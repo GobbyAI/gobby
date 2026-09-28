@@ -1123,6 +1123,8 @@ class TestCanonicalToolMetadata:
             "find src -name '*.py' -execdir rm {} +",
             "find src -name '*.py' -ok rm {} +",
             "find src -name '*.py' -okdir rm {} +",
+            "find src -name '*.py' -exec stat {} + -delete",
+            "find src -name '*.py' -exec stat {} + -exec rm {} +",
         ],
     )
     def test_exec_command_find_mutation_predicates_mark_repo_mutation(self, command: str) -> None:
@@ -1133,6 +1135,18 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "execute"
         assert data["canonical_code_navigation_action"] == "enumerate"
         assert data["canonical_repo_mutation"] is True
+
+    def test_exec_command_find_exec_stat_pipeline_is_read_only(self) -> None:
+        command = (
+            "find /tmp/shots -maxdepth 1 -type f -iname '*.png' "
+            "-exec stat -f '%m %N' {} + | sort -nr | head -5"
+        )
+        data: dict[str, Any] = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert data.get("canonical_repo_mutation") is not True
 
     def test_exec_command_search_populates_visible_paths(self) -> None:
         examples = [

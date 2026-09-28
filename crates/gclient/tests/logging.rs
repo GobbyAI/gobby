@@ -9,6 +9,7 @@ fn binary_initializes_logging_only_for_the_runtime_path() {
         let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
             .arg(flag)
             .env("HOME", home.path())
+            .env_remove("GOBBY_HOME")
             .output()
             .unwrap_or_else(|error| panic!("run gclient {flag}: {error}"));
 
@@ -33,6 +34,7 @@ fn binary_initializes_logging_only_for_the_runtime_path() {
             missing_token.to_str().expect("UTF-8 token path"),
         ])
         .env("HOME", home.path())
+        .env_remove("GOBBY_HOME")
         .output()
         .expect("run gclient runtime path");
 
@@ -45,4 +47,35 @@ fn binary_initializes_logging_only_for_the_runtime_path() {
         "runtime entry point did not initialize file logging"
     );
     assert!(output.stdout.is_empty(), "logging leaked to stdout");
+}
+
+#[test]
+fn runtime_log_follows_gobby_home() {
+    let gobby_home = tempfile::tempdir().expect("temporary Gobby home");
+    let home = tempfile::tempdir().expect("temporary home");
+    let missing_token = gobby_home.path().join("missing-token");
+    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .args([
+            "--daemon-url",
+            "http://127.0.0.1:1",
+            "--token-file",
+            missing_token.to_str().expect("UTF-8 token path"),
+        ])
+        .env("HOME", home.path())
+        .env("GOBBY_HOME", gobby_home.path())
+        .output()
+        .expect("run gclient runtime path");
+
+    assert!(
+        !output.status.success(),
+        "missing token should stop startup before the terminal loop"
+    );
+    assert!(
+        gobby_home.path().join("logs/gclient.log").is_file(),
+        "the runtime log belongs under GOBBY_HOME"
+    );
+    assert!(
+        !home.path().join(".gobby/logs/gclient.log").exists(),
+        "GOBBY_HOME keeps the log out of the user's home"
+    );
 }

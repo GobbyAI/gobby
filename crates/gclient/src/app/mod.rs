@@ -106,7 +106,8 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     sidebar: SidebarModel,
     git_refreshed_at: Instant,
     roster_refreshed_at: Instant,
-    session_retry: live::SessionRetry,
+    session_retry: live::FetchRetry,
+    projects_retry: live::FetchRetry,
     last_roster_refresh_completed_at: Option<Instant>,
     pending_sidebar: PendingSidebar,
     sidebar_stamps: SidebarStamps,
@@ -213,7 +214,8 @@ impl Workspace {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             roster_refreshed_at: Instant::now(),
-            session_retry: live::SessionRetry::default(),
+            session_retry: live::FetchRetry::default(),
+            projects_retry: live::FetchRetry::default(),
             last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
             sidebar_stamps: SidebarStamps::default(),
@@ -570,6 +572,9 @@ impl Workspace {
                 })?;
         }
         let pane = self.panes.get_mut(&id).expect("pane");
+        if pane.scroll_offset != rows {
+            pane.scrolled_at = Some(std::time::Instant::now());
+        }
         pane.scroll_offset = rows;
         if rows == 0 {
             pane.new_output = false;

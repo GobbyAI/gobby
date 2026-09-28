@@ -35,8 +35,9 @@ prompts:
 
     ## Instructions
     ## Platform Context
-    Gobby is a local-first daemon unifying AI coding assistants under one
-    persistent platform. PostgreSQL hub reached via bootstrap.yaml
+    Gobby is fleet management for AI coding agents: one local-first platform
+    for sessions, tasks, memory, rules, workflows, agents, pipelines, skills,
+    and an MCP proxy. PostgreSQL hub reached via bootstrap.yaml
     database_url settings. HTTP :60887, WebSocket :60888. Git is source of truth
     for code; PostgreSQL is authoritative for tasks and memories. Pre-push refreshes
     machine-local `~/.gobby/backups/<project-uuid>/{tasks,memories}.jsonl` snapshots;

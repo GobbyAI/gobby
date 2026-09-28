@@ -12,7 +12,7 @@ use crate::daemon::{DaemonError, LayoutAxis, LayoutNode};
 use crate::theme::{Palette, Theme, ThemeKind};
 use crate::ui::chrome_render::ChromeHits;
 use crate::ui::dialogs::Dialog;
-use crate::ui::hit::{Hit, SidebarSection};
+use crate::ui::hit::Hit;
 use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::keymap::{Keymap, HERDR_PREFIX};
 use crate::ui::navigator::NavigatorState;
@@ -196,6 +196,8 @@ impl Tab {
 pub struct ViewState {
     /// Row 0 across the whole frame, reserved for the menu bar.
     pub menu_bar_rect: Rect,
+    /// Row 1 across the whole frame: the line under the menu bar.
+    pub menu_bar_line: Rect,
     /// Menu bar title cells, by index into `MenuBarMenu::ALL`.
     pub menu_title_hit_areas: Vec<(usize, Rect)>,
     /// Zero-width unless the sidebar is pinned.
@@ -249,6 +251,9 @@ pub struct ViewState {
     /// Buttons of the open dialog, in its button order (confirm close:
     /// `close`, `cancel`); empty while no dialog is drawn.
     pub dialog_button_hit_areas: Vec<Rect>,
+    /// The furthest keybinding-help scroll the frame drew; the scroll keys
+    /// stop there, so the first key back always moves the view.
+    pub help_last_scroll: usize,
 }
 
 impl ViewState {
@@ -265,9 +270,12 @@ impl ViewState {
             settings,
             // The open menu owns its rows; `Chrome::apply_hits` places them.
             menu_rows: _,
+            parent_menu_rows: _,
             dialog_buttons,
+            help_last_scroll,
         } = hits;
         self.dialog_button_hit_areas = dialog_buttons;
+        self.help_last_scroll = help_last_scroll;
         self.menu_title_hit_areas = menu_bar.titles;
         self.tab_hit_areas = tab_bar.tabs;
         self.tab_scroll_left_hit_area = tab_bar.scroll_left;
@@ -646,10 +654,19 @@ impl Chrome {
     }
 
     /// Write the rects the renderers drew back where the hit tests read
-    /// them: the chrome map into `view`, the menu rows into the open menu.
+    /// them: the chrome map into `view`, the menu rows into the open menu
+    /// and the menu it opened from.
     pub fn apply_hits(&mut self, mut hits: ChromeHits) {
         if let (Some(menu), Some(rows)) = (self.menu.as_mut(), hits.menu_rows.take()) {
             menu.item_rects = rows;
+        }
+        if let (Some(parent), Some(rows)) = (
+            self.menu
+                .as_mut()
+                .and_then(|menu| menu.parent.as_deref_mut()),
+            hits.parent_menu_rows.take(),
+        ) {
+            parent.item_rects = rows;
         }
         self.view.apply_hits(hits);
     }
@@ -668,18 +685,17 @@ impl Chrome {
         }
         let bands = Layout::vertical([
             Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(1),
             Constraint::Length(1),
         ])
         .split(area);
-        let (menu_bar_rect, middle, status_rect) = (bands[0], bands[1], bands[2]);
+        let (menu_bar_rect, menu_bar_line, middle, status_rect) =
+            (bands[0], bands[1], bands[2], bands[3]);
         let (sidebar_rect, content) = self.sidebar.layout(middle, self.sidebar_width(middle));
-        let (tab_bar_rect, terminal_area) = if self.show_tab_bar() {
-            let rows = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).split(content);
-            (Some(rows[0]), rows[1])
-        } else {
-            (None, content)
-        };
+        let surface = crate::ui::tab_surface::compute_tab_surface(content, self.show_tab_bar());
+        let tab_bar_rect = (surface.tabs.height > 0).then_some(surface.tabs);
+        let terminal_area = surface.body;
         let (mut pane_infos, split_borders) = match self.active_tab() {
             Some(tab) => pane_layout::pane_geometry(
                 tab,
@@ -720,7 +736,7 @@ impl Chrome {
                     self.prefs.pane_scrollbars,
                     metrics,
                 );
-                title_travel = title_travel.max(pane_chrome::title_travel(ws, pane, info));
+                title_travel = title_travel.max(pane_chrome::title_travel(ws, self, pane, info));
             }
         }
         let rows = sidebar_rows::project_rows(ws, self).len();
@@ -731,10 +747,11 @@ impl Chrome {
         let sidebar_divider_x = (self.sidebar.pinned && sidebar_rect.width > 0)
             .then(|| self.sidebar.edge_x(sidebar_rect));
         let sidebar_section_rects = sidebar::section_rects(ws, self, sidebar_rect);
-        let agents_rect = sidebar_section_rects[SidebarSection::Agents.index()];
-        let title_travel = title_travel.max(sidebar::agents_title_travel(ws, self, agents_rect));
+        let title_travel =
+            title_travel.max(sidebar::title_travel(ws, self, &sidebar_section_rects));
         self.view = ViewState {
             menu_bar_rect,
+            menu_bar_line,
             sidebar_rect,
             tab_bar_rect,
             terminal_area,

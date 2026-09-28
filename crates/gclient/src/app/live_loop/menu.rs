@@ -20,12 +20,16 @@ use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::Workspace;
 use super::actions::toggle_sidebar_pin;
+use super::modal_input::persist_prefs;
 
 mod items;
 pub use items::attention_id;
-use items::{agent_items, global_items, pane_items, project_items, tab_items, worktree_items};
+use items::{
+    agent_items, global_items, pane_items, project_items, tab_items, theme_items, worktree_items,
+};
 pub(super) use items::{
     agents_view_items, arrange_items, blocked_entry, enabled_if, item, passthrough_label,
+    theme_row_label,
 };
 
 /// What the menu was opened on.
@@ -41,6 +45,8 @@ pub enum ContextMenuKind {
     Global,
     /// A menu bar title.
     MenuBar(MenuBarMenu),
+    /// The View menu's theme choices, beside the row that opened them.
+    Theme,
 }
 
 /// Layout choices prepared for Window › Arrange.
@@ -94,6 +100,10 @@ pub enum MenuAction {
     MarkSeen(String),
     /// Pin the sidebar into the layout, or unpin it.
     PinSidebar,
+    /// Open the theme choices beside the View menu's theme row.
+    ThemeMenu,
+    /// Save this theme preference (`dark`, `light` or `system`) and draw in it.
+    SetTheme(&'static str),
     /// Open the alert log.
     ShowAlerts,
     /// Open the destroy-orphaned-terminals dialog.
@@ -118,6 +128,9 @@ pub struct ContextMenuState {
     /// Screen row of each item as last drawn; seeded from the anchor so the
     /// pointer finds rows before the first render.
     pub item_rects: Vec<Rect>,
+    /// The menu this one opened from, drawn behind it and still live, with
+    /// the row that opened it selected.
+    pub parent: Option<Box<ContextMenuState>>,
 }
 
 /// Narrowest popup, in columns, so short menus still read as a panel.
@@ -139,7 +152,12 @@ pub fn build_menu<W: WorkspaceView>(
         ContextMenuKind::Agent(entry_id) => agent_items(ws, entry_id),
         ContextMenuKind::AgentsView => agents_view_items(chrome),
         ContextMenuKind::MenuBar(menu) => super::menu_bar::menu_bar_items(ws, chrome, *menu),
+        ContextMenuKind::Theme => theme_items(chrome),
     };
+    menu_state(kind, anchor, items)
+}
+
+fn menu_state(kind: ContextMenuKind, anchor: (u16, u16), items: Vec<MenuItem>) -> ContextMenuState {
     let item_rects = item_rects(menu_rect(anchor, &items), items.len());
     ContextMenuState {
         kind,
@@ -147,6 +165,7 @@ pub fn build_menu<W: WorkspaceView>(
         items,
         selected: 0,
         item_rects,
+        parent: None,
     }
 }
 
@@ -208,7 +227,10 @@ pub fn apply_local_menu_action<D: Daemon>(
     workspace: &mut Workspace<D>,
     chrome: &mut Chrome,
     action: &MenuAction,
-) -> bool {
+) -> bool
+where
+    Workspace<D>: WorkspaceView,
+{
     match action {
         MenuAction::SwapWithFocused(pane) => swap_with_focused(chrome, *pane),
         MenuAction::ClearPaneName(pane) => {
@@ -223,9 +245,44 @@ pub fn apply_local_menu_action<D: Daemon>(
         }
         MenuAction::ToggleGroup(project_id) => chrome.sidebar.toggle_group(project_id),
         MenuAction::PinSidebar => toggle_sidebar_pin(workspace.gobby_home(), chrome),
+        MenuAction::ThemeMenu => open_theme_choices(workspace, chrome),
+        MenuAction::SetTheme(theme) => {
+            chrome.prefs.theme = (*theme).to_owned();
+            let kind = chrome.prefs.theme_kind();
+            chrome.set_theme(kind);
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
         _ => return false,
     }
     true
+}
+
+/// The theme choices open beside the View menu's theme row and level with
+/// it, where that menu draws under its title. The View menu stays open
+/// behind them with that row selected.
+fn open_theme_choices<W: WorkspaceView>(ws: &W, chrome: &mut Chrome) {
+    let view = MenuBarMenu::View;
+    let anchor = chrome
+        .view
+        .menu_title_hit_areas
+        .iter()
+        .find(|(index, _)| MenuBarMenu::ALL.get(*index) == Some(&view))
+        .map_or((0, 1), |(_, cell)| (cell.x, cell.bottom()));
+    let mut parent = build_menu(ws, chrome, ContextMenuKind::MenuBar(view), anchor);
+    let theme_row = parent
+        .items
+        .iter()
+        .position(|item| item.action == MenuAction::ThemeMenu);
+    let anchor = theme_row
+        .and_then(|index| parent.item_rects.get(index))
+        .map_or(anchor, |row| {
+            (row.right().saturating_add(1), row.y.saturating_sub(1))
+        });
+    parent.selected = theme_row.unwrap_or(parent.selected);
+    let mut choices = menu_state(ContextMenuKind::Theme, anchor, theme_items(chrome));
+    choices.parent = Some(Box::new(parent));
+    chrome.menu = Some(choices);
+    chrome.mode = Mode::ContextMenu;
 }
 
 /// Exchange `pane`'s slot with the focused slot of the active tab.

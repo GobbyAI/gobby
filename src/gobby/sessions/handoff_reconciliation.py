@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from datetime import datetime, timedelta
 
-from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
+from gobby.sessions.compact_markers import (
+    COMPACT_NOTIFICATION_STARTED_AT_VARIABLE,
+    HANDOFF_COMPACT_CONTINUE_VARIABLE,
+)
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -17,8 +20,26 @@ from gobby.sessions.handoff import (
     _store_variables,
 )
 from gobby.sessions.handoff_records import insert_delivery_receipt
+from gobby.sessions.transcript_cursor import codex_compact_boundary_between
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.found_work_gate import arm_found_work_gate
+
+
+def is_legacy_codex_ambiguous_enter_failure(gate: Mapping[str, object], source: str | None) -> bool:
+    """Recognize failed Codex Enter writes recorded before they had an error code."""
+    reason = gate.get("reason")
+    if not isinstance(reason, str):
+        return False
+    pane_reason, separator, action = reason.partition(" (session ")
+    return (
+        source == "codex"
+        and gate.get("error_code") is None
+        and gate.get("clear_session") is False
+        and bool(separator)
+        and " key write failed (" in pane_reason
+        and pane_reason.endswith(": enter")
+        and action.endswith(" while submitting /compact)")
+    )
 
 
 def reconcile_late_compact_handoff(
@@ -27,7 +48,9 @@ def reconcile_late_compact_handoff(
     """Deliver only the caller's failed attempt with a timely provider compact marker."""
     with db.transaction() as conn:
         session = conn.execute(
-            "SELECT status FROM sessions WHERE id = %s FOR UPDATE", (session_id,)
+            "SELECT status, source, transcript_path, external_id FROM sessions "
+            "WHERE id = %s FOR UPDATE",
+            (session_id,),
         ).fetchone()
         if session is None or session["status"] != "active":
             return None
@@ -40,6 +63,9 @@ def reconcile_late_compact_handoff(
         variables = _load_variables(variable_row["variables"])
         marker = variables.get(FAILED_HANDOFF_VARIABLE)
         gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+        legacy_ambiguous_enter = isinstance(
+            gate, Mapping
+        ) and is_legacy_codex_ambiguous_enter_failure(gate, session["source"])
         if (
             not isinstance(marker, Mapping)
             or marker.get("attempt_id") != attempt_id
@@ -48,7 +74,11 @@ def reconcile_late_compact_handoff(
             or gate.get("attempt_id") != attempt_id
             or gate.get("delivery_failed") is not True
             or gate.get("clear_session") is not False
-            or gate.get("error_code") != "interrupt_unconfirmed"
+            or (
+                gate.get("error_code")
+                not in {"interrupt_unconfirmed", "compact_unconfirmed", "compact_failed"}
+                and not legacy_ambiguous_enter
+            )
             or PENDING_HANDOFF_VARIABLE in variables
         ):
             return None
@@ -72,18 +102,37 @@ def reconcile_late_compact_handoff(
         ).fetchone()
         if handoff is None:
             return None
-        raw_boundary = variables.get(COMPACT_NOTIFICATION_STARTED_AT_VARIABLE)
-        if not isinstance(raw_boundary, str):
-            return None
-        try:
-            boundary = datetime.fromisoformat(raw_boundary)
-        except (TypeError, ValueError):
-            return None
         authored = handoff["authored_at"]
+        freshness = (
+            timedelta(minutes=20)
+            if gate.get("error_code") == "compact_unconfirmed"
+            else timedelta(minutes=10)
+        )
+        boundary = None
+        if not legacy_ambiguous_enter:
+            raw_boundary = variables.get(COMPACT_NOTIFICATION_STARTED_AT_VARIABLE)
+            try:
+                boundary = (
+                    datetime.fromisoformat(raw_boundary) if isinstance(raw_boundary, str) else None
+                )
+            except ValueError:
+                boundary = None
         if (
-            boundary.tzinfo is None
+            boundary is None
+            or boundary.tzinfo is None
+            or not authored <= boundary <= authored + freshness
+        ) and session["source"] == "codex":
+            boundary = codex_compact_boundary_between(
+                session["transcript_path"],
+                str(session["external_id"]),
+                authored,
+                authored + freshness,
+            )
+        if (
+            boundary is None
+            or boundary.tzinfo is None
             or authored.tzinfo is None
-            or not authored <= boundary <= authored + timedelta(minutes=10)
+            or not authored <= boundary <= authored + freshness
         ):
             return None
         insert_delivery_receipt(
@@ -102,6 +151,9 @@ def reconcile_late_compact_handoff(
             arm_found_work_gate(variables)
         variables.pop(FAILED_HANDOFF_VARIABLE, None)
         variables.pop(HANDOFF_DISPATCH_GATE_VARIABLE, None)
+        continuation = variables.get(HANDOFF_COMPACT_CONTINUE_VARIABLE)
+        if isinstance(continuation, Mapping) and continuation.get("attempt_id") == attempt_id:
+            variables.pop(HANDOFF_COMPACT_CONTINUE_VARIABLE, None)
         variables[HANDOFF_DELIVERY_FAILURES_VARIABLE] = 0
         _store_variables(conn, session_id, variables, exists=True)
         return consumed, gate_armed

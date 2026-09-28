@@ -68,3 +68,39 @@ def test_normalize_keeps_task_titles_and_renames_prefix(
     assert changed == [(session.id, expected)]
     sweep_source = inspect.getsource(SessionManager.normalize_automatic_title_refs)
     assert "heuristic_title" not in sweep_source
+
+
+def test_normalize_relabels_stored_provisional_titles(
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    automatic = session_manager.register(
+        external_id="stored-agy-title",
+        machine_id=get_machine_id(),
+        source="agy",
+        project_id=sample_project["id"],
+    )
+    manual = session_manager.register(
+        external_id="manual-agy-title",
+        machine_id=get_machine_id(),
+        source="agy",
+        project_id=sample_project["id"],
+        title="AGY notes",
+    )
+    stored = f"test-project#{automatic.seq_num}: AGY"
+    with session_manager.db.transaction() as conn:
+        conn.execute(
+            "UPDATE sessions SET title = %s, title_source = 'provisional' WHERE id = %s",
+            (stored, automatic.id),
+        )
+
+    assert session_manager.normalize_automatic_title_refs() == 1
+
+    swept = session_manager.get(automatic.id)
+    assert swept is not None
+    expected = f"test-project#{automatic.seq_num}: Antigravity"
+    assert (swept.title, swept.title_source) == (expected, "provisional")
+    kept = session_manager.get(manual.id)
+    assert kept is not None
+    assert (kept.title, kept.title_source) == ("AGY notes", "manual")
+    assert session_manager.normalize_automatic_title_refs() == 0

@@ -143,6 +143,10 @@ pub struct Pane {
     /// `zsh` at an idle prompt, `nvim` or `cargo` while a job holds it. Rung 2
     /// of the label ladder, before the short terminal ID fallback.
     pub command: Option<String>,
+    /// The terminal's working directory, as the daemon observed it. Absent
+    /// until the daemon reports one; the Terminals row leaves its second
+    /// line blank meanwhile.
+    pub cwd: Option<String>,
     /// The daemon's terminal lifecycle state, when its inventory supplied one.
     pub terminal_state: Option<String>,
     pub expected_host_epoch: String,
@@ -153,6 +157,9 @@ pub struct Pane {
     pub take_back: bool,
     pub frames_rendered: u32,
     pub scroll_offset: u32,
+    /// When this client last moved `scroll_offset`; the pane's scrollbar
+    /// thumb stays lit a second after.
+    pub scrolled_at: Option<std::time::Instant>,
     pub max_scroll: u32,
     pub new_output: bool,
     pub attach_history: Option<String>,
@@ -232,6 +239,7 @@ impl Pane {
             address: None,
             session_id: None,
             command: None,
+            cwd: None,
             terminal_state: None,
             expected_host_epoch: epoch,
             control: ControlState::Observe,
@@ -239,6 +247,7 @@ impl Pane {
             take_back: false,
             frames_rendered: 0,
             scroll_offset: 0,
+            scrolled_at: None,
             max_scroll: 0,
             new_output: false,
             attach_history: None,
@@ -386,6 +395,15 @@ impl Pane {
 
     pub fn frames_rendered(&self) -> u32 {
         self.frames_rendered
+    }
+
+    /// Whether this pane has drawn what startup waits for: a frame, or the
+    /// reason its attach failed. A pane the daemon refused, or one waiting out
+    /// an attach retry, never draws a frame, so waiting for one would keep
+    /// startup on the splash for as long as the daemon stays slow.
+    pub(super) fn first_frame_settled(&self) -> bool {
+        self.frames_rendered > 0
+            || (matches!(self.attach, AttachState::Detached) && self.status_message.is_some())
     }
 
     pub fn in_flight_write(&self) -> Option<u64> {
@@ -647,13 +665,15 @@ mod tests {
         // The edge metadata agrees: asking is the normal focused state, even
         // while the request is the take-back a Read-only pane offered.
         let ws = crate::app::Workspace::scripted();
-        let reads = |pane: &Pane| crate::ui::pane_chrome::pane_footer(&ws, pane, true).left;
-        assert_eq!(reads(&pane), "terminal · Focused");
+        let chrome = crate::ui::chrome::Chrome::dark();
+        let reads =
+            |pane: &Pane| crate::ui::pane_chrome::pane_corners(&ws, &chrome, pane, true).title;
+        assert_eq!(reads(&pane), "○ terminal · Focused");
         pane.control = ControlState::LeaseLost;
         pane.take_back = true;
-        assert_eq!(reads(&pane), "terminal · Focused");
+        assert_eq!(reads(&pane), "○ terminal · Focused");
         pane.control_request = None;
-        assert_eq!(reads(&pane), "terminal · Read-only");
+        assert_eq!(reads(&pane), "○ terminal · Read-only");
     }
 
     #[test]

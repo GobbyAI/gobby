@@ -1,6 +1,7 @@
 // upstream: herdr v0.8.0 src/ui.rs
-//! Frame composition (herdr `render`): menu bar, tab bar, tab surface or
-//! empty state, sidebar, notifications, then the mode overlay.
+//! Frame composition (herdr `render`): the splash alone until the first
+//! frame lands, else menu bar, tab bar, tab surface or empty state,
+//! sidebar and notifications; then the mode overlay on either.
 
 use crate::app::PaneId;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
@@ -14,8 +15,8 @@ use crate::ui::{
     sidebar, splash, status, tab_surface,
 };
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::widgets::{Block, Clear};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{Clear, Paragraph};
 use ratatui::Frame;
 
 /// Every rect the chrome renderers drew this frame; the run loop writes it
@@ -32,8 +33,12 @@ pub struct ChromeHits {
     /// Rows of the context menu as drawn, in item order, whenever the menu
     /// overlay ran; `Chrome::apply_hits` writes them into the open menu.
     pub menu_rows: Option<Vec<Rect>>,
+    /// Rows of the open menu's parent as drawn, when the overlay ran.
+    pub parent_menu_rows: Option<Vec<Rect>>,
     /// Buttons of the open dialog as drawn, in its button order.
     pub dialog_buttons: Vec<Rect>,
+    /// The furthest scroll the keybinding help's drawn body shows.
+    pub help_last_scroll: usize,
 }
 
 /// Compose the whole frame; `content` paints each pane's terminal grid.
@@ -44,35 +49,14 @@ pub fn render_workspace_with<W: WorkspaceView>(
     content: &mut PaneContent<'_>,
 ) -> ChromeHits {
     let area = frame.area();
-    frame.render_widget(
-        Block::new().style(Style::new().bg(chrome.palette.panel_bg)),
-        area,
-    );
-
-    let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
-    // The sidebar after the content: the overlay lies over it.
-    let tab_bar = render_content_column(frame, ws, chrome, content);
-    let sidebar = render_navigation_chrome(frame, ws, chrome);
-    let mut hits = ChromeHits {
-        menu_bar,
-        tab_bar,
-        sidebar,
-        ..ChromeHits::default()
-    };
-
-    let status_rect = chrome.view.status_rect;
-    let status_hits = if status_rect.is_empty() {
-        status::StatusHits::default()
+    // Nothing fills the frame first: `paint_ground` settles what the default
+    // colours mean once everything is drawn.
+    let mut hits = if splashing(ws, chrome) {
+        splash::render_splash(frame, area, chrome);
+        ChromeHits::default()
     } else {
-        status::render_status_line(frame, status_rect, ws, chrome)
+        render_chrome(frame, ws, chrome, content)
     };
-    hits.control_indicator = status_hits
-        .control_indicator
-        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
-    hits.status_count = status_hits.count;
-
-    // Ambient notifications sit above panes, but below interactive overlays.
-    hits.toast = render_notifications(frame, chrome);
 
     let terminal_area = chrome.view.terminal_area;
     let close_area = if terminal_area.is_empty() {
@@ -98,7 +82,8 @@ pub fn render_workspace_with<W: WorkspaceView>(
         }
         Mode::KeybindHelp => {
             dim_background(frame, area);
-            hits.dialog_buttons = keybind_help::render_keybind_help(frame, area, chrome);
+            (hits.dialog_buttons, hits.help_last_scroll) =
+                keybind_help::render_keybind_help(frame, area, chrome);
         }
         Mode::Navigator => {
             dim_background(frame, area);
@@ -107,11 +92,100 @@ pub fn render_workspace_with<W: WorkspaceView>(
         // Composited last and over an undimmed workspace: the menu is
         // contextual, so what it acts on stays readable.
         Mode::ContextMenu => {
-            hits.menu_rows = Some(context_menu::render_context_menu(frame, area, chrome));
+            let (rows, parent_rows) = context_menu::render_context_menu(frame, area, chrome);
+            hits.menu_rows = Some(rows);
+            hits.parent_menu_rows = Some(parent_rows);
         }
         Mode::Terminal | Mode::Navigate | Mode::Prefix | Mode::Copy | Mode::Resize => {}
     }
+    paint_ground(frame, chrome);
     hits
+}
+
+/// Light and Dark own the ground: every cell still on the terminal's default
+/// colours, hosted panes included, takes the theme's text on `panel_bg`, so
+/// the hosting terminal's configured background and foreground no longer show
+/// through; host opacity that applies to explicit cells still does. System
+/// leaves the terminal's own colours in place. Runs last: overlays `Clear`
+/// their cells back to the default.
+fn paint_ground(frame: &mut Frame, chrome: &Chrome) {
+    if chrome.prefs.follows_system() {
+        return;
+    }
+    let p = &chrome.palette;
+    for cell in &mut frame.buffer_mut().content {
+        if cell.fg == Color::Reset {
+            cell.fg = p.text;
+        }
+        if cell.bg == Color::Reset {
+            cell.bg = p.panel_bg;
+        }
+    }
+}
+
+/// Until startup draws its first frame, the goblin and the wordmark stand alone
+/// on the ground: no bar, tabs, sidebar, status or toasts. A first connect
+/// that failed (a retry scheduled, or a daemon error) never finishes its
+/// stages, so it falls through to the chrome, whose status line says what
+/// went wrong.
+fn splashing<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> bool {
+    chrome
+        .connection
+        .stages
+        .as_ref()
+        .is_some_and(|stages| !stages.finished())
+        && chrome.connection.retry_at.is_none()
+        && ws.daemon_error().is_none()
+}
+
+/// The menu bar and the line under it, the content column with the line
+/// under its tab row, the sidebar over both, then the status line and the
+/// toasts.
+fn render_chrome<W: WorkspaceView>(
+    frame: &mut Frame,
+    ws: &W,
+    chrome: &Chrome,
+    content: &mut PaneContent<'_>,
+) -> ChromeHits {
+    let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
+    render_line(frame, chrome.view.menu_bar_line, chrome);
+    // The sidebar after the content: the overlay lies over it.
+    let tab_bar = render_content_column(frame, ws, chrome, content);
+    let sidebar = render_navigation_chrome(frame, ws, chrome);
+    let mut hits = ChromeHits {
+        menu_bar,
+        tab_bar,
+        sidebar,
+        ..ChromeHits::default()
+    };
+
+    let status_rect = chrome.view.status_rect;
+    let status_hits = if status_rect.is_empty() {
+        status::StatusHits::default()
+    } else {
+        status::render_status_line(frame, status_rect, ws, chrome)
+    };
+    hits.control_indicator = status_hits
+        .control_indicator
+        .or_else(|| pane_chrome::control_indicator_hit_area(ws, chrome));
+    hits.status_count = status_hits.count;
+
+    // Ambient notifications sit above panes, but below interactive overlays.
+    hits.toast = render_notifications(frame, chrome);
+    hits
+}
+
+/// One row of `▀` in the line colour over the ground: the upper half of the
+/// row reads as a thin dark line under the menu bar.
+fn render_line(frame: &mut Frame, rect: Rect, chrome: &Chrome) {
+    if rect.is_empty() {
+        return;
+    }
+    frame.render_widget(
+        Paragraph::new("▀".repeat(usize::from(rect.width)))
+            .style(Style::new().fg(chrome.palette.line)),
+        rect,
+    );
 }
 
 /// Compose the whole frame with empty pane bodies.
@@ -152,29 +226,6 @@ fn render_content_column<W: WorkspaceView>(
 ) -> TabBarHits {
     let terminal_area = chrome.view.terminal_area;
     if terminal_area.is_empty() {
-        return TabBarHits::default();
-    }
-    if chrome
-        .connection
-        .stages
-        .as_ref()
-        .is_some_and(|stages| !stages.finished())
-    {
-        if let Some(tabs) = chrome.view.tab_bar_rect {
-            frame.render_widget(
-                Block::default().style(Style::new().bg(chrome.palette.panel_bg)),
-                tabs,
-            );
-            let mut x = tabs.x;
-            while x.saturating_add(11) <= tabs.right() {
-                frame.render_widget(
-                    Block::default().style(Style::new().bg(chrome.palette.surface1)),
-                    Rect::new(x, tabs.y, 11, 1),
-                );
-                x = x.saturating_add(12);
-            }
-        }
-        splash::render_splash(frame, terminal_area, chrome);
         return TabBarHits::default();
     }
     if chrome.tabs().tabs.is_empty() {
@@ -256,6 +307,7 @@ pub fn rects_overlap(a: Rect, b: Rect) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::ThemeKind;
     use crate::ui::status::Toast;
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
@@ -321,5 +373,40 @@ mod tests {
         let buffer = terminal.backend().buffer();
         assert!(buffer[(3, 2)].modifier.contains(Modifier::DIM));
         assert!(!buffer[(0, 0)].modifier.contains(Modifier::DIM));
+    }
+
+    /// Paint one default cell and one explicit cell, then settle the ground.
+    fn grounded(chrome: &Chrome) -> [(Color, Color); 2] {
+        let mut terminal = Terminal::new(TestBackend::new(2, 1)).unwrap();
+        terminal
+            .draw(|frame| {
+                frame.buffer_mut()[(1, 0)]
+                    .set_fg(Color::Red)
+                    .set_bg(Color::Blue);
+                paint_ground(frame, chrome);
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        [
+            (buffer[(0, 0)].fg, buffer[(0, 0)].bg),
+            (buffer[(1, 0)].fg, buffer[(1, 0)].bg),
+        ]
+    }
+
+    #[test]
+    fn light_and_dark_paint_the_ground_system_leaves_the_terminals() {
+        let mut chrome = Chrome::dark();
+        let explicit = (Color::Red, Color::Blue);
+        let dark = (chrome.palette.text, chrome.palette.panel_bg);
+        assert_eq!(grounded(&chrome), [dark, explicit]);
+
+        chrome.prefs.theme = "light".to_string();
+        chrome.set_theme(ThemeKind::Light);
+        let light = (chrome.palette.text, chrome.palette.panel_bg);
+        assert_ne!(light, dark);
+        assert_eq!(grounded(&chrome), [light, explicit]);
+
+        chrome.prefs.theme = "System".to_string();
+        assert_eq!(grounded(&chrome), [(Color::Reset, Color::Reset), explicit]);
     }
 }

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 
@@ -245,6 +245,14 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
         return AgentDefinitionManager(server.services.database)
 
+    async def _require_definition_operator(request: Request) -> None:
+        principal = await server.run_db(server.auth_service.request_principal, request)
+        if principal is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="Agent API tokens cannot modify agent definitions",
+            )
+
     def _row_to_api_dict(row: Any) -> dict[str, Any] | None:
         """Convert a typed agent definition row to API response dict.
 
@@ -377,8 +385,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     @router.post("/definitions")
     async def create_definition(
         request: CreateAgentDefinitionRequest,
+        http_request: Request,
     ) -> dict[str, Any]:
         """Create a new agent definition in the DB."""
+        await _require_definition_operator(http_request)
         try:
             from gobby.workflows.definitions import AgentDefinitionBody, AgentWorkflows
 
@@ -434,9 +444,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
     @router.put("/definitions/{definition_id}")
     async def update_definition(
-        definition_id: str, request: UpdateAgentDefinitionRequest
+        definition_id: str, request: UpdateAgentDefinitionRequest, http_request: Request
     ) -> dict[str, Any]:
         """Update a DB-backed agent definition."""
+        await _require_definition_operator(http_request)
         try:
             import json as _json
 
@@ -531,8 +542,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/definitions/{definition_id}")
-    async def delete_definition(definition_id: str) -> dict[str, Any]:
+    async def delete_definition(definition_id: str, http_request: Request) -> dict[str, Any]:
         """Delete a DB-backed agent definition (soft-delete)."""
+        await _require_definition_operator(http_request)
         try:
             manager = _get_manager()
             deleted = manager.delete(definition_id)
@@ -546,8 +558,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/definitions/{definition_id}/restore")
-    async def restore_definition(definition_id: str) -> dict[str, Any]:
+    async def restore_definition(definition_id: str, http_request: Request) -> dict[str, Any]:
         """Restore a soft-deleted agent definition."""
+        await _require_definition_operator(http_request)
         try:
             manager = _get_manager()
             row = manager.restore(definition_id)
@@ -583,8 +596,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         remove: list[str] | None = None
 
     @router.patch("/definitions/{definition_id}/rules")
-    async def patch_rules(definition_id: str, request: PatchRulesRequest) -> dict[str, Any]:
+    async def patch_rules(
+        definition_id: str, request: PatchRulesRequest, http_request: Request
+    ) -> dict[str, Any]:
         """Add or remove rules from an agent definition."""
+        await _require_definition_operator(http_request)
         try:
             import json as _json
 
@@ -618,9 +634,10 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
     @router.patch("/definitions/{definition_id}/rule-selectors")
     async def patch_rule_selectors(
-        definition_id: str, request: PatchRuleSelectorsRequest
+        definition_id: str, request: PatchRuleSelectorsRequest, http_request: Request
     ) -> dict[str, Any]:
         """Add or remove rule selectors from an agent definition."""
+        await _require_definition_operator(http_request)
         try:
             import json as _json
 
@@ -664,8 +681,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.patch("/definitions/{definition_id}/variables")
-    async def patch_variables(definition_id: str, request: PatchVariablesRequest) -> dict[str, Any]:
+    async def patch_variables(
+        definition_id: str, request: PatchVariablesRequest, http_request: Request
+    ) -> dict[str, Any]:
         """Set or remove variables from an agent definition."""
+        await _require_definition_operator(http_request)
         try:
             import json as _json
 
@@ -878,9 +898,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     @router.post("/definitions/import/{name}")
     async def import_definition(
         name: str,
+        http_request: Request,
         project_id: str | None = Query(None),
     ) -> dict[str, Any]:
         """Copy a file-based agent definition into the DB for customization."""
+        await _require_definition_operator(http_request)
         try:
             from gobby.agents.sync import get_bundled_agents_path
             from gobby.workflows.definitions import AgentDefinitionBody

@@ -20,7 +20,6 @@ use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
 use crate::ui::sidebar_rows::{displayed_project_ids, project_label, RowKind, SidebarRow};
-use crate::ui::text::truncate_end;
 use ratatui::layout::Rect;
 use ratatui::Frame;
 
@@ -94,7 +93,7 @@ pub fn next_machine_filter(model: &SidebarModel, current: Option<&str>) -> Optio
 
 /// The row state: the pane's live state where one is attached, else the
 /// roster's.
-pub(super) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
+pub(crate) fn agent_state<W: WorkspaceView>(ws: &W, agent: &AgentEntry) -> RowState {
     let pane = ws
         .pane_for_terminal(&agent.terminal_id)
         .map(|pane| ws.pane(pane));
@@ -301,11 +300,14 @@ fn push_children(
     }
 }
 
-fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
-    let Visible { agent, state, .. } = visible;
-    let focused = chrome.focused_pane();
-    let pane = ws.pane_for_terminal(&agent.terminal_id);
-    let reference = agent
+/// An agent's session ref as its row and pane corner print it: `#N`, led
+/// by the project only where rows from every project mix.
+pub(crate) fn agent_reference<W: WorkspaceView>(
+    ws: &W,
+    chrome: &Chrome,
+    agent: &AgentEntry,
+) -> String {
+    agent
         .session_ref
         .as_deref()
         .map_or_else(String::new, |reference| {
@@ -317,14 +319,20 @@ fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'
                 project.as_deref().unwrap_or_default(),
                 reference = short_session_ref(reference)
             )
-        });
+        })
+}
+
+fn agent_candidate<W: WorkspaceView>(ws: &W, chrome: &Chrome, visible: Visible<'_>) -> Candidate {
+    let Visible { agent, state, .. } = visible;
+    let focused = chrome.focused_pane();
+    let pane = ws.pane_for_terminal(&agent.terminal_id);
     Candidate {
         row: SidebarRow {
             id: agent.entry_id.clone(),
             definition: agent.definition_label(),
-            reference,
+            reference: agent_reference(ws, chrome, agent),
             task: agent.task_ref.clone().zip(agent.task_title.clone()),
-            model_slug: truncate_end(&agent.model_slug(), 17),
+            model_slug: agent.model_slug(),
             label: agent_title(agent),
             kind: RowKind::Agent,
             state,

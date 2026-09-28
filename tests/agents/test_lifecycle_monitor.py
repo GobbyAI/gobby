@@ -4324,7 +4324,113 @@ class TestCheckProviderStallsKillsAgent:
 
 
 class TestCheckInitializationTimeout:
-    """Tests for check_initialization_timeout."""
+    """Tests for check_initialization_timeout and uninitialized-run cleanup."""
+
+    @pytest.mark.parametrize("initialized", [False, True])
+    def test_prompt_delivery_failure_needs_provisional_child(
+        self,
+        initialized: bool,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
+    ) -> None:
+        child = session_manager.register(
+            external_id=f"child-prompt-guard-{initialized}",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
+        run = agent_run_manager.create(
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            provider="codex",
+            prompt="work",
+            run_id=_rid(f"run-prompt-guard-{initialized}"),
+        )
+        assert agent_run_manager.start(run.id) is not None
+        if initialized:
+            assert (
+                session_manager.update(session_id=child.id, external_id="native-codex-session")
+                is not None
+            )
+
+        transitioned = agent_run_manager.fail_uninitialized_prompt_delivery(
+            run.id,
+            error="codex_terminal_exited_before_composer: no startup pane snapshot",
+        )
+
+        if initialized:
+            assert transitioned is None
+            assert agent_run_manager.get(run.id).status == "running"
+        else:
+            assert transitioned is not None
+            assert transitioned.status == "error"
+            assert agent_run_manager.get(run.id).status == "error"
+            assert (
+                agent_run_manager.fail_uninitialized_prompt_delivery(run.id, error="later failure")
+                is None
+            )
+
+    @pytest.mark.asyncio
+    async def test_prompt_failure_settles_live_terminal_before_task_recovery(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict[str, Any],
+        sample_project: dict[str, Any],
+        temp_db: HubDatabase,
+    ) -> None:
+        child = session_manager.register(
+            external_id="child-prompt-failure-cleanup",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id=_rid("run-prompt-failure-cleanup"),
+            terminal_id="gobby-prompt-failure-cleanup",
+        )
+        assert run.terminal_id is not None
+        terminal_manager = TerminalManager(temp_db)
+        terminal = terminal_manager.get(run.terminal_id)
+        assert terminal is not None and terminal.state == "live"
+        runtime = LifecycleRuntime()
+        monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db, runtime),
+        )
+        error = "codex_terminal_exited_before_composer: pane gone"
+        transitioned = agent_run_manager.fail_uninitialized_prompt_delivery(run.id, error=error)
+        assert transitioned is not None
+        runtime.alive = False
+
+        await monitor._cleanup_agent(
+            transitioned,
+            terminal_payload=error,
+            preterminalized_run=transitioned,
+        )
+
+        terminal = terminal_manager.get(run.terminal_id)
+        assert terminal is not None and terminal.state == "exited"
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None and stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        assert task_manager.get_task(task.id).claimed_by_session_id is None
 
     @pytest.mark.asyncio
     async def test_kills_uninitialized_agent(
@@ -4343,6 +4449,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
 
         run = _make_terminal_run(
             agent_run_manager,
@@ -4369,6 +4476,7 @@ class TestCheckInitializationTimeout:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
+        assert mock_kill.await_args is not None
         assert mock_kill.await_args.args[0].terminal_id == run.terminal_id
 
         updated = agent_run_manager.get(_rid("run-uninit"))
@@ -4393,6 +4501,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         run = agent_run_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
@@ -4411,9 +4520,9 @@ class TestCheckInitializationTimeout:
 
         with (
             patch(
-                "gobby.agents.agent_health.pid_matches_agent_identity",
+                "gobby.agents.agent_health.inspect_agent_process_identity",
                 new_callable=AsyncMock,
-                return_value=False,
+                return_value="mismatched",
             ) as mock_identity,
             patch("gobby.agents.agent_health.os.kill") as mock_kill,
         ):
@@ -4431,6 +4540,186 @@ class TestCheckInitializationTimeout:
         assert updated.status == "running"
 
     @pytest.mark.asyncio
+    async def test_initialization_timeout_reconciles_exited_terminal_with_recycled_pid(
+        self,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """An exited managed terminal releases the stale run without signaling its old PID."""
+        child = session_manager.register(
+            external_id="child-init-timeout-exited",
+            machine_id=LOCAL_MACHINE_ID,
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
+        task_manager = LocalTaskManager(temp_db)
+        task, run, mutexes = _make_dispatched_stage_run(
+            agent_run_manager=agent_run_manager,
+            task_manager=task_manager,
+            temp_db=temp_db,
+            sample_project=sample_project,
+            parent_session_id=sample_session["id"],
+            child_session_id=child.id,
+            run_id=_rid("run-init-timeout-exited"),
+            terminal_id="gobby-init-timeout-exited",
+        )
+        assert run.terminal_id is not None
+        agent_run_manager.update_runtime(run.id, pid=999)
+        assert TerminalManager(temp_db).mark_exited(run.terminal_id) is not None
+        launch = datetime.now(UTC) - timedelta(seconds=200)
+        created = launch - timedelta(seconds=12)
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
+            (launch.isoformat(), run.id),
+        )
+        temp_db.execute(
+            "UPDATE sessions SET created_at = %s, updated_at = %s, last_activity = %s "
+            "WHERE id = %s",
+            (created.isoformat(), launch.isoformat(), created.isoformat(), child.id),
+        )
+        completion_registry = CompletionEventRegistry()
+        completion_registry.register(run.id, [sample_session["id"]])
+        monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
+            agent_run_manager=agent_run_manager,
+            db=temp_db,
+            session_manager=session_manager,
+            task_manager=task_manager,
+            completion_registry=completion_registry,
+            tmux_config=TmuxConfig(),
+            terminal_services=_fake_terminal_services(temp_db),
+        )
+
+        with (
+            patch(
+                "gobby.agents.agent_health.inspect_agent_process_identity",
+                new_callable=AsyncMock,
+                return_value="mismatched",
+            ) as inspect_identity,
+            patch("gobby.agents.agent_health.os.kill") as signal_pid,
+            patch.object(completion_registry, "notify", wraps=completion_registry.notify) as notify,
+        ):
+            assert await monitor.check_initialization_timeout() == 1
+            assert await monitor.check_initialization_timeout() == 0
+
+        inspect_identity.assert_awaited_once_with(999, provider="codex", session_id=child.id)
+        signal_pid.assert_not_called()
+        notify.assert_awaited_once()
+        assert notify.await_args is not None
+        assert notify.await_args.kwargs["result"]["status"] == "error"
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == "error"
+        assert updated.pid is None
+        assert "never initialized" in (updated.error or "")
+        stage = task_manager.stage_states.get(task.id, "development")
+        assert stage is not None and stage.state == "ready"
+        assert mutexes.get_mutex(task.id) is None
+        assert task_manager.get_task(task.id).claimed_by_session_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "scenario",
+        [
+            "unverifiable",
+            "terminal_orphaned",
+            "session_activity",
+            "last_activity_only",
+            "provider_registration",
+            "terminal_rebound",
+            "pid_changed",
+            "run_completed",
+        ],
+    )
+    async def test_initialization_timeout_preserves_uncertain_or_changed_run(
+        self,
+        scenario: str,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        session_manager: SessionManager,
+        sample_session: dict,
+        sample_project: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        """Reconciliation needs current terminal, session, run and process evidence."""
+        child = session_manager.register(
+            external_id=f"child-init-timeout-{scenario}",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id=_rid(f"run-init-timeout-{scenario}"),
+            terminal_id=f"gobby-init-timeout-{scenario}",
+            child_session_id=child.id,
+            pid=999,
+        )
+        assert run.terminal_id is not None
+        assert TerminalManager(temp_db).mark_exited(run.terminal_id) is not None
+        if scenario == "terminal_orphaned":
+            temp_db.execute(
+                "UPDATE terminals SET state = 'orphaned' WHERE id = %s",
+                (run.terminal_id,),
+            )
+        temp_db.execute(
+            "UPDATE agent_runs SET started_at = %s WHERE id = %s",
+            ((datetime.now(UTC) - timedelta(seconds=200)).isoformat(), run.id),
+        )
+        monitor._session_manager = session_manager
+
+        async def inspect_then_change(*_args: Any, **_kwargs: Any) -> str:
+            if scenario == "unverifiable":
+                return "unverifiable"
+            if scenario == "session_activity":
+                temp_db.execute(
+                    "UPDATE sessions SET updated_at = %s WHERE id = %s",
+                    ((datetime.now(UTC) + timedelta(seconds=10)).isoformat(), child.id),
+                )
+            elif scenario == "last_activity_only":
+                temp_db.execute(
+                    "UPDATE sessions SET last_activity = %s WHERE id = %s",
+                    ((datetime.now(UTC) + timedelta(seconds=10)).isoformat(), child.id),
+                )
+            elif scenario == "provider_registration":
+                temp_db.execute(
+                    "UPDATE sessions SET external_id = %s WHERE id = %s",
+                    ("native-provider-session", child.id),
+                )
+            elif scenario == "terminal_rebound":
+                temp_db.execute(
+                    "UPDATE terminals SET state = 'live' WHERE id = %s",
+                    (run.terminal_id,),
+                )
+            elif scenario == "pid_changed":
+                agent_run_manager.update_runtime(run.id, pid=1000)
+            elif scenario == "run_completed":
+                assert agent_run_manager.complete(run.id, result="completed elsewhere") is not None
+            return "mismatched"
+
+        with (
+            patch(
+                "gobby.agents.agent_health.inspect_agent_process_identity",
+                side_effect=inspect_then_change,
+            ),
+            patch("gobby.agents.agent_health.os.kill") as signal_pid,
+            patch.object(monitor._cleanup_handler, "cleanup_agent") as cleanup_agent,
+        ):
+            assert await monitor.check_initialization_timeout() == 0
+
+        signal_pid.assert_not_called()
+        cleanup_agent.assert_not_called()
+        updated = agent_run_manager.get(run.id)
+        assert updated is not None
+        assert updated.status == ("success" if scenario == "run_completed" else "running")
+
+    @pytest.mark.asyncio
     async def test_initialization_timeout_resets_stage_and_releases_dispatch_mutex(
         self,
         agent_run_manager: LocalAgentRunManager,
@@ -4446,6 +4735,7 @@ class TestCheckInitializationTimeout:
             source="codex",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         task_manager = LocalTaskManager(temp_db)
         task, run, mutexes = _make_dispatched_stage_run(
             agent_run_manager=agent_run_manager,
@@ -4488,21 +4778,26 @@ class TestCheckInitializationTimeout:
         assert updated.status == "error"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "signal", ["provider_registration", "transcript_count", "recent_last_activity"]
+    )
     async def test_skips_initialized_agent(
         self,
+        signal: str,
         monitor: AgentLifecycleMonitor,
         agent_run_manager: LocalAgentRunManager,
         session_manager: SessionManager,
         sample_session: dict,
         sample_project: dict,
     ) -> None:
-        """Agent whose session was updated is NOT killed."""
+        """Confirmed child activity prevents startup recovery."""
         child = session_manager.register(
             external_id="child-init",
             machine_id="21000000-0000-4000-8000-000000000001",
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
 
         run = _make_terminal_run(
             agent_run_manager,
@@ -4519,13 +4814,27 @@ class TestCheckInitializationTimeout:
             (backdated, run.id),
         )
 
-        # Simulate agent activity: backdate created_at so the touch() delta > 5s
+        # A provider ID or confirmed activity is enough, even inside the old 5s grace.
         old_created = (datetime.now(UTC) - timedelta(seconds=30)).isoformat()
         session_manager.db.execute(
             "UPDATE sessions SET created_at = %s WHERE id = %s",
             (old_created, child.id),
         )
-        session_manager.touch(child.id)
+        if signal == "provider_registration":
+            assert (
+                session_manager.update(session_id=child.id, external_id="native-provider-id")
+                is not None
+            )
+        elif signal == "transcript_count":
+            assert session_manager.update_stats(child.id, message_count=1) is not None
+        else:
+            session_manager.db.execute(
+                "UPDATE sessions SET last_activity = %s WHERE id = %s",
+                (
+                    (datetime.fromisoformat(old_created) + timedelta(seconds=1)).isoformat(),
+                    child.id,
+                ),
+            )
 
         monitor._session_manager = session_manager
 
@@ -4598,6 +4907,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
         run = _make_terminal_run(
             agent_run_manager,
             sample_session,
@@ -4612,8 +4922,9 @@ class TestCheckInitializationTimeout:
             (started, run.id),
         )
         session_manager.db.execute(
-            "UPDATE sessions SET created_at = %s, updated_at = %s WHERE id = %s",
-            (session_time, session_time, child.id),
+            "UPDATE sessions SET created_at = %s, updated_at = %s, last_activity = %s "
+            "WHERE id = %s",
+            (session_time, session_time, session_time, child.id),
         )
         monitor._session_manager = session_manager
 
@@ -4625,6 +4936,7 @@ class TestCheckInitializationTimeout:
             killed = await monitor.check_initialization_timeout()
 
         assert killed == 1
+        assert mock_kill.await_args is not None
         assert mock_kill.await_args.args[0].terminal_id == run.terminal_id
 
     @pytest.mark.asyncio
@@ -4645,6 +4957,7 @@ class TestCheckInitializationTimeout:
             source="qwen",
             project_id=sample_project["id"],
         )
+        assert session_manager.update(session_id=child.id, external_id=child.id) is not None
 
         run = _make_terminal_run(
             agent_run_manager,
@@ -4994,7 +5307,7 @@ class TestDeadAgentCompletionEvent:
     async def test_releases_clones_on_dead_tmux_agent(
         self,
         agent_run_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
         temp_db: HubDatabase,
     ) -> None:
         """Clones are released when a dead tmux agent with clone_id is cleaned up."""
@@ -5032,7 +5345,7 @@ class TestDeadAgentKillsOrphanedProcess:
     async def test_kills_orphaned_process(
         self,
         agent_run_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
         monitor: AgentLifecycleMonitor,
     ) -> None:
         """Orphaned process receives cleanup when tmux is dead."""
@@ -5057,7 +5370,7 @@ class TestSessionExpirationOnCleanup:
     async def test_session_expired_on_dead_agent(
         self,
         agent_run_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
         temp_db: HubDatabase,
         session_manager: SessionManager,
     ) -> None:
@@ -5101,7 +5414,7 @@ class TestSessionExpirationOnCleanup:
     async def test_no_session_manager_skips_expiration(
         self,
         agent_run_manager: LocalAgentRunManager,
-        sample_session: dict,
+        sample_session: dict[str, Any],
         temp_db: HubDatabase,
     ) -> None:
         """Without session_manager, cleanup still succeeds but skips expiration."""

@@ -1,82 +1,82 @@
 # gclient screen golden: empty_workspace
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
-00 : panel_bg/accent+b*120
-01 |                                                                                                                        |
-01 : -/panel_bg*120
+00 : bar_ink/bar+b*120
+01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
+01 : line/panel_bg*120
 02 |                                                                                                                        |
-02 : -/panel_bg*120
+02 : text/panel_bg*120
 03 |                                                                                                                        |
-03 : -/panel_bg*120
+03 : text/panel_bg*120
 04 |                                                                                                                        |
-04 : -/panel_bg*120
+04 : text/panel_bg*120
 05 |                                                                                                                        |
-05 : -/panel_bg*120
+05 : text/panel_bg*120
 06 |                                                                                                                        |
-06 : -/panel_bg*120
+06 : text/panel_bg*120
 07 |                                                                                                                        |
-07 : -/panel_bg*120
+07 : text/panel_bg*120
 08 |                                                                                                                        |
-08 : -/panel_bg*120
+08 : text/panel_bg*120
 09 |                                                                                                                        |
-09 : -/panel_bg*120
-10 |                                                                                                                        |
-10 : -/panel_bg*120
-11 |                                                                       ▄▄▀                                              |
-11 : -/panel_bg*71 panel_bg/panel_bg*3 -/panel_bg*46
-12 |                                             ▀▀▄▄▄     ▄▄▄▄▀▀▄▄▄▄ ▄▄▀▀▀▀▀▀                                              |
-12 : -/panel_bg*45 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*2 -/panel_bg*5 panel_bg/panel_bg*3 overlay0/panel_bg*1 panel_bg/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*3 -/panel_bg*1 panel_bg/panel_bg*2 panel_bg/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*46
-13 |                                             ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                               |
-13 : -/panel_bg*45 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 panel_bg/overlay0*2 overlay0/overlay0*10 panel_bg/overlay0*2 overlay0/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*47
-14 |                                              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                |
-14 : -/panel_bg*46 panel_bg/panel_bg*1 overlay0/overlay0*7 overlay0/panel_bg*5 overlay0/overlay0*5 overlay0/panel_bg*6 overlay0/overlay0*1 panel_bg/panel_bg*1 -/panel_bg*48
-15 |                                              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                |
-15 : -/panel_bg*46 panel_bg/panel_bg*1 overlay0/overlay0*5 overlay0/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*2 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*1 overlay0/panel_bg*3 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*2 overlay0/overlay0*2 panel_bg/panel_bg*2 -/panel_bg*48
-16 |                                               ▀▀▀▀▀▀▀▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                |
-16 : -/panel_bg*47 panel_bg/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*4 overlay0/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/panel_bg*3 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*48
-17 |                                               ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                 |
-17 : -/panel_bg*47 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*3 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*3 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*3 panel_bg/overlay0*1 overlay0/panel_bg*4 panel_bg/overlay0*1 panel_bg/panel_bg*1 -/panel_bg*49
-18 |                                                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                 |
-18 : -/panel_bg*48 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*3 overlay0/panel_bg*2 panel_bg/overlay0*2 overlay0/overlay0*9 overlay0/panel_bg*2 overlay0/overlay0*2 panel_bg/panel_bg*1 -/panel_bg*49
-19 |                                                 ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                  |
-19 : -/panel_bg*49 panel_bg/panel_bg*2 overlay0/panel_bg*1 overlay0/overlay0*3 panel_bg/overlay0*7 panel_bg/panel_bg*1 panel_bg/overlay0*3 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*50
-20 |                                                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                 |
-20 : -/panel_bg*52 panel_bg/panel_bg*2 overlay0/panel_bg*3 overlay0/overlay0*4 panel_bg/panel_bg*10 -/panel_bg*49
-21 |                                                   ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                  |
-21 : -/panel_bg*51 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/overlay0*2 panel_bg/panel_bg*10 -/panel_bg*50
-22 |                                                   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                 |
-22 : -/panel_bg*51 panel_bg/panel_bg*1 overlay0/overlay0*3 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*2 overlay0/overlay0*3 panel_bg/panel_bg*6 panel_bg/overlay0*1 panel_bg/panel_bg*1 -/panel_bg*49
-23 |                                                   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                 |
-23 : -/panel_bg*51 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*8 overlay0/panel_bg*1 panel_bg/panel_bg*5 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 -/panel_bg*49
-24 |                                                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                   |
-24 : -/panel_bg*53 panel_bg/panel_bg*1 overlay0/panel_bg*4 panel_bg/panel_bg*11 -/panel_bg*51
-25 |                                                                                                                        |
-25 : -/panel_bg*120
-26 |                                             No pane open.                                                              |
-26 : -/panel_bg*45 overlay1/panel_bg+b*13 -/panel_bg*62
-27 |                                             ctrl+b w  attach a terminal                                                |
-27 : -/panel_bg*45 subtext0/panel_bg*8 overlay0/panel_bg*19 -/panel_bg*48
-28 |                                             File › New Terminal  start one                                             |
-28 : -/panel_bg*45 subtext0/panel_bg*19 overlay0/panel_bg*11 -/panel_bg*45
-29 |                                             ctrl+b b  open the sidebar                                                 |
-29 : -/panel_bg*45 subtext0/panel_bg*8 overlay0/panel_bg*18 -/panel_bg*49
-30 |                                                                                                                        |
-30 : -/panel_bg*120
+09 : text/panel_bg*120
+10 |                                                                         ▄▄▀                                            |
+10 : text/panel_bg*73 panel_bg/panel_bg*3 text/panel_bg*44
+11 |                                           ▀▀▄▄        ▄▄▄▄▄▄▄▄▄    ▄▄▄▀▀▀▀▀                                            |
+11 : text/panel_bg*43 panel_bg/panel_bg*4 text/panel_bg*8 panel_bg/panel_bg*9 text/panel_bg*4 panel_bg/panel_bg*3 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*44
+12 |                                           ▀▀▀▀▀▀▀▀▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                             |
+12 : text/panel_bg*43 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*3 panel_bg/overlay0*2 overlay0/overlay0*8 panel_bg/overlay0*3 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*45
+13 |                                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                              |
+13 : text/panel_bg*44 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/panel_bg*1 panel_bg/overlay0*2 overlay0/overlay0*2 panel_bg/overlay0*1 overlay0/overlay0*21 panel_bg/panel_bg*1 text/panel_bg*46
+14 |                                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                              |
+14 : text/panel_bg*44 panel_bg/panel_bg*1 overlay0/overlay0*7 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*4 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*5 panel_bg/panel_bg*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*46
+15 |                                            ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ▀▀▀▀▀▀                                              |
+15 : text/panel_bg*44 panel_bg/panel_bg*2 overlay0/panel_bg*5 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*4 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/panel_bg*2 overlay0/overlay0*1 overlay0/panel_bg*1 text/panel_bg*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*2 text/panel_bg*46
+16 |                                             ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                               |
+16 : text/panel_bg*45 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*3 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/overlay0*1 panel_bg/panel_bg*3 panel_bg/overlay0*1 overlay0/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*3 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*2 panel_bg/overlay0*1 overlay0/overlay0*2 panel_bg/panel_bg*1 text/panel_bg*47
+17 |                                             ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                               |
+17 : text/panel_bg*45 panel_bg/panel_bg*2 overlay0/overlay0*4 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 overlay0/overlay0*2 overlay0/panel_bg*2 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*4 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*3 panel_bg/panel_bg*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 text/panel_bg*47
+18 |                                              ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                               |
+18 : text/panel_bg*46 panel_bg/panel_bg*2 overlay0/overlay0*4 overlay0/panel_bg*2 overlay0/overlay0*1 panel_bg/overlay0*2 overlay0/overlay0*10 overlay0/panel_bg*2 overlay0/overlay0*2 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*47
+19 |                                                ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                |
+19 : text/panel_bg*48 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*3 overlay0/panel_bg*7 panel_bg/overlay0*4 overlay0/overlay0*2 panel_bg/panel_bg*2 text/panel_bg*48
+20 |                                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄                                               |
+20 : text/panel_bg*50 panel_bg/panel_bg*2 overlay0/panel_bg*2 overlay0/overlay0*7 overlay0/panel_bg*1 panel_bg/panel_bg*11 text/panel_bg*47
+21 |                                                   ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                |
+21 : text/panel_bg*51 panel_bg/panel_bg*1 panel_bg/overlay0*2 panel_bg/panel_bg*1 panel_bg/overlay0*3 overlay0/panel_bg*3 panel_bg/panel_bg*11 text/panel_bg*48
+22 |                                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄                                                |
+22 : text/panel_bg*50 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/panel_bg*1 overlay0/overlay0*2 overlay0/panel_bg*2 panel_bg/panel_bg*1 panel_bg/overlay0*2 panel_bg/panel_bg*9 text/panel_bg*48
+23 |                                                  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄                                               |
+23 : text/panel_bg*50 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*2 overlay0/overlay0*6 overlay0/panel_bg*1 panel_bg/panel_bg*6 overlay0/overlay0*2 panel_bg/panel_bg*1 text/panel_bg*47
+24 |                                                   ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                |
+24 : text/panel_bg*51 panel_bg/panel_bg*1 overlay0/overlay0*8 overlay0/panel_bg*2 panel_bg/panel_bg*6 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*48
+25 |                                                    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                                   |
+25 : text/panel_bg*52 panel_bg/panel_bg*2 overlay0/panel_bg*2 panel_bg/panel_bg*3 overlay0/panel_bg*2 panel_bg/panel_bg*8 text/panel_bg*51
+26 |                                                                                                                        |
+26 : text/panel_bg*120
+27 |                                             No pane open.                                                              |
+27 : text/panel_bg*45 overlay1/panel_bg+b*13 text/panel_bg*62
+28 |                                             ctrl+b w  attach a terminal                                                |
+28 : text/panel_bg*45 subtext0/panel_bg*8 overlay0/panel_bg*19 text/panel_bg*48
+29 |                                             File › New terminal  start one                                             |
+29 : text/panel_bg*45 subtext0/panel_bg*19 overlay0/panel_bg*11 text/panel_bg*45
+30 |                                             ctrl+b b  open the sidebar                                                 |
+30 : text/panel_bg*45 subtext0/panel_bg*8 overlay0/panel_bg*18 text/panel_bg*49
 31 |                                                                                                                        |
-31 : -/panel_bg*120
+31 : text/panel_bg*120
 32 |                                                                                                                        |
-32 : -/panel_bg*120
+32 : text/panel_bg*120
 33 |                                                                                                                        |
-33 : -/panel_bg*120
+33 : text/panel_bg*120
 34 |                                                                                                                        |
-34 : -/panel_bg*120
+34 : text/panel_bg*120
 35 |                                                                                                                        |
-35 : -/panel_bg*120
+35 : text/panel_bg*120
 36 |                                                                                                                        |
-36 : -/panel_bg*120
+36 : text/panel_bg*120
 37 |                                                                                                                        |
-37 : -/panel_bg*120
+37 : text/panel_bg*120
 38 |                                                                                                                        |
-38 : -/panel_bg*120
-39 | 0 agents · 0 terminals                                                                                   prefix ctrl+b |
-39 : -/surface0*1 subtext0/surface0*22 -/surface0*83 subtext0/surface0*13 -/surface0*1
+38 : text/panel_bg*120
+39 |                                                                                                          prefix ctrl+b |
+39 : text/surface0*106 subtext0/surface0*13 text/surface0*1

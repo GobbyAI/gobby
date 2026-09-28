@@ -35,7 +35,9 @@ from gobby.servers.routes.mcp.endpoints.request_context import (
 )
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 from gobby.utils.datetime import to_json_safe
+from gobby.utils.local_token import AgentApiTokenClaims
 from gobby.utils.project_context import reset_project_context, set_project_context
+from gobby.utils.session_context import get_request_principal
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -46,6 +48,16 @@ logger = logging.getLogger(__name__)
 
 _PROXY_NAMESPACE = "gobby"
 _MCP_TOOL_PREFIX = "mcp__"
+
+
+async def _enforce_workflow_for_request(request: Request, server: "HTTPServer") -> bool:
+    """Use authenticated agent identity even when a caller omits the wrapper marker."""
+    enforce = is_mcp_wrapper_request(request) or isinstance(
+        await get_request_principal(), AgentApiTokenClaims
+    )
+    if enforce and server.tool_proxy is None:
+        raise HTTPException(status_code=503, detail="Agent MCP workflow enforcement unavailable")
+    return enforce
 
 
 def _normalize_schema_ref(server_name: str, tool_name: str) -> tuple[str, str]:
@@ -263,6 +275,7 @@ async def list_mcp_tools(
     ctx_token = await request_context._set_context_for_request(server, {}, request)
 
     try:
+        enforce_workflow = await _enforce_workflow_for_request(request, server)
         allowed = await asyncio.to_thread(
             ask_policy.current_allowed_tools,
             server,
@@ -282,7 +295,7 @@ async def list_mcp_tools(
                 tools = _filter_ask_tools(server_name, tools, allowed)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 observe_histogram("list_mcp_tools", response_time_ms / 1000)
-                if server.tool_proxy and is_mcp_wrapper_request(request):
+                if enforce_workflow and server.tool_proxy is not None:
                     server.tool_proxy.record_listed_server(
                         server_name,
                         session_id=ctx_token.resolved_session_id,
@@ -363,7 +376,7 @@ async def list_mcp_tools(
                     "response_time_ms": response_time_ms,
                 },
             )
-            if server.tool_proxy and is_mcp_wrapper_request(request):
+            if enforce_workflow and server.tool_proxy is not None:
                 server.tool_proxy.record_listed_server(
                     server_name,
                     session_id=ctx_token.resolved_session_id,
@@ -404,7 +417,7 @@ async def list_mcp_tools(
 
 def _record_schema_lease(
     server: "HTTPServer",
-    request: Request,
+    enforce_workflow: bool,
     session_id: str | None,
     server_name: str,
     tool_name: str,
@@ -415,7 +428,7 @@ def _record_schema_lease(
     back — a dropped hook channel would otherwise deadlock the
     progressive-discovery gates (#19891). Best-effort: never fails the response.
     """
-    if not is_mcp_wrapper_request(request) or not server.tool_proxy or not session_id:
+    if not enforce_workflow or not server.tool_proxy or not session_id:
         return
     try:
         record_schema_shown(
@@ -472,6 +485,7 @@ async def get_tool_schema(
         ctx_token = await request_context._set_context_for_request(server, body, request)
 
         try:
+            enforce_workflow = await _enforce_workflow_for_request(request, server)
             if (
                 isinstance(server_name, str)
                 and server._internal_manager
@@ -498,7 +512,11 @@ async def get_tool_schema(
                         if schema.get("description"):
                             result["description"] = schema["description"]
                         _record_schema_lease(
-                            server, request, ctx_token.resolved_session_id, server_name, tool_name
+                            server,
+                            enforce_workflow,
+                            ctx_token.resolved_session_id,
+                            server_name,
+                            tool_name,
                         )
                         return result
                     raise HTTPException(
@@ -562,7 +580,7 @@ async def get_tool_schema(
                 if description:
                     result["description"] = description
                 _record_schema_lease(
-                    server, request, ctx_token.resolved_session_id, server_name, tool_name
+                    server, enforce_workflow, ctx_token.resolved_session_id, server_name, tool_name
                 )
                 return result
 
@@ -582,7 +600,7 @@ async def get_tool_schema(
                 if tool_info.get("description"):
                     response["description"] = tool_info["description"]
                 _record_schema_lease(
-                    server, request, ctx_token.resolved_session_id, server_name, tool_name
+                    server, enforce_workflow, ctx_token.resolved_session_id, server_name, tool_name
                 )
                 return response
 
@@ -681,6 +699,7 @@ async def call_mcp_tool(
         # request_context._set_context_for_request reads it non-destructively via .get().
         # InternalToolRegistry.call strips unknown kwargs via signature inspection.
         try:
+            enforce_workflow = await _enforce_workflow_for_request(request, server)
             timeout = _mcp_call_timeout(server)
             scope_project = _http_request_scope(request, server, ctx_token, body)
             if server.mcp_manager is not None:
@@ -710,7 +729,7 @@ async def call_mcp_tool(
                     tool_name,
                     arguments,
                     session_id=ctx_token.resolved_session_id,
-                    enforce_workflow=is_mcp_wrapper_request(request),
+                    enforce_workflow=enforce_workflow,
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,
@@ -816,6 +835,7 @@ async def mcp_proxy(
         # Set project context from session_id or stdio proxy headers
         ctx_token = await request_context._set_context_for_request(server, arguments, request)
         try:
+            enforce_workflow = await _enforce_workflow_for_request(request, server)
             timeout = _mcp_call_timeout(server)
             scope_project = _http_request_scope(request, server, ctx_token, arguments)
             # Route through ToolProxyService for consistent error enrichment
@@ -825,7 +845,7 @@ async def mcp_proxy(
                     tool_name,
                     arguments,
                     session_id=ctx_token.resolved_session_id,
-                    enforce_workflow=is_mcp_wrapper_request(request),
+                    enforce_workflow=enforce_workflow,
                     timeout=timeout,
                     wrapper_originated=True,
                     intent=intent,

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from collections.abc import Callable
@@ -18,6 +19,9 @@ from gobby.sessions.machine_scope import is_local_machine_owner
 
 _SECONDS_PER_DAY = 24 * 60 * 60
 MISSING_TRANSCRIPT_PATH = "missing_transcript"
+_DROID_PARENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+_MAX_DROID_PARENT_EPOCHS = 256
+_MAX_DROID_SESSION_START_BYTES = 1024 * 1024
 
 TranscriptCallerContext = Literal["hook", "recovery"]
 
@@ -265,6 +269,72 @@ def _claude_subagent_transcripts(transcript_path: Path) -> list[Path]:
     return _safe_glob(transcript_path.with_suffix("") / "subagents", "agent-*.jsonl")
 
 
+def _droid_session_start(path: Path) -> dict[str, object] | None:
+    """Read only the bounded first record of a Droid transcript epoch."""
+    try:
+        with path.open("rb") as stream:
+            first_line = stream.readline(_MAX_DROID_SESSION_START_BYTES + 1)
+        if len(first_line) > _MAX_DROID_SESSION_START_BYTES:
+            return None
+        record = json.loads(first_line)
+    except (OSError, UnicodeError, ValueError, RuntimeError):
+        return None
+    if (
+        not isinstance(record, dict)
+        or record.get("type") != "session_start"
+        or (record.get("id") or record.get("session_id")) != path.stem
+    ):
+        return None
+    return record
+
+
+def _droid_parent_transcripts(transcript_path: Path) -> list[Path]:
+    """Follow only the current epoch's /compress ancestry, oldest first."""
+    if transcript_path.suffix != ".jsonl":
+        return []
+    try:
+        directory = transcript_path.parent.resolve(strict=True)
+        primary = transcript_path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return []
+    if primary.parent != directory:
+        return []
+
+    ancestors: list[Path] = []
+    seen = {transcript_path.stem}
+    seen_paths = {primary}
+    start = _droid_session_start(transcript_path)
+    for _ in range(_MAX_DROID_PARENT_EPOCHS):
+        if start is None:
+            break
+        parent_id = start.get("parent")
+        if (
+            not isinstance(parent_id, str)
+            or _DROID_PARENT_ID_RE.fullmatch(parent_id) is None
+            or parent_id in seen
+        ):
+            break
+        parent = transcript_path.parent / f"{parent_id}.jsonl"
+        try:
+            resolved = parent.resolve(strict=True)
+            if (
+                resolved.parent != directory
+                or resolved in seen_paths
+                or not _is_readable_file(parent)
+            ):
+                break
+        except (OSError, RuntimeError):
+            break
+        parent_start = _droid_session_start(parent)
+        if parent_start is None:
+            break
+        ancestors.append(parent)
+        seen.add(parent_id)
+        seen_paths.add(resolved)
+        start = parent_start
+    return list(reversed(ancestors))
+
+
 def _recover_codex(home: Path, external_id: str, escaped: str, max_days: int) -> str | None:
     sessions_dir = home / ".codex" / "sessions"
     if not _safe_exists(sessions_dir):
@@ -387,6 +457,7 @@ PROVIDER_TRANSCRIPT_SPECS: tuple[TranscriptProviderSpec, ...] = (
         source="droid",
         detect_rules=(_PathDetectRule(parts=(".factory", "sessions")),),
         recover=_recover_droid,
+        supplemental=_droid_parent_transcripts,
     ),
     TranscriptProviderSpec(
         source="agy",

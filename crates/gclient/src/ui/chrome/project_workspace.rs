@@ -45,22 +45,29 @@ impl Chrome {
                 })
                 .unwrap_or_else(|| first_slot(layout.root()));
             self.viewer.focus.insert(row.id.clone(), focus);
-            // A renamed tab keeps its name; otherwise the tab is named for its
-            // own address, which is stable where a borrowed pane name is not.
-            let title = row.title.clone().unwrap_or_else(|| {
-                model
-                    .tab_ref(&row.id)
-                    .map_or_else(String::new, |reference| format!("tab-{reference}"))
-            });
+            // A renamed tab keeps its name. An untitled tab stays empty, and the
+            // tab bar numbers it from its own address, never a borrowed pane name.
+            let title = row.title.clone().unwrap_or_default();
             let mut tab = Tab::with_layout(title, layout, slots);
             tab.id = row.id.clone();
             tab.worktree_id = row.worktree_id.clone();
             tabs.push(tab);
         }
-        // Tabs a scripted path opened never came from the model, so it
-        // cannot end them: they stay after the daemon's rows.
+        // Empty drafts keep their positions until filled; populated local tabs
+        // follow daemon tabs as before.
         if let Some(set) = self.project_tabs.sets.get_mut(project_id) {
-            tabs.extend(set.tabs.drain(..).filter(Tab::is_local));
+            for (index, tab) in set.tabs.drain(..).enumerate() {
+                if tab.is_local() {
+                    if tab
+                        .id
+                        .starts_with(crate::app::viewer_state::EMPTY_LOCAL_TAB_PREFIX)
+                    {
+                        tabs.insert(index.min(tabs.len()), tab);
+                    } else {
+                        tabs.push(tab);
+                    }
+                }
+            }
         }
         let active = self
             .viewer

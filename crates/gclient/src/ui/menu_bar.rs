@@ -57,15 +57,16 @@ pub struct MenuBarHits {
     pub titles: Vec<(usize, Rect)>,
 }
 
-/// One full-width row, bold `panel_bg` on `accent`. Each title's cell pads
-/// it by one on either side, so neighbours read two cells apart and the
-/// cells tile the bar from its left edge; the title whose menu is open
-/// reads reversed.
+/// One full-width row in the light theme's colours whatever the theme:
+/// bold `bar_ink` on `bar`. Each title's cell pads it by one on either
+/// side, so neighbours read two cells apart and the cells tile the bar
+/// from its left edge; the title whose menu is open reads `bar_open_ink`
+/// on `bar_ink`.
 pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBarHits {
     let p = &chrome.palette;
     let bar = Style::new()
-        .bg(p.accent)
-        .fg(p.panel_bg)
+        .bg(p.bar)
+        .fg(p.bar_ink)
         .add_modifier(Modifier::BOLD);
     let open = chrome.menu.as_ref().and_then(|menu| match menu.kind {
         ContextMenuKind::MenuBar(open) => Some(open),
@@ -82,7 +83,7 @@ pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBa
             hits.titles.push((index, cell));
         }
         let style = if open == Some(menu) {
-            bar.bg(p.panel_bg).fg(p.accent)
+            bar.bg(p.bar_ink).fg(p.bar_open_ink)
         } else {
             bar
         };
@@ -124,14 +125,15 @@ mod tests {
             items: Vec::new(),
             selected: 0,
             item_rects: Vec::new(),
+            parent: None,
         });
     }
 
-    /// 3.2b.1: one full-width accent row, the titles two cells apart, and
-    /// each title's cell padded by one on either side so the cells tile the
-    /// bar from its left edge.
+    /// One full-width row in the bar's colours, the titles two cells apart,
+    /// and each title's cell padded by one on either side so the cells tile
+    /// the bar from its left edge.
     #[test]
-    fn titles_render_on_row_zero_in_accent() {
+    fn titles_render_on_row_zero_in_the_bar_colours() {
         let chrome = Chrome::dark();
         let palette = &chrome.palette;
         let (hits, buffer) = draw(&chrome);
@@ -142,11 +144,7 @@ mod tests {
         );
         for x in 0..WIDTH {
             let cell = &buffer[(x, 0)];
-            assert_eq!(
-                (cell.fg, cell.bg),
-                (palette.panel_bg, palette.accent),
-                "x={x}"
-            );
+            assert_eq!((cell.fg, cell.bg), (palette.bar_ink, palette.bar), "x={x}");
             assert!(cell.modifier.contains(Modifier::BOLD), "x={x}");
         }
         assert_eq!(row_text(&buffer, 1).trim(), "", "the bar is one row");
@@ -164,10 +162,10 @@ mod tests {
         );
     }
 
-    /// The title whose menu is open reads reversed across its whole cell;
-    /// every other cell keeps the bar's colours.
+    /// The title whose menu is open reads in the open colours across its
+    /// whole cell; every other cell keeps the bar's colours.
     #[test]
-    fn the_open_title_is_reversed() {
+    fn the_open_title_reads_in_the_open_colours() {
         let mut chrome = Chrome::new(Theme::new(ThemeKind::Light));
         open(&mut chrome, MenuBarMenu::View);
         let palette = chrome.palette;
@@ -182,9 +180,9 @@ mod tests {
         for x in 0..WIDTH {
             let cell = &buffer[(x, 0)];
             let expected = if (view.left()..view.right()).contains(&x) {
-                (palette.accent, palette.panel_bg)
+                (palette.bar_open_ink, palette.bar_ink)
             } else {
-                (palette.panel_bg, palette.accent)
+                (palette.bar_ink, palette.bar)
             };
             assert_eq!((cell.fg, cell.bg), expected, "x={x}");
         }

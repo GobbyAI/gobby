@@ -93,7 +93,7 @@ class TestFormatStatusMessage:
             },
         )
 
-        agy_line = _status_line(result, "AGY CLI")
+        agy_line = _status_line(result, "Antigravity CLI")
         assert "unavailable: no machine transport" not in agy_line
         assert "hooks installed" in agy_line
 

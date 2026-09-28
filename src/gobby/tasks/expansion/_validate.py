@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from gobby.plans.parser import Kind, PlanDocument, PlanParseError, parse_plan
+from gobby.plans.parser import Kind, ParseMode, PlanDocument, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import lint_plan_document
 from gobby.plans.symbol_targets import (
     CONSUMER_COVERAGE,
@@ -35,6 +35,7 @@ def validate_plan_file(
     require_symbol_validation: bool = False,
     consumer_coverage_blocking: bool = False,
     plan_document: PlanDocument | None = None,
+    parse_mode: ParseMode = "draft",
 ) -> dict[str, Any]:
     """Validate a plan file against the Plan-Coverage Contract."""
     project_path = project_context.get("project_path") if project_context is not None else None
@@ -48,7 +49,7 @@ def validate_plan_file(
             "symbol_validation": skipped_symbols,
         }
     try:
-        plan_doc = plan_document or parse_plan(plan_path, parse_mode="draft")
+        plan_doc = plan_document or parse_plan(plan_path, parse_mode=parse_mode)
     except (OSError, PlanParseError) as exc:
         return {
             "valid": False,

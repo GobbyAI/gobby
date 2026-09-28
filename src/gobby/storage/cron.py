@@ -346,7 +346,9 @@ class CronJobStorage(CronRunStorageMixin):
         }
     )
 
-    def _update_job_fields(self, job_id: str, **fields: Any) -> CronJob | None:
+    def _update_job_fields(
+        self, job_id: str, fields: dict[str, Any], *, require_non_shell: bool = False
+    ) -> CronJob | None:
         """Update trusted cron row fields without the public operator policy."""
         if not fields:
             return self.get_job(job_id)
@@ -361,10 +363,13 @@ class CronJobStorage(CronRunStorageMixin):
 
         set_clause = ", ".join(f"{key} = %s" for key in fields.keys())
         values = list(fields.values()) + [job_id]
-        self.db.execute(
-            f"UPDATE cron_jobs SET {set_clause} WHERE id = %s",  # nosec B608
+        condition = " AND action_type <> 'shell'" if require_non_shell else ""
+        cursor = self.db.execute(
+            f"UPDATE cron_jobs SET {set_clause} WHERE id = %s{condition}",  # nosec B608
             tuple(values),
         )
+        if require_non_shell and cursor.rowcount == 0:
+            raise PermissionError("Agent credentials cannot update shell cron jobs")
 
         return self.get_job(job_id)
 
@@ -388,7 +393,16 @@ class CronJobStorage(CronRunStorageMixin):
         )
 
     def update_job(self, job_id: str, **fields: Any) -> CronJob | None:
-        """Update cron job fields."""
+        """Update cron job fields for an operator or internal caller."""
+        return self._update_job(job_id, fields, require_non_shell=False)
+
+    def update_non_shell_job(self, job_id: str, **fields: Any) -> CronJob | None:
+        """Update only a non-shell cron job for an authenticated agent."""
+        return self._update_job(job_id, fields, require_non_shell=True)
+
+    def _update_job(
+        self, job_id: str, fields: dict[str, Any], *, require_non_shell: bool
+    ) -> CronJob | None:
         if not fields:
             return self.get_job(job_id)
 
@@ -399,6 +413,10 @@ class CronJobStorage(CronRunStorageMixin):
         job = self.get_job(job_id)
         if job is None:
             return None
+        if require_non_shell and (
+            job.action_type == "shell" or fields.get("action_type") == "shell"
+        ):
+            raise PermissionError("Agent credentials cannot update shell cron jobs")
         if fields.get("enabled") and is_removed_automation_job(job):
             raise SystemRowProtected(
                 f"Cron row {job_id} targets retired automation {job.name!r}; "
@@ -441,7 +459,7 @@ class CronJobStorage(CronRunStorageMixin):
             fields["next_run_at"] = next_run
         fields["updated_at"] = utc_now()
 
-        return self._update_job_fields(job_id, **fields)
+        return self._update_job_fields(job_id, fields, require_non_shell=require_non_shell)
 
     def update_system_job_bookkeeping(
         self,
@@ -479,7 +497,7 @@ class CronJobStorage(CronRunStorageMixin):
         }
         update_fields = {key: value for key, value in fields.items() if value is not UNSET}
 
-        return self._update_job_fields(job_id, **update_fields)
+        return self._update_job_fields(job_id, update_fields)
 
     def reconcile_system_job_identity(
         self,
@@ -519,7 +537,7 @@ class CronJobStorage(CronRunStorageMixin):
             )
 
         update_fields["updated_at"] = utc_now()
-        return self._update_job_fields(job_id, **update_fields)
+        return self._update_job_fields(job_id, update_fields)
 
     def park_system_job(self, job_id: str) -> CronJob | None:
         """Park an enabled system cron row by clearing its next scheduled run."""
@@ -608,7 +626,7 @@ class CronJobStorage(CronRunStorageMixin):
         )
         fields["next_run_at"] = next_run
         fields["updated_at"] = utc_now()
-        return self._update_job_fields(job_id, **fields)
+        return self._update_job_fields(job_id, fields)
 
     def normalize_system_job_timezones(self) -> int:
         """Repoint bundled wall-clock schedules at the host zone.

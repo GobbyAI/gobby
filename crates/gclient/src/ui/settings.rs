@@ -200,13 +200,19 @@ impl Default for ClientPrefs {
             project_order: Vec::new(),
             project_labels: BTreeMap::new(),
             title_scrolling: TitleScrolling::Left,
-            status_left: vec!["focus".to_string(), "model".to_string()],
-            status_right: vec!["context".to_string(), "tokens".to_string()],
+            status_left: vec!["focus".to_string()],
+            status_right: Vec::new(),
         }
     }
 }
 
 impl ClientPrefs {
+    /// System follows the terminal: its appearance picks the palette and its
+    /// own colours stay the ground.
+    pub fn follows_system(&self) -> bool {
+        self.theme.eq_ignore_ascii_case("system")
+    }
+
     pub fn theme_kind(&self) -> ThemeKind {
         match self.theme.to_ascii_lowercase().as_str() {
             "light" => ThemeKind::Light,

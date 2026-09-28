@@ -2,8 +2,9 @@
 //! Sidebar: machines, project cards, agents and bare terminals, each under a
 //! one-row band.
 //!
-//! herdr geometry kept where it still applies: a `│` separator column on
-//! the right. The section rules herdr let the user drag are gone: the
+//! The sidebar sits on the ground with no fill and no separator
+//! glyph; herdr's edge column stays reserved as the drag lane of a pinned
+//! sidebar. The section rules herdr let the user drag are gone: the
 //! machines take up to `MACHINES_MAX_ROWS`, the projects what their cards
 //! need within the top half, and agents and terminals share the rest.
 
@@ -15,7 +16,7 @@ pub mod terminals;
 use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::SidebarSection;
-use crate::ui::scrollbar::{render_scrollbar, should_show_scrollbar};
+use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scrollbar};
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
@@ -80,14 +81,17 @@ pub struct SidebarLayout {
 /// The layout of `area`, from its first row to its last: the machines band
 /// with up to `MACHINES_MAX_ROWS` of its `machine_rows`, the projects band
 /// with its `project_rows` while the two stay within the top half, and the
-/// sessions with everything left, the projects and sessions bands each
-/// under a blank row. A section short of its rows scrolls; one with no room
-/// at all is empty.
+/// agents and terminals with everything left, the projects and agents bands
+/// each under a blank row. With no `terminal_rows` the agents keep their
+/// `agent_rows` and blank row, and the terminals band follows them over the
+/// rest. A section short of its rows scrolls; one with no room at all is
+/// empty.
 pub fn sidebar_layout(
     area: Rect,
     side: SidebarSide,
     machine_rows: u16,
     project_rows: u16,
+    agent_rows: u16,
     terminal_rows: u16,
 ) -> SidebarLayout {
     // The edge column faces the content: last on the left, first on the right.
@@ -112,7 +116,8 @@ pub fn sidebar_layout(
     let terminals = if remaining < 2 {
         0
     } else if terminal_rows == 0 {
-        BAND_ROWS
+        let agents = (BAND_ROWS + GAP_ROWS).saturating_add(agent_rows);
+        remaining - agents.min(remaining - BAND_ROWS)
     } else {
         remaining / 2
     };
@@ -138,8 +143,22 @@ pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [
             .map(|row| usize::from(row.height()))
             .sum(),
     );
+    let agents = rows_u16(
+        agent_rows(ws, chrome)
+            .iter()
+            .map(|row| usize::from(row.height()))
+            .sum(),
+    );
     let terminals = rows_u16(terminal_rows(ws, chrome).len());
-    sidebar_layout(area, chrome.sidebar.side, machines, projects, terminals).sections
+    sidebar_layout(
+        area,
+        chrome.sidebar.side,
+        machines,
+        projects,
+        agents,
+        terminals,
+    )
+    .sections
 }
 
 fn rows_u16(rows: usize) -> u16 {
@@ -156,24 +175,7 @@ pub fn render_sidebar<W: WorkspaceView>(
     if area.width == 0 || area.height == 0 {
         return hits;
     }
-    let p = &chrome.palette;
     let is_navigating = chrome.mode == Mode::Navigate;
-    frame.render_widget(
-        Block::default().style(Style::default().bg(p.panel_bg)),
-        area,
-    );
-    // The overlay's edge stays accent while a menu opens over it.
-    draw_separator_column(
-        frame,
-        area,
-        chrome.sidebar.edge_x(area),
-        if is_navigating || chrome.sidebar.overlay {
-            p.accent
-        } else {
-            p.overlay0
-        },
-    );
-
     let machines = machine_rows(ws, chrome);
     let mut projects = project_rows(ws, chrome);
     if !is_navigating {
@@ -188,6 +190,7 @@ pub fn render_sidebar<W: WorkspaceView>(
         chrome.sidebar.side,
         rows_u16(machines.len()),
         rows_u16(projects.iter().map(|row| usize::from(row.height())).sum()),
+        rows_u16(agents.iter().map(|row| usize::from(row.height())).sum()),
         rows_u16(terminals.len()),
     );
     machines::render_machines(frame, layout.sections[0], &machines, chrome, &mut hits);
@@ -344,7 +347,7 @@ pub(super) fn render_section_rows(
             let row_style = if row.selected {
                 Style::default().bg(p.surface1)
             } else if row.active {
-                Style::default().bg(p.surface_dim)
+                Style::default().bg(p.surface0)
             } else {
                 Style::default()
             };
@@ -400,7 +403,13 @@ pub(super) fn render_section_rows(
     }
     if has_scrollbar {
         let track = scrollbar_track(area, body);
-        render_scrollbar(frame, metrics, track, p.surface_dim, p.overlay0, "▕");
+        // No track: the thumb draws in the dim token at rest, and in
+        // overlay0 for a second after its band scrolls or while navigate
+        // mode's cursor is in it.
+        let lit = scrolled_recently(chrome.sidebar.scrolled_at[section.index()])
+            || (chrome.mode == Mode::Navigate && rows.iter().any(|row| row.selected));
+        let thumb = if lit { p.overlay0 } else { p.dim };
+        render_scrollbar(frame, metrics, track, None, thumb, "▕");
         hits.scrollbars[section.index()] = Some(track);
     }
 }
@@ -427,12 +436,19 @@ fn list_travel(rows: &[SidebarRow], body: Rect) -> usize {
         .unwrap_or(0)
 }
 
-/// The longest overrun of an Agents title drawn in the section `area`, the
-/// only rows that scroll, for `ViewState::title_travel`.
-pub fn agents_title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> usize {
-    let rows = agent_rows(ws, chrome);
-    let (_, body) = section_list(area, SidebarSection::Agents, &rows, chrome);
-    list_travel(&rows, body)
+/// The longest overrun of a scrolling sidebar title, for
+/// `ViewState::title_travel`: an Agents task line or a Projects worktree
+/// name, each measured in its section of `rects`.
+pub fn title_travel<W: WorkspaceView>(ws: &W, chrome: &Chrome, rects: &[Rect; 4]) -> usize {
+    [SidebarSection::Projects, SidebarSection::Agents]
+        .into_iter()
+        .map(|section| {
+            let rows = section_rows(ws, chrome, section);
+            let (_, body) = section_list(rects[section.index()], section, &rows, chrome);
+            list_travel(&rows, body)
+        })
+        .max()
+        .unwrap_or(0)
 }
 
 /// The scrollbar lane: the section's last column beside `body`.
@@ -469,14 +485,6 @@ pub fn section_gap_rows(section: SidebarSection) -> u16 {
     match section {
         SidebarSection::Machines | SidebarSection::Projects | SidebarSection::Agents => GAP_ROWS,
         SidebarSection::Terminals => 0,
-    }
-}
-
-fn draw_separator_column(frame: &mut Frame, area: Rect, x: u16, color: Color) {
-    let buf = frame.buffer_mut();
-    for y in area.y..area.y + area.height {
-        buf[(x, y)].set_symbol("│");
-        buf[(x, y)].set_style(Style::default().fg(color));
     }
 }
 

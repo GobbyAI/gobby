@@ -66,7 +66,7 @@ fn halfblock_cells_paint_upper_and_lower_halves_by_the_stated_rule() {
     assert_eq!(cells[(0, 0)].symbol(), "Q");
     assert_eq!(cells[(0, 0)].bg, Color::Blue);
     assert_eq!(cells[(1, 0)].symbol(), "▀");
-    assert_eq!(cells[(1, 0)].fg, colors.accent);
+    assert_eq!(cells[(1, 0)].fg, colors.wordmark);
     assert_eq!(cells[(1, 0)].bg, Color::Blue);
     assert_eq!(cells[(2, 0)].symbol(), "▄");
     assert_eq!(cells[(2, 0)].fg, colors.overlay1);
@@ -112,7 +112,7 @@ fn braille_glyphs_paint_in_the_given_role_and_blank_cells_stay_transparent() {
         assert_eq!(cells[(1, y)].symbol(), "⠁");
         assert_eq!(cells[(1, y)].bg, Color::Blue);
     }
-    assert_eq!(cells[(1, 0)].fg, colors.accent);
+    assert_eq!(cells[(1, 0)].fg, colors.wordmark);
     assert_eq!(cells[(1, 1)].fg, colors.dim);
 }
 

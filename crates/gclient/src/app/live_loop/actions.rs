@@ -12,15 +12,18 @@ use crate::prefs::{load_prefs, prefs_path};
 use crate::startup::load_keymap;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::{CloseScope, CloseTarget, Dialog, RenameKind};
+use crate::ui::keybind_help::KeybindHelpState;
 use crate::ui::navigator::NavigatorState;
 use crate::ui::sidebar::attention_order;
 use crate::ui::status::Toast;
+use crate::ui::tabs::tab_label;
 use crate::ui::{Action, Chrome, Mode};
 use crossterm::event::KeyEvent;
 use gobby_terminal::layout::{self, find_in_direction, NavDirection};
 use ratatui::layout::Rect;
 
 use super::super::attention::{open_response_dialog, route_response_input};
+use super::super::viewer_state::EMPTY_LOCAL_TAB_PREFIX;
 use super::super::{PaneId, Workspace};
 use super::control::{
     focus_live_pane, observe_live_pane, release_live_control, send_live_report,
@@ -37,9 +40,9 @@ use super::projects::{
 };
 use super::sync_live_chrome;
 use super::workspace_actions::{
-    close_daemon_pane, close_daemon_tab, move_active_daemon_tab, move_daemon_tab,
+    close_daemon_pane, close_daemon_tab, daemon_pane_id, move_active_daemon_tab, move_daemon_tab,
     move_focused_pane_to_tab, place_live_terminal, rename_daemon_target, resize_daemon_split,
-    swap_live_slots,
+    spawn_owned_live_shell, swap_live_slots,
 };
 
 mod sidebar;
@@ -221,7 +224,7 @@ pub(super) async fn handle_live_action(
         Action::SplitHorizontal => {
             spawn_live_terminal(workspace, chrome, Placement::SplitDown).await?;
         }
-        Action::NewTab => spawn_live_terminal(workspace, chrome, Placement::Tab).await?,
+        Action::NewTab => open_empty_tab(chrome),
         Action::NextWorkspace => {
             super::workspaces::switch_next_workspace(workspace, chrome).await?;
             sync_live_chrome(workspace, chrome);
@@ -258,12 +261,13 @@ pub(super) async fn handle_live_action(
             }
         }
         Action::CloseTab => {
-            let Some((id, title, panes)) = chrome
+            let Some((id, panes)) = chrome
                 .active_tab()
-                .map(|tab| (tab.id.clone(), tab.title.clone(), tab.slots.len()))
+                .map(|tab| (tab.id.clone(), tab.slots.len()))
             else {
                 return Ok(());
             };
+            let title = tab_label(&*workspace, &chrome.tabs().tabs, chrome.active_index());
             if chrome.prefs.confirm_close {
                 chrome.dialog = Some(Dialog::ConfirmClose {
                     target: CloseTarget::Tab(id),
@@ -282,7 +286,12 @@ pub(super) async fn handle_live_action(
         }
         Action::Respond => open_response_dialog(workspace, chrome, None).await?,
         Action::CopyMode => chrome.mode = Mode::Copy,
-        Action::Help => chrome.mode = Mode::KeybindHelp,
+        // Help opens fresh: a search left from an earlier visit would hide
+        // the legend.
+        Action::Help => {
+            chrome.keybind_help = KeybindHelpState::default();
+            chrome.mode = Mode::KeybindHelp;
+        }
         Action::Settings => chrome.mode = Mode::Settings,
         Action::ResizeMode => chrome.mode = Mode::Resize,
         Action::TerminalPicker | Action::Goto => {
@@ -502,6 +511,8 @@ pub(super) async fn activate_live_tab(
         .and_then(|tab| chrome.viewer.focused_pane(tab))
     {
         focus_live_shown_pane(workspace, chrome, pane_id).await?;
+    } else {
+        chrome.activate_tab(index);
     }
     Ok(())
 }
@@ -515,14 +526,37 @@ pub(super) fn open_live_rename(chrome: &mut Chrome, kind: RenameKind, value: Str
     chrome.mode = Mode::Rename;
 }
 
-/// Close the focused pane: a gobby-owned terminal is killed and reaped;
-/// an external tmux session only leaves the tab (its lease released) and
-/// stays in the sidebar. A daemon tab's slot then closes through the
-/// daemon, which also takes an empty slot (its terminal unresolved).
+/// The daemon row decides whether closing this pane may kill its terminal.
+fn daemon_pane_is_adopted(
+    workspace: &Workspace<LiveDaemon>,
+    chrome: &Chrome,
+    slot: layout::PaneId,
+) -> Result<bool, FrameError> {
+    if chrome.active_tab().is_none_or(Tab::is_local) {
+        return Ok(false);
+    }
+    let pane_id = daemon_pane_id(chrome, slot)
+        .ok_or_else(|| FrameError::Protocol("daemon pane has no slot mapping".into()))?;
+    let pane = workspace
+        .workspace_model()
+        .and_then(|model| model.pane(&pane_id))
+        .ok_or_else(|| FrameError::Protocol("daemon pane is missing from the workspace".into()))?;
+    Ok(!pane.owns_terminal)
+}
+
+/// Close the focused pane: owned terminals are killed; adopted terminals
+/// leave the daemon tab with their lease released and remain in the roster.
 pub(super) async fn close_live_pane(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
+    if chrome
+        .active_tab()
+        .is_some_and(|tab| tab.is_local() && tab.slots.is_empty())
+    {
+        chrome.close_focused();
+        return Ok(());
+    }
     let Some(slot) = chrome.focus_slot() else {
         return Ok(());
     };
@@ -530,7 +564,7 @@ pub(super) async fn close_live_pane(
         close_daemon_pane(workspace, chrome, slot).await?;
         return Ok(());
     };
-    if workspace.pane(pane_id).external {
+    if workspace.pane(pane_id).external || daemon_pane_is_adopted(workspace, chrome, slot)? {
         release_live_control(workspace, pane_id).await?;
         if !close_daemon_pane(workspace, chrome, slot).await? {
             chrome.close_focused();
@@ -546,13 +580,18 @@ pub(super) async fn close_live_pane(
     Ok(())
 }
 
-/// Close the active tab: its gobby-owned panes are terminated, its
-/// external tmux sessions only release their lease and stay in the
-/// sidebar, and the tab itself goes.
+/// Close the active tab: kill owned terminals and release adopted ones.
 pub(super) async fn close_live_tab(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
 ) -> Result<(), FrameError> {
+    if chrome
+        .active_tab()
+        .is_some_and(|tab| tab.is_local() && tab.slots.is_empty())
+    {
+        chrome.close_focused();
+        return Ok(());
+    }
     let slots: Vec<(layout::PaneId, PaneId)> = chrome
         .active_tab()
         .map(|tab| {
@@ -563,8 +602,27 @@ pub(super) async fn close_live_tab(
         })
         .unwrap_or_default();
     let local = chrome.active_tab().is_some_and(Tab::is_local);
-    for &(slot, pane_id) in &slots {
-        if workspace.pane(pane_id).external {
+    let mut panes = Vec::with_capacity(slots.len());
+    for (slot, pane_id) in slots {
+        let preserve_terminal =
+            workspace.pane(pane_id).external || daemon_pane_is_adopted(workspace, chrome, slot)?;
+        panes.push((slot, pane_id, preserve_terminal));
+    }
+    if !local
+        && panes
+            .iter()
+            .all(|(_, _, preserve_terminal)| *preserve_terminal)
+    {
+        for &(_, pane_id, _) in &panes {
+            release_live_control(workspace, pane_id).await?;
+        }
+        close_daemon_tab(workspace, chrome).await?;
+        sync_live_chrome(workspace, chrome);
+        return Ok(());
+    }
+    let mut owned_native = Vec::new();
+    for &(slot, pane_id, preserve_terminal) in &panes {
+        if preserve_terminal {
             release_live_control(workspace, pane_id).await?;
             if local || !close_daemon_pane(workspace, chrome, slot).await? {
                 let index = chrome.active_index();
@@ -576,15 +634,16 @@ pub(super) async fn close_live_tab(
         } else {
             // A killed pane leaves the roster and `sync_live_chrome` reaps
             // its slot; a refused kill keeps the pane, and so its tab.
+            owned_native.push(pane_id);
             terminate_live_terminal(workspace, pane_id).await?;
         }
     }
     // A refused kill keeps its pane in the roster, and so its tab: the
     // daemon closes a tab only once every owned pane is gone. A local tab
     // goes when it empties.
-    let refused = slots
+    let refused = owned_native
         .iter()
-        .any(|(_, pane)| workspace.panes.get(pane).is_some_and(|pane| !pane.external));
+        .any(|pane| workspace.panes.contains_key(pane));
     if !refused {
         close_daemon_tab(workspace, chrome).await?;
     }
@@ -688,11 +747,19 @@ pub(super) async fn spawn_live_terminal(
     spawn_live_shell(workspace, chrome, placement, cwd, None).await
 }
 
+fn open_empty_tab(chrome: &mut Chrome) {
+    let (layout, _) = layout::TileLayout::new();
+    let mut tab = Tab::with_layout("", layout, Default::default());
+    tab.id = format!("{EMPTY_LOCAL_TAB_PREFIX}{}", tab.id);
+    let id = tab.id.clone();
+    let project = chrome.project_tabs.key().to_owned();
+    chrome.project_tabs.set_mut().tabs.push(tab);
+    chrome.viewer.active_tab.insert(project, id);
+}
+
 /// `spawn_live_terminal` with an explicit working directory and the worktree
-/// the tab is opened for. The spawn itself stays a REST call; the placement
-/// is a workspace op on a daemon workspace, so the tab or pane shows when
-/// the daemon's event names the terminal. The chrome sync afterwards still
-/// covers a terminal the roster has not reported yet.
+/// the tab is opened for. A daemon workspace op creates and owns its shell;
+/// scripted local tabs retain the standalone spawn path.
 pub(super) async fn spawn_live_shell(
     workspace: &mut Workspace<LiveDaemon>,
     chrome: &mut Chrome,
@@ -701,6 +768,23 @@ pub(super) async fn spawn_live_shell(
     worktree_id: Option<String>,
 ) -> Result<(), FrameError> {
     if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+        return Ok(());
+    }
+    if workspace.workspace_model().is_some() {
+        let personal_cwd = (workspace.project_id()
+            == Some(gobby_core::project::PERSONAL_PROJECT_ID))
+        .then_some(cwd.clone())
+        .flatten();
+        if !spawn_owned_live_shell(workspace, chrome, placement, worktree_id, personal_cwd).await? {
+            chrome.notify(Toast::warning("Select a project before opening a shell"));
+        }
+        return Ok(());
+    }
+    if !chrome
+        .active_tab()
+        .is_some_and(|tab| tab.is_local() && !tab.id.starts_with(EMPTY_LOCAL_TAB_PREFIX))
+    {
+        chrome.notify(Toast::warning("Workspace is not ready to open a shell"));
         return Ok(());
     }
     let request = SpawnRequest {

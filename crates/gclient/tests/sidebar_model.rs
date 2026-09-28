@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{
-    agent_state, build, AgentEntry, SidebarInputs, SidebarModel,
+    agent_state, build, provider_label, rollup, AgentEntry, SidebarInputs, SidebarModel,
 };
 use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
@@ -129,23 +129,44 @@ fn agent_state_follows_attention_and_terminal() {
         "only a set attention renders blocked"
     );
 
-    for status in [
-        "paused",
-        "awaiting_input",
-        "awaiting_approval",
-        "awaiting_handoff",
-    ] {
+    let mut paused = running.clone();
+    paused.lifecycle_status = Some("paused".to_string());
+    assert_eq!(
+        agent_state(&paused, Some(&busy)),
+        RowState::Paused,
+        "a paused run is held even while output lands"
+    );
+    assert_eq!(
+        agent_state(&paused, None),
+        RowState::Paused,
+        "a paused run is held with no pane"
+    );
+    paused.attention = blocked();
+    assert_eq!(
+        agent_state(&paused, Some(&quiet)),
+        RowState::Attention,
+        "a prompt outranks a pause"
+    );
+
+    // An agent awaiting input, approval or a handoff sits at its prompt:
+    // it reads by its pane and is never held.
+    for status in ["awaiting_input", "awaiting_approval", "awaiting_handoff"] {
         let mut waiting = running.clone();
         waiting.lifecycle_status = Some(status.to_string());
         assert_eq!(
+            agent_state(&waiting, Some(&quiet)),
+            RowState::Idle,
+            "{status} is idle at its prompt"
+        );
+        assert_eq!(
             agent_state(&waiting, Some(&busy)),
-            RowState::Paused,
-            "{status} pauses the row even while output lands"
+            RowState::Unseen,
+            "{status} with new output is unseen"
         );
         assert_eq!(
             agent_state(&waiting, None),
-            RowState::Paused,
-            "{status} pauses a row with no pane"
+            RowState::Idle,
+            "{status} with no pane is idle"
         );
         waiting.attention = blocked();
         assert_eq!(
@@ -171,6 +192,29 @@ fn agent_state_follows_attention_and_terminal() {
         model.agents[0].project_id, PROJECT,
         "a terminal the daemon joins to no session or run belongs to the focused project"
     );
+}
+
+/// A tab, project or machine takes its most urgent member: needs you, then
+/// gone, then active, then idle. Output unseen, held and no state yet roll
+/// up as idle, and a container with no members is idle.
+#[test]
+fn rollup_ranks_needs_you_gone_active_idle() {
+    let every = [
+        RowState::Idle,
+        RowState::Unseen,
+        RowState::Paused,
+        RowState::Working,
+        RowState::Orphaned,
+        RowState::Attention,
+    ];
+    assert_eq!(rollup(every), RowState::Attention);
+    assert_eq!(rollup(every[..5].iter().copied()), RowState::Orphaned);
+    assert_eq!(rollup(every[..4].iter().copied()), RowState::Working);
+    assert_eq!(
+        rollup([RowState::Unseen, RowState::Paused, RowState::Unknown]),
+        RowState::Idle
+    );
+    assert_eq!(rollup(Vec::<RowState>::new()), RowState::Idle);
 }
 
 /// 2.1.2: projects carry branch and ahead/behind, worktree children carry
@@ -546,7 +590,13 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
 
     assert_eq!(
         agent(Some("Fable 5.1"), Some("claude-fable-5-1"), Some("xhigh")).model_slug(),
-        "fable-5.1-xhigh"
+        "claude-fable-5.1-xhigh",
+        "the raw id's family leads when the display name drops it"
+    );
+    assert_eq!(
+        agent(Some("GPT-6 Sol"), Some("gpt-6-sol"), Some("xhigh")).model_slug(),
+        "gpt-6-sol-xhigh",
+        "a display name that keeps the family is not prefixed twice"
     );
     assert_eq!(
         agent(Some("Claude  Opus\t5.5"), None, None).model_slug(),
@@ -555,11 +605,22 @@ fn model_slug_lowercases_hyphenates_and_appends_effort() {
     );
     let mut claude = agent(Some("Claude Opus 5.5"), None, Some("high"));
     claude.provider = "claude".to_string();
-    assert_eq!(claude.model_slug(), "opus-5.5-high");
+    assert_eq!(
+        claude.model_slug(),
+        "claude-opus-5.5-high",
+        "the provider's own name stays in the slug"
+    );
     assert_eq!(
         agent(None, Some("GPT-5-Codex"), Some("high")).model_slug(),
         "gpt-5-codex-high",
         "the raw model stands in for a missing display name"
     );
     assert_eq!(agent(None, None, None).model_slug(), "");
+}
+
+#[test]
+fn agy_sessions_are_labelled_antigravity() {
+    assert_eq!(provider_label("agy"), "Antigravity");
+    assert_eq!(provider_label(" AGY "), "Antigravity");
+    assert_eq!(provider_label("codex"), "Codex");
 }

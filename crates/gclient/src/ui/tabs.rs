@@ -1,23 +1,21 @@
 // upstream: herdr v0.8.0 src/ui/tabs.rs
-//! Tab bar with scroll arrows, hit areas, and the new-tab button.
+//! Tab bar with edge counts for hidden tabs, hit areas, and the new-tab button.
 
-use crate::app::viewer_state::LOCAL_TAB_PREFIX;
+use crate::app::sidebar_model::rollup;
 use crate::app::MouseGesture;
-use crate::ui::chrome::{Chrome, Tab, WorkspaceView};
+use crate::ui::chrome::{Chrome, RowState, Tab, WorkspaceView};
 use crate::ui::settings::SidebarSide;
-use crate::ui::sidebar_rows::project_label;
+use crate::ui::sidebar::agents::agent_state;
+use crate::ui::status::state_dot;
 use crate::ui::text::display_width_u16;
-use crate::ui::widgets::panel_contrast_fg;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use ratatui::Frame;
-use std::collections::HashSet;
 
 const MIN_TAB_WIDTH: u16 = 12;
 const NEW_TAB_WIDTH: u16 = 3;
-const TAB_SCROLL_BUTTON_WIDTH: u16 = 3;
 
 #[derive(Debug, Clone, Default)]
 pub struct TabBarHits {
@@ -27,12 +25,21 @@ pub struct TabBarHits {
     pub new_tab: Option<Rect>,
 }
 
+/// One edge of an overflowing bar: how many tabs lie beyond it, and whether
+/// one of them needs you.
+#[derive(Debug, Clone, Default)]
+struct EdgeMarker {
+    rect: Rect,
+    text: String,
+    needs_you: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 struct TabBarView {
-    scroll: usize,
+    overflow: bool,
     tab_hit_areas: Vec<Rect>,
-    scroll_left_hit_area: Rect,
-    scroll_right_hit_area: Rect,
+    left: EdgeMarker,
+    right: EdgeMarker,
     new_tab_hit_area: Rect,
 }
 
@@ -62,32 +69,38 @@ pub fn tab_display_name(tabs: &[Tab], tab_idx: usize) -> Option<String> {
     })
 }
 
+/// A tab's name wherever the chrome shows it: the title alone, or until it
+/// has one its number and `Untitled`. The number is the tab's segment of the
+/// daemon address, or the position of a tab the daemon has not seen. The
+/// project is never repeated here.
+pub fn tab_label<W: WorkspaceView>(ws: &W, tabs: &[Tab], tab_idx: usize) -> String {
+    let Some(tab) = tabs.get(tab_idx) else {
+        return String::new();
+    };
+    if !tab_is_auto_named(tab) {
+        return tab.title.trim().to_string();
+    }
+    let number = ws
+        .workspace_model()
+        .and_then(|model| model.tab(&tab.id))
+        .map_or_else(
+            || (tab_idx + 1).to_string(),
+            |row| row.reference.to_string(),
+        );
+    format!("{number}: Untitled")
+}
+
 fn tab_chrome_label<W: WorkspaceView>(
     ws: &W,
     chrome: &Chrome,
     tabs: &[Tab],
     tab_idx: usize,
 ) -> String {
-    let Some(tab) = tabs.get(tab_idx) else {
-        return String::new();
-    };
-    let name = if tab_is_auto_named(tab) {
-        if tab.id.starts_with(LOCAL_TAB_PREFIX) {
-            (tab_idx + 1).to_string()
-        } else {
-            tab.id.clone()
-        }
-    } else {
-        tab.title.trim().to_string()
-    };
-    let project = ws
-        .focused_project()
-        .map(|id| project_label(ws, chrome, id).unwrap_or_else(|| "Project".to_string()));
-    let mut label = match project {
-        Some(project) => format!("{project}:{name}"),
-        None => name,
-    };
-    if chrome.viewer.zoomed.contains(&tab.id) {
+    let mut label = tab_label(ws, tabs, tab_idx);
+    if tabs
+        .get(tab_idx)
+        .is_some_and(|tab| chrome.viewer.zoomed.contains(&tab.id))
+    {
         label.push_str(" Z");
     }
     label
@@ -99,6 +112,8 @@ fn layout_tab_hit_areas(labels: &[String], area: Rect, scroll: usize) -> Vec<Rec
         return rects;
     }
 
+    // A tab shows whole or not at all; only the first one clips, so a tab
+    // wider than the bar still shows.
     let mut x = area.x;
     let right = area.x + area.width;
     for (idx, rect) in rects.iter_mut().enumerate().skip(scroll) {
@@ -107,6 +122,9 @@ fn layout_tab_hit_areas(labels: &[String], area: Rect, scroll: usize) -> Vec<Rec
         }
         let desired = tab_width(labels, idx);
         let remaining = right.saturating_sub(x);
+        if desired > remaining && idx != scroll {
+            break;
+        }
         let width = desired.min(remaining).max(1);
         *rect = Rect::new(x, area.y, width, 1);
         x = x.saturating_add(width + 1);
@@ -114,13 +132,85 @@ fn layout_tab_hit_areas(labels: &[String], area: Rect, scroll: usize) -> Vec<Rec
     rects
 }
 
-fn centered_tab_scroll(labels: &[String], active_tab: usize, area: Rect) -> usize {
+fn needs_you_prefix(needs_you: bool) -> &'static str {
+    if needs_you {
+        "⍾ "
+    } else {
+        ""
+    }
+}
+
+/// The overflowing bar from `scroll`: the left count when tabs lie before
+/// it, the tabs that fit whole, and the right count when tabs lie after
+/// them. `area` leaves out the new-tab button.
+fn layout_at(
+    labels: &[String],
+    attention: &[bool],
+    area: Rect,
+    scroll: usize,
+) -> (Vec<Rect>, EdgeMarker, EdgeMarker) {
+    let left = if scroll > 0 {
+        let needs_you = attention.iter().take(scroll).any(|&a| a);
+        let text = format!(" ‹ {}{scroll} ", needs_you_prefix(needs_you));
+        let width = display_width_u16(&text).min(area.width);
+        EdgeMarker {
+            rect: Rect::new(area.x, area.y, width, 1),
+            text,
+            needs_you,
+        }
+    } else {
+        EdgeMarker::default()
+    };
+    let tabs_x = area.x + left.rect.width;
+    let tabs_area = Rect::new(
+        tabs_x,
+        area.y,
+        area.right().saturating_sub(tabs_x),
+        area.height,
+    );
+    let rects = layout_tab_hit_areas(labels, tabs_area, scroll);
+    if rects.last().is_some_and(|rect| rect.width > 0) {
+        return (rects, left, EdgeMarker::default());
+    }
+
+    // Room for the widest right count, so the tabs never shift under it.
+    let reserve = display_width_u16(&format!(" ⍾ {} › ", labels.len()));
+    let narrowed = Rect {
+        width: tabs_area.width.saturating_sub(reserve),
+        ..tabs_area
+    };
+    let rects = layout_tab_hit_areas(labels, narrowed, scroll);
+    let shown = rects
+        .iter()
+        .rposition(|rect| rect.width > 0)
+        .map_or(scroll, |idx| idx + 1);
+    let needs_you = attention.iter().skip(shown).any(|&a| a);
+    let text = format!(
+        " {}{} › ",
+        needs_you_prefix(needs_you),
+        labels.len() - shown
+    );
+    let width = display_width_u16(&text).min(tabs_area.width);
+    let right = EdgeMarker {
+        rect: Rect::new(area.right() - width, area.y, width, 1),
+        text,
+        needs_you,
+    };
+    (rects, left, right)
+}
+
+fn centered_tab_scroll(
+    labels: &[String],
+    attention: &[bool],
+    active_tab: usize,
+    area: Rect,
+) -> usize {
     let mut best_scroll = active_tab;
     let mut best_distance = u16::MAX;
     let viewport_center = area.x.saturating_mul(2).saturating_add(area.width);
 
     for scroll in 0..=active_tab {
-        let rects = layout_tab_hit_areas(labels, area, scroll);
+        let (rects, _, _) = layout_at(labels, attention, area, scroll);
         let Some(active_rect) = rects.get(active_tab).copied() else {
             continue;
         };
@@ -151,10 +241,11 @@ fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
         .unwrap_or(fallback_x)
 }
 
-fn max_tab_scroll(labels: &[String], area: Rect) -> usize {
+fn max_tab_scroll(labels: &[String], attention: &[bool], area: Rect) -> usize {
     (0..labels.len())
         .find(|&scroll| {
-            layout_tab_hit_areas(labels, area, scroll)
+            layout_at(labels, attention, area, scroll)
+                .0
                 .last()
                 .is_some_and(|rect| rect.width > 0)
         })
@@ -163,6 +254,7 @@ fn max_tab_scroll(labels: &[String], area: Rect) -> usize {
 
 fn compute_tab_bar_view(
     labels: &[String],
+    attention: &[bool],
     active_tab: usize,
     area: Rect,
     current_scroll: usize,
@@ -190,42 +282,23 @@ fn compute_tab_bar_view(
             1,
         );
         return TabBarView {
-            scroll: 0,
+            overflow: false,
             tab_hit_areas: all_tabs,
-            scroll_left_hit_area: Rect::default(),
-            scroll_right_hit_area: Rect::default(),
+            left: EdgeMarker::default(),
+            right: EdgeMarker::default(),
             new_tab_hit_area,
         };
     }
 
-    let left_hit_area = Rect::new(area.x, area.y, TAB_SCROLL_BUTTON_WIDTH.min(area.width), 1);
-    let tab_area_x = left_hit_area.x + left_hit_area.width;
-    let reserved_trailing_width = NEW_TAB_WIDTH.saturating_add(TAB_SCROLL_BUTTON_WIDTH);
-    let tab_area_right = area_right.saturating_sub(reserved_trailing_width);
-    let tab_area = Rect::new(
-        tab_area_x,
-        area.y,
-        tab_area_right.saturating_sub(tab_area_x),
-        area.height,
-    );
-
-    let max_scroll = max_tab_scroll(labels, tab_area);
+    // The new-tab button stays pinned at the right end while tabs scroll.
+    let max_scroll = max_tab_scroll(labels, attention, all_tabs_area);
     let scroll = if follow_active {
-        centered_tab_scroll(labels, active_tab, tab_area).min(max_scroll)
+        centered_tab_scroll(labels, attention, active_tab, all_tabs_area).min(max_scroll)
     } else {
         current_scroll.min(max_scroll)
     };
-    let tab_hit_areas = layout_tab_hit_areas(labels, tab_area, scroll);
-    let trailing_x = trailing_tab_controls_x(&tab_hit_areas, tab_area_x).min(tab_area_right);
-    let right_hit_area = Rect::new(
-        trailing_x,
-        area.y,
-        area_right
-            .saturating_sub(trailing_x)
-            .min(TAB_SCROLL_BUTTON_WIDTH),
-        1,
-    );
-    let new_tab_x = right_hit_area.x + right_hit_area.width;
+    let (tab_hit_areas, left, right) = layout_at(labels, attention, all_tabs_area, scroll);
+    let new_tab_x = all_tabs_area.right();
     let new_tab_hit_area = Rect::new(
         new_tab_x,
         area.y,
@@ -234,10 +307,10 @@ fn compute_tab_bar_view(
     );
 
     TabBarView {
-        scroll,
+        overflow: true,
         tab_hit_areas,
-        scroll_left_hit_area: left_hit_area,
-        scroll_right_hit_area: right_hit_area,
+        left,
+        right,
         new_tab_hit_area,
     }
 }
@@ -270,29 +343,36 @@ pub fn render_tab_bar<W: WorkspaceView>(
         return TabBarHits::default();
     }
     let tabs = &chrome.tabs().tabs;
-    let attention_entries: HashSet<String> = ws.attention_entry_ids().into_iter().collect();
-    let attention_panes: Vec<_> = ws
-        .sidebar()
-        .agents
+    let p = &chrome.palette;
+    // A tab takes the most urgent state of the agents on its panes, the
+    // active tab included, and shows only the bell, while one of them needs
+    // you; work and new output stay on the sidebar rows.
+    let states: Vec<RowState> = tabs
         .iter()
-        .filter(|agent| attention_entries.contains(&agent.entry_id))
-        .filter_map(|agent| ws.pane_for_terminal(&agent.terminal_id))
+        .map(|tab| {
+            rollup(ws.sidebar().agents.iter().filter_map(|agent| {
+                let pane = ws.pane_for_terminal(&agent.terminal_id)?;
+                tab.slot_for(pane).is_some().then(|| agent_state(ws, agent))
+            }))
+        })
+        .collect();
+    let glyphs: Vec<Option<(&str, Color)>> = states
+        .iter()
+        .map(|&state| (state == RowState::Attention).then(|| state_dot(state, p)))
+        .collect();
+    let attention: Vec<bool> = states
+        .iter()
+        .map(|&state| state == RowState::Attention)
         .collect();
     let labels: Vec<String> = (0..tabs.len())
         .map(|idx| {
             let label = tab_chrome_label(ws, chrome, tabs, idx);
-            if idx != chrome.active_index()
-                && attention_panes
-                    .iter()
-                    .any(|pane| tabs[idx].slot_for(*pane).is_some())
-            {
-                format!("⍾ {label}")
-            } else {
-                label
+            match glyphs[idx] {
+                Some((glyph, _)) => format!("{glyph} {label}"),
+                None => label,
             }
         })
         .collect();
-    let p = &chrome.palette;
     // An overlay covers one end of the bar, so the tabs fit, and scroll when
     // they do not, in the columns beside it.
     let beside = if chrome.sidebar.overlay {
@@ -302,6 +382,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
     };
     let mut view = compute_tab_bar_view(
         &labels,
+        &attention,
         chrome.active_index(),
         beside,
         chrome.tab_scroll,
@@ -309,8 +390,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
     );
     // A left overlay covers the bar's start, so tabs that fit move to its
     // far side, hit areas with them; a right one leaves them at the start.
-    let fits = view.scroll_left_hit_area.width == 0;
-    if chrome.sidebar.overlay && chrome.sidebar.side == SidebarSide::Left && fits {
+    if chrome.sidebar.overlay && chrome.sidebar.side == SidebarSide::Left && !view.overflow {
         let shift = area.right().saturating_sub(view.new_tab_hit_area.right());
         for rect in view
             .tab_hit_areas
@@ -326,33 +406,20 @@ pub fn render_tab_bar<W: WorkspaceView>(
         area,
     );
 
-    let first_visible_idx = view.tab_hit_areas.iter().position(|rect| rect.width > 0);
-    let last_visible_idx = view.tab_hit_areas.iter().rposition(|rect| rect.width > 0);
-    let can_scroll_left = view.scroll_left_hit_area.width > 0 && view.scroll > 0;
-    let can_scroll_right = view.scroll_right_hit_area.width > 0
-        && last_visible_idx.is_some_and(|idx| idx + 1 < tabs.len());
-
-    let arrow_style = |enabled: bool| {
-        if enabled {
-            Style::default().fg(p.overlay1).bg(p.surface0)
-        } else {
-            Style::default()
-                .fg(p.overlay0)
-                .bg(p.surface0)
-                .add_modifier(Modifier::DIM)
+    // Each edge counts the tabs beyond it, in the needs-you colour when one
+    // of them needs you.
+    for marker in [&view.left, &view.right] {
+        if marker.rect.width > 0 {
+            let fg = if marker.needs_you {
+                state_dot(RowState::Attention, p).1
+            } else {
+                p.overlay1
+            };
+            frame.render_widget(
+                Paragraph::new(marker.text.as_str()).style(Style::default().fg(fg).bg(p.surface0)),
+                marker.rect,
+            );
         }
-    };
-    if view.scroll_left_hit_area.width > 0 {
-        frame.render_widget(
-            Paragraph::new(" < ").style(arrow_style(can_scroll_left)),
-            view.scroll_left_hit_area,
-        );
-    }
-    if view.scroll_right_hit_area.width > 0 {
-        frame.render_widget(
-            Paragraph::new(" > ").style(arrow_style(can_scroll_right)),
-            view.scroll_right_hit_area,
-        );
     }
 
     let dragged = match chrome.gesture {
@@ -369,13 +436,15 @@ pub fn render_tab_bar<W: WorkspaceView>(
             continue;
         }
         let active = idx == chrome.active_index();
+        // The active tab rises off the bar on the raised surface in every
+        // theme; the host's own ground would read as a hole under System.
         let style = if active {
             Style::default()
                 .fg(p.text)
-                .bg(panel_contrast_fg(p))
+                .bg(p.surface1)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(p.overlay1).bg(p.surface0)
+            Style::default().fg(p.subtext0).bg(p.surface0)
         };
         // A dragged tab lifts off the bar: its own foreground on the bar's
         // surface, reversed, until the release drops it.
@@ -386,16 +455,26 @@ pub fn render_tab_bar<W: WorkspaceView>(
         };
         let width = rect.width as usize;
         let text = format!(" {:width$}", name, width = width.saturating_sub(1));
-        let line = if let Some(rest) = text.strip_prefix(" ⍾") {
-            Line::from(vec![
+        let line = match glyphs[idx] {
+            Some((glyph, color)) => Line::from(vec![
                 Span::raw(" "),
-                Span::styled("⍾", Style::default().fg(p.yellow)),
-                Span::raw(rest.to_string()),
-            ])
-        } else {
-            Line::raw(text)
+                Span::styled(glyph, Style::default().fg(color)),
+                Span::raw(text[1 + glyph.len()..].to_string()),
+            ]),
+            None => Line::raw(text),
         };
         frame.render_widget(Paragraph::new(line).style(style), rect);
+        // A thin rule in the gap before the next tab tells the two apart.
+        let next_shown = view
+            .tab_hit_areas
+            .get(idx + 1)
+            .is_some_and(|next| next.width > 0 && next.x == rect.right() + 1);
+        if next_shown {
+            frame.render_widget(
+                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.surface0)),
+                Rect::new(rect.right(), rect.y, 1, 1),
+            );
+        }
     }
 
     if view.new_tab_hit_area.width > 0 {
@@ -403,31 +482,6 @@ pub fn render_tab_bar<W: WorkspaceView>(
             Paragraph::new(" + ").style(Style::default().fg(p.overlay1).bg(p.surface0)),
             view.new_tab_hit_area,
         );
-    }
-
-    if first_visible_idx.is_some_and(|idx| idx > 0) {
-        let x = if view.scroll_left_hit_area.width > 0 {
-            view.scroll_left_hit_area.x + view.scroll_left_hit_area.width
-        } else {
-            beside.x
-        };
-        if x < beside.x + beside.width {
-            frame.buffer_mut()[(x, beside.y)]
-                .set_symbol("…")
-                .set_style(Style::default().fg(p.overlay0));
-        }
-    }
-    if last_visible_idx.is_some_and(|idx| idx + 1 < tabs.len()) {
-        let x = if view.scroll_right_hit_area.width > 0 {
-            view.scroll_right_hit_area.x.saturating_sub(1)
-        } else {
-            beside.x + beside.width.saturating_sub(1)
-        };
-        if x >= beside.x && x < beside.x + beside.width {
-            frame.buffer_mut()[(x, beside.y)]
-                .set_symbol("…")
-                .set_style(Style::default().fg(p.overlay0));
-        }
     }
 
     TabBarHits {
@@ -438,8 +492,8 @@ pub fn render_tab_bar<W: WorkspaceView>(
             .filter(|(_, rect)| rect.width > 0)
             .map(|(idx, rect)| (idx, *rect))
             .collect(),
-        scroll_left: nonempty(view.scroll_left_hit_area),
-        scroll_right: nonempty(view.scroll_right_hit_area),
+        scroll_left: nonempty(view.left.rect),
+        scroll_right: nonempty(view.right.rect),
         new_tab: nonempty(view.new_tab_hit_area),
     }
 }
@@ -481,15 +535,16 @@ mod tests {
 
     #[test]
     fn fitting_tabs_expose_every_tab_and_the_new_tab_button() {
-        assert!(MIN_TAB_WIDTH > display_width_u16("gobby:0:0:1"));
         let chrome = chrome_with_tabs(&["alpha", "second", ""]);
         let (hits, text) = draw(&chrome, 80);
         assert_eq!(hits.tabs.len(), 3);
         assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
         assert_eq!(hits.tabs[1].1.x, 13);
+        assert_eq!(hits.tabs[2].1.width, display_width_u16("3: Untitled") + 4);
         assert!(hits.scroll_left.is_none() && hits.scroll_right.is_none());
-        assert_eq!(hits.new_tab, Some(Rect::new(38, 0, 3, 1)));
-        assert!(text.contains(" alpha") && text.contains(" second") && text.contains(" 3 "));
+        assert_eq!(hits.new_tab, Some(Rect::new(41, 0, 3, 1)));
+        assert!(text.contains(" alpha") && text.contains(" second"));
+        assert!(text.contains(" 3: Untitled "), "{text}");
         assert!(text.contains(" + "));
     }
 
@@ -501,10 +556,10 @@ mod tests {
         chrome.sidebar.overlay = true;
         chrome.view.sidebar_rect = Rect::new(0, 0, 34, 1);
         let (hits, text) = draw(&chrome, 80);
-        assert_eq!(hits.tabs[0], (0, Rect::new(39, 0, 12, 1)));
+        assert_eq!(hits.tabs[0], (0, Rect::new(36, 0, 12, 1)));
         assert_eq!(hits.new_tab, Some(Rect::new(77, 0, 3, 1)));
         assert!(
-            text.starts_with(&" ".repeat(39)) && text.ends_with(" + "),
+            text.starts_with(&" ".repeat(36)) && text.ends_with(" + "),
             "{text}"
         );
 
@@ -512,7 +567,7 @@ mod tests {
         chrome.view.sidebar_rect = Rect::new(46, 0, 34, 1);
         let (hits, _) = draw(&chrome, 80);
         assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
-        assert_eq!(hits.new_tab, Some(Rect::new(38, 0, 3, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(41, 0, 3, 1)));
     }
 
     #[test]
@@ -532,8 +587,9 @@ mod tests {
             chrome.sidebar.side = side;
             chrome.view.sidebar_rect = overlay;
             let (hits, text) = draw(&chrome, 80);
+            // The active tab is the last, so tabs hide only on the left.
             assert!(
-                hits.scroll_left.is_some() && hits.scroll_right.is_some(),
+                hits.scroll_left.is_some() && hits.scroll_right.is_none(),
                 "{side:?}: {text}"
             );
             let drawn = hits
@@ -560,17 +616,37 @@ mod tests {
     }
 
     #[test]
-    fn overflowing_tabs_get_scroll_arrows_and_follow_the_active_tab() {
+    fn overflowing_tabs_show_whole_and_count_the_hidden_ones() {
         let mut chrome = chrome_with_tabs(&["one", "two", "three", "four", "five", "six"]);
         chrome.activate_tab(5);
         let sixth = chrome.tabs().tabs[5].id.clone();
         chrome.viewer.zoomed.insert(sixth);
         let (hits, text) = draw(&chrome, 46);
-        assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 3, 1)));
-        assert!(hits.scroll_right.is_some() && hits.new_tab.is_some());
-        assert!(hits.tabs.iter().any(|(idx, _)| *idx == 5));
-        assert!(hits.tabs.iter().all(|(_, rect)| rect.width > 0));
-        assert!(text.contains("six Z"), "{text}");
-        assert!(text.contains(" < ") && text.contains(" > "));
+        // Following the active last tab, three tabs show whole after the
+        // count of the three before them; none hides on the right, and the
+        // new-tab button stays at the right end.
+        let shown: Vec<(usize, Rect)> = [3, 4, 5]
+            .into_iter()
+            .zip([5, 18, 31])
+            .map(|(idx, x)| (idx, Rect::new(x, 0, 12, 1)))
+            .collect();
+        assert_eq!(hits.tabs, shown);
+        assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 5, 1)));
+        assert_eq!(hits.scroll_right, None);
+        assert_eq!(hits.new_tab, Some(Rect::new(43, 0, 3, 1)));
+        assert!(text.starts_with(" ‹ 3 "), "{text}");
+        assert!(text.contains("six Z") && !text.contains('…'), "{text}");
+    }
+
+    #[test]
+    fn only_the_first_tab_clips() {
+        // A tab wider than the bar still shows, clipped; the tab after it
+        // hides whole behind the right count.
+        let chrome = chrome_with_tabs(&["a very long title that will not fit", "b"]);
+        let (hits, text) = draw(&chrome, 20);
+        assert_eq!(hits.tabs, [(0, Rect::new(0, 0, 10, 1))]);
+        assert_eq!(hits.scroll_left, None);
+        assert_eq!(hits.scroll_right, Some(Rect::new(12, 0, 5, 1)));
+        assert!(text.ends_with(" 1 ›  + "), "{text}");
     }
 }

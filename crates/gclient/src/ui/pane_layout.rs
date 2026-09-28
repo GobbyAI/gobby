@@ -134,6 +134,9 @@ pub fn pane_geometry(
     area: Rect,
     prefs: &ClientPrefs,
 ) -> (Vec<PaneInfo>, Vec<SplitBorder>) {
+    if tab.slots.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
     if zoomed {
         let borders = Borders::ALL;
         let pane_inner = pane_inner_rect(area, borders);

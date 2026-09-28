@@ -82,7 +82,18 @@ rules:
       and variables.get('context_compact_handoff_result').get('delivery_failed') is True
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
-        and event.data.get('mcp_tool') in ('set_handoff', 'feedback', 'get_handoff')
+        and (
+          event.data.get('mcp_tool') in ('feedback', 'get_handoff')
+          or (
+            event.data.get('mcp_tool') == 'set_handoff'
+            and not (
+              variables.get('context_compact_handoff_result').get('error_code') == 'compact_unconfirmed'
+              and isinstance(variables.get('failed_handoff_attempt'), dict)
+              and variables.get('failed_handoff_attempt').get('attempt_id')
+                  == variables.get('context_compact_handoff_result').get('attempt_id')
+            )
+          )
+        )
       )
       and not (
         event.data.get('mcp_server') == 'gobby-memory'
@@ -106,7 +117,11 @@ rules:
     effects:
       - type: block
         reason: >-
-          Terminal handoff delivery failed after set_handoff returned. Retry
+          {{ 'Compact boundary remains unconfirmed. Call gobby-sessions:get_handoff
+          to reconcile the failed attempt before any new set_handoff.'
+          if variables.get('context_compact_handoff_result', {}).get('error_code')
+          == 'compact_unconfirmed' else
+          'Terminal handoff delivery failed after set_handoff returned. Retry
           gobby-sessions:set_handoff. Only the prerequisites of that retry are
           open: the memory review and feedback a handoff gate can demand, the
-          handoffs reference, schema discovery, and coordination messages.
+          handoffs reference, schema discovery, and coordination messages.' }}

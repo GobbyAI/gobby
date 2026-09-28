@@ -2,14 +2,14 @@
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::{
-    route_mouse, MouseGesture, MouseOutcome, PaneId, Placement, Workspace, TAB_DRAG_THRESHOLD,
+    route_mouse, MouseGesture, MouseOutcome, PaneId, Workspace, TAB_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{ProjectRow, SidebarRows};
 use gobby_client::ui::chrome::Tab;
 use gobby_client::ui::chrome_render::render_workspace;
 use gobby_client::ui::tabs::{render_tab_bar, tab_display_name, tab_width, TabBarHits};
 use gobby_client::ui::text::display_width_u16;
-use gobby_client::ui::Chrome;
+use gobby_client::ui::{Action, Chrome};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -93,8 +93,9 @@ parity_tests! {
             let (term, _) = draw_tab_bar(&chrome, tab_bar_rect);
 
             let row = buffer_row_text(&term, tab_bar_rect, 0);
-            assert!(row.contains(" gobby:0:0:1 Z"), "tab row: {row:?}");
-            assert!(row.contains(" gobby:test Z"), "tab row: {row:?}");
+            assert!(row.contains(" 1: Untitled Z"), "tab row: {row:?}");
+            assert!(row.contains(" test Z"), "tab row: {row:?}");
+            assert!(!row.contains("gobby"), "no project prefix: {row:?}");
             assert_eq!(tab_display_name(&chrome.tabs().tabs, 0).as_deref(), Some("1"));
             assert_eq!(
                 tab_display_name(&chrome.tabs().tabs, custom_tab).as_deref(),
@@ -111,7 +112,7 @@ parity_tests! {
             let (_, tab_rect) = hits.tabs[0];
             let style = cell(&term, tab_rect.x + 1, tab_rect.y).style();
 
-            assert_eq!(style.bg, Some(palette().panel_bg));
+            assert_eq!(style.bg, Some(palette().surface1), "the raised surface");
             assert!(!style.add_modifier.contains(Modifier::DIM));
             assert!(style.add_modifier.contains(Modifier::BOLD));
         }
@@ -122,8 +123,8 @@ parity_tests! {
             zoom_tab(&mut chrome, 0);
 
             let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
-            let expected = tab_width(&["gobby:abcdefgh Z".into()], 0);
-            assert_eq!(expected, display_width_u16("gobby:abcdefgh Z") + 4);
+            let expected = tab_width(&["abcdefgh Z".into()], 0);
+            assert_eq!(expected, display_width_u16("abcdefgh Z") + 4);
             assert_eq!(hits.tabs[0].1.width, expected);
         }
 
@@ -132,8 +133,8 @@ parity_tests! {
             set_custom_name(&mut chrome, 0, "提交 herdr 的反馈");
 
             let (_, hits) = draw_tab_bar(&chrome, Rect::new(0, 0, 50, 1));
-            let expected = tab_width(&["gobby:提交 herdr 的反馈".into()], 0);
-            assert_eq!(expected, display_width_u16("gobby:提交 herdr 的反馈") + 4);
+            let expected = tab_width(&["提交 herdr 的反馈".into()], 0);
+            assert_eq!(expected, display_width_u16("提交 herdr 的反馈") + 4);
             assert_eq!(hits.tabs[0].1.width, expected);
         }
 
@@ -151,7 +152,7 @@ parity_tests! {
 }
 
 #[test]
-fn hidden_tab_with_attention_carries_the_mark() {
+fn every_tab_carries_the_rolled_up_state_of_its_agents() {
     let mut ws = Workspace::scripted();
     let first = ws
         .open_terminal("term-first", "native", "epoch")
@@ -159,11 +160,16 @@ fn hidden_tab_with_attention_carries_the_mark() {
     let second = ws
         .open_terminal("term-second", "native", "epoch")
         .expect("second terminal");
+    let third = ws
+        .open_terminal("term-third", "native", "epoch")
+        .expect("third terminal");
     let mut chrome = Chrome::new(theme());
     chrome.open_tab(first, "");
     chrome.open_tab(second, "");
+    chrome.open_tab(third, "");
     chrome.tabs_mut().tabs[0].id = "0:0:1".into();
     chrome.tabs_mut().tabs[1].id = "0:0:2".into();
+    chrome.tabs_mut().tabs[2].id = "0:0:3".into();
     chrome.activate_tab(0);
 
     ws.daemon_mut().set_roster(json!({
@@ -172,7 +178,13 @@ fn hidden_tab_with_attention_carries_the_mark() {
         "entries": [
             {
                 "entry_id": "run:first",
-                "terminal": {"terminal_id": "term-first", "backend": "native"}
+                "terminal": {"terminal_id": "term-first", "backend": "native"},
+                "lifecycle_status": "running"
+            },
+            {
+                "entry_id": "run:third",
+                "terminal": {"terminal_id": "term-third", "backend": "native"},
+                "lifecycle_status": "awaiting_input"
             },
             {
                 "entry_id": "run:second",
@@ -189,22 +201,39 @@ fn hidden_tab_with_attention_carries_the_mark() {
     draw(&mut term, |frame| {
         hits = render_tab_bar(frame, area, &ws, &chrome);
     });
+    // Only the bell reaches a tab, the active one included: a working or
+    // idle agent draws nothing there, and a thin rule parts adjacent tabs.
     let row = buffer_row_text(&term, area, 0);
-    assert!(row.contains("⍾ 0:0:2"), "tab row: {row:?}");
-    assert!(!row.contains("⍾ 0:0:1"), "tab row: {row:?}");
-    let second_rect = hits.tabs[1].1;
-    assert_eq!(cell(&term, second_rect.x + 1, second_rect.y).symbol(), "⍾");
-    assert_eq!(
-        cell(&term, second_rect.x + 1, second_rect.y).style().fg,
-        Some(palette().yellow)
+    assert!(row.starts_with(" 1: Untitled"), "tab row: {row:?}");
+    assert!(row.contains("⍾ 2: Untitled"), "tab row: {row:?}");
+    assert!(row.contains(" 3: Untitled"), "tab row: {row:?}");
+    assert!(
+        !row.contains('▶') && !row.contains('‖') && !row.contains('○'),
+        "tab row: {row:?}"
     );
+    let rect = hits.tabs[1].1;
+    assert_eq!(cell(&term, rect.x + 1, rect.y).symbol(), "⍾");
+    assert_eq!(
+        cell(&term, rect.x + 1, rect.y).style().fg,
+        Some(palette().peach)
+    );
+    for idx in 0..2 {
+        let rect = hits.tabs[idx].1;
+        let rule = cell(&term, rect.right(), rect.y);
+        assert_eq!(rule.symbol(), "│", "tab row: {row:?}");
+        assert_eq!(rule.style().fg, Some(palette().line));
+    }
 
     chrome.activate_tab(1);
     let mut term = terminal(area.width, area.height);
     draw(&mut term, |frame| {
         render_tab_bar(frame, area, &ws, &chrome);
     });
-    assert!(!buffer_row_text(&term, area, 0).contains('⍾'));
+    let row = buffer_row_text(&term, area, 0);
+    assert!(
+        row.contains("⍾ 2: Untitled"),
+        "the active tab keeps it: {row:?}"
+    );
 }
 
 // Plan 2.2 tab bar mouse: gclient tests driving `route_mouse` over the drawn
@@ -218,6 +247,66 @@ const LEFT_UP: MouseEventKind = MouseEventKind::Up(MouseButton::Left);
 /// One roster terminal per title, each in its own tab, drawn once so the
 /// tab-bar hit map is populated. Returns the workspace, the chrome and the
 /// frame area.
+/// A tab shows whole or hides, and each edge counts the tabs beyond it. The
+/// count takes the needs-you glyph and colour when one of them needs you.
+#[test]
+fn an_edge_count_turns_needs_you_when_a_hidden_tab_does() {
+    let mut ws = Workspace::scripted();
+    let mut chrome = Chrome::new(theme());
+    for index in 0..5 {
+        let pane = ws
+            .open_terminal(&format!("term-{index}"), "native", "epoch")
+            .expect("open scripted terminal");
+        chrome.open_tab(pane, "");
+    }
+    chrome.activate_tab(0);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [{
+            "entry_id": "run:last",
+            "terminal": {"terminal_id": "term-4", "backend": "native"},
+            "attention": {"attention_id": "att-last", "kind": "actionable"}
+        }],
+    }));
+    ws.reconcile_subscribe_first().expect("attention roster");
+
+    let area = Rect::new(0, 0, 50, 1);
+    let draw_bar = |chrome: &Chrome| {
+        let mut term = terminal(area.width, area.height);
+        let mut hits = TabBarHits::default();
+        draw(&mut term, |frame| {
+            hits = render_tab_bar(frame, area, &ws, chrome);
+        });
+        (term, hits)
+    };
+
+    let (term, hits) = draw_bar(&chrome);
+    let row = buffer_row_text(&term, area, 0);
+    let whole: Vec<(usize, Rect)> = vec![(0, Rect::new(0, 0, 15, 1)), (1, Rect::new(16, 0, 15, 1))];
+    assert_eq!(hits.tabs, whole, "tab row: {row:?}");
+    assert_eq!(hits.scroll_left, None);
+    assert_eq!(hits.scroll_right, Some(Rect::new(40, 0, 7, 1)));
+    assert!(row.ends_with(" ⍾ 3 ›  +"), "tab row: {row:?}");
+    for x in [41, 43, 45] {
+        assert_eq!(
+            cell(&term, x, 0).style().fg,
+            Some(palette().peach),
+            "column {x}"
+        );
+    }
+
+    // Following the needs-you tab to the end: the left edge counts the
+    // three before it, none of which needs you.
+    chrome.activate_tab(4);
+    let (term, hits) = draw_bar(&chrome);
+    let row = buffer_row_text(&term, area, 0);
+    assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 5, 1)));
+    assert_eq!(hits.scroll_right, None);
+    assert!(row.starts_with(" ‹ 3 "), "tab row: {row:?}");
+    assert_eq!(cell(&term, 1, 0).style().fg, Some(palette().overlay1));
+}
+
 fn tab_bar_chrome(width: u16, titles: &[&str]) -> (Workspace, Chrome, Rect) {
     let mut ws = Workspace::scripted();
     let mut chrome = Chrome::new(theme());
@@ -280,7 +369,7 @@ fn pane(ws: &Workspace, index: usize) -> PaneId {
 }
 
 #[test]
-fn tab_bar_clicks_activate_spawn_and_scroll() {
+fn tab_bar_clicks_activate_new_tab_and_scroll() {
     let (ws, mut chrome, _) = tab_bar_chrome(80, &["alpha", "beta", "gamma"]);
     let (col, row) = tab_cell(&chrome, 1);
 
@@ -335,7 +424,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         &mouse(LEFT_UP, col, row, KeyModifiers::NONE),
     );
 
-    // The new-tab button spawns into a fresh tab.
+    // The new-tab button requests an empty tab.
     let plus = chrome.view.new_tab_hit_area.expect("new-tab button drawn");
     assert_eq!(
         route_mouse(
@@ -343,9 +432,7 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
             &mut chrome,
             &mouse(LEFT_DOWN, plus.x + 1, plus.y, KeyModifiers::NONE)
         ),
-        MouseOutcome::Spawn {
-            placement: Placement::Tab
-        }
+        MouseOutcome::Action(Action::NewTab)
     );
     assert_eq!(chrome.gesture, None, "the button starts no drag");
 
@@ -382,25 +469,16 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         "down from the last tab wraps to the first"
     );
 
-    // Scroll arrows move `tab_scroll` by one and stop following the active
-    // tab; the next tab click follows it again.
-    let (ws, mut chrome, area) = tab_bar_chrome(
-        54,
-        &[
-            "the first long title",
-            "the second long title",
-            "the third long title",
-            "the fourth long title",
-        ],
-    );
+    // An edge count pages the strip one screen and stops following the
+    // active tab; the next tab click follows it again. Nothing hides before
+    // the first tab, so that edge draws no count.
+    let (ws, mut chrome, area) =
+        tab_bar_chrome(54, &["one", "two", "three", "four", "five", "six"]);
+    assert_eq!(chrome.view.tab_scroll_left_hit_area, None);
     let right = chrome
         .view
         .tab_scroll_right_hit_area
-        .expect("overflowing tabs draw the scroll-right arrow");
-    let left = chrome
-        .view
-        .tab_scroll_left_hit_area
-        .expect("overflowing tabs draw the scroll-left arrow");
+        .expect("tabs hidden on the right draw their count");
     assert!(chrome.tab_scroll_follow_active);
     assert_eq!(
         route_mouse(
@@ -410,25 +488,32 @@ fn tab_bar_clicks_activate_spawn_and_scroll() {
         ),
         MouseOutcome::Handled
     );
-    assert_eq!(chrome.tab_scroll, 1);
+    assert_eq!(chrome.tab_scroll, 3, "the first hidden tab leads the page");
     assert!(!chrome.tab_scroll_follow_active);
     draw_with_hits(&ws, &mut chrome, area);
+    let shown: Vec<usize> = chrome
+        .view
+        .tab_hit_areas
+        .iter()
+        .map(|(index, _)| *index)
+        .collect();
+    assert_eq!(shown, [3, 4, 5], "the bar paged one screen");
     assert_eq!(
-        chrome.view.tab_hit_areas.first().map(|(index, _)| *index),
-        Some(1),
-        "the bar scrolled one tab"
+        chrome.view.tab_scroll_right_hit_area, None,
+        "nothing hides on the right"
     );
-    for _ in 0..2 {
-        route_mouse(
-            &ws,
-            &mut chrome,
-            &mouse(LEFT_DOWN, left.x + 1, left.y, KeyModifiers::NONE),
-        );
-    }
-    assert_eq!(
-        chrome.tab_scroll, 0,
-        "scrolling left stops at the first tab"
+    let left = chrome
+        .view
+        .tab_scroll_left_hit_area
+        .expect("tabs hidden on the left draw their count");
+    route_mouse(
+        &ws,
+        &mut chrome,
+        &mouse(LEFT_DOWN, left.x + 1, left.y, KeyModifiers::NONE),
     );
+    assert_eq!(chrome.tab_scroll, 0, "the left count pages back a screen");
+    draw_with_hits(&ws, &mut chrome, area);
+    assert_eq!(chrome.view.tab_scroll_left_hit_area, None);
     let (col, row) = tab_cell(&chrome, 1);
     route_mouse(
         &ws,

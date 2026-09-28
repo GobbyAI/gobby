@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -32,6 +32,7 @@ from gobby.utils.session_context import (
     session_context_for_test,
     set_session_context,
 )
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -841,7 +842,7 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_explicit_send_message_wakes_parked_tmux_session(
+    async def test_explicit_send_message_wakes_parked_managed_terminal(
         self,
         temp_db: HubDatabase,
         sample_project: dict[str, Any],
@@ -861,18 +862,20 @@ class TestSendMessage:
             machine_id=None,
             source="codex",
             project_id=sample_project["id"],
-            terminal_context={
-                "tmux_pane": "%9",
-                "tmux_socket_path": "/tmp/tmux-gobby",
-            },
         )
         session_manager.update_status(recipient.id, "paused")
         message_manager = InterSessionMessageManager(temp_db)
-        tmux_pane_sender = AsyncMock()
+        terminal = replace(
+            make_memory_terminal(backend="native"),
+            session_id=recipient.id,
+            project_id=sample_project["id"],
+        )
+        native_sender = AsyncMock()
         wake_dispatcher = WakeDispatcher(
             session_manager=session_manager,
             ism_manager=message_manager,
-            tmux_pane_sender=tmux_pane_sender,
+            tmux_sender=native_sender,
+            terminal_manager=MemoryTerminalStore(terminal),
         )
         registry = InternalToolRegistry(
             name="gobby-agents",
@@ -903,15 +906,14 @@ class TestSendMessage:
             {
                 "session_id": recipient.id,
                 "delivered": True,
-                "method": "tmux_pane",
+                "method": "terminal",
                 "session_status": "paused",
                 "message_id": result["message_ids"][0],
             }
         ]
-        tmux_pane_sender.assert_awaited_once_with(
-            "%9",
+        native_sender.assert_awaited_once_with(
+            terminal.id,
             CONTINUE_WAKE_MESSAGE,
-            "/tmp/tmux-gobby",
             submit=True,
             clear_before_submit=True,
             cli_source=ANY,
@@ -1091,13 +1093,13 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_send_message_persists_when_live_wake_has_no_tmux_pane(
+    async def test_send_message_persists_when_live_wake_has_no_managed_terminal(
         self,
         mock_session_manager,
         mock_message_manager,
         mock_db,
     ) -> None:
-        """wake stores mailbox rows even when no live pane exists."""
+        """Wake stores mailbox rows even when no live terminal row exists."""
         from gobby.events.wake import WakeDispatcher
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
@@ -1108,7 +1110,6 @@ class TestSendMessage:
         wake_dispatcher = WakeDispatcher(
             session_manager=mock_session_manager,
             ism_manager=mock_message_manager,
-            tmux_pane_sender=MagicMock(),
         )
         add_messaging_tools(
             registry=registry,
@@ -1144,7 +1145,7 @@ class TestSendMessage:
         assert result["success"] is True
         assert result["message_ids"] == ["msg-direct"]
         assert result["delivery_status"] == "sent_with_failures"
-        assert result["wake_failures"][0]["error_code"] == "no_tmux_pane"
+        assert result["wake_failures"][0]["error_code"] == "no_live_wake_channel"
         assert "message" not in result
         assert "wake_results" not in result
         mock_message_manager.mark_delivered.assert_not_called()

@@ -8,10 +8,9 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 
-use super::backpressure::PushResult;
 #[cfg(feature = "vt-engine")]
 use super::helpers::truncate_title;
-use super::helpers::{err, native_entitlements, push_terminal_ansi, s};
+use super::helpers::{err, native_entitlements, push_semantic_frame, push_terminal_ansi, s};
 #[cfg(feature = "vt-engine")]
 use super::spawn::CommitResult;
 use super::state::{CommitState, HostState, Identity, ObserverBind, Reservation, TerminalSlot};
@@ -709,22 +708,7 @@ impl HostState {
                     continue;
                 }
                 let sent = match encoding {
-                    RenderEncoding::SemanticFrame => {
-                        let msg = ServerMessage::Frame(frame);
-                        match att.mailbox.push_observed(&msg, cap, att.desynced) {
-                            PushResult::Queued => {
-                                att.last_send = Instant::now();
-                                att.desynced = false;
-                                true
-                            }
-                            PushResult::Overflow => {
-                                att.last_send = Instant::now();
-                                att.desynced = true;
-                                true
-                            }
-                            PushResult::Closed => false,
-                        }
-                    }
+                    RenderEncoding::SemanticFrame => push_semantic_frame(att, frame, cap),
                     RenderEncoding::TerminalAnsi => push_terminal_ansi(att, &frame, seq, cap),
                 };
                 if sent {

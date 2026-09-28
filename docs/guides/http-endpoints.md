@@ -372,6 +372,27 @@ The stdio carrier uses `POST /api/mcp/{server_name}/tools/{tool_name}` for
 ordinary calls and `/api/mcp/tools/call` for waits. Both paths retain wrapper
 context and enforcement; the direct path is not a workflow bypass.
 
+Both tool-call routes enforce agent workflow rules when the request carries a
+live, session-bound agent API token, even if it omits the stdio wrapper protocol
+header. Per-server tool listings and schema requests also update that session's
+discovery state. Authentication rejects missing or mismatched caller identity
+on an agent token. The wrapper header continues to opt stdio bridge requests
+into the same enforcement path. Agent calls receive `503` if the enforcement
+service is unavailable; the direct registry fallback remains an operator path.
+
+The install-scoped local token and browser cookie identify an operator. Their
+programmatic CLI and REST calls retain operator behavior, including calls with
+an explicit `X-Gobby-Session-Id` for attribution; internal and pipeline calls
+retain their programmatic behavior. Access to the operator token is the trust
+boundary: a process holding it acts as the operator, even when that process was
+launched from an agent shell. Managed agents use their run-scoped API token for
+daemon calls.
+
+Configuration mutation through `gobby-config:patch_config_values` requires
+operator authority. Agent API tokens cannot change daemon settings through the
+MCP proxy, and the direct `PATCH /api/config/values` route does not accept agent
+tokens. Internal configuration updates retain their existing service path.
+
 ## Hooks And Webhooks
 
 | Method | Route | Purpose |

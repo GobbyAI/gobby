@@ -144,13 +144,13 @@ class TerminalResourceCleaner:
                     message=notification_message,
                     run_db=self._run_db,
                 )
-            except Exception:
+            except Exception as exc:
                 # Delivery is noncritical: the ownership and dispatch-mutex
                 # releases below must still run for this terminal agent (#21897).
                 logger.warning(
-                    "Failed to deliver terminal result for agent %s",
+                    "Failed to deliver terminal result for agent %s: %s",
                     run.id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
 
         finish_phase("delivery")
@@ -161,11 +161,11 @@ class TerminalResourceCleaner:
                     run_attention_entry_id(run.id),
                     state=None,
                 )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Failed to clear attention for terminal agent %s",
+                    "Failed to clear attention for terminal agent %s: %s",
                     run.id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
 
         finish_phase("attention")
@@ -177,13 +177,13 @@ class TerminalResourceCleaner:
                 pass
         try:
             await self._close_tmux_session(run)
-        except Exception:
+        except Exception as exc:
             # Finalisation must survive a tmux or storage error here; the
             # sweep retries any row left unsettled.
             logger.warning(
-                "Failed to close tmux session for terminal agent %s",
+                "Failed to close tmux session for terminal agent %s: %s",
                 run.id,
-                exc_info=True,
+                type(exc).__name__,
             )
         finish_phase("tmux")
         if not parking:
@@ -202,11 +202,11 @@ class TerminalResourceCleaner:
                     )
                 finally:
                     finish_phase("sandbox_reap")
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Failed to reap SRT sandbox resources for terminal agent %s",
+                    "Failed to reap SRT sandbox resources for terminal agent %s: %s",
                     run.id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
 
         self._prompt_detector.clear(run.id)
@@ -224,13 +224,17 @@ class TerminalResourceCleaner:
                 try:
                     await self._run_db(session_coordinator.release_session_worktrees, session_id)
                 except Exception as exc:
-                    logger.warning("Failed to release worktrees for agent %s: %s", run.id, exc)
+                    logger.warning(
+                        "Failed to release worktrees for agent %s: %s", run.id, type(exc).__name__
+                    )
 
             if not parking and self._clone_storage and run.clone_id:
                 try:
                     await self._run_db(self._clone_storage.release, run.clone_id)
                 except Exception as exc:
-                    logger.warning("Failed to release clone for agent %s: %s", run.id, exc)
+                    logger.warning(
+                        "Failed to release clone for agent %s: %s", run.id, type(exc).__name__
+                    )
 
             cleanup = await self._run_db(
                 cleanup_agent_runtime_state,
@@ -273,12 +277,12 @@ class TerminalResourceCleaner:
                         deleted_count,
                         deferred_count,
                     )
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Post-agent merge artifact cleanup failed for run %s task %s",
+                    "Post-agent merge artifact cleanup failed for run %s task %s: %s",
                     run.id,
                     run.task_id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
         finish_phase("merge_artifacts")
 
@@ -311,12 +315,12 @@ class TerminalResourceCleaner:
                     killed = True
                 elif terminal.state not in {"pending", "live", "orphaned"}:
                     return False
-            except Exception:
+            except Exception as exc:
                 logger.warning(
-                    "Failed to close lingering terminal %s for agent %s",
+                    "Failed to close lingering terminal %s for agent %s: %s",
                     run.terminal_id,
                     run.id,
-                    exc_info=True,
+                    type(exc).__name__,
                 )
                 return False
         elif terminal.state not in {"pending", "live", "orphaned"}:
@@ -328,12 +332,12 @@ class TerminalResourceCleaner:
             # The stored pid is the pane pid of the terminal just closed; keeping it
             # would offer a stale signal target to later recovery.
             await self._run_db(self._agent_run_manager.update_runtime, run.id, pid=None)
-        except Exception:
+        except Exception as exc:
             logger.warning(
-                "Failed to settle terminal row %s for agent %s after close",
+                "Failed to settle terminal row %s for agent %s after close: %s",
                 run.terminal_id,
                 run.id,
-                exc_info=True,
+                type(exc).__name__,
             )
             return False
         if killed:

@@ -2,9 +2,11 @@
 //! Keybinding help overlay over the gclient keymap; reserved actions never
 //! appear. Rows are `keys  description (name)`, laid out in two columns
 //! when the modal is wide enough so the whole table fits a 40-row frame.
+//! Help opens on the attention legend card, above the bindings.
 
-use crate::ui::chrome::Chrome;
+use crate::ui::chrome::{Chrome, RowState};
 use crate::ui::keymap::{HelpEntry, Keymap};
+use crate::ui::status::{state_dot, state_label};
 use crate::ui::widgets::{
     action_button_width, modal_stack_areas, panel_contrast_fg, render_action_button,
     render_modal_header, render_modal_shell,
@@ -176,7 +178,6 @@ fn help_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
 }
 
 /// Body rows: the prefix chord first, then every visible binding.
-/// This unbounded form also supplies the logical row count for keyboard scrolling.
 pub fn help_lines(chrome: &Chrome) -> Vec<Line<'static>> {
     help_rows(chrome, u16::MAX)
 }
@@ -185,15 +186,129 @@ pub fn help_rows(chrome: &Chrome, width: u16) -> Vec<Line<'static>> {
     help_groups(chrome, width).into_iter().flatten().collect()
 }
 
-pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Rect> {
+/// The attention legend Help opens with, in the Attention board's order:
+/// each state's glyph and word, what the status counts file it under, and
+/// what it means.
+const LEGEND: [(RowState, &str, &str); 7] = [
+    (
+        RowState::Attention,
+        "need you",
+        "waiting on you: an approval, a question, an error it cannot pass",
+    ),
+    (RowState::Working, "active", "running a turn"),
+    (RowState::Idle, "idle", "at its prompt, nothing pending"),
+    (
+        RowState::Unseen,
+        "idle",
+        "finished since you last looked; clears when its pane is focused",
+    ),
+    (
+        RowState::Paused,
+        "idle",
+        "a run someone paused on purpose; never an agent idle at its prompt",
+    ),
+    (
+        RowState::Orphaned,
+        "n gone",
+        "process or relay missing; its own count, shown only when not zero",
+    ),
+    (
+        RowState::Unknown,
+        "idle",
+        "the first seconds after a spawn, before the daemon has a state",
+    ),
+];
+const LEGEND_STATE_WIDTH: usize = 15;
+const LEGEND_COUNT_WIDTH: usize = 11;
+/// Cells before a legend row's meaning: the glyph cell, the state, the count.
+const LEGEND_LEAD: usize = 3 + LEGEND_STATE_WIDTH + LEGEND_COUNT_WIDTH;
+
+/// The legend card `render_body` draws above the bindings while no search
+/// narrows them: a heading group, then one group per state, each meaning
+/// wrapped like a binding's description.
+pub fn legend_groups(chrome: &Chrome, width: u16) -> Vec<Vec<Line<'static>>> {
+    if !chrome.keybind_help.query.is_empty() {
+        return Vec::new();
+    }
+    let p = &chrome.palette;
+    let dim = Style::default().fg(p.subtext0);
+    let width = width as usize;
+    let mut groups = vec![vec![
+        Line::from(Span::styled(
+            " Legend",
+            Style::default().fg(p.text).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(
+            format!(
+                "   {:state$}{:count$}means",
+                "state",
+                "counts as",
+                state = LEGEND_STATE_WIDTH,
+                count = LEGEND_COUNT_WIDTH
+            ),
+            Style::default().fg(p.overlay1),
+        )),
+    ]];
+    groups.extend(LEGEND.iter().map(|&(state, counts_as, means)| {
+        let (glyph, color) = state_dot(state, p);
+        let lead = vec![
+            Span::raw(" "),
+            Span::styled(format!("{glyph} "), Style::default().fg(color)),
+            Span::styled(
+                format!("{:width$}", state_label(state), width = LEGEND_STATE_WIDTH),
+                Style::default().fg(p.text),
+            ),
+            Span::styled(
+                format!("{counts_as:width$}", width = LEGEND_COUNT_WIDTH),
+                dim,
+            ),
+        ];
+        let inline = if LEGEND_LEAD < width {
+            wrap_description(means, width - LEGEND_LEAD)
+        } else {
+            Vec::new()
+        };
+        let below = wrap_description(means, width.saturating_sub(3));
+        if inline.is_empty() || below.len() + 1 < inline.len() {
+            let mut lines = vec![Line::from(lead)];
+            lines.extend(
+                below
+                    .into_iter()
+                    .map(|chunk| Line::from(vec![Span::raw("   "), Span::styled(chunk, dim)])),
+            );
+            return lines;
+        }
+        inline
+            .into_iter()
+            .enumerate()
+            .map(|(index, chunk)| {
+                let mut spans = if index == 0 {
+                    lead.clone()
+                } else {
+                    vec![Span::raw(" ".repeat(LEGEND_LEAD))]
+                };
+                spans.push(Span::styled(chunk, dim));
+                Line::from(spans)
+            })
+            .collect()
+    }));
+    if let Some(last) = groups.last_mut() {
+        last.push(Line::default());
+    }
+    groups
+}
+
+/// Draw the help over `area`. Returns the close button, and the furthest
+/// scroll the drawn body shows, which bounds the scroll keys.
+pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> (Vec<Rect>, usize) {
     let p = &chrome.palette;
     let popup_w = area.width.saturating_sub(4).min(HELP_MAX_WIDTH);
     let popup_h = area.height.saturating_sub(2).min(HELP_MAX_HEIGHT);
     let Some(inner) = render_modal_shell(frame, area, popup_w, popup_h, p) else {
-        return Vec::new();
+        return (Vec::new(), 0);
     };
     if inner.height < 6 || inner.width < 20 {
-        return Vec::new();
+        return (Vec::new(), 0);
     }
 
     let stack = modal_stack_areas(inner, 2, 1, 0, 1);
@@ -243,7 +358,7 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Ve
     };
     frame.render_widget(Paragraph::new(search_line), search_row);
 
-    render_body(frame, stack.content, chrome);
+    let last_scroll = render_body(frame, stack.content, chrome);
 
     let dim = Style::default().fg(p.overlay0);
     let key = Style::default().fg(p.text);
@@ -304,14 +419,15 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Ve
         ])
     };
     frame.render_widget(Paragraph::new(footer), footer_area);
-    vec![button]
+    (vec![button], last_scroll)
 }
 
 /// Lay logical bindings out column-major, wrapping descriptions within each row.
-/// Scroll by bindings so the existing keyboard bound still reaches the last one.
-fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
+/// Scroll by groups, and return the furthest scroll: the first group of the
+/// last full view.
+fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) -> usize {
     if body.width == 0 || body.height == 0 {
-        return;
+        return 0;
     }
     let p = &chrome.palette;
     let entries = visible_entries(chrome);
@@ -325,7 +441,8 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
             1
         };
         let column_width = text_width.saturating_sub(HELP_COLUMN_GAP * (columns - 1)) / columns;
-        let groups = help_groups(chrome, column_width);
+        let mut groups = legend_groups(chrome, column_width);
+        groups.extend(help_groups(chrome, column_width));
         let total_lines = groups.iter().map(Vec::len).sum::<usize>();
         (columns, column_width, groups, total_lines)
     };
@@ -364,7 +481,7 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
     }
 
     let Some(track) = track else {
-        return;
+        return max_scroll;
     };
     let track_rows = track.height as usize;
     let thumb_len = ((track_rows * capacity) / total_lines).max(1);
@@ -380,6 +497,7 @@ fn render_body(frame: &mut Frame, body: Rect, chrome: &Chrome) {
         })
         .collect();
     frame.render_widget(Paragraph::new(cells), track);
+    max_scroll
 }
 
 #[cfg(test)]

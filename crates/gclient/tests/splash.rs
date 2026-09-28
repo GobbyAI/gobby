@@ -9,6 +9,7 @@ use gobby_client::daemon::{
 };
 use gobby_client::frame_source::{PaneFrameSource, ScriptedFrameSource, Transport};
 use gobby_client::teardown::TerminalGuard;
+use gobby_client::ui::marks::{self, MarkPalette};
 use gobby_client::ui::{render_workspace, splash, status, Chrome};
 use gobby_client::Workspace;
 use gobby_terminal::protocol::{CellData, FrameData, PaneModes, ServerMessage};
@@ -57,81 +58,96 @@ fn row(terminal: &Terminal<TestBackend>, y: u16) -> String {
         .collect()
 }
 
-#[test]
-fn group_is_centred_in_the_pane_area_and_never_clips() {
-    let chrome = waiting_chrome();
-    let full = draw(120, 40, Rect::new(0, 0, 120, 40), &chrome);
-    let first_stage = (0..40)
-        .map(|y| row(&full, y))
-        .find(|line| line.contains("daemon health"))
-        .expect("stage row");
-    let byte = first_stage.find("daemon health").expect("stage label");
-    assert_eq!(first_stage[..byte].chars().count(), 53);
-    assert!(first_stage.contains("9.8 s and waiting"));
-    assert!(row(&full, 12).chars().any(|ch| ch != ' '));
-
-    let wordmark_only = draw(60, 20, Rect::new(0, 0, 60, 20), &chrome);
-    assert!(row(&wordmark_only, 12).contains("daemon health"));
-    assert!(row(&wordmark_only, 2).chars().any(|ch| ch != ' '));
-
-    let compact = draw(50, 20, Rect::new(5, 2, 40, 16), &chrome);
-    let compact_rows: Vec<String> = (0..20).map(|y| row(&compact, y)).collect();
-    assert!(compact_rows
-        .iter()
-        .any(|line| line.contains("daemon health")));
-    for (y, line) in compact_rows.iter().enumerate() {
-        for (x, ch) in line.chars().enumerate() {
-            if !(5..45).contains(&x) || !(2..18).contains(&y) {
-                assert_eq!(ch, ' ', "splash escaped ({x}, {y})");
+/// The marks drawn straight into an empty buffer at the given origins, so
+/// the splash is judged cell for cell.
+fn marks_at(
+    width: u16,
+    height: u16,
+    placed: &[(&marks::Mark, (u16, u16))],
+    chrome: &Chrome,
+) -> Terminal<TestBackend> {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+    let palette = MarkPalette::normal(&chrome.palette);
+    terminal
+        .draw(|frame| {
+            for (mark, origin) in placed {
+                marks::render_mark(frame, *origin, mark, &palette);
             }
-        }
-    }
+        })
+        .expect("marks draw");
+    terminal
 }
 
 #[test]
-fn connecting_note_clears_the_goblin_at_standard_terminal_height() {
+fn goblin_and_wordmark_stand_alone_centred_and_drop_as_the_area_shrinks() {
     let chrome = waiting_chrome();
-    let terminal = draw(120, 40, Rect::new(0, 0, 120, 40), &chrome);
-    let note_y = (1..40)
-        .find(|&y| row(&terminal, y).contains("Connecting to"))
-        .expect("connecting note");
-    let goblin_top = (2..note_y)
-        .find(|&y| row(&terminal, y).chars().take(50).any(|ch| ch != ' '))
-        .expect("goblin mark");
-    assert!(
-        note_y >= goblin_top + 17,
-        "the note at row {note_y} must clear the sixteen-row goblin at row {goblin_top}"
+    let (goblin, wordmark) = (marks::goblin_large(), marks::wordmark());
+
+    // Both: the wordmark 37 columns right of the goblin and 4 rows down.
+    let full = draw(120, 40, Rect::new(0, 0, 120, 40), &chrome);
+    let both = marks_at(
+        120,
+        40,
+        &[(goblin, (14, 12)), (wordmark, (51, 16))],
+        &chrome,
     );
+    assert_eq!(full.backend().buffer(), both.backend().buffer());
+
+    // Too narrow for both: the wordmark alone.
+    let narrow = draw(60, 20, Rect::new(0, 0, 60, 20), &chrome);
+    let alone = marks_at(60, 20, &[(wordmark, (3, 6))], &chrome);
+    assert_eq!(narrow.backend().buffer(), alone.backend().buffer());
+
+    // Too narrow for the wordmark: the goblin alone, inside its area.
+    let compact = draw(50, 20, Rect::new(5, 2, 40, 16), &chrome);
+    let goblin_only = marks_at(50, 20, &[(goblin, (8, 2))], &chrome);
+    assert_eq!(compact.backend().buffer(), goblin_only.backend().buffer());
+
+    // Too small for either: nothing at all.
+    let tiny = draw(30, 10, Rect::new(0, 0, 30, 10), &chrome);
+    let empty = marks_at(30, 10, &[], &chrome);
+    assert_eq!(tiny.backend().buffer(), empty.backend().buffer());
 }
 
 #[test]
-fn status_segment_names_the_running_stage_and_the_retry_countdown() {
+fn the_splash_is_the_whole_frame_until_a_failed_first_connect_falls_through() {
     let ws = Workspace::scripted();
     let mut chrome = waiting_chrome();
-    chrome.prefs.status_left.clear();
-    chrome.prefs.status_right.clear();
-    let mut terminal = Terminal::new(TestBackend::new(120, 1)).expect("test terminal");
-    let draw_status = |terminal: &mut Terminal<TestBackend>, chrome: &Chrome| {
-        terminal
-            .draw(|frame| {
-                status::render_status_line(frame, Rect::new(0, 0, 120, 1), &ws, chrome);
-            })
-            .expect("draw status");
-        row(terminal, 0)
-    };
-
-    let line = draw_status(&mut terminal, &chrome);
-    assert!(
-        line.starts_with(" ◐ connecting · daemon health · 9.8 s"),
-        "status should name the running stage: {line}"
+    // Under System the ground stays the terminal's, so the frame is the
+    // marks alone; Dark and Light paint theirs over it (chrome_render).
+    chrome.prefs.theme = "system".to_string();
+    chrome.compute_view(&ws, Rect::new(0, 0, 120, 40));
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    terminal
+        .draw(|frame| {
+            render_workspace(frame, &ws, &chrome);
+        })
+        .expect("splash frame");
+    let splash = marks_at(
+        120,
+        40,
+        &[
+            (marks::goblin_large(), (14, 12)),
+            (marks::wordmark(), (51, 16)),
+        ],
+        &chrome,
     );
+    assert_eq!(terminal.backend().buffer(), splash.backend().buffer());
 
-    chrome.connection.stages = None;
+    // A failed first connect schedules a retry and never finishes its
+    // stages: the chrome comes back and the status line says why.
     chrome.connection.retry_at = Some(chrome.connection.now + Duration::from_secs(3));
-    let line = draw_status(&mut terminal, &chrome);
+    terminal
+        .draw(|frame| {
+            render_workspace(frame, &ws, &chrome);
+        })
+        .expect("retry frame");
+    let menu = row(&terminal, 0);
+    assert!(menu.starts_with(" Gobby  File "), "{menu}");
+    let status = row(&terminal, 39);
     assert!(
-        line.starts_with(" × Daemon unreachable · retry in 3 s"),
-        "status should show the retry deadline: {line}"
+        status.contains("× Daemon unreachable · retrying in 3 s"),
+        "{status}"
     );
 }
 

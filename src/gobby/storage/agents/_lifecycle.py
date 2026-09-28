@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
@@ -506,6 +507,108 @@ class _AgentRunLifecycleMixin:
                 now,
                 run_id,
             ),
+        )
+
+    def fail_uninitialized_with_exited_terminal(
+        self: _AgentRunLifecycleHost,
+        run_id: str,
+        *,
+        error: str,
+        expected_pid: int,
+        expected_started_at: str,
+        expected_child_session_id: str,
+        expected_session_created_at: str,
+        expected_session_updated_at: str,
+        expected_session_last_activity: datetime | str | None,
+        expected_terminal_id: str,
+    ) -> AgentRun | None:
+        """Fail a stale startup only while its session and managed terminal remain unchanged."""
+        now = utc_now()
+        return _execute_terminal_transition(
+            self,
+            run_id=run_id,
+            sql="""
+            UPDATE agent_runs AS ar
+            SET status = 'error',
+                error = %s,
+                terminal_reason = NULL,
+                pending_terminal_action = NULL,
+                pending_terminal_reason = NULL,
+                termination_requested_at = NULL,
+                pid = NULL,
+                completed_at = %s,
+                updated_at = %s
+            WHERE ar.id = %s
+              AND ar.status = 'running'
+              AND ar.pid = %s
+              AND ar.started_at = %s
+              AND ar.child_session_id = %s
+              AND ar.terminal_id = %s
+              AND COALESCE(ar.tool_calls_count, 0) = 0
+              AND COALESCE(ar.turns_used, 0) = 0
+              AND EXISTS (
+                  SELECT 1 FROM sessions AS s
+                  WHERE s.id = ar.child_session_id
+                    AND s.created_at = %s
+                    AND s.updated_at = %s
+                    AND s.last_activity IS NOT DISTINCT FROM %s
+                    AND s.external_id = CAST(s.id AS TEXT)
+                    AND s.context_injected = FALSE
+                    AND COALESCE(s.message_count, 0) = 0
+                    AND COALESCE(s.turn_count, 0) = 0
+                    AND COALESCE(s.tool_call_count, 0) = 0
+              )
+              AND EXISTS (
+                  SELECT 1 FROM terminals AS t
+                  WHERE t.id = ar.terminal_id AND t.state = 'exited'
+              )
+            """,
+            params=(
+                error,
+                now,
+                now,
+                run_id,
+                expected_pid,
+                expected_started_at,
+                expected_child_session_id,
+                expected_terminal_id,
+                expected_session_created_at,
+                expected_session_updated_at,
+                expected_session_last_activity,
+            ),
+        )
+
+    def fail_uninitialized_prompt_delivery(
+        self: _AgentRunLifecycleHost,
+        run_id: str,
+        *,
+        error: str,
+    ) -> AgentRun | None:
+        """Fail prompt delivery only before the child binds a provider session."""
+        now = utc_now()
+        return _execute_terminal_transition(
+            self,
+            run_id=run_id,
+            sql="""
+            UPDATE agent_runs AS ar
+            SET status = 'error',
+                error = %s,
+                terminal_reason = NULL,
+                pending_terminal_action = NULL,
+                pending_terminal_reason = NULL,
+                termination_requested_at = NULL,
+                pid = NULL,
+                completed_at = %s,
+                updated_at = %s
+            WHERE ar.id = %s
+              AND ar.status IN ('pending', 'running')
+              AND EXISTS (
+                  SELECT 1 FROM sessions AS s
+                  WHERE s.id = ar.child_session_id
+                    AND s.external_id = CAST(s.id AS TEXT)
+              )
+            """,
+            params=(error, now, now, run_id),
         )
 
     def timeout(

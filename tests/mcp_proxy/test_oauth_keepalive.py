@@ -98,6 +98,48 @@ def test_retry_after_backoff_blocks_a_second_call_inside_the_window() -> None:
     assert state.retry_not_before == 1_030.0
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("headers", "delay"),
+    [
+        ({"X-Retry-After": "120"}, 120),
+        ({"Retry-After": "30", "X-Retry-After": "120"}, 30),
+    ],
+)
+async def test_token_failure_logs_retry_headers_and_blocks_next_attempt(
+    headers: dict[str, str], delay: int, caplog: pytest.LogCaptureFixture
+) -> None:
+    config = _config("retry-headers")
+    storage = MCPOAuthStorage(_store(), config)
+    storage.state.tokens = OAuthToken(
+        access_token="expired-access", token_type="Bearer", refresh_token="expired-refresh"
+    )
+    storage.state.client = OAuthClientInformationFull(
+        client_id="client", redirect_uris=[AnyUrl("http://127.0.0.1:9/callback")]
+    )
+    storage.state.expires_at = 1.0
+    provider = PersistentOAuthProvider(config, storage)
+    response = httpx2.Response(
+        429,
+        headers=headers,
+        json={"error": "server_error"},
+        request=httpx2.Request("POST", "https://retry-headers.example/token"),
+    )
+
+    caplog.set_level("WARNING")
+    await provider._record_token_endpoint_failure(response)
+
+    assert "x_retry_after=120" in caplog.text
+    if "Retry-After" in headers:
+        assert "retry_after=30" in caplog.text
+    assert storage.state.retry_not_before is not None
+    remaining = storage.state.retry_not_before - time.time()
+    assert delay - 5 < remaining <= delay
+    flow = provider.async_auth_flow(httpx2.Request("GET", config.url or ""))
+    with pytest.raises(OAuthFlowError, match="backoff"):
+        await anext(flow)
+
+
 def test_idle_token_is_due_inside_the_named_lead() -> None:
     now = 5_000.0
     assert token_refresh_due(now + ACCESS_REFRESH_LEAD_SECONDS, now)

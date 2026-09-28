@@ -8,24 +8,13 @@
 
 use crate::transport::DeliveryFailureKind;
 use serde_json::Value;
-use std::io;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const DEFAULT_ALLOW_SECONDS: f64 = 120.0;
 const MAINTENANCE_ALLOW_SECONDS: f64 = 24.0 * 60.0 * 60.0;
-const HEALTH_TIMEOUT: Duration = Duration::from_millis(350);
-const HEALTH_ENDPOINT: &str = "/api/health";
 const ACTIVE_MARKER: &str = "shutdown_intent_active.json";
 const ALLOWED_SOURCES: [&str; 4] = ["cli_", "http_", "service_", "mcp_"];
-
-pub fn should_skip_dispatch(hook_type: &str) -> bool {
-    should_skip_dispatch_with(
-        hook_type,
-        || marker_home().is_some_and(|home| fresh_shutdown_marker(&home)),
-        || daemon_is_reachable(&gobby_core::daemon_url::daemon_url()),
-    )
-}
 
 pub fn suppress_after_failed_post(
     hook_type: &str,
@@ -40,30 +29,22 @@ pub fn suppress_after_failed_post(
 fn suppress_after_failed_post_with_marker(
     hook_type: &str,
     failure_kind: Option<DeliveryFailureKind>,
-    enqueued_path: &Path,
+    _enqueued_path: &Path,
     marker_active: impl FnOnce() -> bool,
 ) -> bool {
-    if !should_suppress_failed_post(hook_type, failure_kind, marker_active) {
-        return false;
-    }
-
-    delete_enqueued(enqueued_path)
+    should_suppress_failed_post(hook_type, failure_kind, marker_active)
 }
 
 pub fn is_stop_hook(hook_type: &str) -> bool {
     hook_type.eq_ignore_ascii_case("stop")
 }
 
-fn is_fail_open_hook(hook_type: &str) -> bool {
-    is_stop_hook(hook_type) || matches!(hook_type, "pre-compact" | "PreCompact" | "pre_compact")
+pub fn fail_open_after_enqueue_failure(hook_type: &str) -> bool {
+    is_fail_open_hook(hook_type) && marker_home().is_some_and(|home| fresh_shutdown_marker(&home))
 }
 
-fn should_skip_dispatch_with(
-    hook_type: &str,
-    marker_active: impl FnOnce() -> bool,
-    daemon_reachable: impl FnOnce() -> bool,
-) -> bool {
-    is_fail_open_hook(hook_type) && marker_active() && !daemon_reachable()
+fn is_fail_open_hook(hook_type: &str) -> bool {
+    is_stop_hook(hook_type) || matches!(hook_type, "pre-compact" | "PreCompact" | "pre_compact")
 }
 
 fn should_suppress_failed_post(
@@ -128,17 +109,6 @@ fn read_marker(path: &Path) -> Option<Value> {
     value.is_object().then_some(value)
 }
 
-fn daemon_is_reachable(daemon_url: &str) -> bool {
-    let endpoint = format!("{}{}", daemon_url.trim_end_matches('/'), HEALTH_ENDPOINT);
-    match ureq::get(&endpoint).timeout(HEALTH_TIMEOUT).call() {
-        Ok(_) | Err(ureq::Error::Status(_, _)) => true,
-        Err(ureq::Error::Transport(error)) => {
-            log::debug!("daemon health probe transport error for {endpoint}: {error}");
-            false
-        }
-    }
-}
-
 fn marker_home() -> Option<PathBuf> {
     gobby_core::gobby_home().ok()
 }
@@ -185,21 +155,10 @@ fn now_secs() -> f64 {
         .unwrap_or(0.0)
 }
 
-fn delete_enqueued(enqueued_path: &Path) -> bool {
-    match std::fs::remove_file(enqueued_path) {
-        Ok(()) => true,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
-        Err(_) => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-    use std::thread;
     use tempfile::tempdir;
 
     fn write_marker(home: &Path, name: &str, value: Value) {
@@ -336,52 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn skip_dispatch_requires_fail_open_hook_marker_and_unreachable_daemon() {
-        assert!(should_skip_dispatch_with("Stop", || true, || false));
-        assert!(should_skip_dispatch_with("stop", || true, || false));
-        assert!(should_skip_dispatch_with("pre-compact", || true, || false));
-        assert!(should_skip_dispatch_with("PreCompact", || true, || false));
-        assert!(should_skip_dispatch_with("pre_compact", || true, || false));
-        assert!(!should_skip_dispatch_with("PreToolUse", || true, || false));
-        assert!(!should_skip_dispatch_with(
-            "session-start",
-            || true,
-            || false
-        ));
-        assert!(!should_skip_dispatch_with(
-            "Stop",
-            || false,
-            || { panic!("daemon probe should not run without a marker") }
-        ));
-        assert!(!should_skip_dispatch_with("Stop", || true, || true));
-    }
-
-    #[test]
-    fn daemon_probe_treats_http_responses_as_reachable() {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        let handle = thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0_u8; 1024];
-            let n = stream.read(&mut buf).unwrap();
-            let request = String::from_utf8_lossy(&buf[..n]);
-            assert!(request.contains("GET /api/health HTTP/1.1"));
-            stream
-                .write_all(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n")
-                .unwrap();
-        });
-
-        assert!(daemon_is_reachable(&format!("http://{addr}")));
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn daemon_probe_treats_transport_failure_as_unreachable() {
-        assert!(!daemon_is_reachable("file:///tmp/not-a-daemon"));
-    }
-
-    #[test]
-    fn post_enqueue_suppression_deletes_fail_open_envelope_for_connect_or_timeout() {
+    fn post_enqueue_suppression_retains_fail_open_envelope_for_connect_or_timeout() {
         let dir = tempdir().unwrap();
         let connect = dir.path().join("connect.json");
         let timeout = dir.path().join("timeout.json");
@@ -394,7 +308,7 @@ mod tests {
             &connect,
             || true
         ));
-        assert!(!connect.exists());
+        assert!(connect.exists());
 
         assert!(suppress_after_failed_post_with_marker(
             "PreCompact",
@@ -402,7 +316,7 @@ mod tests {
             &timeout,
             || true
         ));
-        assert!(!timeout.exists());
+        assert!(timeout.exists());
     }
 
     #[test]
@@ -449,14 +363,5 @@ mod tests {
             || false
         ));
         assert!(stale.exists());
-    }
-
-    #[test]
-    fn post_enqueue_suppression_rejects_delete_failure() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("not-a-file");
-        std::fs::create_dir(&path).unwrap();
-
-        assert!(!delete_enqueued(&path));
     }
 }

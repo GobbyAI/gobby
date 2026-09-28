@@ -21,13 +21,19 @@ _ARTIFACT_REF_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 _INLINE_CRITERION_LINE_RE = re.compile(
-    r"^[ \t]*(?:>[ \t]*)?(?:[-*+][ \t]+|\d+[.)][ \t]+)?"
-    r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+:[ \t]+(?P<body>[^\n]*)",
+    r"^[ \t]*(?:>[ \t]*)?(?:(?:[-*+][ \t]+|\d+[.)][ \t]+)?"
+    r"[A-Za-z0-9]+(?:\.[A-Za-z0-9]+)+:|(?P<numbered>\d+[.)]))"
+    r"[ \t]+(?P<body>[^\n]*)",
     re.MULTILINE,
 )
 _INLINE_ARTIFACT_REF_RE = re.compile(
     r"\b(?P<kind>test|file):"
     r"(?:[ \t]*`(?P<quoted>[^`]+)`|[ \t]+(?P<bare>[^\s,;]+))",
+    re.IGNORECASE,
+)
+_ILLUSTRATIVE_QUOTE_RE = re.compile(
+    r"\b(?:such as|for example|example|e\.g\.)[ \t]*[:,]?[ \t]*"
+    r"(?P<quote>'(?:[^'\n]|'(?=\w))*'|\"[^\"\n]*\")",
     re.IGNORECASE,
 )
 # An unbackticked token only counts as a reference when it is shaped like one.
@@ -85,9 +91,13 @@ def extract_artifact_references(criteria: str, kind: str) -> tuple[str, ...]:
     matches = [(match.start(), match) for match in _ARTIFACT_REF_RE.finditer(criteria)]
     for criterion in _INLINE_CRITERION_LINE_RE.finditer(criteria):
         body = criterion.group("body")
-        code_spans = tuple(re.finditer(r"`[^`\n]*`", body))
+        inert_spans = [span.span() for span in re.finditer(r"`[^`\n]*`", body)]
+        if criterion.group("numbered"):
+            inert_spans.extend(
+                example.span("quote") for example in _ILLUSTRATIVE_QUOTE_RE.finditer(body)
+            )
         for match in _INLINE_ARTIFACT_REF_RE.finditer(body):
-            if any(span.start() <= match.start() < span.end() for span in code_spans):
+            if any(start <= match.start() < end for start, end in inert_spans):
                 continue
             matches.append((criterion.start("body") + match.start(), match))
     for _, match in sorted(matches, key=lambda item: item[0]):

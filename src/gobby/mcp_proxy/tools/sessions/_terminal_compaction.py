@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
 from gobby.terminals.pane_io import (
+    ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
     PaneIO,
@@ -453,7 +454,13 @@ async def _send_terminal_compaction_command(
     readiness_before_command: str | None = None
     rejection: dict[str, str] | None = None
     interrupt_sent = False
-    for resubmission in range(1 + _COMPACTION_REJECTION_RETRIES):
+    # A compact command may have started despite a transient rejection view.
+    # Never type it again; only the verified-submit ladder may retry Enter when
+    # it can still see the original command in the composer.
+    rejection_retries = (
+        0 if command in _CLI_COMPACT_COMMANDS.values() else _COMPACTION_REJECTION_RETRIES
+    )
+    for resubmission in range(1 + rejection_retries):
         if resubmission:
             logger.warning(
                 "Session %s rejected %s while its task was still running; "
@@ -531,6 +538,16 @@ async def _send_terminal_compaction_command(
             composer_read=composer_read,
             verify_seconds=verify_seconds,
         )
+        if (
+            not ok
+            and submit_detail is not None
+            and submit_detail.get("error_code") == ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE
+        ):
+            # The text write included a newline, which may have launched /compact.
+            # Keep the marker and await a provider boundary; never type it again.
+            if schedule_continuation_readiness is not None:
+                schedule_continuation_readiness(readiness_before_command)
+            return True, None, continuation_pending, {"enter_delivery_unconfirmed": True}
         if ok:
             submit_detail = None
             ok, reason = await _confirm_compaction_prompt(

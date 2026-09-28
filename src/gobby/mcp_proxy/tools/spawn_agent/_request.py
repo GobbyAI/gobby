@@ -61,6 +61,11 @@ def build_spawn_request(
         agent_name=agent_name,
         session_manager=runner.child_session_manager,
         run_manager=runner.run_storage,
+        cleanup_agent=(
+            runner.agent_lifecycle_monitor.get_cleanup_agent()
+            if getattr(runner, "agent_lifecycle_monitor", None) is not None
+            else None
+        ),
         machine_id=machine_id,
         model=endpoint.model,
         is_local=endpoint.is_local,

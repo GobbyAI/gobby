@@ -25,7 +25,7 @@ Usage: gclient [--project PROJECT] [--node NODE] [--workspace WORKSPACE] [--daem
 
 | Flag | Meaning |
 | --- | --- |
-| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it opens the project the workspace's rows say was focused last, or the personal project with one shell in the directory it was launched from. |
+| `--project PROJECT` | A project UUID or a checkout path. Without it the client walks up from the current directory to the nearest `.gobby/project.json`; outside every checkout it opens the project the workspace's rows say was focused last, or the personal project. No shell starts until you ask for one. |
 | `--workspace WORKSPACE` | The workspace to attach: a ref (`1`, or `2:1`, whose node overrides `--node`) or a name. Defaults to `default`, which is created on first use. See [Workspaces](#workspaces). |
 | `--node NODE` | The node that owns the workspace: a ref (`2`), a node id, a hostname, or a label. Defaults to the daemon's own node. |
 | `--daemon-url URL` | Daemon endpoint. Defaults to the local daemon's configured URL. |
@@ -51,11 +51,11 @@ Logs go to `~/.gobby/logs/gclient.log`.
 ```text
  0 | Gobby  File  Edit  View  Window  Agent  Help
  1 | tab-0:0:0  tab-0:0:1 Z  +
- 2 |┌ ▸ zsh ───────────────────────┐┌ claude ──────────────────────────┐
+ 2 |┌ ○ zsh · Focused ─────────────┐┌ ○ #1742: Codex ──────────────────┐
  3 |│  pane (focused)              ││  pane                            │
  4 |│                              ││                                  │
  5 |│                              ││                                  │
- 6 |└ zsh · Focused ──────── tmux ┘└ claude ──────────────── gclient ┘
+ 6 |└──────────────────── tmux %16 ┘└───────────────────────── 0:0:1:2 ┘
  7 |                                              prefix ctrl+b
 
     The sidebar starts pinned beside the tabs and panes. Unpin it to use
@@ -74,7 +74,7 @@ and the status bar the last row. With default pane gaps, every pane draws all
 four edges. This example shows the sidebar hidden for clarity. By default it
 starts pinned in a saved column beside the content. `prefix+b` unpins it; a
 later `prefix+b` opens the overlay on the configured side without resizing
-tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View › pin sidebar**
+tabs or panes. `esc` or `prefix+b` rolls the overlay up. **View › Pin sidebar**
 pins it again. The menus remain usable while the client connects.
 
 **Menus.** Click a title on row 0 or move between open menus with the keyboard.
@@ -83,26 +83,41 @@ when those conditions are absent. Slashes below separate alternative labels:
 
 | Menu | Items |
 | --- | --- |
-| Gobby | settings, reload config, quit |
-| File | new terminal, new tab, new workspace…, rename tab, close tab, destroy orphaned terminals…, detach |
-| Edit | copy mode, rename pane, rename tab, rename terminal, clear pane name (when named), send right-clicks to pane / use gclient menu |
-| View | this project / all projects, grouped / priority, working projects / all projects, show sidebar, pin sidebar |
-| Window | split right, split down, zoom / unzoom, close pane, resize mode, arrange: even horizontal, arrange: even vertical, arrange: main horizontal, arrange: main vertical, arrange: tiled, new grid… |
-| Agent | respond, mark seen, take control, release control, take back, detach, open alert target, next attention, previous attention |
-| Help | keys, alerts…, daemon, about gobby |
+| Gobby | Settings, Reload config, Quit |
+| File | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
+| View | This project / All projects, Grouped / Priority, Working projects / All projects, Show sidebar, Pin sidebar, Legend, Theme ▸ |
+| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange: even horizontal, Arrange: even vertical, Arrange: main horizontal, Arrange: main vertical, Arrange: tiled, New grid… |
+| Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
+| Help | Keys, Alerts…, Daemon, About Gobby |
 
-The five **Window › arrange: …** items redistribute the panes in the active
-tab into the chosen layout. **Window › new grid…** asks for rows and columns
-and starts a terminal in each new cell. **Help › daemon** shows the daemon URL, client and daemon
+**View › Theme** opens Dark, Light, and System beside the View menu, which
+stays drawn with its Theme row lit. A click on another View row still acts on
+it, and `esc` closes both. **View › Legend** opens the keybinding help on its
+attention legend.
+
+Dark and Light paint their own ground: every cell and every pane's default
+colours take the theme's text and background, whatever background and
+foreground the hosting terminal (Ghostty included) configures. Those cells are
+explicit colours, so a terminal setting that applies opacity to explicit cells
+(Ghostty's `background-opacity-cells`) still applies. System keeps the hosting
+terminal's own background and foreground and only picks the palette from the
+OS appearance.
+
+The five **Window › Arrange: …** items redistribute the panes in the active
+tab into the chosen layout. **Window › New grid…** asks for rows and columns
+and starts a terminal in each new cell. **Help › Daemon** shows the daemon URL, client and daemon
 versions, health, last roster refresh, and completed startup timings. **Help ›
-about gobby** shows the versions, URL, and machine.
+About Gobby** shows the versions, URL, and machine.
 
 **Sidebar.** Shown and pinned by default. Its side and pinned state are saved
 in preferences; unpinned it opens as an overlay on the saved side.
 Four sections, each under a one-row band: Machines, Projects, Agents, and
 Terminals. Every clickable control is bracketed. Machines and Projects together
 never take more than the top half of the sidebar (each scrolls inside its cap);
-Agents and Terminals share the rest.
+Agents and Terminals share the rest. A section with more rows than room draws a
+scrollbar thumb and no track. The thumb is dim at rest, and brightens for a
+second after the section scrolls or while the navigate cursor is in it.
 
 - *Machines* lists this machine (the hub, by host name) first, then every other
   machine the daemon knows nested under it with `├─`/`└─`, each with the most
@@ -116,6 +131,8 @@ Agents and Terminals share the rest.
   edge. Only one project is expanded at a time: selecting a project expands it
   and folds the others, and its worktrees appear under the card as
   `├─ glyph branch · #task`, with `~` for the branch of a detached worktree.
+  A branch too long for its row drops the task and scrolls on the same clock
+  as the Agents titles.
   The band's control toggles `[working]` (projects
   with a live session, run, or terminal on the current machine filter, plus the
   focused one) and `[all]`.
@@ -137,20 +154,30 @@ Agents and Terminals share the rest.
   (flattened urgency order). A `✓` marks the value in force, and choosing it
   again closes the menu unchanged.
 - *Terminals* lists bare terminals without an agent row by their given pane
-  name or foreground command, with the backend below. Click or right-click
-  one as you would an agent row.
+  name or foreground command. The pane's address sits at the right edge, as
+  the pane's corner prints it, and gives way when the name needs the room.
+  The working directory sits below, with `~` for your home, once the daemon
+  reports one. The client relists every five seconds, so the directory and
+  command follow a `cd` or a new program within that time; a directory the
+  daemon can no longer read drops the line. Click or right-click one as you
+  would an agent row.
 
-State glyphs, on machine, project, and session rows alike:
+State glyphs, on machine, project, and session rows alike. The same table opens
+first in the keybinding help as the attention legend:
 
-| Glyph | State |
-| --- | --- |
-| `▶` | working |
-| `⍾` | needs you (an attention prompt is waiting; the row's first line also carries the words `needs you` when they fit beside the title) |
-| `◆` | unseen (new output since you last looked) |
-| `‖` | paused (the session's turn ended waiting on input, approval, or a handoff) |
-| `○` | idle |
-| `◌` | orphaned (the terminal's host is gone; see *Orphaned terminals*) |
-| `·` | unknown |
+| Glyph | State | Counts as | Means |
+| --- | --- | --- | --- |
+| `⍾` | needs you | need you | waiting on you: an approval, a question, an error it cannot pass; the row's first line also carries the words `needs you` when they fit beside the title |
+| `▶` | active | active | running a turn |
+| `○` | idle | idle | at its prompt, nothing pending |
+| `◆` | output unseen | idle | finished since you last looked; clears when its pane is focused |
+| `‖` | held | idle | a run someone paused on purpose; never an agent idle at its prompt |
+| `◌` | gone | gone | process or relay missing (see *Orphaned terminals*) |
+| `·` | no state yet | idle | the first seconds after a spawn, before the daemon has a state |
+
+A machine, project, or worktree row shows the most urgent state among its
+agents: needs you, then gone, then active, then idle. Output unseen, held, and
+no state yet roll up as idle, and a row with no agents is idle.
 
 Only needs-you rows carry a word. A font without U+237E shows a box in place of
 `⍾`; the words still identify the row.
@@ -160,54 +187,67 @@ as its own workspace, so the address is hub, then workspace, then tab, then pane
 Gobby on workspace 0 and Game Goblins on the next workspace is `0:1:0`, not a
 second tab of workspace 0. `prefix+c` still opens a tab inside the attached
 workspace. `prefix+shift+g` switches to the next workspace on this node. See
-[Workspaces](#workspaces). A tab you have not renamed is named for its own
-address, `tab-` followed by its `node:workspace:tab` ref (`tab-0:0:1`), which
-stays put while the panes inside it change what they run; a renamed tab shows
-its name, and a zoomed tab adds ` Z`. A new-tab button follows the last tab; scroll
-arrows appear when tabs overflow. The bar hides when only one tab is open if you
-turn on `hide tab bar with one tab` in settings.
+[Workspaces](#workspaces). A tab you have not renamed shows its number and
+`Untitled` (`6: Untitled`), which stays put while the panes inside it change
+what they run; a renamed tab shows its name alone, and a zoomed tab adds ` Z`.
+A tab leads with the rolled-up state of the agents on its panes, the active tab
+included: `⍾`, `◌`, or `▶`. An idle tab shows no glyph. A new-tab button follows
+the last tab. When the tabs overflow, each shows whole or not at all, the
+new-tab button stays at the right end, and each edge counts the tabs hidden
+beyond it (`‹ 3`, `2 ›`). A count takes `⍾` and the needs-you colour when one of
+those tabs needs you, and a click on it pages the bar one screen. The bar hides
+when only one tab is open if you turn on `hide tab bar with one tab` in
+settings.
 
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
-A pane's top border names the agent's task (`Task #ref - title`) when one is
-known; otherwise it uses the pane label, then the session title or agent
-definition. The focused pane's title starts with `▸`. Over-long pane titles
-share the Agents ticker. The bottom-left border names the agent definition
-and reference, without a repeated project prefix, followed by `Focused` on
-the focused pane or an exceptional `Read-only` / `Uncertain` state when typing
-is unsafe. The bottom-right border names the backend and address (see
+A pane's top-left corner names who sits in it: the agent's state glyph, its
+session reference, and its definition, as in `○ #1742: Codex`. The project
+leads the reference (`○ gobby#1742: Codex`) only in the all-projects priority
+view. A seat with no definition names its provider, such as `○ Claude Code`,
+and a bare shell shows its name, such as `○ zsh`. The focused pane appends
+` · Focused`, or ` · Read-only` / ` · Uncertain` when typing is unsafe;
+unfocused panes carry no condition word. The focused title is bold in the
+accent, a seat that needs you reads in the warning hue, and a read-only or
+uncertain focused pane is dimmed. The task title stays on the Agents row.
+Over-long pane titles share the Agents ticker. The bottom-left corner is
+empty. The bottom-right corner names the pane's address: its workspace ref
+such as `0:0:1:2`, `tmux %16` for a tmux pane, or the backend alone
+(`gclient`, `tmux`) until the address is known (see
 [Attach and control](#attach-and-control)). With `pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
-metadata moves to the top-right of its own title row, unless that would leave the
+address moves to the top-right of its own title row, unless that would leave the
 title fewer than four cells. A pane that has not yet received
 a frame says `waiting for frames`; a pane whose size another viewer set says
 `sized by <viewer>` on its bottom row. An empty tab shows a dimmed goblin mark
 above **No pane open.** when there is room; a small window keeps the text and
 omits the mark. From there, use the live `prefix+w` binding to attach a
-terminal, **File › new terminal** to start one, or `prefix+b` to open the
+terminal, **File › New terminal** to start one, or `prefix+b` to open the
 sidebar. If you changed the keymap, these hints show your current chords.
 
-**Status line.** The fixed left slot shows connection progress as
-`◐ connecting · <stage> · <elapsed>` or an outage as
-`× Daemon unreachable · retry in <n> s`. Off-tab attention adds
-`⍾ 1 needs you` or `⍾ N need you`; ordinary off-tab agents do not enter that count.
-Once connected, the line also shows separate totals for agents and bare terminals.
-These totals give way to focused pane metadata or drop as whole segments when
-the window is too narrow for the right-hand hints.
+**Status line.** The left counts every agent on this machine by its legend
+state, whatever the sidebar shows: `⍾ 1 needs you` or `⍾ N need you`, then
+`N idle`, `N active`, and `◌ N gone`, separated by `│`. Output unseen, held, and
+no state yet count as idle, so the counts sum to the agents on this machine. A
+count of zero draws nothing. Clicking the needs-you count opens the sidebar in
+navigate mode. An outage leads the line with
+`× Daemon unreachable · retrying in <n> s`, and the last known counts stay
+beside it. The idle, active, and gone counts give way to the focused pane's title
+or drop whole when the window is too narrow for the right-hand hints.
 The right end shows the prefix chord,
 shifted when the client runs inside tmux, and the current mode when it is not
-plain terminal mode. Pane-local title, backend, and control state stay on that
-pane's borders. With default pane gaps, every pane, a lone one included, draws
-all four edges; a focused pane too narrow to fit its metadata
-on its edge hands the metadata here, where it leads the line. Metadata is
-clickable only while it names an exception: clicking
-`Read-only` or `Uncertain`, on a border or here, takes control. `Focused` is a
+plain terminal mode. Pane-local title, address, and control state stay on that
+pane's borders. Every pane draws a top edge; a focused pane four cells wide or
+narrower has no room for its title there and hands it here, where it leads the
+line. The title is clickable only while it names an exception: clicking a title
+that ends `Read-only` or `Uncertain`, on the border or here, takes control, and
+hovering it underlines the title's words. `Focused` is a
 condition, not a button.
 
 **Alerts.** Messages that used to sit in the status line are toasts: they
 stack at the top-right corner of the pane area, newest at the bottom, up to
 three at once, and leave after six seconds or at the next keypress. Every
-toast is kept in the alert log (**Help › alerts…**; the last 200),
+toast is kept in the alert log (**Help › Alerts…**; the last 200),
 newest first; `j` / `k` or the arrows scroll it, `enter`, `esc`, or `q` closes
 it. A condition rather than an event, such as `Daemon unreachable`, stays in
 the status line.
@@ -231,7 +271,8 @@ short terminal address alone identifies it rather than a long UUID.
 Where two terminals share a name — most panes on a machine are running a shell
 — the address is what tells them apart: the pane's workspace ref (`0:0:0:1`),
 or the tmux pane id of an external tmux pane, which you can type straight into
-tmux. The address sits under every sidebar row and leads the navigator's detail.
+tmux. The address sits at the right edge of a Terminals row and leads the
+navigator's detail.
 A session's provider
 (`claude`, `codex`, `droid`) is a token beside the address rather than the
 terminal's name.
@@ -334,7 +375,7 @@ and only work after you bind them; every action also appears in the help popup
 
 | Chord | Action | Name |
 | --- | --- | --- |
-| `prefix+c` | Open a new tab with a fresh shell | `new_tab` |
+| `prefix+c` | Open an empty tab without starting a shell | `new_tab` |
 | `prefix+shift+g` | Switch to the next workspace on this node | `next_workspace` |
 | `prefix+n` / `prefix+p` | Next / previous tab | `next_tab` / `previous_tab` |
 | `prefix+1` … `prefix+9` | Switch to tab 1–9 | `switch_tab` |
@@ -409,7 +450,7 @@ the focused terminal.
 | `prefix+q` | Release control of the focused terminal (same as `release_control`; it does not exit) | `detach` |
 | `prefix+shift+q` | Quit the client | `quit` |
 
-The **Help › keys** overlay shows the current bindings after overrides. In a
+The **Help › Keys** overlay shows the current bindings after overrides. In a
 narrow window it hides binding names, keeping chords and descriptions readable;
 you can still search by a binding name.
 
@@ -418,11 +459,14 @@ cannot be rebound.
 
 ## Tabs and panes
 
-A new tab starts its shell in the focused project's checkout and is named for
-its address (`tab-0:0:1`) until you rename it; a split starts a fresh shell for
-the same project. Worktree rows
+A new tab opens empty. Use New Terminal or a split to start a shell in the
+focused project's checkout; that shell and its pane are created together in the
+daemon workspace. The tab stays `Untitled` until you rename it. Worktree rows
 in the sidebar open a tab whose shell starts in that worktree, or reveal the tab
-that already shows it.
+that already shows it. An empty tab is a draft in this window; once you open a
+shell in it, the daemon-owned tab takes its place and survives reattachment.
+Splitting a tab of bare terminals moves its current pane layout into the daemon
+workspace. Those existing terminals stay adopted; the new shell is owned.
 
 **Closing kills gobby's terminals, not yours.** `close_pane`, `close_terminal`,
 and `close tab` ask the daemon to kill a terminal gobby started. The terminal is
@@ -453,12 +497,12 @@ workspace and survive detach and reattach.
 Every pane you open is *attached*: it receives frames. Whether your keystrokes
 reach it depends on the control lease, summarized at the pane's bottom-right.
 
-| Pane metadata | Meaning |
+| Pane title ends | Meaning |
 | --- | --- |
-| `gclient · Focused` / `tmux · Focused` | This is the focused pane. It holds the lease or is acquiring it; keys, pastes, and mouse reports are delivered in order. |
-| `gclient` / `tmux` | An ordinary unfocused pane, including one deliberately observed with `alt+click`. |
-| `backend · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the metadata or use `prefix+shift+a` to take control. |
-| `backend · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the metadata or take control again to continue. |
+| ` · Focused` | This is the focused pane. It holds the lease or is acquiring it; keys, pastes, and mouse reports are delivered in order. |
+| (no condition word) | An ordinary unfocused pane, including one deliberately observed with `alt+click`. |
+| ` · Read-only` | Another viewer took the lease, or the host refused this pane's input. Typing is refused; click the title or use `prefix+shift+a` to take control. |
+| ` · Uncertain` | A proxied write's outcome is unknown after a disconnect. Typing is refused; click the title or take control again to continue. |
 
 ### Where your keystrokes go
 
@@ -471,7 +515,7 @@ grant.
 
 Every other pane keeps typing through the daemon — tmux panes, remote panes,
 and any pane whose direct connection failed and fell back to `proxy`. Those
-are the panes that can show `◌ read-only`, because only a write the daemon
+are the panes that can show `· Uncertain`, because only a write the daemon
 acknowledges can have an unknown outcome. No indicator tells the two apart; a
 pane that typed instantly and then went sluggish fell back, and
 `~/.gobby/logs/gclient.log` records it.
@@ -503,7 +547,7 @@ Asking the daemon who may type costs one round trip, and that round trip belongs
 to the focus change or completed click, never to a key. For a free pane, keys,
 pastes, and forwarded mouse reports you produce before the grant lands
 are held in order and written the instant it does. Nothing is dropped and nothing
-announces a mode — the pane reads `backend · Focused` throughout. Only a daemon
+announces a mode — the pane's title ends `· Focused` throughout. Only a daemon
 that stops answering can overrun that queue, and then a warning toast says
 `too much typed while acquiring control; the rest was dropped`.
 
@@ -516,8 +560,8 @@ types: the first key takes control for you. A forwarded mouse report does not,
 so a pane you deliberately left observing stays that way under the pointer.
 
 `prefix+u`, `prefix+q`, and `ctrl+\` release the lease. The daemon can refuse a
-take: the pane's metadata then reads `backend · Read-only`, the reason arrives
-as a toast, and clicking the metadata takes control back.
+take: the pane's title then ends `· Read-only`, the reason arrives
+as a toast, and clicking the title takes control back.
 On quit, the client releases every held lease and detaches every pane; the
 terminals keep running.
 
@@ -571,7 +615,8 @@ idle rows. `prefix+g` opens with the search box already focused.
 and worktree rows. `enter` focuses the selected project or opens the selected
 worktree; `esc` returns to the terminal.
 
-**Keybinding help (`prefix+?`).** The live keymap with names. `j` / `k`, the
+**Keybinding help (`prefix+?`).** The attention legend, then the live keymap
+with names. A search hides the legend. `j` / `k`, the
 arrows, and `PageUp` / `PageDown` scroll, `/` searches by key, description, or
 name, `enter` or `esc` closes. The `close` button closes too; while the search
 has focus it reads `back` and returns to the list, as `esc` does.
@@ -590,15 +635,15 @@ the `done` and `close` buttons. Rows are clickable. Every change is written to
 
 | Row | Default | Effect |
 | --- | --- | --- |
-| theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one) |
+| theme | `dark` | `dark`, `light`, or `system`; system follows OS appearance while the client is open (dark if the OS does not specify one); also changed by **View › Theme** |
 | mouse capture | on | Off leaves selection and scrolling to your terminal emulator |
-| pane scrollbars | on | Draw a scrollbar lane beside scrolled panes |
+| pane scrollbars | on | Draw a scrollbar lane beside scrolled panes; its thumb is dim at rest and brightens while the pane is focused or for a second after it scrolls |
 | pane gaps | on | Leave a gap between split panes |
 | confirm close | on | Ask before closing a pane, terminal, tab, or project |
 | hide tab bar with one tab | off | Hide the tab bar when a project has a single tab |
 | sidebar width | 26 | Columns; also set by dragging the sidebar edge |
 | sidebar side | `left` | Put the overlay or pinned sidebar on the left or right |
-| sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › pin sidebar** |
+| sidebar pinned | on | Keep the sidebar in its own column; also changed by **View › Pin sidebar** |
 | right-click passthrough | none | Modifier that sends a right-click to the pane's application instead of opening the pane menu (`shift`, `alt`, `ctrl`, or none) |
 | agent sort | `grouped` | `grouped` or `priority` order in the Agents section |
 | title scrolling | `left` | `off`, `left`, or `right`: which way over-long session titles and pane headers scroll, on one shared ticker |
@@ -675,7 +720,7 @@ Mouse support is on by default; turn it off with `--no-mouse` or the
 | Wheel over a pane | Scroll its scrollback; on an alternate screen the wheel sends arrow keys instead |
 | Wheel over the tab bar | Switch tabs |
 | Wheel over the sidebar | Scroll the section under the pointer |
-| Click a tab, the new-tab button, or the scroll arrows | Switch, open, or scroll tabs |
+| Click a tab, the new-tab button, or an edge count | Switch tabs, open one, or page the bar one screen |
 | Drag a tab onto another tab | Reorder tabs, including when the terminal delivers only press and release events |
 | Click a project card / worktree row | Focus the project (expanding its card) / open the worktree |
 | Drag a project card | Reorder projects |
@@ -699,38 +744,39 @@ and `esc` to close.
 
 | Target | Items |
 | --- | --- |
-| Pane | rename pane, clear pane name, swap with focused pane, split right, split down, zoom / unzoom, arrange: even horizontal / even vertical / main horizontal / main vertical / tiled, new grid…, take / release control, respond (when it needs you), copy mode, send right-clicks to pane / use gclient menu, close pane |
-| Tab | new tab, rename tab, close tab |
-| Project card | rename, close, new worktree, open worktree…, collapse / expand |
-| Worktree row | rename, close, delete worktree checkout… |
-| Agent or bare terminal row | focus, open in new tab, respond (when it needs you), mark seen, take / release control, close terminal / destroy orphaned terminal (when orphaned) |
-| Empty tab bar or empty sidebar | new terminal, new tab, new workspace…, settings, keybinding help, reload config, toggle sidebar, destroy orphaned terminals…, detach, quit |
-| `[view]` on the Agents band (left click) | this project / all projects, grouped / priority; the same choices are under **View** |
-| **Gobby** on the menu bar (click) | settings, reload config, quit |
-| **File** on the menu bar (click) | new terminal, new tab, new workspace…, rename tab, close tab, destroy orphaned terminals…, detach |
-| **Edit** on the menu bar (click) | copy mode, rename pane, rename tab, rename terminal, clear pane name, send right-clicks to pane / use gclient menu |
-| **View** on the menu bar (click) | this project / all projects, grouped / priority, working projects / all projects, show sidebar, pin sidebar |
-| **Window** on the menu bar (click) | split right, split down, zoom / unzoom, close pane, resize mode, five arrange layouts, new grid… |
-| **Agent** on the menu bar (click) | respond, mark seen, take / release control, take back, detach, open alert target, next / previous attention |
-| **Help** on the menu bar (click) | keys, alerts…, daemon, about gobby |
+| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange: even horizontal / even vertical / main horizontal / main vertical / tiled, New grid…, Take / Release control, Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
+| Tab | New tab, Rename tab, Close tab |
+| Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
+| Worktree row | Rename, Close, Delete worktree checkout… |
+| Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Take / Release control, Close terminal / Destroy orphaned terminal (when orphaned) |
+| Empty tab bar or empty sidebar | New terminal, New tab, New workspace…, Settings, Keybinding help, Reload config, Toggle sidebar, Destroy orphaned terminals…, Detach, Quit |
+| `[view]` on the Agents band (left click) | This project / All projects, Grouped / Priority; the same choices are under **View** |
+| **Gobby** on the menu bar (click) | Settings, Reload config, Quit |
+| **File** on the menu bar (click) | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
+| **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
+| **View** on the menu bar (click) | This project / All projects, Grouped / Priority, Working projects / All projects, Show sidebar, Pin sidebar, Legend, Theme ▸ |
+| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, five Arrange layouts, New grid… |
+| **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
+| **Help** on the menu bar (click) | Keys, Alerts…, Daemon, About Gobby |
 
-`send right-clicks to pane` flips a per-pane flag so the pane's application gets
+`Send right-clicks to pane` flips a per-pane flag so the pane's application gets
 right-clicks; the `right-click passthrough` setting does the same for every pane
-while its modifier is held. `close terminal` acts on the row you right-clicked
+while its modifier is held. `Close terminal` acts on the row you right-clicked
 rather than on the focused pane, and on an external terminal (a tmux pane
 `gclient` never created) it releases the lease and drops the pane instead of
-killing it. `close` on a project card kills every terminal in the
+killing it. `Close` on a project card kills every terminal in the
 project's tabs (after a confirm-close dialog) but leaves the project registered.
-`delete worktree checkout…` kills the worktree's terminals and removes the
-checkout through the daemon. `destroy orphaned terminals…` opens the dialog
+`Delete worktree checkout…` kills the worktree's terminals and removes the
+checkout through the daemon. `Destroy orphaned terminals…` opens the dialog
 described under *Orphaned terminals*.
 
 ## Workspace persistence
 
-The layout is the daemon's, not the client's. Tabs, splits, names, and the focus
+The populated layout is the daemon's, not the client's. Tabs, splits, names, and the focus
 hints live in the workspace rows on the daemon, and the gterm host keeps the
 terminals themselves, so the same workspace comes back in the next window and
-after a daemon restart. The client writes nothing about layout.
+after a daemon restart. An empty New Tab draft exists only in its current window
+until a terminal is opened in it. The client writes nothing about layout.
 
 | Where | What it holds |
 | --- | --- |
@@ -740,12 +786,10 @@ after a daemon restart. The client writes nothing about layout.
 
 On launch the client attaches the workspace — the project's own workspace when
 the launch names a registered project and no `--workspace` was given — and opens
-the focused project. A
-project with no tabs gets one shell in its checkout (for the personal project,
-the directory `gclient` was launched from). A pane whose terminal died is dropped
+the focused project without starting a shell. A pane whose terminal died is dropped
 from its split by the daemon's restart sweep, and a tab with no surviving panes
-is dropped with it; a project that lost every tab starts again with that one
-shell. There is no snapshot file to move aside.
+is dropped with it; a project that lost every tab remains empty until you open
+another terminal. There is no snapshot file to move aside.
 
 ## Daemon restarts and reconnects
 
@@ -759,7 +803,7 @@ The client rides through the gap. When the daemon's connection drops:
 1. The pane contents stay visible but frozen while the daemon is unreachable.
    A toast names the URL and cause (`Daemon unreachable at <url>: <error>`),
    while the status bar's left slot shows
-   `× Daemon unreachable · retry in <n> s` and counts down to the next attempt.
+   `× Daemon unreachable · retrying in <n> s` and counts down to the next attempt.
 2. The client retries with backoff until the daemon answers, however the
    connection was lost: a deliberate stop or restart shows as *going away*, any
    other loss as *unavailable*. It never gives up on its own; `prefix+shift+q`
@@ -774,22 +818,22 @@ The client rides through the gap. When the daemon's connection drops:
 
 Panes, tabs, and held control therefore survive `gobby restart`. On a pane that
 types through the daemon, a write whose outcome the daemon never confirmed leaves
-it `◌ read-only` until you take control again; a direct native pane has no such
+it `· Uncertain` until you take control again; a direct native pane has no such
 write to lose, and retaking control re-grants its input on the host. If the host
 itself was drained or replaced, the affected terminals are gone and their panes
 disappear on the next roster refresh.
 
-On launch, a splash appears in the pane area while four stages complete:
-**daemon health**, **workspace attach**, **roster**, and **first frame**. It shows
-the `gclient` version, daemon version (or `—` while unknown), machine, each
-stage's elapsed time, and which stage is waiting. The menu bar works while a
-stage waits, including **Help › daemon** for health and stage details. Each
+On launch, the goblin and the wordmark stand alone on the selected ground
+while four stages complete: **daemon health**, **workspace attach**,
+**roster**, and **first frame**. The splash has no menu bar, tabs, sidebar, or
+status line; they arrive with the first frame, and `prefix+shift+q` quits
+meanwhile. **Help › Daemon** then reports health and stage details. Each
 completed stage's timing and the final summary are logged to
 `~/.gobby/logs/gclient.log`.
 
-Launching with the daemon stopped leaves the splash on its daemon-health stage
-and shows `× Daemon unreachable · retry in <n> s` in the status bar. Once the
-daemon answers, the remaining stages run, the status segment clears, and the
+With the daemon stopped, the first failed health check ends the splash: the
+chrome opens and the status bar shows `× Daemon unreachable · retrying in <n> s`.
+Once the daemon answers, the remaining stages run, the status segment clears, and the
 workspace opens. A malformed daemon URL, refused token, unusable gterm host,
 or broken prefs file still reports its own error.
 
@@ -804,12 +848,12 @@ both from one place:
 - A native terminal whose host epoch is gone (the daemon marks the row
   `orphaned`). Its session row carries the `◌` glyph in the sidebar (the glyph
   alone marks it; no word is printed), and its context menu offers
-  `destroy orphaned terminal` in place of `close terminal`.
+  `Destroy orphaned terminal` in place of `Close terminal`.
 - A tmux session on the default or gobby socket with no attached client, for
   example one you started by hand and detached from. Gobby-owned agent sessions
   are always detached and are never listed.
 
-Choose **File › destroy orphaned terminals…** or the same item on the empty
+Choose **File › Destroy orphaned terminals…** or the same item on the empty
 chrome context menu. The client fetches the current candidates from the daemon
 and opens a checklist with every row checked. Each row shows the session name or
 title, the backend, the Gobby session that still owns it (or `no session`), and

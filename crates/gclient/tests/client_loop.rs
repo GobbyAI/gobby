@@ -21,10 +21,10 @@ use gobby_client::app::{
     HOST_GRANT_UNAVAILABLE,
 };
 use gobby_client::daemon::{
-    Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LiveDaemon,
-    Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow, SourceStatus, SpawnOutcome,
-    SpawnRequest, SubscribeSnapshot, TerminalRow, WorkspaceOp, WorktreeRow, WsMessage, WsReply,
-    BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE,
+    Answer, Daemon, DaemonError, DaemonEvent, EventReceiver, Generation, KillOutcome, LayoutAxis,
+    LayoutNode, LiveDaemon, Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow,
+    SourceStatus, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WorkspaceOp,
+    WorktreeRow, WsMessage, WsReply, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
     AttachLocator, FrameDelivery, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
@@ -1312,6 +1312,94 @@ async fn closing_a_tab_spares_external_tmux_sessions() {
     mock.shutdown().await;
 }
 
+/// A native terminal adopted into a daemon tab remains live when that tab closes.
+#[tokio::test]
+async fn closing_an_adopted_native_tab_releases_its_terminal() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let roster = terminal_page(&["terminal-native"]);
+    mock.enqueue("GET", "/api/terminals?", 200, roster.clone());
+    mock.enqueue("GET", "/api/terminals?", 200, roster);
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let workspace_id = workspace
+        .workspace_model()
+        .expect("workspace model")
+        .workspace
+        .id
+        .clone();
+    let created = daemon
+        .workspace_op(WorkspaceOp::TabCreate {
+            workspace: workspace_id,
+            project_id: "project-1".into(),
+            worktree_id: None,
+            title: None,
+            terminal_id: Some("terminal-native".into()),
+            cwd: None,
+            node: None,
+        })
+        .await
+        .expect("adopt native terminal into tab");
+    let tab_id = created.result["tabs"][0]["id"]
+        .as_str()
+        .expect("created tab id");
+    let pane_id = created.result["panes"][0]["id"]
+        .as_str()
+        .expect("adopted pane id");
+    workspace
+        .drain_live_events()
+        .await
+        .expect("apply adopted tab");
+    let mut chrome = Chrome::dark();
+    chrome.prefs.confirm_close = false;
+    sync_live_chrome(&mut workspace, &mut chrome);
+    let tab_index = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .position(|tab| tab.id == tab_id)
+        .expect("adopted tab in chrome");
+    chrome.activate_tab(tab_index);
+    let pane = workspace
+        .workspace_model()
+        .expect("workspace model")
+        .pane(pane_id)
+        .expect("adopted pane");
+    assert!(!pane.owns_terminal);
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_chord(&input_tx, KeyCode::Char('X'), KeyModifiers::SHIFT).await;
+        wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("close adopted tab live loop");
+    assert_eq!(workspace_ops(&mock, "tab.close").len(), 1);
+    assert!(workspace_ops(&mock, "pane.close").is_empty());
+    assert!(websocket_requests(&mock, "terminal_kill").is_empty());
+    assert!(workspace.pane_for_terminal("terminal-native").is_some());
+    mock.shutdown().await;
+}
+
 /// `close tab` when the daemon refuses the gobby-owned kill: the external
 /// pane still leaves the tab with its lease released, the refused pane keeps
 /// its place, and so the tab stays.
@@ -1435,10 +1523,10 @@ async fn closing_a_pane_spares_an_external_tmux_session() {
 }
 
 /// A start outside every checkout with nothing saved opens on the personal
-/// project: its empty snapshot seeds one shell tab, spawned for that
-/// project in the directory gclient was launched from.
+/// project: an explicit shell request creates a daemon-owned tab in the
+/// directory where gclient was launched.
 #[tokio::test]
-async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
+async fn a_project_less_explicit_shell_uses_the_launch_directory() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     mock.enqueue(
@@ -1457,7 +1545,7 @@ async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
         200,
         json!({
             "items": [
-                {"terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "backend": "native", "state": "live"}
+                {"terminal_id": "mock-terminal-3", "backend": "native", "state": "live"}
             ],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 2}
@@ -1477,7 +1565,9 @@ async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
     let (input_tx, input_rx) = mpsc::channel(32);
 
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
+        send_chord(&input_tx, KeyCode::Char('v'), KeyModifiers::NONE).await;
+        wait_until(|| workspace_ops(&mock, "tab.create").len() == 1).await;
         // The daemon's tab.created event places the shell; the loop then
         // focuses its pane and reports that as the workspace's focus hint.
         wait_until(|| {
@@ -1503,8 +1593,9 @@ async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
         driver
     );
     result.expect("live loop exits cleanly");
-    let creates = websocket_requests(&mock, "terminal_create");
-    assert_eq!(creates.len(), 1, "exactly one shell is seeded");
+    let creates = workspace_ops(&mock, "tab.create");
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    assert_eq!(creates.len(), 1, "one explicitly requested shell");
     assert_eq!(
         creates[0].get("project_id"),
         Some(&json!(gobby_core::project::PERSONAL_PROJECT_ID)),
@@ -1515,6 +1606,7 @@ async fn a_project_less_start_opens_one_shell_in_the_launch_directory() {
         Some(&json!("/home/me/notes")),
         "the shell starts where gclient was launched"
     );
+    assert!(creates[0].get("terminal_id").is_none());
     assert_eq!(chrome.tabs().tabs.len(), 1, "one shell tab");
     mock.shutdown().await;
 }
@@ -3220,6 +3312,7 @@ async fn resize_geometry_policy_reducer() {
 async fn select_spawn_attach_terminate_loop() {
     {
         let mock = MockDaemon::start("local-token").await;
+        mock.queue_owned_terminal_id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
         mock.use_unique_attachment_ids();
         mock.enqueue(
             "GET",
@@ -3296,7 +3389,6 @@ async fn select_spawn_attach_terminate_loop() {
 
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
             send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
-            wait_for_websocket_requests(&mock, "terminal_create", 1).await;
             // The survivor's viewport is claimed again as its slot shrinks,
             // so the spawned pane's claim is found by terminal, not by count.
             let spawned_attachment = timeout(Duration::from_secs(1), async {
@@ -3321,8 +3413,8 @@ async fn select_spawn_attach_terminate_loop() {
             })
             .await
             .expect("spawned attachment");
-            // The create reply and relist have already attached the pane. Delivering the
-            // lifecycle afterward, twice, must remain idempotent.
+            // The workspace event precedes the op reply. Duplicate terminal
+            // lifecycle events after attachment must remain idempotent.
             mock.send_event_and_wait(json!({
                 "type": "terminal_event",
                 "event": "created",
@@ -3398,7 +3490,10 @@ async fn select_spawn_attach_terminate_loop() {
             driver
         );
         result.expect("spawn and terminate live loop");
-        assert_eq!(websocket_requests(&mock, "terminal_create").len(), 1);
+        let splits = workspace_ops(&mock, "pane.split");
+        assert_eq!(splits.len(), 1);
+        assert!(splits[0].get("terminal_id").is_none());
+        assert!(websocket_requests(&mock, "terminal_create").is_empty());
         assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 2);
         let kills = websocket_requests(&mock, "terminal_kill");
         assert_eq!(kills.len(), 1);
@@ -3426,19 +3521,8 @@ async fn select_spawn_attach_terminate_loop() {
 
     {
         let mock = MockDaemon::start("local-token").await;
+        mock.queue_owned_terminal_id("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
         mock.use_unique_attachment_ids();
-        mock.enqueue_spawn_events_before_reply(vec![json!({
-            "type": "terminal_event",
-            "event": "created",
-            "daemon_epoch": "epoch-early",
-            "seq": 2,
-            "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-            "terminal": {
-                "terminal_id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-                "backend": "native",
-                "state": "live"
-            }
-        })]);
         mock.enqueue(
             "GET",
             "/api/terminals?",
@@ -3557,7 +3641,7 @@ async fn select_spawn_attach_terminate_loop() {
 
     {
         let mock = MockDaemon::start("local-token").await;
-        mock.set_spawn_refusal("capacity exhausted");
+        mock.refuse_workspace_op_at("tab.create", 1, "terminal_failed", "capacity exhausted");
         mock.enqueue(
             "GET",
             "/api/terminals?",
@@ -3585,7 +3669,7 @@ async fn select_spawn_attach_terminate_loop() {
             settle_live_event().await;
             send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
             send_key(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
-            wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+            wait_until(|| workspace_ops(&mock, "tab.create").len() == 1).await;
             settle_live_event().await;
             drop(input_tx);
         };
@@ -3601,11 +3685,18 @@ async fn select_spawn_attach_terminate_loop() {
             driver
         );
         result.expect("spawn refusal live loop");
+        assert!(websocket_requests(&mock, "terminal_create").is_empty());
         assert_eq!(workspace.pane_count(), 0);
         assert!(websocket_requests(&mock, "terminal_attach").is_empty());
-        assert!(chrome
-            .last_alert()
-            .is_some_and(|message| message.contains("capacity exhausted")));
+        assert!(
+            chrome
+                .alert_log
+                .iter()
+                .any(|toast| toast.title.contains("capacity exhausted")),
+            "alerts={:?}, tab.create={:?}",
+            chrome.alert_log,
+            workspace_ops(&mock, "tab.create")
+        );
         mock.shutdown().await;
     }
 }
@@ -5032,7 +5123,7 @@ async fn a_key_the_overlay_passes_on_rolls_it_up() {
     let band: String = (0..34)
         .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
         .collect();
-    assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
+    assert!(!band.contains("Machines"), "row 2 is the tab bar: {band:?}");
     mock.shutdown().await;
 }
 
@@ -5086,14 +5177,14 @@ async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
         let sidebar = chrome.view.sidebar_rect;
         let terminal_area = chrome.view.terminal_area;
         let band: String = (0..sidebar.width.max(9))
-            .map(|x| next_frame.backend().buffer()[(x, 1)].symbol().to_string())
+            .map(|x| next_frame.backend().buffer()[(x, 2)].symbol().to_string())
             .collect();
         if pinned_before {
             assert!(!chrome.sidebar.pinned, "prefix+b unpins the column");
             assert!(!chrome.sidebar.overlay, "unpinning opens no overlay");
             assert_eq!(sidebar.width, 0, "a hidden sidebar takes no columns");
             assert_eq!(terminal_area.x, 0, "the panes start at the left edge");
-            assert!(!band.contains("Machines"), "row 1 is the tab bar: {band:?}");
+            assert!(!band.contains("Machines"), "row 2 is the tab bar: {band:?}");
         } else {
             assert!(!chrome.sidebar.pinned, "the overlay leaves the pin alone");
             assert!(chrome.sidebar.overlay, "prefix+b opens the overlay");
@@ -5102,7 +5193,7 @@ async fn prefix_b_opens_the_overlay_or_unpins_the_column() {
             assert_eq!(terminal_area.x, 0, "the panes keep their place under it");
             assert!(
                 band.contains("Machines"),
-                "row 1 draws the first band over the tab bar: {band:?}"
+                "row 2 draws the first band over the tab bar: {band:?}"
             );
         }
         mock.shutdown().await;
@@ -6495,16 +6586,16 @@ async fn control_indicator_click_takes_back_only_a_lost_lease() {
         .expect("roster pane");
     let attachment = workspace.pane(pane).attachment_id().to_string();
 
-    // Mirror the loop's one-pane chrome to click the footer's left metadata.
-    // Focused and Read-only share its first cell.
+    // Mirror the loop's one-pane chrome to click the top-left title.
+    // Focused and Read-only share its first cells.
     let area = Rect::new(0, 0, 120, 40);
     let mut probe = Chrome::dark();
     probe.open_pane(pane, "terminal-lease");
     probe.compute_view(&workspace, area);
-    let footer = gobby_client::ui::pane_chrome::pane_footer(&workspace, workspace.pane(pane), true);
-    let (indicator, _) =
-        gobby_client::ui::pane_chrome::footer_rects(&probe.view.pane_infos[0], &footer)
-            .expect("one-pane footer");
+    let corners =
+        gobby_client::ui::pane_chrome::pane_corners(&workspace, &probe, workspace.pane(pane), true);
+    let indicator = gobby_client::ui::pane_chrome::title_rect(&probe.view.pane_infos[0], &corners)
+        .expect("one-pane title");
     let (column, row) = (indicator.x + 1, indicator.y);
 
     let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
@@ -6739,11 +6830,12 @@ async fn open_link_failure_surfaces_a_toast() {
 
 /// 4.1.2: the keymap actions that were inert drive the live workspace. Focus
 /// moves are read off the daemon's `terminal_take_control` requests, the
-/// split off the spawn, and the swap off the first tab's layout.
+/// split off the daemon workspace op, and the swap off the first tab's layout.
 #[tokio::test]
 async fn wired_actions_split_focus_swap_and_switch_tabs() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(SPAWNED);
     mock.use_unique_attachment_ids();
     let roster_page = |ids: &[&str]| {
         let items: Vec<Value> = ids
@@ -6863,7 +6955,7 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         wait_for_websocket_requests(&mock, "terminal_take_control", 7).await;
         // SplitHorizontal spawns under the focused pane.
         chord('-', KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_until(|| workspace_ops(&mock, "pane.split").len() == 1).await;
         timeout(Duration::from_secs(1), async {
             loop {
                 let attached = websocket_requests(&mock, "terminal_set_viewport")
@@ -6961,8 +7053,8 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "the attention jump reveals the terminal and opens no prompt: {:?}",
         chrome.dialog
     );
-    // 4.2.4: every layout mutation went to the daemon as a workspace_op with
-    // explicit ids, and the tabs on screen are the daemon's rows.
+    // 4.2.4: every layout mutation went to the daemon as a workspace_op,
+    // and the tabs on screen are the daemon's rows.
     assert_eq!(
         tab.id, *tab_1,
         "the loop applies the daemon's workspace_event: tabs carry daemon ids"
@@ -6998,11 +7090,8 @@ async fn wired_actions_split_focus_swap_and_switch_tabs() {
         "splits the focused pane a"
     );
     assert_eq!(split["axis"], json!("vertical"));
-    assert_eq!(
-        split["terminal_id"],
-        json!(SPAWNED),
-        "carries the spawned terminal"
-    );
+    assert!(split.get("terminal_id").is_none());
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
     let hint = ops
         .iter()
         .rev()
@@ -7493,7 +7582,6 @@ async fn moving_pane_to_new_tab_keeps_its_process_and_closes_placeholder() {
         json!(seeded[0].1[0])
     );
     let model = workspace.workspace_model().expect("workspace model");
-    assert!(model.tab(&seeded[0].0).is_none(), "last-pane source closes");
     assert_eq!(
         model
             .pane(&seeded[0].1[0])
@@ -7946,6 +8034,7 @@ async fn settings_toggle_switches_mouse_capture_and_saves_prefs() {
 async fn context_menu_dispatches_items_and_closes_outside() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(SPAWNED);
     mock.use_unique_attachment_ids();
     let roster_page = |ids: &[&str]| {
         let items: Vec<Value> = ids
@@ -8005,25 +8094,28 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         .draw(|frame| hits = Some(render_workspace(frame, &workspace, &probe)))
         .expect("draw probe frame");
     probe.view.apply_hits(hits.expect("probe frame drawn"));
-    let cells: Vec<(String, (u16, u16))> = probe
+    let cells: Vec<(String, Rect)> = probe
         .view
         .pane_infos
         .iter()
         .map(|info| {
             let pane = probe.pane_for_slot(info.id).expect("slot pane");
-            let inner = info.inner_rect;
-            (
-                workspace.pane(pane).terminal_id.clone(),
-                (inner.x + 1, inner.y + 1),
-            )
+            (workspace.pane(pane).terminal_id.clone(), info.inner_rect)
         })
         .collect();
     let cell_of = |terminal_id: &str| {
         cells
             .iter()
             .find(|(id, _)| id == terminal_id)
-            .map(|(_, cell)| *cell)
+            .map(|(_, rect)| (rect.x + 1, rect.y + 1))
             .expect("pane cell")
+    };
+    let center_of = |terminal_id: &str| {
+        cells
+            .iter()
+            .find(|(id, _)| id == terminal_id)
+            .map(|(_, rect)| (rect.x + rect.width / 2, rect.y + rect.height / 2))
+            .expect("pane center")
     };
     let tab_cell = probe
         .view
@@ -8116,7 +8208,7 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         press(MouseButton::Right, cell_of(other)).await;
         hover(item_cell(cell_of(other), 1)).await;
         key(KeyCode::Enter).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_until(|| workspace_ops(&mock, "pane.split").len() == 2).await;
         timeout(Duration::from_secs(1), async {
             loop {
                 let attached = websocket_requests(&mock, "terminal_set_viewport")
@@ -8130,17 +8222,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         })
         .await
         .expect("the spawned terminal attaches");
-        settle_live_event().await;
 
-        // Keys walk the unfocused pane's menu down to `close pane`, its last
-        // row, past the clamp: that terminal dies and its slot is reaped.
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            roster_page(&[other, SPAWNED]),
-        );
-        press(MouseButton::Right, cell_of(&initial)).await;
+        // Click immediately after migration, before an unrelated timer redraw.
+        // Keys reach `close pane`; its adopted terminal stays live.
+        press(MouseButton::Right, center_of(&initial)).await;
         for _ in 0..20 {
             key(KeyCode::Down).await;
         }
@@ -8151,13 +8236,6 @@ async fn context_menu_dispatches_items_and_closes_outside() {
             "close pane must wait for confirmation"
         );
         key(KeyCode::Char('y')).await;
-        wait_for_websocket_requests(&mock, "terminal_kill", 1).await;
-        assert_eq!(
-            terminal_of(&websocket_requests(&mock, "terminal_kill")[0]),
-            initial,
-            "close pane acts on the pane under the menu, not the focused one"
-        );
-        wait_for_http_requests(&mock, "GET", "/api/terminals?", 3).await;
         settle_live_event().await;
 
         // Bare tab-bar space opens the global menu; clicking `reload config`
@@ -8188,6 +8266,12 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         driver
     );
     result.expect("live loop exits cleanly");
+    assert_eq!(
+        workspace_ops(&mock, "pane.close").len(),
+        1,
+        "the click immediately after migration must close the adopted pane"
+    );
+    assert!(websocket_requests(&mock, "terminal_kill").is_empty());
     assert!(chrome.menu.is_none(), "activation closes the menu");
     assert_eq!(chrome.mode, Mode::ConfirmClose, "close tab asks first");
     assert!(
@@ -8210,11 +8294,23 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         "reload config re-read the keymap overrides"
     );
     assert!(
-        workspace.pane_for_terminal(&initial).is_none(),
-        "close pane retired the terminal"
+        workspace.pane_for_terminal(&initial).is_some(),
+        "closing an adopted pane leaves its terminal live"
     );
+    assert!(workspace
+        .workspace_model()
+        .expect("workspace model")
+        .panes()
+        .all(|pane| pane.terminal_id.as_deref() != Some(initial.as_str())));
     let tab = &chrome.tabs().tabs[0];
     assert_eq!(tab.slots.len(), 2, "the closed pane's slot was reaped");
+    let splits = workspace_ops(&mock, "pane.split");
+    assert_eq!(
+        workspace_ops(&mock, "tab.create")[0]["terminal_id"],
+        json!("terminal-a")
+    );
+    assert_eq!(splits[0]["terminal_id"], json!("terminal-b"));
+    assert!(splits[1].get("terminal_id").is_none());
     let rect_of = |pane| {
         let slot = tab.slot_for(pane).expect("pane shown in the tab");
         tab.layout
@@ -8231,6 +8327,228 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         "split right lands beside the menu's pane: {spawned:?} vs {other_rect:?}"
     );
     mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn splitting_a_local_bare_tab_preserves_layout_and_owns_only_new_shells() {
+    const OWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const NEXT_OWNED: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(OWNED);
+    mock.queue_owned_terminal_id(NEXT_OWNED);
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        terminal_page(&["terminal-a", "terminal-b", "terminal-c"]),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("load bare terminals");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let tab = chrome.active_tab_mut().expect("local roster tab");
+    assert!(tab.is_local());
+    assert!(tab.layout.set_ratio_at(&[], 0.3));
+    assert!(tab.layout.set_ratio_at(&[true], 0.7));
+    chrome.keymap = Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+        .expect("test keymap");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a", "terminal-b", "terminal-c", OWNED]),
+        );
+        send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
+        wait_until(|| workspace_ops(&mock, "pane.split").len() == 3).await;
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|request| request.get("terminal_id") == Some(&json!(OWNED)))
+        })
+        .await;
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a", "terminal-b", "terminal-c", OWNED, NEXT_OWNED]),
+        );
+        send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
+        wait_until(|| workspace_ops(&mock, "pane.split").len() == 4).await;
+        wait_until(|| {
+            websocket_requests(&mock, "terminal_set_viewport")
+                .iter()
+                .any(|request| request.get("terminal_id") == Some(&json!(NEXT_OWNED)))
+        })
+        .await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("local tab migration");
+    let creates = workspace_ops(&mock, "tab.create");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0]["terminal_id"], json!("terminal-a"));
+    let splits = workspace_ops(&mock, "pane.split");
+    assert_eq!(splits.len(), 4);
+    assert_eq!(splits[0]["terminal_id"], json!("terminal-b"));
+    assert_eq!(splits[1]["terminal_id"], json!("terminal-c"));
+    assert!(splits[2].get("terminal_id").is_none());
+    assert!(splits[3].get("terminal_id").is_none());
+    assert_eq!(workspace_ops(&mock, "pane.resize").len(), 2);
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    let tab = chrome.active_tab().expect("migrated tab");
+    assert!(!tab.is_local());
+    assert_eq!(tab.slots.len(), 5);
+    assert_eq!(
+        workspace
+            .pane(chrome.focused_pane().expect("focused pane"))
+            .terminal_id,
+        NEXT_OWNED
+    );
+    let model = workspace.workspace_model().expect("workspace model");
+    for terminal_id in ["terminal-a", "terminal-b", "terminal-c", OWNED, NEXT_OWNED] {
+        let pane = model
+            .panes()
+            .find(|pane| pane.terminal_id.as_deref() == Some(terminal_id))
+            .expect("adopted or owned pane");
+        assert_eq!(
+            pane.owns_terminal,
+            terminal_id == OWNED || terminal_id == NEXT_OWNED
+        );
+    }
+    let row = model.tab(&tab.id).expect("daemon tab");
+    let LayoutNode::Split {
+        axis: LayoutAxis::Horizontal,
+        ratio,
+        children,
+    } = &row.layout
+    else {
+        panic!("root split preserved");
+    };
+    assert!((*ratio - 0.3).abs() < 0.001);
+    let LayoutNode::Split {
+        axis: LayoutAxis::Horizontal,
+        ratio,
+        ..
+    } = &children[1]
+    else {
+        panic!("nested split preserved");
+    };
+    assert!((*ratio - 0.7).abs() < 0.001);
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn local_bare_tab_migration_refusals_restore_the_original_view() {
+    const OWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    for failure in ["adoption", "resize", "spawn", "snapshot"] {
+        let mock = MockDaemon::start("local-token").await;
+        mock.queue_owned_terminal_id(OWNED);
+        match failure {
+            "adoption" => mock.refuse_workspace_op_at("pane.split", 1, "busy", failure),
+            "resize" => mock.refuse_workspace_op_at("pane.resize", 1, "invalid_op", failure),
+            "spawn" => mock.refuse_workspace_op_at("pane.split", 3, "terminal_failed", failure),
+            "snapshot" => mock.refuse_snapshot_after_ops(6, failure),
+            _ => unreachable!(),
+        }
+        mock.enqueue(
+            "GET",
+            "/api/terminals?",
+            200,
+            terminal_page(&["terminal-a", "terminal-b", "terminal-c"]),
+        );
+        let daemon = LiveDaemon::connect(mock.url(), "local-token")
+            .await
+            .expect("connect live daemon");
+        let mut workspace = Workspace::live(daemon);
+        workspace.select_project("project-1");
+        workspace
+            .reconcile_subscribe_first()
+            .await
+            .expect("load bare terminals");
+        let mut chrome = Chrome::dark();
+        show_roster(&workspace, &mut chrome);
+        let tab = chrome.active_tab_mut().expect("local roster tab");
+        assert!(tab.layout.set_ratio_at(&[], 0.3));
+        assert!(tab.layout.set_ratio_at(&[true], 0.7));
+        chrome.keymap =
+            Keymap::from_toml("[bindings]\nnew_terminal = \"prefix+i\"\n", HERDR_PREFIX)
+                .expect("test keymap");
+        let original_tab = chrome.active_tab().expect("local tab").id.clone();
+        let original_panes: std::collections::HashSet<_> = workspace
+            .workspace_model()
+            .expect("workspace model")
+            .panes()
+            .map(|pane| pane.id.clone())
+            .collect();
+        let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let driver = async {
+            wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+            let snapshots = websocket_requests(&mock, "workspace_snapshot").len();
+            send_chord(&input_tx, KeyCode::Char('i'), KeyModifiers::NONE).await;
+            wait_until(|| workspace_ops(&mock, "tab.close").len() == 1).await;
+            let expected = snapshots + usize::from(failure == "snapshot") + 1;
+            wait_for_websocket_requests(&mock, "workspace_snapshot", expected).await;
+            settle_live_event().await;
+            drop(input_tx);
+        };
+        let mut switch = TerminalGuard::recording().0;
+        let (result, ()) = tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        );
+        if failure != "snapshot" {
+            result.expect("refused adoption leaves loop running");
+        }
+        let tab = chrome.active_tab().expect("original local tab retained");
+        assert_eq!(tab.id, original_tab, "{failure}");
+        assert_eq!(tab.slots.len(), 3, "{failure}");
+        assert!(tab.is_local(), "{failure}");
+        assert_eq!(workspace_ops(&mock, "tab.create").len(), 1, "{failure}");
+        assert_eq!(workspace_ops(&mock, "tab.close").len(), 1, "{failure}");
+        assert!(websocket_requests(&mock, "terminal_kill").is_empty());
+        assert!(websocket_requests(&mock, "terminal_create").is_empty());
+        let model = workspace.workspace_model().expect("workspace model");
+        assert_eq!(
+            model
+                .panes()
+                .map(|pane| pane.id.clone())
+                .collect::<std::collections::HashSet<_>>(),
+            original_panes,
+            "{failure}: rollback restored the original model panes"
+        );
+        let close_ops = workspace_ops(&mock, "tab.close");
+        let rolled_back_tab = close_ops[0]["tab"].as_str().expect("temporary tab id");
+        assert!(model.tab(rolled_back_tab).is_none(), "{failure}");
+        mock.shutdown().await;
+    }
 }
 
 /// Deliver one daemon event over the mock socket and wait until the live
@@ -8755,7 +9073,7 @@ async fn sidebar_model_follows_daemon_events() {
     // An attention event within the epoch carries only the attention; the
     // refetch it queues brings the lifecycle_status the glyph is drawn from.
     let mut waiting = sidebar_roster_entry("run:a", "run-a", "terminal-a");
-    waiting["lifecycle_status"] = json!("awaiting_input");
+    waiting["lifecycle_status"] = json!("paused");
     mock.enqueue(
         "GET",
         "/api/attention/roster",
@@ -8791,7 +9109,7 @@ async fn sidebar_model_follows_daemon_events() {
     );
     assert_eq!(
         workspace.sidebar().agents[0].lifecycle_status.as_deref(),
-        Some("awaiting_input"),
+        Some("paused"),
         "the refetch reconciled the lifecycle status"
     );
     assert_eq!(workspace.sidebar().agents[0].state, RowState::Paused);
@@ -9322,16 +9640,12 @@ fn shown_terminals(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Vec<St
 /// tab holding one shell it spawned into the project checkout; the eight are
 /// agent rows only and never panes.
 #[tokio::test]
-async fn first_run_opens_one_shell_and_never_auto_opens() {
-    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+async fn first_run_does_not_open_a_shell_or_auto_open_roster_terminals() {
     let mock = MockDaemon::start("local-token").await;
     let roster: Vec<String> = (1..=8).map(|n| format!("terminal-{n}")).collect();
     let ids: Vec<&str> = roster.iter().map(String::as_str).collect();
-    let mut relisted = ids.clone();
-    relisted.push(SPAWNED);
     mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
     mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&ids));
-    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&relisted));
     mock.enqueue(
         "GET",
         "/api/attention/roster",
@@ -9357,8 +9671,7 @@ async fn first_run_opens_one_shell_and_never_auto_opens() {
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(8);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
-        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
         settle_live_event().await;
         drop(input_tx);
     };
@@ -9375,16 +9688,12 @@ async fn first_run_opens_one_shell_and_never_auto_opens() {
     );
     result.expect("first-run live loop");
 
-    assert_eq!(shown_terminals(&workspace, &chrome), [SPAWNED]);
-    assert_eq!(
-        chrome.tabs().tabs[0].slots.len(),
-        1,
-        "one slot in the one tab"
+    assert!(
+        chrome.tabs().tabs.is_empty(),
+        "startup leaves the workspace empty"
     );
-    let creates = websocket_requests(&mock, "terminal_create");
-    assert_eq!(creates.len(), 1);
-    assert_eq!(creates[0].get("cwd"), Some(&json!("/repo")));
-    assert_eq!(creates[0].get("project_id"), Some(&json!("project-1")));
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    assert!(workspace_ops(&mock, "tab.create").is_empty());
     let agents: Vec<&str> = workspace
         .sidebar()
         .agents
@@ -9403,6 +9712,109 @@ async fn first_run_opens_one_shell_and_never_auto_opens() {
             "{id} was auto-opened"
         );
     }
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn new_tab_is_an_empty_local_draft_without_a_shell() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
+        send_chord(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("empty tab live loop");
+    assert_eq!(chrome.tabs().tabs.len(), 1);
+    assert!(chrome.tabs().tabs[0].is_local());
+    assert!(chrome.tabs().tabs[0].slots.is_empty());
+    chrome.compute_view(&workspace, Rect::new(0, 0, 96, 30));
+    assert!(chrome.view.pane_infos.is_empty());
+    assert!(workspace_ops(&mock, "tab.create").is_empty());
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn explicit_shell_replaces_first_empty_draft_without_reordering_later_drafts() {
+    const OWNED: &str = "mock-terminal-3";
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
+    mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[OWNED]));
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon);
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
+        send_chord(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
+        send_chord(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
+        send_chord(&input_tx, KeyCode::Char('p'), KeyModifiers::NONE).await;
+        send_chord(&input_tx, KeyCode::Char('v'), KeyModifiers::NONE).await;
+        wait_until(|| workspace_ops(&mock, "tab.create").len() == 1).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("owned shell live loop");
+    let creates = workspace_ops(&mock, "tab.create");
+    assert_eq!(creates.len(), 1);
+    assert!(creates[0].get("terminal_id").is_none(), "{creates:?}");
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    assert_eq!(chrome.tabs().tabs.len(), 2, "one draft becomes a real tab");
+    assert!(!chrome.tabs().tabs[0].is_local());
+    assert!(
+        chrome.tabs().tabs[1].is_local(),
+        "later draft keeps its place"
+    );
+    assert!(chrome.tabs().tabs[1].slots.is_empty());
+    assert_eq!(chrome.active_index(), 0, "the new shell remains focused");
+    assert_eq!(shown_terminals(&workspace, &chrome), [OWNED]);
+    let pane = workspace
+        .workspace_model()
+        .and_then(|model| {
+            model
+                .panes()
+                .find(|pane| pane.terminal_id.as_deref() == Some(OWNED))
+        })
+        .expect("owned workspace pane");
+    assert!(pane.owns_terminal);
     mock.shutdown().await;
 }
 
@@ -9756,12 +10168,11 @@ async fn assert_agent_row_click_activates_tab_showing_existing_pane() {
 }
 
 /// 2.2.2: two projects keep separate tab sets. Focusing the second swaps
-/// the tab bar (seeded with a shell in its checkout), a tab opened from its
+/// the tab bar, a tab opened from its
 /// agent row lands in its set, and refocusing the first restores its tabs
 /// and active tab from the snapshot the switch saved.
 #[tokio::test]
 async fn tab_sets_follow_the_focused_project() {
-    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let projects = json!([
         {"id": "project-1", "name": "one", "display_name": "one",
@@ -9778,7 +10189,7 @@ async fn tab_sets_follow_the_focused_project() {
         200,
         terminal_page(&["terminal-a1", "terminal-a2"]),
     );
-    let later = terminal_page(&["terminal-a1", "terminal-a2", "terminal-b1", SPAWNED]);
+    let later = terminal_page(&["terminal-a1", "terminal-a2", "terminal-b1"]);
     for _ in 0..8 {
         mock.enqueue("GET", "/api/terminals?", 200, later.clone());
     }
@@ -9819,23 +10230,15 @@ async fn tab_sets_follow_the_focused_project() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
-    // The daemon's tab.created event places the shell: apply it and project
-    // the row the way the loop does between actions.
     workspace
         .drain_live_events()
         .await
-        .expect("apply the tab.created event");
+        .expect("drain project switch events");
     sync_live_chrome(&mut workspace, &mut chrome);
     assert_eq!(chrome.project_tabs.focused.as_deref(), Some("project-2"));
     assert_eq!(workspace.project_id(), Some("project-2"));
-    assert_eq!(
-        shown_terminals(&workspace, &chrome),
-        [SPAWNED],
-        "a project without tabs is seeded with one shell"
-    );
-    let creates = websocket_requests(&mock, "terminal_create");
-    assert_eq!(creates.len(), 1);
-    assert_eq!(creates[0].get("cwd"), Some(&json!("/repo2")));
+    assert!(shown_terminals(&workspace, &chrome).is_empty());
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
     // A second project-2 tab arrives from the daemon, as another window's
     // would.
     let workspace_id = workspace
@@ -9851,6 +10254,7 @@ async fn tab_sets_follow_the_focused_project() {
             worktree_id: None,
             title: None,
             terminal_id: Some("terminal-b1".into()),
+            cwd: None,
             node: None,
         })
         .await
@@ -9860,7 +10264,7 @@ async fn tab_sets_follow_the_focused_project() {
         .await
         .expect("apply the second tab.created event");
     sync_live_chrome(&mut workspace, &mut chrome);
-    assert_eq!(chrome.project_tabs.sets["project-2"].tabs.len(), 2);
+    assert_eq!(chrome.project_tabs.sets["project-2"].tabs.len(), 1);
 
     focus_project(&mut workspace, &mut chrome, "project-1")
         .await
@@ -9888,10 +10292,7 @@ async fn tab_sets_follow_the_focused_project() {
         project_two.workspace.default_project_id.as_deref(),
         Some("project-2")
     );
-    assert_eq!(
-        shown_terminals(&workspace, &chrome),
-        [SPAWNED, "terminal-b1"]
-    );
+    assert_eq!(shown_terminals(&workspace, &chrome), ["terminal-b1"]);
     mock.shutdown().await;
 }
 
@@ -9902,6 +10303,7 @@ async fn tab_sets_follow_the_focused_project() {
 async fn every_shown_pane_sizes_its_terminal() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(SPAWNED);
     mock.use_unique_attachment_ids();
     let page = |terminals: &[(&str, &str)]| {
         let items: Vec<Value> = terminals
@@ -9960,7 +10362,7 @@ async fn every_shown_pane_sizes_its_terminal() {
             "startup sizes the tmux pane: {sized_at_startup:?}"
         );
         send_chord(&input_tx, KeyCode::Char('-'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_until(|| workspace_ops(&mock, "pane.split").len() == 1).await;
         timeout(Duration::from_secs(1), async {
             loop {
                 let sized = websocket_requests(&mock, "terminal_resize")
@@ -10071,7 +10473,6 @@ fn draw_pane_bodies(
         .draw(|frame| {
             chrome.compute_view(ws, frame.area());
             let focused = chrome.focused_pane();
-            let palette = chrome.palette;
             let mut content =
                 |frame: &mut ratatui::Frame<'_>, area: Rect, pane: gobby_client::app::PaneId| {
                     gobby_client::views::grid::render(
@@ -10079,7 +10480,6 @@ fn draw_pane_bodies(
                         area,
                         ws.pane(pane),
                         focused == Some(pane),
-                        &palette,
                     );
                 };
             gobby_client::ui::render_workspace_with(frame, ws, chrome, &mut content);
@@ -10309,10 +10709,9 @@ async fn stale_cells_are_cleared_on_shrink_and_move() {
 /// 3.3.1: `prefix+shift+n` opens the new-project dialog; enter posts the
 /// typed path to `/api/projects/init`, a refusal keeps the dialog (and its
 /// path) open with the daemon's reason, and the created project is focused
-/// with one shell tab in its checkout.
+/// without opening a shell.
 #[tokio::test]
 async fn new_project_dialog_inits_and_focuses() {
-    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let new_root = tempfile::tempdir().expect("new project dir");
     let new_path = new_root.path().to_string_lossy().into_owned();
@@ -10336,13 +10735,8 @@ async fn new_project_dialog_inits_and_focuses() {
     for _ in 0..3 {
         mock.enqueue("GET", "/api/projects", 200, both.clone());
     }
-    for page in [
-        terminal_page(&[]),
-        terminal_page(&[SPAWNED]),
-        terminal_page(&[]),
-        terminal_page(&[SPAWNED]),
-    ] {
-        mock.enqueue("GET", "/api/terminals?", 200, page);
+    for _ in 0..4 {
+        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
     }
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -10355,7 +10749,7 @@ async fn new_project_dialog_inits_and_focuses() {
     let mut chrome = Chrome::dark();
     let (input_tx, input_rx) = mpsc::channel(64);
     let driver = async {
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
         send_chord(&input_tx, KeyCode::Char('N'), KeyModifiers::SHIFT).await;
         // The dialog opens on `~/`; replace it with the absolute path.
         send_key(&input_tx, KeyCode::Backspace, KeyModifiers::NONE).await;
@@ -10368,9 +10762,7 @@ async fn new_project_dialog_inits_and_focuses() {
         // The refusal left the dialog open with the path still typed.
         send_key(&input_tx, KeyCode::Enter, KeyModifiers::NONE).await;
         wait_for_http_requests(&mock, "POST", "/api/projects/init", 2).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 2).await;
-        // The shell lands on the bar only after its placement round trip.
-        wait_until(|| workspace_ops(&mock, "tab.create").len() == 2).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
         settle_live_event().await;
         drop(input_tx);
     };
@@ -10401,16 +10793,9 @@ async fn new_project_dialog_inits_and_focuses() {
     assert!(chrome.dialog.is_none(), "{:?}", chrome.dialog);
     assert_eq!(workspace.project_id(), Some("project-2"));
     assert_eq!(chrome.project_tabs.focused.as_deref(), Some("project-2"));
-    assert_eq!(
-        chrome.tabs().tabs.len(),
-        1,
-        "one shell tab in the new project"
-    );
-    assert_eq!(chrome.tabs().tabs[0].slots.len(), 1);
-    let creates = websocket_requests(&mock, "terminal_create");
-    assert_eq!(creates.len(), 2);
-    assert_eq!(creates[1].get("cwd"), Some(&json!(new_path)));
-    assert_eq!(creates[1].get("project_id"), Some(&json!("project-2")));
+    assert!(chrome.tabs().tabs.is_empty(), "new project starts empty");
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    assert!(workspace_ops(&mock, "tab.create").is_empty());
     mock.shutdown().await;
 }
 
@@ -10513,6 +10898,7 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
 async fn worktree_flows_round_trip_the_daemon() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(SPAWNED);
     let worktrees_path = "/api/source-control/worktrees?";
     let worktree = |id: &str, branch: &str| {
         json!({
@@ -10634,9 +11020,12 @@ async fn worktree_flows_round_trip_the_daemon() {
             .collect()
     };
     assert_eq!(children(&workspace), ["wt-1", "wt-2"]);
-    let creates = websocket_requests(&mock, "terminal_create");
+    let creates = workspace_ops(&mock, "tab.create");
     assert_eq!(creates.len(), 1);
-    assert_eq!(creates[0].get("cwd"), Some(&json!("/repo-wt/feature")));
+    assert_eq!(creates[0].get("worktree_id"), Some(&json!("wt-1")));
+    assert!(creates[0].get("terminal_id").is_none());
+    assert!(creates[0].get("cwd").is_none());
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
     assert_eq!(chrome.tabs().tabs.len(), 1);
     assert_eq!(chrome.tabs().tabs[0].worktree_id.as_deref(), Some("wt-1"));
 
@@ -10912,6 +11301,7 @@ fn project_dialog_keys_produce_daemon_requests() {
 async fn row_menus_dispatch_project_and_agent_actions() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
+    mock.queue_owned_terminal_id(SPAWNED);
     mock.use_unique_attachment_ids();
     let worktrees_path = "/api/source-control/worktrees?";
     let worktree = |id: &str, branch: &str| {
@@ -11071,7 +11461,12 @@ async fn row_menus_dispatch_project_and_agent_actions() {
         }
         key(KeyCode::Enter).await;
         wait_for_http_requests(&mock, "POST", "/api/source-control/worktrees", 1).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
+        wait_until(|| {
+            workspace_ops(&mock, "tab.create")
+                .iter()
+                .any(|op| op.get("worktree_id") == Some(&json!("wt-2")))
+        })
+        .await;
         wait_for_http_requests(&mock, "GET", worktrees_path, fetched + 1).await;
         timeout(Duration::from_secs(1), async {
             loop {
@@ -11131,9 +11526,14 @@ async fn row_menus_dispatch_project_and_agent_actions() {
             "base_branch": "0.5.0", "workspace_role": "client",
         })]
     );
-    let creates = websocket_requests(&mock, "terminal_create");
-    assert_eq!(creates.len(), 1);
-    assert_eq!(creates[0].get("cwd"), Some(&json!("/repo-wt/feature")));
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    let creates = workspace_ops(&mock, "tab.create");
+    let worktree_create = creates
+        .iter()
+        .find(|op| op.get("worktree_id") == Some(&json!("wt-2")))
+        .expect("worktree shell op");
+    assert!(worktree_create.get("terminal_id").is_none());
+    assert!(worktree_create.get("cwd").is_none());
     let deletes: Vec<String> = mock
         .requests()
         .into_iter()
@@ -11314,16 +11714,10 @@ async fn two_project_workspace(
 
 /// Opening a project attaches the next workspace and the first tab is created there.
 #[tokio::test]
-async fn opening_a_project_places_its_tab_on_the_next_workspace() {
+async fn opening_a_project_attaches_an_empty_next_workspace() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let (_daemon, mut workspace, mut chrome, _home) = two_project_workspace(&mock, SPAWNED).await;
-    let original = workspace
-        .workspace_model()
-        .expect("attached")
-        .workspace
-        .id
-        .clone();
     let original_ref = workspace
         .workspace_model()
         .expect("attached")
@@ -11332,10 +11726,6 @@ async fn opening_a_project_places_its_tab_on_the_next_workspace() {
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
-    workspace
-        .drain_live_events()
-        .await
-        .expect("apply the tab.created event");
     sync_live_chrome(&mut workspace, &mut chrome);
     let attaches = websocket_requests(&mock, "workspace_attach");
     assert!(
@@ -11345,11 +11735,7 @@ async fn opening_a_project_places_its_tab_on_the_next_workspace() {
         "opening a project resolves its workspace"
     );
     let creates = workspace_ops(&mock, "tab.create");
-    assert_eq!(creates.len(), 1, "the new workspace's first tab");
-    assert_ne!(
-        creates[0].get("workspace").and_then(|value| value.as_str()),
-        Some(original.as_str())
-    );
+    assert!(creates.is_empty(), "project focus does not start a shell");
     let model = workspace.workspace_model().expect("project workspace");
     assert_eq!(
         model.workspace.default_project_id.as_deref(),
@@ -11357,8 +11743,7 @@ async fn opening_a_project_places_its_tab_on_the_next_workspace() {
     );
     assert_eq!(model.workspace.reference, original_ref + 1);
     let tab = model.tabs_for_project("project-2");
-    assert_eq!(tab.len(), 1);
-    assert_eq!(tab[0].workspace_id, model.workspace.id);
+    assert!(tab.is_empty());
     mock.shutdown().await;
 }
 
@@ -11371,6 +11756,7 @@ async fn other_window_creates_tab(daemon: &LiveDaemon, workspace_id: &str, termi
             worktree_id: None,
             title: None,
             terminal_id: Some(terminal.to_string()),
+            cwd: None,
             node: None,
         })
         .await
@@ -11380,12 +11766,11 @@ async fn other_window_creates_tab(daemon: &LiveDaemon, workspace_id: &str, termi
 /// 4.2: a placement the daemon refuses is forgotten, so another window
 /// placing the same terminal later does not move this window's focus.
 #[tokio::test]
-async fn a_refused_placement_is_not_claimed_when_another_window_places_it() {
+async fn project_focus_does_not_claim_another_windows_tabs() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let (daemon, mut workspace, mut chrome, _home) = two_project_workspace(&mock, SPAWNED).await;
 
-    mock.enqueue_workspace_refusal("busy", "another window is moving the workspace");
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
@@ -11395,17 +11780,9 @@ async fn a_refused_placement_is_not_claimed_when_another_window_places_it() {
         .workspace
         .id
         .clone();
-    assert_eq!(
-        workspace_ops(&mock, "tab.create").len(),
-        1,
-        "the empty bar spawned a shell and asked for its tab"
-    );
-    assert_eq!(
-        chrome.last_alert(),
-        Some("another window is moving the workspace")
-    );
+    assert!(workspace_ops(&mock, "tab.create").is_empty());
 
-    // Another window fills the project workspace, including the refused shell.
+    // Another window fills the project workspace; none is this window's placement.
     for terminal in ["terminal-b1", SPAWNED] {
         other_window_creates_tab(&daemon, &project_workspace, terminal).await;
         workspace
@@ -11426,12 +11803,12 @@ async fn a_refused_placement_is_not_claimed_when_another_window_places_it() {
 /// 4.2: a placement that lands while another project is focused waits for
 /// its own bar and focuses there when the project returns.
 #[tokio::test]
-async fn a_placement_landing_behind_another_project_focuses_on_return() {
+async fn tabs_created_behind_another_project_appear_on_return() {
     const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let mock = MockDaemon::start("local-token").await;
     let (daemon, mut workspace, mut chrome, _home) = two_project_workspace(&mock, SPAWNED).await;
 
-    // Place the shell, then leave. Another window edits that parked workspace.
+    // Another window edits the parked project workspace.
     focus_project(&mut workspace, &mut chrome, "project-2")
         .await
         .expect("focus project-2");
@@ -11444,17 +11821,19 @@ async fn a_placement_landing_behind_another_project_focuses_on_return() {
     workspace
         .drain_live_events()
         .await
-        .expect("apply the shell's tab.created event");
+        .expect("drain project events");
     sync_live_chrome(&mut workspace, &mut chrome);
     focus_project(&mut workspace, &mut chrome, "project-1")
         .await
         .expect("focus project-1");
 
-    other_window_creates_tab(&daemon, &project_workspace, "terminal-b1").await;
-    workspace
-        .drain_live_events()
-        .await
-        .expect("apply the second tab.created event");
+    for terminal in [SPAWNED, "terminal-b1"] {
+        other_window_creates_tab(&daemon, &project_workspace, terminal).await;
+        workspace
+            .drain_live_events()
+            .await
+            .expect("apply the tab.created event");
+    }
     let front = mock
         .tab_for_terminal("terminal-b1")
         .expect("the other window's tab");
@@ -11480,11 +11859,7 @@ async fn a_placement_landing_behind_another_project_focuses_on_return() {
         shown_terminals(&workspace, &chrome),
         ["terminal-b1", SPAWNED]
     );
-    assert_eq!(
-        chrome.active_index(),
-        1,
-        "the shell this window spawned is the active tab"
-    );
+    assert_eq!(chrome.active_index(), 0, "no tab was placed by this window");
     mock.shutdown().await;
 }
 
@@ -12550,11 +12925,9 @@ async fn opening_a_bare_terminal_row_in_a_new_tab_reveals_that_terminal() {
 
 /// #22534: a launch that finds the daemon down opens the window and waits.
 /// The status line carries the condition, the supervisor connects when the
-/// daemon returns, and the first handshake runs the restore the launch
-/// skipped, so the window seeds its first shell then.
+/// daemon returns, and the first handshake restores an empty workspace.
 #[tokio::test]
 async fn launch_with_the_daemon_down_waits_and_restores_when_it_returns() {
-    const SPAWNED: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     let home = tempfile::tempdir().expect("gobby home");
     let address = {
         let mock = MockDaemon::start("local-token").await;
@@ -12594,10 +12967,8 @@ async fn launch_with_the_daemon_down_waits_and_restores_when_it_returns() {
             }]),
         );
         mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[]));
-        mock.enqueue("GET", "/api/terminals?", 200, terminal_page(&[SPAWNED]));
         wait_for_websocket_requests(&mock, "workspace_attach", 1).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
-        wait_for_http_requests(&mock, "GET", "/api/terminals?", 2).await;
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", 1).await;
         settle_live_event().await;
         send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::CONTROL).await;
         send_key(&input_tx, KeyCode::Char('Q'), KeyModifiers::SHIFT).await;
@@ -12620,12 +12991,8 @@ async fn launch_with_the_daemon_down_waits_and_restores_when_it_returns() {
         workspace.daemon_ready(),
         "the returned daemon was handshaken"
     );
-    assert_eq!(
-        websocket_requests(&mock, "terminal_create").len(),
-        1,
-        "the first handshake seeds the shell the launch could not"
-    );
-    assert_eq!(chrome.tabs().tabs.len(), 1);
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    assert!(chrome.tabs().tabs.is_empty());
     mock.shutdown().await;
 }
 
@@ -12771,11 +13138,17 @@ async fn reconnect_rearms_direct_from_the_fresh_roster_row() {
 }
 
 #[tokio::test]
-async fn tab_and_split_shells_start_in_the_focused_checkout() {
+async fn tab_and_split_shells_use_the_daemons_focused_checkout() {
     let mock = MockDaemon::start("local-token").await;
-    mock.set_spawn_refusal("cwd-probe");
     for _ in 0..4 {
         mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    }
+    for page in [
+        terminal_page(&[]),
+        terminal_page(&["mock-terminal-3"]),
+        terminal_page(&["mock-terminal-3", "mock-terminal-5"]),
+    ] {
+        mock.enqueue("GET", "/api/terminals?", 200, page);
     }
     let daemon = LiveDaemon::connect(mock.url(), "local-token")
         .await
@@ -12794,11 +13167,11 @@ async fn tab_and_split_shells_start_in_the_focused_checkout() {
         wait_for_http_requests(&mock, "GET", "/api/projects", 1).await;
         settle_live_event().await;
         send_chord(&input_tx, KeyCode::Char('c'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 1).await;
         send_chord(&input_tx, KeyCode::Char('v'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 2).await;
+        wait_until(|| workspace_ops(&mock, "tab.create").len() == 1).await;
+        wait_for_websocket_requests(&mock, "terminal_attach", 1).await;
         send_chord(&input_tx, KeyCode::Char('-'), KeyModifiers::NONE).await;
-        wait_for_websocket_requests(&mock, "terminal_create", 3).await;
+        wait_until(|| workspace_ops(&mock, "pane.split").len() == 1).await;
         settle_live_event().await;
         drop(input_tx);
     };
@@ -12814,20 +13187,25 @@ async fn tab_and_split_shells_start_in_the_focused_checkout() {
         driver
     );
     result.expect("checkout cwd live loop");
-    let resolved = workspace.focused_checkout_path();
-    let creates = websocket_requests(&mock, "terminal_create");
-    let cwds: Vec<Option<&str>> = creates
-        .iter()
-        .map(|create| create.get("cwd").and_then(Value::as_str))
-        .collect();
-    assert_eq!(
-        (resolved.as_deref(), cwds.as_slice()),
-        (
-            Some("/repo"),
-            [Some("/repo"), Some("/repo"), Some("/repo")].as_slice()
-        ),
-        "tab, split right, and split down start in the focused checkout: {creates:?}"
-    );
+    assert_eq!(workspace.focused_checkout_path().as_deref(), Some("/repo"));
+    assert!(websocket_requests(&mock, "terminal_create").is_empty());
+    let creates = workspace_ops(&mock, "tab.create");
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0]["project_id"], json!("project-1"));
+    assert!(creates[0].get("terminal_id").is_none());
+    assert!(creates[0].get("cwd").is_none());
+    let splits = workspace_ops(&mock, "pane.split");
+    assert_eq!(splits.len(), 1);
+    assert!(splits[0].get("terminal_id").is_none());
+    assert!(splits[0].get("cwd").is_none());
+    let model = workspace.workspace_model().expect("workspace model");
+    for terminal_id in ["mock-terminal-3", "mock-terminal-5"] {
+        let pane = model
+            .panes()
+            .find(|pane| pane.terminal_id.as_deref() == Some(terminal_id))
+            .expect("new shell pane");
+        assert!(pane.owns_terminal, "{terminal_id} belongs to the workspace");
+    }
     mock.shutdown().await;
 }
 
@@ -13233,5 +13611,177 @@ async fn a_lagged_proxy_pane_reattaches_beside_the_loop() {
         pane.attach_state()
     );
     assert_ne!(json!(pane.attachment_id()), retired);
+    mock.shutdown().await;
+}
+
+/// A row's working directory and command follow its shell: the roster relists
+/// every five seconds, one request at a time and beside the loop, and each
+/// answer replaces both, a null clearing what the last answer showed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_roster_refreshes_each_rows_directory_and_command() {
+    const TERMINAL_ID: &str = "terminal-cd";
+    let roster = |cwd: Value, command: &str| {
+        json!({
+            "items": [{
+                "terminal_id": TERMINAL_ID,
+                "backend": "native",
+                "state": "live",
+                "cwd": cwd,
+                "command": command,
+            }],
+            "next_cursor": null,
+            "snapshot": {"daemon_epoch": "epoch-1", "seq": 0},
+        })
+    };
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    // The launch reconcile's list.
+    mock.enqueue(
+        "GET",
+        "/api/terminals?",
+        200,
+        roster(json!("/repo/a"), "vim"),
+    );
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+    let mut seen_before_refresh = None;
+    let driver = async {
+        settle_before_lag(&mock).await;
+        let listed = request_count(&mock, "GET", "/api/terminals?");
+        let hold = mock.enqueue_held("GET", "/api/terminals?", 200, roster(Value::Null, "zsh"));
+        // The relist after it stays out, so nothing overwrites what it installs.
+        let _next = mock.enqueue_held("GET", "/api/terminals?", 200, roster(Value::Null, "zsh"));
+        // Nothing asks: the interval alone brings the next relist.
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        // While it is out, the loop keeps serving events and starts no second
+        // relist.
+        let sessions = request_count(&mock, "GET", "/api/sessions?");
+        mock.send_event(json!({"type": "session_event", "project_id": "project-1"}));
+        wait_for_http_requests(&mock, "GET", "/api/sessions?", sessions + 1).await;
+        seen_before_refresh = Some(request_count(&mock, "GET", "/api/terminals?") - listed);
+        hold.notify_one();
+        // The next relist starts only once this answer is applied.
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let run = async {
+        tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        )
+    };
+    let Ok((result, ())) = timeout(Duration::from_secs(20), run).await else {
+        panic!("the roster refresh stalled: {:?}", mock.activity());
+    };
+    result.expect("refreshed loop");
+    assert_eq!(
+        seen_before_refresh,
+        Some(1),
+        "one relist in flight at a time: {:?}",
+        mock.activity()
+    );
+    let pane = workspace
+        .pane_for_terminal(TERMINAL_ID)
+        .expect("the refreshed row keeps its pane");
+    assert_eq!(
+        workspace.pane(pane).cwd,
+        None,
+        "a null directory clears the old one"
+    );
+    assert_eq!(workspace.pane(pane).command.as_deref(), Some("zsh"));
+    mock.shutdown().await;
+}
+
+/// A relist asked for before a pane opened here answers without it. The
+/// periodic relist makes that race common, so a pane the loop installs itself
+/// outdates any relist in flight rather than being reaped by its answer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_relist_older_than_a_pane_opened_here_does_not_reap_it() {
+    let mock = MockDaemon::start("local-token").await;
+    // The launch reconcile's list.
+    mock.enqueue("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    let mut workspace = Workspace::live(daemon.clone());
+    let seeded = mock.seed_workspace("project-1", &[(&["terminal-a"], "terminal-a")]);
+    let (tab_id, panes) = seeded[0].clone();
+    workspace.select_project("project-1");
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        let listed = request_count(&mock, "GET", "/api/terminals?");
+        let hold = mock.enqueue_held("GET", "/api/terminals?", 200, roster_items(&["terminal-a"]));
+        // The relist asked again once the stale answer is dropped stays out,
+        // so no later answer can restore a reaped pane.
+        let _asked_again = mock.enqueue_held(
+            "GET",
+            "/api/terminals?",
+            200,
+            roster_items(&["terminal-a", "terminal-late"]),
+        );
+        lag_the_loop_receiver(&mock, &daemon);
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 1).await;
+        // While that relist is out, a new tab's shell opens here.
+        mock.enqueue(
+            "GET",
+            "/api/terminals/terminal-late",
+            200,
+            json!({"terminal_id": "terminal-late", "backend": "native", "state": "live"}),
+        );
+        mock.send_event_and_wait(pane_added_event(
+            &tab_id,
+            &panes[0],
+            "mock-pane-late",
+            "terminal-late",
+            1,
+        ))
+        .await;
+        wait_until(|| terminal_row_requests(&mock, "terminal-late") >= 1).await;
+        settle_live_event().await;
+        hold.notify_one();
+        wait_for_http_requests(&mock, "GET", "/api/terminals?", listed + 2).await;
+        settle_live_event().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let run = async {
+        tokio::join!(
+            run_live_loop(
+                &mut workspace,
+                &mut terminal,
+                &mut chrome,
+                input_rx,
+                &mut switch
+            ),
+            driver
+        )
+    };
+    let Ok((result, ())) = timeout(Duration::from_secs(10), run).await else {
+        panic!("the raced relist stalled: {:?}", mock.activity());
+    };
+    result.expect("raced loop");
+    assert!(
+        workspace.pane_for_terminal("terminal-late").is_some(),
+        "an answer older than the pane reaped it: {:?}",
+        mock.activity()
+    );
     mock.shutdown().await;
 }

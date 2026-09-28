@@ -13,8 +13,9 @@ pub struct TabSurfaceLayout {
     pub body: Rect,
 }
 
-/// Split `area` into the tab bar row and the body (herdr `compute_tab_surface`).
-/// Without a tab bar, `tabs` is the empty rect on the top edge.
+/// Split `area` into the tab bar row and the body under it (herdr
+/// `compute_tab_surface`). Without a tab bar, `tabs` is an empty rect on
+/// the top edge.
 pub fn compute_tab_surface(area: Rect, show_tab_bar: bool) -> TabSurfaceLayout {
     if !show_tab_bar || area.height == 0 {
         return TabSurfaceLayout {
@@ -74,9 +75,13 @@ mod tests {
     }
 
     #[test]
-    fn zero_height_area_never_yields_a_tab_row() {
+    fn short_areas_never_yield_rows_they_lack() {
         let surface = compute_tab_surface(Rect::new(0, 0, 40, 0), true);
         assert_eq!(surface.tabs.height, 0);
         assert_eq!(surface.body.height, 0);
+
+        let one_row = compute_tab_surface(Rect::new(0, 0, 40, 1), true);
+        assert_eq!(one_row.tabs, Rect::new(0, 0, 40, 1));
+        assert_eq!(one_row.body.height, 0);
     }
 }

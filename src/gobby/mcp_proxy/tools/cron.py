@@ -14,17 +14,35 @@ Exposes functionality for:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.scheduler.scheduler import CronRunRejected
+from gobby.utils.session_context import get_request_principal
 
 if TYPE_CHECKING:
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.storage.cron import CronJobStorage
 
 logger = logging.getLogger(__name__)
+
+
+async def _restricted_caller() -> bool:
+    """Distinguish agent credentials from operator and unseeded internal calls."""
+    try:
+        return await get_request_principal() is not None
+    except LookupError:
+        return False
+
+
+def _agent_forbidden() -> dict[str, Any]:
+    return {
+        "success": False,
+        "error_code": "forbidden",
+        "error": "Agent credentials cannot manage shell cron jobs or run, toggle, or delete jobs",
+    }
 
 
 def create_cron_registry(
@@ -81,7 +99,7 @@ def create_cron_registry(
         name="create_cron_job",
         description="Create a new cron job. Supports cron expressions, intervals, or one-shot schedules.",
     )
-    def create_cron_job(
+    async def create_cron_job(
         name: str,
         action_type: Literal["agent_spawn", "pipeline", "shell"],
         action_config: dict[str, Any],
@@ -111,6 +129,9 @@ def create_cron_registry(
         from gobby.storage.projects import PERSONAL_PROJECT_ID
         from gobby.utils.project_context import get_project_context
 
+        if action_type == "shell" and await _restricted_caller():
+            return _agent_forbidden()
+
         if not project_id:
             project_ctx = get_project_context()
             if project_ctx and project_ctx.get("id"):
@@ -128,7 +149,9 @@ def create_cron_registry(
                 from gobby.storage.tasks._id import resolve_task_reference
 
                 try:
-                    resolved_id = resolve_task_reference(cron_storage.db, task_ref, project_id)
+                    resolved_id = await asyncio.to_thread(
+                        resolve_task_reference, cron_storage.db, task_ref, project_id
+                    )
                     action_config["inputs"]["task_id"] = resolved_id
                 except Exception as e:
                     return {
@@ -137,7 +160,8 @@ def create_cron_registry(
                     }
 
         try:
-            job = cron_storage.create_job(
+            job = await asyncio.to_thread(
+                cron_storage.create_job,
                 project_id=project_id,
                 name=name,
                 schedule_type=schedule_type,
@@ -182,7 +206,7 @@ def create_cron_registry(
         name="update_cron_job",
         description="Update a cron job's configuration.",
     )
-    def update_cron_job(
+    async def update_cron_job(
         job_id: str,
         name: str | None = None,
         display_name: str | None = None,
@@ -232,10 +256,17 @@ def create_cron_registry(
             if not kwargs:
                 return {"success": False, "error": "No fields to update"}
 
-            updated = cron_storage.update_job(job_id, **kwargs)
+            restricted = await _restricted_caller()
+            if restricted and action_type == "shell":
+                return _agent_forbidden()
+
+            update = cron_storage.update_non_shell_job if restricted else cron_storage.update_job
+            updated = await asyncio.to_thread(update, job_id, **kwargs)
             if not updated:
                 return {"success": False, "error": f"Cron job not found: {job_id}"}
             return {"success": True, "job": updated.to_dict()}
+        except PermissionError:
+            return _agent_forbidden()
         except Exception as e:
             logger.exception("Failed to update cron job", extra={"job_id": job_id})
             return {"success": False, "error": str(e)}
@@ -244,15 +275,17 @@ def create_cron_registry(
         name="toggle_cron_job",
         description="Toggle a cron job between enabled and disabled.",
     )
-    def toggle_cron_job(job_id: str) -> dict[str, Any]:
+    async def toggle_cron_job(job_id: str) -> dict[str, Any]:
         """
         Toggle a cron job enabled/disabled.
 
         Args:
             job_id: The cron job ID
         """
+        if await _restricted_caller():
+            return _agent_forbidden()
         try:
-            job = cron_storage.toggle_job(job_id)
+            job = await asyncio.to_thread(cron_storage.toggle_job, job_id)
             if not job:
                 return {"success": False, "error": f"Cron job not found: {job_id}"}
             state = "enabled" if job.enabled else "disabled"
@@ -265,15 +298,17 @@ def create_cron_registry(
         name="delete_cron_job",
         description="Delete a cron job and its run history.",
     )
-    def delete_cron_job(job_id: str) -> dict[str, Any]:
+    async def delete_cron_job(job_id: str) -> dict[str, Any]:
         """
         Delete a cron job.
 
         Args:
             job_id: The cron job ID
         """
+        if await _restricted_caller():
+            return _agent_forbidden()
         try:
-            success = cron_storage.delete_job(job_id)
+            success = await asyncio.to_thread(cron_storage.delete_job, job_id)
             if not success:
                 return {"success": False, "error": f"Cron job not found: {job_id}"}
             return {"success": True}
@@ -292,6 +327,8 @@ def create_cron_registry(
         Args:
             job_id: The cron job ID
         """
+        if await _restricted_caller():
+            return _agent_forbidden()
         try:
             if cron_scheduler is not None:
                 try:
@@ -299,7 +336,7 @@ def create_cron_registry(
                 except CronRunRejected as exc:
                     return {"success": False, "error_code": exc.code, "error": str(exc)}
                 if not run:
-                    if cron_storage.get_job(job_id):
+                    if await asyncio.to_thread(cron_storage.get_job, job_id):
                         return {
                             "success": False,
                             "error_code": "cron_job_already_running",

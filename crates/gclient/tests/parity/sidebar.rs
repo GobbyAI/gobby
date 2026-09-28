@@ -43,7 +43,7 @@ use gobby_client::ui::text::display_width;
 use gobby_client::ui::Action;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::Terminal;
 use serde_json::json;
@@ -198,7 +198,7 @@ impl Board {
             }
             RowState::Idle => {}
             RowState::Paused => {
-                self.agent_mut(name).lifecycle_status = Some("awaiting_input".to_string());
+                self.agent_mut(name).lifecycle_status = Some("paused".to_string());
             }
             RowState::Orphaned => {
                 let agent = self.agent_mut(name);
@@ -386,14 +386,14 @@ parity_tests! {
             assert_eq!(workspace_style.fg, Some(p.text));
             assert!(workspace_style.add_modifier.contains(Modifier::BOLD));
             assert!(!workspace_style.add_modifier.contains(Modifier::DIM));
-            assert_eq!(workspace_style.bg, Some(p.surface_dim));
+            assert_eq!(workspace_style.bg, Some(p.surface0));
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
             assert_eq!(agent_style.fg, Some(p.overlay1));
             assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
-            assert_eq!(agent_style.bg, Some(p.surface_dim));
+            assert_eq!(agent_style.bg, Some(p.surface0));
         }
 
         fn occurrence_false_removes_default_workspace_bold_and_agent_dim() {
@@ -435,15 +435,15 @@ parity_tests! {
             assert_eq!(active.fg, Some(p.text));
             assert!(active.add_modifier.contains(Modifier::BOLD));
             assert!(!active.add_modifier.contains(Modifier::DIM));
-            assert_eq!(active.bg, Some(p.surface_dim));
+            assert_eq!(active.bg, Some(p.surface0));
 
             let inactive = style_at(&terminal, find_symbol_x(&terminal, second_row, 25, "t"), second_row);
             assert_eq!(inactive.fg, Some(p.subtext0));
             assert!(!inactive
                 .add_modifier
                 .intersects(Modifier::BOLD | Modifier::DIM));
-            // herdr: `Color::Reset`; gclient fills the sidebar with `panel_bg`.
-            assert_eq!(inactive.bg, Some(p.panel_bg));
+            // herdr: `Color::Reset`; the sidebar sits on the terminal's ground.
+            assert_eq!(inactive.bg, Some(Color::Reset));
         }
 
         fn space_occurrence_style_applies_without_styling_separator() {
@@ -467,7 +467,7 @@ parity_tests! {
                 assert_eq!(style.fg, Some(p.text));
                 assert!(style.add_modifier.contains(Modifier::BOLD));
                 assert!(!style.add_modifier.contains(Modifier::DIM));
-                assert_eq!(style.bg, Some(p.surface_dim));
+                assert_eq!(style.bg, Some(p.surface0));
             }
         }
 
@@ -534,13 +534,13 @@ parity_tests! {
             let (terminal, _) = draw_sidebar(&board, &chrome, area.width, area.height);
             let body = section_body(&board, &chrome, area, SidebarSection::Terminals);
             let rendered = row_str(&terminal, body.y, 9);
-            let backend = row_str(&terminal, body.y + 1, 9);
+            let directory = row_str(&terminal, body.y + 1, 9);
 
             assert!(!rendered.contains('⠋'));
             assert!(rendered.contains('修') && rendered.contains('复'), "rendered={rendered:?}, body={body:?}, rows={:?}", terminal_rows(&board, &chrome));
-            assert_eq!(backend, "   gclie…");
+            assert_eq!(directory, "");
             assert!(!rendered.contains('@'));
-            assert!(!backend.contains('@'));
+            assert!(!directory.contains('@'));
 
             let spans = fitted_spans(
                 ("", Style::default()),
@@ -568,7 +568,7 @@ parity_tests! {
             assert_eq!(metrics.max_offset_from_bottom, 2);
             // herdr: `agent_panel_scroll_for_target(&app, area, 0, 2) == 1`;
             // scrolling one row reveals the target row the packed layout hid.
-            *chrome.sidebar.scroll_mut(SidebarSection::Agents) = 2;
+            chrome.sidebar.set_scroll(SidebarSection::Agents, 2);
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
             let ids: Vec<&str> = hits.agents.iter().map(|(id, _)| id.as_str()).collect();
             assert_eq!(ids, ["agent:three"]);
@@ -700,7 +700,6 @@ parity_tests! {
 
             let entries = agent_rows(&board, &chrome);
             assert_eq!(entries[0].label, "bridge");
-            assert_eq!(entries[0].provider, None);
         }
 
         fn expanded_sidebar_sections_handle_tiny_heights() {
@@ -708,7 +707,7 @@ parity_tests! {
             // gclient has no ratio: the top half of five rows (two) goes to
             // the machines band and its row, nothing is left for the
             // projects; Agents and Terminals split the other three.
-            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 0);
+            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 1, 0);
 
             assert_eq!(
                 layout.sections,
@@ -806,7 +805,7 @@ parity_tests! {
             let board = Board::new(&["main", "one", "two"]);
             let mut chrome = chrome();
             let area = Rect::new(0, 0, 30, 30);
-            *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 2;
+            chrome.sidebar.set_scroll(SidebarSection::Projects, 2);
             let body = section_body(&board, &chrome, area, SidebarSection::Projects);
 
             let (_, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
@@ -834,7 +833,7 @@ parity_tests! {
             let board = Board::new(&["main", "notes"]);
             let mut chrome = chrome();
             chrome.mode = Mode::Terminal;
-            *chrome.sidebar.scroll_mut(SidebarSection::Projects) = 1;
+            chrome.sidebar.set_scroll(SidebarSection::Projects, 1);
             let area = Rect::new(0, 0, 30, 11);
             assert_eq!(
                 section_body(&board, &chrome, area, SidebarSection::Projects).height,
@@ -951,13 +950,13 @@ parity_tests! {
 
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Attention)));
-            assert_eq!(second_text(&row, 60, &chrome), "   Task #1 - reviewing auth");
+            assert_eq!(second_text(&row, 60, &chrome), "   Working task 1 reviewing auth");
             let working = plain_row("repo", RowState::Working, &["reviewing auth"]);
             assert_eq!(
                 line_text(&working, 60, &chrome),
                 format!(" {} repo", dot(RowState::Working))
             );
-            assert_eq!(second_text(&working, 60, &chrome), "   Task #1 - reviewing auth");
+            assert_eq!(second_text(&working, 60, &chrome), "   Working task 1 reviewing auth");
         }
 
         fn terminal_title_builtins_are_distinct_from_custom_tokens() {
@@ -970,24 +969,23 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert!(!text.contains('⠋'));
             assert_eq!(text, format!(" {} raw title", dot(RowState::Working)));
-            assert_eq!(second_text(&row, 60, &chrome), "   Task #1 - custom title");
+            assert_eq!(second_text(&row, 60, &chrome), "   Working task 1 custom title");
         }
 
         fn known_agent_override_replaces_default_rows() {
             // herdr: `rows_by_agent["pi"]` wins while `entry.agent` is `Pi`
             // and the default rows return once it is `None`; gclient's row
-            // keeps the roster's provider token and name once its pane is
-            // gone, and only the state changes.
+            // keeps the roster's name once its pane is gone, and only the
+            // state changes.
             let mut board = Board::new(&[]);
             board.add("repo", "renamed pi");
             let chrome = chrome();
 
             let rows = agent_rows(&board, &chrome);
-            assert_eq!(rows[0].provider, None);
+            assert_eq!(rows[0].label, "repo");
 
             board.set_state("repo", RowState::Unknown);
             let rows = agent_rows(&board, &chrome);
-            assert_eq!(rows[0].provider, None);
             assert_eq!(rows[0].label, "repo");
             assert!(!line_text(&rows[0], 60, &chrome).contains("detached"));
         }
@@ -1012,7 +1010,7 @@ parity_tests! {
             let text = line_text(&row, 60, &chrome);
             assert_eq!(text, format!(" {} repo", dot(RowState::Idle)));
             let second = second_text(&row, 60, &chrome);
-            assert_eq!(second, "   Task #1 - 2 changes");
+            assert_eq!(second, "   Working task 1 2 changes");
             assert!(!second.contains('↑') && !second.contains('↓'));
         }
     }
@@ -1285,10 +1283,10 @@ fn agent_rows_follow_project_and_machine_filter() {
     assert_eq!(
         items,
         [
-            ("✓ this project", false),
-            ("  all projects", true),
-            ("  grouped", true),
-            ("✓ priority", false),
+            ("✓ This project", false),
+            ("  All projects", true),
+            ("  Grouped", true),
+            ("✓ Priority", false),
         ]
     );
     chrome.menu = None;
@@ -1508,6 +1506,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
     assert_eq!(projects_scroll(&chrome), projects_max - MOUSE_SCROLL_LINES);
     route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
     assert_eq!(projects_scroll(&chrome), 0, "clamped at the top");
+    let projects_lit_at =
+        |chrome: &Chrome| chrome.sidebar.scrolled_at[SidebarSection::Projects.index()];
+    chrome.sidebar.scrolled_at = [None; 4];
+    route(&ws, &mut chrome, MouseEventKind::ScrollUp, col, row);
+    assert_eq!(
+        projects_lit_at(&chrome),
+        None,
+        "a notch past the top leaves the thumb dim"
+    );
     let terminals_max =
         section_metrics(&ws, &chrome, SidebarSection::Terminals).max_offset_from_bottom;
     assert!(terminals_max > 0, "bare terminals overflow their section");
@@ -1604,6 +1611,13 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         "a thumb press starts a drag"
     );
     assert_eq!(projects_scroll(&chrome), 0, "a thumb press does not jump");
+    chrome.sidebar.scrolled_at = [None; 4];
+    route(&ws, &mut chrome, LEFT_DRAG, track.x, track.y);
+    assert_eq!(
+        projects_lit_at(&chrome),
+        None,
+        "a drag that holds still leaves the thumb dim"
+    );
     assert_eq!(
         route(&ws, &mut chrome, LEFT_DRAG, track.x, bottom),
         MouseOutcome::Handled
@@ -1612,6 +1626,10 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         projects_scroll(&chrome),
         projects_max,
         "the thumb follows the pointer"
+    );
+    assert!(
+        projects_lit_at(&chrome).is_some(),
+        "a drag that moves lights the thumb"
     );
     assert_eq!(
         route(&ws, &mut chrome, LEFT_UP, track.x, bottom),
@@ -1915,4 +1933,67 @@ fn key(code: KeyCode) -> KeyInput {
         key: KeyEvent::new(code, KeyModifiers::NONE),
         bytes: Vec::new(),
     }
+}
+
+/// The fg of each thumb cell in `section`'s lane; the lane draws no track,
+/// so every other row is blank.
+fn band_thumb(
+    board: &Board,
+    chrome: &Chrome,
+    height: u16,
+    section: SidebarSection,
+) -> Vec<Option<Color>> {
+    let (terminal, hits) = draw_sidebar(board, chrome, 20, height);
+    let lane = hits.scrollbars[section.index()].expect("the band overflows");
+    (lane.y..lane.bottom())
+        .map(|y| cell(&terminal, lane.x, y))
+        .filter(|cell| cell.symbol() == "▕")
+        .map(|cell| cell.style().fg)
+        .collect()
+}
+
+/// A band's thumb draws in the dim token at rest and in overlay0 for a
+/// second after the band scrolls, or while navigate mode's cursor is in it.
+#[test]
+fn a_band_thumb_rests_dim_and_lights_while_it_scrolls_or_holds_the_cursor() {
+    use std::time::{Duration, Instant};
+    let p = palette();
+
+    let board = Board::new(&["one", "two", "three"]);
+    let mut scrolling = chrome();
+    let agents = SidebarSection::Agents;
+    let rest = band_thumb(&board, &scrolling, 13, agents);
+    assert!(!rest.is_empty(), "a thumb draws");
+    let (dim, lit) = (
+        vec![Some(p.dim); rest.len()],
+        vec![Some(p.overlay0); rest.len()],
+    );
+    assert_eq!(rest, dim, "at rest");
+    scrolling.sidebar.set_scroll(agents, 1);
+    assert_eq!(
+        band_thumb(&board, &scrolling, 13, agents),
+        lit,
+        "just scrolled"
+    );
+    scrolling.sidebar.scrolled_at[agents.index()] =
+        Instant::now().checked_sub(Duration::from_secs(2));
+    assert_eq!(
+        band_thumb(&board, &scrolling, 13, agents),
+        dim,
+        "a second after"
+    );
+
+    let board = Board::new(&["one", "two"]);
+    let mut chrome = chrome();
+    let projects = SidebarSection::Projects;
+    let rest = band_thumb(&board, &chrome, 11, projects);
+    assert!(!rest.is_empty(), "a thumb draws");
+    assert_eq!(rest, vec![Some(p.dim); rest.len()], "at rest");
+    chrome.mode = Mode::Navigate;
+    chrome.sidebar.selected = 0;
+    assert_eq!(
+        band_thumb(&board, &chrome, 11, projects),
+        vec![Some(p.overlay0); rest.len()],
+        "holding the cursor"
+    );
 }

@@ -462,9 +462,9 @@ Button selections return their configured value to the supplied session.
 Callback tokens are opaque, single-use, scoped to their chat, topic, and
 session, and stored in memory until they expire.
 
-Send an existing regular file inside the resolved workspace with
-`send_attachment`. The tool resolves symlinks and rejects paths outside the
-workspace before delivery:
+Send an existing regular file inside the project checkout or one of its active
+or stale registered worktrees with `send_attachment`. The tool resolves
+symlinks and rejects paths outside those roots before delivery:
 
 ```json
 {

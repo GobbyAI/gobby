@@ -8,7 +8,8 @@ use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
 use crate::ui::hit::Hit;
 use crate::ui::marks::{self, MarkPalette};
 use crate::ui::pane_chrome::{
-    self, footer_rects, pane_footer, title_budget, top_reserve, PaneFooter,
+    self, address_rect, exited, pane_corners, title_budget, title_rect, top_reserve, MetadataTone,
+    PaneCorners,
 };
 use crate::ui::pane_layout::{self, PaneInfo, SplitBorder};
 use crate::ui::scrollbar::render_pane_scrollbar;
@@ -19,7 +20,7 @@ use gobby_terminal::selection::Selection;
 use ratatui::layout::{Alignment, Direction, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Borders, Paragraph};
 use ratatui::Frame;
 use std::collections::HashMap;
 
@@ -27,23 +28,20 @@ use std::collections::HashMap;
 /// grid into its inner rect.
 pub type PaneContent<'a> = dyn FnMut(&mut Frame, Rect, PaneId) + 'a;
 
-/// Border label for a pane: padded, truncated to the top edge, and marked
-/// with "▸" when focused.
-pub fn pane_border_title(label: &str, pane_width: u16, focused: bool) -> Option<String> {
+/// Border label for a pane: padded and truncated to the top edge.
+pub fn pane_border_title(label: &str, pane_width: u16) -> Option<String> {
     let label = label.trim();
     if label.is_empty() || pane_width <= 4 {
         return None;
     }
-    let budget = title_budget(pane_width, focused, 0);
-    Some(frame_title(&truncate_end(label, budget), focused))
+    Some(frame_title(&truncate_end(
+        label,
+        title_budget(pane_width, 0),
+    )))
 }
 
-fn frame_title(label: &str, focused: bool) -> String {
-    if focused {
-        format!(" ▸ {label} ")
-    } else {
-        format!(" {label} ")
-    }
+fn frame_title(label: &str) -> String {
+    format!(" {label} ")
 }
 
 /// A live header: the title window at the shared ticker, beside whatever
@@ -51,7 +49,7 @@ fn frame_title(label: &str, focused: bool) -> String {
 fn header_title(
     label: &str,
     info: &PaneInfo,
-    footer: &PaneFooter,
+    corners: &PaneCorners,
     chrome: &Chrome,
     max_travel: usize,
 ) -> Option<String> {
@@ -59,7 +57,7 @@ fn header_title(
     if label.is_empty() || info.rect.width <= 4 {
         return None;
     }
-    let budget = title_budget(info.rect.width, info.is_focused, top_reserve(info, footer));
+    let budget = title_budget(info.rect.width, top_reserve(info, corners));
     let window = ticker_window(
         label,
         budget,
@@ -67,7 +65,7 @@ fn header_title(
         max_travel,
         chrome.prefs.title_scrolling,
     );
-    Some(frame_title(&window, info.is_focused))
+    Some(frame_title(&window))
 }
 
 /// Render every pane of the active tab from `chrome.view.pane_infos`,
@@ -85,7 +83,7 @@ pub fn render_panes<W: WorkspaceView>(
     let terminal_active = chrome.mode == Mode::Terminal;
 
     let mut resolved: Vec<PaneInfo> = Vec::with_capacity(chrome.view.pane_infos.len());
-    let mut labels: Vec<(String, PaneFooter)> = Vec::with_capacity(chrome.view.pane_infos.len());
+    let mut labels: Vec<PaneCorners> = Vec::with_capacity(chrome.view.pane_infos.len());
     let mut frame_states = Vec::with_capacity(chrome.view.pane_infos.len());
     // One ticker period for every scrolling title in the frame (D7).
     let mut max_travel = chrome.view.title_travel;
@@ -112,7 +110,7 @@ pub fn render_panes<W: WorkspaceView>(
         {
             highlight_selection(frame, selection, info.inner_rect, metrics, &chrome.palette);
         }
-        render_pane_scrollbar(frame, &info, metrics, &chrome.palette);
+        render_pane_scrollbar(frame, &info, metrics, &chrome.palette, pane.scrolled_at);
 
         let should_dim = !info.is_focused && multi_pane && !terminal_active;
         if should_dim {
@@ -126,11 +124,8 @@ pub fn render_panes<W: WorkspaceView>(
             }
         }
 
-        max_travel = max_travel.max(pane_chrome::title_travel(ws, pane, &info));
-        labels.push((
-            pane_chrome::pane_title(ws, pane),
-            pane_footer(ws, pane, info.is_focused),
-        ));
+        max_travel = max_travel.max(pane_chrome::title_travel(ws, chrome, pane, &info));
+        labels.push(pane_corners(ws, chrome, pane, info.is_focused));
         frame_states.push(frame_state(ws, pane));
         resolved.push(info);
     }
@@ -147,11 +142,30 @@ pub fn render_panes<W: WorkspaceView>(
     let titles: Vec<Option<String>> = resolved
         .iter()
         .zip(&labels)
-        .map(|(info, (label, meta))| header_title(label, info, meta, chrome, max_travel))
+        .map(|(info, corners)| header_title(&corners.title, info, corners, chrome, max_travel))
         .collect();
-    render_pane_border_titles(chrome, &resolved, &titles, frame);
-    for (info, (_, meta)) in resolved.iter().zip(&labels) {
-        render_pane_metadata(frame, chrome, info, meta);
+    let styles: Vec<Style> = resolved
+        .iter()
+        .zip(&labels)
+        .map(|(info, corners)| corner_style(chrome, info, corners.tone))
+        .collect();
+    render_pane_border_titles(&resolved, &titles, &styles, frame);
+    // The pointer resting on a Read-only or Uncertain title underlines its
+    // words, not the padding.
+    if matches!(chrome.hover, Some(Hit::ControlIndicator)) {
+        for (info, corners) in resolved.iter().zip(&labels) {
+            let Some(rect) = title_rect(info, corners).filter(|_| corners.actionable) else {
+                continue;
+            };
+            let words = Rect::new(rect.x + 1, rect.y, rect.width.saturating_sub(2), 1);
+            let words = words.intersection(frame.area());
+            frame
+                .buffer_mut()
+                .set_style(words, Style::default().add_modifier(Modifier::UNDERLINED));
+        }
+    }
+    for (info, corners) in resolved.iter().zip(&labels) {
+        render_pane_address(frame, chrome, info, corners);
     }
 }
 
@@ -191,15 +205,11 @@ pub fn highlight_selection(
 /// Placeholder body when no pane is open.
 pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     let p = &chrome.palette;
-    frame.render_widget(
-        Block::default().style(Style::default().bg(p.panel_bg)),
-        area,
-    );
     if area.height < 2 || area.width < 8 {
         return;
     }
 
-    let mark = marks::goblin_small();
+    let mark = marks::goblin_large();
     let show_mark = area.width >= mark.cols && area.height >= mark.rows + 5;
     let text_y = if show_mark {
         let mark_y = area.y + (area.height - (mark.rows + 5)) / 2;
@@ -243,9 +253,18 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
     };
     let picker_label = binding_label("terminal_picker");
     let sidebar_label = binding_label("toggle_sidebar");
+    // The toggle unpins a pinned column, rolls up an open overlay, and
+    // otherwise opens the overlay.
+    let sidebar_step = if chrome.sidebar.pinned {
+        "hide the sidebar"
+    } else if chrome.sidebar.overlay {
+        "close the sidebar"
+    } else {
+        "open the sidebar"
+    };
     let width = 30usize
         .max(display_width(&picker_label) + 2 + display_width("attach a terminal"))
-        .max(display_width(&sidebar_label) + 2 + display_width("open the sidebar"))
+        .max(display_width(&sidebar_label) + 2 + display_width(sidebar_step))
         .min(usize::from(area.width)) as u16;
     let lines = vec![
         Line::styled(
@@ -253,8 +272,8 @@ pub fn render_empty(frame: &mut Frame, area: Rect, chrome: &Chrome) {
             Style::default().fg(p.overlay1).add_modifier(Modifier::BOLD),
         ),
         row(&picker_label, "attach a terminal", width),
-        row("File › New Terminal", "start one", width),
-        row(&sidebar_label, "open the sidebar", width),
+        row("File › New terminal", "start one", width),
+        row(&sidebar_label, sidebar_step, width),
     ];
     let rect = Rect::new(
         area.x + (area.width - width) / 2,
@@ -339,9 +358,7 @@ fn frame_state<W: WorkspaceView>(ws: &W, pane: &Pane) -> FrameState {
         .agents
         .iter()
         .find(|agent| agent.terminal_id == pane.terminal_id);
-    if pane.terminal_state.as_deref() == Some("exited")
-        || agent.is_some_and(|agent| agent.terminal_state.as_deref() == Some("exited"))
-    {
+    if exited(pane, agent) {
         FrameState::Exited
     } else if agent.is_some_and(|agent| agent.attention.is_some()) {
         FrameState::Attention
@@ -369,10 +386,31 @@ pub fn render_pane_borders(
         .map(|(info, title)| {
             title
                 .as_deref()
-                .and_then(|title| pane_border_title(title, info.rect.width, info.is_focused))
+                .and_then(|title| pane_border_title(title, info.rect.width))
         })
         .collect();
-    render_pane_border_titles(chrome, pane_infos, &titles, frame);
+    let styles: Vec<Style> = pane_infos
+        .iter()
+        .map(|info| {
+            let tone = if info.is_focused {
+                MetadataTone::Focused
+            } else {
+                MetadataTone::Ordinary
+            };
+            corner_style(chrome, info, tone)
+        })
+        .collect();
+    render_pane_border_titles(pane_infos, &titles, &styles, frame);
+}
+
+/// A corner's text style: its tone's hue, bold on the focused pane.
+fn corner_style(chrome: &Chrome, info: &PaneInfo, tone: MetadataTone) -> Style {
+    let style = Style::default().fg(tone.color(&chrome.palette));
+    if info.is_focused {
+        style.add_modifier(Modifier::BOLD)
+    } else {
+        style
+    }
 }
 
 /// The line grid of `render_pane_borders`; false when no pane has a border.
@@ -443,7 +481,9 @@ fn render_border_lines(
             FrameState::Exited => ("◌", chrome.palette.red),
             FrameState::Ordinary => continue,
         };
-        if area.contains(info.rect.as_position()) {
+        // A pane with room for its title leads it with this glyph already.
+        let titled = info.borders.contains(Borders::TOP) && info.rect.width > 4;
+        if !titled && area.contains(info.rect.as_position()) {
             let cell = &mut buf[(info.rect.x, info.rect.y)];
             cell.set_symbol(symbol);
             cell.set_style(Style::default().fg(color));
@@ -572,14 +612,14 @@ fn line_touches_pane(x: u16, y: u16, info: &PaneInfo, pane_gaps: bool) -> bool {
 }
 
 fn render_pane_border_titles(
-    chrome: &Chrome,
     pane_infos: &[PaneInfo],
     titles: &[Option<String>],
+    styles: &[Style],
     frame: &mut Frame,
 ) {
     let buf = frame.buffer_mut();
     let area = buf.area;
-    for (info, title) in pane_infos.iter().zip(titles) {
+    for ((info, title), style) in pane_infos.iter().zip(titles).zip(styles) {
         if !info.borders.contains(Borders::TOP) || info.rect.width <= 4 {
             continue;
         }
@@ -600,49 +640,34 @@ fn render_pane_border_titles(
         if start_x >= end_x {
             continue;
         }
-        let color = if info.is_focused {
-            chrome.palette.accent
-        } else {
-            chrome.palette.overlay0
-        };
-        let mut style = Style::default().fg(color);
-        if info.is_focused {
-            style = style.add_modifier(Modifier::BOLD);
-        }
         buf.set_stringn(
             start_x,
             y,
             title,
             end_x.saturating_sub(start_x) as usize,
-            style,
+            *style,
         );
     }
 }
 
-/// Identity and condition on the left edge, backend and address on the right.
-/// The focused pane's footer reads bold; while it offers take-control, the
-/// pointer underlines the actionable words like every chrome button.
-fn render_pane_metadata(frame: &mut Frame, chrome: &Chrome, info: &PaneInfo, footer: &PaneFooter) {
-    let Some((left, right)) = footer_rects(info, footer) else {
+/// The pane's address in its bottom-right corner, or at the top edge's
+/// right end on a pane without its own bottom edge; bold when focused.
+fn render_pane_address(frame: &mut Frame, chrome: &Chrome, info: &PaneInfo, corners: &PaneCorners) {
+    let Some(rect) = address_rect(info, corners) else {
         return;
     };
     let buf = frame.buffer_mut();
-    if !buf.area.contains(left.as_position()) || right.right() > buf.area.right() {
+    if !buf.area.contains(rect.as_position()) || rect.right() > buf.area.right() {
         return;
     }
-    let mut style = Style::default().fg(footer.tone.color(&chrome.palette));
-    if info.is_focused {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    buf.set_string(left.x, left.y, format!(" {} ", footer.left), style);
-    buf.set_string(right.x, right.y, format!(" {} ", footer.right), style);
-    if left.y == info.rect.y && info.rect.height > 1 {
-        buf.set_string(left.right(), left.y, "·", style);
-    }
-    if info.is_focused && footer.actionable && matches!(chrome.hover, Some(Hit::ControlIndicator)) {
-        let words = Rect::new(left.x + 1, left.y, left.width.saturating_sub(2), 1);
-        buf.set_style(words, Style::default().add_modifier(Modifier::UNDERLINED));
-    }
+    // The address repeats focus and hold; a seat that needs you says so
+    // in its title alone.
+    let tone = match corners.tone {
+        MetadataTone::Attention => MetadataTone::Ordinary,
+        tone => tone,
+    };
+    let style = corner_style(chrome, info, tone);
+    buf.set_string(rect.x, rect.y, format!(" {} ", corners.address), style);
 }
 
 fn line_cell_symbol(line: LineCell) -> &'static str {

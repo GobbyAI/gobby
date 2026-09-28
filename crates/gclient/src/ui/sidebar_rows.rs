@@ -36,7 +36,7 @@ pub enum RowKind {
     Worktree,
     /// An agent session or run: definition, task and model on three lines.
     Agent,
-    /// A bare terminal: foreground app and backend on two lines.
+    /// A bare terminal: foreground app and address, over its working directory.
     Terminal,
     /// A machine row: one line.
     Machine,
@@ -50,14 +50,17 @@ pub struct SidebarRow {
     pub id: String,
     pub definition: String,
     pub reference: String,
-    pub provider: Option<String>,
     pub task: Option<(String, String)>,
     pub model_slug: String,
     pub label: String,
     pub kind: RowKind,
     pub state: RowState,
-    /// The task ref of a worktree row; a machine row's `local`/`all` mark.
+    /// The task ref of a worktree row; a machine row's `local`/`all` mark;
+    /// a terminal row's working directory.
     pub detail: String,
+    /// A terminal row's address at the right of its first line: the
+    /// pane's workspace ref, `tmux %16`, or the backend word alone.
+    pub address: String,
     /// The project card's branch, `~` without one.
     pub branch: Option<String>,
     pub ahead: u32,
@@ -250,14 +253,23 @@ fn nest_prefix(row: &SidebarRow) -> &'static str {
     }
 }
 
+/// Cells a worktree row leaves its name: the width less the marker, the
+/// two-cell indent, the nest prefix, the glyph and its spacer. The name's
+/// ticker and its travel both measure against this one budget.
+fn worktree_name_budget(row: &SidebarRow, width: u16) -> usize {
+    usize::from(width).saturating_sub(5 + display_width(nest_prefix(row)))
+}
+
 /// The first rendered line of `row` at `width` columns. A project card is
 /// `{marker}{dot} {name} ({branch} ↑a ↓b)` with the group toggle at the
 /// right edge; a worktree row is `{marker}  ├─ {dot} {branch} · {task}`
 /// with the prefix in `overlay0` so the branch sits under its card's name;
 /// a machine row is the same shape without the indent; an agent row shows
 /// the state glyph, definition and pinned reference; a terminal row shows
-/// the state glyph and foreground app. A group row is the dim project name
-/// and a rule. Agent task titles scroll on the second line.
+/// the state glyph and foreground app, with the pane's address at the
+/// right edge while the name leaves it room. A group row is the dim
+/// project name and a rule. Agent task titles scroll on the second line;
+/// a worktree name too long for its row drops its task and scrolls.
 pub fn row_line<'a>(
     row: &'a SidebarRow,
     width: u16,
@@ -271,8 +283,8 @@ pub(crate) fn row_line_with_scrolling<'a>(
     row: &'a SidebarRow,
     width: u16,
     chrome: &Chrome,
-    _max_travel: usize,
-    _title_scrolling: TitleScrolling,
+    max_travel: usize,
+    title_scrolling: TitleScrolling,
 ) -> Line<'a> {
     let p = &chrome.palette;
     let (glyph, glyph_color) = state_dot(row.state, p);
@@ -311,13 +323,34 @@ pub(crate) fn row_line_with_scrolling<'a>(
             let prefix = format!("  {}", nest_prefix(row));
             let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
-            spans.extend(fitted_spans(
-                glyph,
-                (&row.label, title_style),
-                &[(row.detail.as_str(), detail_style)],
-                p,
-                budget.saturating_sub(prefix_width),
-            ));
+            let name_budget = worktree_name_budget(row, width);
+            if name_budget > 0 && display_width(&row.label) > name_budget {
+                // A name the row cannot hold drops its task and scrolls
+                // on the shared clock, as an agent's task line does.
+                spans.push(Span::styled(glyph.0.to_string(), glyph.1));
+                spans.push(Span::styled(
+                    " ",
+                    Style::default().fg(p.overlay0).add_modifier(Modifier::DIM),
+                ));
+                spans.push(Span::styled(
+                    ticker_window(
+                        &row.label,
+                        name_budget,
+                        chrome.ticker,
+                        max_travel,
+                        title_scrolling,
+                    ),
+                    title_style,
+                ));
+            } else {
+                spans.extend(fitted_spans(
+                    glyph,
+                    (&row.label, title_style),
+                    &[(row.detail.as_str(), detail_style)],
+                    p,
+                    budget.saturating_sub(prefix_width),
+                ));
+            }
         }
         RowKind::Machine => {
             let prefix = nest_prefix(row);
@@ -340,33 +373,29 @@ pub(crate) fn row_line_with_scrolling<'a>(
                 p,
                 budget.saturating_sub(display_width(prefix)),
             ));
+            // The name outranks the address: it takes the right edge
+            // only with a cell to spare after the name.
+            let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
+            let address_width = display_width(&row.address);
+            if !row.address.is_empty() && used + 1 + address_width <= usize::from(width) {
+                let pad = usize::from(width) - used - address_width;
+                spans.push(Span::raw(" ".repeat(pad)));
+                spans.push(Span::styled(row.address.as_str(), detail_style));
+            }
         }
         RowKind::Agent => {
             let prefix = nest_prefix(row);
             spans.push(Span::styled(prefix, prefix_style));
             let budget = budget.saturating_sub(display_width(prefix));
-            let reference = (!row.reference.is_empty()).then(|| format!(" ({})", row.reference));
-            let suffix_width = reference.as_deref().map_or(0, display_width);
-            let name_budget = budget.saturating_sub(2 + suffix_width);
             spans.push(Span::styled(glyph.0.to_string(), glyph.1));
             if budget > 1 {
                 spans.push(Span::raw(" "));
-                let name = truncate_end(&row.definition, name_budget);
-                let remaining = budget.saturating_sub(2 + display_width(&name));
-                spans.push(Span::styled(name, title_style));
-                if let Some(reference) = reference {
-                    spans.push(Span::styled(
-                        truncate_end(&reference, remaining),
-                        title_style,
-                    ));
-                }
-                let used: usize = spans.iter().map(|span| display_width(&span.content)).sum();
-                if let Some(provider) = row.provider.as_deref() {
-                    let trailing = format!(" · {provider}");
-                    if used + display_width(&trailing) <= usize::from(width) {
-                        spans.push(Span::styled(trailing, Style::default().fg(p.overlay0)));
-                    }
-                }
+                let name = if row.reference.is_empty() {
+                    row.definition.clone()
+                } else {
+                    format!("{}: {}", row.reference, row.definition)
+                };
+                spans.push(Span::styled(truncate_end(&name, budget - 2), title_style));
             }
         }
         RowKind::Group => {
@@ -423,23 +452,34 @@ fn card_spans(
     spans
 }
 
-/// Cells an agent task title overruns its marquee budget by at `width`,
-/// zero when it fits or the row never scrolls. The longest overrun among
-/// the rows drawn together sets their shared period.
+/// Cells a scrolling title overruns its marquee budget by at `width`: an
+/// agent's task line, or a worktree name too long for its row. Zero when
+/// it fits or the row never scrolls. The longest overrun among the rows
+/// drawn together sets their shared period.
 pub fn row_travel(row: &SidebarRow, width: u16) -> usize {
-    if row.kind != RowKind::Agent {
-        return 0;
-    }
-    let Some((reference, title)) = row.task.as_ref() else {
-        return 0;
+    let (text_width, budget) = match row.kind {
+        RowKind::Agent => match task_line(row) {
+            Some(task) => (
+                display_width(&task),
+                usize::from(width).saturating_sub(3 + display_width(nest_prefix(row))),
+            ),
+            None => return 0,
+        },
+        RowKind::Worktree => (display_width(&row.label), worktree_name_budget(row, width)),
+        _ => return 0,
     };
-    let prefix = format!("Task {reference} - ");
-    let budget = usize::from(width)
-        .saturating_sub(3 + display_width(nest_prefix(row)) + display_width(&prefix));
     if budget < TICKER_MIN_WINDOW {
         return 0;
     }
-    display_width(title).saturating_sub(budget)
+    text_width.saturating_sub(budget)
+}
+
+/// An agent's second line, `Working task 22944 Title`: the number is the
+/// task ref after its last `#`, and the whole line tickers as one string.
+fn task_line(row: &SidebarRow) -> Option<String> {
+    let (reference, title) = row.task.as_ref()?;
+    let number = reference.rsplit('#').next().unwrap_or(reference);
+    Some(format!("Working task {number} {title}"))
 }
 
 /// The `budget`-cell window of `text` the marquee shows at `ticker`: the
@@ -465,8 +505,15 @@ pub fn ticker_window(
     }
     let travel = (width - budget) as u64;
     let step = ticker / TICKER_STEP;
+    // One pass per shared period: rest at the start, walk to the end, rest
+    // there, then back to the start while a longer title finishes its pass.
     let period = travel.max(max_travel as u64) + 2 * TICKER_PAUSE;
-    let walked = (step % period).saturating_sub(TICKER_PAUSE).min(travel);
+    let at = step % period;
+    let walked = if at < travel + 2 * TICKER_PAUSE {
+        at.saturating_sub(TICKER_PAUSE).min(travel)
+    } else {
+        0
+    };
     let offset = match direction {
         TitleScrolling::Off | TitleScrolling::Left => walked,
         TitleScrolling::Right => travel - walked,
@@ -497,7 +544,7 @@ pub fn ticker_window(
 }
 
 /// The fixed task reference and scrolling title, or dim empty-task label,
-/// under an agent definition. A terminal shows its backend here.
+/// under an agent definition. A terminal shows its working directory here.
 pub fn row_second_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> Line<'a> {
     row_second_line_with_travel(row, width, chrome, chrome.view.title_travel)
 }
@@ -514,15 +561,11 @@ pub(crate) fn row_second_line_with_travel<'a>(
     let style = Style::default().fg(chrome.palette.subtext0);
     match row.kind {
         RowKind::Agent => {
-            if let Some((reference, title)) = row.task.as_ref() {
-                let prefix = format!("Task {reference} - ");
-                let prefix = truncate_end(&prefix, budget);
-                let title_budget = budget.saturating_sub(display_width(&prefix));
-                spans.push(Span::styled(prefix, style));
+            if let Some(task) = task_line(row) {
                 spans.push(Span::styled(
                     ticker_window(
-                        title,
-                        title_budget,
+                        &task,
+                        budget,
                         chrome.ticker,
                         max_travel,
                         chrome.prefs.title_scrolling,
@@ -547,7 +590,7 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
         return Line::default();
     }
     let indent = 3 + display_width(nest_prefix(row));
-    let budget = usize::from(width).saturating_sub(indent).min(17);
+    let budget = usize::from(width).saturating_sub(indent);
     Line::from(vec![
         Span::raw(" ".repeat(indent.min(usize::from(width)))),
         Span::styled(

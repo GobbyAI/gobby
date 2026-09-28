@@ -35,6 +35,7 @@ def clear_connection_state(
     lazy_state = lazy_connector.get_state(name)
     if lazy_state is not None:
         lazy_state.connected_at = None
+        lazy_state.last_used_at = None
     return connection
 
 

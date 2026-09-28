@@ -125,8 +125,9 @@ impl AgentEntry {
             .unwrap_or_else(|| provider_label(&self.provider).to_string())
     }
 
-    /// `fable-5.1-xhigh`: the display name (else the raw model) lowercased,
-    /// each whitespace run one `-`, with the effort appended.
+    /// `claude-fable-5.1-xhigh`: the display name (else the raw model) lowercased,
+    /// each whitespace run one `-`, with the effort appended. When the display
+    /// name drops the family (`Fable 5.1`), the raw id's first token leads.
     pub fn model_slug(&self) -> String {
         let model = self
             .model_display_name
@@ -134,12 +135,18 @@ impl AgentEntry {
             .or(self.model.as_deref())
             .unwrap_or_default()
             .to_lowercase();
-        let slug = model.split_whitespace().collect::<Vec<_>>().join("-");
-        let provider_prefix = format!("{}-", self.provider.to_lowercase());
-        let mut slug = slug
-            .strip_prefix(&provider_prefix)
-            .unwrap_or(&slug)
-            .to_string();
+        let mut slug = model.split_whitespace().collect::<Vec<_>>().join("-");
+        let family = self
+            .model
+            .as_deref()
+            .and_then(|raw| raw.split('-').next())
+            .map(str::to_lowercase)
+            .filter(|family| !family.is_empty());
+        if let Some(family) = family {
+            if !slug.is_empty() && slug.split('-').next() != Some(family.as_str()) {
+                slug = format!("{family}-{slug}");
+            }
+        }
         if let Some(effort) = &self.effort {
             slug.push('-');
             slug.push_str(effort);
@@ -150,7 +157,7 @@ impl AgentEntry {
 
 /// The daemon's `_PROVIDER_TITLE_LABELS` (`storage/sessions/_title_defaults.py`).
 const PROVIDER_LABELS: [(&str, &str); 10] = [
-    ("agy", "AGY"),
+    ("agy", "Antigravity"),
     ("claude", "Claude"),
     ("claude_code", "Claude Code"),
     ("codex", "Codex"),
@@ -349,7 +356,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
                     .find_map(|agent| agent.task_ref.clone())
                     .or_else(|| worktree.task_id.clone()),
                 role: worktree.workspace_role.clone(),
-                state: most_urgent(bound.iter().map(|agent| agent.state)),
+                state: rollup(bound.iter().map(|agent| agent.state)),
             }
         })
         .collect();
@@ -368,7 +375,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
         ahead: status.and_then(|status| status.ahead),
         behind: status.and_then(|status| status.behind),
         worktrees,
-        state: most_urgent(own.iter().map(|agent| agent.state)),
+        state: rollup(own.iter().map(|agent| agent.state)),
     }
 }
 
@@ -385,9 +392,21 @@ pub fn urgency(state: RowState) -> u8 {
     }
 }
 
-/// herdr's collapsed parent: the most urgent of its children's states.
-fn most_urgent(states: impl Iterator<Item = RowState>) -> RowState {
+/// The attention legend's class for a state: needs you, gone and active
+/// keep their own; output unseen, held and no state yet count as idle.
+pub fn state_class(state: RowState) -> RowState {
+    match state {
+        RowState::Attention | RowState::Orphaned | RowState::Working => state,
+        RowState::Paused | RowState::Unseen | RowState::Idle | RowState::Unknown => RowState::Idle,
+    }
+}
+
+/// A container's state: the most urgent class among its members, needs
+/// you over gone over active over idle, and idle with no members.
+pub fn rollup(states: impl IntoIterator<Item = RowState>) -> RowState {
     states
+        .into_iter()
+        .map(state_class)
         .max_by_key(|state| urgency(*state))
         .unwrap_or(RowState::Idle)
 }
@@ -434,9 +453,9 @@ fn resolve_state(
     if orphaned {
         return RowState::Orphaned;
     }
-    // A paused or awaiting turn sits until the agent or user resumes it.
-    if lifecycle_status.is_some_and(|status| status == "paused" || status.starts_with("awaiting_"))
-    {
+    // Held is a run someone paused on purpose. An agent awaiting input,
+    // approval or a handoff sits at its prompt and reads by its pane.
+    if lifecycle_status == Some("paused") {
         return RowState::Paused;
     }
     if lifecycle_status.is_some_and(|status| matches!(status, "running" | "active")) {

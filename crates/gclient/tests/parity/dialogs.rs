@@ -678,9 +678,9 @@ fn context_menu_renders_anchored_and_clamped() {
         enabled,
     };
     let items = vec![
-        item("rename pane", true),
-        item("swap with focused pane", false),
-        item("close pane", true),
+        item("Rename pane", true),
+        item("Swap with focused pane", false),
+        item("Close pane", true),
     ];
     // `longest label + 4` wide and `items + 2` tall.
     let (width, height) = (26, 5);
@@ -692,6 +692,7 @@ fn context_menu_renders_anchored_and_clamped() {
             items: items.clone(),
             selected: 0,
             item_rects: Vec::new(),
+            parent: None,
         });
     };
     let draw = |chrome: &mut Chrome| {
@@ -709,9 +710,9 @@ fn context_menu_renders_anchored_and_clamped() {
     };
     let popup_rows = vec![
         format!("┌{}┐", "─".repeat(24)),
-        format!("│{:<24}│", " rename pane"),
-        format!("│{:<24}│", " swap with focused pane"),
-        format!("│{:<24}│", " close pane"),
+        format!("│{:<24}│", " Rename pane"),
+        format!("│{:<24}│", " Swap with focused pane"),
+        format!("│{:<24}│", " Close pane"),
         format!("└{}┘", "─".repeat(24)),
     ];
 

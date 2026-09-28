@@ -7,7 +7,7 @@ use std::pin::Pin;
 use tokio::sync::mpsc::UnboundedSender;
 #[path = "live_sidebar.rs"]
 mod live_sidebar;
-pub(super) use live_sidebar::SessionRetry;
+pub(super) use live_sidebar::FetchRetry;
 pub use live_sidebar::{SidebarFetch, SidebarFetchFuture};
 
 pub(super) mod relist;
@@ -31,7 +31,8 @@ impl Workspace<LiveDaemon> {
             sidebar: SidebarModel::default(),
             git_refreshed_at: Instant::now(),
             roster_refreshed_at: Instant::now(),
-            session_retry: SessionRetry::default(),
+            session_retry: FetchRetry::default(),
+            projects_retry: FetchRetry::default(),
             last_roster_refresh_completed_at: None,
             pending_sidebar: PendingSidebar::default(),
             sidebar_stamps: SidebarStamps::default(),
@@ -92,6 +93,7 @@ impl Workspace<LiveDaemon> {
         }
         let id = PaneId(self.next_pane);
         self.next_pane += 1;
+        self.relist.invalidate();
         self.panes.insert(
             id,
             Pane::new_detached(id, terminal_id, Backend::parse(backend), ""),
@@ -113,6 +115,7 @@ impl Workspace<LiveDaemon> {
         pane.external = row_is_external(row);
         pane.address = row_address(row);
         pane.command = row_command(row);
+        pane.cwd = row_cwd(row);
         pane.terminal_state = row
             .fields
             .get("state")
@@ -534,6 +537,13 @@ pub struct ControlOutcome {
 fn row_command(row: &TerminalRow) -> Option<String> {
     let command = row.fields.get("command")?.as_str()?;
     (!command.is_empty()).then(|| command.to_string())
+}
+
+/// The terminal's working directory, as the daemon observed it when it
+/// served the row. Absent on a row the daemon could not probe.
+fn row_cwd(row: &TerminalRow) -> Option<String> {
+    let cwd = row.fields.get("cwd")?.as_str()?;
+    (!cwd.is_empty()).then(|| cwd.to_string())
 }
 
 /// The terminal's address on its backend. Only tmux has one the user can act

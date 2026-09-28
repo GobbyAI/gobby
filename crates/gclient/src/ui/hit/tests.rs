@@ -189,7 +189,7 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, lane.x, lane.y), scrollbar);
 
     // Only a genuine exceptional pane state is a control, on the pane's
-    // bottom edge; the global status row stays plain status.
+    // top-left title; the global status row stays plain status.
     let status = view.status_rect;
     let indicator = view.control_indicator_hit_area.expect("indicator drawn");
     assert_ne!(indicator.y, status.y);
@@ -208,6 +208,8 @@ fn hit_test_covers_split_live_layout() {
         assert_eq!(at(view, rect.right() - 1, rect.y), Hit::MenuTitle(*index));
     }
     assert_eq!(at(view, WIDTH - 1, 0), Hit::MenuBarEmpty);
+    assert_eq!(view.menu_bar_line, Rect::new(0, 1, WIDTH, 1));
+    assert_eq!(at(view, 0, 1), Hit::MenuBarEmpty);
     // The menu bar is tested before the tab bar: a tab bar reaching row 0
     // still yields the title and the bare bar there.
     let mut overlapped = view.clone();

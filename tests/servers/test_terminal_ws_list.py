@@ -309,9 +309,13 @@ async def test_list_names_the_foreground_command_for_both_backends(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
     )
 
+    process = MagicMock()
+    process.return_value.cwd.return_value = "/srv/app"
+
     with (
         patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
         patch("gobby.terminals.foreground.spawn.run", ps),
+        patch("gobby.terminals.foreground.psutil.Process", process),
     ):
         page = await listed(server, {"request_id": "commands"})
 
@@ -320,6 +324,11 @@ async def test_list_names_the_foreground_command_for_both_backends(
     # the shell pid the host recorded, and both land on one field.
     assert by_id[pane.id]["command"] == "vim"
     assert by_id[promoted.id]["command"] == "nvim"
+    # The working directory follows the same split: tmux's pane path, and the
+    # native shell's own directory.
+    assert by_id[pane.id]["cwd"] == "/Users/dev/projects/gobby"
+    assert by_id[promoted.id]["cwd"] == "/srv/app"
+    process.assert_called_once_with(4242)
 
 
 async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
@@ -358,3 +367,46 @@ async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
 
     by_id = {item["terminal_id"]: item for item in page["items"]}
     assert by_id[promoted.id]["command"] == "zsh"
+
+
+@pytest.mark.asyncio
+async def test_a_stalled_session_query_stays_inside_the_sweep_budget(
+    server: WebSocketServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    release = threading.Event()
+
+    def stalled_list(**_query: Any) -> list[Any]:
+        release.wait(5)
+        return []
+
+    listed_sessions = MagicMock(side_effect=stalled_list)
+    server.session_manager = MagicMock(list=listed_sessions)
+    monkeypatch.setattr("gobby.servers.websocket.terminal_ws.TMUX_SWEEP_BUDGET_SECONDS", 0.05)
+    sweep = AsyncMock(return_value={})
+    monkeypatch.setattr("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep)
+    manager = server.terminal_manager
+
+    # The query stalls: the list falls back to the database inside the budget,
+    # and the next list joins the stalled sweep instead of queueing another.
+    first = await asyncio.wait_for(server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID), 1)
+    second = await asyncio.wait_for(server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID), 1)
+    assert (first, second) == ({}, {})
+    assert listed_sessions.call_count == 1
+    sweep.assert_not_awaited()
+
+    # A caller that goes away (a closed socket) leaves the shared sweep running.
+    stalled = server._tmux_sweep
+    assert stalled is not None
+    caller = asyncio.ensure_future(server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID))
+    await asyncio.sleep(0)
+    caller.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await caller
+    assert not stalled.done()
+
+    # Once it settles, the next list starts a fresh sweep.
+    release.set()
+    await stalled
+    sweep.assert_awaited_once()
+    await server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID)
+    assert listed_sessions.call_count == 2

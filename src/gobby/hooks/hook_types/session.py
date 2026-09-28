@@ -88,7 +88,7 @@ class UserPromptSubmitInput(HookInput):
         default="",
         description=(
             "User's prompt text to validate; empty when the CLI hook carries none "
-            "(AGY PreInvocation reports a turn start without the prompt)"
+            "(Antigravity PreInvocation reports a turn start without the prompt)"
         ),
     )
     estimated_tokens: int | None = Field(default=None, ge=0, description="Estimated token count")

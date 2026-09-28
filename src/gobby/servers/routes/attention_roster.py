@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.routes.configuration_context import require_config_snapshot
+from gobby.sessions.turn_lifecycle import TurnLifecycleState
 from gobby.storage.attention import (
     AttentionRosterRow,
     AttentionRosterSnapshot,
@@ -36,13 +37,18 @@ def _load_roster_entries(
 
     for run in runs:
         entry_id = f"run:{run.source_id}"
+        session_attention = (
+            attention.get(f"session:{run.session_id}") if run.session_id is not None else None
+        )
         entries.append(
             {
                 "entry_id": entry_id,
                 "run_id": run.source_id,
                 "session_id": run.session_id,
                 "lifecycle_status": run.lifecycle_status,
-                "attention": _serialize_attention(attention.get(entry_id)),
+                "attention": _serialize_attention(attention.get(entry_id))
+                or _serialize_attention(session_attention),
+                "provider_error": _provider_error(session_attention),
                 "task": _task_payload(run),
                 "provider": run.provider,
                 "model": run.model,
@@ -70,6 +76,7 @@ def _load_roster_entries(
                 "session_id": session.session_id,
                 "lifecycle_status": session.lifecycle_status,
                 "attention": _serialize_attention(attention.get(entry_id)),
+                "provider_error": _provider_error(attention.get(entry_id)),
                 "task": _task_payload(session),
                 "provider": session.provider,
                 "model": session.model,
@@ -123,6 +130,13 @@ def _serialize_attention(state: AttentionState | None) -> dict[str, object] | No
         "since": state.since,
         "seen_at": state.seen_at,
     }
+
+
+def _provider_error(state: AttentionState | None) -> dict[str, object] | None:
+    if state is None:
+        return None
+    failure = TurnLifecycleState.from_payload(state.payload).provider_error
+    return failure.to_dict() if failure is not None else None
 
 
 def _terminal_block(

@@ -32,21 +32,21 @@ fn menus_list_items_per_target_and_state() {
     assert_eq!(
         labels(&menu),
         [
-            "rename pane",
-            "swap with focused pane",
-            "split right",
-            "split down",
-            "zoom",
-            "arrange: even horizontal",
-            "arrange: even vertical",
-            "arrange: main horizontal",
-            "arrange: main vertical",
-            "arrange: tiled",
-            "new grid…",
-            "take control",
-            "copy mode",
-            "send right-clicks to pane",
-            "close pane",
+            "Rename pane",
+            "Swap with focused pane",
+            "Split right",
+            "Split down",
+            "Zoom",
+            "Arrange: even horizontal",
+            "Arrange: even vertical",
+            "Arrange: main horizontal",
+            "Arrange: main vertical",
+            "Arrange: tiled",
+            "New grid…",
+            "Take control",
+            "Copy mode",
+            "Send right-clicks to pane",
+            "Close pane",
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::SwapWithFocused(other));
@@ -77,22 +77,22 @@ fn menus_list_items_per_target_and_state() {
     assert_eq!(
         labels(&menu),
         [
-            "rename pane",
-            "clear pane name",
-            "split right",
-            "split down",
-            "unzoom",
-            "arrange: even horizontal",
-            "arrange: even vertical",
-            "arrange: main horizontal",
-            "arrange: main vertical",
-            "arrange: tiled",
-            "new grid…",
-            "release control",
-            "respond",
-            "copy mode",
-            "use gclient menu",
-            "close pane",
+            "Rename pane",
+            "Clear pane name",
+            "Split right",
+            "Split down",
+            "Unzoom",
+            "Arrange: even horizontal",
+            "Arrange: even vertical",
+            "Arrange: main horizontal",
+            "Arrange: main vertical",
+            "Arrange: tiled",
+            "New grid…",
+            "Release control",
+            "Respond",
+            "Copy mode",
+            "Use gclient menu",
+            "Close pane",
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
@@ -100,23 +100,23 @@ fn menus_list_items_per_target_and_state() {
     assert_eq!(menu.items[12].action, MenuAction::Respond(entry_id));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
-    assert_eq!(labels(&menu), ["new tab", "rename tab", "close tab"]);
+    assert_eq!(labels(&menu), ["New tab", "Rename tab", "Close tab"]);
     assert_eq!(menu.items[2].action, MenuAction::Act(Action::CloseTab));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Global, (40, 12));
     assert_eq!(
         labels(&menu),
         [
-            "new terminal",
-            "new tab",
-            "new workspace…",
-            "settings",
-            "keybinding help",
-            "reload config",
-            "toggle sidebar",
-            "destroy orphaned terminals…",
-            "detach",
-            "quit",
+            "New terminal",
+            "New tab",
+            "New workspace…",
+            "Settings",
+            "Keybinding help",
+            "Reload config",
+            "Toggle sidebar",
+            "Destroy orphaned terminals…",
+            "Detach",
+            "Quit",
         ]
     );
     assert_eq!(menu.items[2].action, MenuAction::Act(Action::NewProject));
@@ -137,7 +137,7 @@ fn menus_list_items_per_target_and_state() {
     assert_eq!(menu_hit(&menu, 40, 13), None, "the border is not a row");
     assert_eq!(menu_hit(&menu, 45, 22), Some(9), "the last row");
     assert_eq!(menu_hit(&menu, 45, 23), None, "below the last row");
-    let short = [item("zoom", MenuAction::Act(Action::Zoom))];
+    let short = [item("Zoom", MenuAction::Act(Action::Zoom))];
     assert_eq!(
         menu_rect((0, 0), &short).width,
         MENU_MIN_WIDTH,
@@ -155,7 +155,7 @@ fn global_menu_offers_destroy_orphaned_terminals() {
         .iter()
         .find(|item| item.action == MenuAction::DestroyOrphans)
         .expect("destroy orphans item");
-    assert_eq!(item.label, "destroy orphaned terminals…");
+    assert_eq!(item.label, "Destroy orphaned terminals…");
     assert!(item.enabled, "enabled without knowing the candidates");
 }
 
@@ -179,7 +179,7 @@ fn menu_bar_menus_regroup_items_per_title() {
     };
 
     let gobby = menu(&ws, &chrome, MenuBarMenu::Gobby);
-    assert_eq!(labels(&gobby), ["settings", "reload config", "quit"]);
+    assert_eq!(labels(&gobby), ["Settings", "Reload config", "Quit"]);
     assert_eq!(
         actions(&gobby),
         [
@@ -193,13 +193,13 @@ fn menu_bar_menus_regroup_items_per_title() {
     assert_eq!(
         labels(&file),
         [
-            "new terminal",
-            "new tab",
-            "new workspace…",
-            "rename tab",
-            "close tab",
-            "destroy orphaned terminals…",
-            "detach",
+            "New terminal",
+            "New tab",
+            "New workspace…",
+            "Rename tab",
+            "Close tab",
+            "Destroy orphaned terminals…",
+            "Detach",
         ]
     );
     assert_eq!(
@@ -220,12 +220,12 @@ fn menu_bar_menus_regroup_items_per_title() {
     assert_eq!(
         labels(&edit),
         [
-            "copy mode",
-            "rename pane",
-            "rename tab",
-            "rename terminal",
-            "clear pane name",
-            "send right-clicks to pane",
+            "Copy mode",
+            "Rename pane",
+            "Rename tab",
+            "Rename terminal",
+            "Clear pane name",
+            "Send right-clicks to pane",
         ]
     );
     assert_eq!(edit.items[0].action, MenuAction::Act(Action::CopyMode));
@@ -240,28 +240,37 @@ fn menu_bar_menus_regroup_items_per_title() {
     assert_eq!(
         labels(&menu(&ws, &chrome, MenuBarMenu::Edit)),
         [
-            "copy mode",
-            "rename pane",
-            "rename tab",
-            "rename terminal",
-            "use gclient menu",
+            "Copy mode",
+            "Rename pane",
+            "Rename tab",
+            "Rename terminal",
+            "Use gclient menu",
         ]
     );
 
-    // View is the sessions band's view menu, then the sidebar's openers.
+    // View is the sessions band's view menu, the sidebar's openers, the
+    // legend, then the one theme row.
     let view = menu(&ws, &chrome, MenuBarMenu::View);
     let band = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 1)).items;
     assert_eq!(view.items[..band.len()], band[..]);
     assert_eq!(
         labels(&view)[band.len()..],
-        ["working projects", "show sidebar", "pin sidebar"]
+        [
+            "Working projects",
+            "Show sidebar",
+            "Pin sidebar",
+            "Legend",
+            "Theme: Dark ▸"
+        ]
     );
     assert_eq!(
         actions(&view)[band.len()..],
         [
             MenuAction::Act(Action::ToggleProjectsFilter),
             MenuAction::Act(Action::ToggleSidebar),
-            MenuAction::PinSidebar
+            MenuAction::PinSidebar,
+            MenuAction::Act(Action::Help),
+            MenuAction::ThemeMenu
         ]
     );
 
@@ -269,17 +278,17 @@ fn menu_bar_menus_regroup_items_per_title() {
     assert_eq!(
         labels(&window),
         [
-            "split right",
-            "split down",
-            "zoom",
-            "close pane",
-            "resize mode",
-            "arrange: even horizontal",
-            "arrange: even vertical",
-            "arrange: main horizontal",
-            "arrange: main vertical",
-            "arrange: tiled",
-            "new grid…",
+            "Split right",
+            "Split down",
+            "Zoom",
+            "Close pane",
+            "Resize mode",
+            "Arrange: even horizontal",
+            "Arrange: even vertical",
+            "Arrange: main horizontal",
+            "Arrange: main vertical",
+            "Arrange: tiled",
+            "New grid…",
         ]
     );
     assert_eq!(
@@ -300,7 +309,7 @@ fn menu_bar_menus_regroup_items_per_title() {
     );
 
     let help = menu(&ws, &chrome, MenuBarMenu::Help);
-    assert_eq!(labels(&help), ["keys", "alerts…", "daemon", "about gobby"]);
+    assert_eq!(labels(&help), ["Keys", "Alerts…", "Daemon", "About Gobby"]);
     assert_eq!(
         actions(&help),
         [
@@ -320,7 +329,7 @@ fn menu_bar_menus_regroup_items_per_title() {
     let edit = menu(&ws, &Chrome::dark(), MenuBarMenu::Edit);
     assert_eq!(
         labels(&edit),
-        ["copy mode", "rename pane", "rename tab", "rename terminal"]
+        ["Copy mode", "Rename pane", "Rename tab", "Rename terminal"]
     );
     assert!(edit.items.iter().all(|item| !item.enabled));
 }
@@ -371,10 +380,10 @@ fn agents_view_menu_marks_the_view_in_force() {
     assert_eq!(
         items(&chrome),
         [
-            ("✓ this project", false),
-            ("  all projects", true),
-            ("✓ grouped", false),
-            ("  priority", true),
+            ("✓ This project", false),
+            ("  All projects", true),
+            ("✓ Grouped", false),
+            ("  Priority", true),
         ]
     );
 
@@ -384,10 +393,10 @@ fn agents_view_menu_marks_the_view_in_force() {
     assert_eq!(
         items(&chrome),
         [
-            ("  this project", true),
-            ("✓ all projects", false),
-            ("  grouped", true),
-            ("✓ priority", false),
+            ("  This project", true),
+            ("✓ All projects", false),
+            ("  Grouped", true),
+            ("✓ Priority", false),
         ]
     );
 
@@ -442,11 +451,11 @@ fn row_menu_labels_orphaned_rows() {
     assert_eq!(
         labels(&menu),
         [
-            "focus",
-            "open in new tab",
-            "mark seen",
-            "take control",
-            "destroy orphaned terminal",
+            "Focus",
+            "Open in new tab",
+            "Mark seen",
+            "Take control",
+            "Destroy orphaned terminal",
         ]
     );
     let enabled: Vec<bool> = menu.items.iter().map(|item| item.enabled).collect();
@@ -462,7 +471,7 @@ fn row_menu_labels_orphaned_rows() {
         ContextMenuKind::Agent("run:term-live".to_string()),
         (3, 22),
     );
-    assert_eq!(labels(&menu)[4], "close terminal");
+    assert_eq!(labels(&menu)[4], "Close terminal");
     assert!(!menu.items[4].enabled, "no pane to close");
 }
 
@@ -552,11 +561,11 @@ fn row_menus_list_items_per_target_and_state() {
     assert_eq!(
         labels(&menu),
         [
-            "rename",
-            "close",
-            "new worktree",
-            "open worktree…",
-            "expand"
+            "Rename",
+            "Close",
+            "New worktree",
+            "Open worktree…",
+            "Expand"
         ]
     );
     assert_eq!(
@@ -583,14 +592,14 @@ fn row_menus_list_items_per_target_and_state() {
     assert_eq!((menu.kind, menu.anchor), (git(), (2, 3)));
     chrome.sidebar.toggle_group("proj-git");
     let menu = build_menu(&ws, &chrome, git(), (2, 3));
-    assert_eq!(labels(&menu)[4], "collapse");
+    assert_eq!(labels(&menu)[4], "Collapse");
     let menu = build_menu(
         &ws,
         &chrome,
         ContextMenuKind::Project("proj-plain".to_string()),
         (2, 6),
     );
-    assert_eq!(labels(&menu), ["rename", "close"]);
+    assert_eq!(labels(&menu), ["Rename", "Close"]);
     assert_eq!(
         menu.items[1].action,
         MenuAction::CloseProject("proj-plain".to_string())
@@ -601,7 +610,7 @@ fn row_menus_list_items_per_target_and_state() {
     let menu = build_menu(&ws, &chrome, worktree(), (4, 4));
     assert_eq!(
         labels(&menu),
-        ["rename", "close", "delete worktree checkout…"]
+        ["Rename", "Close", "Delete worktree checkout…"]
     );
     assert_eq!(enabled(&menu), [false, false, true]);
     assert_eq!(menu.items[0].action, MenuAction::Act(Action::RenameTab));
@@ -620,12 +629,12 @@ fn row_menus_list_items_per_target_and_state() {
     assert_eq!(
         labels(&menu),
         [
-            "focus",
-            "open in new tab",
-            "respond",
-            "mark seen",
-            "take control",
-            "close terminal",
+            "Focus",
+            "Open in new tab",
+            "Respond",
+            "Mark seen",
+            "Take control",
+            "Close terminal",
         ]
     );
     assert_eq!(
@@ -652,11 +661,11 @@ fn row_menus_list_items_per_target_and_state() {
     assert_eq!(
         labels(&menu),
         [
-            "focus",
-            "open in new tab",
-            "mark seen",
-            "release control",
-            "close terminal",
+            "Focus",
+            "Open in new tab",
+            "Mark seen",
+            "Release control",
+            "Close terminal",
         ]
     );
     assert_eq!(enabled(&menu), [true, true, false, true, true]);
@@ -665,11 +674,11 @@ fn row_menus_list_items_per_target_and_state() {
     assert_eq!(
         labels(&menu),
         [
-            "focus",
-            "open in new tab",
-            "mark seen",
-            "take control",
-            "close terminal",
+            "Focus",
+            "Open in new tab",
+            "Mark seen",
+            "Take control",
+            "Close terminal",
         ]
     );
     assert_eq!(enabled(&menu), [true, true, false, false, false]);
@@ -712,7 +721,7 @@ fn agent_row_close_activates_with_the_row_pane_not_the_focused_one() {
     menu.selected = menu
         .items
         .iter()
-        .position(|item| item.label == "close terminal")
+        .position(|item| item.label == "Close terminal")
         .expect("close terminal item");
 
     assert_eq!(
@@ -743,4 +752,67 @@ fn pin_sidebar_pins_the_overlay_into_a_saved_column() {
     assert!(chrome.sidebar.pinned && !chrome.sidebar.overlay);
     let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
     assert!(saved.sidebar_pinned);
+}
+
+/// The View menu's theme row opens Dark, Light and System beside it, the
+/// first level with the row and the one in force marked; a pick redraws the
+/// chrome in it and saves it.
+#[test]
+fn theme_row_opens_its_choices_beside_it_and_saves_the_pick() {
+    let mut ws = Workspace::scripted();
+    let home = tempfile::tempdir().expect("temp gobby home");
+    ws.set_gobby_home(home.path().to_path_buf());
+    let mut chrome = Chrome::dark();
+    // The View title drawn at column 10 opens its menu under it at (10, 1).
+    let title = MenuBarMenu::ALL
+        .iter()
+        .position(|menu| *menu == MenuBarMenu::View)
+        .expect("view title");
+    chrome.view.menu_title_hit_areas = vec![(title, Rect::new(10, 0, 6, 1))];
+    open_menu(
+        &ws,
+        &mut chrome,
+        ContextMenuKind::MenuBar(MenuBarMenu::View),
+        (10, 1),
+    );
+    let view = chrome.menu.as_mut().expect("view menu");
+    let theme_row = view
+        .items
+        .iter()
+        .position(|item| item.action == MenuAction::ThemeMenu)
+        .expect("theme row");
+    assert_eq!(view.items[theme_row].label, "Theme: Dark ▸");
+    view.selected = theme_row;
+    let row = view.item_rects[theme_row];
+
+    let (kind, action) = activate_menu(&mut chrome).expect("the theme row is live");
+    assert_eq!(kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
+    assert_eq!(action, MenuAction::ThemeMenu);
+    assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
+    assert_eq!(chrome.mode, Mode::ContextMenu);
+    let choices = chrome.menu.as_mut().expect("theme choices");
+    assert_eq!(choices.kind, ContextMenuKind::Theme);
+    assert_eq!(
+        choices.item_rects[0].x,
+        row.right() + 2,
+        "beside the border"
+    );
+    assert_eq!(choices.item_rects[0].y, row.y, "level with the row");
+    assert_eq!(labels(choices), ["● Dark", "  Light", "  System"]);
+    let enabled: Vec<bool> = choices.items.iter().map(|item| item.enabled).collect();
+    assert_eq!(
+        enabled,
+        [false, true, true],
+        "the one in force is marked and inert"
+    );
+
+    choices.selected = 1;
+    let (kind, action) = activate_menu(&mut chrome).expect("light is a pick");
+    assert_eq!(kind, ContextMenuKind::Theme);
+    assert_eq!(action, MenuAction::SetTheme("light"));
+    assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
+    assert_eq!(chrome.theme.kind, crate::theme::ThemeKind::Light);
+    assert_eq!(theme_row_label(&chrome), "Theme: Light ▸");
+    let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
+    assert_eq!(saved.theme, "light");
 }

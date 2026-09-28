@@ -1,4 +1,4 @@
-use gobby_client::ui::keybind_help::{help_lines, help_rows, render_keybind_help};
+use gobby_client::ui::keybind_help::{help_rows, legend_groups, render_keybind_help};
 use gobby_client::ui::Chrome;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
@@ -20,6 +20,18 @@ fn rendered_help(chrome: &Chrome, width: u16, height: u16) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// The furthest scroll help reports after drawing at `width` x `height`.
+fn drawn_last_scroll(chrome: &Chrome, width: u16, height: u16) -> usize {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).expect("test terminal");
+    let mut last = 0;
+    terminal
+        .draw(|frame| {
+            last = render_keybind_help(frame, Rect::new(0, 0, width, height), chrome).1;
+        })
+        .expect("render keybind help");
+    last
 }
 
 fn compact(value: &str) -> String {
@@ -101,7 +113,7 @@ fn name_stays_searchable_when_hidden() {
 fn wrapped_rows_keep_the_last_binding_reachable_by_logical_scroll() {
     let mut chrome = Chrome::dark();
     let last = chrome.keymap.help_entries().pop().expect("last binding");
-    chrome.keybind_help.scroll = help_lines(&chrome).len() - 1;
+    chrome.keybind_help.scroll = drawn_last_scroll(&chrome, 56, 24);
     let screen = rendered_help(&chrome, 56, 24);
     assert!(
         compact(&screen).contains(&compact(last.description)),
@@ -130,4 +142,46 @@ fn narrow_footer_keeps_the_close_and_back_actions_visible() {
         assert!(footer.contains("esc back"), "{width} columns: {footer}");
         chrome.keybind_help.search_focused = false;
     }
+}
+
+// Help opens on the attention legend: a row per state with its glyph, word,
+// count and meaning, above the first binding; a search leaves only bindings.
+#[test]
+fn help_opens_on_the_attention_legend_and_a_search_hides_it() {
+    let mut chrome = Chrome::dark();
+    let legend: Vec<String> = legend_groups(&chrome, u16::MAX)
+        .iter()
+        .flatten()
+        .map(line_text)
+        .collect();
+    assert_eq!(legend[0], " Legend");
+    let states = [
+        ("⍾ needs you", "need you", "an error it cannot pass"),
+        ("▶ active", "active", "running a turn"),
+        ("○ idle", "idle", "at its prompt, nothing pending"),
+        ("◆ output unseen", "idle", "clears when its pane is focused"),
+        ("‖ held", "idle", "never an agent idle at its prompt"),
+        ("◌ gone", "n gone", "shown only when not zero"),
+        ("· no state yet", "idle", "before the daemon has a state"),
+    ];
+    for ((state, counts_as, means), row) in states.iter().zip(&legend[2..]) {
+        assert!(row.starts_with(&format!(" {state} ")), "{row:?}");
+        assert!(row.contains(&format!(" {counts_as} ")), "{row:?}");
+        assert!(row.ends_with(means), "{row:?}");
+    }
+
+    let screen = rendered_help(&chrome, 120, 40);
+    let rows: Vec<&str> = screen.lines().collect();
+    let first_binding = chrome.keymap.help_entries()[0].description;
+    let legend_row = rows.iter().position(|row| row.contains("⍾ needs you"));
+    let binding_row = rows.iter().position(|row| row.contains(first_binding));
+    assert!(
+        legend_row.is_some() && legend_row < binding_row,
+        "the legend comes first: {screen}"
+    );
+
+    chrome.keybind_help.query = "split".to_string();
+    let searched = rendered_help(&chrome, 120, 40);
+    assert!(!searched.contains("needs you"), "{searched}");
+    assert!(!searched.contains("running a turn"), "{searched}");
 }

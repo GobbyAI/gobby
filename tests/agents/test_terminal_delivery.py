@@ -5,7 +5,9 @@ import logging
 import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
+from contextlib import AbstractContextManager, nullcontext
 from contextvars import ContextVar
+from dataclasses import replace
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,6 +26,7 @@ from tests.agents.cleanup_test_support import (
     RecordingDb,
     _handler,
 )
+from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -258,13 +261,16 @@ async def test_durable_boundary_caller_cancellation_before_cross_loop_admission(
 async def test_submitted_delivery_reports_background_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    marker = "private marker"
+
     async def operation() -> None:
-        raise RuntimeError("terminal test failure")
+        raise RuntimeError(marker)
 
     await terminal_delivery.submit_terminal_delivery("failed-submit", operation)
     await terminal_delivery.drain_shielded_terminal_deliveries()
     assert "Submitted terminal delivery failed for agent failed-submit" in caplog.text
-    assert "terminal test failure" in caplog.text
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
 
 
 async def test_shielded_terminal_delivery_settles_before_cancellation_propagates() -> None:
@@ -408,20 +414,61 @@ class FailingCompletionRegistry(AcknowledgingCompletionRegistry):
         raise RuntimeError(f"notify failed for {completion_id}: {result!r} {message}")
 
 
-async def test_terminal_delivery_notify_failure_preserves_registry_state() -> None:
+async def test_terminal_delivery_notify_failure_preserves_registry_state(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    marker = "private marker"
     registry = FailingCompletionRegistry(None)
 
-    delivery = await terminal_delivery.deliver_and_cleanup_terminal_run(
-        db=cast("HubDatabase", RecordingDb()),
-        completion_registry=cast(Any, registry),
-        run_id="run-1",
-        result={"status": "completed"},
-        message="Agent completed",
-        run_db=AsyncMock(),
-    )
+    with (
+        caplog.at_level(logging.WARNING, logger="gobby.agents.terminal_delivery"),
+        patch.object(registry, "notify", new=AsyncMock(side_effect=RuntimeError(marker))),
+    ):
+        delivery = await terminal_delivery.deliver_and_cleanup_terminal_run(
+            db=cast("HubDatabase", RecordingDb()),
+            completion_registry=cast(Any, registry),
+            run_id="run-1",
+            result={"status": "completed"},
+            message="Agent completed",
+            run_db=AsyncMock(),
+        )
 
     assert delivery is None
     assert registry.cleaned == []
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["subscriber_read", "durable_wake"])
+async def test_terminal_delivery_subscriber_failures_do_not_log_exception_text(
+    phase: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    marker = "private marker"
+    with caplog.at_level(logging.WARNING, logger="gobby.agents.terminal_delivery"):
+        if phase == "subscriber_read":
+            subscribers, succeeded = await terminal_delivery._read_durable_subscribers_safely(
+                db=cast("HubDatabase", RecordingDb()),
+                run_id="run-1",
+                run_db=AsyncMock(side_effect=RuntimeError(marker)),
+            )
+            assert subscribers == []
+            assert succeeded is False
+        else:
+            registry = MagicMock()
+            registry.wake_sessions = AsyncMock(side_effect=RuntimeError(marker))
+            delivery = await terminal_delivery._wake_durable_subscribers(
+                completion_registry=registry,
+                run_id="run-1",
+                result={"status": "error"},
+                message="Agent failed",
+                subscribers=["session-1"],
+                registry_delivery=None,
+            )
+            assert delivery is None
+
+    assert "RuntimeError" in caplog.text
+    assert marker not in caplog.text
 
 
 async def test_terminal_delivery_orders_remove_and_cleanup_after_awaited_notify(
@@ -543,6 +590,11 @@ class DurableDb(RecordingDb):
         self.queried.append((sql, params))
         return [{"session_id": session_id} for session_id in self.subscribers]
 
+    def transaction(self) -> AbstractContextManager[Any]:
+        connection = MagicMock()
+        connection.execute.return_value.fetchone.return_value = None
+        return nullcontext(connection)
+
 
 class DurableWakeRegistry(AcknowledgingCompletionRegistry):
     """Registry fake exposing the wake_sessions surface the fallback needs."""
@@ -602,10 +654,12 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
 ) -> None:
     """A fresh registry falls back through durable rows to the real wake dispatcher."""
     db = DurableDb(["session-a"])
+    terminal = replace(make_memory_terminal(backend="native"), session_id="session-a")
     session = SimpleNamespace(
         id="session-a",
+        project_id=terminal.project_id,
         agent_depth=0,
-        terminal_context={"tmux_pane": "%7"},
+        terminal_context={"gobby_terminal_id": terminal.id},
         status="paused",
         turn_count=0,
         session_type="terminal",
@@ -614,7 +668,8 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
     session_manager = MagicMock()
     session_manager.get.return_value = session
     ism_manager = MagicMock()
-    tmux_pane_sender = AsyncMock()
+    native_sender = AsyncMock()
+    terminals = MemoryTerminalStore(terminal)
 
     async def run_inline(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         return func(*args, **kwargs)
@@ -622,7 +677,8 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
     before_restart = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=ism_manager,
-        tmux_pane_sender=tmux_pane_sender,
+        tmux_sender=native_sender,
+        terminal_manager=terminals,
         run_db=run_inline,
     )
     first_wake = await before_restart.dispatch_live_wake("session-a")
@@ -631,7 +687,8 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
     after_restart = WakeDispatcher(
         session_manager=session_manager,
         ism_manager=ism_manager,
-        tmux_pane_sender=tmux_pane_sender,
+        tmux_sender=native_sender,
+        terminal_manager=terminals,
         run_db=run_inline,
     )
     restarted_registry = CompletionEventRegistry(wake_callback=after_restart.wake)
@@ -643,7 +700,8 @@ async def test_terminal_delivery_wakes_durable_subscriber_after_registry_restart
             message="Agent terminal",
         )
 
-    assert tmux_pane_sender.await_count == 2
+    assert native_sender.await_count == 2
+    assert all(call.args[0] == terminal.id for call in native_sender.await_args_list)
     assert ism_manager.create_message.call_count == 1
     assert db.executed == [
         (
@@ -938,13 +996,9 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
         return SimpleNamespace(id="session-a", agent_depth=0, status="paused", turn_count=0)
 
     session_manager.get.side_effect = read_session
-    refresh_loops: list[asyncio.AbstractEventLoop] = []
     dispatch_loops: list[asyncio.AbstractEventLoop] = []
     first_dispatch_started = asyncio.Event()
     release_first_dispatch = asyncio.Event()
-
-    async def refresh(_session_id: str) -> None:
-        refresh_loops.append(asyncio.get_running_loop())
 
     async def dispatch_stub(
         session_id: str, *, session: object | None = None, priority: str = "normal"
@@ -963,7 +1017,6 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
         session_manager=session_manager,
         ism_manager=MagicMock(),
         run_db=run_inline,
-        lifecycle_refresh=refresh,
     )
     monkeypatch.setattr(dispatcher, "_dispatch_live_wake_unlocked", dispatch_stub)
     dispatcher.bind_owner_loop(owner_loop)
@@ -998,7 +1051,6 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
         release_first_dispatch.set()
         terminal_delivery.reset_terminal_delivery_offload()
 
-    assert refresh_loops == [owner_loop, owner_loop, owner_loop]
     assert dispatch_loops == [owner_loop, owner_loop, owner_loop]
     assert db.executed == [
         (
@@ -1007,6 +1059,7 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
         )
     ]
     assert "bound to a different event loop" not in caplog.text
+    assert "Failed to resolve task-close review delivery" not in caplog.text
 
 
 @pytest.mark.asyncio

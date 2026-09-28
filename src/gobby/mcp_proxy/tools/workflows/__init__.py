@@ -7,6 +7,7 @@ These tools are registered with the InternalToolRegistry and accessed
 via the downstream proxy pattern (call_tool, list_tools, get_tool_schema).
 """
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
@@ -49,6 +50,7 @@ from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.utils.project_context import get_project_context, get_workflow_project_path
+from gobby.utils.session_context import get_request_principal
 from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
@@ -221,6 +223,19 @@ def create_workflows_registry(
         result = await evaluate_agent_definition(agent, mcp_inventory)
         return result.to_dict()
 
+    async def _agent_definition_write_denied() -> bool:
+        try:
+            principal = await get_request_principal()
+        except LookupError:
+            return False  # Internal callers have no request principal.
+        return principal is not None
+
+    forbidden_agent_write = {
+        "success": False,
+        "error_code": "forbidden",
+        "error": "Agent API tokens cannot modify agent definitions",
+    }
+
     @registry.tool(
         name="reload_cache",
         description=(
@@ -228,11 +243,14 @@ def create_workflows_registry(
             "Use this after modifying YAML files."
         ),
     )
-    def _reload_cache(
+    async def _reload_cache(
         project_path: str | None = None,
         project_id: str | None = None,
     ) -> dict[str, Any]:
-        return reload_cache(
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
+        return await asyncio.to_thread(
+            reload_cache,
             _loader,
             db=_db,
             project_path=project_path,
@@ -461,73 +479,95 @@ def create_workflows_registry(
         name="create_agent_definition",
         description="Create a new agent definition. Validates with AgentDefinitionBody before inserting.",
     )
-    def _create_agent_definition(
+    async def _create_agent_definition(
         name: str,
         definition: dict[str, Any],
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
-        return create_agent_definition(
-            _agent_manager, name, definition, project_path=pp, make_global_template=make_template
+        return await asyncio.to_thread(
+            create_agent_definition,
+            _agent_manager,
+            name,
+            definition,
+            project_path=pp,
+            make_global_template=make_template,
         )
 
     @registry.tool(
         name="toggle_agent_definition",
         description="Enable or disable an agent definition by name.",
     )
-    def _toggle_agent_definition(name: str, enabled: bool) -> dict[str, Any]:
+    async def _toggle_agent_definition(name: str, enabled: bool) -> dict[str, Any]:
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return toggle_agent_definition(_agent_manager, name, enabled)
+        return await asyncio.to_thread(toggle_agent_definition, _agent_manager, name, enabled)
 
     @registry.tool(
         name="delete_agent_definition",
         description="Delete an agent definition by name (soft-delete). Template agents are protected unless force=True.",
     )
-    def _delete_agent_definition(
+    async def _delete_agent_definition(
         name: str,
         force: bool = False,
     ) -> dict[str, Any]:
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
-        return delete_agent_definition(_agent_manager, name, force)
+        return await asyncio.to_thread(delete_agent_definition, _agent_manager, name, force)
 
     @registry.tool(
         name="update_agent_rules",
         description="Add or remove rules from an agent definition's workflows.rules list.",
     )
-    def _update_agent_rules(
+    async def _update_agent_rules(
         name: str,
         add: list[str] | None = None,
         remove: list[str] | None = None,
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
-        return update_agent_rules(
-            _agent_manager, name, add, remove, project_path=pp, make_global_template=make_template
+        return await asyncio.to_thread(
+            update_agent_rules,
+            _agent_manager,
+            name,
+            add,
+            remove,
+            project_path=pp,
+            make_global_template=make_template,
         )
 
     @registry.tool(
         name="update_agent_variables",
         description="Set or remove variables from an agent definition's workflows.variables dict.",
     )
-    def _update_agent_variables(
+    async def _update_agent_variables(
         name: str,
         set_vars: dict[str, Any] | None = None,
         remove: list[str] | None = None,
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
-        return update_agent_variables(
+        return await asyncio.to_thread(
+            update_agent_variables,
             _agent_manager,
             name,
             set_vars,
@@ -544,18 +584,21 @@ def create_workflows_registry(
             "Pass clear_step_workflow=true to remove it."
         ),
     )
-    def _update_agent_step_workflow(
+    async def _update_agent_step_workflow(
         name: str,
         step_workflow: dict[str, Any] | None = None,
         clear_step_workflow: bool = False,
         project_path: str | None = None,
         make_template: bool = False,
     ) -> dict[str, Any]:
+        if await _agent_definition_write_denied():
+            return forbidden_agent_write
         if _agent_manager is None:
             return {"error": "Agent definition tools require database connection"}
         pp = Path(project_path) if project_path else None
         if clear_step_workflow:
-            return update_agent_step_workflow(
+            return await asyncio.to_thread(
+                update_agent_step_workflow,
                 _agent_manager,
                 name,
                 None,
@@ -563,8 +606,9 @@ def create_workflows_registry(
                 make_global_template=make_template,
             )
         if step_workflow is None:
-            return get_agent_definition(_agent_manager, name)
-        return update_agent_step_workflow(
+            return await asyncio.to_thread(get_agent_definition, _agent_manager, name)
+        return await asyncio.to_thread(
+            update_agent_step_workflow,
             _agent_manager,
             name,
             step_workflow,

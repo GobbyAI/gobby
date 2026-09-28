@@ -69,7 +69,7 @@ export const PROVIDER_COLOR_PAIRS: Record<string, SourceColorPair> = {
 export const SOURCE_LABELS: Record<string, string> = {
   claude: "Claude",
   grok: "Grok",
-  agy: "AGY",
+  agy: "Antigravity",
   qwen: "Qwen",
   codex: "Codex",
   droid: "Droid",

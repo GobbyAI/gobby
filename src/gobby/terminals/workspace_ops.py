@@ -21,7 +21,6 @@ import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from dataclasses import dataclass
 from typing import Any, Literal, TypeVar
 
 from psycopg import Error as PsycopgError
@@ -30,9 +29,6 @@ from psycopg.errors import UniqueViolation
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.detection.safe_regex import InvalidPatternError, RegexOutcome, compile_safe_regex
 from gobby.storage.machines import Machine
-from gobby.storage.project_checkouts import (
-    require_root,
-)
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.storage.workspace_address import resolve_launch_workspace
@@ -48,8 +44,6 @@ from gobby.storage.workspaces import (
     WorkspaceTarget,
     mint_pane_id,
 )
-from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.terminals.actor_scope import ActorScope, ActorScopeError, resolve_actor_scope
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import (
     InputPayloadTooLargeError,
@@ -69,12 +63,12 @@ from gobby.terminals.workspace_contract import (
     WorkspaceSnapshot,
     _identity_env,
     _pane_of,
-    _pane_ref,
     _require_local,
     _tab_of,
     _workspace_of,
     storage_errors,
 )
+from gobby.terminals.workspace_pane_access import ShellSpawn, WorkspacePaneAccess
 from gobby.terminals.workspace_writes import (
     PaneWrite,
     WorkspacePaneWriteError,
@@ -107,12 +101,6 @@ IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _ACTIVE_STATES = frozenset({"pending", "live"})
 
 
-@dataclass(frozen=True, slots=True)
-class _ShellSpawn:
-    runtime: TerminalRuntime
-    cwd: str
-
-
 class WorkspaceOps:
     """Execute ``workspace.*``, ``tab.*``, and ``pane.*`` ops for every surface."""
 
@@ -134,6 +122,9 @@ class WorkspaceOps:
         self._publish = publish
         self._publish_fence = asyncio.Lock()
         self._detection_registry = DetectionManifestRegistry(workspaces.db)
+        self._pane_access = WorkspacePaneAccess(
+            workspaces=workspaces, terminals=terminals, registry=registry, sessions=sessions
+        )
 
     # -- workspaces ---------------------------------------------------------
 
@@ -268,13 +259,14 @@ class WorkspaceOps:
         worktree_id: str | None = None,
         title: str | None = None,
         terminal_id: str | None = None,
+        cwd: str | None = None,
         node: str | None = None,
     ) -> LayoutChange:
         """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``."""
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         source = await self._db(
-            self._pane_source, actor, home, project_id, worktree_id, terminal_id
+            self._pane_access.source, actor, home, project_id, worktree_id, terminal_id, cwd
         )
         pane_id = mint_pane_id()
         await self._db(self._workspaces.mark_spawn_in_flight, pane_id)
@@ -358,6 +350,7 @@ class WorkspaceOps:
         axis: str,
         *,
         terminal_id: str | None = None,
+        cwd: str | None = None,
         node: str | None = None,
     ) -> LayoutChange:
         """Split ``pane`` with a new pane that spawns a shell or adopts ``terminal_id``.
@@ -368,12 +361,13 @@ class WorkspaceOps:
         target = await self._enter(pane, node)
         tab, beside = _pane_of(target, pane)
         source = await self._db(
-            self._pane_source,
+            self._pane_access.source,
             actor,
             target.workspace,
             tab.project_id,
             tab.worktree_id,
             terminal_id,
+            cwd,
         )
         pane_id = mint_pane_id()
         await self._db(self._workspaces.mark_spawn_in_flight, pane_id)
@@ -707,96 +701,13 @@ class WorkspaceOps:
         )
         return _published_seq(result)
 
-    def _scope(self, actor: str) -> ActorScope:
-        try:
-            return resolve_actor_scope(self._sessions, actor)
-        except ActorScopeError as exc:
-            raise WorkspaceOpError("forbidden", str(exc)) from exc
-
-    @staticmethod
-    def _require_admitted(scope: ActorScope, terminal: Terminal) -> None:
-        if not scope.admits(project_id=terminal.project_id, session_id=terminal.session_id):
-            raise WorkspaceOpError(
-                "forbidden",
-                f"Terminal {terminal.id} is outside the actor's project and agent tree",
-            )
-
-    def _pane_source(
-        self,
-        actor: str,
-        workspace: Workspace,
-        project_id: str,
-        worktree_id: str | None,
-        terminal_id: str | None,
-    ) -> _ShellSpawn | Terminal:
-        """Check scope and resolve what fills a new pane, before any row is inserted."""
-        scope = self._scope(actor)
-        if terminal_id is not None:
-            return self._adoptable(scope, workspace, terminal_id)
-        if not scope.admits(project_id=project_id):
-            raise WorkspaceOpError(
-                "forbidden", f"Project {project_id} is outside the actor's project and agent tree"
-            )
-        try:
-            runtime = self._registry.resolve("native")
-        except UnregisteredBackendError as exc:
-            raise WorkspaceOpError(
-                "terminal_failed", "The native terminal runtime is unavailable"
-            ) from exc
-        with storage_errors():
-            if worktree_id is None:
-                return _ShellSpawn(
-                    runtime, require_root(self._workspaces.db, project_id, workspace.machine_id)
-                )
-            worktree = LocalWorktreeManager(self._workspaces.db).get(worktree_id)
-        if (
-            worktree is None
-            or worktree.project_id != project_id
-            or worktree.machine_id != workspace.machine_id
-        ):
-            raise WorkspaceOpError(
-                "not_found", f"Worktree {worktree_id} of project {project_id} is not on this node"
-            )
-        return _ShellSpawn(runtime, worktree.worktree_path)
-
-    def _adoptable(self, scope: ActorScope, workspace: Workspace, terminal_id: str) -> Terminal:
-        try:
-            terminal = self._terminals.get(terminal_id)
-        except ValueError as exc:
-            raise WorkspaceOpError(
-                "invalid_ref", f"Terminal id {terminal_id!r} is invalid"
-            ) from exc
-        if terminal is None:
-            raise WorkspaceOpError("not_found", f"Terminal {terminal_id} not found")
-        self._require_admitted(scope, terminal)
-        if terminal.state != "live" or terminal.machine_id != workspace.machine_id:
-            raise WorkspaceOpError(
-                "invalid_op", f"Terminal {terminal_id} is not live on the workspace's node"
-            )
-        self._refuse_held(terminal.id)
-        return terminal
-
-    def _refuse_held(self, terminal_id: str) -> None:
-        """Raise ``busy`` naming the pane that already holds ``terminal_id``."""
-        holder = self._workspaces.get_pane_for_terminal(terminal_id)
-        if holder is None:
-            return
-        with storage_errors():
-            target = self._workspaces.resolve_reference(holder.id)
-        tab, pane = _pane_of(target, holder.id)
-        raise WorkspaceOpError(
-            "busy",
-            f"Terminal {terminal_id} is held by pane "
-            f"{_pane_ref(target.node, target.workspace, tab, pane)}",
-        )
-
     async def _fill(
         self,
         node: Machine,
         workspace: Workspace,
         tab: WorkspaceTab,
         pane: WorkspacePane,
-        source: _ShellSpawn | Terminal,
+        source: ShellSpawn | Terminal,
     ) -> WorkspacePane:
         """Bind a freshly inserted pane to its adopted or newly spawned terminal."""
         if isinstance(source, Terminal):
@@ -806,7 +717,7 @@ class WorkspaceOps:
                 )
             except UniqueViolation as exc:
                 await self._roll_back(pane.id)
-                await self._db(self._refuse_held, source.id)
+                await self._db(self._pane_access.refuse_held, source.id)
                 raise WorkspaceOpError(
                     "busy", f"Terminal {source.id} is held by another pane"
                 ) from exc
@@ -834,12 +745,21 @@ class WorkspaceOps:
                 raise WorkspaceOpError(
                     "terminal_failed", f"Pane spawn failed: {result.error_detail or result.error}"
                 )
-            bound = await self._db(
-                self._workspaces.set_pane_terminal,
-                pane.id,
-                result.terminal_id,
-                owns_terminal=True,
-            )
+            try:
+                bound = await self._db(
+                    self._workspaces.set_pane_terminal,
+                    pane.id,
+                    result.terminal_id,
+                    owns_terminal=True,
+                )
+            except Exception as exc:
+                try:
+                    await self._roll_back(pane.id)
+                finally:
+                    minted = await self._db(self._terminals.get, result.terminal_id)
+                    if minted is not None:
+                        await self._kill([minted])
+                raise WorkspaceOpError("terminal_failed", f"Pane bind raised: {exc}") from exc
             minted = (
                 None
                 if bound is not None
@@ -885,9 +805,9 @@ class WorkspaceOps:
             if terminal is not None and terminal.state in _ACTIVE_STATES:
                 doomed.append(terminal)
         if doomed:
-            scope = self._scope(actor)
+            scope = self._pane_access.scope(actor)
             for terminal in doomed:
-                self._require_admitted(scope, terminal)
+                self._pane_access.require_admitted(scope, terminal)
         return doomed
 
     async def _kill(self, terminals: Iterable[Terminal]) -> None:
@@ -911,7 +831,7 @@ class WorkspaceOps:
         self, actor: str, pane: str, node: str | None
     ) -> tuple[WorkspacePane, Terminal]:
         """The pane and the in-scope terminal behind it."""
-        scope = await self._db(self._scope, actor)
+        scope = await self._db(self._pane_access.scope, actor)
         row = _pane_of(await self._enter(pane, node), pane)[1]
         terminal = (
             None
@@ -922,7 +842,7 @@ class WorkspaceOps:
             if await self._db(self._workspaces.is_spawn_in_flight, row.id):
                 raise WorkspaceOpError("busy", f"Pane {row.id} is still spawning its terminal")
             raise WorkspaceOpError("not_found", f"Pane {row.id} has no terminal")
-        self._require_admitted(scope, terminal)
+        self._pane_access.require_admitted(scope, terminal)
         return row, terminal
 
     def _runtime(self, terminal: Terminal) -> TerminalRuntime:

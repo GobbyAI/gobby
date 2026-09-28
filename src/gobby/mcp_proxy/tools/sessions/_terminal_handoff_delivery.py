@@ -24,7 +24,7 @@ from gobby.sessions.compact_continuation import (
     CompactBoundaryWaiter,
     arm_compact_boundary_waiter,
     clear_handoff_compact_continuation_pending,
-    disarm_compact_boundary_waiter,
+    consume_and_schedule_handoff_compact_continuation,
     mark_handoff_compact_continuation_pending,
     register_compact_boundary_waiter,
     schedule_codex_handoff_compact_continuation_readiness,
@@ -32,6 +32,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.sessions.transcript_cursor import (
+    CodexRolloutCursor,
     TranscriptObservationError,
     TranscriptTailCursor,
     TurnSettledObserver,
@@ -45,11 +46,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_COMPACT_BOUNDARY_CONFIRM_SECONDS = 150.0
-_CLAUDE_COMPACT_BOUNDARY_CONFIRM_SECONDS = 600.0
+_COMPACT_BOUNDARY_CONFIRM_SECONDS = 600.0
 _COMPACT_BOUNDARY_POLL_SECONDS = 2.0
-_COMPACT_PROVIDER_RETRIES = 2
-_COMPACT_RETRY_BACKOFF_SECONDS = 1.0
 _COMPACT_ERROR_PREFIX = "Error during compaction:"
 _COMPACT_BOUNDARY_TIMEOUT_REASON = (
     "compact boundary was not observed before the confirmation deadline"
@@ -99,12 +97,27 @@ async def _wait_for_compact_boundary(
     cursor: TranscriptTailCursor | None,
     *,
     timeout_seconds: float | None = None,
+    codex_cursor: CodexRolloutCursor | None = None,
+    on_codex_boundary: Callable[[], bool] | None = None,
 ) -> str | None:
     """Return an error or wait for one boundary within this delivery operation."""
     deadline = asyncio.get_running_loop().time() + (
         _COMPACT_BOUNDARY_CONFIRM_SECONDS if timeout_seconds is None else timeout_seconds
     )
     while not waiter.event.is_set():
+        if codex_cursor is not None:
+            try:
+                if await asyncio.to_thread(codex_cursor.saw_fresh_compacted):
+                    if on_codex_boundary is not None:
+                        try:
+                            await asyncio.to_thread(on_codex_boundary)
+                        except Exception:
+                            logger.warning(
+                                "Failed settling Codex rollout compact boundary", exc_info=True
+                            )
+            except TranscriptObservationError:
+                logger.warning("Codex compact rollout observation ended", exc_info=True)
+                codex_cursor = None
         error = await asyncio.to_thread(_fresh_compact_error, cursor) if cursor else None
         if error is not None:
             return error
@@ -196,94 +209,87 @@ async def deliver_staged_compact_handoff(
     waiter = register_compact_boundary_waiter(
         session_id, attempt_id, handoff_record_id, getattr(session, "terminal_context", None)
     )
+    codex_cursor: CodexRolloutCursor | None = None
+
+    def command_submitting() -> None:
+        nonlocal codex_cursor
+        if source == "codex":
+            try:
+                codex_cursor = CodexRolloutCursor.at_eof(getattr(session, "transcript_path", None))
+            except TranscriptObservationError:
+                logger.warning("Codex compact rollout is unavailable for session %s", session_id)
+        arm_compact_boundary_waiter(session_id, attempt_id)
+
     continuation_pending = False
     detail: dict[str, Any] | None = None
     failure_result: dict[str, Any] | None = None
     try:
-        for submission in range(_COMPACT_PROVIDER_RETRIES + 1):
-            if submission and (
-                waiter.event.is_set() or _compact_receipt_exists(db, handoff_record_id, attempt_id)
-            ):
-                break
-            try:
-                before_command = await pane.snapshot(CODEX_COMPACT_READY_CAPTURE_LINES)
-            except Exception:
-                before_command = None
-            cursor = _claude_compact_error_cursor(session)
-            try:
-                ok, reason, continuation_pending, detail = await _send_terminal_compaction_command(
-                    pane,
-                    command,
-                    session_id,
-                    cli_source=source,
-                    mark_continuation_pending=lambda: mark_handoff_compact_continuation_pending(
-                        db,
-                        session_id,
-                        prompt=build_handoff_continue_prompt(),
-                        attempt_id=attempt_id,
-                    ),
-                    clear_continuation_pending=lambda: clear_handoff_compact_continuation_pending(
-                        db,
-                        session_id,
-                        attempt_id=attempt_id,
-                    ),
-                    schedule_continuation_readiness=schedule_readiness,
-                    continuation_readiness_capture_lines=(
-                        CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
-                    ),
-                    observe_interrupt=observe_interrupt,
-                    turn_settled=turn_settled,
-                    composer_read=composer_reader(db, source),
-                    on_command_submitting=lambda: arm_compact_boundary_waiter(
-                        session_id, attempt_id
-                    ),
-                )
-            except Exception:
-                if _compact_receipt_exists(db, handoff_record_id, attempt_id):
-                    break
-                raise
-            if not ok:
-                if _compact_receipt_exists(db, handoff_record_id, attempt_id):
-                    break
-                failure_result = {"compacted": False, "reason": reason}
-                if detail is not None:
-                    failure_result.update(detail)
-                break
+        try:
+            before_command = await pane.snapshot(CODEX_COMPACT_READY_CAPTURE_LINES)
+        except Exception:
+            before_command = None
+        cursor = _claude_compact_error_cursor(session)
+        ok, reason, continuation_pending, detail = await _send_terminal_compaction_command(
+            pane,
+            command,
+            session_id,
+            cli_source=source,
+            mark_continuation_pending=lambda: mark_handoff_compact_continuation_pending(
+                db,
+                session_id,
+                prompt=build_handoff_continue_prompt(),
+                attempt_id=attempt_id,
+            ),
+            clear_continuation_pending=lambda: clear_handoff_compact_continuation_pending(
+                db,
+                session_id,
+                attempt_id=attempt_id,
+            ),
+            schedule_continuation_readiness=schedule_readiness,
+            continuation_readiness_capture_lines=(
+                CODEX_COMPACT_READY_CAPTURE_LINES if source == "codex" else None
+            ),
+            observe_interrupt=observe_interrupt,
+            turn_settled=turn_settled,
+            composer_read=composer_reader(db, source),
+            on_command_submitting=command_submitting,
+        )
+        if not ok and not _compact_receipt_exists(db, handoff_record_id, attempt_id):
+            failure_result = {"compacted": False, "reason": reason}
+            if detail is not None:
+                failure_result.update(detail)
+        elif ok:
+            delivery_loop = asyncio.get_running_loop()
             failure = await _wait_for_compact_boundary(
                 waiter,
                 pane,
                 before_command,
                 cursor,
-                timeout_seconds=(
-                    _CLAUDE_COMPACT_BOUNDARY_CONFIRM_SECONDS if source == "claude" else None
+                codex_cursor=codex_cursor,
+                on_codex_boundary=lambda: consume_and_schedule_handoff_compact_continuation(
+                    db,
+                    pending_session_id=session_id,
+                    target_session=session,
+                    loop=delivery_loop,
+                    terminal_manager=terminal_manager,
+                    terminal_runtime_registry=terminal_runtime_registry,
                 ),
             )
-            if failure is not None:
-                disarm_compact_boundary_waiter(session_id, attempt_id)
             if (
-                failure is None
-                or waiter.event.is_set()
-                or _compact_receipt_exists(db, handoff_record_id, attempt_id)
+                failure is not None
+                and not waiter.event.is_set()
+                and not _compact_receipt_exists(db, handoff_record_id, attempt_id)
             ):
-                break
-            clear_handoff_compact_continuation_pending(db, session_id, attempt_id=attempt_id)
-            if (source == "claude" and failure == _COMPACT_BOUNDARY_TIMEOUT_REASON) or (
-                submission == _COMPACT_PROVIDER_RETRIES
-            ):
+                unconfirmed = failure == _COMPACT_BOUNDARY_TIMEOUT_REASON
+                if not unconfirmed:
+                    clear_handoff_compact_continuation_pending(
+                        db, session_id, attempt_id=attempt_id
+                    )
                 failure_result = {
                     "compacted": False,
                     "reason": failure,
-                    "error_code": "compact_failed",
+                    "error_code": "compact_unconfirmed" if unconfirmed else "compact_failed",
                 }
-                break
-            logger.warning(
-                "Compact handoff for session %s attempt %s failed after submission %d: %s",
-                session_id,
-                attempt_id,
-                submission + 1,
-                failure,
-            )
-            await asyncio.sleep(_COMPACT_RETRY_BACKOFF_SECONDS * (submission + 1))
     except Exception as exc:
         logger.warning(
             "Failed delivering compact handoff for session %s", session_id, exc_info=True
@@ -297,6 +303,20 @@ async def deliver_staged_compact_handoff(
             "compacted": False,
             "reason": "compact boundary receipt is missing",
         }
+    if source == "codex" and not schedule_codex_handoff_compact_continuation_readiness(
+        db,
+        pane=pane,
+        pending_session_id=session_id,
+        before_command=before_command,
+        attempt_id=attempt_id,
+    ):
+        consume_and_schedule_handoff_compact_continuation(
+            db,
+            pending_session_id=session_id,
+            target_session=session,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+        )
     clear_queued_context(session_manager, session_id)
     return {
         "compacted": True,

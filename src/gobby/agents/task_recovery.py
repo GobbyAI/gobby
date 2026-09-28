@@ -299,7 +299,7 @@ class TaskRecoveryHandler:
             )
             return True
         except Exception as e:
-            logger.warning("Failed to recover task for agent %s: %s", db_run.id, e)
+            logger.warning("Failed to recover task for agent %s: %s", db_run.id, type(e).__name__)
             return False
 
     def _is_bootstrap_stall(self, error_string: str | None) -> bool:

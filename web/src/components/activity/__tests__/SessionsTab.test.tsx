@@ -585,7 +585,7 @@ describe("SessionsTab", () => {
     expect(screen.queryByLabelText("Cron")).toBeNull();
     expect(screen.queryByLabelText("Pipeline")).toBeNull();
     expect(screen.queryByLabelText("System")).toBeNull();
-    expect(screen.getByLabelText("AGY")).toBeInTheDocument();
+    expect(screen.getByLabelText("Antigravity")).toBeInTheDocument();
 
     rerender(
       <SessionsTab

@@ -2,7 +2,6 @@
 //! Toasts, copy feedback, and the state glyphs shared by sidebar,
 //! navigator, and pane titles.
 
-use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crate::app::{ControlState, Pane};
@@ -11,8 +10,8 @@ use crate::theme::Palette;
 use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::dialogs::Dialog;
 use crate::ui::hit::Hit;
-use crate::ui::pane_chrome::{footer_rects, pane_footer};
-use crate::ui::status_segments::{segment_text, StatusSegment};
+use crate::ui::pane_chrome::{pane_corners, title_rect};
+use crate::ui::status_segments::{agent_counts, segment_text, StatusSegment};
 use crate::ui::text::display_width_u16;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -84,15 +83,15 @@ pub struct ActiveToast {
 }
 
 /// Glyph plus colour for a roster row state, one shape per state so the
-/// rows read without colour: `▶` working (accent), `⍾` needs you (warning),
-/// `◆` unseen output (info), `○` idle, `◌` orphaned (destructive), `·`
-/// unknown.
+/// rows read without colour: `▶` active (accent), `⍾` needs you (warning),
+/// `◆` output unseen (info), `○` idle, `‖` held, `◌` gone (destructive),
+/// `·` no state yet.
 pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
     match state {
         RowState::Attention => ("⍾", p.peach),
         RowState::Orphaned => ("◌", p.red),
         // U+2016, one cell in a mono face; the emoji pause would not be.
-        RowState::Paused => ("‖", p.yellow),
+        RowState::Paused => ("‖", p.overlay1),
         RowState::Working => ("▶", p.accent),
         RowState::Unseen => ("◆", p.teal),
         RowState::Idle => ("○", p.overlay0),
@@ -101,15 +100,16 @@ pub fn state_dot(state: RowState, p: &Palette) -> (&'static str, Color) {
 }
 
 /// herdr `state_label`: the word beside a row's glyph where a surface
-/// spells the state out.
+/// spells the state out, and the Help legend's words.
 pub fn state_label(state: RowState) -> &'static str {
     match state {
         RowState::Attention => "needs you",
-        RowState::Orphaned => "orphaned",
-        RowState::Paused => "paused",
-        RowState::Working => "working",
-        RowState::Unseen => "unseen",
-        RowState::Idle | RowState::Unknown => "idle",
+        RowState::Orphaned => "gone",
+        RowState::Paused => "held",
+        RowState::Working => "active",
+        RowState::Unseen => "output unseen",
+        RowState::Idle => "idle",
+        RowState::Unknown => "no state yet",
     }
 }
 
@@ -327,11 +327,6 @@ pub fn render_copy_feedback(frame: &mut Frame, area: Rect, chrome: &Chrome, mess
     frame.render_widget(Paragraph::new(text), inner);
 }
 
-/// Global status line on `surface0`: the prefix hint and the mode word at
-/// the right end, daemon reachability on the left. A pane's title and
-/// metadata live on its edges; the focused pane's metadata leads this line
-/// instead when no edge has room for it.
-///
 /// Interactive cells drawn into the status row.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct StatusHits {
@@ -339,7 +334,10 @@ pub struct StatusHits {
     pub count: Option<Rect>,
 }
 
-/// Draws the fixed health and attention slot, configured segments, and key hint.
+/// Global status line on `surface0`. The left holds daemon reachability and
+/// this machine's agents by legend class, the right end the prefix hint and
+/// the mode word. A pane's title and metadata live on its edges; the focused
+/// pane's metadata leads this line instead when no edge has room for it.
 /// The control indicator offers take-control only for exceptional pane states.
 pub fn render_status_line<W: WorkspaceView>(
     frame: &mut Frame,
@@ -355,23 +353,28 @@ pub fn render_status_line<W: WorkspaceView>(
     let mut spans = vec![Span::styled(" ", base)];
     let mut left_width = 1_u16;
     let mut has_part = false;
-    let mut append = |text: String, style: Style, separator: &'static str| {
+    let mut append = |parts: Vec<Span<'static>>, separator: &'static str| {
         let first = !has_part;
         if has_part {
             spans.push(Span::styled(separator, base.fg(p.subtext0)));
             left_width = left_width.saturating_add(3);
         }
         let start = left_width;
-        left_width = left_width.saturating_add(display_width_u16(&text));
-        spans.push(Span::styled(text, style));
+        for part in parts {
+            left_width = left_width.saturating_add(display_width_u16(part.content.as_ref()));
+            spans.push(part);
+        }
         has_part = true;
         (start, first)
     };
     let mut hits = StatusHits::default();
 
-    // Connection state and off-tab attention occupy the fixed slot, regardless of prefs.
+    // Connection state and the needs-you count occupy the fixed slot, regardless of prefs.
     if let Some(DaemonError::Workspace(error)) = ws.daemon_error() {
-        append(error.reason.clone(), base.fg(p.red), " │ ");
+        append(
+            vec![Span::styled(error.reason.clone(), base.fg(p.red))],
+            " │ ",
+        );
     } else if chrome.connection.retry_at.is_some()
         || (!ws.daemon_ready() && ws.daemon_error().is_some())
     {
@@ -381,112 +384,77 @@ pub fn render_status_line<W: WorkspaceView>(
                 let seconds = remaining
                     .as_secs()
                     .saturating_add(u64::from(remaining.subsec_nanos() > 0));
-                format!("retry in {seconds} s")
+                format!(" · retrying in {seconds} s")
             }
-            Some(_) | None => "retrying".to_string(),
+            Some(_) | None => " · retrying".to_string(),
         };
         append(
-            format!("× Daemon unreachable · {retry}"),
-            base.fg(p.red),
-            " │ ",
-        );
-    } else if let Some((stage, elapsed)) = chrome
-        .connection
-        .stages
-        .as_ref()
-        .and_then(|stages| stages.running().map(|stage| (stage, stages.elapsed(stage))))
-    {
-        append(
-            format!(
-                "◐ connecting · {} · {:.1} s",
-                stage.label(),
-                elapsed.unwrap_or_default().as_secs_f64()
-            ),
-            base.fg(p.accent),
+            vec![
+                Span::styled("× Daemon unreachable", base.fg(p.red)),
+                Span::styled(retry, base.fg(p.subtext0)),
+            ],
             " │ ",
         );
     } else if !ws.daemon_ready() {
-        append("× Daemon unreachable".to_string(), base.fg(p.red), " │ ");
-    }
-    let hidden = ws
-        .attention_entry_ids()
-        .into_iter()
-        .filter(|entry_id| {
-            let pane = ws
-                .sidebar()
-                .agents
-                .iter()
-                .find(|agent| agent.entry_id == *entry_id)
-                .and_then(|agent| ws.pane_for_terminal(&agent.terminal_id));
-            !pane.is_some_and(|pane| {
-                chrome
-                    .active_tab()
-                    .is_some_and(|tab| tab.slot_for(pane).is_some())
-            })
-        })
-        .count();
-    if hidden > 0 {
-        let label = format!(
-            "⍾ {hidden} {} you",
-            if hidden == 1 { "needs" } else { "need" }
+        append(
+            vec![Span::styled("× Daemon unreachable", base.fg(p.red))],
+            " │ ",
         );
-        let mut style = base.fg(p.peach);
+    }
+    // Every agent on this machine by legend class. The roster outlives a
+    // disconnect, so the last known counts stay beside an outage.
+    let counts = agent_counts(ws);
+    if counts.need_you > 0 {
+        let (glyph, color) = state_dot(RowState::Attention, p);
+        let words = format!(
+            " {} {} you",
+            counts.need_you,
+            if counts.need_you == 1 {
+                "needs"
+            } else {
+                "need"
+            }
+        );
+        let mut glyph_style = base.fg(color);
+        let mut words_style = base.fg(p.subtext0);
         if matches!(chrome.hover, Some(Hit::StatusCount)) {
-            style = style.add_modifier(Modifier::UNDERLINED);
+            glyph_style = glyph_style.add_modifier(Modifier::UNDERLINED);
+            words_style = words_style.add_modifier(Modifier::UNDERLINED);
         }
-        let (start, _) = append(label.clone(), style, " │ ");
-        hits.count = Some(Rect::new(
-            area.x.saturating_add(start),
-            area.y,
-            display_width_u16(&label),
-            1,
-        ));
+        let width = display_width_u16(glyph).saturating_add(display_width_u16(&words));
+        let (start, _) = append(
+            vec![
+                Span::styled(glyph, glyph_style),
+                Span::styled(words, words_style),
+            ],
+            " │ ",
+        );
+        hits.count = Some(Rect::new(area.x.saturating_add(start), area.y, width, 1));
     }
     let mut optional_spans = 0;
     // Pane overflow can contain an actionable control button. Let it take
-    // the left slot before the informational totals on a narrow row. A
-    // starting or disconnected roster cannot supply truthful totals yet.
-    let totals_ready = ws.daemon_ready()
-        && ws.daemon_error().is_none()
-        && chrome.connection.retry_at.is_none()
-        && chrome
-            .connection
-            .stages
-            .as_ref()
-            .is_none_or(|stages| stages.finished());
-    if totals_ready && focused_overflow(ws, chrome).is_none() {
-        let agents = &ws.sidebar().agents;
-        let agent_total = agents.len();
-        let agent_terminals: HashSet<&str> = agents
-            .iter()
-            .map(|agent| agent.terminal_id.as_str())
-            .collect();
-        let terminal_total = ws
-            .roster_terminal_ids()
-            .into_iter()
-            .filter(|terminal_id| {
-                !agent_terminals.contains(terminal_id.as_str())
-                    && ws.pane_for_terminal(terminal_id).is_some()
-            })
-            .count();
-        let (_, first) = append(
-            format!(
-                "{agent_total} agent{}",
-                if agent_total == 1 { "" } else { "s" }
+    // the left slot before the informational counts on a narrow row. A
+    // count of zero draws nothing.
+    if focused_overflow(ws, chrome).is_none() {
+        let (gone, gone_color) = state_dot(RowState::Orphaned, p);
+        for (count, text, color) in [
+            (counts.idle, format!("{} idle", counts.idle), p.subtext0),
+            (
+                counts.active,
+                format!("{} active", counts.active),
+                p.subtext0,
             ),
-            base.fg(p.subtext0),
-            if hidden > 0 { " · " } else { " │ " },
-        );
-        optional_spans += if first { 1 } else { 2 };
-        let (_, first) = append(
-            format!(
-                "{terminal_total} terminal{}",
-                if terminal_total == 1 { "" } else { "s" }
+            (
+                counts.gone,
+                format!("{gone} {} gone", counts.gone),
+                gone_color,
             ),
-            base.fg(p.subtext0),
-            " · ",
-        );
-        optional_spans += if first { 1 } else { 2 };
+        ] {
+            if count > 0 {
+                let (_, first) = append(vec![Span::styled(text, base.fg(color))], " │ ");
+                optional_spans += if first { 1 } else { 2 };
+            }
+        }
     }
     let mut optional_started = optional_spans > 0;
     for name in &chrome.prefs.status_left {
@@ -499,9 +467,9 @@ pub fn render_status_line<W: WorkspaceView>(
         let mut style = base.fg(p.subtext0);
         let actionable = if segment == StatusSegment::Focus {
             focused_overflow(ws, chrome).map(|pane| {
-                let footer = pane_footer(ws, pane, true);
-                style = base.fg(footer.tone.color(p)).add_modifier(Modifier::BOLD);
-                footer.actionable
+                let corners = pane_corners(ws, chrome, pane, true);
+                style = base.fg(corners.tone.color(p)).add_modifier(Modifier::BOLD);
+                corners.actionable
             })
         } else {
             None
@@ -511,7 +479,10 @@ pub fn render_status_line<W: WorkspaceView>(
             style = style.add_modifier(Modifier::UNDERLINED);
         }
         let width = display_width_u16(&text);
-        let (start, first) = append(text, style, if optional_started { " · " } else { " │ " });
+        let (start, first) = append(
+            vec![Span::styled(text, style)],
+            if optional_started { " · " } else { " │ " },
+        );
         optional_started = true;
         optional_spans += if first { 1 } else { 2 };
         if actionable {
@@ -537,7 +508,7 @@ pub fn render_status_line<W: WorkspaceView>(
     )];
     if let Some(name) = mode_name(chrome) {
         hint.push(Span::styled(" │ ", base.fg(p.subtext0)));
-        hint.push(Span::styled(name, base.fg(p.accent)));
+        hint.push(Span::styled(name, base.fg(p.text)));
     }
     hint.push(Span::styled(" ", base));
     let hint = Line::from(hint);
@@ -565,8 +536,9 @@ pub fn render_status_line<W: WorkspaceView>(
     let right_width = display_width_u16(&right).min(hint_area.x.saturating_sub(area.x));
     let right_area = Rect::new(hint_area.x - right_width, area.y, right_width, 1);
     let fixed_spans = spans.len() - optional_spans;
-    // Preserve the fixed connection and attention slots. Optional left
-    // segments, including totals, disappear whole before the right slot.
+    // Preserve the fixed connection and needs-you slots. Optional left
+    // segments, the idle, active and gone counts included, disappear whole
+    // before the right slot.
     let left_limit = right_area.x.saturating_sub(area.x).saturating_sub(3);
     while left_width > left_limit && spans.len() > fixed_spans {
         let removed = spans.pop().expect("optional status segment");
@@ -611,7 +583,7 @@ pub(super) fn focused_overflow<'a, W: WorkspaceView>(
 ) -> Option<&'a Pane> {
     let pane = ws.pane(chrome.focused_pane()?);
     let info = chrome.view.pane_infos.iter().find(|info| info.is_focused)?;
-    footer_rects(info, &pane_footer(ws, pane, true))
+    title_rect(info, &pane_corners(ws, chrome, pane, true))
         .is_none()
         .then_some(pane)
 }
@@ -704,6 +676,7 @@ mod tests {
             "seq": 1,
             "entries": [{
                 "entry_id": "run:term-alpha",
+                "terminal": {"terminal_id": "term-alpha", "backend": "native"},
                 "attention": {"kind": "actionable"}
             }]
         }));
@@ -721,10 +694,8 @@ mod tests {
         // The focused pane's border carries its title and metadata; the
         // prefix and the mode word sit at the right end on surface0.
         let (text, indicator) = draw_status(&ws, &chrome);
-        assert!(
-            text.starts_with(" ⍾ 1 needs you · 0 agents · 2 terminals"),
-            "{text}"
-        );
+        // One agent, and it needs you: no zero counts beside it.
+        assert!(text.starts_with(" ⍾ 1 needs you  "), "{text}");
         assert!(text.ends_with("prefix ctrl+b │ navigate "), "{text}");
         assert_eq!(indicator, None);
         let (terminal, _) = status_terminal(&ws, &chrome);
@@ -734,9 +705,10 @@ mod tests {
             assert_eq!(buffer[(x, 0)].bg, p.surface0, "x={x}");
         }
         assert_eq!(buffer[(1, 0)].fg, p.peach, "attention marker");
+        assert_eq!(buffer[(3, 0)].fg, p.subtext0, "the count's words");
         assert_eq!(buffer[(55, 0)].fg, p.subtext0, "the prefix hint");
         for x in 71..79 {
-            assert_eq!(buffer[(x, 0)].fg, p.accent, "the mode word, x={x}");
+            assert_eq!(buffer[(x, 0)].fg, p.text, "the mode word, x={x}");
         }
         for pane_local in ["observe", "tmux", "Focused", "term-beta"] {
             assert!(
@@ -756,83 +728,35 @@ mod tests {
     }
 
     #[test]
-    fn off_tab_count_excludes_idle_roster_entries_and_visible_attention() {
-        let mut ws = Workspace::scripted();
-        ws.daemon_mut().set_roster(json!({
-            "epoch": "e1",
-            "seq": 1,
-            "entries": [
-                {
-                    "entry_id": "run:visible",
-                    "terminal": {"terminal_id": "visible", "backend": "native"},
-                    "attention": {"kind": "actionable"}
-                },
-                {
-                    "entry_id": "run:off-tab",
-                    "terminal": {"terminal_id": "off-tab", "backend": "native"},
-                    "attention": {"kind": "actionable"}
-                },
-                {
-                    "entry_id": "run:idle",
-                    "terminal": {"terminal_id": "idle", "backend": "native"}
-                }
-            ]
-        }));
-        ws.reconcile_subscribe_first().unwrap();
-        let visible = ws.open_terminal("visible", "native", "epoch").unwrap();
-        let mut chrome = Chrome::dark();
-        chrome.open_pane(visible, "alpha");
-        chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
-        chrome.prefs.status_left.clear();
-        chrome.prefs.status_right.clear();
-
-        assert_eq!(ws.roster_entry_ids().len(), 3);
-        assert_eq!(ws.attention_entry_ids().len(), 2);
-        let (text, _) = draw_status(&ws, &chrome);
-        assert!(text.starts_with(" ⍾ 1 needs you"), "{text}");
-    }
-
-    #[test]
-    fn status_slot_names_connecting_stage_and_retry() {
-        use crate::app::startup_stages::{StageState, StartupStages};
-
+    fn status_slot_names_the_retry_countdown() {
         let ws = Workspace::scripted();
         let mut chrome = Chrome::dark();
         chrome.prefs.status_left.clear();
         chrome.prefs.status_right.clear();
         let now = Instant::now();
         chrome.connection.now = now;
-        chrome.connection.stages = Some(StartupStages::for_test(
-            [
-                StageState::Done {
-                    took: Duration::from_millis(300),
-                },
-                StageState::Running {
-                    since: now - Duration::from_millis(2100),
-                },
-                StageState::Pending,
-                StageState::Pending,
-            ],
-            now,
-        ));
-        let (text, _) = draw_status(&ws, &chrome);
-        assert!(
-            text.starts_with(" ◐ connecting · workspace attach · 2.1 s"),
-            "status should name the running stage: {text}"
-        );
-        assert!(
-            !text.contains("0 agents"),
-            "roster is still loading: {text}"
-        );
-
-        chrome.connection.stages = None;
         chrome.connection.retry_at = Some(now + Duration::from_secs(3));
         let (text, _) = draw_status(&ws, &chrome);
         assert!(
-            text.starts_with(" × Daemon unreachable · retry in 3 s"),
+            text.starts_with(" × Daemon unreachable · retrying in 3 s"),
             "status should show the retry countdown: {text}"
         );
-        assert!(!text.contains("0 agents"), "roster is unavailable: {text}");
+        assert!(
+            !text.contains("idle"),
+            "an empty roster counts nothing: {text}"
+        );
+        let (terminal, _) = status_terminal(&ws, &chrome);
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            buffer[(1, 0)].fg,
+            chrome.palette.red,
+            "the outage leads in red"
+        );
+        assert_eq!(
+            buffer[(24, 0)].fg,
+            chrome.palette.subtext0,
+            "the retry is dim"
+        );
     }
 
     #[test]
@@ -851,28 +775,27 @@ mod tests {
             chrome.open_pane(id, "alpha");
             chrome.prefs.status_left.clear();
             chrome.prefs.status_right.clear();
-            // A lone pane draws all four edges, and its top edge has room.
+            // A lone pane draws all four edges, and its top edge has room,
+            // so its metadata stays off the status line.
             chrome.compute_view(&ws, Rect::new(0, 0, 80, 20));
             assert_eq!(chrome.view.pane_infos[0].borders, Borders::ALL);
 
             let (text, indicator) = draw_status(&ws, &chrome);
-            assert!(text.starts_with(" 0 agents · 1 terminal"), "{text}");
-            assert!(text.ends_with("prefix ctrl+b "), "{text}");
+            assert_eq!(text.trim(), "prefix ctrl+b", "{text}");
             assert_eq!(indicator, None);
 
             // An exception's button stays on the edge too.
             ws.pane_mut(id).control = ControlState::LeaseLost;
             ws.pane_mut(id).take_back = true;
             let (text, indicator) = draw_status(&ws, &chrome);
-            assert!(text.starts_with(" 0 agents · 1 terminal"), "{text}");
-            assert!(text.ends_with("prefix ctrl+b "), "{text}");
+            assert_eq!(text.trim(), "prefix ctrl+b", "{text}");
             assert_eq!(indicator, None);
             assert!(crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome).is_some());
         }
     }
 
     #[test]
-    fn focused_pane_footer_overflows_to_the_status_row() {
+    fn a_pane_too_narrow_for_its_title_overflows_to_the_status_row() {
         let mut ws = Workspace::scripted();
         ws.daemon_mut().set_roster(json!({
             "epoch": "e1",
@@ -889,18 +812,23 @@ mod tests {
         chrome.prefs.status_left = vec!["focus".to_string()];
         chrome.prefs.status_right.clear();
         let focused = chrome.focused_pane().unwrap();
-        let info = chrome.view.pane_infos.iter().find(|info| info.is_focused);
+        // Bordered, but too narrow for any title on its top edge.
+        let info = chrome
+            .view
+            .pane_infos
+            .iter_mut()
+            .find(|info| info.is_focused);
         let info = info.unwrap();
-        // Bordered, but narrower than its padded metadata.
+        info.rect.width = 4;
         assert!(!info.borders.is_empty());
-        let footer = pane_footer(&ws, ws.pane(focused), true);
-        assert_eq!(footer_rects(info, &footer), None, "{:?}", info.rect);
+        let info = info.clone();
+        let corners = pane_corners(&ws, &chrome, ws.pane(focused), true);
+        assert_eq!(title_rect(&info, &corners), None, "{:?}", info.rect);
 
-        // The title keeps the pane's top edge; only the metadata moves.
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" term-beta · Focused{:>60}", "prefix ctrl+b ")
+            format!(" ○ term-beta · Focused{:>58}", "prefix ctrl+b ")
         );
         assert_eq!(indicator, None);
 
@@ -909,9 +837,9 @@ mod tests {
         let (text, indicator) = draw_status(&ws, &chrome);
         assert_eq!(
             text,
-            format!(" term-beta · Read-only{:>58}", "prefix ctrl+b ")
+            format!(" ○ term-beta · Read-only{:>56}", "prefix ctrl+b ")
         );
-        let width = display_width_u16("term-beta · Read-only") + 1;
+        let width = display_width_u16("○ term-beta · Read-only") + 1;
         assert_eq!(indicator, Some(Rect::new(0, 0, width, 1)));
         assert_eq!(
             crate::ui::pane_chrome::control_indicator_hit_area(&ws, &chrome),

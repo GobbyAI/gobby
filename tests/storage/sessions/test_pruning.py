@@ -11,6 +11,7 @@ from gobby.sessions.status_events import SessionStatusTransition
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.step_instances import AgentStepInstanceManager
 from tests.fixtures.postgres import TEST_USER_ID
@@ -66,6 +67,101 @@ class TestSessionManagerPruning:
         instance = workflow_manager.get_for_session(session.id)
         assert instance is not None
         assert instance.agent_name == "developer"
+
+    def test_handoff_sweep_preserves_live_or_unconfirmed_native_terminal(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """A provider-limit prompt still occupying a native seat is not an orphan."""
+        terminal_id = str(uuid4())
+        session = session_manager.register(
+            external_id="provider-limit-handoff",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={"gobby_terminal_id": terminal_id},
+        )
+        session_manager.update_status(session.id, "awaiting_handoff")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            (session.id,),
+        )
+
+        # A missing lookup is inconclusive while a host may be restarting.
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 0
+
+        terminals = TerminalManager(session_manager.db)
+        terminals.create_pending(
+            terminal_id=terminal_id,
+            project_id=sample_project["id"],
+            backend="native",
+            ownership="gobby",
+            spawn_key=terminal_id,
+            machine_id=LOCAL_MACHINE_ID,
+            session_id=session.id,
+        )
+        assert terminals.promote_to_live(
+            terminal_id,
+            locator={"host_terminal_id": "limit-prompt"},
+            locator_key=native_locator_key("limit-epoch", "limit-prompt"),
+            host_epoch="limit-epoch",
+        )
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 0
+        current = session_manager.get(session.id)
+        assert current is not None and current.status == "awaiting_handoff"
+
+        assert terminals.mark_exited(terminal_id)
+        alternate_id = str(uuid4())
+        terminals.create_pending(
+            terminal_id=alternate_id,
+            project_id=sample_project["id"],
+            backend="native",
+            ownership="gobby",
+            spawn_key=alternate_id,
+            machine_id=LOCAL_MACHINE_ID,
+            session_id=session.id,
+        )
+        assert terminals.promote_to_live(
+            alternate_id,
+            locator={"host_terminal_id": "replacement-seat"},
+            locator_key=native_locator_key("replacement-epoch", "replacement-seat"),
+            host_epoch="replacement-epoch",
+        )
+        # The old row exited, but a replacement still hosts the same session.
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 0
+
+        session_manager.update(session.id, terminal_context={"gobby_terminal_id": alternate_id})
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            (session.id,),
+        )
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 0
+        assert terminals.mark_exited(alternate_id)
+
+        session_manager.update_status(session.id, "paused")
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            (session.id,),
+        )
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 0
+
+        session_manager.update_status(session.id, "awaiting_handoff")
+        session_manager.update(session.id, terminal_context={"gobby_terminal_id": str(uuid4())})
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            (session.id,),
+        )
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 0
+
+        session_manager.update(session.id, terminal_context={"gobby_terminal_id": alternate_id})
+        session_manager.db.execute(
+            "UPDATE sessions SET updated_at = NOW() - INTERVAL '31 minutes' WHERE id = %s",
+            (session.id,),
+        )
+        assert session_manager.expire_orphaned_handoff_sessions(timeout_minutes=30) == 1
+        expired = session_manager.get(session.id)
+        assert expired is not None and expired.status == "expired"
 
     def test_prune_stale_compact_workflow_instances_reclaims_marked_sessions(
         self,

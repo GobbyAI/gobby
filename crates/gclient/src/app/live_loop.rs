@@ -55,8 +55,7 @@ mod workspaces;
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
 use control::{apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input};
 use modal_input::{route_modal_key, ModalOutcome};
-use mouse::{route_mouse, MouseOutcome, Placement};
-use projects::first_shell_request;
+use mouse::{route_mouse, MouseOutcome};
 use reconnect::{
     await_reconnect_job, begin_reconnect, handle_live_event, handle_reconnect_outcome,
     recv_daemon_event, settle_sidebar_banner, wait_for_reconnect,
@@ -227,9 +226,6 @@ pub async fn run_live_loop<B: Backend>(
         None
     };
     let mut reconnect_stage: Option<(Generation, EventReceiver)> = None;
-    let mut shell_spawn_job: Option<startup::ShellSpawnFuture> = None;
-    let mut shell_spawn_project: Option<String> = None;
-    let mut first_shell_pending: Option<String> = None;
     let mut first_frame_pending = false;
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut relist_job: Option<RelistFuture> = None;
@@ -272,6 +268,7 @@ pub async fn run_live_loop<B: Backend>(
         // (#22573).
         workspace.start_control_request(&control_tx);
         if !launch_pending && reconnect_stage.is_none() && relist_job.is_none() {
+            workspace.refresh_relist();
             relist_job = workspace.start_relist();
         }
         tokio::select! {
@@ -369,8 +366,6 @@ pub async fn run_live_loop<B: Backend>(
                             startup::mark_running(chrome, StartupStage::FirstFrame);
                             first_frame_pending = true;
                             sync_live_chrome(workspace, chrome);
-                            first_shell_pending = first_shell_request(workspace, chrome)
-                                .and_then(|request| request.project_id);
                             recoveries.extend(workspace.start_due_attaches(Instant::now(), true));
                             if let Some(pane_id) = chrome.focused_pane() {
                                 if let Err(error) = focus_live_pane(workspace, pane_id).await {
@@ -402,22 +397,6 @@ pub async fn run_live_loop<B: Backend>(
                             loop_error = Some(failure);
                         }
                     }
-                }
-            }
-            result = async { shell_spawn_job.as_mut().expect("shell spawn job").await },
-                if shell_spawn_job.is_some() =>
-            {
-                shell_spawn_job = None;
-                let project = shell_spawn_project.take();
-                match result {
-                    Ok(outcome) => {
-                        if let Err(error) = actions::finish_live_shell_spawn(
-                            workspace, chrome, Placement::Tab, None, project.as_deref(), outcome,
-                        ).await {
-                            chrome.notify(Toast::error(error.to_string()));
-                        }
-                    }
-                    Err(error) => chrome.notify(Toast::error(error.to_string())),
                 }
             }
             event = recv_daemon_event(&mut events) => {
@@ -489,20 +468,11 @@ pub async fn run_live_loop<B: Backend>(
                         None
                     }
                     Err(error) => {
-                        workspace.request_focused_sessions();
+                        workspace.requeue_failed_sidebar_fetch();
                         Some(error)
                     }
                 };
                 settle_sidebar_banner(chrome, &mut sidebar_error_shown, error.as_ref());
-                if let Some(project) = first_shell_pending.take() {
-                    if workspace.project_id() == Some(project.as_str()) {
-                        if let Some(request) = first_shell_request(workspace, chrome) {
-                            shell_spawn_project = request.project_id.clone();
-                            shell_spawn_job =
-                                Some(startup::spawn_first_shell(daemon.clone(), request));
-                        }
-                    }
-                }
             }
             result = await_relist_job(&mut relist_job), if relist_job.is_some() => {
                 relist_job = None;
@@ -576,7 +546,7 @@ pub async fn run_live_loop<B: Backend>(
                 }
             }
             _ = render_tick.tick() => {
-                if chrome.prefs.theme.eq_ignore_ascii_case("system") {
+                if chrome.prefs.follows_system() {
                     if !system_theme_watch_attempted {
                         system_theme_watcher = dark_light::subscribe().ok();
                         system_theme_watch_attempted = true;
@@ -635,7 +605,7 @@ pub async fn run_live_loop<B: Backend>(
             && reconnect_stage.is_none()
             && chrome
                 .focused_pane()
-                .is_none_or(|pane_id| workspace.pane(pane_id).frames_rendered() > 0)
+                .is_none_or(|pane_id| workspace.pane(pane_id).first_frame_settled())
         {
             startup::mark_done(chrome, StartupStage::FirstFrame);
             if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
@@ -645,6 +615,14 @@ pub async fn run_live_loop<B: Backend>(
                 workspace.queue_initial_sidebar_fetch();
                 launch_pending = false;
                 first_frame_pending = false;
+            }
+        }
+        // Projection can replace pane slots while input is queued. Refresh the
+        // drawn hit map before the next event uses it, independent of the timer.
+        if workspace.exit_reason().is_none() && pane_hit_map_stale(chrome) {
+            if let Err(error) = render_live_workspace(terminal, workspace, chrome) {
+                workspace.latch_exit(error.to_string());
+                loop_error = Some(error);
             }
         }
         // Again after the event, not only before it: the event just handled is
@@ -895,6 +873,24 @@ async fn recv_workspace_frame(
     next
 }
 
+fn pane_hit_map_stale(chrome: &Chrome) -> bool {
+    let Some(tab) = chrome.active_tab() else {
+        return !chrome.view.pane_infos.is_empty();
+    };
+    let (expected, _) = crate::ui::pane_layout::pane_geometry(
+        tab,
+        chrome.tab_focus(tab),
+        chrome.is_zoomed(),
+        chrome.view.terminal_area,
+        &chrome.prefs,
+    );
+    expected.len() != chrome.view.pane_infos.len()
+        || expected
+            .iter()
+            .zip(&chrome.view.pane_infos)
+            .any(|(current, drawn)| current.id != drawn.id || current.rect != drawn.rect)
+}
+
 fn render_live_workspace<B: Backend>(
     terminal: &mut Terminal<B>,
     workspace: &mut Workspace<LiveDaemon>,
@@ -905,17 +901,15 @@ fn render_live_workspace<B: Backend>(
     terminal
         .draw(|frame| {
             chrome.compute_view(workspace, frame.area());
-            // Read focus and palette out before the closure exists: capturing
-            // `chrome` inside it would borrow across the `apply_hits` below.
+            // Read focus out before the closure exists: capturing `chrome`
+            // inside it would borrow across the `apply_hits` below.
             let focused = chrome.cursor_pane();
-            let palette = chrome.palette;
             let mut content = |frame: &mut ratatui::Frame<'_>, area, pane| {
                 crate::views::grid::render(
                     frame,
                     area,
                     workspace.pane(pane),
                     focused == Some(pane),
-                    &palette,
                 );
             };
             let hits = crate::ui::render_workspace_with(frame, workspace, chrome, &mut content);

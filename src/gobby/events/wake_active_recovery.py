@@ -134,15 +134,15 @@ async def reconcile_idle_prompt_session(
     activity_probe: ActivityProbe,
     run_db: RunDb,
 ) -> Session | None:
-    """Pause an active Claude row whose pane is idle at an empty prompt.
+    """Pause an active row whose provider can read an idle, empty composer.
 
     Two agreeing reads, then an exact ``updated_at`` compare-and-set. Unlike
     restart recovery, the row does not have to predate a daemon restart: a
-    finished Claude turn can leave ``sessions.status`` active while the pane
-    is already back at the prompt. A turn still in flight, a draft, or any
-    other source stays active.
+    finished turn can leave ``sessions.status`` active while the pane is
+    already back at the prompt. Unsupported providers return ``unknown`` from
+    their composer probe; a turn still in flight or a draft stays active.
     """
-    if observed.source != "claude" or observed.status != "active":
+    if observed.status != "active":
         return None
     first = await _read_activity(activity_probe, observed, terminal)
     if not idle_prompt_allows_wake(first):
@@ -153,7 +153,7 @@ async def reconcile_idle_prompt_session(
     current = await run_db(session_manager.get, observed.id)
     if (
         current is None
-        or current.source != "claude"
+        or current.source != observed.source
         or current.status != "active"
         or current.updated_at != observed.updated_at
     ):

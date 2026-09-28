@@ -83,7 +83,7 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
 )
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
-    """Gobby - Local-first daemon for AI coding assistants."""
+    """Gobby - fleet management for AI coding agents."""
     if ctx.invoked_subcommand == "start":
         load_bootstrap(str(get_gobby_home() / "bootstrap.yaml"))
     runtime = CliRuntime(config_file=config)

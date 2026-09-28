@@ -235,6 +235,7 @@ def test_non_lifecycle_gobby_commands_still_register() -> None:
         "uv run gobby mcp proxy tools unavailable",
         "about gobby",
         "example git add src/gobby/tasks/criterion_commands.py and git commit",
+        "git add and commit",
     ],
 )
 def test_prose_shaped_backticks_are_not_commands(span: str) -> None:

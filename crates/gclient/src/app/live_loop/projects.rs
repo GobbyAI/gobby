@@ -1,12 +1,12 @@
 //! Project focus for the live loop: the outgoing project's tab set is parked
-//! in the chrome, the incoming one is shown or seeded with a shell
-//! (decision 7); the daemon's workspace rows remember the focus.
+//! in the chrome, and the incoming one's daemon tabs are shown. The daemon's
+//! workspace rows remember the focus.
 
 use std::path::PathBuf;
 
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::daemon::{Daemon, DaemonError, LiveDaemon, SpawnRequest, WorkspaceOp};
+use crate::daemon::{Daemon, DaemonError, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::chrome::{attention_pane, Tab};
 use crate::ui::dialogs::project::{complete_directory, expand_home, plural};
@@ -19,8 +19,7 @@ use crate::ui::{Chrome, Mode};
 use super::super::sidebar_model::{ProjectEntry, WorktreeEntry};
 use super::super::{PaneId, Workspace};
 use super::actions::{
-    activate_live_tab, close_live_pane, open_live_rename, spawn_live_shell, spawn_live_terminal,
-    terminate_live_terminal,
+    activate_live_tab, close_live_pane, open_live_rename, spawn_live_shell, terminate_live_terminal,
 };
 use super::control::{focus_live_pane, release_live_control};
 use super::menu::{attention_id, ContextMenuKind, MenuAction};
@@ -54,7 +53,7 @@ pub async fn focus_project(
     chrome.focus_project(project_id);
     chrome.sidebar.expanded_project = Some(project_id.to_owned());
     sync_live_chrome(workspace, chrome);
-    restore_focused(workspace, chrome).await
+    Ok(())
 }
 
 /// Attach the project's default workspace when this window is not already on it.
@@ -294,39 +293,6 @@ pub async fn open_worktree(
         }
     }
     Ok(())
-}
-
-/// Fill the focused project's tab bar when it is empty. The daemon's tabs
-/// were projected by the chrome sync, so an empty bar means the workspace
-/// has none for the project, and one shell opens its first tab. A window
-/// without a Gobby home (only the loop tests run that way) seeds nothing.
-pub(super) async fn restore_focused(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-) -> Result<(), FrameError> {
-    if first_shell_request(workspace, chrome).is_some() {
-        spawn_live_terminal(workspace, chrome, Placement::Tab).await?;
-    }
-    Ok(())
-}
-
-pub(super) fn first_shell_request(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-) -> Option<SpawnRequest> {
-    if let Some(project) = workspace.project_id() {
-        chrome.focus_project(project);
-    }
-    // A window inside a gclient pane shows what the outer window opens and
-    // never seeds a shell of its own.
-    if workspace.in_pane() || !chrome.tabs().tabs.is_empty() || workspace.gobby_home().is_none() {
-        return None;
-    }
-    Some(SpawnRequest {
-        project_id: workspace.project_id().map(str::to_owned),
-        cwd: workspace.focused_checkout_path(),
-        ..SpawnRequest::default()
-    })
 }
 
 /// Open the new-project dialog on `~/`.

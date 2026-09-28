@@ -11,7 +11,7 @@ import click
 import psycopg
 
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.plans.parser import PlanParseError, parse_plan
+from gobby.plans.parser import ParseMode, PlanParseError, parse_plan
 from gobby.plans.review_evidence_io import normalize_plan_path
 from gobby.plans.review_evidence_models import PlanReviewEvidence, ReviewEvidenceError
 from gobby.plans.review_evidence_store import (
@@ -396,7 +396,10 @@ def _validate_plan_for_cli(
         project_context, expected_project_id = _validation_project_context(project_ref)
         plan_root = Path(project_context["project_path"])
     plan_path = plan_file if plan_file.is_absolute() else plan_root / plan_file
-    structural_result = validate_plan_file(None, plan_path, project_context=project_context)
+    parse_mode: ParseMode = "expansion" if mode == "expansion" else "draft"
+    structural_result = validate_plan_file(
+        None, plan_path, project_context=project_context, parse_mode=parse_mode
+    )
     if not structural_result.get("valid"):
         return structural_result
 
@@ -408,6 +411,7 @@ def _validate_plan_for_cli(
             expected_project_id=expected_project_id,
             require_symbol_validation=require_symbol_validation,
             consumer_coverage_blocking=mode == "expansion",
+            parse_mode=parse_mode,
         )
     else:
         db = _open_db()
@@ -419,6 +423,7 @@ def _validate_plan_for_cli(
             code_index=CodeIndexStorage(db),
             require_symbol_validation=require_symbol_validation,
             consumer_coverage_blocking=mode == "expansion",
+            parse_mode=parse_mode,
         )
     return _with_symbol_validation_warnings(result)
 

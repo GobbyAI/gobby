@@ -77,7 +77,7 @@ that a run or its assigned task has completed.
 | `qwen` | Qwen CLI hooks |
 | `droid` | Droid CLI hooks |
 | `grok` | Grok CLI hooks |
-| `agy` | AGY CLI hooks or web-chat AGY backend |
+| `agy` | Antigravity CLI hooks or web-chat Antigravity backend |
 | `pipeline` | Pipeline automation |
 | `system` | Bootstrapped root session for cron and pipeline work without a caller |
 

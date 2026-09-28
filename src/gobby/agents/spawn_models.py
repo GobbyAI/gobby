@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import KW_ONLY, dataclass, field
 from subprocess import SubprocessError
 from typing import TYPE_CHECKING, Any, Literal, Protocol
@@ -111,6 +111,7 @@ class SpawnRequest:
     max_agent_depth: int = 5
     session_manager: ChildSessionManager | None = None
     run_manager: LocalAgentRunManager | None = None
+    cleanup_agent: Callable[..., Awaitable[None]] | None = None
     machine_id: str | None = None
     model: str | None = None
     is_local: bool = False

@@ -95,7 +95,10 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let deadline = state.config.control_deadline();
     let (outbound_tx, outbound_rx) = mpsc::channel::<Value>(outbound_cap);
     let writer_task = tokio::spawn(async move {
-        let _ = super::backpressure::write_outbound(writer, outbound_rx, deadline).await;
+        let reason = super::backpressure::write_outbound(writer, outbound_rx, deadline).await;
+        if reason != super::backpressure::ControlClose::Disconnected {
+            tracing::warn!(conn_id, ?reason, "gterm control writer closed");
+        }
     });
     let event_tasks = Arc::new(StdMutex::new(Vec::new()));
     let mut dispatch_tasks = JoinSet::new();
@@ -132,13 +135,22 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                 continue;
             }
             Ok(RequestRead::Overflow) => {
+                tracing::warn!(
+                    conn_id,
+                    reason = "read_overflow",
+                    "gterm control reader closed"
+                );
                 let _ = enqueue_control(
                     &outbound_tx,
                     json!({"ok": false, "error": "control_overflow"}),
                 );
                 break;
             }
-            Ok(RequestRead::Closed) | Err(_) => break,
+            Ok(RequestRead::Closed) => break,
+            Err(err) => {
+                tracing::warn!(conn_id, error_kind = ?err.kind(), "gterm control reader closed");
+                break;
+            }
         };
         let Some(id) = request.id.clone() else {
             if enqueue_control(&outbound_tx, json!({"ok": false, "error": "missing_id"})).is_err() {

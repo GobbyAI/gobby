@@ -140,6 +140,28 @@ pub fn truncate_title(text: &str) -> String {
     text[..end].to_string()
 }
 
+/// Queue changed semantic frames, preserving forced snapshots after desync.
+pub(crate) fn push_semantic_frame(att: &mut Attachment, frame: FrameData, cap: usize) -> bool {
+    if !att.desynced && att.last_semantic_frame.as_ref() == Some(&frame) {
+        return false;
+    }
+    let msg = ServerMessage::Frame(frame.clone());
+    match att.mailbox.push_observed(&msg, cap, att.desynced) {
+        PushResult::Queued => {
+            att.last_semantic_frame = Some(frame);
+            att.desynced = false;
+            att.last_send = Instant::now();
+            true
+        }
+        PushResult::Overflow => {
+            att.desynced = true;
+            att.last_send = Instant::now();
+            true
+        }
+        PushResult::Closed => false,
+    }
+}
+
 /// Encode `frame` for a `terminal_ansi` attachment and queue it on the
 /// attachment's channel; returns whether a message was queued.
 ///
