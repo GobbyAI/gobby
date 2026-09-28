@@ -1276,15 +1276,21 @@ own, the supervisor reads the shutdown-intent marker the runner already writes
 with a golden test against a Python-written marker): intent `restart` respawns the
 backend immediately (lease held, epoch unchanged, grants valid); intent `stop` exits
 gdaemon after releasing the lease and the pid claim; no active marker is a crash and
-respawns with backoff (1 s doubling to 30 s). The supervisor clears the active
-marker (the `clear_active_shutdown_intent` path) immediately before every spawn, so
-only a marker the current backend wrote can steer it. Without that, a `stop` marker
-left by an orphan draining on liveness-pipe EOF (below) survives until the next
-runner is listening (`runner_lifecycle.py` clears it only then), and a first backend
-that dies before listening would make the new gdaemon read that stale `stop`, exit,
-and release the lease instead of backing off. Rejected: honoring a marker only when
-its `timestamp` is at or after the spawn (a wall-clock step misorders the comparison,
-and clearing before spawn needs no comparison).
+respawns with backoff (1 s doubling to 30 s). Only a marker the current backend
+wrote steers the supervisor: immediately before every spawn it records the raw bytes
+of whatever active marker exists (they carry `sender_pid`, `timestamp`, and `source`,
+so any new write differs) and leaves the file in place; on the backend's exit a marker
+byte-equal to the recorded one counts as absent (a crash, with backoff). The runner
+still clears the marker once it is listening (`runner_lifecycle.py`), as today.
+Without this, a `stop` marker left by an orphan draining on liveness-pipe EOF (below)
+would make a new gdaemon whose first backend dies before listening exit and release
+the lease, and an already-acted-on `restart` marker would respawn a backend that keeps
+dying before listening with no backoff. The file stays so ghook's planned-shutdown
+suppression (1.4; `should_suppress_failed_post` requires a fresh marker) keeps covering
+the typed 503 while a restarted backend is `starting`. Rejected: deleting the marker
+before spawn (drops that suppression for the whole startup window of every planned
+restart); honoring a marker only when its `timestamp` is at or after the spawn (a
+wall-clock step misorders the comparison).
 
 **Start refusals are not crashes** (decided 2026-09-27). Today every refusal and every
 crash leaves `runner.main` with status 1: the worktree refusal calls `sys.exit(1)`, the
@@ -1428,7 +1434,7 @@ for a healthy daemon or adopts a claim.
 - 5.2.5 - Service templates launch gdaemon and `service_unit_has_launch_env` still detects the launch env. file: `src/gobby/install/shared/services/gobby-daemon.service.j2`.
 - 5.2.6 - `src/gobby/cli/daemon.py` stays below 1,000 lines after the lifecycle split. file: `src/gobby/cli/daemon_lifecycle.py`.
 - 5.2.7 - `POST /api/admin/restart` keeps its admission checks, writes intent `restart`, spawns no helper, and the deleted helper functions are gone. test: `tests/servers/routes/test_admin.py::test_restart_writes_intent_without_helper`.
-- 5.2.8 - The supervisor parses a Python-written shutdown-intent marker and respawns on `restart`, exits on `stop`, and backs off on a crash; a `stop` marker present before the spawn is cleared, so a backend that then dies before listening backs off as a crash. test: `crates/gdaemon/tests/lifecycle.rs::shutdown_intent_marker_drives_respawn`.
+- 5.2.8 - The supervisor parses a Python-written shutdown-intent marker and respawns on `restart`, exits on `stop`, and backs off on a crash; a `stop` marker present before the spawn followed by an early backend death backs off, and a consumed `restart` marker followed by an early death backs off with the marker file still present. test: `crates/gdaemon/tests/lifecycle.rs::shutdown_intent_marker_drives_respawn`.
 - 5.2.9 - `gobby restart` (both forms) and `gobby cutover` refuse before any stop when `restart_start_refusal` fails, leaving the running daemon untouched, and cutover restarts with `--full`. test: `tests/cli/test_cli_daemon.py::test_restart_backend_only_runs_start_preflight`.
 - 5.2.10 - The supervisor does not respawn after a start-refusal exit (status 78) and reports the typed 503 with `backend.state: refused` and the refusal text, and the spawned backend holds no pid-lock descriptor. test: `crates/gdaemon/tests/lifecycle.rs::start_refusal_is_not_respawned`.
 - 5.2.11 - `gobby stop` reaches the pid-record SIGTERM fallback only after the singleton, protected-run, and handoff admissions pass. test: `tests/cli/test_daemon_handoffs.py::test_stop_fallback_runs_after_admissions`.
@@ -1659,9 +1665,13 @@ built and installed binaries:
 - 2026-09-28: Writer #14578 read-only consensus input on `84029b7643` agreed the plan
   is ready and raised one medium finding: an orphan draining on liveness-pipe EOF writes
   a `stop` marker that is cleared only when the next runner listens, so a new gdaemon
-  whose first backend dies early would read it and exit. 5.2 now has the supervisor
-  clear the active marker before every spawn (5.2.8 extended); the Writer's
-  timestamp-comparison fix is recorded as rejected for wall-clock steps.
+  whose first backend dies early would read it and exit. A first fix cleared the marker
+  before every spawn (`4a098defa9`); the Writer's re-check found that drops ghook's
+  planned-restart suppression during backend startup (1.4). Final: the supervisor
+  records the pre-spawn marker's bytes, leaves the file, and treats a byte-equal marker
+  as absent, which also stops a consumed `restart` marker from respawning without
+  backoff (5.2.8 extended with both cases); timestamp comparison and pre-spawn deletion
+  are recorded as rejected.
 
 **Round 1** `kind: enhancement`
 
