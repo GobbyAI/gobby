@@ -1624,3 +1624,10 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   Writer's rendered-byte commit is verified and reported as
   `EVENT=M1_COMMITTED`, which alone resets the loop (3.4, 3.5). Edited in
   the isolated worktree while main is frozen.
+- 2026-09-28: Consensus. The Plan Adversary (gobby#14579) confirmed the
+  duplicate-delivery repair on `17f1537979` by tracing
+  `build_before_tool_event`, the proxy dispatch path, ascending rule
+  priority, serialized same-session evaluation and non-recursive inline
+  dispatch. All findings are resolved, none remain open, and
+  `validate_plan` passes. No implementation tests were run. The
+  artifact awaits the Adversary's M1 stamp and PD review.
