@@ -46,7 +46,16 @@ def test_parse_diff_and_write_gate(
         "Version control": ["github.com", "www.github.com", "raw.githubusercontent.com"],
         "Container registries": ["*.gcr.io", "pub.dev"],
     }
-    for refused in ("*", "*.com", "https://example.com", "example.com:443", "example.com/p"):
+    for refused in (
+        "*",
+        "*.com",
+        "https://example.com",
+        "example.com:443",
+        "example.com/p",
+        "example .com",
+        "example..com",
+        "*.exa mple.com",
+    ):
         assert not refresh.is_srt_domain_pattern(refused)
     assert refresh.is_srt_domain_pattern("localhost")
     assert refresh.is_srt_domain_pattern("[::1]")

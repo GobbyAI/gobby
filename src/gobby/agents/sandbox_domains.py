@@ -3,7 +3,10 @@
 import functools
 import ipaddress
 import json
+import re
 from importlib.resources import files
+
+_HOST_LABEL = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")
 
 GIT_DOMAINS = (
     "github.com",
@@ -38,23 +41,22 @@ PACKAGE_REGISTRY_DOMAINS = (
 
 
 def is_srt_domain_pattern(entry: str) -> bool:
-    """Mirror SRT's domain rule: host, ``*.`` plus two labels, localhost, or ``[IPv6]``."""
+    """Accept only entries SRT's domain rule allows, requiring real hostname labels.
+
+    An entry is ``localhost``, a bracketed IPv6 literal, or two or more
+    letter-digit-hyphen labels with an optional leading ``*.``. That refuses
+    schemes, paths, ports, ``*``, ``*.com``, whitespace and empty labels.
+    """
     if entry.startswith("[") and entry.endswith("]"):
         try:
             ipaddress.IPv6Address(entry[1:-1])
         except ValueError:
             return False
         return True
-    if "/" in entry or ":" in entry:
-        return False
     if entry == "localhost":
         return True
-    if entry.startswith("*."):
-        parts = entry[2:].split(".")
-        return len(parts) >= 2 and all(parts)
-    if "*" in entry:
-        return False
-    return "." in entry and not entry.startswith(".") and not entry.endswith(".")
+    labels = entry.removeprefix("*.").split(".")
+    return len(labels) >= 2 and all(_HOST_LABEL.fullmatch(label) for label in labels)
 
 
 @functools.cache
