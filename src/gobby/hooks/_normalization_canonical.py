@@ -45,6 +45,7 @@ from gobby.hooks._normalization_shell import (
     _has_perl_inplace_option,
     _has_sed_inplace_option,
     _input_redirection_paths,
+    _literal_assignment_bindings,
     _literal_cd_target,
     _looks_file_like,
     _looks_path_target,
@@ -253,6 +254,11 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 loop_bindings[item.loop_binding_variable] = item.paths
             else:
                 loop_bindings.pop(item.loop_binding_variable, None)
+        for variable, value in item.assignment_bindings:
+            if variable not in disqualified_loop_variables and _loop_binding_variable_is_stable(
+                variable
+            ):
+                loop_bindings[variable] = (value,)
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
         if (
             item.extra
@@ -269,13 +275,15 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             mutation_scope_unknown = True
             saw_unexpanded_mutation_path = True
             for path in unresolved_mutation_paths:
-                referenced_variable = _plain_loop_binding_reference(
+                reference = _plain_loop_binding_reference(
                     path,
                     item.shell_words,
                     item.shell_raw_words,
                 )
-                if referenced_variable and referenced_variable in loop_bindings:
-                    for resolved_path in loop_bindings[referenced_variable]:
+                if reference and reference[0] in loop_bindings:
+                    variable, suffix = reference
+                    for bound_path in loop_bindings[variable]:
+                        resolved_path = bound_path + suffix
                         if resolved_path not in mutation_paths:
                             mutation_paths.append(resolved_path)
                 else:
@@ -353,20 +361,30 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     persistent_cwd: str | None = None
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
+    # Only the bare assignments that open a command always run in this shell.
+    leading_assignments = True
     for index, segment in enumerate(segments):
-        in_pipeline = segment.separator_before == "|" or (
-            index + 1 < len(segments) and segments[index + 1].separator_before == "|"
-        )
+        next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
+        in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             persistent_cwd = None
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
+        assignment_bindings = (
+            _literal_assignment_bindings(tuple(raw_parts), source_parts)
+            if leading_assignments
+            and segment.separator_before in {None, "&&", ";", "\n"}
+            and next_separator not in {"|", "&"}
+            else None
+        )
+        leading_assignments = assignment_bindings is not None
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
                     neutral_setup=True,
+                    assignment_bindings=assignment_bindings or (),
                     shell_words=tuple(raw_parts),
                     shell_raw_words=source_parts,
                 )

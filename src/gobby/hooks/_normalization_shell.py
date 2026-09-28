@@ -529,7 +529,9 @@ def _shell_loop_binding_disqualifications(words: tuple[str, ...]) -> frozenset[s
 
     parts = _strip_shell_wrappers(list(words))
     if not parts:
-        return frozenset(disqualified)
+        # A bare assignment rebinds the shell variable itself, which the binding
+        # pass replaces or drops; only command-scoped prefixes disqualify.
+        return frozenset(disqualified) if words[:1] == ("env",) else frozenset()
     command = parts[0].rsplit("/", 1)[-1]
     declares_attributes = command in {"readonly", "export"}
     if command in {"declare", "local", "typeset"}:
@@ -545,19 +547,44 @@ def _shell_loop_binding_disqualifications(words: tuple[str, ...]) -> frozenset[s
     return frozenset(disqualified)
 
 
+def _literal_assignment_bindings(
+    words: tuple[str, ...],
+    raw_words: tuple[str, ...],
+) -> tuple[tuple[str, str], ...] | None:
+    """Return absolute literal bindings of a bare-assignment segment, else ``None``."""
+    if not words or len(words) != len(raw_words):
+        return None
+    bindings: dict[str, str] = {}
+    for word, raw in zip(words, raw_words, strict=True):
+        name, _, value = word.partition("=")
+        if not _is_env_assignment(word) or not raw.startswith(f"{name}="):
+            return None
+        raw_value = raw[len(name) + 1 :]
+        if value.startswith("/") and "~" not in raw_value and _raw_shell_word_is_literal(raw_value):
+            bindings[name] = value
+        else:
+            bindings.pop(name, None)
+    return tuple(bindings.items())
+
+
 def _plain_loop_binding_reference(
     path: str,
     words: tuple[str, ...],
     raw_words: tuple[str, ...],
-) -> str | None:
-    """Return the referenced variable only for one exact double-quoted expansion."""
-    match = re.fullmatch(r"\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))", path)
+) -> tuple[str, str] | None:
+    """Return ``(variable, literal suffix)`` for one exact double-quoted expansion."""
+    match = re.fullmatch(
+        r"\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))(?P<suffix>[^$`\\\"]*)", path
+    )
     if not match or not raw_words:
         return None
     variable = match.group("braced") or match.group("bare")
+    suffix = match.group("suffix")
     raw_matches = [raw for word, raw in zip(words, raw_words, strict=True) if word == path]
-    allowed = {f'"${variable}"', f'"${{{variable}}}"'}
-    return variable if raw_matches and all(raw in allowed for raw in raw_matches) else None
+    allowed = {f'"${variable}{suffix}"', f'"${{{variable}}}{suffix}"'}
+    if raw_matches and all(raw in allowed for raw in raw_matches):
+        return variable, suffix
+    return None
 
 
 _LOOP_BINDING_UNSAFE_COMMANDS = frozenset(
