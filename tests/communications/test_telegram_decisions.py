@@ -266,15 +266,23 @@ async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_s
 
 
 @pytest.mark.asyncio
-async def test_failed_answer_persistence_leaves_decision_pending(decision: _Decision) -> None:
+@pytest.mark.parametrize(
+    "failing_write",
+    [
+        (LocalCommunicationsStore, "_insert_message"),
+        (InterSessionMessageManager, "create_message"),
+    ],
+)
+async def test_failed_answer_persistence_leaves_decision_pending(
+    decision: _Decision, failing_write: tuple[type, str]
+) -> None:
     post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     inbound = InboundCommunications(_manager(decision, adapter))
     approve_token, _ = await _reissue(adapter, inbound)
 
-    with patch.object(
-        decision.store, "_insert_message", side_effect=RuntimeError("database write failed")
-    ):
+    owner, method = failing_write
+    with patch.object(owner, method, side_effect=RuntimeError("database write failed")):
         handled = await inbound.handle_messages(
             "telegram", [_click(adapter, approve_token, "q-ok")]
         )
@@ -944,13 +952,18 @@ class _WakeRecorder:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("wake_error", [None, ConnectionError("tmux unavailable")])
+@pytest.mark.parametrize("asker_source", ["comms", "claude"])
 async def test_answer_wakes_paused_asker_once_and_never_reaches_the_responder(
-    decision: _Decision, wake_error: Exception | None
+    decision: _Decision, wake_error: Exception | None, asker_source: str
 ) -> None:
     post_json = AsyncMock(return_value=_OK)
     adapter = _adapter(post_json)
     manager = _manager(decision, adapter)
     sessions = SessionManager(decision.store.db)
+    # A CLI asker is the live-session route that once added its own mailbox copy.
+    decision.store.db.execute(
+        "UPDATE sessions SET source = %s WHERE id = %s", (asker_source, decision.session_id)
+    )
     sessions.update_status(decision.session_id, "paused")
     wakes = _WakeRecorder(wake_error)
     mailbox = MailboxService(
