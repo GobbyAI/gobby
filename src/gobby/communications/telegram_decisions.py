@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
 from typing import TYPE_CHECKING, cast
 from weakref import WeakValueDictionary
 
@@ -38,8 +39,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# A Retry answer button's value names the attempt it retries.
-RETRY_ANSWER_PREFIX = "gobby:retry-answer:"
+# The trusted callback action of a Retry answer button; its value is the attempt it
+# retries. Only the registry sets an action, so no ordinary option value can pose as one.
+RETRY_ANSWER_ACTION = "retry_answer"
 _RETRYABLE = frozenset({"failed", "in_doubt"})
 
 
@@ -166,7 +168,8 @@ async def settle_decision_callback(
     store = manager._store
     if status == "ok":
         source_id = message.metadata_json.get("callback_source_id")
-        if not source_id or message.metadata_json.get("callback_action"):
+        action = message.metadata_json.get("callback_action")
+        if not source_id or (action and action != RETRY_ANSWER_ACTION):
             return True
         source = await asyncio.to_thread(store.get_message, str(source_id))
         # An unstored keyboard message (its outbound write failed) routes as before.
@@ -201,11 +204,14 @@ async def accept_decision_callback(
     A Retry answer click is never persisted; it starts its answer's next attempt.
     """
     decision_id = str(message.metadata_json["callback_decision_id"])
-    retried = _retried_attempt(message)
-    if retried is not None and isinstance(adapter, TelegramAdapter):
-        await _retry_answer(manager, adapter, decision_id, retried, message)
-        return None
     store = manager._store
+    if message.metadata_json.get("callback_action") == RETRY_ANSWER_ACTION:
+        retried = _retried_attempt(message)
+        if retried is not None and isinstance(adapter, TelegramAdapter):
+            await _retry_answer(manager, adapter, decision_id, retried, message)
+        else:
+            message.metadata_json["callback_status"] = "invalid"
+        return None
     async with manager.decision_locks(decision_id):
         accepted = await asyncio.to_thread(
             store.accept_callback_decision,
@@ -254,14 +260,17 @@ async def _publish_answer_status(
     if not await asyncio.to_thread(ledger.advance_answered_generation, decision_id, generation):
         return False
     keyboard = (
-        [[{"text": "Retry answer", "value": f"{RETRY_ANSWER_PREFIX}{answer.answer_attempt}"}]]
+        [[{"text": "Retry answer", "value": str(answer.answer_attempt)}]]
         if answer.answer_outcome in _RETRYABLE
         else None
+    )
+    retry_source = replace(
+        decision, metadata_json={**decision.metadata_json, "callback_action": RETRY_ANSWER_ACTION}
     )
     await _publish(
         manager,
         adapter,
-        decision,
+        retry_source,
         f"{decision.content}\n\n{_status_text(answer)}",
         str(chat_id),
         keyboard,
@@ -328,10 +337,7 @@ async def _retry_answer(
 
 def _retried_attempt(message: CommsMessage) -> int | None:
     value = message.metadata_json.get("callback_value")
-    if not isinstance(value, str) or not value.startswith(RETRY_ANSWER_PREFIX):
-        return None
-    attempt = value.removeprefix(RETRY_ANSWER_PREFIX)
-    return int(attempt) if attempt.isdecimal() else None
+    return int(value) if isinstance(value, str) and value.isdecimal() else None
 
 
 def _status_text(answer: CommsMessage) -> str:

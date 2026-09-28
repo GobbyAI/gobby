@@ -17,15 +17,12 @@ from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEdit
 from gobby.communications.chat_backend import ChatSessionCommsBackend
 from gobby.communications.identities import IdentityManager, IdentityResolution
 from gobby.communications.inbound import InboundCommunications
+from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.communications.responder import CommunicationsResponder
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.communications.telegram_callbacks import TelegramCallbackRegistry
-from gobby.communications.telegram_decisions import (
-    DecisionLocks,
-    edit_keyboard_message,
-    publish_answer_status,
-)
+from gobby.communications.telegram_decisions import DecisionLocks, edit_keyboard_message
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.communications import LocalCommunicationsStore
@@ -1048,7 +1045,7 @@ async def _answer_route(
         backend=backend,
         answers=answers,
         daemon_epoch="live-daemon-epoch",
-        answer_status=lambda answer: publish_answer_status(manager, adapter, answer),
+        answer_status=lambda answer: CommunicationsManager._publish_answer_status(manager, answer),
         retry_delays=(0.01,),
     )
     manager.responder = responder
@@ -1460,22 +1457,54 @@ async def test_backend_installed_after_recovery_routes_waiting_answers(
 
 
 @pytest.mark.asyncio
-async def test_status_lost_to_telegram_is_republished_once_by_recovery(
-    decision: _Decision,
-) -> None:
+async def test_status_lost_to_telegram_is_retried_until_shown(decision: _Decision) -> None:
     route = await _answer_route(decision, "comms", failed_turns=1)
-    route.post_json.side_effect = httpx.ConnectError("telegram unreachable")
+    outage = {"failed_edits": 0}
+
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "editMessageText" and outage["failed_edits"] < 2:
+            outage["failed_edits"] += 1
+            raise httpx.ConnectError("telegram unreachable")
+        return _OK
+
+    route.post_json.side_effect = telegram_api
     answer = await _click_approve(route)
-    assert "answer_status_shown" not in _answer(decision, answer.id).metadata_json
 
-    route.post_json.side_effect = None
-    route.post_json.return_value = _OK
-    route.post_json.reset_mock()
+    # No restart or recovery call: the status reaches Telegram once it is back.
+    await _until(
+        lambda: _answer(decision, answer.id).metadata_json.get("answer_status_shown") == "1:failed"
+    )
+    assert outage["failed_edits"] == 2
+    assert _retry_token(route)
+    assert len(route.host.turns) == 1
+    shown = len(_status_edits(route))
     await route.responder.recover_decision_answers()
-    await route.responder.recover_decision_answers()
+    assert len(_status_edits(route)) == shown
 
-    assert len(_status_edits(route)) == 1
-    assert _answer(decision, answer.id).metadata_json["answer_status_shown"] == "1:failed"
+
+@pytest.mark.asyncio
+async def test_status_waits_for_an_absent_telegram_adapter(decision: _Decision) -> None:
+    gate = asyncio.Event()
+    route = await _answer_route(decision, "comms", failed_turns=1, gate=gate)
+    await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, route.approve_token, "q-ok")]
+    )
+    await _until(lambda: route.host.turns)
+    answer = route.observed[0]
+    # The Telegram channel goes away while the answer's turn is running.
+    route.manager._adapters = {}
+    gate.set()
+    await route.responder.drain()
+    assert _outcome(decision, answer.id) == "failed"
+    assert _status_edits(route) == []
+
+    route.manager._adapters = {"telegram": route.adapter}
+
+    await _until(
+        lambda: _answer(decision, answer.id).metadata_json.get("answer_status_shown") == "1:failed"
+    )
+    assert _retry_token(route)
+    assert len(route.host.turns) == 1
 
 
 @pytest.mark.asyncio
@@ -1552,3 +1581,29 @@ async def test_transient_ledger_failures_back_off_until_the_answer_is_delivered(
     await _until(lambda: _outcome(decision, answer.id) == "delivered")
     assert route.host.turns == [(decision.session_id, "approve")]
     assert calls == {"sweep": 2, "claim": 2}
+
+
+@pytest.mark.asyncio
+async def test_retry_shaped_option_on_a_pending_decision_is_an_ordinary_answer(
+    decision: _Decision,
+) -> None:
+    # A Retry answer button's value is its attempt number; only its trusted callback
+    # action, never an option value, makes a click a retry.
+    retry_shaped = "1"
+    keyboard = [
+        [{"text": "One", "value": retry_shaped}, {"text": "Old", "value": "gobby:retry-answer:1"}]
+    ]
+    decision.store.db.execute(
+        """UPDATE comms_messages
+              SET metadata_json = jsonb_set(metadata_json, '{inline_keyboard}', %s::jsonb)
+            WHERE id = %s""",
+        (json.dumps(keyboard), decision.source.id),
+    )
+    route = await _answer_route(decision, "comms")
+
+    answer = await _click_approve(route)
+
+    assert answer.content == retry_shaped
+    assert _row(decision)["callback_state"] == "answered"
+    assert route.host.turns == [(decision.session_id, retry_shaped)]
+    assert _outcome(decision, answer.id) == "delivered"

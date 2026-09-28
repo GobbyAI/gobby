@@ -196,6 +196,7 @@ class CommunicationsResponder:
         self._retry_tasks: dict[str, asyncio.Task[None]] = {}
         self._status_tasks: set[asyncio.Task[None]] = set()
         self._recovered = False
+        self._stopping = False
         self._turn_queue = ConversationTurnQueue()
 
     def set_backend(self, backend: ResponderBackend | None) -> None:
@@ -398,16 +399,44 @@ class CommunicationsResponder:
         task.add_done_callback(self._status_tasks.discard)
 
     async def _show_status(self, answer: CommsMessage) -> None:
+        """Show an answer's status, retrying with backoff until it reaches Telegram."""
         if self._answer_status is None or answer.answer_status_key is None:
             return
+        if not await self._publish_status(answer):
+            self._retry_soon(f"status:{answer.id}", lambda: self._republish_status(answer.id))
+
+    async def _publish_status(self, answer: CommsMessage) -> bool:
+        """Publish once; True when the answer's current status is recorded as shown."""
+        if self._answer_status is None:
+            return True
         try:
             await self._answer_status(answer)
         except Exception:
             logger.warning(
-                "Could not show decision answer %s status; startup republishes it",
-                answer.id,
-                exc_info=True,
+                "Could not show decision answer %s status; retrying", answer.id, exc_info=True
             )
+            return False
+        return await self._republish_status(answer.id, publish=False)
+
+    async def _republish_status(self, answer_id: str, *, publish: bool = True) -> bool:
+        """True once the answer's current status is shown; else publish it when asked.
+
+        Only the status is published; the answer's turn is never rerun here.
+        """
+        answers = self._answers
+        if answers is None:
+            return True
+        try:
+            answer = await asyncio.to_thread(answers.get_answer, answer_id)
+        except Exception:
+            logger.debug("Could not reload decision answer %s", answer_id, exc_info=True)
+            return False
+        if answer is None or answer.answer_status_key in {
+            None,
+            answer.metadata_json.get("answer_status_shown"),
+        }:
+            return True
+        return publish and await self._publish_status(answer)
 
     def _retry_answer_soon(self, answer_id: str) -> None:
         self._retry_soon(answer_id, lambda: self._retry_pending_answer(answer_id))
@@ -437,7 +466,7 @@ class CommunicationsResponder:
     def _retry_soon(
         self, key: str, attempt: Callable[[], Awaitable[bool]], *, delay_first: bool = True
     ) -> None:
-        if key in self._retry_tasks:
+        if self._stopping or key in self._retry_tasks:
             return
         try:
             asyncio.get_running_loop()
@@ -473,6 +502,7 @@ class CommunicationsResponder:
         Answers whose turns this cancels are in doubt; their status gets a bounded
         chance to reach Telegram, and startup republishes any that did not.
         """
+        self._stopping = True
         retries = tuple(self._retry_tasks.values())
         for task in retries:
             task.cancel()
