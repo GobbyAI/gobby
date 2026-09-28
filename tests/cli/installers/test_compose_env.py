@@ -39,8 +39,10 @@ class _ConfigRepository:
     def __init__(self, _db: object, **_kwargs: object) -> None:
         pass
 
-    def read(self, *, resolve_secrets: bool = True) -> SimpleNamespace:
+    def read(self, *, resolve_secrets: bool = True, unknown_keys: str = "raise") -> SimpleNamespace:
         del resolve_secrets
+        if "memory.recall_signal_hub" in self.values and unknown_keys != "skip":
+            raise RuntimeError("retired stored memory key blocks service setup")
         return SimpleNamespace(values=self.values)
 
 
@@ -145,6 +147,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
         "databases.falkordb.host": "127.0.0.1",
         "databases.falkordb.port": 17000,
         "databases.falkordb.password": "$secret:falkor-test",
+        "memory.recall_signal_hub": True,
     }
     _SecretStore.values = {"falkor-test": "falkor-secret"}
     monkeypatch.setattr(

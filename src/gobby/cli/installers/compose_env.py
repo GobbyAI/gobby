@@ -251,7 +251,11 @@ def _service_environment(
 
     try:
         secret_store = SecretStore(db, gobby_home=gobby_home)
-        snapshot = ConfigRepository(db, secret_store=secret_store).read(resolve_secrets=False)
+        # Managed-service setup precedes the daemon's registry reconciliation.
+        # Ignore retired, unrelated keys here so startup can remove them.
+        snapshot = ConfigRepository(db, secret_store=secret_store).read(
+            resolve_secrets=False, unknown_keys="skip"
+        )
         config_values = snapshot.values
         values: dict[str, str] = {}
 

@@ -513,7 +513,9 @@ def start(ctx: click.Context, verbose: bool) -> None:
         else:
             _step("Docker services started")
 
-        config = get_cli_runtime(ctx).operational_config
+        # The runner reconciles retired config rows and applies migrations.
+        # This preflight must tolerate them so a stopped daemon can start.
+        config = get_cli_runtime(ctx).read_only_operational_config()
         if config.agent_sandbox.enabled or config.web_chat_sandbox.enabled:
             from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
 
