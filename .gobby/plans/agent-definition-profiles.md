@@ -163,16 +163,21 @@ non-goals.
     `model`, `isolation: inherit`, `timeout: 0`, `surfaces: [spawn, persona]`
     with one prompt text under a YAML anchor used by both blocks. A pane gets
     its provider from Josh's launch line; a spawned seat gets the caller's.
-13. **Rollout is a PD-owned restart, then sync, then activation.** 1.1 and
-    3.2 change imported Python (`AgentDefinitionBody`, dispatch and expansion
-    routing); `gobby-workflows:reload_cache` re-syncs definition rows and
-    clears the pipeline cache but reloads no module, so a running daemon
-    would keep dropping `version`, accepting `skills`, and routing to the
-    deleted names. After the branch lands, the PD announces and runs the
+13. **Rollout is a PD-owned cutover restart at the 3.2 boundary, then a
+    final sync, then activation.** 1.1, 2.2 and 3.2 change imported Python
+    (`AgentDefinitionBody`, the path helpers and proxy marker, dispatch and
+    expansion routing); `gobby-workflows:reload_cache` re-syncs definition
+    rows and clears the pipeline cache but reloads no module, so a running
+    daemon would keep dropping `version`, accepting `skills`, and routing
+    categories and the default agent to the deleted names. All three have
+    landed on 0.5.0 once 3.2 lands (3.2 depends on 3.1 and 2.2, and 2.2 on
+    2.1 and 1.1). Before 3.3 dispatches, the PD announces and runs the
     restart from the main checkout (global notice before and after, outside
-    quiet hours), inspects the sync result for errors and shadowed rows, and
-    only then do seats activate (4.1). `reload_cache` alone is enough for
-    later data-only changes to seat YAML or rules.
+    quiet hours), inspects the startup sync for errors and shadowed rows,
+    and verifies the installed rows (3.2.5). The leaves after 3.2 change
+    only seat YAML, tests, role files and docs, so after the last leaf lands
+    the PD runs `reload_cache`, inspects that sync, and only then do seats
+    activate (4.1).
 14. **Josh's plan flow.** Encoded in `plan-writer.yaml` and
     `plan-adversary.yaml` as Josh restated it on 2026-09-26 (memory
     55b8c14e, confirmed by the PD on 2026-09-27): the Writer drafts and
@@ -265,20 +270,17 @@ Current code, recorded so executors and reviewers separate them from the target:
 - Build compatibility is not a constraint (ruling 6102cd1d). The build path is
   left installed and is not deleted here; a leaf that touches
   `src/gobby/dispatch/` reads `src/gobby/dispatch/AGENTS.md` first.
-- Executor routing follows the definitions that exist when each leaf runs,
-  and every implementation leaf names its agent explicitly rather than
-  inheriting an emitter or dispatch default. 1.1, 2.1, 2.2, 3.1 and 3.2 run
-  before any definition is deleted and route to `backend-developer`; 3.2
-  deletes that definition from the tree, and its own session finishes under
-  the row it started with. 3.2 lands on 0.5.0 before 3.3 dispatches, and the
-  PD then runs `gobby-workflows:reload_cache`, which re-syncs bundled rows
-  from the main checkout: `developer` is installed and the three deleted
-  names are tombstoned. This is data-only and is not the Decision 13
-  restart, and no seat activates from it. 3.3, 3.4, 3.5 and 4.1 route to
-  `developer` explicitly, because until the restart the running daemon's
-  dispatch fallback still names `backend-developer`. 4.2 is docs-only and
-  routes to `tech-writer`, which exists in every phase. The PD dispatches
-  the leaves; this plan launches nothing.
+- Executor routing follows the definitions installed when each leaf runs,
+  split by the Decision 13 cutover at the 3.2 boundary. Before it: 1.1, 2.1,
+  2.2, 3.1 and 3.2 route to `backend-developer`. The code leaves 1.1, 2.2
+  and 3.2 get it through their backend implementation domain, and the
+  config leaves 2.1 and 3.1 name it explicitly. The dependency graph
+  finishes all five before 3.2 lands. 3.2 deletes the definition from the
+  tree, and its own session finishes under the row it started with. After
+  the cutover: 3.3, 3.4, 3.5 and 4.1 name `developer` explicitly, and each
+  depends on 3.2, so none dispatches before the cutover (3.2.5, 3.3.5).
+  4.2 is docs-only and routes to `tech-writer`, which exists in every
+  phase. The PD dispatches the leaves; this plan launches nothing.
 
 ## P1: Schema
 `kind: framing`
@@ -802,7 +804,7 @@ requests to the PD. Continuity: compact, never clear. No
 - 3.1.4 - All three select `tag:roles` and carry the `seat` tag. behavior:
   "tag:roles" in `src/gobby/install/shared/workflows/agents/lane-manager.yaml`.
 
-### 3.2 One developer definition with task-routed skills [category: code] (depends: 2.2)
+### 3.2 One developer definition with task-routed skills [category: code] (depends: 2.2, 3.1)
 `kind: deliverable`
 
 Targets:
@@ -968,6 +970,17 @@ tests/build_pipeline tests/agents/test_agents_sync.py
 tests/tasks/test_expansion_service_compile_plan_12725.py -q`, then the V1
 commands.
 
+Cutover handoff (Decision 13): 3.2 is the last leaf that runs as
+`backend-developer` and the last that changes imported Python. It depends
+on 3.1, so every pre-cutover leaf has landed before it. Its close summary
+tells the PD that the cutover is due. Once 3.2 lands on 0.5.0, the PD
+announces the restart globally, restarts from the main checkout outside
+quiet hours, announces completion, and inspects the startup sync. It then
+confirms that `gobby agents show developer` prints the installed row and
+that `gobby agents show backend-developer`, `frontend-developer` and
+`fullstack-developer` report no definition. Only then does 3.3 dispatch.
+No seat activates at this restart (4.1).
+
 **Acceptance:**
 
 - 3.2.1 - `developer` validates, is `seat`-tagged, selects `tag:roles`, carries
@@ -989,6 +1002,11 @@ commands.
 - 3.2.4 - The bundle smoke test and claim-step test pass with `developer` in
   place of the three names. test:
   `tests/workflows/test_workflows_agent_definitions.py::test_build_smoke_agent_runtime_mappings`.
+- 3.2.5 - The close summary hands the PD the cutover. After 3.2 lands, the
+  announced restart runs, and the restarted daemon shows the `developer`
+  row installed and no row for the three retired names. behavior:
+  "cutover restart due" in the 3.2 close summary, naming
+  `src/gobby/install/shared/workflows/agents/developer.yaml`.
 
 ### 3.3 Review and observation seats: code-reviewer, archivist, log-monitor, researcher [category: config] (depends: 2.2, 3.2)
 `kind: deliverable`
@@ -1106,6 +1124,11 @@ field lands.
   tests no longer list it.
   file: `src/gobby/install/shared/workflows/agents/researcher.yaml`. test:
   `tests/agents/test_discovery_agents.py::test_discovery_agent_yaml_validates_and_is_enabled`.
+- 3.3.5 - Before its first edit, the 3.3 session records from the restarted
+  daemon that `gobby agents show developer` prints the installed row and
+  that `gobby agents show backend-developer` reports no definition. behavior:
+  "cutover verified" in the 3.3 close summary, naming
+  `src/gobby/install/shared/workflows/agents/code-reviewer.yaml`.
 
 ### 3.4 Planning council seats and the review flow [category: config] (depends: 2.2, 3.3)
 `kind: deliverable`
@@ -1480,13 +1503,13 @@ reference. `apply_persona` persists `_persona_name`, which survives compaction
 and re-injects the persona; the 2.x rules key on it. Retiring the roster and
 role files is #22903's (binding) work.
 
-Rollout (Decision 13): after the branch lands, the PD announces the restart
-globally, restarts the daemon from the main checkout outside quiet hours,
-announces completion, inspects the startup sync result for errors and
-shadowed rows, and confirms `gobby agents show <seat>` prints the seat row
-for one seat; only then does each live session call `apply_persona` for its
-seat on its next turn and report the receipt to the PD, as done for #22894.
-`reload_cache` alone does not reload the 1.1, 2.2, and 3.2 Python.
+Rollout (Decision 13): the imported Python was loaded by the cutover
+restart at the 3.2 boundary (3.2.5). After the last leaf lands, the PD runs
+`gobby-workflows:reload_cache` from the main checkout, inspects the sync
+result for errors and shadowed rows, and confirms `gobby agents show <seat>`
+prints the seat row for one seat. Only then does each live session call
+`apply_persona` for its seat on its next turn and report the receipt to
+the PD, as done for #22894.
 
 **Acceptance:**
 
@@ -1579,7 +1602,8 @@ uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 uv run gobby plans validate .gobby/plans/agent-definition-profiles.md -p /Users/josh/Projects/gobby
 ```
 
-Live check after the PD-owned restart (Decision 13, 4.1): `gobby agents show
+Live check after the Decision 13 cutover restart and the final sync (4.1):
+`gobby agents show
 plan-writer` prints the seat row with `version: "1.0"`; the Plan Writer
 session calls `apply_persona(agent="plan-writer")` and on its next turn sees
 the seat prompt plus the shared seat guidance once; a deliberate
@@ -1588,9 +1612,9 @@ the seat prompt plus the shared seat guidance once; a deliberate
 session is blocked by `seat-no-pipeline-launch`; an Assistant write under
 `src/` is blocked by
 `assistant-write-scope`; `gobby agents show backend-developer` reports no
-such definition. Do not run the full pytest suite. The restart is announced
-globally before and after, outside quiet hours, and no seat activates before
-it.
+such definition. Do not run the full pytest suite. The cutover restart is
+announced globally before and after, outside quiet hours, and no seat
+activates before the final sync.
 
 Round 1 (Adversary gobby#14579, message 5c6cf6a7, snapshot 7e975ca8): needs_review, 8 blocking and 3 nits. Writer dispositions, each accepted; the repairs landed in 91a3be7558.
 
@@ -1672,8 +1696,10 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
 - 2026-09-28: PD review (gobby#14610) of the stamped `45efe3885c` returned
   three repairs, and that M1 is superseded. (1) Executor routing: M1
   sent 3.3, 3.4, 3.5 and 4.1 to `backend-developer`, which 3.2 deletes.
-  Routing now follows each execution phase, with `developer` explicit
-  after 3.2 lands and the PD's `reload_cache` (Constraints). (2) Josh's
+  Routing now follows each execution phase. 3.2 depends on 3.1, and the
+  3.2 boundary is the PD's announced cutover restart with installed-row
+  verification, not `reload_cache` alone. `developer` is explicit after it
+  (Decision 13, Constraints, 3.2.5, 3.3.5, 4.1, V1). (2) Josh's
   task-edit policy is carried in the shared seat text and the
   coordination prompts, with enforcement left to #22954 (2.1, 2.1.5,
   3.1). (3) Josh's review-lesson hold: no seat selects
