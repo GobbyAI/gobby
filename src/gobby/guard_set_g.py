@@ -9,7 +9,6 @@ import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -18,6 +17,13 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import psutil
+
+from gobby.agents.zig_packages import (
+    ZIG_PACKAGES,
+    machine_zig_packages,
+    materialize_zig_packages,
+    vendored_libghostty_vt,
+)
 
 REQUIRED_GATED_TARGETS = frozenset(
     {
@@ -36,8 +42,6 @@ _UNIX_SOCKET_MAX = 104
 _SOCKET_NEST = Path(".tmpxxxxxx") / "gterm-control.sock"
 _RUN_ROOT_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
 _RUN_ZIG_CACHE = "zig-cache"
-_ZIG_PACKAGES = "p"
-_ZIG_TARBALL_SUFFIX = ".tar.gz"
 
 CommandRunner = Callable[[Sequence[str], Mapping[str, str]], int]
 HostSnapshot = Callable[[], dict[int, Path]]
@@ -685,68 +689,6 @@ def isolated_run_root(parent: Path | None = None) -> Iterator[Path]:
             shutil.rmtree(owned, ignore_errors=True)
 
 
-def _extract_zig_package(tarball: Path, dest: Path, *, staging_parent: Path) -> None:
-    """Unpack one package tarball into dest through a staged sibling directory."""
-    staging = Path(tempfile.mkdtemp(prefix=".zig-pkg-", dir=staging_parent))
-    try:
-        with tarfile.open(tarball, "r:gz") as archive:
-            archive.extractall(staging, filter="data")
-        try:
-            os.replace(staging / dest.name, dest)
-        except OSError:
-            # A concurrent run materialized the same package first.
-            if not dest.is_dir():
-                raise
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-
-
-def _materialize_zig_packages(
-    source: Path,
-    cache_root: Path,
-    vendored_zig_pkg: Path | None,
-) -> bool:
-    """Make every machine Zig package usable as an extracted directory.
-
-    A `zig build --system <dir>` run resolves packages by id with fetching
-    disabled, so tarball-only entries must be unpacked (reusing the vendored
-    zig-pkg extraction when the package id matches) before that directory can
-    back a sandboxed build. Entries the machine cache already holds extracted
-    are symlinked instead: Zig resolves a `--system` package through a symlink,
-    and copying the cache costs a minute and half a gigabyte per run. Returns
-    True only when every source package resolved to a usable directory.
-    """
-    packages = cache_root / _ZIG_PACKAGES
-    packages.mkdir(parents=True, exist_ok=True)
-    entries = sorted(source.iterdir())
-    if not entries:
-        # An empty machine cache cannot back a fetch-disabled --system build.
-        return False
-    complete = True
-    for entry in entries:
-        pkgid = entry.name.removesuffix(_ZIG_TARBALL_SUFFIX)
-        dest = packages / pkgid
-        if dest.exists() or dest.is_symlink():
-            continue
-        try:
-            if entry.is_dir():
-                dest.symlink_to(entry, target_is_directory=True)
-                continue
-            if not entry.name.endswith(_ZIG_TARBALL_SUFFIX):
-                _emit(f"zig package cache entry {entry} is not a directory or tarball")
-                complete = False
-                continue
-            vendored_copy = vendored_zig_pkg / pkgid if vendored_zig_pkg is not None else None
-            if vendored_copy is not None and vendored_copy.is_dir():
-                dest.symlink_to(vendored_copy, target_is_directory=True)
-                continue
-            _extract_zig_package(entry, dest, staging_parent=cache_root)
-        except (OSError, tarfile.TarError) as exc:
-            _emit(f"zig package {pkgid} could not be materialized: {exc}")
-            complete = False
-    return complete
-
-
 def _isolated_child_env(
     run_root: Path,
     base: Mapping[str, str] | None = None,
@@ -761,21 +703,21 @@ def _isolated_child_env(
     env["TEMP"] = root
     env["CLAUDE_CODE_TMPDIR"] = root
     repo_root = repo if repo is not None else Path.cwd()
-    machine_pkgs = Path.home() / ".cache" / "zig" / "p"
+    machine_pkgs = machine_zig_packages()
     if machine_pkgs.is_dir():
         cache_root = run_root / _RUN_ZIG_CACHE
-        vendored_zig_pkg = (
-            repo_root / "crates" / "gterminal" / "vendor" / "libghostty-vt" / "zig-pkg"
-        )
+        vendored_zig_pkg = vendored_libghostty_vt(repo_root) / "zig-pkg"
         try:
-            complete = _materialize_zig_packages(machine_pkgs, cache_root, vendored_zig_pkg)
+            complete = materialize_zig_packages(
+                machine_pkgs, cache_root, vendored_zig_pkg, report=_emit
+            )
         except OSError as exc:
             _emit(f"zig package cache preparation skipped: {exc}")
         else:
             if not env.get("ZIG_GLOBAL_CACHE_DIR", "").strip():
                 env["ZIG_GLOBAL_CACHE_DIR"] = str(cache_root)
             if complete and not env.get("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR", "").strip():
-                env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(cache_root / _ZIG_PACKAGES)
+                env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(cache_root / ZIG_PACKAGES)
     return env
 
 

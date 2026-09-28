@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 
 from gobby.agents import resume_executor, srt_runtime
 from gobby.agents.isolation import IsolationContext
@@ -1037,32 +1038,33 @@ async def test_ask_agent_permission_boundary(
     ]
     assert searched["total_results"] == 1
 
+    # An agent call without a tool proxy cannot be workflow-checked, so it fails closed.
     server_namespace.tool_proxy = None
-    direct_call = await call_mcp_tool(
-        _mcp_request(
-            {
-                "server_name": "gobby-tasks",
-                "tool_name": "close_task",
-                "arguments": {"task_id": "#1", "session_id": first_child.id},
-            },
-            **request_kwargs,
-        ),
-        server,
-    )
-    assert direct_call["success"] is False
-    assert direct_call["error_code"] == "TOOL_BLOCKED"
+    with pytest.raises(HTTPException) as direct_call:
+        await call_mcp_tool(
+            _mcp_request(
+                {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "#1", "session_id": first_child.id},
+                },
+                **request_kwargs,
+            ),
+            server,
+        )
+    assert direct_call.value.status_code == 503
 
-    direct_proxy = await mcp_proxy(
-        "gobby-tasks",
-        "close_task",
-        _mcp_request(
-            {"task_id": "#1", "session_id": first_child.id},
-            **request_kwargs,
-        ),
-        server,
-    )
-    assert direct_proxy["success"] is False
-    assert direct_proxy["error_code"] == "TOOL_BLOCKED"
+    with pytest.raises(HTTPException) as direct_proxy:
+        await mcp_proxy(
+            "gobby-tasks",
+            "close_task",
+            _mcp_request(
+                {"task_id": "#1", "session_id": first_child.id},
+                **request_kwargs,
+            ),
+            server,
+        )
+    assert direct_proxy.value.status_code == 503
     assert calls == []
     server_namespace.tool_proxy = proxy
 
