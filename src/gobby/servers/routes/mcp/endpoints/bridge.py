@@ -4,14 +4,13 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import Depends, Request
 
+from gobby.hooks.event_handlers._session_start.claims import MCP_PROXY_READY_VARIABLE
 from gobby.servers.routes.dependencies import get_server
 from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
-
-MCP_PROXY_READY_VARIABLE = "_mcp_proxy_ready"
 
 
 async def report_bridge_ready(

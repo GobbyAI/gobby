@@ -125,19 +125,3 @@ class TestInitialStopBeforeProxyConnects:
 
         assert RETRY_MARKER in (second_start.context or "")
         assert RETRY_MARKER not in (third_start.context or "")
-
-    @pytest.mark.asyncio
-    async def test_clear_successor_inherits_the_running_cli_connection(
-        self, db: HubDatabase
-    ) -> None:
-        engine = RuleEngine(db)
-        variables = _fresh_session_variables()
-
-        await engine.evaluate(
-            _event(HookEventType.SESSION_START, source="clear"), SESSION_ID, variables
-        )
-        _, first_end = await _turn(engine, variables)
-
-        assert variables["_mcp_proxy_ready"] is True
-        assert first_end.decision == "block"
-        assert MEMORY_DIRECTIVE in (first_end.reason or "")

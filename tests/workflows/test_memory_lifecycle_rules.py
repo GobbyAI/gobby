@@ -53,7 +53,6 @@ MEMORY_RULES = {
     "snapshot-mcp-proxy-ready-on-turn-start",
     "retry-gobby-tools-after-proxy-connects",
     "note-mcp-proxy-missed-turn",
-    "inherit-mcp-proxy-ready-on-clear",
     "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",

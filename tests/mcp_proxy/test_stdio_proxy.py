@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from mcp.client import Client
 from mcp.server.mcpserver import MCPServer
@@ -522,39 +524,65 @@ def _session_required_response() -> MagicMock:
     )
 
 
-_ALL_SESSION_REQUIRED = len(BRIDGE_READY_RETRY_DELAYS_SECONDS) + 1
+_ALL_RETRYABLE = len(BRIDGE_READY_RETRY_DELAYS_SECONDS) + 1
+
+
+def _bridge_ready_outcome(outcome: int | str) -> MagicMock | httpx.HTTPError:
+    if outcome == "no-session":
+        return _session_required_response()
+    if outcome == "down":
+        return httpx.ConnectError("connection refused")
+    if outcome == "slow":
+        return httpx.ReadTimeout("read timed out")
+    assert isinstance(outcome, int)
+    return _response(outcome)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("statuses", "expected_sleeps"),
+    ("outcomes", "expected_log"),
     [
         pytest.param(
-            [409, 409, 200],
-            [0.0, *BRIDGE_READY_RETRY_DELAYS_SECONDS[:2]],
+            ["no-session", "no-session", 200],
+            "Bridge readiness reported after 2 retries",
             id="retries-until-session-registers",
         ),
-        pytest.param([404], [0.0], id="stops-on-non-session-failure"),
         pytest.param(
-            [409] * _ALL_SESSION_REQUIRED,
-            [0.0, *BRIDGE_READY_RETRY_DELAYS_SECONDS],
-            id="gives-up-when-no-session-registers",
+            ["down", "down", 200],
+            "Bridge readiness reported after 2 retries",
+            id="retries-while-daemon-restarts",
+        ),
+        pytest.param(
+            ["slow", 200],
+            "Bridge readiness reported after 1 retries",
+            id="retries-after-request-timeout",
+        ),
+        pytest.param([200], None, id="reports-first-time"),
+        pytest.param([404], "Bridge readiness report failed", id="stops-on-other-failure"),
+        pytest.param(
+            ["no-session", "down", "slow"] * 3,
+            "Bridge readiness report gave up after 8 retries",
+            id="gives-up-after-bounded-retries",
+        ),
+        pytest.param(
+            ["no-session"] * _ALL_RETRYABLE,
+            None,
+            id="unhooked-client-gives-up-quietly",
         ),
     ],
 )
-async def test_bridge_ready_report_retries_only_session_required(
-    statuses: list[int], expected_sleeps: list[float]
+async def test_bridge_ready_report_retries_transient_failures(
+    outcomes: list[int | str],
+    expected_log: str | None,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    outcomes = outcomes[:_ALL_RETRYABLE]
     proxy = DaemonProxy(60887)
     client = AsyncMock()
-    client.request = AsyncMock(
-        side_effect=[
-            _session_required_response() if status == 409 else _response(status)
-            for status in statuses
-        ]
-    )
+    client.request = AsyncMock(side_effect=[_bridge_ready_outcome(o) for o in outcomes])
 
     with (
+        caplog.at_level(logging.INFO),
         patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
         patch("gobby.mcp_proxy.stdio_proxy.asyncio.sleep", new=AsyncMock()) as sleep,
     ):
@@ -562,8 +590,17 @@ async def test_bridge_ready_report_retries_only_session_required(
 
     assert [c.args[:2] for c in client.request.await_args_list] == [
         ("POST", f"{proxy.base_url}/api/mcp/bridge/ready")
-    ] * len(statuses)
-    assert [c.args[0] for c in sleep.await_args_list] == expected_sleeps
+    ] * len(outcomes)
+    assert [c.args[0] for c in sleep.await_args_list] == [
+        0.0,
+        *BRIDGE_READY_RETRY_DELAYS_SECONDS[: len(outcomes) - 1],
+    ]
+    bridge_logs = [r.getMessage() for r in caplog.records if "Bridge readiness" in r.getMessage()]
+    if expected_log is None:
+        assert bridge_logs == []
+    else:
+        assert len(bridge_logs) == 1
+        assert bridge_logs[0].startswith(expected_log)
 
 
 @pytest.mark.asyncio

@@ -1,7 +1,8 @@
 tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 
 rules:
-  # The Gobby stdio bridge sets _mcp_proxy_ready through POST /api/mcp/bridge/ready.
+  # The Gobby stdio bridge sets _mcp_proxy_ready through POST /api/mcp/bridge/ready;
+# a /clear successor inherits its predecessor's value when the clear binds.
   # A CLI whose first turn starts before that report has no Gobby tools in the
   # turn's catalog, and a stop-block continuation keeps the same catalog, so the
   # value that matters is the one captured when the turn started.
@@ -40,17 +41,6 @@ rules:
     effects:
       - type: set_variable
         variable: _mcp_proxy_missed_turn
-        value: true
-
-  inherit-mcp-proxy-ready-on-clear:
-    description: "A /clear successor runs in the same CLI process as its connected predecessor"
-    event: session_start
-    enabled: true
-    priority: 5
-    when: "event.data.get('source') == 'clear'"
-    effects:
-      - type: set_variable
-        variable: _mcp_proxy_ready
         value: true
 
   check-memory-guidance-on-initial-stop:
