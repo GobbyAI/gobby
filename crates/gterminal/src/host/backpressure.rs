@@ -19,12 +19,22 @@ pub enum ControlClose {
     Disconnected,
 }
 
+#[derive(Debug)]
+pub enum ControlOutbound {
+    Reply(Value),
+    Bounded(Value),
+}
+
 pub async fn write_outbound<W: AsyncWrite + Unpin>(
     mut writer: W,
-    mut rx: mpsc::Receiver<Value>,
+    mut rx: mpsc::Receiver<ControlOutbound>,
     deadline: Duration,
 ) -> ControlClose {
-    while let Some(value) = rx.recv().await {
+    while let Some(outbound) = rx.recv().await {
+        let (value, is_reply) = match outbound {
+            ControlOutbound::Reply(value) => (value, true),
+            ControlOutbound::Bounded(value) => (value, false),
+        };
         let mut line = value.to_string();
         if line.len() >= 2 * 1024 * 1024 {
             let id = value.get("id").cloned();
@@ -35,12 +45,16 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
             line = too_large.to_string();
         }
         line.push('\n');
-        match timeout(deadline, async {
+        let write = async {
             writer.write_all(line.as_bytes()).await?;
             writer.flush().await
-        })
-        .await
-        {
+        };
+        let result = if is_reply {
+            Ok(write.await)
+        } else {
+            timeout(deadline, write).await
+        };
+        match result {
             Ok(Ok(())) => {}
             Ok(Err(_)) => return ControlClose::Io,
             Err(_) => {
@@ -56,15 +70,33 @@ pub async fn write_outbound<W: AsyncWrite + Unpin>(
     ControlClose::Disconnected
 }
 
-pub fn enqueue_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ControlClose> {
-    tx.try_send(value).map_err(|err| match err {
-        mpsc::error::TrySendError::Full(_) => ControlClose::Overflow,
-        mpsc::error::TrySendError::Closed(_) => ControlClose::Disconnected,
-    })
+pub fn enqueue_control(
+    tx: &mpsc::Sender<ControlOutbound>,
+    value: Value,
+) -> Result<(), ControlClose> {
+    tx.try_send(ControlOutbound::Bounded(value))
+        .map_err(|err| match err {
+            mpsc::error::TrySendError::Full(_) => ControlClose::Overflow,
+            mpsc::error::TrySendError::Closed(_) => ControlClose::Disconnected,
+        })
 }
 
-pub async fn send_control(tx: &mpsc::Sender<Value>, value: Value) -> Result<(), ControlClose> {
-    tx.send(value).await.map_err(|_| ControlClose::Disconnected)
+pub async fn send_control(
+    tx: &mpsc::Sender<ControlOutbound>,
+    value: Value,
+) -> Result<(), ControlClose> {
+    tx.send(ControlOutbound::Reply(value))
+        .await
+        .map_err(|_| ControlClose::Disconnected)
+}
+
+pub async fn send_event(
+    tx: &mpsc::Sender<ControlOutbound>,
+    value: Value,
+) -> Result<(), ControlClose> {
+    tx.send(ControlOutbound::Bounded(value))
+        .await
+        .map_err(|_| ControlClose::Disconnected)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

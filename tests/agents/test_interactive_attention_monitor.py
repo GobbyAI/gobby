@@ -13,7 +13,8 @@ import pytest
 
 from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.storage.agents import AgentRun
-from gobby.terminals.host_client import HostConnectionLost
+from gobby.terminals.host_client import HostConnectionLost, HostUnavailableError
+from gobby.utils.logging import ThrottledLogger
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.agents.test_lifecycle_monitor import LifecycleRuntime
 from tests.terminals.fakes import make_memory_terminal, runtime_registry
@@ -79,10 +80,14 @@ async def test_interactive_sessions_use_cursor_pagination_on_worker_thread() -> 
     assert worker_threads and main_thread not in worker_threads
 
 
+@pytest.mark.parametrize(
+    "outage", [HostConnectionLost("closed"), HostUnavailableError("unavailable")]
+)
 @pytest.mark.asyncio
 async def test_lost_host_skips_remaining_native_snapshots_then_recovers(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    outage: HostUnavailableError,
 ) -> None:
     sessions = [
         SimpleNamespace(id=f"session-{index}", source="claude", terminal_context={})
@@ -95,18 +100,27 @@ async def test_lost_host_skips_remaining_native_snapshots_then_recovers(
     )
     session_manager = Mock(db=Mock())
     session_manager.list.return_value = sessions
-    runtime = LifecycleRuntime(backend="native", snapshot_error=HostConnectionLost("closed"))
+    runtime = LifecycleRuntime(backend="native", snapshot_error=outage)
     monitor = _monitor(session_manager, runtime)
     cast(Mock, monitor._attention_manager).list_blocked.return_value = []
+    monkeypatch.setattr(
+        "gobby.agents.interactive_attention_monitor._host_outage_log", ThrottledLogger()
+    )
 
     with (
         patch.object(monitor, "_sync_interactive_attention", new_callable=AsyncMock) as sync,
-        caplog.at_level(logging.INFO, logger="gobby.agents.interactive_attention_monitor"),
+        caplog.at_level(logging.DEBUG, logger="gobby.agents.interactive_attention_monitor"),
     ):
         await monitor._check_attention_panes(active_runs=[])
         assert runtime.snapshot_calls == [15]
         assert sync.await_count == 0
-        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
+        assert (
+            len(
+                [record for record in caplog.records if "native host unavailable" in record.message]
+            )
+            == 1
+        )
+        assert not [record for record in caplog.records if record.levelno >= logging.INFO]
 
         runtime.snapshot_error = None
         await monitor._check_attention_panes(active_runs=[])

@@ -842,6 +842,7 @@ class TerminalHostManager:
         self._health_task = loop.create_task(self._health_loop(), name="gterm-host-health")
 
     def _record_healthy_ping(self) -> None:
+        self.last_error = None
         now = self._monotonic()
         if self._healthy_since is None:
             self._healthy_since = now
@@ -872,6 +873,7 @@ class TerminalHostManager:
                 self._record_healthy_ping()
             except Exception as exc:
                 self.last_error = str(exc)
+                self._healthy_since = None
                 pid = self.host_pid
                 if isinstance(pid, int) and pid > 0 and self._pid_identity(pid):
                     logger.warning("gterm control probe failed; reconnecting live host: %s", exc)
@@ -890,6 +892,7 @@ class TerminalHostManager:
                         self._client = replacement
                         self.host_epoch = ping.host_epoch or hello.host_epoch
                         self.host_pid = ping.host_pid
+                        self._record_healthy_ping()
                     except Exception as reconnect_exc:
                         self.last_error = str(reconnect_exc)
                         try:
