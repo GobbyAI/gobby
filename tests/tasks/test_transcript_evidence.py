@@ -12,6 +12,7 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -3330,6 +3331,115 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
     ]
     assert [(edit.path, edit.tool_name) for edit in claude_evidence.edits] == [
         ("src/changed.py", "Edit")
+    ]
+
+
+async def test_task_checkout_paths_reject_foreign_root_and_file(tmp_path: Path) -> None:
+    owned_a = tmp_path / "worktrees" / "task-259-runbook"
+    owned_b = tmp_path / "worktrees" / "task-259-supply"
+    foreign = tmp_path / "worktrees" / "task-260-resources"
+    transcript = tmp_path / "claude-checkouts.jsonl"
+    records = []
+    edits = (
+        (owned_a, "docs/replenishment.md"),
+        (foreign, "docs/replenishment.md"),
+        (owned_b, "docs/replenishment.md"),
+        (owned_a, "docs/other.md"),
+    )
+    for index, (root, path) in enumerate(edits):
+        records.append(
+            {
+                "type": "assistant",
+                "timestamp": (BASE_TIME + timedelta(seconds=index)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"edit-{index}",
+                            "name": "Edit",
+                            "input": {"file_path": str(root / path)},
+                        }
+                    ],
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    # This session works both tasks and currently points at the foreign checkout.
+    session = replace(_session("claude", transcript), workspace_path=str(foreign))
+
+    evidence = await derive_transcript_evidence(
+        session,
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"docs/replenishment.md", "docs/other.md"},
+        str(foreign),
+        task_checkout_paths=frozenset(
+            {
+                (str(owned_a), "docs/replenishment.md"),
+                (str(owned_b), "docs/replenishment.md"),
+                (str(owned_b), "docs/other.md"),
+            }
+        ),
+    )
+
+    assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
+        ("docs/replenishment.md", BASE_TIME),
+        ("docs/replenishment.md", BASE_TIME + timedelta(seconds=2)),
+    ]
+
+
+@pytest.mark.parametrize("tool_name", ["Edit", "apply_patch", "Bash"])
+async def test_relative_edits_require_call_time_checkout_proof(
+    tmp_path: Path, tool_name: str
+) -> None:
+    owned_a = tmp_path / "task-259-runbook"
+    foreign = tmp_path / "task-260-resources"
+    owned_b = tmp_path / "task-259-supply"
+    path = "docs/replenishment.md"
+    transcript = tmp_path / f"{tool_name}.jsonl"
+    records = []
+    for index, workdir in enumerate((owned_a, foreign, owned_b, None)):
+        if tool_name == "Edit":
+            arguments = {"file_path": path}
+        elif tool_name == "apply_patch":
+            arguments = {"patch": f"*** Begin Patch\n*** Update File: {path}\n*** End Patch"}
+        else:
+            arguments = {"command": _heredoc_write(path)}
+        if workdir is not None:
+            arguments["workdir"] = str(workdir)
+        records.append(
+            {
+                "type": "assistant",
+                "timestamp": (BASE_TIME + timedelta(seconds=index)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"edit-{index}",
+                            "name": tool_name,
+                            "input": arguments,
+                        }
+                    ],
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    session = replace(_session("claude", transcript), workspace_path=str(foreign))
+
+    evidence = await derive_transcript_evidence(
+        session,
+        BASE_TIME,
+        default_validation_detection_config(),
+        {path},
+        str(owned_a),
+        task_checkout_paths=frozenset({(str(owned_a), path), (str(owned_b), path)}),
+    )
+
+    assert [edit.timestamp for edit in evidence.edits] == [
+        BASE_TIME,
+        BASE_TIME + timedelta(seconds=2),
     ]
 
 

@@ -96,7 +96,7 @@ def derive_spawn_key(backend: str, terminal_id: str) -> str:
 def resolve_terminal_services(
     request: SpawnRequest,
 ) -> tuple[TerminalManager, TerminalRuntimeRegistry, TerminalRuntime, str]:
-    """Resolve composition-root services, falling back to a tmux singleton registry."""
+    """Resolve the composition-root services for the requested backend."""
     backend = request.terminal_backend
     manager = request.terminal_manager
     registry = request.terminal_runtime_registry
@@ -106,11 +106,7 @@ def resolve_terminal_services(
             raise RuntimeError("terminal_manager is required for spawn")
         manager = TerminalManager(db)
     if registry is None:
-        from gobby.agents.tmux import get_tmux_session_manager
-        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
-
-        registry = TerminalRuntimeRegistry()
-        registry.register(TmuxTerminalRuntime(get_tmux_session_manager()))
+        raise RuntimeError("terminal_runtime_registry is required for spawn")
     runtime = registry.resolve(backend)
     return manager, registry, runtime, backend
 

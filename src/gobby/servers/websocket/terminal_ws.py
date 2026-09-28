@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_observation
 from gobby.storage.projects import GLOBAL_PROJECT_ID
-from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
 from gobby.terminals.foreground import (
     foreground_commands,
@@ -31,7 +30,6 @@ from gobby.terminals.runtime import (
     TerminalWriteError,
     UnregisteredBackendError,
 )
-from gobby.terminals.tmux_discovery import pane_owners, sweep_tmux_terminals
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
     TERMINAL_LIST_MAX_PAGE_SIZE,
@@ -72,12 +70,6 @@ TERMINAL_THEME_CAPABILITY = "terminal_theme"
 # host becomes a typed refusal the client shows and retries rather than a
 # timeout it cannot name (#22544).
 HOST_STARTUP_ATTACH_WAIT_SECONDS = 2.5
-
-# The sweep fronts every terminal_list, and a websocket connection handles its
-# messages in order, so whatever the sweep waits for is what every later message
-# on that connection waits for. A hung tmux used to spend the full
-# TMUX_COMMAND_TIMEOUT_SECONDS there (observed: terminal_list took 10.22s).
-TMUX_SWEEP_BUDGET_SECONDS = 2.0
 
 # Opening the host's frame socket and the frame handshake each get this long.
 # Both are local I/O that finishes in milliseconds on a healthy host, and a
@@ -147,9 +139,6 @@ class TerminalWsMixin:
     terminal_services: Any | None = None
     terminal_host_manager: Any | None = None
     open_proxy_frame: Any | None = None
-    # The sweep in flight, which every list request joins until it settles.
-    _tmux_sweep: asyncio.Task[dict[str, Any]] | None = None
-
     if TYPE_CHECKING:
 
         async def broadcast_tmux_session_event(
@@ -191,6 +180,7 @@ class TerminalWsMixin:
                     "request_id": request_id,
                     "success": False,
                     "code": "terminal_gone",
+                    "reason": "terminal row is unavailable",
                     "terminal_id": terminal_id,
                 },
             )
@@ -205,6 +195,29 @@ class TerminalWsMixin:
                     "request_id": request_id,
                     "success": False,
                     "code": "terminal_gone",
+                    "reason": "terminal row is unavailable",
+                    "terminal_id": terminal_id,
+                },
+            )
+            return
+        if row.state in {"exited", "orphaned"} or row.backend != "native":
+            code = (
+                f"terminal_{row.state}"
+                if row.state in {"exited", "orphaned"}
+                else "unsupported_terminal_backend"
+            )
+            await self._send_json(
+                websocket,
+                {
+                    "type": "terminal_attach_result",
+                    "request_id": request_id,
+                    "success": False,
+                    "code": code,
+                    "reason": (
+                        "terminal row is exited or orphaned; nothing to attach"
+                        if code != "unsupported_terminal_backend"
+                        else "live terminal backend is unsupported for web attachment"
+                    ),
                     "terminal_id": terminal_id,
                 },
             )
@@ -307,7 +320,7 @@ class TerminalWsMixin:
         )
 
     async def _handle_terminal_list(self, websocket: Any, data: dict[str, Any]) -> None:
-        """Every pending or live terminal on this machine, tmux panes included.
+        """Every pending or live terminal on this machine.
 
         A ``project_id`` (sent by the web project picker) narrows the page to
         that project plus terminals that belong to no project, which live
@@ -350,9 +363,7 @@ class TerminalWsMixin:
             )
             return
         machine_id = require_machine_id()
-        panes = await self.sweep_tmux_panes(manager, machine_id)
-        # The page query, like the sweep, runs off the loop: a slow database
-        # then delays this reply instead of every other connection's input.
+        # A slow page query runs off the loop so it does not delay other clients.
         items, has_more = await asyncio.to_thread(
             manager.list_page,
             None if project_id is None else [project_id, GLOBAL_PROJECT_ID],
@@ -368,29 +379,8 @@ class TerminalWsMixin:
         serialized = []
         for row in items:
             item = inventory_item(row, lease_holder=self._leases().holder_info(row.id))
-            pane = panes.get(row.locator_key or "")
-            if pane is not None:
-                item.update(
-                    {
-                        "name": pane.session_name,
-                        "socket": os.path.basename(pane.socket_path),
-                        "window_name": pane.window_name,
-                        "pane_pid": pane.pane_pid,
-                        "pane_title": pane.pane_title,
-                        "pane_command": pane.pane_command,
-                        "pane_path": pane.pane_path,
-                        "attached_clients": pane.session_attached,
-                    }
-                )
-            # tmux reports its own pane's foreground command; a native row's is
-            # probed from the shell pid the host recorded, else named by the shell
-            # the daemon spawned.
-            item["command"] = (
-                native_commands.get(row.id)
-                or (pane.pane_command if pane is not None else None)
-                or process_shell(row)
-            )
-            item["cwd"] = native_cwds.get(row.id) or (pane.pane_path if pane is not None else None)
+            item["command"] = native_commands.get(row.id) or process_shell(row)
+            item["cwd"] = native_cwds.get(row.id)
             serialized.append(item)
         item_cursors = [f"{row.created_at.isoformat()}|{row.id}" for row in items]
         next_cursor = None if not has_more else item_cursors[-1]
@@ -413,69 +403,6 @@ class TerminalWsMixin:
             )
             return
         await self._send_json(websocket, payload)
-
-    async def sweep_tmux_panes(self, manager: Any, machine_id: str) -> dict[str, Any]:
-        """Mirror the tmux servers into ``terminals`` before listing; never fails the list.
-
-        Bounded by ``TMUX_SWEEP_BUDGET_SECONDS``, session query included: an
-        unresponsive tmux or a stalled query drops this list back to the
-        database rather than holding the connection. A sweep that outlives
-        its budget keeps running, and later lists join it until it settles,
-        so a stall never stacks one worker thread per request.
-
-        A pane whose working directory is not inside a registered project is
-        filed under the global project, so it shows up whichever project the
-        web picker selects.
-        """
-        tmux_managers = [
-            tmux
-            for tmux in (
-                getattr(self, "_tmux_mgr_default", None),
-                getattr(self, "_tmux_mgr_gobby", None),
-            )
-            if tmux is not None
-        ]
-        if not tmux_managers:
-            return {}
-        session_manager = getattr(self, "session_manager", None)
-
-        async def sweep() -> dict[str, Any]:
-            sessions = (
-                []
-                if session_manager is None
-                else await asyncio.to_thread(
-                    session_manager.list,
-                    statuses=LIVE_SESSION_STATUS_ORDER,
-                    machine_id=machine_id,
-                    limit=1000,
-                )
-            )
-            return await sweep_tmux_terminals(
-                manager,
-                tmux_managers,
-                machine_id=machine_id,
-                owners=pane_owners(sessions),
-                fallback_project_id=GLOBAL_PROJECT_ID,
-            )
-
-        task = self._tmux_sweep
-        if task is None or task.done():
-            task = asyncio.ensure_future(sweep())
-            # Every waiter may have timed out; read the outcome so it is not
-            # reported as never retrieved.
-            task.add_done_callback(lambda done: done.cancelled() or done.exception())
-            self._tmux_sweep = task
-        try:
-            return await asyncio.wait_for(asyncio.shield(task), timeout=TMUX_SWEEP_BUDGET_SECONDS)
-        except TimeoutError:
-            logger.warning(
-                "tmux terminal discovery exceeded %.1fs; listing from the database",
-                TMUX_SWEEP_BUDGET_SECONDS,
-            )
-            return {}
-        except Exception:
-            logger.warning("tmux terminal discovery failed", exc_info=True)
-            return {}
 
     def _relayed_host_capabilities(self, backend: str) -> list[str]:
         host_capabilities = getattr(self.terminal_host_manager, "capabilities", ())
@@ -666,10 +593,6 @@ class TerminalWsMixin:
                 WriteRequest,
             )
 
-            client_fd: int | None = None
-            bridge = getattr(self, "_tmux_bridge", None)
-            if kind == "input" and bridge is not None:
-                client_fd = await bridge.get_master_fd(attachment_id)
             record = self._leases().get(attachment_id)
             result = await coordinator.write(
                 WriteRequest(
@@ -680,7 +603,6 @@ class TerminalWsMixin:
                     payload=payload,
                     attachment_id=attachment_id,
                     expected_lease_generation=generation,
-                    client_fd=client_fd,
                     terminal=None if record is None else record.terminal,
                 )
             )
@@ -779,6 +701,20 @@ class TerminalWsMixin:
             hub = ProxyHub(self)
             self._proxy_hub = hub
         return hub
+
+    async def _cleanup_terminal_client(self, websocket: Any) -> None:
+        events = await self._leases().finalize_websocket(websocket, "ws_close")
+        for event in events:
+            await self._apply_terminal_sizing(event.terminal_id, event.sizing)
+        hub = getattr(self, "_proxy_hub", None)
+        if hub is not None:
+            await hub.drop_socket(websocket, "ws_close")
+
+    async def _cleanup_terminals(self) -> None:
+        hub = getattr(self, "_proxy_hub", None)
+        if hub is not None:
+            for websocket in list(hub.relays):
+                await hub.drop_socket(websocket, "ws_close")
 
     def _runtime_for(self, backend: str) -> Any | None:
         registry = getattr(self, "terminal_runtime_registry", None)

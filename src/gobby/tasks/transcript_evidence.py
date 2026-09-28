@@ -78,6 +78,7 @@ from gobby.tasks.transcript_tool_arguments import (
 from gobby.tasks.transcript_tool_arguments import (
     normalize_tool_name as _tool_basename,
 )
+from gobby.tasks.transcript_tool_arguments import resolve_edit_path as _resolve_edit_path
 
 logger = logging.getLogger(__name__)
 
@@ -131,6 +132,7 @@ class _DerivationState:
     detection_config: ValidationDetectionConfig
     task_edited_files: set[str]
     repo_path: str
+    task_checkout_paths: frozenset[tuple[str, str]] | None
     window_start: datetime | None
     pending: dict[str, _PendingTool] = field(default_factory=dict)
     runs: list[TranscriptValidationRun] = field(default_factory=list)
@@ -274,6 +276,7 @@ def _derivation_fingerprint(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
 ) -> str:
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
@@ -282,6 +285,9 @@ def _derivation_fingerprint(
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
             "repo_path": repo_path,
+            "task_checkout_paths": sorted(task_checkout_paths)
+            if task_checkout_paths is not None
+            else None,
             "task_edited_files": sorted(task_edited_files),
             "detection": detection_config.model_dump(mode="json"),
         },
@@ -356,6 +362,7 @@ async def derive_transcript_evidence(
     repo_path: str,
     *,
     archive_dir: str | None = None,
+    task_checkout_paths: frozenset[tuple[str, str]] | None = None,
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
@@ -366,6 +373,7 @@ async def derive_transcript_evidence(
         detection_config,
         set(task_edited_files),
         repo_path,
+        task_checkout_paths,
         archive_dir,
         local_machine_id,
         _load_snapshot(session.id),
@@ -474,6 +482,7 @@ def _derive_transcript_evidence_sync(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
     archive_dir: str | None,
     local_machine_id: str,
     resume: _EvidenceSnapshot | None,
@@ -495,6 +504,7 @@ def _derive_transcript_evidence_sync(
             detection_config,
             task_edited_files,
             repo_path,
+            task_checkout_paths,
             attempted_paths,
             resume_enabled=index == 0,
             resume=resume if index == 0 else None,
@@ -520,6 +530,7 @@ def _derive_transcript_path_evidence(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
     attempted_paths: list[str],
     *,
     resume_enabled: bool,
@@ -527,7 +538,12 @@ def _derive_transcript_path_evidence(
 ) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
     normalized_task_files = {_normalize_known_path(item, repo_path) for item in task_edited_files}
     fingerprint = _derivation_fingerprint(
-        session, window_start, detection_config, normalized_task_files, repo_path
+        session,
+        window_start,
+        detection_config,
+        normalized_task_files,
+        repo_path,
+        task_checkout_paths,
     )
     if resume is not None and (
         resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
@@ -566,6 +582,7 @@ def _derive_transcript_path_evidence(
         detection_config=detection_config,
         task_edited_files=normalized_task_files,
         repo_path=repo_path,
+        task_checkout_paths=task_checkout_paths,
         window_start=window_start,
     )
     if resume is not None:
@@ -891,23 +908,21 @@ def _record_validation_run(
     )
 
 
-def _shell_write_paths(command: str, repo_path: str) -> set[str]:
-    """Resolve the repository files one shell command writes.
-
-    The canonical classifier here is the one `enforce-tdd-block` gates on, so a
-    heredoc-written test is close-time edit evidence exactly when enforcement
-    already saw it as a repo mutation. Commands that only read, move or delete a
-    path carry no write path and stay uncredited.
-    """
+def _shell_write_paths(
+    command: str, arguments: dict[str, Any], repo_path: str, require_proven_checkout: bool
+) -> set[str]:
+    """Credit writes recognized by the canonical TDD shell classifier."""
     if not command.strip():
         return set()
     write_paths = _shell_tool_metadata(command).get("canonical_write_file_paths")
     if not isinstance(write_paths, list):
         return set()
     return {
-        _normalize_known_path(path, repo_path)
+        resolved
         for path in write_paths
         if isinstance(path, str) and path
+        if (resolved := _resolve_edit_path(path, arguments, repo_path, require_proven_checkout))
+        is not None
     }
 
 
@@ -919,14 +934,21 @@ def _record_edit(
     order: int,
 ) -> None:
     basename = _tool_basename(tool_name)
+    require_proven_checkout = state.task_checkout_paths is not None
     if basename in _EDIT_TOOLS:
-        paths = _extract_edit_paths(basename, arguments, state.repo_path)
+        paths = _extract_edit_paths(
+            basename, arguments, state.repo_path, require_proven_checkout=require_proven_checkout
+        )
     elif basename in _SHELL_TOOLS:
-        paths = _shell_write_paths(_extract_command(arguments), state.repo_path)
+        paths = _shell_write_paths(
+            _extract_command(arguments), arguments, state.repo_path, require_proven_checkout
+        )
     else:
         return
     for path in paths:
-        task_file = _match_task_file(path, state.task_edited_files)
+        task_file = _match_task_file(
+            path, state.task_edited_files, state.repo_path, state.task_checkout_paths
+        )
         if task_file is None:
             continue
         state.edits.append(

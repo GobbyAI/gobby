@@ -7,19 +7,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.adapters.plan_keystrokes import (
     DEFAULT_PLAN_KEYSTROKES,
-    dispatch_plan_keystrokes,
     resolve_action_option_id,
 )
 from gobby.adapters.plan_options import get_plan_accept_option
 from gobby.hooks.events import HookEventType
 from gobby.servers.websocket.db import run_db
-from gobby.terminals.lookup import manager_for_terminal_context
+from gobby.terminals.key_bytes import normalize_named_key
+from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.write_coordinator import SequenceDelay, WriteRequest
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -34,9 +35,9 @@ logger = logging.getLogger(__name__)
 # we wait up to this long for it to drain before injecting the continuation so
 # the inject path does not cancel a still-streaming turn.
 _PLAN_TURN_DRAIN_TIMEOUT_SECONDS = 120.0
-_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS = 10.0
+_PLAN_TERMINAL_OPERATION_TIMEOUT_SECONDS = 10.0
 
-# Lines of the attached CLI's tmux pane to capture for native plan-menu detection
+# Lines of the attached CLI's terminal to capture for native plan-menu detection
 # (Path B). The menu markers sit within the last few lines of the prompt; this is
 # generous headroom around them.
 _PLAN_MENU_CAPTURE_LINES = 60
@@ -247,10 +248,10 @@ async def handle_attached_plan_approval(
 ) -> None:
     """Drive a native plan menu for an attached (proxy-terminal) CLI session.
 
-    The caller is attached to a CLI running in a tmux pane (Path B): there is no
+    The caller is attached to a managed native CLI (Path B): there is no
     in-memory ChatSession whose plan gate we can release. The plan choice is a
     native TUI menu, so approval/rejection is a keystroke sequence sent to the
-    pane. The sequence is resolved from the per-CLI registry keyed by
+    terminal. The sequence is resolved from the per-CLI registry keyed by
     ``(session.source, option_id)``; ``option_id`` is a plan_options accept id for
     approve, or the request-changes sentinel for reject.
 
@@ -286,20 +287,6 @@ async def handle_attached_plan_approval(
         )
         return
 
-    ctx: dict[str, Any] = {}
-    if isinstance(getattr(session, "terminal_context", None), dict):
-        ctx = session.terminal_context
-    tmux_pane = ctx.get("tmux_pane")
-    if not tmux_pane and isinstance(getattr(session, "metadata", None), dict):
-        tmux_pane = session.metadata.get("terminal_tmux_pane")
-    if not isinstance(tmux_pane, str) or not tmux_pane:
-        await mixin._send_error(
-            websocket,
-            f"Session {target_session_id} has no tmux pane for plan approval",
-            code="NO_TERMINAL_TARGET",
-        )
-        return
-
     source = getattr(session, "source", None)
     decision = data.get("decision", "")
     raw_option_id = data.get("option_id")
@@ -324,21 +311,56 @@ async def handle_attached_plan_approval(
         )
         return
 
-    tmux = manager_for_terminal_context(ctx)
-    # Resolve against the live pane when the source either has multiple menu
+    terminal_manager = getattr(mixin, "terminal_manager", None)
+    coordinator = getattr(mixin, "write_coordinator", None)
+    registry_runtime = getattr(mixin, "terminal_runtime_registry", None)
+    try:
+        terminal = (
+            await run_db(mixin, terminal_manager.resolve_live_for_session, session)
+            if terminal_manager is not None
+            else None
+        )
+    except Exception:
+        logger.warning("Failed to resolve managed terminal for plan approval", exc_info=True)
+        terminal = None
+    if terminal is None or coordinator is None or registry_runtime is None:
+        await mixin._send_error(
+            websocket,
+            f"Session {target_session_id} has no managed terminal for plan approval",
+            code="NO_TERMINAL_TARGET",
+        )
+        return
+    if terminal.backend != "native":
+        await mixin._send_error(
+            websocket,
+            "Plan approval requires a native terminal",
+            code="UNSUPPORTED_TERMINAL_BACKEND",
+        )
+        return
+
+    try:
+        runtime = registry_runtime.resolve("native")
+    except (KeyError, RuntimeError):
+        await mixin._send_error(
+            websocket,
+            "Native terminal runtime is unavailable",
+            code="NO_TERMINAL_TARGET",
+        )
+        return
+    # Resolve against the live terminal when the source either has multiple menu
     # shapes or a static-menu presence guard. A stale web-UI click must not send
-    # blind digits into whatever the pane currently shows.
+    # blind digits into whatever the terminal currently shows.
     pane_text = ""
     if registry.requires_pane(source):
         try:
             captured = await asyncio.wait_for(
-                tmux.snapshot_lines(tmux_pane, lines=_PLAN_MENU_CAPTURE_LINES),
-                timeout=_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS,
+                runtime.snapshot(terminal, lines=_PLAN_MENU_CAPTURE_LINES),
+                timeout=_PLAN_TERMINAL_OPERATION_TIMEOUT_SECONDS,
             )
         except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
-            logger.warning("Failed to capture pane %s for plan-menu detection: %s", tmux_pane, exc)
+            logger.warning("Failed to snapshot terminal %s for plan menu: %s", terminal.id, exc)
             captured = None
-        pane_text = captured or ""
+        pane_text = captured.text if captured is not None else ""
 
     sequence = registry.resolve_for_pane(source, action_option_id, pane_text)
     if sequence is None:
@@ -350,22 +372,63 @@ async def handle_attached_plan_approval(
         )
         return
 
-    try:
-        dispatched = await asyncio.wait_for(
-            dispatch_plan_keystrokes(tmux, tmux_pane, sequence),
-            timeout=_PLAN_TMUX_OPERATION_TIMEOUT_SECONDS,
+    steps: list[WriteRequest | SequenceDelay] = []
+    for stroke in sequence.strokes:
+        if steps and sequence.settle_seconds:
+            steps.append(SequenceDelay(sequence.settle_seconds))
+        kind: Literal["input", "key"]
+        if stroke.literal or stroke.keys == "C-r":
+            kind, payload = "input", "\x12" if stroke.keys == "C-r" else stroke.keys
+        else:
+            key = normalize_named_key(stroke.keys)
+            if key is None:
+                await mixin._send_error(
+                    websocket,
+                    f"Unmapped native plan key: {stroke.keys}",
+                    code="PLAN_KEYSTROKES_UNMAPPED",
+                )
+                return
+            kind, payload = "key", key
+        steps.append(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key=f"plan-approval:{action_option_id}",
+                origin="automatic",
+                kind=kind,
+                payload=payload,
+            )
         )
-    except (TimeoutError, OSError, RuntimeError, ValueError) as exc:
+
+    try:
+        outcome = await asyncio.wait_for(
+            coordinator.run_sequence(
+                terminal.id,
+                action_key=f"plan-approval:{action_option_id}",
+                origin="automatic",
+                steps=steps,
+            ),
+            timeout=_PLAN_TERMINAL_OPERATION_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning("Native plan keystroke dispatch timed out for terminal %s", terminal.id)
+        outcome = IndeterminateWrite("plan approval dispatch timed out")
+    except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(
-            "tmux plan keystroke dispatch failed for pane %s: %s",
-            tmux_pane,
+            "Native plan keystroke dispatch failed for terminal %s: %s",
+            terminal.id,
             exc,
             exc_info=True,
         )
-        dispatched = False
-    if not dispatched:
+        outcome = None
+    if not isinstance(outcome, Delivered):
         await mixin._send_error(
-            websocket, "Failed to send plan approval keystrokes to attached session"
+            websocket,
+            "Plan approval delivery is unconfirmed"
+            if isinstance(outcome, IndeterminateWrite)
+            else "Failed to send plan approval keystrokes to attached session",
+            code="PLAN_DISPATCH_UNCONFIRMED"
+            if isinstance(outcome, IndeterminateWrite)
+            else "PLAN_DISPATCH_FAILED",
         )
         return
 

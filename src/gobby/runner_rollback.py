@@ -43,7 +43,6 @@ def rollback_runner_resources(runner: Any) -> None:
 
 async def _rollback_inventory_async(runner: Any) -> None:
     from gobby.agents.terminal_delivery import reset_terminal_delivery_offload
-    from gobby.agents.tmux import reset_tmux_globals
     from gobby.app_context import clear_app_context
     from gobby.runner_broadcasting import reset_agent_event_broadcasting
     from gobby.telemetry import shutdown_telemetry
@@ -53,7 +52,6 @@ async def _rollback_inventory_async(runner: Any) -> None:
     await _await_named("terminal delivery offload", reset_terminal_delivery_offload)
     await _await_named("tool summarizer", reset_summarizer_config)
     await _await_named("agent event broadcasting", reset_agent_event_broadcasting)
-    await _await_named("tmux globals", reset_tmux_globals)
 
     http_services = getattr(getattr(runner, "http_server", None), "services", None)
     resources = (

@@ -1,4 +1,4 @@
-"""Tests for tmux-backed session MCP terminal tools."""
+"""Tests for managed session MCP terminal tools."""
 
 from __future__ import annotations
 
@@ -13,10 +13,8 @@ from uuid import uuid4
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.sessions._terminal import (
-    _resolve_tmux_target,
-    register_terminal_tools,
-)
+from gobby.mcp_proxy.tools.sessions import _terminal_clear
+from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
     _FORBIDDEN_SPEED_COMMANDS,
     _is_speed_command,
@@ -132,126 +130,6 @@ def _handoff_row_count(temp_db: HubDatabase, session_id: str) -> int:
     )
     assert row is not None
     return int(row["count"])
-
-
-class TestResolveTmuxTarget:
-    """Tests for session-to-tmux target resolution."""
-
-    def test_returns_error_when_session_missing(self) -> None:
-        """Missing sessions should not return a stale default-server marker."""
-        session_manager = MagicMock()
-        session_manager.get.return_value = None
-
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        target, tmux_manager, error = _resolve_tmux_target(
-            "missing-session",
-            session_manager,
-            agent_run_manager,
-        )
-
-        assert target is None
-        assert tmux_manager is None
-        assert error == "Session missing-session not found"
-
-    def test_accepts_json_terminal_context(self) -> None:
-        """Stored terminal_context may be raw JSON text."""
-        session = MagicMock()
-        session.terminal_context = '{"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}'
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context"
-        ) as mock_get_tmux_manager:
-            target, tmux_manager, error = _resolve_tmux_target(
-                "session-1",
-                session_manager,
-                agent_run_manager,
-            )
-
-        assert target == "%12"
-        assert tmux_manager == mock_get_tmux_manager.return_value
-        assert error is None
-        mock_get_tmux_manager.assert_called_once_with(
-            {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
-        )
-
-    def test_accepts_mapping_terminal_context(self) -> None:
-        """Stored terminal_context may already be a parsed mapping."""
-        session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context"
-        ) as mock_get_tmux_manager:
-            target, tmux_manager, error = _resolve_tmux_target(
-                "session-1",
-                session_manager,
-                agent_run_manager,
-            )
-
-        assert target == "%12"
-        assert tmux_manager == mock_get_tmux_manager.return_value
-        assert error is None
-        mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
-
-    def test_reports_invalid_terminal_context(self) -> None:
-        """Malformed stored terminal_context returns a useful diagnostic."""
-        session = MagicMock()
-        session.terminal_context = "{not json"
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        target, tmux_manager, error = _resolve_tmux_target(
-            "session-1",
-            session_manager,
-            agent_run_manager,
-        )
-
-        assert target is None
-        assert tmux_manager is None
-        assert error == (
-            "Session session-1 has invalid terminal_context (str); expected object or JSON object"
-        )
-
-    def test_reports_terminal_context_without_tmux_target(self) -> None:
-        """A parsed context without a tmux target should explain its keys."""
-        session = MagicMock()
-        session.terminal_context = {"terminal": "tmux"}
-
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        target, tmux_manager, error = _resolve_tmux_target(
-            "session-1",
-            session_manager,
-            agent_run_manager,
-        )
-
-        assert target is None
-        assert tmux_manager is None
-        assert error == (
-            "Session session-1 terminal_context has no tmux_pane or tmux_session (keys: terminal)"
-        )
 
 
 class TestIsSpeedCommand:
@@ -476,8 +354,9 @@ class TestRegisterTerminalTools:
 
         with (
             session_context_for_test("session-1"),
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_clear._authorize_send_keys_target",
+            patch.object(
+                _terminal_clear,
+                "_authorize_send_keys_target",
                 return_value=("session-1", None),
             ),
             patch(
@@ -509,8 +388,8 @@ class TestRegisterTerminalTools:
         assert result["command"] == "/clear"
         send_command.assert_not_awaited()
 
-    def assert_send_keys_preserves_raw_tmux_fallback_after_native_lookup(self) -> None:
-        """Interactive sessions should route through the manager for their recorded tmux server."""
+    def assert_send_keys_rejects_raw_tmux_context_after_native_lookup(self) -> None:
+        """A pane hint alone cannot authorize a raw tmux write."""
         registry = _TestRegistry(name="test", description="test")
 
         session = MagicMock()
@@ -526,29 +405,17 @@ class TestRegisterTerminalTools:
         session_manager.get.return_value = session
         session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
 
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        tmux_manager = MagicMock()
-        tmux_manager.send_keys = AsyncMock(return_value=True)
-        tmux_manager.dispatch_keys = tmux_manager.send_keys
         terminal_manager = MagicMock()
         terminal_manager.resolve_live_for_session.return_value = None
         write_coordinator = MagicMock()
 
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
-                return_value=agent_run_manager,
-            ),
-        ):
-            register_terminal_tools(
-                registry,
-                session_manager,
-                MagicMock(fetchone=MagicMock(return_value=None)),
-                terminal_manager=terminal_manager,
-                write_coordinator=write_coordinator,
-            )
+        register_terminal_tools(
+            registry,
+            session_manager,
+            MagicMock(fetchone=MagicMock(return_value=None)),
+            terminal_manager=terminal_manager,
+            write_coordinator=write_coordinator,
+        )
 
         send_keys_metadata = registry.get_tool_metadata("send_keys")
         assert send_keys_metadata is not None
@@ -563,24 +430,17 @@ class TestRegisterTerminalTools:
         send_keys = send_keys_metadata.func
         assert send_keys is not None
 
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ) as mock_get_tmux_manager,
-            patch(
-                "gobby.utils.session_context.get_current_session_id",
-                return_value="session-1",
-            ),
+        with patch(
+            "gobby.utils.session_context.get_current_session_id",
+            return_value="session-1",
         ):
             result = asyncio.run(send_keys(session_id="session-1", keys="hello\n", literal=True))
 
-        assert result["success"] is True
+        assert result["success"] is False
+        assert result["error_code"] == "terminal_target_unavailable"
         assert isinstance(result["idempotency_key"], str)
         terminal_manager.resolve_live_for_session.assert_called_once_with(session)
         write_coordinator.write.assert_not_called()
-        mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
-        tmux_manager.send_keys.assert_awaited_once_with("%12", "hello\n", literal=True)
 
     def test_send_keys_rejects_target_outside_caller_scope(self) -> None:
         """Cross-project sessions outside the caller's agent tree cannot receive keys."""
@@ -596,16 +456,9 @@ class TestRegisterTerminalTools:
         }.get
         session_manager.is_ancestor.return_value = False
 
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
-            return_value=agent_run_manager,
-        ):
-            register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
-            )
+        register_terminal_tools(
+            registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+        )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
@@ -624,7 +477,6 @@ class TestRegisterTerminalTools:
             "target_session_id": "target-session",
             "idempotency_key": result["idempotency_key"],
         }
-        agent_run_manager.get_by_session.assert_not_called()
 
     def test_send_keys_rejects_autonomous_agent_caller(self) -> None:
         """Autonomous agent sessions cannot inject keystrokes into any terminal."""
@@ -639,29 +491,16 @@ class TestRegisterTerminalTools:
         session_manager.resolve_session_reference.return_value = "caller-session"
         session_manager.get.return_value = caller
 
-        agent_run_manager = MagicMock()
-        tmux_manager = MagicMock()
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
-            return_value=agent_run_manager,
-        ):
-            register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
-            )
+        register_terminal_tools(
+            registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
+        )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
 
-        with (
-            patch(
-                "gobby.utils.session_context.get_current_session_id",
-                return_value="caller-session",
-            ),
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ) as mock_get_tmux_manager,
+        with patch(
+            "gobby.utils.session_context.get_current_session_id",
+            return_value="caller-session",
         ):
             result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
 
@@ -674,8 +513,6 @@ class TestRegisterTerminalTools:
         }
         session_manager.resolve_session_reference.assert_called_once_with("caller-session")
         session_manager.get.assert_called_once_with("caller-session")
-        agent_run_manager.get_by_session.assert_not_called()
-        mock_get_tmux_manager.assert_not_called()
 
     @pytest.mark.parametrize("relationship", ["same_project", "caller_ancestor", "target_ancestor"])
     def test_send_keys_allows_in_scope_target(self, relationship: str) -> None:
@@ -700,50 +537,44 @@ class TestRegisterTerminalTools:
             or (relationship == "target_ancestor" and ancestor == "target-session")
         )
 
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-        tmux_manager = MagicMock()
-        tmux_manager.send_keys = AsyncMock(return_value=True)
-        tmux_manager.dispatch_keys = tmux_manager.send_keys
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
-            return_value=agent_run_manager,
-        ):
-            register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
-            )
+        terminal_manager = MagicMock()
+        terminal_manager.resolve_live_for_session.return_value = SimpleNamespace(
+            id="terminal-1", backend="native"
+        )
+        write_coordinator = MagicMock()
+        write_coordinator.write = AsyncMock(return_value=Delivered())
+        register_terminal_tools(
+            registry,
+            session_manager,
+            MagicMock(fetchone=MagicMock(return_value=None)),
+            terminal_manager=terminal_manager,
+            write_coordinator=write_coordinator,
+        )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
 
-        with (
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ),
-            patch(
-                "gobby.utils.session_context.get_current_session_id",
-                return_value="caller-session",
-            ),
+        with patch(
+            "gobby.utils.session_context.get_current_session_id",
+            return_value="caller-session",
         ):
             result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
 
         assert result["success"] is True
         assert isinstance(result["idempotency_key"], str)
-        tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
+        request = write_coordinator.write.await_args.args[0]
+        assert request.terminal_id == "terminal-1"
+        assert request.payload == "hello"
 
     @staticmethod
-    def _authorized_send_keys(
-        tmux_manager: MagicMock,
-    ) -> Callable[..., Any]:
+    def _authorized_send_keys() -> tuple[Callable[..., Any], MagicMock, MagicMock]:
         """Register send_keys with a caller that clears every authorization check."""
         registry = _TestRegistry(name="test", description="test")
         caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
         target = MagicMock(
             id="target-session",
             project_id="project-1",
-            terminal_context={"tmux_pane": "%12"},
+            terminal_context=None,
         )
 
         session_manager = MagicMock()
@@ -753,33 +584,29 @@ class TestRegisterTerminalTools:
             "target-session": target,
         }.get
 
-        agent_run_manager = MagicMock()
-        agent_run_manager.get_by_session.return_value = None
-
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
-            return_value=agent_run_manager,
-        ):
-            register_terminal_tools(
-                registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
-            )
+        terminal_manager = MagicMock()
+        terminal_manager.resolve_live_for_session.return_value = SimpleNamespace(
+            id="terminal-1", backend="native"
+        )
+        write_coordinator = MagicMock()
+        write_coordinator.write = AsyncMock(return_value=Delivered())
+        register_terminal_tools(
+            registry,
+            session_manager,
+            MagicMock(fetchone=MagicMock(return_value=None)),
+            terminal_manager=terminal_manager,
+            write_coordinator=write_coordinator,
+        )
 
         send_keys = registry.get_tool("send_keys")
         assert send_keys is not None
-        return send_keys
+        return send_keys, terminal_manager, write_coordinator
 
     def test_send_keys_gates_the_speed_toggle_before_any_delivery_path(self) -> None:
-        """The `/fast` refusal fires after authorization and before either delivery path."""
-        tmux_manager = MagicMock()
-        tmux_manager.send_keys = AsyncMock(return_value=True)
-        tmux_manager.dispatch_keys = tmux_manager.send_keys
-        send_keys = self._authorized_send_keys(tmux_manager)
+        """The `/fast` refusal fires after authorization and before native delivery."""
+        send_keys, terminal_manager, write_coordinator = self._authorized_send_keys()
 
         with (
-            patch(
-                "gobby.mcp_proxy.tools.sessions._terminal_send_keys.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ) as mock_get_tmux_manager,
             patch(
                 "gobby.utils.session_context.get_current_session_id",
                 return_value="caller-session",
@@ -796,14 +623,14 @@ class TestRegisterTerminalTools:
         }
         assert delivered["success"] is True
         assert isinstance(delivered["idempotency_key"], str)
-        # The refusal never resolved a pane, so neither the write-coordinator nor the
-        # tmux fallback branch could have run; the nearby `/faster` proves the same
-        # setup does deliver.
-        mock_get_tmux_manager.assert_called_once_with({"tmux_pane": "%12"})
-        tmux_manager.send_keys.assert_awaited_once_with("%12", "/faster\n", literal=True)
+        terminal_manager.resolve_live_for_session.assert_called_once()
+        write_coordinator.write.assert_awaited_once()
+        request = write_coordinator.write.await_args.args[0]
+        assert request.payload == "/faster"
+        assert request.submit is True
 
-    def test_capture_output_uses_tmux_when_pane_exists(self) -> None:
-        """capture_output reads the live pane when a tmux target is available."""
+    def test_capture_output_does_not_probe_raw_tmux_context(self) -> None:
+        """A pane hint without a managed row cannot trigger raw tmux capture."""
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock()
         session.terminal_context = {"tmux_pane": "%12"}
@@ -812,9 +639,6 @@ class TestRegisterTerminalTools:
         session_manager.get.return_value = session
         agent_run_manager = MagicMock()
         agent_run_manager.get_by_session.return_value = None
-        tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="live output")
-        tmux_manager.snapshot_lines = tmux_manager.capture_pane
 
         with patch(
             "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
@@ -832,14 +656,10 @@ class TestRegisterTerminalTools:
         capture_output = capture_metadata.func
         assert capture_output is not None
 
-        with patch(
-            "gobby.mcp_proxy.tools.sessions._terminal.manager_for_terminal_context",
-            return_value=tmux_manager,
-        ):
-            result = asyncio.run(capture_output(session_id="session-1", lines=20))
+        result = asyncio.run(capture_output(session_id="session-1", lines=20))
 
-        assert result == {"success": True, "output": "live output", "via": "tmux"}
-        tmux_manager.capture_pane.assert_awaited_once_with("%12", 20)
+        assert result["success"] is False
+        assert result["error_code"] == "no_live_pane_or_transcript"
 
     def test_capture_output_falls_back_to_transcript_tail(self, tmp_path: Path) -> None:
         """When no tmux target exists, capture_output returns a transcript tail."""
@@ -952,8 +772,8 @@ class TestRegisterTerminalTools:
         assert result["output"] == "live pane"
 
 
-def test_send_keys_preserves_raw_tmux_fallback_after_native_lookup() -> None:
-    TestRegisterTerminalTools().assert_send_keys_preserves_raw_tmux_fallback_after_native_lookup()
+def test_send_keys_rejects_raw_tmux_context_after_native_lookup() -> None:
+    TestRegisterTerminalTools().assert_send_keys_rejects_raw_tmux_context_after_native_lookup()
 
 
 def test_send_keys_named_key_never_pastes_literally() -> None:
@@ -967,24 +787,20 @@ def test_send_keys_named_key_never_pastes_literally() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = session
     session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
-    agent_run_manager = MagicMock()
-    agent_run_manager.get_by_session.return_value = None
     terminal_manager = MagicMock()
-    terminal_manager.resolve_live_for_session.return_value = SimpleNamespace(id="terminal-1")
+    terminal_manager.resolve_live_for_session.return_value = SimpleNamespace(
+        id="terminal-1", backend="native"
+    )
     write_coordinator = MagicMock()
     write_coordinator.write = AsyncMock(return_value=Delivered())
 
-    with patch(
-        "gobby.mcp_proxy.tools.sessions._terminal_send_keys.LocalAgentRunManager",
-        return_value=agent_run_manager,
-    ):
-        register_terminal_tools(
-            registry,
-            session_manager,
-            MagicMock(fetchone=MagicMock(return_value=None)),
-            terminal_manager=terminal_manager,
-            write_coordinator=write_coordinator,
-        )
+    register_terminal_tools(
+        registry,
+        session_manager,
+        MagicMock(fetchone=MagicMock(return_value=None)),
+        terminal_manager=terminal_manager,
+        write_coordinator=write_coordinator,
+    )
 
     send_keys = registry.get_tool("send_keys")
     assert send_keys is not None

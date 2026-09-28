@@ -13,9 +13,9 @@ import pytest
 
 from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.idle_check_handler import IdleCheckHandler
+from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
-from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
@@ -154,11 +154,9 @@ async def test_blocked_transition_broadcasts_agent_event(
     )
 
     pty_reader = MagicMock()
-    tmux_reader = MagicMock()
     websocket = MagicMock()
     websocket.broadcast_agent_event = AsyncMock()
     monkeypatch.setattr("gobby.agents.pty_reader.get_pty_reader_manager", lambda: pty_reader)
-    monkeypatch.setattr("gobby.agents.tmux.get_tmux_output_reader", lambda: tmux_reader)
     setup_agent_event_broadcasting(websocket)
 
     def publish(payload: dict[str, object]) -> None:
@@ -535,7 +533,6 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         agent_run_manager=run_manager,
         db=temp_db,
         get_session_manager=lambda: None,
-        tmux=MagicMock(),
         idle_detector=MagicMock(),
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
@@ -586,7 +583,6 @@ async def test_idle_check_reuses_attention_pane_and_stops_on_unknown(
         agent_run_manager=run_manager,
         db=temp_db,
         get_session_manager=lambda: None,
-        tmux=MagicMock(),
         idle_detector=idle_detector,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
@@ -641,9 +637,8 @@ async def test_tmux_monitor_reads_interactive_terminal_off_loop_and_reports_prom
     sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
     runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
-    monitor = TmuxPaneMonitor(
+    monitor = InteractiveAttentionMonitor(
         detection_registry=DETECTION_REGISTRY,
-        session_end_callback=MagicMock(),
         session_manager=sessions,
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
@@ -687,9 +682,8 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     sessions.update_session_status.side_effect = session_manager.update_session_status
     sessions.list.return_value = [session]
     runtime = LifecycleRuntime(snapshot_text=APPROVAL_PANE)
-    monitor = TmuxPaneMonitor(
+    monitor = InteractiveAttentionMonitor(
         detection_registry=DETECTION_REGISTRY,
-        session_end_callback=MagicMock(),
         session_manager=sessions,
         attention_manager=manager,
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
@@ -703,7 +697,7 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     runtime.snapshot_calls.clear()
     runtime.snapshot_error = TimeoutError("tmux command timed out")
     caplog.clear()
-    logger_name = "gobby.agents.tmux.pane_monitor"
+    logger_name = "gobby.agents.interactive_attention_monitor"
     with caplog.at_level(logging.DEBUG, logger=logger_name):
         await monitor._check_attention_panes(active_runs=[])
 
@@ -716,10 +710,10 @@ async def test_tmux_monitor_keeps_attention_on_capture_timeout_and_recovers(
     records = [record for record in caplog.records if record.name == logger_name]
     assert not [record for record in records if record.levelno >= logging.WARNING]
     timeout_record = next(
-        record for record in records if record.getMessage().endswith("pane capture timed out")
+        record for record in records if record.getMessage().endswith("terminal capture timed out")
     )
     assert timeout_record.exc_info is None
-    assert timeout_record.__dict__["pane_id"] == "%42"
+    assert timeout_record.__dict__["terminal_id"]
     assert timeout_record.__dict__["session_id"] == session.id
     assert timeout_record.__dict__["provider"] == "claude"
 

@@ -52,8 +52,9 @@ def _task_edited_files(variables: dict[str, Any]) -> dict[str, list[str]]:
 
 def _task_edited_file_checkouts(
     variables: dict[str, Any],
+    ledger_name: str = "task_edited_file_checkouts",
 ) -> dict[str, dict[str, list[str]]]:
-    raw = variables.get("task_edited_file_checkouts") or {}
+    raw = variables.get(ledger_name) or {}
     if not isinstance(raw, dict):
         return {}
     result: dict[str, dict[str, list[str]]] = {}
@@ -186,6 +187,40 @@ def task_edited_file_set_for_checkout(
     if not task_id or root is None:
         return set()
     return set(_task_edited_file_checkouts(variables).get(task_id, {}).get(root, []))
+
+
+def task_edited_checkout_paths(
+    variables: dict[str, Any], task_id: str
+) -> frozenset[tuple[str, str]]:
+    """Return exact checkout/path pairs recorded for this task only."""
+    return frozenset(
+        (root, path)
+        for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
+        for path in files
+    )
+
+
+def other_task_edited_checkout_paths(
+    variables: dict[str, Any],
+    task_id: str,
+    historical_exempt_task_ids: frozenset[str] = frozenset(),
+) -> frozenset[tuple[str, str]]:
+    """Return other-task pairs, retaining live paths for every other task."""
+    return frozenset(
+        (root, path)
+        for ledger_name in (
+            "task_edited_file_checkouts",
+            "task_edited_file_checkouts_history",
+        )
+        for other_task_id, checkouts in _task_edited_file_checkouts(variables, ledger_name).items()
+        if other_task_id != task_id
+        and not (
+            ledger_name == "task_edited_file_checkouts_history"
+            and other_task_id in historical_exempt_task_ids
+        )
+        for root, files in checkouts.items()
+        for path in files
+    )
 
 
 def task_edited_file_times(variables: dict[str, Any], task_id: str) -> dict[str, float]:

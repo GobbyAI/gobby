@@ -31,13 +31,17 @@ def extract_edit_paths(
     tool_name: str,
     arguments: dict[str, Any],
     repo_path: str,
+    *,
+    require_proven_checkout: bool = False,
 ) -> set[str]:
-    """Extract repository-relative paths edited by one provider tool call."""
+    """Extract edits, retaining call-time checkout provenance when required."""
     values: set[str] = set()
     for key in _PATH_KEYS:
         value = arguments.get(key)
         if isinstance(value, str) and value:
-            values.add(normalize_known_path(value, repo_path))
+            resolved = resolve_edit_path(value, arguments, repo_path, require_proven_checkout)
+            if resolved is not None:
+                values.add(resolved)
     if tool_name in {"apply_patch", "exec"}:
         raw = arguments.get("raw") or arguments.get("patch") or arguments.get("input")
         if isinstance(raw, str):
@@ -48,12 +52,51 @@ def extract_edit_paths(
             for line in raw.splitlines():
                 for prefix in ("*** Add File: ", "*** Delete File: ", "*** Update File: "):
                     if line.startswith(prefix):
-                        values.add(normalize_known_path(line.removeprefix(prefix), repo_path))
+                        resolved = resolve_edit_path(
+                            line.removeprefix(prefix), arguments, repo_path, require_proven_checkout
+                        )
+                        if resolved is not None:
+                            values.add(resolved)
     return values
 
 
-def match_task_file(path: str, task_files: set[str]) -> str | None:
-    """Map a path from any checkout to the matching task-attributed file."""
+def resolve_edit_path(
+    path: str,
+    arguments: dict[str, Any],
+    repo_path: str,
+    require_proven_checkout: bool,
+) -> str | None:
+    """Resolve a relative edit only when the tool call names an absolute cwd."""
+    if not require_proven_checkout:
+        return normalize_known_path(path, repo_path)
+    if os.path.isabs(path):
+        return os.path.realpath(path)
+    for key in ("workdir", "cwd"):
+        cwd = arguments.get(key)
+        if isinstance(cwd, str) and os.path.isabs(cwd):
+            return os.path.realpath(os.path.join(cwd, path))
+    return None
+
+
+def match_task_file(
+    path: str,
+    task_files: set[str],
+    repo_path: str | None = None,
+    task_checkout_paths: frozenset[tuple[str, str]] | None = None,
+) -> str | None:
+    """Map an edit only from an exact task-attributed checkout/path pair."""
+    if task_checkout_paths is not None:
+        if not os.path.isabs(path):
+            return None
+        absolute = os.path.realpath(path)
+        for root, task_path in task_checkout_paths:
+            try:
+                relative = os.path.relpath(absolute, root).replace(os.sep, "/")
+            except ValueError:
+                continue
+            if relative == task_path and relative in task_files:
+                return relative
+        return None
     if path in task_files:
         return path
     if not (os.path.isabs(path) or path.startswith("../")):

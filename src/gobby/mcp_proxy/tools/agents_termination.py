@@ -122,21 +122,37 @@ async def _complete_self_terminated_run(
 
     if run.terminal_id and not debug:
         from gobby.agents.capture import terminate_managed_runtime_async
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
         from gobby.storage.agents import LocalAgentRunManager, TerminalAction
         from gobby.storage.terminals import TerminalManager
-        from gobby.terminals.runtime import TerminalRuntime
-        from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+        from gobby.terminals.runtime import UnregisteredBackendError
 
         manager = LocalAgentRunManager(kill_db)
         terminal_manager = TerminalManager(kill_db)
         terminal = terminal_manager.get(run.terminal_id)
         registry = getattr(runner, "terminal_runtime_registry", None)
-        runtime: TerminalRuntime
-        if terminal is not None and registry is not None:
+        if terminal is None:
+            return {
+                "success": False,
+                "run_id": run.id,
+                "error": "agent run has no terminal",
+                "error_code": "kill_failed",
+            }
+        if registry is None:
+            return {
+                "success": False,
+                "run_id": run.id,
+                "error": "terminal runtime registry unavailable",
+                "error_code": "terminal_runtime_unavailable",
+            }
+        try:
             runtime = registry.resolve(terminal.backend)
-        else:
-            runtime = TmuxTerminalRuntime(TmuxSessionManager())
+        except UnregisteredBackendError:
+            return {
+                "success": False,
+                "run_id": run.id,
+                "error": f"unsupported terminal backend: {terminal.backend}",
+                "error_code": "unsupported_terminal_backend",
+            }
 
         async def terminalize(
             _action: TerminalAction,
@@ -148,22 +164,17 @@ async def _complete_self_terminated_run(
 
         termination_error: str | None
         termination_code: str | None
-        if terminal is None:
-            termination_ok = False
-            termination_error = "agent run has no terminal"
-            termination_code = "kill_failed"
-        else:
-            termination = await terminate_managed_runtime_async(
-                storage=manager,
-                run=run,
-                terminal=terminal,
-                runtime=runtime,
-                action="complete",
-                terminalize=terminalize,
-            )
-            termination_ok = termination.success
-            termination_error = termination.error
-            termination_code = termination.error_code
+        termination = await terminate_managed_runtime_async(
+            storage=manager,
+            run=run,
+            terminal=terminal,
+            runtime=runtime,
+            action="complete",
+            terminalize=terminalize,
+        )
+        termination_ok = termination.success
+        termination_error = termination.error
+        termination_code = termination.error_code
         if not termination_ok:
             return {
                 "success": False,

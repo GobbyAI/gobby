@@ -29,7 +29,6 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.agents.watchdog.composer_probe import composer_holds_draft
 from gobby.config.tmux import TmuxConfig
@@ -111,13 +110,11 @@ class AgentLifecycleMonitor:
 
             tmux_config = get_configured_tmux_config()
         self._tmux_config = tmux_config
-        self._tmux = TmuxSessionManager(config=self._tmux_config)
         if terminal_services is None:
             from gobby.terminals.leases import TerminalLeaseRegistry
 
             terminal_services = build_terminal_services(
                 db,
-                self._tmux,
                 TerminalLeaseRegistry(),
             )
         self._terminal_services = terminal_services
@@ -147,7 +144,6 @@ class AgentLifecycleMonitor:
         )
         self._terminal_prompt_monitor = TerminalPromptMonitor(
             get_active_terminal_runs=self._get_active_terminal_runs,
-            get_tmux=lambda: self._tmux,
             prompt_detector=self._prompt_detector,
             idle_detector=self._idle_detector,
             loop_tracker=self._loop_tracker,
@@ -179,7 +175,6 @@ class AgentLifecycleMonitor:
         self._reconciliation = LifecycleReconciliation(
             agent_run_manager=agent_run_manager,
             db=db,
-            tmux=self._tmux,
             cleanup_handler=self._cleanup_handler,
             run_db=self._run_db,
             terminal_manager=self._terminal_services.manager,
@@ -190,7 +185,6 @@ class AgentLifecycleMonitor:
         self._health_monitor = AgentHealthMonitor(
             agent_run_manager=agent_run_manager,
             db=db,
-            tmux=self._tmux,
             get_session_manager=lambda: self._session_manager,
             stall_classifier=self._stall_classifier,
             cleanup_handler=self._cleanup_handler,
@@ -202,7 +196,6 @@ class AgentLifecycleMonitor:
         self._memory_watchdog = MemoryWatchdogHandler(
             agent_run_manager=agent_run_manager,
             db=db,
-            tmux=self._tmux,
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
             run_db=run_db,
@@ -212,7 +205,6 @@ class AgentLifecycleMonitor:
             agent_run_manager=agent_run_manager,
             db=db,
             get_session_manager=lambda: self._session_manager,
-            tmux=self._tmux,
             idle_detector=self._idle_detector,
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,

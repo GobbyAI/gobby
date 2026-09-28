@@ -1,4 +1,4 @@
-"""``terminal_list`` is machine-wide, project-narrowed, paged, and pane-enriched (#21190)."""
+"""Terminal inventory is machine-wide, project-narrowed, and paged."""
 
 from __future__ import annotations
 
@@ -11,14 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.tmux.session_manager import TmuxPaneInfo
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.leases import TerminalLeaseRegistry
 from tests.fixtures.isolated_checkout import patch_local_machine_id
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending
 
 pytestmark = pytest.mark.unit
@@ -72,25 +71,6 @@ def seed_pane(manager: TerminalManager, project_id: str, pane_id: str, title: st
     )
 
 
-def pane_for(row: Any, **overrides: Any) -> TmuxPaneInfo:
-    values: dict[str, Any] = {
-        "socket_path": SOCKET,
-        "server_pid": 6051,
-        "server_start_time": 1787385464,
-        "session_name": row.session_name,
-        "window_id": "@1",
-        "window_name": "zsh",
-        "pane_id": row.locator["pane_id"],
-        "pane_pid": 42,
-        "pane_title": "MBP.local",
-        "pane_dead": False,
-        "pane_command": "vim",
-        "pane_path": "/Users/dev/projects/gobby",
-    }
-    values.update(overrides)
-    return TmuxPaneInfo(**values)
-
-
 async def listed(server: WebSocketServer, request: dict[str, Any]) -> dict[str, Any]:
     ws = MockWebSocket()
     await server._handle_terminal_list(ws, {"type": "terminal_list", **request})
@@ -98,7 +78,7 @@ async def listed(server: WebSocketServer, request: dict[str, Any]) -> dict[str, 
 
 
 @pytest.mark.asyncio
-async def test_list_without_a_project_is_machine_wide_and_carries_pane_metadata(
+async def test_list_without_a_project_is_machine_wide_without_tmux_probes(
     server: WebSocketServer,
     manager: TerminalManager,
     sample_project: dict[str, Any],
@@ -107,29 +87,16 @@ async def test_list_without_a_project_is_machine_wide_and_carries_pane_metadata(
     other = project_manager.create(name="other-project")
     here = seed_pane(manager, sample_project["id"], "%1", "75")
     elsewhere = seed_pane(manager, other.id, "%2", "100")
-    sweep = AsyncMock(return_value={here.locator_key: pane_for(here)})
-
-    with patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep):
-        page = await listed(server, {"request_id": "init"})
+    page = await listed(server, {"request_id": "init"})
 
     assert page["type"] == "terminal_list"
     assert page["request_id"] == "init"
     assert page["next_cursor"] is None
     by_id = {item["terminal_id"]: item for item in page["items"]}
     assert set(by_id) == {here.id, elsewhere.id}
-    enriched = by_id[here.id]
-    assert enriched["name"] == "75"
-    assert enriched["socket"] == "default"
-    assert (enriched["pane_command"], enriched["pane_path"]) == ("vim", "/Users/dev/projects/gobby")
-    assert (enriched["window_name"], enriched["pane_pid"], enriched["pane_title"]) == (
-        "zsh",
-        42,
-        "MBP.local",
-    )
-    assert "name" not in by_id[elsewhere.id]
-    sweep.assert_awaited_once()
-    assert sweep.await_args is not None
-    assert sweep.await_args.kwargs["machine_id"] == LOCAL_MACHINE_ID
+    assert by_id[here.id]["backend"] == "tmux"
+    assert by_id[elsewhere.id]["backend"] == "tmux"
+    assert "pane_command" not in by_id[here.id]
 
 
 @pytest.mark.asyncio
@@ -145,12 +112,7 @@ async def test_list_with_a_project_keeps_that_project_and_unscoped_terminals(
     seed_pane(manager, other.id, "%2", "theirs")
     shared = seed_pane(manager, unscoped.id, "%3", "shared")
 
-    with (
-        patch(
-            "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", AsyncMock(return_value={})
-        ),
-        patch("gobby.servers.websocket.terminal_ws.GLOBAL_PROJECT_ID", unscoped.id),
-    ):
+    with patch("gobby.servers.websocket.terminal_ws.GLOBAL_PROJECT_ID", unscoped.id):
         page = await listed(server, {"request_id": "init", "project_id": sample_project["id"]})
 
     assert {item["terminal_id"] for item in page["items"]} == {mine.id, shared.id}
@@ -162,35 +124,17 @@ async def test_list_pages_through_the_cursor_it_hands_out(
 ) -> None:
     rows = [seed_pane(manager, sample_project["id"], f"%{n}", str(n)) for n in range(3)]
 
-    with patch(
-        "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", AsyncMock(return_value={})
-    ):
-        first = await listed(server, {"request_id": "init", "limit": 2})
-        assert [item["terminal_id"] for item in first["items"]] == [rows[0].id, rows[1].id]
-        assert first["next_cursor"]
-        second = await listed(
-            server, {"request_id": "page", "limit": 2, "cursor": first["next_cursor"]}
-        )
-        assert [item["terminal_id"] for item in second["items"]] == [rows[2].id]
-        assert second["next_cursor"] is None
-        broken = await listed(server, {"request_id": "bad", "cursor": "not-a-cursor"})
+    first = await listed(server, {"request_id": "init", "limit": 2})
+    assert [item["terminal_id"] for item in first["items"]] == [rows[0].id, rows[1].id]
+    assert first["next_cursor"]
+    second = await listed(
+        server, {"request_id": "page", "limit": 2, "cursor": first["next_cursor"]}
+    )
+    assert [item["terminal_id"] for item in second["items"]] == [rows[2].id]
+    assert second["next_cursor"] is None
+    broken = await listed(server, {"request_id": "bad", "cursor": "not-a-cursor"})
 
     assert broken == {"type": "terminal_error", "code": "invalid_cursor", "request_id": "bad"}
-
-
-@pytest.mark.asyncio
-async def test_list_still_answers_when_discovery_fails(
-    server: WebSocketServer, manager: TerminalManager, sample_project: dict[str, Any]
-) -> None:
-    row = seed_pane(manager, sample_project["id"], "%1", "1")
-
-    with patch(
-        "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals",
-        AsyncMock(side_effect=RuntimeError("tmux exploded")),
-    ):
-        page = await listed(server, {"request_id": "init"})
-
-    assert [item["terminal_id"] for item in page["items"]] == [row.id]
 
 
 @pytest.mark.asyncio
@@ -209,14 +153,11 @@ async def test_list_keeps_the_event_loop_free_while_the_database_answers(
         return page_query(*args, **kwargs)
 
     monkeypatch.setattr(manager, "list_page", list_page_once_released)
-    with patch(
-        "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", AsyncMock(return_value={})
-    ):
-        reply = asyncio.create_task(listed(server, {"request_id": "init"}))
-        assert await asyncio.to_thread(query_started.wait, 5), "the page query never ran"
-        assert not reply.done(), "the page query held the event loop"
-        release_query.set()
-        page = await reply
+    reply = asyncio.create_task(listed(server, {"request_id": "init"}))
+    assert await asyncio.to_thread(query_started.wait, 5), "the page query never ran"
+    assert not reply.done(), "the page query held the event loop"
+    release_query.set()
+    page = await reply
 
     assert page["type"] == "terminal_list"
     assert page["items"] == []
@@ -236,11 +177,8 @@ async def test_list_states_filter_admits_orphaned_rows(
     orphan = seed_pane(manager, sample_project["id"], "%2", "orphan")
     assert manager.mark_orphaned(orphan.id) is not None
 
-    with patch(
-        "gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", AsyncMock(return_value={})
-    ):
-        default = await listed(server, {"request_id": "default"})
-        widened = await listed(server, {"request_id": "wide", "states": ["live", "orphaned"]})
+    default = await listed(server, {"request_id": "default"})
+    widened = await listed(server, {"request_id": "wide", "states": ["live", "orphaned"]})
 
     assert [item["terminal_id"] for item in default["items"]] == [live.id]
     assert {item["terminal_id"]: item["state"] for item in widened["items"]} == {
@@ -251,30 +189,6 @@ async def test_list_states_filter_admits_orphaned_rows(
 
 
 @pytest.mark.asyncio
-async def test_list_carries_attached_client_count(
-    server: WebSocketServer, manager: TerminalManager, sample_project: dict[str, Any]
-) -> None:
-    detached = seed_pane(manager, sample_project["id"], "%1", "detached")
-    attached = seed_pane(manager, sample_project["id"], "%2", "attached")
-    sweep = AsyncMock(
-        return_value={
-            detached.locator_key: pane_for(detached, session_attached=0),
-            attached.locator_key: pane_for(attached, session_attached=2),
-        }
-    )
-
-    with patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep):
-        page = await listed(server, {"request_id": "init"})
-
-    by_id = {item["terminal_id"]: item for item in page["items"]}
-    assert (by_id[detached.id]["attached_clients"], by_id[attached.id]["attached_clients"]) == (
-        0,
-        2,
-    )
-    assert by_id[detached.id]["ownership"] == "external"
-
-
-@pytest.mark.asyncio
 async def test_list_rejects_unknown_states(server: WebSocketServer) -> None:
     for states in (["live", "zombie"], [], "live", [7]):
         page = await listed(server, {"request_id": "bad", "states": states})
@@ -282,7 +196,7 @@ async def test_list_rejects_unknown_states(server: WebSocketServer) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_names_the_foreground_command_for_both_backends(
+async def test_list_names_the_native_foreground_command(
     server: WebSocketServer,
     manager: TerminalManager,
     sample_project: dict[str, Any],
@@ -303,7 +217,6 @@ async def test_list_names_the_foreground_command_for_both_backends(
         host_epoch="epoch-1",
     )
     assert promoted is not None
-    sweep = AsyncMock(return_value={pane.locator_key: pane_for(pane)})
     table = "4242 5150 -zsh\n5150 5150 /usr/local/bin/nvim\n"
     ps = MagicMock(
         return_value=subprocess.CompletedProcess(args=["ps"], returncode=0, stdout=table, stderr="")
@@ -313,20 +226,16 @@ async def test_list_names_the_foreground_command_for_both_backends(
     process.return_value.cwd.return_value = "/srv/app"
 
     with (
-        patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
         patch("gobby.terminals.foreground.spawn.run", ps),
         patch("gobby.terminals.foreground.psutil.Process", process),
     ):
         page = await listed(server, {"request_id": "commands"})
 
     by_id = {item["terminal_id"]: item for item in page["items"]}
-    # tmux reports its pane's own current command; a native row is probed from
-    # the shell pid the host recorded, and both land on one field.
-    assert by_id[pane.id]["command"] == "vim"
+    # Historical tmux rows are listed without querying a live pane.
+    assert by_id[pane.id]["command"] is None
     assert by_id[promoted.id]["command"] == "nvim"
-    # The working directory follows the same split: tmux's pane path, and the
-    # native shell's own directory.
-    assert by_id[pane.id]["cwd"] == "/Users/dev/projects/gobby"
+    assert by_id[pane.id]["cwd"] is None
     assert by_id[promoted.id]["cwd"] == "/srv/app"
     process.assert_called_once_with(4242)
 
@@ -351,7 +260,6 @@ async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
         host_epoch="epoch-1",
     )
     assert promoted is not None
-    sweep = AsyncMock(return_value={})
     # The process table no longer lists the shell, so no live foreground resolves.
     ps = MagicMock(
         return_value=subprocess.CompletedProcess(
@@ -360,53 +268,9 @@ async def test_list_falls_back_to_the_spawn_shell_for_a_native_row(
     )
 
     with (
-        patch("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep),
         patch("gobby.terminals.foreground.subprocess.run", ps),
     ):
         page = await listed(server, {"request_id": "spawn-shell"})
 
     by_id = {item["terminal_id"]: item for item in page["items"]}
     assert by_id[promoted.id]["command"] == "zsh"
-
-
-@pytest.mark.asyncio
-async def test_a_stalled_session_query_stays_inside_the_sweep_budget(
-    server: WebSocketServer, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    release = threading.Event()
-
-    def stalled_list(**_query: Any) -> list[Any]:
-        release.wait(5)
-        return []
-
-    listed_sessions = MagicMock(side_effect=stalled_list)
-    server.session_manager = MagicMock(list=listed_sessions)
-    monkeypatch.setattr("gobby.servers.websocket.terminal_ws.TMUX_SWEEP_BUDGET_SECONDS", 0.05)
-    sweep = AsyncMock(return_value={})
-    monkeypatch.setattr("gobby.servers.websocket.terminal_ws.sweep_tmux_terminals", sweep)
-    manager = server.terminal_manager
-
-    # The query stalls: the list falls back to the database inside the budget,
-    # and the next list joins the stalled sweep instead of queueing another.
-    first = await asyncio.wait_for(server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID), 1)
-    second = await asyncio.wait_for(server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID), 1)
-    assert (first, second) == ({}, {})
-    assert listed_sessions.call_count == 1
-    sweep.assert_not_awaited()
-
-    # A caller that goes away (a closed socket) leaves the shared sweep running.
-    stalled = server._tmux_sweep
-    assert stalled is not None
-    caller = asyncio.ensure_future(server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID))
-    await asyncio.sleep(0)
-    caller.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await caller
-    assert not stalled.done()
-
-    # Once it settles, the next list starts a fresh sweep.
-    release.set()
-    await stalled
-    sweep.assert_awaited_once()
-    await server.sweep_tmux_panes(manager, LOCAL_MACHINE_ID)
-    assert listed_sessions.call_count == 2

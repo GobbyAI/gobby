@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +20,7 @@ from gobby.tasks.state_semantics import (
     is_task_actionable,
     is_task_reviewable,
 )
+from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.session_context import get_current_session_id
 
 from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
@@ -229,6 +230,54 @@ class TaskSpawnLease:
             self._mutex.release()
 
 
+async def admit_task_spawn(
+    lease: TaskSpawnLease,
+    *,
+    run_storage: Any,
+    task_id: str | None,
+    task_ref: str | None,
+    requested_agent_name: str | None,
+    parent_session_id: str,
+    cleanup: Callable[[], Awaitable[None]],
+) -> dict[str, Any] | None:
+    """Check task idempotency around lease acquisition and roll back cancellation."""
+
+    async def active_response() -> dict[str, Any] | None:
+        if not task_id or not run_storage:
+            return None
+        return await asyncio.to_thread(
+            active_task_response_if_blocked,
+            run_storage=run_storage,
+            task_id=task_id,
+            task_ref=task_ref,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        )
+
+    cleanup_started = False
+    try:
+        response = await active_response()
+        if response is not None:
+            cleanup_started = True
+            await run_to_completion(cleanup())
+            return response
+        response = await run_thread_to_completion(lease.acquire)
+        if response is not None:
+            cleanup_started = True
+            await run_to_completion(cleanup())
+            return response
+        response = await active_response()
+        if response is not None:
+            cleanup_started = True
+            await run_to_completion(cleanup())
+            return response
+    except BaseException:
+        if not cleanup_started:
+            await run_to_completion(cleanup())
+        raise
+    return None
+
+
 def active_task_spawn_blocker(
     run_storage: Any,
     task_id: str,
@@ -327,6 +376,7 @@ async def reserve_agent_slot(
     db: Any | None,
     project_id: str,
     project_path: str,
+    on_entry_cancel: Callable[[], Awaitable[None]] | None = None,
 ) -> AsyncIterator[dict[str, Any] | None]:
     if db is None:
         yield None
@@ -334,14 +384,22 @@ async def reserve_agent_slot(
 
     caller_session_id = get_current_session_id()
     lock = _SLOT_LOCKS.setdefault(project_id, asyncio.Lock())
-    async with lock:
-        yield await asyncio.to_thread(
-            agent_slot_cap_refusal,
-            db,
-            project_id=project_id,
-            project_path=project_path,
-            caller_session_id=caller_session_id,
-        )
+    entered = False
+    try:
+        async with lock:
+            response = await run_thread_to_completion(
+                agent_slot_cap_refusal,
+                db,
+                project_id=project_id,
+                project_path=project_path,
+                caller_session_id=caller_session_id,
+            )
+            entered = True
+            yield response
+    except asyncio.CancelledError:
+        if not entered and on_entry_cancel is not None:
+            await run_to_completion(on_entry_cancel())
+        raise
 
 
 def active_task_response_if_blocked(

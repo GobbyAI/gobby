@@ -44,7 +44,6 @@ def _handler(
         agent_run_manager=MagicMock(),
         db=MagicMock(),
         get_session_manager=lambda: MagicMock(),
-        tmux=MagicMock(),
         idle_detector=MagicMock(),
         prompt_detector=MagicMock(),
         stall_classifier=MagicMock(),

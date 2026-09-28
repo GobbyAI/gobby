@@ -1042,8 +1042,7 @@ def test_compact_end_retains_instance_expired_end_deletes(
         )
 
     handler = _Handler()
-    with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        compact = handler.handle_session_end(_event(SessionEndReason.COMPACT))
+    compact = handler.handle_session_end(_event(SessionEndReason.COMPACT))
     assert compact.decision == "allow"
     retained = manager.get_for_session(S1)
     assert retained is not None
@@ -1051,8 +1050,7 @@ def test_compact_end_retains_instance_expired_end_deletes(
     assert retained.current_step == "implement"
     assert retained.variables == {"goal": "ship", "progress": 2}
 
-    with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        expired = handler.handle_session_end(_event(SessionEndReason.CLEAR))
+    expired = handler.handle_session_end(_event(SessionEndReason.CLEAR))
     assert expired.decision == "allow"
     assert manager.get_for_session(S1) is None
 

@@ -20,7 +20,6 @@ from gobby.utils.machine_id import require_machine_id
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
     from gobby.agents.stall_classifier import StallClassifier
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.hub.protocol import HubDatabase
@@ -43,7 +42,6 @@ class AgentHealthMonitor:
         self,
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
-        tmux: TmuxSessionManager,
         get_session_manager: Callable[[], SessionManager | None],
         stall_classifier: StallClassifier,
         cleanup_handler: AgentCleanupHandler,
@@ -54,7 +52,6 @@ class AgentHealthMonitor:
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
-        self._tmux = tmux
         self._get_session_manager = get_session_manager
         self._stall_classifier = stall_classifier
         self._cleanup_handler = cleanup_handler
