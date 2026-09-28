@@ -373,6 +373,11 @@ fn only_the_input_grant_holder_themes_a_granted_pane() {
         answer.contains(LIGHT.fg_answer) && answer.contains(LIGHT.bg_answer),
         "{screen}"
     );
+    // Nor can it recolour the next spawn that brings no theme of its own.
+    let agent = host.spawn(None).unwrap();
+    host.wait_for(&agent, "the holder's theme on a new spawn", |s| {
+        LIGHT.shown_by(s)
+    });
 
     // Moving the grant applies the new holder's declaration.
     host.grant(&pane, "att-other");

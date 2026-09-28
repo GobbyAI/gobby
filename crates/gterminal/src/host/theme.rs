@@ -5,8 +5,9 @@
 //! declaration a pane shows: with no grant any declaration applies, and with a
 //! grant only the holder's does. A stale or observing stream therefore cannot
 //! undo the controlling client's newer theme. When the daemon moves the grant,
-//! the new holder's declaration applies. Every declaration also becomes the
-//! host's `latest_theme`, which a spawn without its own theme starts with.
+//! the new holder's declaration applies. Every declaration that applies also
+//! becomes the host's `latest_theme`, which a spawn without its own theme
+//! starts with.
 
 use super::state::{HostState, Inner, TerminalSlot};
 use crate::terminal_theme::ThemeDeclaration;
@@ -28,12 +29,16 @@ impl HostState {
         attachment.declared_theme = Some(theme.clone());
         let host_terminal_id = attachment.host_terminal_id.clone();
         let bound = attachment.client_attachment_id.clone();
-        inner.latest_theme = Some(theme.clone());
-        if let Some(slot) = native_slot(&inner, &host_terminal_id) {
-            if slot.input_grant.is_none() || slot.input_grant == bound {
-                apply(slot, &theme);
-            }
+        let Some(slot) = native_slot(&inner, &host_terminal_id) else {
+            return Ok(());
+        };
+        if slot.input_grant.is_some() && slot.input_grant != bound {
+            return Ok(());
         }
+        apply(slot, &theme);
+        // Only a declaration that applied seeds later spawns, so a stale or
+        // observing stream cannot recolour them.
+        inner.latest_theme = Some(theme);
         Ok(())
     }
 }
