@@ -85,6 +85,7 @@ class SessionLivenessMonitor:
         poll_interval: float = _DEFAULT_POLL_INTERVAL,
         terminal_manager: Any | None = None,
         startup_ready: Callable[[], bool] | None = None,
+        live_host_epoch: Callable[[], str | None] | None = None,
     ) -> None:
         self._session_manager = session_storage
         self._dispatch_summaries_fn = dispatch_summaries_fn
@@ -93,6 +94,7 @@ class SessionLivenessMonitor:
         self._poll_interval = poll_interval
         self.terminal_manager = terminal_manager
         self._startup_ready = startup_ready
+        self._live_host_epoch = live_host_epoch or (lambda: None)
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}
@@ -360,6 +362,7 @@ class SessionLivenessMonitor:
                     terminal_id=terminal_id,
                     machine_id=machine_id,
                     observed_updated_at=observed_updated_at,
+                    live_host_epoch=self._live_host_epoch(),
                 )
         except Exception:
             logger.warning(
