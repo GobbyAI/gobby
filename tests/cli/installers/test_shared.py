@@ -29,6 +29,7 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_json,
     remove_mcp_server_toml,
 )
+from gobby.cli.installers.mcp_config_shared import _resolved_gobby_mcp_command
 from gobby.cli.installers.shared import (
     install_cli_content,
     install_global_hooks,
@@ -581,7 +582,7 @@ class TestConfigureMcpServerToml:
 
         content = config_path.read_text()
         assert "[mcp_servers.gobby]" in content
-        assert 'command = "gobby"' in content
+        assert f"command = {json.dumps(_resolved_gobby_mcp_command())}" in content
         assert 'args = ["mcp-server"]' in content
 
     def test_configure_existing_toml_no_mcp(self, temp_dir: Path) -> None:

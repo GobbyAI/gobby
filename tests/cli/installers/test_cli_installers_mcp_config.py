@@ -21,8 +21,10 @@ from gobby.cli.installers.mcp_config import (
     remove_mcp_server_toml,
     remove_project_mcp_server,
 )
-from gobby.cli.installers.mcp_config_json import _resolved_gobby_mcp_command
-from gobby.cli.installers.mcp_config_shared import _remove_toml_table_block
+from gobby.cli.installers.mcp_config_shared import (
+    _remove_toml_table_block,
+    _resolved_gobby_mcp_command,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -310,8 +312,9 @@ class TestConfigureMCPServerTOML:
         assert "[mcp_servers.gobby]" in content
         parsed = tomllib.loads(content)
         assert parsed["mcp_servers"]["gobby"] == {
-            "command": "gobby",
+            "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
+            "required": True,
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
             "default_tools_approval_mode": "approve",
@@ -332,6 +335,7 @@ class TestConfigureMCPServerTOML:
         config = tmp_path / "config.toml"
         config.write_text(
             '[mcp_servers.gobby]\ncommand = "uv"\n'
+            "required = true\n"
             "startup_timeout_sec = 120\n"
             "tool_timeout_sec = 360\n"
             'default_tools_approval_mode = "approve"\n'
@@ -339,6 +343,32 @@ class TestConfigureMCPServerTOML:
         result = configure_mcp_server_toml(config)
         assert result["success"] is True
         assert result["already_configured"] is True
+
+    @pytest.mark.parametrize(
+        "resolved",
+        ["/opt/gobby/bin/gobby", "gobby"],
+        ids=["resolvable", "unresolvable"],
+    )
+    def test_repairs_bare_optional_gobby_server(self, tmp_path: Path, resolved: str) -> None:
+        """A required server must not depend on the launching CLI's PATH when gobby resolves."""
+        config = tmp_path / "config.toml"
+        config.write_text(
+            '[mcp_servers.gobby]\ncommand = "gobby"\nargs = ["mcp-server"]\n'
+            "startup_timeout_sec = 120\n"
+            "tool_timeout_sec = 360\n"
+            'default_tools_approval_mode = "approve"\n'
+        )
+        with patch(
+            "gobby.cli.installers.mcp_config_shared._resolved_gobby_mcp_command",
+            return_value=resolved,
+        ):
+            result = configure_mcp_server_toml(config)
+
+        assert result["success"] is True
+        assert result["updated"] is True
+        server = tomllib.loads(config.read_text())["mcp_servers"]["gobby"]
+        assert server["required"] is True
+        assert server["command"] == resolved
 
     def test_adds_missing_tool_timeout_to_existing_config(self, tmp_path: Path) -> None:
         config = tmp_path / "config.toml"
@@ -415,8 +445,9 @@ class TestConfigureMCPServerTOML:
         assert result["backup_path"] is not None
         parsed = tomllib.loads(config.read_text())
         assert parsed["mcp_servers"]["gobby"] == {
-            "command": "gobby",
+            "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
+            "required": True,
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
             "default_tools_approval_mode": "approve",
@@ -434,8 +465,9 @@ class TestConfigureMCPServerTOML:
         assert result["updated"] is True
         parsed = tomllib.loads(config.read_text())
         assert parsed["mcp_servers"]["gobby"] == {
-            "command": "gobby",
+            "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
+            "required": True,
             "startup_timeout_sec": 120,
             "tool_timeout_sec": 360,
             "default_tools_approval_mode": "approve",
@@ -446,6 +478,7 @@ class TestConfigureMCPServerTOML:
         config.write_text(
             '[mcp_servers.gobby]\ncommand = "uv"\n'
             'args = ["run", "--project", "/repo/gobby", "gobby", "mcp-server"]\n'
+            "required = true\n"
             "startup_timeout_sec = 120\n"
             "tool_timeout_sec = 360\n"
             'default_tools_approval_mode = "approve"\n'

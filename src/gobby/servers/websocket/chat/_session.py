@@ -13,7 +13,10 @@ from gobby.agents.sandbox import (
     web_chat_policy_mismatch_message,
     web_chat_sandbox_policy_hash,
 )
-from gobby.hooks.event_handlers._session_start.claims import preserve_task_claim_state
+from gobby.hooks.event_handlers._session_start.claims import (
+    inherited_mcp_proxy_ready,
+    preserve_task_claim_state,
+)
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.hook_types import SessionEndReason
 from gobby.servers.chat_session import ChatSession
@@ -289,6 +292,9 @@ class ChatSessionMixin:
             predecessor_id,
             predecessor_vars,
         )
+        proxy_ready = inherited_mcp_proxy_ready(predecessor_vars)
+        if proxy_ready:
+            sv_mgr.merge_variables(successor_id, proxy_ready)
         predecessor = session_manager.get(predecessor_id)
         if predecessor is not None:
             from gobby.sessions.title_lifecycle import apply_clear_successor_title

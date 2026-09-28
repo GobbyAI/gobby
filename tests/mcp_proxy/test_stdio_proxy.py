@@ -1,17 +1,21 @@
 """Focused bearer-auth tests for stdio daemon requests."""
 
+import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
+import httpx
 import pytest
 from mcp.client import Client
 from mcp.server.mcpserver import MCPServer
 
 from gobby.config.bootstrap import BootstrapConfig
-from gobby.mcp_proxy.stdio_proxy import DaemonProxy
+from gobby.mcp_proxy.models import ToolProxyErrorCode
+from gobby.mcp_proxy.stdio_proxy import BRIDGE_READY_RETRY_DELAYS_SECONDS, DaemonProxy
 from gobby.mcp_proxy.stdio_server import (
     StdioServerDependencies,
     _StdioMCPServer,
@@ -505,3 +509,113 @@ async def test_add_mcp_server_forwards_template_fields() -> None:
     delete_json = delete_call.kwargs.get("json") or {}
     delete_params = delete_call.kwargs.get("params") or {}
     assert delete_json.get("scope") == "project" or delete_params.get("scope") == "project"
+
+
+def _session_required_response() -> MagicMock:
+    return _response(
+        409,
+        {
+            "detail": {
+                "success": False,
+                "error_code": ToolProxyErrorCode.SESSION_REQUIRED.value,
+                "error": "session required",
+            }
+        },
+    )
+
+
+_ALL_RETRYABLE = len(BRIDGE_READY_RETRY_DELAYS_SECONDS) + 1
+
+
+def _bridge_ready_outcome(outcome: int | str) -> MagicMock | httpx.HTTPError:
+    if outcome == "no-session":
+        return _session_required_response()
+    if outcome == "down":
+        return httpx.ConnectError("connection refused")
+    if outcome == "slow":
+        return httpx.ReadTimeout("read timed out")
+    assert isinstance(outcome, int)
+    return _response(outcome)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcomes", "expected_log"),
+    [
+        pytest.param(
+            ["no-session", "no-session", 200],
+            "Bridge readiness reported after 2 retries",
+            id="retries-until-session-registers",
+        ),
+        pytest.param(
+            ["down", "down", 200],
+            "Bridge readiness reported after 2 retries",
+            id="retries-while-daemon-restarts",
+        ),
+        pytest.param(
+            ["slow", 200],
+            "Bridge readiness reported after 1 retries",
+            id="retries-after-request-timeout",
+        ),
+        pytest.param([200], None, id="reports-first-time"),
+        pytest.param([404], "Bridge readiness report failed", id="stops-on-other-failure"),
+        pytest.param(
+            ["no-session", "down", "slow"] * 3,
+            "Bridge readiness report gave up after 8 retries",
+            id="gives-up-after-bounded-retries",
+        ),
+        pytest.param(
+            ["no-session"] * _ALL_RETRYABLE,
+            None,
+            id="unhooked-client-gives-up-quietly",
+        ),
+    ],
+)
+async def test_bridge_ready_report_retries_transient_failures(
+    outcomes: list[int | str],
+    expected_log: str | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    outcomes = outcomes[:_ALL_RETRYABLE]
+    proxy = DaemonProxy(60887)
+    client = AsyncMock()
+    client.request = AsyncMock(side_effect=[_bridge_ready_outcome(o) for o in outcomes])
+
+    with (
+        caplog.at_level(logging.INFO),
+        patch("gobby.mcp_proxy.stdio_proxy.httpx.AsyncClient", return_value=client),
+        patch("gobby.mcp_proxy.stdio_proxy.asyncio.sleep", new=AsyncMock()) as sleep,
+    ):
+        await proxy.report_bridge_ready()
+
+    assert [c.args[:2] for c in client.request.await_args_list] == [
+        ("POST", f"{proxy.base_url}/api/mcp/bridge/ready")
+    ] * len(outcomes)
+    assert [c.args[0] for c in sleep.await_args_list] == [
+        0.0,
+        *BRIDGE_READY_RETRY_DELAYS_SECONDS[: len(outcomes) - 1],
+    ]
+    bridge_logs = [r.getMessage() for r in caplog.records if "Bridge readiness" in r.getMessage()]
+    if expected_log is None:
+        assert bridge_logs == []
+    else:
+        assert len(bridge_logs) == 1
+        assert bridge_logs[0].startswith(expected_log)
+
+
+@pytest.mark.asyncio
+async def test_stdio_server_reports_ready_only_after_client_lists_tools() -> None:
+    proxy = MagicMock(spec=DaemonProxy)
+    proxy.aclose = AsyncMock()
+    reported = asyncio.Event()
+    proxy.report_bridge_ready = AsyncMock(side_effect=reported.set)
+    server = _create_server_with_proxy(proxy)
+
+    async with Client(server) as client:
+        await asyncio.sleep(0)
+        assert not reported.is_set()
+        await client.list_tools()
+        await asyncio.wait_for(reported.wait(), timeout=1.0)
+
+    proxy.report_bridge_ready.assert_awaited_once_with()
+    proxy.aclose.assert_awaited_once_with()

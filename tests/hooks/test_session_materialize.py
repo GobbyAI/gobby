@@ -14,6 +14,7 @@ import psutil
 import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
+from gobby.hooks.event_handlers._session_start.claims import MCP_PROXY_READY_VARIABLE
 from gobby.hooks.event_handlers._session_start.context import classify_session_start_context
 from gobby.hooks.event_handlers._session_start.handoff import SessionStartResolution
 from gobby.hooks.event_handlers._session_start.materialize import activate_materialized_session
@@ -780,3 +781,26 @@ def test_schedule_clear_continuation_forwards_terminal_runtime(
         (prompt, "handoff_continuation"),
         (prompt, "handoff_continuation"),
     ]
+
+
+@pytest.mark.parametrize("predecessor_ready", [True, False])
+def test_clear_successor_inherits_the_predecessor_proxy_readiness(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    predecessor_ready: bool,
+) -> None:
+    """The stdio bridge reported once, to the predecessor; the successor shares its CLI process."""
+    staged = _staged_clear(
+        temp_db, tmp_path, monkeypatch, name=f"ready-{predecessor_ready}", pane="%105"
+    )
+    variables = SessionVariableManager(temp_db)
+    if predecessor_ready:
+        variables.merge_variables(staged.predecessor_id, {MCP_PROXY_READY_VARIABLE: True})
+    successor_id = staged.register("successor-ext")
+
+    _activate_clear_successor(staged, _handler(staged.sessions), successor_id, staged.resolution())
+
+    successor_vars = variables.get_variables(successor_id)
+    assert successor_vars[HANDOFF_PULL_PENDING_VARIABLE] is True
+    assert successor_vars.get(MCP_PROXY_READY_VARIABLE) is (True if predecessor_ready else None)

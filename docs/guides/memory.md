@@ -577,7 +577,10 @@ Current bundled memory rules:
 
 | Rule | Event | Behavior |
 | --- | --- | --- |
-| `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until `gobby:references/memory/overview.md` is loaded or its fetch failed. |
+| `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end that started with the Gobby MCP proxy connected, once, until `gobby:references/memory/overview.md` is loaded or its fetch failed. A turn that started before the proxy connected leaves the gate armed for the next one. |
+| `snapshot-mcp-proxy-ready-on-turn-start` | `turn_start` | Copies `_mcp_proxy_ready`, which the stdio bridge sets through `POST /api/mcp/bridge/ready` once the CLI lists its tools, into `_mcp_proxy_ready_this_turn`. A `/clear` successor inherits its predecessor's `_mcp_proxy_ready` when the clear binds, since it runs in the same CLI process. |
+| `note-mcp-proxy-missed-turn` | `turn_end` | Marks a turn that started before the proxy connected. |
+| `retry-gobby-tools-after-proxy-connects` | `turn_start` | After such a turn, once the proxy has connected, tells the agent once that the Gobby MCP proxy was not yet connected and to retry instead of treating them as absent. A proxy that never reports gets no retry text. |
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |

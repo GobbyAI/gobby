@@ -25,7 +25,11 @@ from gobby.sessions.handoff import (
 )
 
 from .agents import _seed_parent_turn_seq
-from .claims import preserve_task_claim_state, rehydrate_found_work_gate_arm
+from .claims import (
+    inherited_mcp_proxy_ready,
+    preserve_task_claim_state,
+    rehydrate_found_work_gate_arm,
+)
 from .context import (
     classify_session_start_context,
     stash_startup_claim,
@@ -187,8 +191,8 @@ def _bind_clear_successor(
             },
         )
         return False
+    predecessor_vars: dict[str, Any] = {}
     try:
-        predecessor_vars: dict[str, Any] = {}
         sv_mgr: Any | None = None
         try:
             from gobby.workflows.state_manager import SessionVariableManager
@@ -225,7 +229,7 @@ def _bind_clear_successor(
 
         SessionVariableManager(handler._session_manager.db).merge_variables(
             successor_id,
-            {HANDOFF_PULL_PENDING_VARIABLE: True},
+            {HANDOFF_PULL_PENDING_VARIABLE: True, **inherited_mcp_proxy_ready(predecessor_vars)},
         )
     except Exception as exc:
         handler.logger.warning(
