@@ -3218,6 +3218,60 @@ async def test_task_checkout_paths_reject_foreign_root_and_file(tmp_path: Path) 
     ]
 
 
+@pytest.mark.parametrize("tool_name", ["Edit", "apply_patch", "Bash"])
+async def test_relative_edits_require_call_time_checkout_proof(
+    tmp_path: Path, tool_name: str
+) -> None:
+    owned_a = tmp_path / "task-259-runbook"
+    foreign = tmp_path / "task-260-resources"
+    owned_b = tmp_path / "task-259-supply"
+    path = "docs/replenishment.md"
+    transcript = tmp_path / f"{tool_name}.jsonl"
+    records = []
+    for index, workdir in enumerate((owned_a, foreign, owned_b, None)):
+        if tool_name == "Edit":
+            arguments = {"file_path": path}
+        elif tool_name == "apply_patch":
+            arguments = {"patch": f"*** Begin Patch\n*** Update File: {path}\n*** End Patch"}
+        else:
+            arguments = {"command": _heredoc_write(path)}
+        if workdir is not None:
+            arguments["workdir"] = str(workdir)
+        records.append(
+            {
+                "type": "assistant",
+                "timestamp": (BASE_TIME + timedelta(seconds=index)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"edit-{index}",
+                            "name": tool_name,
+                            "input": arguments,
+                        }
+                    ],
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    session = replace(_session("claude", transcript), workspace_path=str(foreign))
+
+    evidence = await derive_transcript_evidence(
+        session,
+        BASE_TIME,
+        default_validation_detection_config(),
+        {path},
+        str(owned_a),
+        task_checkout_paths=frozenset({(str(owned_a), path), (str(owned_b), path)}),
+    )
+
+    assert [edit.timestamp for edit in evidence.edits] == [
+        BASE_TIME,
+        BASE_TIME + timedelta(seconds=2),
+    ]
+
+
 async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_path: Path) -> None:
     """Escaping paths only count when they end with a task file."""
     repo_path = tmp_path / "main"

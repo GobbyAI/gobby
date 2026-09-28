@@ -213,6 +213,48 @@ async def test_close_uses_only_target_task_checkout_paths_for_linked_session() -
 
 
 @pytest.mark.asyncio
+async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
+    session = _session(IMPLEMENTER, "2026-08-27T00:30:00+00:00")
+    ctx = _context(
+        [_link(IMPLEMENTER, "claimed", "2026-08-27T01:00:00+00:00")],
+        {IMPLEMENTER: session},
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    seen_paths: list[frozenset[tuple[str, str]]] = []
+
+    async def record(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        seen_paths.append(kwargs["task_checkout_paths"])
+        return TranscriptEvidence()
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        merged = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start="2026-08-27T01:00:00+00:00",
+            task_edited_files={"tests/test_change.py", "src/change.py"},
+            repo_path="/work/task-259",
+        )
+
+    assert merged == TranscriptEvidence()
+    ctx.session_var_manager.get_variables.assert_called_once_with(IMPLEMENTER)
+    assert seen_paths == [
+        frozenset(
+            {
+                ("/work/task-259", "tests/test_change.py"),
+                ("/work/task-259", "src/change.py"),
+            }
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_prelink_runs_are_attached_without_changing_credited_runs() -> None:
     window = "2026-08-27T02:10:00+00:00"
     ctx = _context(

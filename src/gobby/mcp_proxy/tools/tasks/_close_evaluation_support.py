@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
@@ -246,6 +247,11 @@ async def derive_close_transcript_evidence(
         effective_window: str | datetime | None = window_start
         variables = ctx.session_var_manager.get_variables(session_id)
         task_checkout_paths = task_edited_checkout_paths(variables, task_id)
+        if not task_checkout_paths:
+            # Commit fallback proves these task files in the checkout being closed.
+            # Transcript edits still need an absolute path or a call-time cwd.
+            root = os.path.realpath(repo_path)
+            task_checkout_paths = frozenset((root, path) for path in task_edited_files)
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         try:
