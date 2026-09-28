@@ -33,10 +33,11 @@ from gobby.terminals.host_client import (
     HostUnavailableError,
     encode_control_line,
 )
-from gobby.terminals.host_protocol import HostListRow, control_socket_path, frames_socket_path
-from gobby.terminals.host_reap import reap_recorded_process
+from gobby.terminals.host_protocol import control_socket_path, frames_socket_path
+from gobby.terminals.host_reap import reap_recorded_process, recorded_process_group_is_alive
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.key_bytes import encode_named_key
+from gobby.terminals.native_host_probe import NativeHostProbeMixin
 from gobby.terminals.runtime import (
     MAX_INPUT_PAYLOAD_BYTES,
     MAX_RAW_INPUT_PAYLOAD_BYTES,
@@ -201,7 +202,7 @@ __all__ = [
 ]
 
 
-class NativeTerminalRuntime:
+class NativeTerminalRuntime(NativeHostProbeMixin):
     """Control-client backend; does not write terminal rows."""
 
     backend: Literal["tmux", "native"] = "native"
@@ -727,26 +728,74 @@ class NativeTerminalRuntime:
             await self._client.revoke_input(host_id, attachment_id)
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
-        # An orphan's host epoch is gone: no host can address its PTY any more,
-        # and the failed epoch check used to escape terminal_kill, so the
-        # destroy-orphans dialog never worked (#22530). Reap the recorded
-        # process group instead and let the caller mark the row exited.
+        grace_ms = max(0, int(grace_seconds * 1000)) or 50
+        # Connect before the epoch compare: an unconnected client after a
+        # restart has no epoch yet and would make a current row look stale.
+        connect_error: Exception | None = None
+        try:
+            await self._ensure()
+        except (HostUnavailableError, ConnectionError, OSError) as exc:
+            connect_error = exc
         current_epoch = str(getattr(self._client, "host_epoch", "") or "")
         if not terminal.host_epoch or terminal.host_epoch != current_epoch:
-            if terminal.process:
-                await asyncio.to_thread(
-                    reap_recorded_process, terminal.process, grace_seconds=grace_seconds
-                )
+            await self._terminate_stale(terminal, grace_seconds, grace_ms, connect_error)
             return
         expected_epoch = self._require_current_epoch(terminal.host_epoch)
         host_terminal_id = self._host_id(terminal)
-        grace_ms = max(0, int(grace_seconds * 1000)) or 50
         try:
             await self._ensure()
             await self._client.kill(host_terminal_id, grace_ms=grace_ms)
         except (HostUnavailableError, ConnectionError, OSError):
             await self._reconnect_epoch(expected_epoch)
             await self._client.kill(host_terminal_id, grace_ms=grace_ms)
+
+    async def _terminate_stale(
+        self,
+        terminal: Terminal,
+        grace_seconds: float,
+        grace_ms: int,
+        connect_error: Exception | None,
+    ) -> None:
+        # A row without the current epoch (stale, missing, or pending) returns
+        # only on proof: a kill through the host id the current host lists, a
+        # strict listing without it (#22530: reap the recorded process), or a
+        # usable recorded process group verified dead. Anything else raises.
+        if connect_error is not None:
+            await self._reap_proven_dead(terminal, grace_seconds, connect_error)
+            return
+        try:
+            host_terminal_id = await self.find_host_terminal(
+                terminal.id, str(terminal.spawn_key or terminal.id)
+            )
+        except (HostUnavailableError, ConnectionError, OSError) as exc:
+            await self._reap_proven_dead(terminal, grace_seconds, exc)
+            return
+        if host_terminal_id is not None:
+            await self._client.kill(host_terminal_id, grace_ms=grace_ms)
+        elif terminal.process:
+            await asyncio.to_thread(
+                reap_recorded_process, terminal.process, grace_seconds=grace_seconds
+            )
+
+    async def _reap_proven_dead(
+        self, terminal: Terminal, grace_seconds: float, host_error: Exception
+    ) -> None:
+        # With the host unable to answer, only a usable recorded process group
+        # (a positive integer pgid) verified dead after the reap is proof.
+        # recorded_process_group_is_alive also answers false for a missing or
+        # invalid pgid, so that false is never read as death.
+        process = terminal.process
+        pgid = None if process is None else process.get("pgid")
+        if (
+            process is not None
+            and isinstance(pgid, int)
+            and not isinstance(pgid, bool)
+            and pgid > 0
+        ):
+            await asyncio.to_thread(reap_recorded_process, process, grace_seconds=grace_seconds)
+            if not recorded_process_group_is_alive(process):
+                return
+        raise host_error
 
     async def kill(self, host_terminal_id: str, grace_seconds: float = 0.05) -> None:
         """Kill one resource on the currently connected host."""
@@ -806,37 +855,6 @@ class NativeTerminalRuntime:
                 kill=self.kill,
             )
         return normalized_epoch
-
-    async def rebind_prepared(
-        self,
-        prepared: PreparedSpawn,
-        reservation_id: str | None = None,
-    ) -> None:
-        rows: list[HostListRow] = await self._client.list_terminals()
-        match = next(
-            (
-                row
-                for row in rows
-                if str(row.terminal_id) == str(prepared.terminal_id)
-                and str(row.spawn_key) == prepared.spawn_key
-            ),
-            None,
-        )
-        if match is None:
-            raise HostCommandError("not_found")
-        if match.observer_bind == "none":
-            raise HostCommandError("observer_bind_none")
-        rid = reservation_id
-        attaches = getattr(self._client, "attaches", None)
-        if isinstance(attaches, list):
-            attaches.append(rid)
-        if rid is not None:
-            locator = AttachLocator(
-                backend="native",
-                frame_host_epoch=str(getattr(self._client, "host_epoch", "") or ""),
-                host_terminal_id=match.host_terminal_id,
-            )
-            await self._bind_frames(locator, rid)
 
     def _require_current_epoch(self, expected_epoch: str | None) -> str:
         if not expected_epoch:

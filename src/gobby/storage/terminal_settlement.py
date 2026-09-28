@@ -271,6 +271,67 @@ class TerminalSettlementMixin:
             new_state="exited",
         )
 
+    def mark_exited_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        """CAS live or orphaned to exited only while the captured attempt owns the row."""
+        return self._cas(
+            terminal_id,
+            expected=("live", "orphaned"),
+            new_state="exited",
+            predicate_sql="""
+                AND attempt_generation = %s
+                AND attempt_started_at = %s
+            """,
+            predicate_params=(attempt_generation, attempt_started_at),
+        )
+
+    def record_orphan_identity(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        locator: Mapping[str, object],
+        locator_key: str,
+        host_epoch: str,
+        process: Mapping[str, object] | None,
+    ) -> Terminal | None:
+        """Record the current host identity of an orphan the host still lists.
+
+        ``locator`` must already be the normalized native locator. The captured
+        attempt pair guards against a row that moved on since it was reread.
+        """
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET locator = %s,
+                locator_key = %s,
+                host_epoch = %s,
+                process = COALESCE(process, '{}'::jsonb) || %s,
+                updated_at = now()
+            WHERE id = %s
+              AND state = 'orphaned'
+              AND attempt_generation = %s
+              AND attempt_started_at = %s
+            RETURNING *
+            """,
+            (
+                Jsonb(dict(locator)),
+                locator_key,
+                host_epoch,
+                Jsonb(dict(process or {})),
+                str(UUID(terminal_id)),
+                attempt_generation,
+                attempt_started_at,
+            ),
+        )
+        return _terminal(row)
+
     def mark_orphaned(self, terminal_id: str) -> Terminal | None:
         """CAS live to orphaned after native host-epoch or host-crash loss."""
         return self._cas(terminal_id, expected="live", new_state="orphaned")

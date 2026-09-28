@@ -13,6 +13,7 @@ from uuid import UUID
 
 from gobby.storage.terminals import Terminal, native_locator_key
 from gobby.terminals.host_reap import recorded_process_group_is_alive
+from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,18 @@ class SupportsIdentityLookup(Protocol):
     def mark_exited(self, terminal_id: str) -> Terminal | None: ...
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None: ...
+
+    def record_orphan_identity(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        locator: Any,
+        locator_key: str,
+        host_epoch: str,
+        process: Any,
+    ) -> Terminal | None: ...
 
     def merge_process_reap_record(
         self,
@@ -119,6 +132,46 @@ async def _settle_offloop(operation: Callable[[], Any]) -> Any:
         raise
 
 
+async def _record_listed_orphan(
+    terminal_manager: SupportsIdentityLookup,
+    durable: Terminal,
+    row: Any,
+    terminal_id: str,
+    host_epoch: str,
+) -> None:
+    host_terminal_id = str(getattr(row, "host_terminal_id", terminal_id))
+    process: dict[str, object] = {"host_terminal_id": host_terminal_id}
+    pgid = getattr(row, "pgid", None)
+    if isinstance(pgid, int):
+        process["pgid"] = pgid
+        start_time = getattr(row, "start_time", None)
+        if start_time is not None:
+            process["start_time"] = start_time
+    async with terminal_manager.settle_lock(durable.id):
+        current = await asyncio.to_thread(terminal_manager.get, durable.id)
+        if (
+            current is None
+            or current.state != "orphaned"
+            or current.spawn_key != durable.spawn_key
+            or current.attempt_generation != durable.attempt_generation
+            or current.attempt_started_at != durable.attempt_started_at
+            or in_doubt_spawns.holds(durable.id)
+        ):
+            return
+        await _settle_offloop(
+            partial(
+                terminal_manager.record_orphan_identity,
+                durable.id,
+                attempt_generation=current.attempt_generation,
+                attempt_started_at=current.attempt_started_at,
+                locator={"host_terminal_id": host_terminal_id},
+                locator_key=native_locator_key(host_epoch, host_terminal_id),
+                host_epoch=host_epoch,
+                process=process,
+            )
+        )
+
+
 async def reconcile_host_inventory(
     *,
     terminal_manager: SupportsIdentityLookup,
@@ -165,7 +218,9 @@ async def reconcile_host_inventory(
     for row in host_rows:
         terminal_id = _canonical_terminal_id(str(row.terminal_id))
         spawn_key = str(row.spawn_key)
-        if terminal_id is None:
+        # A held id's local prepare can still create or bind after this
+        # snapshot; its owner, not reconcile, decides the outcome.
+        if terminal_id is None or in_doubt_spawns.holds(terminal_id):
             continue
         durable = by_id.get(terminal_id)
         if durable is not None and durable.spawn_key != spawn_key:
@@ -227,9 +282,13 @@ async def reconcile_host_inventory(
                         start_time=start_time,
                     )
                 )
+        elif durable.state == "orphaned":
+            # The host still lists this orphan: record its current identity so
+            # terminal_kill can address it. Reconcile never kills it here.
+            await _record_listed_orphan(terminal_manager, durable, row, terminal_id, host_epoch)
 
     for durable in db_rows:
-        if durable.id in seen:
+        if durable.id in seen or in_doubt_spawns.holds(durable.id):
             continue
         host_row = host_by_id.get((durable.id, str(durable.spawn_key)))
         if host_row is not None:

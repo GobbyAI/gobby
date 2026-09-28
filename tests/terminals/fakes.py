@@ -308,6 +308,31 @@ class MemoryTerminalStore:
         current.process = {**(current.process or {}), "pgid": pgid, "start_time": start_time}
         return current
 
+    def record_orphan_identity(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        locator: Mapping[str, object],
+        locator_key: str,
+        host_epoch: str,
+        process: Mapping[str, object] | None,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.state != "orphaned"
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        current.locator = dict(locator)
+        current.locator_key = locator_key
+        current.host_epoch = host_epoch
+        current.process = {**(current.process or {}), **(process or {})}
+        return current
+
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
         current = self.rows.get(terminal_id)
         if current is None:
@@ -638,7 +663,12 @@ class FakeRuntime:
             process = terminal.process or terminal.locator or {}
             host_terminal_id = process.get("host_terminal_id")
             if isinstance(host_terminal_id, str):
-                await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
+                mismatch = await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
+                if mismatch is not None:
+                    # The native runtime kills a stale-epoch row this host still
+                    # lists through the host id its strict listing returns.
+                    self.killed_host_ids.append(host_terminal_id)
+                self.killed_ids.add(terminal.id)
             return
         self.killed_ids.add(terminal.id)
         name = terminal.session_name or terminal.spawn_key
