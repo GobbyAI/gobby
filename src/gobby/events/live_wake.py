@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
 from gobby.agents.idle_detector import ComposerRead
+from gobby.sessions.handoff import PENDING_HANDOFF_VARIABLE
 from gobby.sessions.tmux_context import get_tmux_socket_path, parse_terminal_context_value
 from gobby.storage.sessions import LIVE_SESSION_STATUSES, PROTECTED_SESSION_STATUSES
+from gobby.workflows.reserved_variables import HANDOFF_TURN_END_PENDING_VARIABLE
 
 
 @dataclass(frozen=True)
@@ -121,5 +123,20 @@ def composer_occupied_result(session_id: str, *, method: str) -> dict[str, Any]:
         "method": method,
         "skipped": COMPOSER_OCCUPIED,
         "decline_reason": COMPOSER_OCCUPIED,
+        "ism_persisted": True,
+    }
+
+
+def handoff_delivery_skip(session_id: str, variables: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Keep wake input out of a composer a staged set_handoff dispatch owns."""
+    if variables.get(HANDOFF_TURN_END_PENDING_VARIABLE) is not True or not isinstance(
+        variables.get(PENDING_HANDOFF_VARIABLE), Mapping
+    ):
+        return None
+    return {
+        "session_id": session_id,
+        "delivered": False,
+        "method": "next_call_context",
+        "skipped": "handoff_delivery_pending",
         "ism_persisted": True,
     }

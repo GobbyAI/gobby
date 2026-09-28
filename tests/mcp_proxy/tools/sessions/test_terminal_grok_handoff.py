@@ -19,7 +19,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -131,7 +131,8 @@ async def _deliver(
         patch(f"{_DELIVERY}.mark_handoff_compact_continuation_pending", return_value=True),
         patch(f"{_DELIVERY}.clear_handoff_compact_continuation_pending", return_value=True),
         patch(f"{_DELIVERY}.clear_queued_context"),
-        patch(f"{_DELIVERY}.record_handoff_delivery", return_value=True),
+        patch(f"{_DELIVERY}._compact_receipt_exists", return_value=True),
+        patch(f"{_DELIVERY}._wait_for_compact_boundary", new_callable=AsyncMock),
         patch(
             f"{_DELIVERY}.schedule_codex_handoff_compact_continuation_readiness",
             return_value=True,

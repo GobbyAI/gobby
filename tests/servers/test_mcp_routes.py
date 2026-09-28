@@ -449,7 +449,7 @@ class FakeInternalManager:
 
 
 def _wire_workflow_proxy(server: HTTPServer) -> None:
-    """Dispatch through ToolProxyService, which wrapper calls need for workflow enforcement."""
+    """Dispatch through ToolProxyService; wrapper requests fail closed without it (#22961)."""
     mcp_manager = MagicMock()
     mcp_manager.project_id = None
     mcp_manager.session_manager = None

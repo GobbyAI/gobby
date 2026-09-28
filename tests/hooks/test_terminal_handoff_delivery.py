@@ -43,6 +43,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff import (
+    DISPATCH_OWNER,
     FAILED_HANDOFF_VARIABLE,
     FOUND_WORK_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -351,6 +352,7 @@ def test_unclaimed_completion_is_logged(caplog: pytest.LogCaptureFixture) -> Non
         PENDING_HANDOFF_VARIABLE: {
             "attempt_id": ATTEMPT_ID,
             "dispatch_started_at": "2026-09-03T21:47:00+00:00",
+            "dispatch_owner": DISPATCH_OWNER,
             "clear_session": False,
             "handoff_record_id": "handoff-1",
         },
@@ -1605,32 +1607,24 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
     assert claim_staged_handoff_delivery(hub_db, SESSION_ID, ATTEMPT_ID) is None
 
 
-async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
+async def test_tmux_pane_only_session_gets_no_continuation(
     hub_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Continuations are native-only; a session bound just to a tmux pane has no delivery path."""
     session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
-    tmux = MagicMock()
-    tmux.dispatch_keys = AsyncMock(return_value=True)
-    tmux.snapshot_lines = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
-        0.0,
-    )
     assert mark_handoff_compact_continuation_pending(hub_db, SESSION_ID, attempt_id=ATTEMPT_ID)
-    registry = runtime_registry(FakeRuntime(backend="native"))
-    handler = _session_start_handler(session_manager, MemoryTerminalStore(), registry)
+    runtime = FakeRuntime(backend="native")
+    handler = _session_start_handler(
+        session_manager, MemoryTerminalStore(), runtime_registry(runtime)
+    )
 
-    with patch(
-        "gobby.sessions.compact_continuation.manager_for_terminal_context", return_value=tmux
-    ):
-        scheduled = _consume_pending_handoff_compact_continuation(
-            handler,
-            session_source="compact",
-            pending_session_id=SESSION_ID,
-            target_session=session_manager.get(SESSION_ID),
-        )
-        await _await_continuations()
+    scheduled = _consume_pending_handoff_compact_continuation(
+        handler,
+        session_source="compact",
+        pending_session_id=SESSION_ID,
+        target_session=session_manager.get(SESSION_ID),
+    )
+    await _await_continuations()
 
-    assert scheduled is True
-    tmux.dispatch_keys.assert_any_await("%12", f"{build_handoff_continue_prompt()}\n", literal=True)
+    assert scheduled is False
+    assert runtime.write_log == []

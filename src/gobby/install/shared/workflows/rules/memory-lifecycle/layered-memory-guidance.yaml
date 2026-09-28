@@ -1,8 +1,50 @@
 tags: [memory-lifecycle, memory, lifecycle, gobby, default]
 
 rules:
+  # The Gobby stdio bridge sets _mcp_proxy_ready through POST /api/mcp/bridge/ready;
+# a /clear successor inherits its predecessor's value when the clear binds.
+  # A CLI whose first turn starts before that report has no Gobby tools in the
+  # turn's catalog, and a stop-block continuation keeps the same catalog, so the
+  # value that matters is the one captured when the turn started.
+  snapshot-mcp-proxy-ready-on-turn-start:
+    description: "Record whether the Gobby MCP proxy was connected when this turn started"
+    event: turn_start
+    enabled: true
+    priority: 0
+    effects:
+      - type: set_variable
+        variable: _mcp_proxy_ready_this_turn
+        value: "bool(variables.get('_mcp_proxy_ready'))"
+
+  retry-gobby-tools-after-proxy-connects:
+    description: "Tell the agent to retry Gobby tools once the proxy connects after a turn that lacked it"
+    event: turn_start
+    enabled: true
+    priority: 0
+    when: "variables.get('_mcp_proxy_missed_turn') and variables.get('_mcp_proxy_ready')"
+    effects:
+      - type: inject_context
+        template: >
+          If a Gobby tool call was unavailable during your previous turn, the Gobby MCP
+          proxy was not yet connected; it is connected now. Retry that call instead of
+          treating Gobby tools as absent.
+      - type: set_variable
+        variable: _mcp_proxy_missed_turn
+        value: false
+
+  note-mcp-proxy-missed-turn:
+    description: "Remember a turn that ran before the Gobby MCP proxy connected"
+    event: turn_end
+    enabled: true
+    priority: 0
+    when: "not variables.get('_mcp_proxy_ready_this_turn')"
+    effects:
+      - type: set_variable
+        variable: _mcp_proxy_missed_turn
+        value: true
+
   check-memory-guidance-on-initial-stop:
-    description: "Check memory skill loading once at the first turn end"
+    description: "Check memory skill loading once at the first turn end that had the Gobby MCP proxy"
     event: turn_end
     enabled: true
     priority: 1
@@ -17,10 +59,13 @@ rules:
             "gobby-skills/get_skill_file",
             {"name": "gobby", "path": "references/memory/overview.md"}
           )
+      # Without the proxy this turn the skill fetch is unsatisfiable; the gate
+      # stays armed for the first turn that started with the proxy connected.
       - type: block
         delivery: on_receipt
         when: >
-          not skill_loaded('gobby:references/memory/overview.md')
+          variables.get('_mcp_proxy_ready_this_turn')
+          and not skill_loaded('gobby:references/memory/overview.md')
           and not has_open_tool_error(
             "gobby-skills/get_skill_file",
             {"name": "gobby", "path": "references/memory/overview.md"}

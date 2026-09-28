@@ -50,6 +50,9 @@ MEMORY_RULES = {
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "check-memory-guidance-on-initial-stop",
+    "snapshot-mcp-proxy-ready-on-turn-start",
+    "retry-gobby-tools-after-proxy-connects",
+    "note-mcp-proxy-missed-turn",
     "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
@@ -252,6 +255,7 @@ def _turn_end_event(
 def _initial_gate_variables(**overrides: Any) -> dict[str, Any]:
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": False,
+        "_mcp_proxy_ready_this_turn": True,
         "loaded_skills": [],
         "open_tool_errors": [],
     }
@@ -685,6 +689,7 @@ class TestPostCloseMemoryReviewRules:
         variables = _review_variables(
             _pending_review("#42", "Completed work."),
             _memory_initial_stop_checked=False,
+            _mcp_proxy_ready_this_turn=True,
             loaded_skill_references=[],
             open_tool_errors=[],
             # The research-feedback stop gate shares this trigger; keep it quiet
