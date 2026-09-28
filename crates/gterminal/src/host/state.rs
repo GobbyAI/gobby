@@ -555,7 +555,7 @@ impl HostState {
             .ok_or("terminal_gone")?;
         attachment.client_attachment_id = Some(client_attachment_id);
         let host_terminal_id = attachment.host_terminal_id.clone();
-        super::theme::apply_holder_theme(&inner, &host_terminal_id);
+        super::theme::apply_holder_theme(&mut inner, &host_terminal_id);
         Ok(())
     }
 

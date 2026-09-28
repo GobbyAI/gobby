@@ -5,9 +5,9 @@
 //! declaration a pane shows: with no grant any declaration applies, and with a
 //! grant only the holder's does. A stale or observing stream therefore cannot
 //! undo the controlling client's newer theme. When the daemon moves the grant,
-//! the new holder's declaration applies. Every declaration that applies also
-//! becomes the host's `latest_theme`, which a spawn without its own theme
-//! starts with.
+//! the new holder's declaration applies. Every declaration that applies, live
+//! or on a grant move, also becomes the host's `latest_theme`, which a spawn
+//! without its own theme starts with.
 
 use super::state::{HostState, Inner, TerminalSlot};
 use crate::terminal_theme::ThemeDeclaration;
@@ -44,8 +44,9 @@ impl HostState {
 }
 
 /// Apply the input-grant holder's newest declaration to its slot, if the
-/// holder's stream has declared one.
-pub(crate) fn apply_holder_theme(inner: &Inner, host_terminal_id: &str) {
+/// holder's stream has declared one. Like a live declaration that applies, it
+/// then seeds later spawns.
+pub(crate) fn apply_holder_theme(inner: &mut Inner, host_terminal_id: &str) {
     let Some(slot) = native_slot(inner, host_terminal_id) else {
         return;
     };
@@ -61,9 +62,10 @@ pub(crate) fn apply_holder_theme(inner: &Inner, host_terminal_id: &str) {
         })
         .filter_map(|(id, att)| Some((*id, att.declared_theme.as_ref()?)))
         .max_by_key(|(id, _)| *id)
-        .map(|(_, theme)| theme);
+        .map(|(_, theme)| theme.clone());
     if let Some(theme) = declared {
-        apply(slot, theme);
+        apply(slot, &theme);
+        inner.latest_theme = Some(theme);
     }
 }
 

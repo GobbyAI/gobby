@@ -382,6 +382,12 @@ fn only_the_input_grant_holder_themes_a_granted_pane() {
     // Moving the grant applies the new holder's declaration.
     host.grant(&pane, "att-other");
     host.wait_for(&pane, "new holder theme", |s| DARK.shown_by(s));
+    // The applied declaration also seeds the next spawn, although the new
+    // holder's client never re-sends a theme it already declared.
+    let after_move = host.spawn(None).unwrap();
+    host.wait_for(&after_move, "the new holder's theme on a new spawn", |s| {
+        DARK.shown_by(s)
+    });
 }
 
 #[test]
