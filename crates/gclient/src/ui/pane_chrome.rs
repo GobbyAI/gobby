@@ -74,7 +74,11 @@ pub fn pane_corners<W: WorkspaceView>(
         agent.map_or_else(|| pane_state(pane), |agent| agent_state(ws, agent))
     };
     let identity = agent
-        .filter(|agent| agent.agent_definition_name.is_some() || !agent.provider.trim().is_empty())
+        .filter(|agent| {
+            agent.manual_title.is_some()
+                || agent.agent_definition_name.is_some()
+                || !agent.provider.trim().is_empty()
+        })
         .map_or_else(
             || pane.display_name().to_owned(),
             |agent| {
