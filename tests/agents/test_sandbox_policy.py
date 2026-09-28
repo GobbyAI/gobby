@@ -380,6 +380,75 @@ def test_prepare_sandbox_run_paths_falls_back_when_apfs_clone_fails(
     assert (destination / "repoabc" / "hook.py").read_text(encoding="utf-8") == ("hook:fallback\n")
 
 
+def test_failed_apfs_clone_is_replaced_by_a_symlink_preserving_copy(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "partial")
+    interpreter = tmp_path / "interpreter"
+    interpreter.write_text("binary\n", encoding="utf-8")
+    interpreter.chmod(0o500)
+    venv_bin = source / "repoabc" / "py_env" / "bin"
+    venv_bin.mkdir(parents=True)
+    (venv_bin / "python3").symlink_to(interpreter)
+    (source / "repoabc" / "hook.py").chmod(0o400)
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+    monkeypatch.setattr("gobby.agents.sandbox_policy.sys.platform", "darwin")
+
+    def run(command: list[str], **_kwargs: object) -> None:
+        if command[0] == "/bin/cp":
+            # cp gets as far as the read-only object and the venv symlink, then fails.
+            shutil.copytree(command[-2], command[-1], symlinks=True)
+            raise subprocess.CalledProcessError(1, command, stderr="cp: clonefile failed\n")
+        raise OSError("chmod unavailable")
+
+    monkeypatch.setattr("gobby.agents.sandbox_policy.spawn.run", run)
+
+    with caplog.at_level("WARNING", logger="gobby.agents.sandbox_policy"):
+        _paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
+
+    assert "cp: clonefile failed" in caplog.text
+    assert (destination / "repoabc" / "hook.py").read_text(encoding="utf-8") == "hook:partial\n"
+    python3 = destination / "repoabc" / "py_env" / "bin" / "python3"
+    assert python3.is_symlink()
+    assert python3.readlink() == interpreter
+    assert stat.S_IMODE(interpreter.stat().st_mode) == 0o500
+    assert all(
+        path.lstat().st_mode & stat.S_IWUSR
+        for path in (destination, *destination.rglob("*"))
+        if not path.is_symlink()
+    )
+
+
+def test_failed_pre_commit_prewarm_leaves_no_partial_store(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    workspace = _workspace(tmp_path)
+    source = _operator_store(tmp_path / "operator-pre-commit", "broken")
+    monkeypatch.setenv("PRE_COMMIT_HOME", str(source))
+
+    def failing_clone(_source: Path, destination: Path) -> None:
+        destination.mkdir(parents=True)
+        (destination / "db.db").write_text("partial\n", encoding="utf-8")
+        (destination / "db.db").chmod(0o400)
+        destination.chmod(0o500)
+        raise shutil.Error("copy failed")
+
+    monkeypatch.setattr(sandbox_policy, "_clone_pre_commit_store", failing_clone)
+    monkeypatch.setattr(sandbox_policy, "_schedule_pre_commit_store_spare", lambda _source: None)
+
+    with caplog.at_level("WARNING", logger="gobby.agents.sandbox_policy"):
+        paths, destination = _run_cache(monkeypatch, tmp_path, workspace=workspace)
+
+    assert "Failed to prewarm pre-commit store" in caplog.text
+    assert not destination.exists()
+    assert paths.cache.is_dir()
+
+
 def test_prepare_sandbox_run_paths_uses_xdg_pre_commit_store(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
