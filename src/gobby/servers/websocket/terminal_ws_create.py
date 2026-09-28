@@ -98,6 +98,7 @@ class TerminalCreateMixin:
         command = data.get("command") or ["zsh"]
         if not isinstance(command, list):
             command = ["zsh"]
+        terminal_theme = data.get("terminal_theme")
         result: WebSpawnResult = await spawn_web_terminal(
             manager=manager,
             runtime=runtime,
@@ -107,6 +108,7 @@ class TerminalCreateMixin:
             cols=data.get("cols"),
             cwd=data.get("cwd"),
             command=[str(part) for part in command],
+            terminal_theme=terminal_theme if isinstance(terminal_theme, dict) else None,
         )
         if not result.success:
             logger.warning(

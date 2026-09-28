@@ -834,6 +834,7 @@ async def test_restart_adopts_host_preserving_epoch_pid_and_row(
     client = FakeControlClient(
         host_epoch=epoch,
         host_pid=7777,
+        capabilities=("terminal_theme",),
         terminals=[
             FakeListRow(
                 terminal_id=row.id,
@@ -850,6 +851,8 @@ async def test_restart_adopts_host_preserving_epoch_pid_and_row(
     assert host.spawned_this_construction is False
     assert host.host_epoch == epoch
     assert host.host_pid == 7777
+    # The adopted host's advertised features are kept and reported in health.
+    assert host.health_state()["capabilities"] == ["terminal_theme"]
     loaded = _loaded(terminals, row.id)
     assert loaded.state == "live"
     assert loaded.host_epoch == epoch

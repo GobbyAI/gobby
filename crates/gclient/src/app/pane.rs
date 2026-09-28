@@ -14,6 +14,7 @@ use crate::frame_source::{
 };
 use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::protocol::{ClientMessage, FrameData};
+use gobby_terminal::terminal_theme::ThemeDeclaration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PaneId(pub u32);
@@ -186,6 +187,12 @@ pub struct Pane {
     /// delivers input only to the bound holder, and a fresh source or a fresh
     /// attachment has to bind again.
     pub(super) host_bound_attachment: Option<String>,
+    /// The host behind the installed direct stream accepts `SetTerminalTheme`
+    /// (its attach reply advertised it). An older host ends the stream on an
+    /// unknown message, so without this nothing is declared.
+    pub(super) host_themes: bool,
+    /// The theme last declared on the installed frame source.
+    pub(super) declared_theme: Option<ThemeDeclaration>,
     pub client_write_seq: u64,
     pub bracketed_paste: bool,
     pub search_buffer: String,
@@ -259,6 +266,8 @@ impl Pane {
             control_request: None,
             host_input_granted: false,
             host_bound_attachment: None,
+            host_themes: false,
+            declared_theme: None,
             client_write_seq: 0,
             bracketed_paste: false,
             search_buffer: String::new(),
@@ -644,6 +653,8 @@ impl Pane {
         self.frame_source = Some(source);
         self.fallback_in_flight = false;
         self.host_bound_attachment = None;
+        self.host_themes = false;
+        self.declared_theme = None;
     }
 }
 

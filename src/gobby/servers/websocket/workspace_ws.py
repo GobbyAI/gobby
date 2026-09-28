@@ -45,6 +45,9 @@ def _fields(method: Callable[..., Any]) -> dict[str, _Field]:
             continue
         hint = hints[name]
         types = get_args(hint) if isinstance(hint, UnionType) else (hint,)
+        # A JSON object with untyped values checks completely as a dict; whoever
+        # reads it validates the contents.
+        types = tuple(dict if option == dict[str, object] else option for option in types)
         # Only plain classes check with isinstance; fail at import, not per message.
         if not all(isinstance(option, type) for option in types):
             raise TypeError(f"WorkspaceOps.{method.__name__}.{name}: unsupported type {hint}")

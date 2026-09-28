@@ -96,6 +96,8 @@ impl HostState {
             Err(code) => return err(code),
         };
         let previous = slot.input_grant.replace(attachment_id);
+        let host_terminal_id = slot.host_terminal_id.clone();
+        super::theme::apply_holder_theme(&inner, &host_terminal_id);
         json!({"ok": true, "granted": true, "previous": previous})
     }
 

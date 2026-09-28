@@ -567,6 +567,33 @@ async def test_oversized_workspace_events_fragment_without_faulting_publication(
     assert stack.server.lease_registry.lifecycle_snapshot()["seq"] == seq + 2
 
 
+async def test_shell_ops_carry_the_client_theme_to_the_spawn(stack: _Stack) -> None:
+    """tab.create and pane.split spawn with the requesting client's colours."""
+    websocket = _client(stack, set())
+    home = (await _op(stack, websocket, "workspace.create", name="themed"))["id"]
+    light: dict[str, object] = {"background": {"r": 250, "g": 251, "b": 252}, "palette": []}
+    dark: dict[str, object] = {"background": {"r": 16, "g": 17, "b": 18}, "palette": []}
+
+    created = await _op(
+        stack,
+        websocket,
+        "tab.create",
+        workspace=home,
+        project_id=stack.project_id,
+        terminal_theme=light,
+    )
+    assert stack.native.last_request is not None
+    assert stack.native.last_request.terminal_theme == light
+    first = created["panes"][0]["id"]
+    await _op(stack, websocket, "pane.split", pane=first, axis="vertical", terminal_theme=dark)
+    assert stack.native.last_request.terminal_theme == dark
+    await _op(stack, websocket, "pane.split", pane=first, axis="horizontal")
+    assert stack.native.last_request.terminal_theme is None
+
+    refused = _op_request("pane.split", pane=first, axis="vertical", terminal_theme=["dark"])
+    assert await _error(stack.server, websocket, refused) == "invalid_op"
+
+
 def test_op_fields_refuse_types_a_message_cannot_be_checked_against() -> None:
     async def send_many(self: object, actor: str, keys: list[str]) -> None: ...
 

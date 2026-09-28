@@ -103,6 +103,10 @@ class HelloResult:
     host_epoch: str
     version: str
     protocol_version: int
+    # Optional features from the hello reply. Hosts older than the field send
+    # none, and a feature missing here must not be used on the host's frame
+    # streams: an unknown frame message ends the stream.
+    capabilities: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -386,10 +390,14 @@ class HostClient:
         self._protocol_version = protocol_version
         self._control_token = control_token
         self.host_epoch = str(payload.get("host_epoch", ""))
+        raw_capabilities = payload.get("capabilities")
         return HelloResult(
             host_epoch=self.host_epoch,
             version=str(payload.get("version", "")),
             protocol_version=int(payload.get("protocol_version", protocol_version)),
+            capabilities=tuple(item for item in raw_capabilities if isinstance(item, str))
+            if isinstance(raw_capabilities, list)
+            else (),
         )
 
     async def ping(self) -> PingResult:

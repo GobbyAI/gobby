@@ -1306,6 +1306,19 @@ async def test_direct_attach_result_carries_locator(
         "host_terminal_id": cast(dict[str, Any], harness.native_row.locator)["host_terminal_id"],
         "pane": None,
     }
+    assert native["host_capabilities"] == []
+
+    class _ThemedHost:
+        capabilities = ("terminal_theme",)
+
+        async def wait_startup_settled(self, timeout: float) -> bool:
+            return True
+
+    harness.server.terminal_host_manager = _ThemedHost()
+    themed_ws = MockWebSocket()
+    themed = await _attach_result(harness, themed_ws, harness.native_row, request_id="themed")
+    assert themed["host_capabilities"] == ["terminal_theme"]
+    await harness.server._cleanup_tmux_client(themed_ws)
 
     tmux_ws = MockWebSocket()
     tmux = await _attach_result(harness, tmux_ws, harness.tmux_row, request_id="direct-tmux")
@@ -1332,6 +1345,8 @@ async def test_direct_attach_result_carries_locator(
     )
     assert proxy["success"] is True
     assert proxy["direct"] is None
+    # No direct stream, so nothing to advertise.
+    assert proxy["host_capabilities"] == []
 
     harness.native_rt.locator_error = RuntimeError("locator failed")
     failed_ws = MockWebSocket()

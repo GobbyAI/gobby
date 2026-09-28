@@ -331,6 +331,9 @@ async def test_emitters_match_golden_replies(monkeypatch: pytest.MonkeyPatch) ->
     _assert_golden("attach_result_error.json", _sent(websocket))
 
     server, _, _ = _server(backend="native")
+    server.terminal_host_manager = SimpleNamespace(
+        capabilities=("terminal_theme",), wait_startup_settled=AsyncMock(return_value=True)
+    )
     websocket = MockWebSocket()
     direct_request = {
         **_message("attach.json"),

@@ -27,6 +27,7 @@ pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;
+mod theme;
 mod write;
 
 pub use backpressure::{FrameMailbox, PushResult};

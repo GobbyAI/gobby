@@ -196,6 +196,7 @@ async fn attach_tmux(
             delta_bytes: 0,
             last_semantic_frame: None,
             encoder: crate::protocol::render_ansi::BlitEncoder::new(),
+            declared_theme: None,
         },
     );
     let mut replay = None;

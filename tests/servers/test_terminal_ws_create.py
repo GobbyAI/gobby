@@ -377,3 +377,25 @@ async def test_create_result_carries_host_code_and_detail(
     assert message["code"] == "exec_failed:ENOENT"
     assert message["reason"] == "exec: No such file or directory"
     await server.lease_registry.shutdown_lifecycle_publication()
+
+
+@pytest.mark.asyncio
+async def test_create_forwards_the_client_theme_object_only(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    server, _runtime = _create_server(temp_db)
+    spawn = AsyncMock(return_value=WebSpawnResult(False, "terminal-1", "spawn_failed"))
+    monkeypatch.setattr("gobby.terminals.web_spawn.spawn_web_terminal", spawn)
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+    theme = {"background": {"r": 250, "g": 251, "b": 252}, "palette": []}
+
+    for sent, forwarded in ((theme, theme), ("dark", None), (None, None)):
+        await server._handle_terminal_create(
+            websocket,
+            {"request_id": "theme", "rows": 24, "cols": 80, "terminal_theme": sent},
+        )
+        assert spawn.await_args is not None
+        assert spawn.await_args.kwargs["terminal_theme"] == forwarded
+    await server.lease_registry.shutdown_lifecycle_publication()

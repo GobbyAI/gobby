@@ -253,6 +253,13 @@ class TerminalWsMixin:
                 "backend": row.backend,
                 "frame_delivery": record.frame_delivery,
                 "direct": None if locator is None else locator.direct_block(),
+                # What the frame host behind `direct` accepts beyond the base
+                # protocol; a direct client sends nothing else on that stream.
+                "host_capabilities": (
+                    list(getattr(self.terminal_host_manager, "capabilities", ()))
+                    if locator is not None
+                    else []
+                ),
                 "lease_generation": registry.generation(terminal_id),
                 "lease_holder": registry.holder_info(terminal_id),
                 "success": True,

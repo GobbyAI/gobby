@@ -105,6 +105,7 @@ class TerminalHostManager:
         self.native_available = False
         self.host_epoch: str | None = None
         self.protocol_version: int | None = CONTROL_PROTOCOL_VERSION
+        self.capabilities: tuple[str, ...] = ()
         self.host_pid: int | None = None
         self.restart_count = 0
         self.backoff_seconds = 0.0
@@ -146,6 +147,7 @@ class TerminalHostManager:
             "adopted": self.adopted,
             "host_epoch": self.host_epoch,
             "protocol_version": self.protocol_version,
+            "capabilities": list(self.capabilities),
             "restart_count": self.restart_count,
             "backoff_seconds": self.backoff_seconds,
             "live_terminals": live,
@@ -588,6 +590,7 @@ class TerminalHostManager:
         self.host_epoch = ping.host_epoch or hello.host_epoch
         self.host_pid = ping.host_pid
         self.protocol_version = int(hello.protocol_version)
+        self.capabilities = tuple(hello.capabilities)
         self.adopted = True
         self.spawned_this_construction = False
         return _Adopt.ADOPTED
@@ -618,6 +621,7 @@ class TerminalHostManager:
         self.host_epoch = ping.host_epoch or hello.host_epoch
         self.host_pid = ping.host_pid
         self.protocol_version = int(hello.protocol_version)
+        self.capabilities = tuple(hello.capabilities)
         self.adopted = False
         self.spawned_this_construction = True
         self.restart_count += 1

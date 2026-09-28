@@ -21,6 +21,7 @@ use crate::protocol::{
     validate_dimensions, FrameData, ObservationReason, ObservationState, RenderEncoding,
     ServerMessage, LIFECYCLE_RESERVED_SLOTS,
 };
+use crate::terminal_theme::ThemeDeclaration;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identity {
@@ -126,6 +127,9 @@ pub struct Attachment {
     pub(crate) last_semantic_frame: Option<FrameData>,
     /// Per-attachment diff state for `terminal_ansi` frames.
     pub(crate) encoder: BlitEncoder,
+    /// Last `SetTerminalTheme` this stream declared; applied to the slot
+    /// whenever this stream's bound attachment holds the input grant.
+    pub(crate) declared_theme: Option<crate::terminal_theme::ThemeDeclaration>,
 }
 
 pub(crate) struct Inner {
@@ -136,6 +140,10 @@ pub(crate) struct Inner {
     pub(crate) attachments: HashMap<u64, Attachment>,
     pub(crate) next_attachment: u64,
     control_owners: HashSet<u64>,
+    /// Most recent declaration from any stream: the theme a spawn without an
+    /// explicit `terminal_theme` starts with. `None` until a client declares,
+    /// in which case panes start with the unset theme.
+    pub(crate) latest_theme: Option<crate::terminal_theme::ThemeDeclaration>,
 }
 
 pub struct HostState {
@@ -186,6 +194,7 @@ impl HostState {
                 attachments: HashMap::new(),
                 next_attachment: 1,
                 control_owners: HashSet::new(),
+                latest_theme: None,
             }),
         })
     }
@@ -273,12 +282,22 @@ impl HostState {
             .get("commit_deadline_ms")
             .and_then(Value::as_u64)
             .unwrap_or(30_000);
+        let explicit_theme = match extra.get("terminal_theme") {
+            None | Some(Value::Null) => None,
+            Some(value) => match serde_json::from_value::<ThemeDeclaration>(value.clone()) {
+                Ok(theme) => Some(theme),
+                Err(_) => return err("invalid_terminal_theme"),
+            },
+        };
         let identity = Identity {
             terminal_id: terminal_id.clone(),
             spawn_key: spawn_key.clone(),
         };
         let fingerprint = spawn_fingerprint(&argv, &env, &cwd, dims, &reservation_id, &reserve_key);
-        {
+        // The child waits at the gate until commit, so the theme resolved here
+        // answers its first OSC 10/11 query: the request's own theme, else the
+        // latest client declaration, else the unset theme.
+        let spawn_theme = {
             let inner = self.inner.lock().await;
             if let Some(existing) = inner.terminals.get(&identity) {
                 if existing.fingerprint == fingerprint {
@@ -308,10 +327,11 @@ impl HostState {
             if res.key != reserve_key || res.terminal_id != terminal_id {
                 return err("invalid_reservation");
             }
-        }
+            explicit_theme.or_else(|| inner.latest_theme.clone())
+        };
         #[cfg(not(feature = "vt-engine"))]
         {
-            let _ = (conn_id, deadline_ms, argv, cwd, env);
+            let _ = (conn_id, deadline_ms, argv, cwd, env, spawn_theme);
             err("not_implemented")
         }
         #[cfg(feature = "vt-engine")]
@@ -323,6 +343,7 @@ impl HostState {
                 &argv,
                 &env,
                 self.config.native_scrollback_max_bytes as usize,
+                spawn_theme.as_ref(),
             ) {
                 Ok(child) => child,
                 Err(_) => return err("spawn_failed"),
@@ -478,6 +499,7 @@ impl HostState {
                 delta_bytes: 0,
                 last_semantic_frame: None,
                 encoder: BlitEncoder::new(),
+                declared_theme: None,
             },
         );
         if let Some(slot) = inner.terminals.get_mut(&identity) {
@@ -532,6 +554,8 @@ impl HostState {
             .get_mut(&attachment_id)
             .ok_or("terminal_gone")?;
         attachment.client_attachment_id = Some(client_attachment_id);
+        let host_terminal_id = attachment.host_terminal_id.clone();
+        super::theme::apply_holder_theme(&inner, &host_terminal_id);
         Ok(())
     }
 

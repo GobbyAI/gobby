@@ -657,3 +657,24 @@ async def test_grant_and_revoke_are_unledgered_round_trips() -> None:
         assert client.next_seq == 1
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_hello_reads_the_host_capabilities() -> None:
+    """Advertised features are kept; an older host's reply advertises none."""
+    reader = asyncio.StreamReader()
+    writer = _Writer()
+    client = HostClient(reader, writer)
+    try:
+        for extra, expected in (
+            ({"capabilities": ["terminal_theme", 7]}, ("terminal_theme",)),
+            ({}, ()),
+            ({"capabilities": "terminal_theme"}, ()),
+        ):
+            task = asyncio.create_task(client.hello(host_client.CONTROL_PROTOCOL_VERSION, "t"))
+            request = await writer.next_write()
+            reply = {"ok": True, "host_epoch": "epoch-1", "id": request["id"]} | extra
+            reader.feed_data(host_client.encode_control_line(reply))
+            assert (await task).capabilities == expected
+    finally:
+        await client.close()
