@@ -1584,15 +1584,15 @@ async def test_transient_ledger_failures_back_off_until_the_answer_is_delivered(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "retry_shaped", ["gobby:retry-answer:1", "1"], ids=["former-retry-prefix", "attempt-number"]
+)
 async def test_retry_shaped_option_on_a_pending_decision_is_an_ordinary_answer(
-    decision: _Decision,
+    decision: _Decision, retry_shaped: str
 ) -> None:
     # A Retry answer button's value is its attempt number; only its trusted callback
     # action, never an option value, makes a click a retry.
-    retry_shaped = "1"
-    keyboard = [
-        [{"text": "One", "value": retry_shaped}, {"text": "Old", "value": "gobby:retry-answer:1"}]
-    ]
+    keyboard = [[{"text": "Pick", "value": retry_shaped}, _KEYBOARD[0][1]]]
     decision.store.db.execute(
         """UPDATE comms_messages
               SET metadata_json = jsonb_set(metadata_json, '{inline_keyboard}', %s::jsonb)
