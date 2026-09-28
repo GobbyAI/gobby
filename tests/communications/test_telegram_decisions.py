@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -20,6 +21,7 @@ from gobby.communications.telegram_decisions import DecisionLocks, edit_keyboard
 from gobby.config.communications import CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.integration
@@ -236,6 +238,14 @@ async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_s
     assert second[0].metadata_json["callback_status"] == "answered"
     assert _routed(decision, "q-2") is None
 
+    # The one accepted answer waits in the asking session's mailbox under its own ID.
+    mailbox = InterSessionMessageManager(decision.store.db).get_undelivered_messages(
+        decision.session_id
+    )
+    assert [message.id for message in mailbox] == [routed[0].id]
+    assert mailbox[0].content.endswith("was answered: approve")
+    assert json.loads(mailbox[0].metadata_json or "{}")["wake_requested"] is True
+
     # A later stale click cannot revive the answered decision.
     post_json.reset_mock()
     late = await inbound.handle_messages("telegram", [_click(adapter, "gobby:1.gone", "q-late")])
@@ -260,6 +270,8 @@ async def test_failed_answer_persistence_leaves_decision_pending(decision: _Deci
     assert handled == []  # not acknowledged: polling redelivers the update
     assert _row(decision).get("callback_state") is None
     assert _routed(decision, "q-ok") is None
+    mailbox = InterSessionMessageManager(decision.store.db)
+    assert mailbox.get_undelivered_messages(decision.session_id) == []
 
     # The redelivered click's token was consumed, so it reissues; the fresh
     # buttons then answer the still-pending decision exactly once.
@@ -270,6 +282,9 @@ async def test_failed_answer_persistence_leaves_decision_pending(decision: _Deci
     routed = await inbound.handle_messages("telegram", [_click(adapter, fresh_approve, "q-ok2")])
     assert routed[0].metadata_json["callback_status"] == "ok"
     assert _row(decision)["callback_state"] == "answered"
+    assert [message.id for message in mailbox.get_undelivered_messages(decision.session_id)] == [
+        routed[0].id
+    ]
 
 
 @pytest.mark.asyncio

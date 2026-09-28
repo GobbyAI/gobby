@@ -537,10 +537,12 @@ SELECT
     def accept_callback_decision(
         self, decision_id: str, generation: int, callback: CommsMessage
     ) -> CommsMessage | None:
-        """Answer a pending decision and persist its callback in one transaction.
+        """Answer a pending decision, persist its callback and enqueue it, in one transaction.
 
-        Returns None, persisting nothing, unless the decision is still pending at
-        ``generation``. A persistence failure rolls the answer back with it.
+        The answer is enqueued in the asking session's inter-session mailbox under the
+        callback row's ID, so it reaches that session durably and exactly once however
+        the live fan-out fares. Returns None, persisting nothing, unless the decision
+        is still pending at ``generation``. A persistence failure rolls the answer back.
         """
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -557,6 +559,32 @@ SELECT
             if row is None:
                 return None
             persisted, _ = self._insert_message(conn, callback)
+            conn.execute(
+                """
+                INSERT INTO inter_session_messages
+                    (id, from_session, to_session, content, priority, sent_at, metadata_json)
+                SELECT %s, COALESCE(identity.session_id, decision.session_id),
+                       decision.session_id, %s, 'normal', now(), %s::jsonb
+                  FROM comms_messages AS decision
+                  LEFT JOIN comms_identities AS identity ON identity.id = %s
+                 WHERE decision.id = %s
+                   AND decision.session_id IS NOT NULL
+                ON CONFLICT (id) DO NOTHING
+                """,
+                (
+                    persisted.id,
+                    f"Telegram decision {decision_id} was answered: {persisted.content}",
+                    json.dumps(
+                        {
+                            "wake_requested": True,
+                            "comms_decision_id": decision_id,
+                            "comms_answer_id": persisted.id,
+                        }
+                    ),
+                    persisted.identity_id,
+                    decision_id,
+                ),
+            )
         return persisted
 
     def claim_callback_reissue(self, message_id: str, generation: int) -> bool:
