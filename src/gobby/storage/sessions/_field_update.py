@@ -332,11 +332,13 @@ class _FieldUpdateMixin(
                 ),
             )
             row = cursor.fetchone()
-        if row is None:
-            return None
-        exited_host_epoch = row["exited_host_epoch"]
-        if live_host_epoch and exited_host_epoch and exited_host_epoch != live_host_epoch:
-            record_contested_terminal_expiry(self.db, session_id, "terminal_drain")
+            if row is None:
+                return None
+            exited_host_epoch = row["exited_host_epoch"]
+            # Same transaction as the expiry: a claim sweep must never see the
+            # drained session expired without the marker that shields its claims.
+            if live_host_epoch and exited_host_epoch and exited_host_epoch != live_host_epoch:
+                record_contested_terminal_expiry(self.db, session_id, "terminal_drain")
         self._notify_session_change("session_expired", session_id)
         updated = self.get(session_id)
         if updated is not None:

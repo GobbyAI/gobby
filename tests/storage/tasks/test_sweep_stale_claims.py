@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -783,6 +784,7 @@ def _expire_seat_whose_native_pane_exited(
     sample_project: dict[str, Any],
     *,
     live_host_epoch: str,
+    before_expiry: Callable[[str], object] | None = None,
 ) -> tuple[SessionManager, str]:
     """Expire a paused seat whose native pane exited under ``_EXITED_HOST_EPOCH``."""
     sessions = SessionManager(temp_db)
@@ -810,6 +812,8 @@ def _expire_seat_whose_native_pane_exited(
     assert terminals.mark_exited(terminal_id) is not None
     paused = sessions.get(session_id)
     assert paused is not None
+    if before_expiry is not None:
+        before_expiry(session_id)
     expired = sessions.expire_if_paused_terminal_exited(
         session_id,
         terminal_id=terminal_id,
@@ -879,3 +883,43 @@ def test_a_seat_resumed_after_a_host_drain_keeps_its_claim(
     )
     assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
     assert _claim(temp_db, task.id) == session_id
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+def test_a_claim_sweep_racing_a_drain_expiry_never_sees_the_seat_unshielded(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The drain marker commits with the expiry, so no sweep can land in between."""
+    claimed: list[Task] = []
+    released_during_expiry: list[int] = []
+
+    def sweep_before_marker(db: HubDatabase, session_id: str, cause: Any) -> None:
+        # A sweep on its own connection, run after the expiry UPDATE and before
+        # the marker write, which is where the two used to commit separately.
+        worker = threading.Thread(
+            target=lambda: released_during_expiry.append(
+                sweep_stale_claims(temp_db, project_id=sample_project["id"])
+            )
+        )
+        worker.start()
+        worker.join(timeout=30)
+        record_contested_terminal_expiry(db, session_id, cause)
+
+    with patch(
+        "gobby.storage.sessions._field_update.record_contested_terminal_expiry",
+        side_effect=sweep_before_marker,
+    ):
+        _sessions, session_id = _expire_seat_whose_native_pane_exited(
+            temp_db,
+            sample_project,
+            live_host_epoch="host-epoch-after-drain",
+            before_expiry=lambda owner: claimed.append(
+                _claimed_task(temp_db, sample_project, claimed_by=owner)
+            ),
+        )
+
+    assert released_during_expiry == [0]
+    assert _claim(temp_db, claimed[0].id) == session_id
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+    assert _claim(temp_db, claimed[0].id) == session_id
