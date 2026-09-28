@@ -178,6 +178,9 @@ class CommunicationsResponder:
         if message.content_type == "reaction":
             logger.debug("Ignoring reaction event %s in responder pipeline", message.id)
             return None
+        if message.is_decision_answer:
+            logger.debug("Ignoring decision answer %s already in its session's mailbox", message.id)
+            return None
         if not message.content.strip():
             logger.info("Ignoring responder message %s without text content", message.id)
             return None

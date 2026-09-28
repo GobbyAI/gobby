@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -225,6 +226,19 @@ class MailboxService:
             target_id=resolution.target_id,
             selector_metadata=resolution.selector_metadata,
             wake_results=wake_results,
+        )
+
+    async def wake_committed(self, message_id: str) -> list[dict[str, Any]]:
+        """Wake the recipient of a mailbox row another transaction committed, if it exists."""
+        message = await asyncio.to_thread(self._message_manager.get_message, message_id)
+        if message is None:
+            return []
+        return await dispatch_mailbox_wakes(
+            self._wake_dispatcher,
+            self._session_manager,
+            [message],
+            [message.to_session],
+            priority=message.priority,
         )
 
     def resolve_target(

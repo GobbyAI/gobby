@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,13 +16,16 @@ from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEdit
 from gobby.communications.identities import IdentityManager, IdentityResolution
 from gobby.communications.inbound import InboundCommunications
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
+from gobby.communications.responder import CommunicationsResponder
+from gobby.communications.telegram_actions import TelegramActionController
 from gobby.communications.telegram_callbacks import TelegramCallbackRegistry
 from gobby.communications.telegram_decisions import DecisionLocks, edit_keyboard_message
 from gobby.config.communications import CommunicationsConfig
+from gobby.sessions.mailbox import MailboxService
 from gobby.storage.communications import LocalCommunicationsStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions import SessionManager, system_session_id
 
 pytestmark = pytest.mark.integration
 
@@ -244,7 +247,16 @@ async def test_restart_lost_click_reissues_buttons_that_route_once_to_original_s
     )
     assert [message.id for message in mailbox] == [routed[0].id]
     assert mailbox[0].content.endswith("was answered: approve")
-    assert json.loads(mailbox[0].metadata_json or "{}")["wake_requested"] is True
+    # The daemon delivers it; the metadata names who clicked, never the session as sender.
+    assert mailbox[0].from_session == system_session_id()
+    assert mailbox[0].message_type == "telegram_message"
+    metadata = json.loads(mailbox[0].metadata_json or "{}")
+    assert metadata["wake_requested"] is True
+    assert metadata["sender"] == "1111111"
+    assert metadata["comms_identity_id"] == decision.identity.id
+    assert metadata["comms_decision_id"] == decision.source.id
+    assert metadata["comms_answer_id"] == routed[0].id
+    assert metadata["callback_data"] == "approve"
 
     # A later stale click cannot revive the answered decision.
     post_json.reset_mock()
@@ -914,3 +926,72 @@ def test_decision_state_transitions_are_compare_and_set(decision: _Decision) -> 
     assert _row(decision)["callback_state"] == "answered"
     assert _routed(decision, "q-old") is None
     assert _routed(decision, "q-again") is None
+
+
+class _WakeRecorder:
+    def __init__(self, error: Exception | None = None) -> None:
+        self.woken: list[str] = []
+        self._error = error
+
+    async def dispatch_live_wake(
+        self, session_id: str, *, priority: str = "normal"
+    ) -> dict[str, Any]:
+        self.woken.append(session_id)
+        if self._error is not None:
+            raise self._error
+        return {"session_id": session_id, "delivered": True, "method": "terminal"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wake_error", [None, ConnectionError("tmux unavailable")])
+async def test_answer_wakes_paused_asker_once_and_never_reaches_the_responder(
+    decision: _Decision, wake_error: Exception | None
+) -> None:
+    post_json = AsyncMock(return_value=_OK)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    sessions = SessionManager(decision.store.db)
+    sessions.update_status(decision.session_id, "paused")
+    wakes = _WakeRecorder(wake_error)
+    mailbox = MailboxService(
+        db=decision.store.db,
+        message_manager=InterSessionMessageManager(decision.store.db),
+        session_manager=sessions,
+        wake_dispatcher=wakes,
+    )
+    manager.get_channel_by_name.return_value = decision.channel
+    manager.get_channel.return_value = replace(
+        decision.channel,
+        config_json={"responder": {"enabled": True}, "allow_from": ["1111111"]},
+    )
+    manager.handle_session_action = TelegramActionController(manager, sessions, mailbox).handle
+    backend = AsyncMock()
+    responder = CommunicationsResponder(manager, backend=backend)
+    observed: list[CommsMessage] = []
+
+    async def fan_out(event: str, **kwargs: Any) -> None:
+        message = kwargs["message"]
+        assert isinstance(message, CommsMessage)
+        observed.append(message)
+        await responder.handle_event(event, **kwargs)
+
+    manager.event_callback = fan_out
+    inbound = InboundCommunications(manager)
+    approve_token, _ = await _reissue(adapter, inbound)
+    observed.clear()
+    post_json.reset_mock()
+
+    routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
+
+    assert routed[0].metadata_json["callback_status"] == "ok"
+    assert wakes.woken == [decision.session_id]
+    queued = InterSessionMessageManager(decision.store.db).get_undelivered_messages(
+        decision.session_id
+    )
+    assert [message.id for message in queued] == [routed[0].id]
+    # Observers still see the click; no responder turn delivers it a second time.
+    assert [message.id for message in observed] == [routed[0].id]
+    await responder.drain()
+    backend.run_turn.assert_not_awaited()
+    # A failed wake leaves the durable row for wake recovery and never asks for a resend.
+    assert _calls(post_json, "sendMessage") == []

@@ -15,6 +15,8 @@ from gobby.communications.models import (
     CommsMessage,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import ensure_system_session, system_session_id
 from gobby.utils.datetime import to_aware_utc, utc_now
 from gobby.utils.machine_id import require_machine_id
 
@@ -540,10 +542,12 @@ SELECT
         """Answer a pending decision, persist its callback and enqueue it, in one transaction.
 
         The answer is enqueued in the asking session's inter-session mailbox under the
-        callback row's ID, so it reaches that session durably and exactly once however
-        the live fan-out fares. Returns None, persisting nothing, unless the decision
+        callback row's ID, from the system session with the Telegram sender in its
+        metadata. That row is the answer's only delivery; the caller wakes its
+        recipient after commit. Returns None, persisting nothing, unless the decision
         is still pending at ``generation``. A persistence failure rolls the answer back.
         """
+        ensure_system_session(self.db)
         with self.db.transaction() as conn:
             row = conn.execute(
                 """
@@ -552,39 +556,22 @@ SELECT
                  WHERE id = %s
                    AND NOT (metadata_json ? 'callback_state')
                    AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
-                RETURNING id
+                RETURNING session_id
                 """,
                 (decision_id, generation),
             ).fetchone()
             if row is None:
                 return None
             persisted, _ = self._insert_message(conn, callback)
-            conn.execute(
-                """
-                INSERT INTO inter_session_messages
-                    (id, from_session, to_session, content, priority, sent_at, metadata_json)
-                SELECT %s, COALESCE(identity.session_id, decision.session_id),
-                       decision.session_id, %s, 'normal', now(), %s::jsonb
-                  FROM comms_messages AS decision
-                  LEFT JOIN comms_identities AS identity ON identity.id = %s
-                 WHERE decision.id = %s
-                   AND decision.session_id IS NOT NULL
-                ON CONFLICT (id) DO NOTHING
-                """,
-                (
-                    persisted.id,
-                    f"Telegram decision {decision_id} was answered: {persisted.content}",
-                    json.dumps(
-                        {
-                            "wake_requested": True,
-                            "comms_decision_id": decision_id,
-                            "comms_answer_id": persisted.id,
-                        }
-                    ),
-                    persisted.identity_id,
-                    decision_id,
-                ),
-            )
+            if row["session_id"]:
+                InterSessionMessageManager(self.db).create_message(
+                    from_session=system_session_id(),
+                    to_session=str(row["session_id"]),
+                    content=f"Telegram decision {decision_id} was answered: {persisted.content}",
+                    message_type="telegram_message",
+                    metadata_json=json.dumps(_decision_answer_metadata(decision_id, persisted)),
+                    message_id=persisted.id,
+                )
         return persisted
 
     def claim_callback_reissue(self, message_id: str, generation: int) -> bool:
@@ -756,3 +743,18 @@ SELECT
                 (message_id, self.machine_id),
             )
             return cursor.rowcount
+
+
+def _decision_answer_metadata(decision_id: str, answer: CommsMessage) -> dict[str, Any]:
+    """Describe a decision answer's mailbox row: who clicked what, on which decision."""
+    return {
+        "wake_requested": True,
+        "comms_decision_id": decision_id,
+        "comms_answer_id": answer.id,
+        "comms_channel_id": answer.channel_id,
+        "comms_identity_id": answer.identity_id,
+        "sender": answer.metadata_json.get("external_user_id"),
+        "sender_username": answer.metadata_json.get("external_username"),
+        "telegram_chat_id": answer.metadata_json.get("chat_id"),
+        "callback_data": answer.metadata_json.get("callback_value"),
+    }

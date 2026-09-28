@@ -136,6 +136,13 @@ class CommsMessage:
     error: str | None = None
     metadata_json: dict[str, Any] = field(default_factory=dict)
 
+    @property
+    def is_decision_answer(self) -> bool:
+        """True for a decision button click, delivered only through the asking session's mailbox."""
+        return self.content_type == "callback" and bool(
+            self.metadata_json.get("callback_decision_id")
+        )
+
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CommsMessage:
         """Create from database row."""
