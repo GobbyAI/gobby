@@ -6,7 +6,7 @@
 | program-director.md | gobby#14610 |
 | lane-1-gclient.md | gobby#14704 |
 | lane-2-stability.md | gobby#14713 |
-| lane-3-hooks.md | gobby#14714 |
+| lane-3-hooks.md | gobby#14725 |
 | lane-4-backlog.md | gobby#14674 |
 | lane-5-functional.md | gobby#14642 |
 | rust-migration.md | gobby#14639 |
