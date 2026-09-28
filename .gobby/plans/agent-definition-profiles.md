@@ -106,8 +106,8 @@ non-goals.
    no runbook tool is listed. Ordinary pipeline launch is explicit policy
    here: a pipeline's `spawn_agent` and `exec` steps run in the daemon's
    pipeline executor, outside the launching seat's `before_tool` rules, so
-   a seat that launched a pipeline would bypass the spawn block. Every seat
-   is therefore blocked from `gobby-workflows:run_pipeline` and from the
+   a seat that launched a pipeline would bypass the spawn block. Every seat,
+   the Program Director included with no carve-out, is therefore blocked from `gobby-workflows:run_pipeline` and from the
    exposed `gobby-workflows:pipeline:<name>` tools, and every seat's shell is
    blocked from `gobby agents spawn` and `gobby pipelines run`. Runbooks
    launch from Josh's CLI, web, gclient or cron surfaces (#22895). Plan Writer
@@ -116,7 +116,10 @@ non-goals.
    UUIDs in session variables (2.2), never as a session boolean: reclaiming
    the same task, `create_task(claim=true)`, a failed spawn, and context loss
    all leave the ledger as it is; only a claim of a different planning task
-   makes a new pass eligible. `_common.md` names the exception. This is the
+   makes a new pass eligible. The exception is the Plan Writer's alone: no
+   other seat holds an enhancer or launch privilege, and Lane 7's earlier
+   one-off enhancer pass is consumed history that grants nothing.
+   `_common.md` names the exception. This is the
    explicit spawn authorization Josh's proposed flow needs; until it lands, no
    seat spawns.
 7. **Step workflows authored for seats with a fixed loop or required skills:**
@@ -1463,3 +1466,10 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   (Decision 6, 2.2.1). Roles: the catalogue and 4.1 follow the 22-row
   roster, and 3.1 to 3.3 follow the current role files. The enhancer pass
   for this task was already spent, so this refresh runs no new pass.
+- 2026-09-27: PD dispositions (gobby#14610) on `34257c1f47`. (a) The enhancer
+  exception stays scoped to the Plan Writer; Lane 7's historical one-off
+  pass is consumed and confers no standing launch privilege. (b) Pipeline
+  launch is blocked for every seat, the Program Director included, with no
+  carve-out; Josh's operator CLI, web, gclient and cron surfaces are
+  unchanged. Decision 6 states both. The PD's full artifact review is still
+  pending.
