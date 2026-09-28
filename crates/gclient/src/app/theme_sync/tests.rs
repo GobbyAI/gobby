@@ -85,6 +85,59 @@ fn a_proxied_pane_is_sent_nothing() {
     assert!(sent(&pane).is_empty());
 }
 
+fn proxied_pane(host_themes: bool) -> Pane {
+    let mut pane = capable_pane();
+    pane.host_themes = host_themes;
+    pane.frame_source = Some(PaneFrameSource::Scripted(ScriptedFrameSource::new(
+        Transport::Proxy,
+    )));
+    pane
+}
+
+fn relayed(ws: &Workspace<crate::daemon::ScriptedDaemon>) -> Vec<serde_json::Value> {
+    ws.daemon()
+        .ws_sent()
+        .into_iter()
+        .filter(|message| message["type"] == "terminal_set_theme")
+        .collect()
+}
+
+#[tokio::test]
+async fn a_proxied_pane_is_relayed_through_the_daemon_once_per_theme() {
+    let mut ws = Workspace::scripted();
+    let pane = proxied_pane(true);
+    let attachment_id = pane.attachment_id().to_string();
+    ws.panes.insert(PaneId(1), pane);
+    let dark = declaration(ThemeKind::Dark);
+
+    ws.sync_terminal_themes(&dark).await;
+    ws.sync_terminal_themes(&dark).await;
+
+    assert_eq!(
+        relayed(&ws),
+        vec![json!({
+            "type": "terminal_set_theme",
+            "terminal_id": "terminal-1",
+            "attachment_id": attachment_id,
+            "theme": dark,
+        })]
+    );
+    assert!(
+        sent(&ws.panes[&PaneId(1)]).is_empty(),
+        "nothing on the frame source"
+    );
+}
+
+#[tokio::test]
+async fn a_proxied_pane_without_the_relay_is_sent_nothing() {
+    let mut ws = Workspace::scripted();
+    ws.panes.insert(PaneId(1), proxied_pane(false));
+
+    ws.sync_terminal_themes(&declaration(ThemeKind::Dark)).await;
+
+    assert!(relayed(&ws).is_empty());
+}
+
 #[test]
 fn a_new_frame_source_redeclares_only_after_its_host_advertises() {
     let mut pane = capable_pane();

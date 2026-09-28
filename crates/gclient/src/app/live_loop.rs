@@ -570,7 +570,7 @@ pub async fn run_live_loop<B: Backend>(
                 // the same colours.
                 let terminal_theme = (&chrome.theme.terminal_theme()).into();
                 workspace.daemon().set_terminal_theme(&terminal_theme);
-                workspace.sync_terminal_themes(&terminal_theme);
+                workspace.sync_terminal_themes(&terminal_theme).await;
                 chrome.connection.now = std::time::Instant::now();
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 chrome.expire_toasts(std::time::Instant::now());

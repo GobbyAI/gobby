@@ -532,6 +532,7 @@ class WebSocketServer(
                 ),
                 "terminal_set_viewport": self._handle_terminal_set_viewport,
                 "terminal_set_scroll_offset": self._handle_terminal_set_scroll_offset,
+                "terminal_set_theme": self._handle_terminal_set_theme,
                 "terminal_paste": self._handle_terminal_paste,
                 "workspace_attach": self._handle_workspace_attach,
                 "workspace_snapshot": self._handle_workspace_snapshot,
