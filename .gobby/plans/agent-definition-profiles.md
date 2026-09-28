@@ -112,12 +112,12 @@ non-goals.
    blocked from `gobby agents spawn` and `gobby pipelines run`. Runbooks
    launch from Josh's CLI, web, gclient or cron surfaces (#22895). Plan Writer
    exception: `agent == "plan-enhancer-taskless"`, `isolation == "none"`, at most
-   one pass per claimed planning task, tracked as a per-task ledger of task
-   UUIDs in session variables (2.2), never as a session boolean: reclaiming
-   the same task, `create_task(claim=true)`, a failed spawn, compaction, and
-   a `/clear` successor all leave the ledger as it is (the successor
-   inherits both ledgers with the claim, 2.2); only a claim of a different
-   planning task makes a new pass eligible. The exception is the Plan Writer's alone: no
+   one pass per planning task, recorded as a durable receipt on the task
+   itself (the label `enhancer-pass-spent`, 2.2), never in session state:
+   reclaiming the same task, `create_task(claim=true)`, compaction, a
+   `/clear` successor, and a release followed by a fresh session's claim
+   all find the receipt and are refused; only a different planning task
+   admits a new pass (PD disposition, 2026-09-28). The exception is the Plan Writer's alone: no
    other seat holds an enhancer or launch privilege, and Lane 7's earlier
    one-off enhancer pass is consumed history that grants nothing.
    `_common.md` names the exception. This is the
@@ -438,11 +438,9 @@ Targets:
 - `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml`
 - `src/gobby/workflows/condition_helpers_paths.py`
 - `src/gobby/workflows/safe_evaluator.py::*` — scope-reason: register the write-scope path helpers in the condition namespace beside touches_docker_policy_path
-- `src/gobby/hooks/event_handlers/_session_start/claims.py::preserve_task_claim_state`
 - `.gobby/roles/_common.md`
 - `tests/workflows/test_seat_rules.py`
 - `tests/workflows/test_condition_helpers_paths.py`
-- `tests/hooks/test_session_start_claims.py::*` — scope-reason: add the Plan Writer ledger successor-transfer test
 
 **Research context:** `before_tool` rules read the proxy call as `tool_input`
 with `server_name`, `tool_name`, and `arguments`
@@ -460,27 +458,25 @@ and the same rule tests membership with `in`). No bundled rule blocks
 `spawn_agent` for interactive sessions today; only
 `worker-safety/no-agent-spawn-for-merge.yaml` (`agent_scope: [merge]`).
 
-Ledger facts: `claim_task` answers a task the session already holds with
-`already_claimed: True` (`mcp_proxy/tools/tasks/_lifecycle_claim.py:249`) and
-`create_task(claim=true)` never passes through `claim_task`, so a claim event
-cannot safely re-arm a boolean. The bound is two session-variable ledgers of
-task ids, `plan_writer_planning_tasks` (planning tasks this session claimed)
-and `plan_writer_enhancer_tasks` (planning tasks whose pass is spent); both
-persist with the other session variables across compaction. Eligibility is a
-claimed planning task present in the first ledger and absent from the second.
-A `/clear` successor receives only what `preserve_task_claim_state`
-(`hooks/event_handlers/_session_start/claims.py:53`) copies, today
-`task_claimed` and `claimed_tasks`, so a cleared Plan Writer would keep its
-claim, lose the spent ledger, and re-record the task on its next
-`already_claimed` reclaim. This leaf extends that function to carry both
-ledgers from the predecessor's variables onto the successor, merged as a
-set union with any ledger the successor already holds, whether or not a
-claim transfers. The one function serves every clear path (terminal session
-start through `_session_start/materialize.py` and web chat through
-`servers/websocket/chat/_session.py`). The authorization therefore lives as
-long as the claim chain on the task. A fresh session that is no successor
-starts with empty ledgers and can hold the task only after the prior claim
-is released; that case is the stated boundary of this bound.
+Receipt facts: session variables cannot carry the bound. `claim_task`
+answers a task the session already holds with `already_claimed: True`
+(`mcp_proxy/tools/tasks/_lifecycle_claim.py:249`), a `/clear` successor
+inherits only `task_claimed` and `claimed_tasks`
+(`hooks/event_handlers/_session_start/claims.py:53`), and a fresh session
+that claims a released task starts empty. The receipt therefore lives on
+the task, in storage every session reads: the label `enhancer-pass-spent`.
+Rules already read labels through the registered task helper
+`all_tasks_have_label(task_id_or_ids, label)`
+(`workflows/condition_helpers.py:937`, registered in `safe_evaluator.py`
+when a task manager is bound), and write them through the `mcp_call`
+effect (`engine/effects.py:136`), whose inline form (`inject_result`, not
+`background`) honors `block_on_failure` so a failed call blocks the
+originating tool call. `gobby-tasks:add_label(task_id, label)`
+(`mcp_proxy/tools/tasks/_lifecycle_labels.py:19`) requires claim authority,
+which the Plan Writer holds on its claimed task; the executor confirms
+`live_session_label_change_error` does not guard this label. No table,
+column, or session-transfer change is needed. One claim per session means
+`claimed_tasks` holds the single planning task the pass is for.
 
 Write-scope facts: before-tool normalization annotates every write with
 `event.data['canonical_tool_kind'] == 'write'`,
@@ -540,36 +536,32 @@ Rules in `seat-spawn-policy.yaml`, tags `[roles, seat, enforcement, gobby, defau
   `gobby agents spawn` and `gobby pipelines run` (optionally behind `uv
   run`), in the prefix grammar of
   `task-enforcement/block-gobby-tasks-cli.yaml`; same reason.
-- `plan-writer-track-claim`: `event: after_tool`, `when:` seat is
-  `plan-writer`, `event.data.get('mcp_server') == 'gobby-tasks'`,
-  `event.data.get('mcp_tool') in ['claim_task', 'create_task']`, and the
-  output reports success; effect `set_variable plan_writer_planning_tasks`
-  with an expression that adds the output's task id (`task_id` from
-  `claim_task`, `id` from `create_task`) to the ledger when absent. Neither
-  payload carries a task category (`_lifecycle_claim.py:249` returns
-  `success`, `task_id`, `title`; `_crud.py:361-366` returns `id`, `seq_num`,
-  `ref`), so the rule does not filter on one: every task the Plan Writer
-  claims is a planning task by seat contract, and the ledger records every
-  successful claim. An `already_claimed` reclaim matches the rule and
-  changes nothing.
-- `plan-writer-enhancer-only`: `event: before_tool`, priority 10, `when:` seat is
-  `plan-writer` and not (`arguments.agent == 'plan-enhancer-taskless'` and
-  `arguments.isolation == 'none'` and
-  `any(t in (variables.get('plan_writer_planning_tasks') or []) and t not in (variables.get('plan_writer_enhancer_tasks') or []) for t in (variables.get('claimed_tasks') or {}))`);
-  effect `block` on `gobby-agents:spawn_agent` and
-  `gobby-agents:dispatch_batch`, reason naming the exact allowed call and
-  that one pass per claimed planning task is permitted.
-- `plan-writer-enhancer-consumed`: `event: after_tool`, `when:` seat is
-  `plan-writer` and `event.data.get('mcp_server') == 'gobby-agents'` and
-  `event.data.get('mcp_tool') == 'spawn_agent'` and the output reports success;
-  effect `set_variable plan_writer_enhancer_tasks` with an expression that adds
-  every currently claimed id that is in `plan_writer_planning_tasks`. A failed
-  spawn changes nothing. There is no re-arm rule: a consumed id never becomes
-  eligible again, and only a claim of a different planning task admits a pass.
-
-The ledger expressions run in `safe_evaluator`: the executor uses list
-concatenation if the evaluator accepts it and otherwise a comma-joined string
-with `split(',')` membership, and pins the chosen form in the tests.
+- `plan-writer-enhancer-only`: `event: before_tool`, priority 10, `when:`
+  seat is `plan-writer` and not (`arguments.agent ==
+  'plan-enhancer-taskless'` and `arguments.isolation == 'none'` and
+  `variables.get('claimed_tasks')` is non-empty and
+  `not all_tasks_have_label(list(variables.get('claimed_tasks')),
+  'enhancer-pass-spent')`); effect `block` on `gobby-agents:spawn_agent`
+  and `gobby-agents:dispatch_batch`, reason naming the exact allowed call
+  and that one pass per planning task is permitted and this task's is
+  spent.
+- `plan-writer-enhancer-receipt`: `event: before_tool`, priority 11,
+  `when:` the admitted case of the rule above (seat `plan-writer`, a
+  `gobby-agents:spawn_agent` call with that agent and isolation, and the
+  claimed task without the label); effect inline `mcp_call` to
+  `gobby-tasks:add_label` with `task_id` the claimed task and `label:
+  enhancer-pass-spent`, `block_on_failure: true`. The receipt is written
+  before the spawn runs, so a receipt that cannot be written refuses the
+  spawn. A spawn that fails after its receipt keeps the pass spent: the
+  bound fails closed, and only the PD re-grants a pass by removing the
+  label.
+- `seat-keep-enhancer-receipt`: `event: before_tool`, priority 10,
+  `when:` seat match and seat is not `program-director` and either a
+  `gobby-tasks:remove_label` call whose `label` is `enhancer-pass-spent`,
+  or a `gobby-tasks:update_task` call carrying `labels` without
+  `enhancer-pass-spent` for a task that has it (`all_tasks_have_label`);
+  effect `block` with no tool filter, reason: only the PD removes an
+  enhancer receipt.
 
 Rules in `seat-write-scope.yaml`, same tags, `event: before_tool`, priority 15:
 
@@ -583,26 +575,23 @@ Rules in `seat-write-scope.yaml`, same tags, `event: before_tool`, priority 15:
   r'/Users/josh/Desktop/gobby-digest-\d{4}-\d{2}-\d{2}\.md')`; reason:
   the Archivist writes only the dated desktop digest.
 
-Tests with the real engine as 2.1 does: the enhancer bound covers a reclaim
-that returns `already_claimed`, `create_task(claim=true)` of the same task, a
-failed spawn, a `compact` session_start, a spawn followed by a `/clear`
-successor that reclaims the same task and is refused, and a claim of
-a second planning task; the write scope covers one allowed and one blocked
-write per seat and an opaque write with no path.
-`test_session_start_claims.py` pins the successor transfer: both ledgers
-reach the successor, merge with an existing successor ledger, and transfer
-when no claim does.
-
-Consumers unchanged:
-- `src/gobby/hooks/event_handlers/_session_start/materialize.py` — no-edit-reason: it calls `preserve_task_claim_state` with the predecessor's variables and gains the ledger transfer with no signature change.
-- `src/gobby/servers/websocket/chat/_session.py` — no-edit-reason: the web-chat clear path calls the same function unchanged and gains the transfer.
-- `tests/servers/websocket/chat/test_clear_session.py` — no-edit-reason: it asserts claim transfer, which is unchanged; the ledger keys are absent in its fixtures.
+Tests with the real engine and a bound task manager as 2.1 does: after one
+admitted spawn the task carries `enhancer-pass-spent`, and a second spawn
+for the same task is refused from a reclaim answered `already_claimed`, a
+`create_task(claim=true)` of it, a `compact` session_start, a `/clear`
+successor, and a fresh session that claims it after release; a failed
+`add_label` refuses the spawn; a spawn that fails after its receipt stays
+spent; a different agent, another isolation, or no claimed task is
+refused; a second planning task admits exactly one pass; a non-PD seat's
+`remove_label` or label-dropping `update_task` on a receipted task is
+refused and the PD's is allowed. The write scope covers one allowed and
+one blocked write per seat and an opaque write with no path.
 
 `_common.md` third bullet becomes: "Do not spawn agents or launch
 pipelines. The automated task-close reviewer and the Plan Writer's single
-`plan-enhancer-taskless` pass per plan, one per claimed planning task (Josh,
-2026-09-26; rule `plan-writer-enhancer-only`), are the only permitted spawn
-paths."
+`plan-enhancer-taskless` pass per planning task, receipted on the task
+(Josh, 2026-09-26; rule `plan-writer-enhancer-only`), are the only
+permitted spawn paths."
 
 **Acceptance:**
 
@@ -615,13 +604,14 @@ paths."
   `src/gobby/install/shared/workflows/rules/roles/seat-spawn-policy.yaml`. test:
   `tests/workflows/test_seat_rules.py::test_seats_cannot_spawn`.
 - 2.2.2 - The Plan Writer may spawn `plan-enhancer-taskless` with `isolation:
-  none` once per claimed planning task: a reclaim answered with
-  `already_claimed`, a `create_task(claim=true)` of the same task, a failed
-  spawn, a compact, and a `/clear` successor leave the ledgers unchanged; a
-  second attempt for the same task (including from a `/clear` successor
-  that reclaims it), a different agent, another isolation, or no claimed
-  task is blocked; claiming a different planning task admits
-  exactly one more pass. test:
+  none` once per planning task, receipted by the task label
+  `enhancer-pass-spent` before the spawn runs: a second attempt for the
+  same task is refused after a reclaim answered `already_claimed`, a
+  `create_task(claim=true)`, a compact, a `/clear` successor, and a
+  release followed by a fresh session's claim; a failed receipt write
+  refuses the spawn; a failed spawn keeps the receipt; a different agent,
+  another isolation, or no claimed task is refused; a different planning
+  task admits exactly one pass; only the PD can remove the receipt. test:
   `tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_per_task`.
 - 2.2.3 - The shared role rules name the exception. behavior:
   "plan-writer-enhancer-only" in `.gobby/roles/_common.md`.
@@ -640,11 +630,6 @@ paths."
   refused, and both are callable from a rule condition. symbol:
   `src/gobby/workflows/condition_helpers_paths.py::write_paths_within`. test:
   `tests/workflows/test_condition_helpers_paths.py::test_write_path_helpers_resolve_before_matching`.
-- 2.2.6 - A `/clear` successor inherits `plan_writer_planning_tasks` and
-  `plan_writer_enhancer_tasks` from its predecessor. symbol:
-  `src/gobby/hooks/event_handlers/_session_start/claims.py::preserve_task_claim_state`.
-  test:
-  `tests/hooks/test_session_start_claims.py::test_clear_successor_inherits_plan_writer_ledgers`.
 
 ## P3: Seat Definitions
 `kind: framing`
@@ -1223,16 +1208,22 @@ commit; transition to `stamp` when `vars.consensus`) → `stamp` (allowed
 MCP: `gobby-plans:derive_plan_handoff_manifest`,
 `gobby-plans:apply_plan_handoff_manifest`, `send_message`,
 `gobby-agents:wait_for_coordination`, `gobby-workflows:set_variable`; the
-seat waits here for the Writer's commit of the rendered bytes; the handoff
-tools are allowed in no other step; the seat verifies the committed bytes' hash and base validation,
-derives with complete routing decisions, applies with the exact returned
-hashes and digest, runs `uv run gobby plans validate <plan> -p <project>
---mode expansion`, and sends the Writer and PD the manifest digest, entry
-count, rendered hash and validation result; `on_mcp_success` for
-`gobby-agents:send_message` with `when: 'manifest_digest' in
-str(tool_input.get('content')) and str(vars.candidate_sha) in
-str(tool_input.get('content'))` resets `candidate_sha` and `consensus`;
-transition to `await` when `not vars.candidate_sha`). A refused derive or
+handoff tools are allowed in no other step; the seat verifies the committed
+bytes' hash and base validation, derives with complete routing decisions,
+applies with the exact returned hashes and digest, runs `uv run gobby plans
+validate <plan> -p <project> --mode expansion`, and sends the Writer and PD
+the manifest digest, entry count, rendered hash and validation result. That
+digest report resets nothing: the seat stays in `stamp` and waits there for
+the Writer's commit of the rendered bytes, verifies that the committed
+file's SHA256 equals the rendered hash, and then sends the Writer and PD
+`EVENT=M1_COMMITTED` naming `candidate_sha` and the M1 commit;
+`on_mcp_success` for `gobby-agents:send_message` with `when:
+'EVENT=M1_COMMITTED' in str(tool_input.get('content')) and
+str(vars.candidate_sha) in str(tool_input.get('content'))` resets
+`candidate_sha` and `consensus`; transition to `await` when `not
+vars.candidate_sha`. A new candidate that arrives while a handoff is
+outstanding is bound only after that reset, in `await`, so it cannot
+overwrite the outstanding `candidate_sha`). A refused derive or
 apply is reported to the Writer and PD with the exact error and the step
 stays in `stamp`; an edit after derivation means deriving again. Prompt
 states Decision 14: the seat owns M1 and never hand-edits the plan, and it
@@ -1264,7 +1255,8 @@ never expands or dispatches.
   (Decision 14): enhancer edits to the PD, Writer–Adversary consensus over
   `send_message`, the Adversary's handoff-manifest stamp from the committed
   consensus bytes, PD review, and Josh's approval before expansion; neither
-  names an evidence-round tool. behavior: "derive_plan_handoff_manifest" in
+  seat invokes or is permitted an evidence-round tool, which appear only in
+  `plan-adversary`'s `blocked_mcp_tools` declarations. behavior: "derive_plan_handoff_manifest" in
   `src/gobby/install/shared/workflows/agents/plan-adversary.yaml`.
 
 ### 3.5 Seat bundle contract test [category: test] (depends: 3.1, 3.2, 3.3, 3.4)
@@ -1325,8 +1317,10 @@ after the first
 fires only on the message naming `candidate_task`; `plan-adversary` is
 refused `derive_plan_handoff_manifest` in `load_skills`, `await`, and
 `review`, is admitted to derive and apply in `stamp`, and stamps
-two candidates with distinct `candidate_sha` values and the stamp report
-resets only on the message naming the bound SHA; `plan-writer` takes one
+two candidates with distinct `candidate_sha` values: the digest report
+leaves it in `stamp`, only the `EVENT=M1_COMMITTED` report naming the
+bound SHA resets it, and a second candidate sent before that report does
+not rebind `candidate_sha`; `plan-writer` takes one
 plan from `draft` through `handoff` to close and binds a second
 `plan_task`, and a findings message leaves it in `adversary`; `log-monitor`
 reports two windows and a non-report message leaves `tick_done` set.
@@ -1573,3 +1567,16 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   component-wise directory containment and the Archivist uses
   `write_paths_match` on the dated digest name, both after symlink and
   traversal resolution (2.2, 2.2.4, 2.2.5).
+- 2026-09-28: Adversary follow-up (gobby#14579) on `88abd91c07` and PD
+  disposition (gobby#14610). PA-003, PA-004, PA-012 and PA-013 are
+  resolved. PA-001: the PD kept one pass per planning task, including
+  against a fresh session after release, and authorized no
+  per-session-chain bound. The session ledgers and the successor-transfer
+  change are replaced by a durable receipt on the task, the
+  `enhancer-pass-spent` label, written before the spawn by an inline
+  `mcp_call` with `block_on_failure`, read with `all_tasks_have_label`,
+  and removable only by the PD (Decision 6, 2.2, 2.2.2). Nits: 3.4.5 says
+  neither seat invokes an evidence-round tool; `stamp` holds until the
+  Writer's rendered-byte commit is verified and reported as
+  `EVENT=M1_COMMITTED`, which alone resets the loop (3.4, 3.5). Edited in
+  the isolated worktree while main is frozen.
