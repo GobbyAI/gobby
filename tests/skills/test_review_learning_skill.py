@@ -377,11 +377,10 @@ def test_interactive_approval_sequence(
         protocol.index("apply_plan_review_manifest"),
         protocol.index("append_plan_changelog_round"),
         protocol.index("finalize_plan_review_evidence"),
-        protocol.index("checkpoint_plan_review_lesson_mint"),
     ]
     assert operation_order == sorted(operation_order)
     assert "atomically records approval intent and manifest checkpoint" in normalized_protocol
-    assert "pending lesson-mint state" in protocol
+    assert "lesson" not in protocol.lower()
     assert "drift revokes the intent" in (PLAN_SKILL.parent / "repair.md").read_text()
     assert "append_plan_changelog_round" in protocol
     assert "never overwrite it with a stale mirror" in draft_contract.lower()

@@ -1584,7 +1584,7 @@ silently ignored and would fail the 3.5 "no key outside the model" check.
 
 ```yaml
 deferral:
-  task_ref: "TBD-after-22899"
+  task_ref: "#23003"
   reason: "External prerequisite: the sandbox_profile field and guards are delivered by the #22899 plan's leaves."
   owner: "program-director"
   original_acceptance_items:

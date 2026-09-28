@@ -149,9 +149,8 @@ canonical result before the coordinator (the Writer seat in a static-seat
 round) applies accepted typed repairs.
 
 On user-accepted approval, the coordinator calls `apply_plan_review_manifest`,
-then `append_plan_changelog_round`, `finalize_plan_review_evidence`, and
-`checkpoint_plan_review_lesson_mint`. The daemon writes canonical V1 fences;
-never hand-build them. Pending lesson mint blocks a subsequent review round.
+then `append_plan_changelog_round` and `finalize_plan_review_evidence`. The
+daemon writes canonical V1 fences; never hand-build them.
 If review is skipped, use `derive_plan_handoff_manifest` and
 `apply_plan_handoff_manifest` with their exact returned hashes/digest instead.
 These paths reject stale evidence rather than guessing a replacement manifest.
@@ -289,8 +288,8 @@ and plan approval state rather than only static plan files.
 Review evidence uses `prepare_plan_review_round`, `get_plan_review_snapshot`,
 `bind_evidence_run`, `bind_static_review_seats`, `expire_plan_review_evidence`,
 and `verify_plan_unchanged`.
-Manifest derivation/application, coverage attestation, typed repairs, changelog
-append/finalization, and lesson checkpoint tools share this service. Discover
+Manifest derivation/application, coverage attestation, typed repairs, and
+changelog append/finalization tools share this service. Discover
 unknown names with `list_tools`; fetch a known unleased schema directly.
 
 Plan file edits still obey normal agent write rules. MCP plan records do not

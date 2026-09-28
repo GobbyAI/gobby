@@ -139,7 +139,10 @@ def test_checkpoint_choices_and_active_handoff() -> None:
         "stop",
     ):
         assert choice in draft
-    assert "After drafting, enhancement, each finalized review, and approval" in draft
+    assert (
+        "In generic interactive planning, after drafting, enhancement, each finalized review, "
+        "and approval" in draft
+    )
     assert "Stop preserves the current authority and starts no next phase" in draft
     approval = _body("plan/approval.md")
     assert "while an enhancer or reviewer is active, mark it pending" in approval
@@ -175,12 +178,11 @@ def test_approval_uses_canonical_payload_and_finalized_round_counts() -> None:
             "apply_plan_review_manifest",
             "append_plan_changelog_round",
             "finalize_plan_review_evidence",
-            "checkpoint_plan_review_lesson_mint",
         )
     ]
     assert order == sorted(order)
     assert "complete canonical approved result, never reconstructed fields" in reviewed
-    assert "Approval completes only after pending clears" in reviewed
+    assert "lesson" not in body.lower()
     assert "verification section with bold round labels" in reviewed
     assert "planning_seed_state approved" in body
     assert "only finalized completed_plan_review_rounds" in body
