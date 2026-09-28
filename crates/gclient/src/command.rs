@@ -173,6 +173,11 @@ fn dispatch_inner(args: Vec<String>, env: CommandEnv) -> Result<i32, CommandErro
         return Ok(0);
     }
     if parsed.verb == "help" {
+        // Help takes the options every verb takes and ignores them.
+        parsed.switch("--json");
+        for option in ["--workspace", "--daemon-url", "--token-file"] {
+            parsed.take(option);
+        }
         let text = match parsed.position() {
             Some(verb) => help::verb(&verb)
                 .ok_or_else(|| CommandError::usage(format!("unknown verb: {verb}")))?,

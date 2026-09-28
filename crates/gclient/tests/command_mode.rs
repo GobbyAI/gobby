@@ -76,6 +76,20 @@ fn every_verb_has_its_own_help() {
     assert!(send_keys.starts_with("usage: gclient send-keys [REF] TEXT [--enter]\n"));
     assert!(send_keys.contains("check it with capture-pane before retrying"));
 
+    for args in [
+        vec!["help", "--workspace", "0"],
+        vec!["help", "send-keys", "--workspace", "0", "--json"],
+        vec!["help", "--daemon-url", "http://x", "--token-file", "t"],
+    ] {
+        let output = gclient(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
+
     let unknown = gclient(&["help", "bogus"]);
     assert_eq!(unknown.status.code(), Some(2));
     assert_eq!(stderr(&unknown), "gclient help: unknown verb: bogus\n");
