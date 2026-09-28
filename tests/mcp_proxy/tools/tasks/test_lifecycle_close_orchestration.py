@@ -26,6 +26,8 @@ from fastapi import FastAPI
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
 from gobby.config.tasks import TaskValidationConfig
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
@@ -1250,9 +1252,14 @@ async def test_submit_close_review_claims_before_heavy_work(
     async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(function, *args, **kwargs)
 
+    # An agent's stdio call is workflow-enforced, which only the proxy performs (#22961).
+    tool_proxy = ToolProxyService(
+        mcp_manager=cast(MCPClientManager, SimpleNamespace(session_manager=session_manager)),
+        internal_manager=internal_manager,
+    )
     http_server = SimpleNamespace(
         _internal_manager=internal_manager,
-        tool_proxy=None,
+        tool_proxy=tool_proxy,
         mcp_manager=None,
         session_manager=session_manager,
         services=SimpleNamespace(database=temp_db),
