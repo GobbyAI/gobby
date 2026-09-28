@@ -469,7 +469,10 @@ def _split_markdown_row(line: str) -> tuple[str, ...]:
 
 
 def _is_separator_row(row: tuple[str, ...]) -> bool:
-    return bool(row) and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in row)
+    # GFM permits a separator cell with a single dash (``| - | - |``); the
+    # authoritative Claude ``model-config`` document uses that short form, so
+    # requiring three dashes silently discarded every table in it.
+    return bool(row) and all(re.fullmatch(r":?-+:?", cell.replace(" ", "")) for cell in row)
 
 
 def _required_feature(
