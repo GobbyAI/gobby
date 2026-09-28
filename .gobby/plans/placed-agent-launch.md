@@ -51,8 +51,8 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
     resume.
   - Any invalid input or wrap failure is refused before any unplaced or unsandboxed
     agent side effect.
-  - The isolated acceptance tests include a two-seat tab+split ordinary pipeline and a
-    live-seat refusal.
+  - The isolated acceptance tests include a two-seat tab+split placement fixture (an
+    ordinary pipeline owned by the tests) and a live-seat refusal.
   - gclient hand launches and plain shells have no sandbox mechanism and are out of
     scope. Current hand-launched seats are not relaunched.
 - Josh's rulings of record:
@@ -2166,22 +2166,25 @@ the existing workspace model and projection and adds no placement registry.
 - 2.1.2 - A `created` event that arrives before the binding workspace event gets its unplaced surface moved into the bound daemon pane, leaving exactly one surface and no local tab. test: `crates/gclient/tests/placed_agent.rs::created_then_bind_moves_into_pane`.
 - 2.1.3 - A client that starts or reconnects through `reconcile_subscribe_first`, with a snapshot holding the bound pane and a roster holding the already-live terminal, shows exactly one surface in the saved pane, no local surface, and stable focus. test: `crates/gclient/tests/placed_agent.rs::reconnect_projects_bound_terminal_once`.
 
-## P3: Runbook pipeline acceptance
+## P3: Placement pipeline acceptance
 `kind: framing`
 
-The ordinary-pipeline runbook proof for Josh's acceptance.
+An isolated proof that an ordinary pipeline places two seats through
+`spawn_agent`. It is a test fixture, not a published runbook. The tagged,
+roster-guarded operator runbook is #22895's.
 
-### 3.1 Two-seat runbook pipeline acceptance [category: code] (depends: 1.4, 2.1)
+### 3.1 Two-seat placement acceptance fixture [category: code] (depends: 1.4, 2.1)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/install/shared/workflows/pipelines/runbook-two-seat-example.yaml`
-- `tests/workflows/test_runbook_placed_pipeline.py`
+- `tests/workflows/fixtures/two_seat_placement.yaml`
+- `tests/workflows/test_placed_pipeline_fixture.py`
 
-Add a bundled example runbook: an ordinary pipeline with no new schema and two `mcp`
-steps. It is the one runbook sample. Its `runbook` catalogue tag is #22895's to
-carry onto the row, because bundled pipeline sync writes `tags=["gobby"]` today
-(`workflows/sync_pipelines.py:84`), so this leaf adds no tag mechanism.
+Add a test-owned placement fixture, `two-seat-placement-fixture`: an ordinary
+pipeline with no new schema and two `mcp` steps. It lives under `tests/`, so
+only the isolated test runtime imports it. There is no bundled template, and
+nothing publishes it to a live pipeline registry. It carries no `runbook` tag
+and is not the runbook sample.
 
 1. `seat_a`: `gobby-agents:spawn_agent` with
    `placement: {tab: {workspace: ${{inputs.workspace}}, title: ${{inputs.seat_a_title}}}}`.
@@ -2189,9 +2192,11 @@ carry onto the row, because bundled pipeline sync writes `tags=["gobby"]` today
    `placement: {split: {pane: ${{steps.seat_a.output.pane_ref}}, axis: right, title: ${{inputs.seat_b_title}}}}`.
 
 Each step's failure stops the pipeline through the existing step error semantics.
-The template carries only inputs, the two steps, and prompts and agents supplied as
-inputs. It carries no guard logic of its own, because the guards live in
-`spawn_agent`.
+The fixture carries only inputs, the two steps, and prompts and agents supplied as
+inputs. It carries no guard logic of its own. The refusals it exercises are
+`spawn_agent`'s placement guards. `seat_live` is keyed only by workspace and tab
+title, so the fixture proves placement-level refusal, not roster-level refusal;
+roster guarding belongs to #22895's runbook.
 
 The isolated acceptance test runs this pipeline end to end against an isolated test
 daemon (temporary state and ports, test hub `DATABASE_URL`, `GOBBY_TEST_PROTECT=1`).
@@ -2202,25 +2207,27 @@ the managed wrapper stubbed at the SRT binary boundary.
 - Pipeline `mcp` steps run through the tool proxy with the child session seeded.
   `_inject_agent_parent_session_argument` fills in `parent_session_id` (decision 8).
   Step outputs are addressable as `${{steps.<id>.output.<field>}}`.
-- The bundled pipelines live in `src/gobby/install/shared/workflows/pipelines/`
-  (`ask.yaml`, `expand-task.yaml`, `gobby-merge.yaml`). They sync to the DB registry
-  (templates are not live config), so the test imports the template into the isolated
-  daemon.
+- The test imports the fixture into the isolated daemon's database with
+  `workflows/imports.py::sync_imported_workflow_file`, which upserts one pipeline
+  YAML for a project scope. A file under `src/gobby/install/shared/workflows/pipelines/`
+  would instead sync to every daemon's registry, which is why the fixture is not
+  bundled.
 - Existing executor test patterns: `tests/workflows/test_pipeline_executor_child_session.py`.
-- The CLI entry is `gobby pipelines run runbook-two-seat-example --input ...`, with the
-  system-session parent. Cron uses the same pipeline with the cron-session parent. The
-  MCP entry is `run_pipeline` with the calling-session parent.
+- After the import, inside the isolated daemon only, the CLI entry is
+  `gobby pipelines run two-seat-placement-fixture --input ...` with the
+  system-session parent. Cron would use the same pipeline with the cron-session
+  parent. The MCP entry is `run_pipeline` with the calling-session parent.
 - Planned check: `DATABASE_URL=<isolated hub> GOBBY_TEST_PROTECT=1 uv run pytest
-  tests/workflows/test_runbook_placed_pipeline.py -v`. It needs a PD slot because it
+  tests/workflows/test_placed_pipeline_fixture.py -v`. It needs a PD slot because it
   starts an isolated daemon.
 
 **Acceptance:**
 
-- 3.1.1 - The two-seat pipeline places seat A in a new titled tab and seat B in a right split of seat A's pane, stored with axis `horizontal`. Both terminals are SRT-wrapped and bound before exec, and both replies carry pane refs. test: `tests/workflows/test_runbook_placed_pipeline.py::test_two_seat_tab_and_split`.
-- 3.1.2 - Re-running the pipeline while seat A is live fails at `seat_a` with `seat_live` and spawns nothing. test: `tests/workflows/test_runbook_placed_pipeline.py::test_rerun_refuses_live_seat`.
-- 3.1.3 - An invalid pane ref for seat B fails the step with no spawn, and seat A is unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_invalid_ref_refuses_without_spawn`.
-- 3.1.4 - An SRT wrap failure for seat B fails the step, leaves no seat B pane and no provider process, and leaves seat A unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_wrap_failure_refuses_seat`.
-- 3.1.5 - A CLI-started run parents both agents to the pipeline child session, whose parent is the system session, and resolves the pipeline's project. test: `tests/workflows/test_runbook_placed_pipeline.py::test_cli_run_parent_and_project`.
+- 3.1.1 - The two-seat pipeline places seat A in a new titled tab and seat B in a right split of seat A's pane, stored with axis `horizontal`. Both terminals are SRT-wrapped and bound before exec, and both replies carry pane refs. test: `tests/workflows/test_placed_pipeline_fixture.py::test_two_seat_tab_and_split`.
+- 3.1.2 - Re-running the pipeline while seat A is live fails at `seat_a` with `seat_live` and spawns nothing. test: `tests/workflows/test_placed_pipeline_fixture.py::test_rerun_refuses_live_seat`.
+- 3.1.3 - An invalid pane ref for seat B fails the step with no spawn, and seat A is unaffected. test: `tests/workflows/test_placed_pipeline_fixture.py::test_invalid_ref_refuses_without_spawn`.
+- 3.1.4 - An SRT wrap failure for seat B fails the step, leaves no seat B pane and no provider process, and leaves seat A unaffected. test: `tests/workflows/test_placed_pipeline_fixture.py::test_wrap_failure_refuses_seat`.
+- 3.1.5 - A CLI-started run parents both agents to the pipeline child session, whose parent is the system session, and resolves the pipeline's project. test: `tests/workflows/test_placed_pipeline_fixture.py::test_cli_run_parent_and_project`.
 
 ## P4: Definition network policy and the vendored Trusted seed
 `kind: framing`
@@ -2511,14 +2518,22 @@ environment only:
 - `cargo test -p gobby-client --test placed_agent`;
 - the 3.1 isolated-daemon pipeline test.
 
-After a PD-scheduled restart and gclient promotion, the operator smoke test is:
+After a PD-scheduled restart and gclient promotion, the placement smoke runs in an
+isolated scratch daemon, never the live one. The daemon runs from a throwaway
+worktree of the landed commit with its own database, state and ports
+(`GOBBY_ALLOW_WORKTREE_DAEMON=1`, announced as testing). The fixture is copied to
+the scratch project's `.gobby/workflows/pipelines/two_seat_placement.yaml`, and
+`gobby-workflows:reload_cache` on the scratch daemon imports it through
+`sync_imported_workflows`. Then:
 
 ```sh
-gobby pipelines run runbook-two-seat-example
+gobby pipelines run two-seat-placement-fixture
 ```
 
 It runs against a scratch workspace and must show two placed, SRT-wrapped seats and a
-refused re-run. Researchers never touch the live daemon or its seats.
+refused re-run. Nothing is imported into the live registry. The operator-facing
+guarded runbook smoke belongs to #22895. Researchers never touch the live daemon or
+its seats.
 
 SRT smoke, after P4 lands, in an isolated Program Director slot. This plan
 assigns `trusted` to no production definition (decision 14); that assignment
@@ -2894,711 +2909,15 @@ brings its own sync-owned fixtures:
   committed bytes and validates expansion from them. The Program Director
   reviews the plan and gates expansion on Josh's approval. No expansion or
   dispatch happens before that approval.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Agent pane reservation primitives
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.5'
-  - '1.6'
-  validation_criteria: '1.1.1: Invalid placement shapes (no title, bad axis, both
-    variants, unknown key) raise `invalid_placement` without touching storage. test:
-    `tests/terminals/test_workspace_agent_panes.py::test_invalid_placement_shapes_refused`.
-
-    1.1.2: Preflight refuses an unknown ref, an out-of-scope project and a foreign
-    node, and inserts no row. test: `tests/terminals/test_workspace_agent_panes.py::test_preflight_refusals_have_no_side_effects`.
-
-    1.1.3: Preflight refuses `seat_live` when a tab title or pane label with the same
-    canonical title holds a pending, live or orphaned terminal, across kinds in both
-    directions (an existing tab then a split request, an existing split then a tab
-    request). Two titles that truncate to the same stored value are one seat, and
-    relaunch is allowed once that terminal has ended. test: `tests/terminals/test_workspace_agent_panes.py::test_live_seat_refused_across_kinds_ended_seat_allowed`.
-
-    1.1.4: Reserve then bind produces a bound pane with `owns_terminal=True`, keeps
-    the in-flight mark until `settle`, and emits exactly one `tab.created` or `pane.added`.
-    test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_bind_emits_once`.
-
-    1.1.5: With no launch terminal, or an inactive one, release removes the reserved
-    pane and the tab it emptied, and is idempotent. test: `tests/terminals/test_workspace_agent_panes.py::test_release_is_idempotent`.
-
-    1.1.6: Two concurrent reservations of the same workspace and canonical title yield
-    exactly one reservation and one `seat_live` refusal, for same-kind and cross-kind
-    pairs. test: `tests/terminals/test_workspace_agent_panes.py::test_concurrent_same_seat_reserves_once`.
-
-    1.1.7: A `right` split is stored with axis `horizontal`, and a `down` split with
-    axis `vertical`. test: `tests/terminals/test_workspace_agent_panes.py::test_split_axis_maps_to_storage_axis`.
-
-    1.1.8: A tab reservation stores the `worktree_id` passed to `reserve`: none for
-    isolation none, the reused id for a reused worktree, and the new id for a fresh
-    worktree. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_stores_final_worktree_association`.
-
-    1.1.9: A `create_tab` or `add_pane` failure, and a `rename_pane` failure after
-    `add_pane` committed, each leave no pane row, tab row, in-flight mark or seat
-    entry, and a later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_insert_failure_leaves_nothing`.
-
-    1.1.10: A reserve cancelled while its insert is running waits for the insert to
-    settle, removes any committed row, clears the mark and the seat entry, and re-raises
-    `CancelledError`. A later reserve of the same seat succeeds. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_cancelled_before_return_leaves_nothing`.
-
-    1.1.11: Release kills an owned terminal that is still `pending` or `live` and
-    then removes the pane, kills nothing when that terminal is already inactive, and
-    when the kill fails, or the terminal is already `orphaned`, keeps the pane bound
-    to that terminal, `orphaned` after a failed kill of a `live` row and still `pending`
-    after a failed kill of a `pending` row (1.6), so a same-seat preflight is `seat_live`.
-    After that terminal settles `exited`, `sweep_dead_panes` removes the pane and
-    the seat is free. test: `tests/terminals/test_workspace_agent_panes.py::test_release_kills_only_an_active_owned_terminal`.
-
-    1.1.12: With an active owned terminal, release still kills it and clears the mark
-    and the seat entry when the kill raises, when `remove_pane` raises, when the removal
-    publish raises, and when the row is already gone. Each failure is logged with
-    the phase, the pane and terminal ids and the exception type name, a synthetic
-    secret in the exception message is absent from the log, release does not raise,
-    and after a successful cleanup has marked the terminal inactive release issues
-    no kill. test: `tests/terminals/test_workspace_agent_panes.py::test_release_steps_are_independent`.
-
-    1.1.13: When the rollback''s `remove_pane` fails, reserve logs that failure with
-    the pane id and the exception type name and without the exception message (a synthetic
-    secret marker is absent from the log), clears the mark and the seat entry, and
-    raises the original error. The residual unbound row is not a live seat, a same-seat
-    reserve succeeds, and the next `sweep_dead_panes` removes the row. test: `tests/terminals/test_workspace_agent_panes.py::test_reserve_rollback_failure_leaves_sweepable_residue`.
-
-    1.1.14: `settle` clears the mark and the seat entry after a successful reply,
-    and until then a guarded close, move or swap of the bound pane is refused `busy`.
-    test: `tests/terminals/test_workspace_agent_panes.py::test_mark_held_until_settle`.
-
-    1.1.15: A split whose beside pane, or that pane''s tab, moved to another tab,
-    workspace or project after preflight is refused `not_found` at reserve and inserts
-    nothing. test: `tests/terminals/test_workspace_agent_panes.py::test_split_reserve_refuses_moved_target`.'
-  labels:
-  - covers:placed-agent-launch:1.1:1.1.1
-  - covers:placed-agent-launch:1.1:1.1.2
-  - covers:placed-agent-launch:1.1:1.1.3
-  - covers:placed-agent-launch:1.1:1.1.4
-  - covers:placed-agent-launch:1.1:1.1.5
-  - covers:placed-agent-launch:1.1:1.1.6
-  - covers:placed-agent-launch:1.1:1.1.7
-  - covers:placed-agent-launch:1.1:1.1.8
-  - covers:placed-agent-launch:1.1:1.1.9
-  - covers:placed-agent-launch:1.1:1.1.10
-  - covers:placed-agent-launch:1.1:1.1.11
-  - covers:placed-agent-launch:1.1:1.1.12
-  - covers:placed-agent-launch:1.1:1.1.13
-  - covers:placed-agent-launch:1.1:1.1.14
-  - covers:placed-agent-launch:1.1:1.1.15
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: Executor binds a placed terminal before exec
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.6'
-  - '1.9'
-  validation_criteria: '1.2.1: With a binder, the executor runs `wrap_provider_command`,
-    `create_pending`, the bind, `reserve_observer`/`prepare_spawn` and provider exec
-    in that order, and the provider argv is the SRT-wrapped command. Without a binder
-    the order is unchanged. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_follows_wrap_and_precedes_exec`.
-
-    1.2.2: A binder failure, including a publish failure raised after `set_pane_terminal`
-    persisted the binding, fails the pending terminal through `_settle_native_spawn_failure`,
-    returns a failed `SpawnResult`, and never starts the provider. test: `tests/agents/test_spawn_executor_placement_bind.py::test_bind_failure_fails_pending_terminal`.
-
-    1.2.3: `spawn_executor` re-exports `_runtime_spawn` and `_promote_prepared` from
-    `spawn_executor_runtime`. symbol: `_runtime_spawn`. file: `src/gobby/agents/spawn_executor_runtime.py`.
-
-    1.2.4: With a binder, a `timeout_seconds` expiry hands the held claim to the owner,
-    the row stays `pending` while the prepare is unresolved, and `spawn_timeout` returns
-    without awaiting the prepare. A late success with a proven kill settles the row
-    `exited`. After a late success, a tmux kill that leaves the session present, a
-    tmux terminate that raises, and a native stale-epoch kill whose host cannot answer
-    and that has no process each move the row from `pending` to `orphaned` in one
-    CAS carrying the prepared locator, locator key, epoch and process. A native stale-epoch
-    kill with a process whose group is then dead settles `exited`. When the final
-    settlement write succeeds, the claim is released in every case, for native and
-    tmux. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_timeout_holds_pending_then_late_settlement`.
-
-    1.2.5: Without a binder, a timeout keeps today''s pending row and late cleanup.
-    test: `tests/agents/test_spawn_executor_placement_bind.py::test_unplaced_timeout_unchanged`.
-
-    1.2.6: With a binder, repeated cancellation while the prepare is unresolved, and
-    a cancellation that arrives as the prepare completes with either a success or
-    a failure, each hand the prepare to exactly one owner, which consumes it, and
-    return `cancelled`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_placed_cancellation_has_one_owner`.
-
-    1.2.7: The claim is taken before `create_pending` is dispatched and released after
-    a successful promote or a bind failure. While it is held, `cleanup_failed_spawn`
-    and `terminal_kill` each report not settled, leave the unresolved row `pending`
-    and start no runtime terminate. A prepare slower than `spawn_in_doubt_seconds`
-    is reaped by neither reaper. test: `tests/agents/test_spawn_executor_placement_bind.py::test_in_doubt_claim_spans_prepare`.
-
-    1.2.8: A late prepare failure is not proof. A tmux session created before a failing
-    dimension query, and a native terminal created on the host whose spawn response
-    was lost, are each found and killed with proof before the row settles `exited`.
-    A native probe that cannot reach the host leaves the row `pending` with the claim
-    held, and the absence retry settles it once the host answers (1.2.12). test: `tests/agents/test_spawn_executor_placement_bind.py::test_late_prepare_failure_requires_proven_absence`.
-
-    1.2.9: With a binder, each exit E1-E14 either releases the claim inline or hands
-    it to exactly one owner, and none leaves the id held without an owner. Each case
-    is one parametrized row. Cancellation cases cancel the caller repeatedly while
-    the stage''s worker is still running, and the owner awaits that worker''s real
-    completion. A `create_pending` whose row commits after the cancellation gets that
-    row settled by the owner. The E12 cases (observer bind failure, `CommitSpawnRefusedError`,
-    native commit error, lost CAS), with a kill that raises or is swallowed, leave
-    the row unterminalized until the owner''s proof, and the owner kills through the
-    `prepared` identity. test: `tests/agents/test_spawn_executor_placement_bind.py::test_every_exit_releases_or_hands_off_the_claim`.
-
-    1.2.10: An injected failure of `mark_kill_failed` still lets the owner consume
-    the prepare and make its kill decision. A final settlement write that fails after
-    three retries leaves the claim held and the row unsettled, and the owner enters
-    its settlement retry. With `mark_kill_failed` failing on every attempt and the
-    kill unproven, a `record_orphan_identity` CAS that matches no row keeps the claim
-    held. A final `exited` or `fail_pending_attempt` read back in the wrong state
-    also keeps the claim, and an already-`exited` row releases. On a timeout the row
-    stays `pending` under the held claim while the prepare is still unresolved. test:
-    `tests/agents/test_spawn_executor_placement_bind.py::test_owner_contains_storage_failures`.
-
-    1.2.11: With storage failing past the three immediate retries, the owner keeps
-    the claim and retries on the capped backoff with no restart. Once storage recovers,
-    it settles and releases exactly once for each settlement: `exited` after a proven
-    kill, a kept orphan (from `pending` in one `mark_kill_failed` CAS with identity,
-    and from `live` by `mark_kill_failed` then `record_orphan_identity`), and `fail_pending_attempt`
-    at stages `create`, `bind` and `reserve`. Every re-issued write carries the captured
-    `attempt_generation` and `attempt_started_at`, and a read-back with another pair
-    is not confirmation. A CAS that first matches no row and a wrong-state read-back
-    each retry and then settle. Compensation runs once for `exited` and for `fail_pending_attempt`
-    and is dropped for a kept orphan. For `create`, `bind` and `reserve`, a created-isolation
-    step deferred before the release runs once after the confirmed settlement, and
-    one deferred after the release decides from the row: `exited`, no row, or a row
-    still carrying the result''s `prior_attempt` pair removes, and any other state
-    keeps. No settlement cycle calls terminate, the host probe, the prepare or provider
-    code. While the owner retries, `terminal_kill`, reconcile and both stale-pending
-    reapers leave the row unchanged, and a second claim on the id is refused. test:
-    `tests/agents/test_spawn_executor_placement_bind.py::test_owner_retries_settlement_until_storage_recovers`.
-
-    1.2.12: A prepare that fails with absence unproven, for native (`find_host_terminal`
-    raises) and tmux (`session_present` raises, or the session stays present after
-    an unproven kill), leaves the row `pending`, never `orphaned`, with the claim
-    held. On the capped backoff the owner re-runs the presence check and, while the
-    session is present, re-issues the strict kill at most once per cycle; it never
-    re-dispatches the prepare or runs provider code. Once the check proves absence
-    or a kill is proven, it settles `fail_pending_attempt`, releases and runs compensation
-    once, with no restart. A prepare that succeeded followed by an unproven kill moves
-    the `pending` row to `orphaned` with the prepared identity in one CAS. After a
-    simulated restart such a `pending` row settles only on proof: `LifecycleReconciliation.reap_stale_pending`
-    delegates to the strict reaper, a tmux row whose session is present and a native
-    row the host lists or cannot answer for stay `pending`, and a native row absent
-    from the strict listing settles `exited`. test: `tests/agents/test_spawn_executor_placement_bind.py::test_identityless_row_stays_pending_until_absence_proven`.
-
-    1.2.13: Repeatedly cancelling the spawn caller and a waiter that awaits the owner
-    through `asyncio.shield` does not stop the owner. The cancellations land during
-    the stage drain, the first settlement, a backoff sleep and a shielded offloaded
-    settlement write. When storage then recovers with no restart, there is one owner
-    task, one confirmed settlement, one `release` and one compensation run. In a separate
-    shutdown case, cancelling the owner task itself as loop teardown does, at each
-    of those points, releases nothing, runs no deferred step, leaves the claim until
-    process exit and leaves the row for restart recovery. test: `tests/agents/test_spawn_executor_placement_bind.py::test_owner_retry_survives_cancellation_until_shutdown`.
-
-    1.2.14: A raised `create_pending` or bump is recovered by read-back and never
-    re-executed. A create that commits and then raises, and a bump that commits and
-    then raises, each leave a `pending` row that the owner adopts by its pair and
-    settles `fail_pending_attempt`. A create that rolls back leaves no row, and a
-    bump that rolls back leaves the pre-existing attempt unchanged; each settles with
-    no write. With the read-back failing during a storage outage, the claim stays
-    held and the owner recovers and settles once storage returns, with no restart.
-    Compensation runs once in every case. For a rolled-back bump whose earlier attempt''s
-    row is `pending`, a created-isolation step deferred before the release is run
-    once by the owner. One deferred after the release sees the row still carrying
-    the result''s `prior_attempt` and removes created isolation. A row carrying a
-    newer pair keeps it, and reused isolation is never registered or removed. test:
-    `tests/agents/test_spawn_executor_placement_bind.py::test_indeterminate_create_is_recovered_by_read_back`.'
-  labels:
-  - covers:placed-agent-launch:1.2:1.2.1
-  - covers:placed-agent-launch:1.2:1.2.2
-  - covers:placed-agent-launch:1.2:1.2.3
-  - covers:placed-agent-launch:1.2:1.2.4
-  - covers:placed-agent-launch:1.2:1.2.5
-  - covers:placed-agent-launch:1.2:1.2.6
-  - covers:placed-agent-launch:1.2:1.2.7
-  - covers:placed-agent-launch:1.2:1.2.8
-  - covers:placed-agent-launch:1.2:1.2.9
-  - covers:placed-agent-launch:1.2:1.2.10
-  - covers:placed-agent-launch:1.2:1.2.11
-  - covers:placed-agent-launch:1.2:1.2.12
-  - covers:placed-agent-launch:1.2:1.2.13
-  - covers:placed-agent-launch:1.2:1.2.14
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: One daemon-scoped reserver reaches spawn_agent
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: '1.3.1: `configure_terminals` builds exactly one `AgentPaneReserver`
-    with the same workspace manager, terminal manager, runtime registry, sessions
-    and publish callback as `WorkspaceOps`, and builds none when `WorkspaceOps` is
-    not built. test: `tests/terminals/test_composition_roots.py::test_configure_terminals_builds_one_agent_pane_reserver`.
-
-    1.3.2: `register_agent_spawn_tools` hands the context''s resolver to `create_spawn_agent_registry`
-    unchanged, and each resolution returns the server''s single reserver. test: `tests/mcp_proxy/tools/test_agents_spawn_tools.py::test_spawn_registry_resolves_one_daemon_reserver`.'
-  labels:
-  - covers:placed-agent-launch:1.3:1.3.1
-  - covers:placed-agent-launch:1.3:1.3.2
-  tdd: true
-  source_section: '1.3'
-  implementation_domain: backend
-- title: spawn_agent placement input, compensation and reply
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '1.2'
-  - '1.3'
-  - '1.6'
-  validation_criteria: '1.4.1: A refused preflight (`invalid_placement`, `seat_live`,
-    `not_found`, `forbidden`) creates no isolation, no child session, no agent run,
-    no terminal and no pane. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_refused_placement_has_no_side_effects`.
-
-    1.4.2: A placed spawn with a sandbox config that is not SRT, or not enabled, is
-    refused with `sandbox_required` before any side effect. Leaf-local: until 1.8
-    lands, unplaced spawns are unaffected; 1.8 extends the refusal to every launch.
-    test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_launch_requires_managed_srt`.
-
-    1.4.3: A provider or SRT preparation failure that `finalize_executed_spawn` returns
-    as `success: false` releases the pane, runs `cleanup_failed_spawn` exactly once,
-    and never starts the provider. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_wrap_failure_refuses_and_releases_pane`.
-
-    1.4.4: A later returned failure (terminal liveness or start-run) releases the
-    pane, kills the bound terminal, and runs `cleanup_failed_spawn` exactly once.
-    test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_returned_failure_releases_pane_once`.
-
-    1.4.5: An exception, a `CancelledError` and a bind `busy` conflict each release
-    the pane, and release still runs when a `cleanup_failed_spawn` step fails. When
-    cleanup''s terminate step did not reach the terminal, release kills the recorded
-    launch terminal, or marks it orphaned when the kill fails. After a `busy` conflict
-    release kills nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_exceptions_and_cancellation_release_pane`.
-
-    1.4.6: A successful placed spawn returns synchronously with run_id, terminal_id,
-    workspace, tab_ref and pane_ref, and keeps its pane bound. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_spawn_reply_carries_refs`.
-
-    1.4.7: A slot, lease or active-task refusal leaves no pane, and the loser of a
-    reserve-time `seat_live` race cleans its run, child session and created isolation.
-    test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_late_refusals_leave_no_pane`.
-
-    1.4.8: An explicit `project_path` is accepted. A resolved parent is accepted,
-    including a pipeline child parented to the system or cron session. An ambient-only
-    project and a parent that is the system session itself are refused with `parent_unresolved`
-    before any side effect. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_parent_and_project_provenance`.
-
-    1.4.9: A placed spawn that fails after creating its own worktree removes that
-    worktree, and one that reused a `worktree_id` keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_failed_placed_spawn_cleans_created_isolation_only`.
-
-    1.4.10: Two concurrent placed spawns of one seat through the registry yield one
-    placed agent and one `seat_live`, and the winner''s bind publishes `tab.created`
-    or `pane.added` through the server''s workspace broadcast before provider exec.
-    test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_concurrent_placed_spawns_share_one_reserver`.
-
-    1.4.11: A `reserve` that raises, and a cancellation that arrives while `reserve`
-    is running, each run `_spawn_failure` once, which removes the run, the child session
-    and created isolation, and leave no pane, tab or in-flight mark. The cancellation
-    is re-raised. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_reserve_failure_and_cancellation_clean_dispatch_state`.
-
-    1.4.12: When bind''s publish raises after `set_pane_terminal` persisted the binding,
-    release still receives the launch terminal id. When the pending-failure settlement
-    fails and `cleanup_failed_spawn`''s terminate step also fails before that terminal
-    is inactive, release removes the pane and kills the terminal exactly once. When
-    cleanup completes instead, release issues no kill. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_bind_publish_failure_keeps_release_kill_backstop`.
-
-    1.4.13: Through the registry, a placed request for a free seat whose task already
-    has an active run is refused `task_active` with that run id and removes the isolation
-    it created. A placed request for the occupied seat is `seat_live`. An unplaced
-    duplicate keeps the skipped reply, and no second agent starts. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_duplicate_placed_request_precedence`.
-
-    1.4.14: A placed spawn whose `timeout_seconds` expires while the prepare is unresolved
-    runs finalize, `cleanup_failed_spawn`, release and then a `pane_close` of the
-    bound pane with the claim held. The row stays `pending`, the `pane_close` is refused
-    `busy`, the pane stays bound and holds the seat, created isolation still exists,
-    and nothing is marked `exited`. When the late prepare succeeds, the owner''s proven
-    kill settles the row `exited` and removes the created worktree, and `sweep_dead_panes`
-    then frees the pane. On an unproven kill the worktree and the pane are kept. This
-    holds for native and tmux. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_placed_timeout_race_keeps_pane_until_owner_settles`.'
-  labels:
-  - covers:placed-agent-launch:1.4:1.4.1
-  - covers:placed-agent-launch:1.4:1.4.2
-  - covers:placed-agent-launch:1.4:1.4.3
-  - covers:placed-agent-launch:1.4:1.4.4
-  - covers:placed-agent-launch:1.4:1.4.5
-  - covers:placed-agent-launch:1.4:1.4.6
-  - covers:placed-agent-launch:1.4:1.4.7
-  - covers:placed-agent-launch:1.4:1.4.8
-  - covers:placed-agent-launch:1.4:1.4.9
-  - covers:placed-agent-launch:1.4:1.4.10
-  - covers:placed-agent-launch:1.4:1.4.11
-  - covers:placed-agent-launch:1.4:1.4.12
-  - covers:placed-agent-launch:1.4:1.4.13
-  - covers:placed-agent-launch:1.4:1.4.14
-  tdd: true
-  source_section: '1.4'
-  implementation_domain: backend
-- title: Workspace mutations refuse in-flight panes atomically
-  category: code
-  task_type: bug
-  depends_on:
-  - '1.6'
-  validation_criteria: '1.5.1: Each guarded mutation (`close`, `close_tab`, `remove_pane`,
-    `move_pane`, `move_tab`, `swap_panes`) raises `WorkspaceBusyError` for an in-flight
-    pane, bound or unbound, and for a pane whose bound terminal is held in-doubt after
-    its mark was cleared, and changes nothing. test: `tests/storage/test_workspaces.py::test_guarded_mutations_refuse_in_flight_panes`.
-
-    1.5.2: A guarded mutation racing an agent-pane insert in either order either refuses
-    busy or runs against the committed pane; neither commits against a stale read.
-    test: `tests/storage/test_workspaces.py::test_guard_and_insert_serialize`.
-
-    1.5.3: `add_pane` with expected ids refuses a beside pane moved to another tab,
-    a tab moved to another workspace, and a tab of another project in the same workspace,
-    and inserts nothing. test: `tests/storage/test_workspaces.py::test_add_pane_refuses_moved_beside_target`.
-
-    1.5.4: An empty-workspace close and a concurrent `create_tab` serialize: either
-    the close wins and the insert fails not found, or the insert wins and the close
-    refuses busy. test: `tests/storage/test_workspaces.py::test_empty_workspace_close_serializes_with_new_tab`.
-
-    1.5.5: `sweep_dead_panes` keeps a pane whose terminal is `orphaned` and removes
-    it once the terminal is `exited`. test: `tests/storage/test_workspaces.py::test_sweep_keeps_orphaned_panes`.
-
-    1.5.6: `WorkspaceOps` close, move and swap return `busy` for an in-flight pane,
-    and a `pane_close` on an `orphaned` pane retries its kill. test: `tests/terminals/test_workspace_ops.py::test_ops_refuse_in_flight_and_retry_orphaned_kill`.
-
-    1.5.7: `storage/workspaces.py` is under 1,000 lines and `workspace_ops.py` under
-    850, and the moved names import from their new modules. file: `src/gobby/storage/workspace_layout.py`.
-
-    1.5.8: The pane I/O methods live in `WorkspacePaneIOMixin`, `WorkspaceOps` inherits
-    them with unchanged signatures, and the existing pane I/O tests pass unchanged
-    apart from the retargeted clock patches. file: `src/gobby/terminals/workspace_pane_io.py`.
-
-    1.5.9: A `workspace_close` or `tab_close` whose pane read precedes a reservation
-    that inserts, binds and settles a pane before the close''s transaction runs is
-    refused `busy`, deletes nothing and kills nothing. test: `tests/terminals/test_workspace_ops.py::test_close_refuses_membership_drift_since_read`.'
-  labels:
-  - covers:placed-agent-launch:1.5:1.5.1
-  - covers:placed-agent-launch:1.5:1.5.2
-  - covers:placed-agent-launch:1.5:1.5.3
-  - covers:placed-agent-launch:1.5:1.5.4
-  - covers:placed-agent-launch:1.5:1.5.5
-  - covers:placed-agent-launch:1.5:1.5.6
-  - covers:placed-agent-launch:1.5:1.5.7
-  - covers:placed-agent-launch:1.5:1.5.8
-  - covers:placed-agent-launch:1.5:1.5.9
-  tdd: true
-  source_section: '1.5'
-  implementation_domain: backend
-- title: 'Spawn failure cleanup: one attempt, cancellation-safe, kill truth'
-  category: code
-  task_type: bug
-  depends_on:
-  - '1.9'
-  validation_criteria: '1.6.1: `mark_kill_failed` moves a `live` row to `orphaned`,
-    moves a `pending` row to `orphaned` only with a full identity written in the same
-    statement (which passes the schema CHECKs), leaves a `pending` row without identity
-    `pending`, and leaves other states, and a row with another attempt pair, unchanged.
-    test: `tests/storage/test_terminal_kill_settlement.py::test_mark_kill_failed_cas`.
-
-    1.6.2: A failed runtime kill of a native pid-less `pending` terminal, a tmux `pending`
-    terminal whose session is still present after terminate, and a held in-doubt id
-    each leave the row `pending` and keep created isolation, and a failed kill of
-    a `live` terminal leaves it `orphaned` and listed; a successful kill settles it
-    and cleanup removes created isolation. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_failed_kill_orphans_and_keeps_isolation`.
-
-    1.6.3: A failure inside `finalize_executed_spawn`''s cleanup followed by `_spawn_failure`
-    runs cleanup once. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_runs_once_per_attempt`.
-
-    1.6.4: A cancellation during cleanup, and a second cancellation during a later
-    step, let every step finish once and re-raise the first cancellation; a cancellation
-    after cleanup settled starts nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_survives_cancellation`.
-
-    1.6.5: With each step failing in turn, every later step still runs, each failure
-    is logged with the phase, the run id and the exception type name, a synthetic
-    secret in the exception message is absent from the log, and cleanup does not raise.
-    test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_cleanup_steps_are_independent`.
-
-    1.6.7: With the terminal held in-doubt, cleanup registers created-isolation removal
-    with the claim and removes nothing itself, and reused isolation is not registered.
-    After the claim ends, cleanup removes created isolation only for an `exited` row,
-    no row, or a row still carrying the failed result''s `prior_attempt` pair; a `pending`,
-    `live` or `orphaned` row with any other pair keeps it. test: `tests/mcp_proxy/tools/spawn_agent/test_failure_cleanup.py::test_held_terminal_defers_isolation_to_owner`.
-
-    1.6.6: Every production `cleanup_failed_spawn` call passes the attempt''s `SpawnCleanupOnce`.
-    symbol: `SpawnCleanupOnce`. file: `src/gobby/mcp_proxy/tools/spawn_agent/_failure_cleanup.py`.'
-  labels:
-  - covers:placed-agent-launch:1.6:1.6.1
-  - covers:placed-agent-launch:1.6:1.6.2
-  - covers:placed-agent-launch:1.6:1.6.3
-  - covers:placed-agent-launch:1.6:1.6.4
-  - covers:placed-agent-launch:1.6:1.6.5
-  - covers:placed-agent-launch:1.6:1.6.7
-  - covers:placed-agent-launch:1.6:1.6.6
-  tdd: true
-  source_section: '1.6'
-  implementation_domain: backend
-- title: Placed resume re-places against current state
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  validation_criteria: '1.7.1: A placed agent''s resume snapshot carries its validated
-    placement, and an unplaced agent''s carries none. test: `tests/agents/test_resume_placement.py::test_snapshot_carries_validated_placement`.
-
-    1.7.2: A placed resume re-runs preflight, reserve and bind before exec, and on
-    success the pane is bound to the new terminal and settled. test: `tests/agents/test_resume_placement.py::test_placed_resume_replaces_before_exec`.
-
-    1.7.3: A moved or missing target, an occupied seat (including `orphaned`), a forbidden
-    project, a wrap failure and a missing reserver each park the successor, return
-    a typed error, start no provider and leave no pane. test: `tests/agents/test_resume_placement.py::test_placed_resume_refusals_park_successor`.
-
-    1.7.4: A placed resume failure or cancellation runs cleanup and release once each
-    and never falls back to an unplaced launch. test: `tests/agents/test_resume_placement.py::test_placed_resume_cleanup_once`.
-
-    1.7.5: `resume_executor.py` is under 1,000 lines and the moved helpers import
-    from `resume_executor_settlement.py`. file: `src/gobby/agents/resume_executor_settlement.py`.
-
-    1.7.6: A placed resume cancelled repeatedly while its prepare is unresolved hands
-    the prepare to the 1.2 owner and keeps the pane bound to the `pending` row. The
-    owner''s late settlement then lets the pane be freed, and no unplaced fallback
-    runs. test: `tests/agents/test_resume_placement.py::test_placed_resume_cancel_keeps_in_doubt_owner`.'
-  labels:
-  - covers:placed-agent-launch:1.7:1.7.1
-  - covers:placed-agent-launch:1.7:1.7.2
-  - covers:placed-agent-launch:1.7:1.7.3
-  - covers:placed-agent-launch:1.7:1.7.4
-  - covers:placed-agent-launch:1.7:1.7.5
-  - covers:placed-agent-launch:1.7:1.7.6
-  tdd: true
-  source_section: '1.7'
-  implementation_domain: backend
-- title: spawn_agent and resume never launch unsandboxed
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  - '1.6'
-  - '1.7'
-  validation_criteria: '1.8.1: An unplaced spawn whose effective config is `enabled:
-    false`, or whose backend is `provider-native`, is refused `sandbox_required` before
-    isolation, a child session or a run exists. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_unsandboxed_config_refused_before_side_effects`.
-
-    1.8.2: A managed runtime profile config goes through the same gate. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_runtime_profile_config_is_gated`.
-
-    1.8.3: A resume with no snapshot config, `enabled: false` or a non-`srt` backend
-    parks the successor, returns `sandbox_required` and starts no provider. test:
-    `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config`.
-
-    1.8.5: From a spawned agent, a REST or CLI MCP call is rule-enforced. test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced`.
-
-    1.8.6: With no verifier patch and `GOBBY_HOME` set to an empty directory, the
-    real `verify_srt_installation` fails and the gate refuses the spawn `sandbox_required`;
-    gate unit cases that patch the verifier assert both outcomes explicitly. test:
-    `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_gate_refuses_when_isolated_srt_is_missing`.'
-  labels:
-  - covers:placed-agent-launch:1.8:1.8.1
-  - covers:placed-agent-launch:1.8:1.8.2
-  - covers:placed-agent-launch:1.8:1.8.3
-  - covers:placed-agent-launch:1.8:1.8.5
-  - covers:placed-agent-launch:1.8:1.8.6
-  tdd: true
-  source_section: '1.8'
-  implementation_domain: backend
-- title: In-doubt spawn ownership, kill truth and restart recovery
-  category: code
-  task_type: bug
-  depends_on: []
-  validation_criteria: '1.9.1: `claim`, `holds`, `defer` and `release` track one id;
-    `defer` on an unheld id returns false; `release` returns the deferred steps once,
-    and a `defer` after it returns false. `holds` called from a worker thread while
-    the loop claims and releases answers consistently. test: `tests/terminals/test_in_doubt_kill_truth.py::test_in_doubt_registry_claims_defers_and_releases`.
-
-    1.9.2: `kill_terminal` on a held id raises `TerminalInDoubtError`, calls no runtime
-    terminate and leaves the row unchanged. After `release`, the same call kills the
-    terminal and marks it `exited`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_refuses_held_ids`.
-
-    1.9.3: A tmux terminate that leaves the session present makes `kill_terminal`
-    raise `TerminalKillUnprovenError` and leave the row unsettled. Before any reconcile,
-    a native row with a stale non-NULL epoch that the current host still lists is
-    killed through the host id the strict probe returns before it is marked `exited`.
-    The same row absent from the listing is reaped and settles `exited` (#22530).
-    With the host unreachable, it settles only when a usable recorded process (a positive
-    integer `pgid`) has a dead group afterwards. A live group, no process, a host
-    id with no process, and a non-integer or non-positive `pgid` each stay unsettled.
-    A `pending` row follows the same three cases, and a current-epoch row is not treated
-    as stale while the client is unconnected. A `kill_terminal` given a stale `Terminal`
-    decides from the row it reread under `settle_lock`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_kill_terminal_requires_proven_kill`.
-
-    1.9.4: `record_orphan_identity` writes the locator, epoch and process on an `orphaned`
-    row and changes no row in any other state. test: `tests/terminals/test_in_doubt_kill_truth.py::test_record_orphan_identity_cas`.
-
-    1.9.5: After a simulated restart, an `orphaned` row whose recorded host identity
-    is stale and that the host lists gets the current host identity and process from
-    reconcile, and `terminal_kill` then calls the host kill before it marks the row
-    `exited`. A listed row that reconcile finds held, or whose state or attempt pair
-    changed under the lock, is untouched. `mark_exited_attempt` and `record_orphan_identity`
-    change no row with another attempt pair. test: `tests/terminals/test_host_reconcile_orphans.py::test_reconcile_recovers_orphan_identity`.
-
-    1.9.6: `find_host_terminal` returns the matching host id or `None`, and raises
-    when the host is unreachable. `LifecycleReconciliation.reap_stale_pending` skips
-    a held `pending` row older than `spawn_in_doubt_seconds`. test: `tests/terminals/test_in_doubt_kill_truth.py::test_probe_is_strict_and_reaper_honors_claims`.'
-  labels:
-  - covers:placed-agent-launch:1.9:1.9.1
-  - covers:placed-agent-launch:1.9:1.9.2
-  - covers:placed-agent-launch:1.9:1.9.3
-  - covers:placed-agent-launch:1.9:1.9.4
-  - covers:placed-agent-launch:1.9:1.9.5
-  - covers:placed-agent-launch:1.9:1.9.6
-  tdd: true
-  source_section: '1.9'
-  implementation_domain: backend
-- title: gclient reconciliation of daemon-placed terminals
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  validation_criteria: '2.1.1: A binding workspace event that arrives before `created`
-    means the terminal opens only in its bound daemon pane, with no local surface
-    in the final Chrome state. test: `crates/gclient/tests/placed_agent.rs::bind_then_created_opens_once_in_pane`.
-
-    2.1.2: A `created` event that arrives before the binding workspace event gets
-    its unplaced surface moved into the bound daemon pane, leaving exactly one surface
-    and no local tab. test: `crates/gclient/tests/placed_agent.rs::created_then_bind_moves_into_pane`.
-
-    2.1.3: A client that starts or reconnects through `reconcile_subscribe_first`,
-    with a snapshot holding the bound pane and a roster holding the already-live terminal,
-    shows exactly one surface in the saved pane, no local surface, and stable focus.
-    test: `crates/gclient/tests/placed_agent.rs::reconnect_projects_bound_terminal_once`.'
-  labels:
-  - covers:placed-agent-launch:2.1:2.1.1
-  - covers:placed-agent-launch:2.1:2.1.2
-  - covers:placed-agent-launch:2.1:2.1.3
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: frontend
-- title: Two-seat runbook pipeline acceptance
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.4'
-  - '2.1'
-  validation_criteria: '3.1.1: The two-seat pipeline places seat A in a new titled
-    tab and seat B in a right split of seat A''s pane, stored with axis `horizontal`.
-    Both terminals are SRT-wrapped and bound before exec, and both replies carry pane
-    refs. test: `tests/workflows/test_runbook_placed_pipeline.py::test_two_seat_tab_and_split`.
-
-    3.1.2: Re-running the pipeline while seat A is live fails at `seat_a` with `seat_live`
-    and spawns nothing. test: `tests/workflows/test_runbook_placed_pipeline.py::test_rerun_refuses_live_seat`.
-
-    3.1.3: An invalid pane ref for seat B fails the step with no spawn, and seat A
-    is unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_invalid_ref_refuses_without_spawn`.
-
-    3.1.4: An SRT wrap failure for seat B fails the step, leaves no seat B pane and
-    no provider process, and leaves seat A unaffected. test: `tests/workflows/test_runbook_placed_pipeline.py::test_wrap_failure_refuses_seat`.
-
-    3.1.5: A CLI-started run parents both agents to the pipeline child session, whose
-    parent is the system session, and resolves the pipeline''s project. test: `tests/workflows/test_runbook_placed_pipeline.py::test_cli_run_parent_and_project`.'
-  labels:
-  - covers:placed-agent-launch:3.1:3.1.1
-  - covers:placed-agent-launch:3.1:3.1.2
-  - covers:placed-agent-launch:3.1:3.1.3
-  - covers:placed-agent-launch:3.1:3.1.4
-  - covers:placed-agent-launch:3.1:3.1.5
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Vendored Trusted seed and its reviewed refresh
-  category: config
-  task_type: feature
-  depends_on: []
-  validation_criteria: '4.1.1: The vendored seed records its source URL and fetch
-    date, its `sha256` matches its domain list, and every entry passes SRT''s domain
-    rule. symbol: `trusted_domains`. test: `tests/agents/test_trusted_domains.py::test_seed_provenance_and_entries_are_valid`.
-
-    4.1.2: The refresh script parses the Accordion bullet format, including link and
-    escaped entries, rejects an entry SRT would refuse, prints a diff and writes only
-    with `--write`. test: `tests/scripts/test_refresh_trusted_domains.py::test_parse_diff_and_write_gate`.'
-  labels:
-  - covers:placed-agent-launch:4.1:4.1.1
-  - covers:placed-agent-launch:4.1:4.1.2
-  tdd: true
-  source_section: '4.1'
-  assigned_agent: backend-developer
-- title: Definition network field and sync-only write guard
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '4.2.1: `AgentDefinitionBody` accepts `network` of `none` or
-    `trusted`, defaults to `none`, and rejects any other value; a bundled template''s
-    `trusted` survives sync into the stored row. symbol: `AgentDefinitionBody`. test:
-    `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_preserves_trusted_network`.
-
-    4.2.2: Every non-sync write that brings in a body with `network: trusted` is refused:
-    create, update, upsert_with_steps and duplicate. test: `tests/storage/definitions/test_agents_manager.py::test_non_sync_writes_refuse_widened_network`.
-
-    4.2.3: A row with `network: trusted` is immutable outside the sync: update, toggle,
-    restore, set_step_workflow and both moves refuse. test: `tests/storage/definitions/test_agents_manager.py::test_widened_network_row_is_immutable_outside_sync`.
-
-    4.2.4: The sync creates, updates and restores rows carrying `network: trusted`
-    through sync entry points only. test: `tests/agents/test_agents_sync.py::TestSyncBundledAgents::test_sync_new_row_uses_sync_entry_point`.
-
-    4.2.5: An imported global or project agent YAML carrying `network: trusted`, loaded
-    through `sync_imported_workflows` (the `reload_cache` path), is refused and leaves
-    no row with a widened network. test: `tests/workflows/test_workflows_sync.py::test_imported_agent_yaml_cannot_widen_network`.'
-  labels:
-  - covers:placed-agent-launch:4.2:4.2.1
-  - covers:placed-agent-launch:4.2:4.2.2
-  - covers:placed-agent-launch:4.2:4.2.3
-  - covers:placed-agent-launch:4.2:4.2.4
-  - covers:placed-agent-launch:4.2:4.2.5
-  tdd: true
-  source_section: '4.2'
-  implementation_domain: backend
-- title: Resolve the definition's network at spawn
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.8'
-  - '4.1'
-  - '4.2'
-  validation_criteria: '4.3.1: A spawned `trusted` definition resolves to enabled
-    SRT with `allow_network` false whose domains are the Trusted seed, the git and
-    registry groups and the Gobby hosts, and a `none` definition gets exactly the
-    `agent_sandbox` policy plus the write grant, placed or not. symbol: `definition_sandbox_config`.
-    test: `tests/agents/test_sandbox_network.py::test_trusted_definition_adds_seed_to_srt_allowlist`.
-
-    4.3.2: An unreadable seed refuses a `trusted` spawn with `sandbox_required` before
-    any side effect, and a `none` spawn does not read the seed. test: `tests/agents/test_sandbox_network.py::test_unreadable_seed_refuses_trusted_spawn_only`.
-
-    4.3.3: A resumed `trusted` run replays its spawn-time domains through the 1.8
-    snapshot path. test: `tests/agents/test_resume_sandbox_gate.py::test_resume_replays_trusted_snapshot`.
-
-    4.3.4: `_implementation.py` does not end above its `c52269ccd5` size. file: `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py`.'
-  labels:
-  - covers:placed-agent-launch:4.3:4.3.1
-  - covers:placed-agent-launch:4.3:4.3.2
-  - covers:placed-agent-launch:4.3:4.3.3
-  - covers:placed-agent-launch:4.3:4.3.4
-  tdd: true
-  source_section: '4.3'
-  implementation_domain: backend
-- title: Document definition network policy in the sandboxing guide
-  category: docs
-  task_type: chore
-  depends_on:
-  - '4.3'
-  validation_criteria: '4.4.1: The guide documents the `network` field, the seed and
-    its refresh, the write guard and the refusal. behavior: "Agent network policy"
-    in `docs/guides/sandboxing.md`.'
-  labels:
-  - covers:placed-agent-launch:4.4:4.4.1
-  tdd: false
-  source_section: '4.4'
-  assigned_agent: tech-writer
-```
+- 2026-09-28: Reviewer 4 (gobby#14681) bounced 3.1, and the PD accepted the
+  bounce with a narrow repair. 3.1 becomes an isolated two-seat placement
+  acceptance fixture: `tests/workflows/fixtures/two_seat_placement.yaml`,
+  imported only by the isolated test runtime, with no bundled template and
+  no live-registry publication. It proves placement-level refusal only
+  (`seat_live` is keyed by workspace and title). The V1 smoke imports the
+  fixture into an isolated scratch daemon and state, and the operator-facing
+  guarded runbook and its smoke are #22895's. The test module is renamed
+  `test_placed_pipeline_fixture.py`. Acceptance 3.1.1 to 3.1.5, the
+  two-seat placement assertions, the failure behavior, and P1, P2 and P4
+  are unchanged. No dependency on #22895 is added. The superseded M1 is
+  removed, and the Adversary rederives it after consensus.
