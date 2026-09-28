@@ -194,7 +194,6 @@ class MemoryManagerFacadeMethods:
         *,
         embed_text: str | None = None,
         session_id: str | None = None,
-        recall_request_id: str | None = None,
         caller: str = "memory.search",
         include_global: bool = True,
     ) -> list[Memory]:
@@ -210,7 +209,6 @@ class MemoryManagerFacadeMethods:
             min_score=min_score,
             embed_text=embed_text,
             session_id=session_id,
-            recall_request_id=recall_request_id,
             caller=caller,
             include_global=include_global,
         )

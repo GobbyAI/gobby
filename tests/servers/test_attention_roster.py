@@ -20,9 +20,9 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.servers.http import HTTPServer
 from gobby.servers.routes.attention import AttentionAnswer, AttentionPane, create_attention_router
+from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.attention import (
     AttentionRosterRow,

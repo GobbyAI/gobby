@@ -994,7 +994,7 @@
         {
           "name": "gclient-commands",
           "description": "Use gclient command-mode verbs and pane refs",
-          "path": "references/gclient/commands.md",
+          "path": "references/admin/gclient-commands.md",
           "when": "Inspecting or operating gclient workspaces from shell command mode"
         }
       ]

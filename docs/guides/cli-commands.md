@@ -878,8 +878,8 @@ gobby memory export [--output PATH]
 gobby memory stats
 ```
 
-Memory also provides backup/restore, graph/index maintenance, dream run
-observation/revert, and recall-signal diagnostics. See the audited
+Memory also provides backup/restore, graph/index maintenance, and dream run
+observation/revert. See the audited
 [Memory CLI reference](memory.md#cli-reference) and
 [Dream operations](memory.md#dream-operations) for scope and recovery boundaries.
 

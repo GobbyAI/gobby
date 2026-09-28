@@ -94,7 +94,7 @@ class TestContextInjection:
         event.metadata["_platform_session_id"] = None
 
         results = await dispatch_mcp_calls(
-            [{"server": "gobby-memory", "tool": "judge_shadow_relevance", "arguments": {}}],
+            [{"server": "gobby-memory", "tool": "surface_memories", "arguments": {}}],
             event,
             call_tool,
             logging.getLogger("test"),
@@ -115,7 +115,7 @@ class TestContextInjection:
         del event.metadata["_platform_session_id"]
 
         results = await dispatch_mcp_calls(
-            [{"server": "gobby-memory", "tool": "judge_shadow_relevance", "arguments": {}}],
+            [{"server": "gobby-memory", "tool": "surface_memories", "arguments": {}}],
             event,
             call_tool,
             logging.getLogger("test"),
