@@ -26,6 +26,8 @@ use tokio::time::timeout;
 struct DrawCounter {
     inner: TestBackend,
     count: Arc<AtomicUsize>,
+    /// The text of every frame drawn, one row per line.
+    frames: Arc<Mutex<Vec<String>>>,
 }
 
 struct LogWriter(Arc<Mutex<Vec<u8>>>);
@@ -51,9 +53,14 @@ impl DrawCounter {
             Self {
                 inner: TestBackend::new(width, height),
                 count: Arc::clone(&count),
+                frames: Arc::default(),
             },
             count,
         )
+    }
+
+    fn frames(&self) -> Arc<Mutex<Vec<String>>> {
+        Arc::clone(&self.frames)
     }
 }
 
@@ -66,6 +73,15 @@ impl Backend for DrawCounter {
     {
         self.inner.draw(content)?;
         self.count.fetch_add(1, Ordering::SeqCst);
+        let buffer = self.inner.buffer();
+        let width = usize::from(buffer.area.width);
+        let text = buffer
+            .content()
+            .chunks(width)
+            .map(|row| row.iter().map(Cell::symbol).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        self.frames.lock().expect("recorded frames").push(text);
         Ok(())
     }
 
@@ -507,7 +523,8 @@ async fn first_frame_stage_waits_for_the_focused_pane() {
 
 /// The workspace is projected on attach, before the roster opens any pane, so
 /// the focused tab's terminals are unresolved then. Opening them must
-/// re-project the tab without a generation bump or a tab switch (#22972).
+/// re-project the tab without a generation bump or a tab switch, so the first
+/// frame after the splash already shows both of its panes (#22972).
 #[tokio::test]
 async fn focused_tab_panes_are_drawn_after_startup_opens_them() {
     let mock = MockDaemon::start("local-token").await;
@@ -536,7 +553,9 @@ async fn focused_tab_panes_are_drawn_after_startup_opens_them() {
     let mut workspace = Workspace::live(daemon);
     workspace.select_project("project-1");
     workspace.set_frame_delivery(FrameDelivery::Proxy);
-    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let (backend, _) = DrawCounter::new(120, 40);
+    let frames = backend.frames();
+    let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = Chrome::dark();
     chrome.connection.stages = Some(StartupStages::begin(Instant::now()));
     let (input_tx, input_rx) = mpsc::channel(1);
@@ -560,26 +579,49 @@ async fn focused_tab_panes_are_drawn_after_startup_opens_them() {
         }))
         .await;
         roster_hold.notify_one();
-        timeout(Duration::from_secs(5), async {
+        // A pane claims its viewport with the attachment id the attach reply
+        // carried, so both claims mean both attaches were answered.
+        let attachment_of = |terminal_id: &str| {
+            mock.requests().iter().find_map(|request| {
+                let body = request.body.as_ref()?;
+                (request.method == "WS"
+                    && body.get("type") == Some(&serde_json::json!("terminal_set_viewport"))
+                    && body.get("terminal_id") == Some(&serde_json::json!(terminal_id)))
+                .then(|| body.get("attachment_id")?.as_str().map(str::to_string))
+                .flatten()
+            })
+        };
+        let attachment_id = timeout(Duration::from_secs(5), async {
             loop {
-                let attached = |terminal_id: &str| {
-                    mock.requests().iter().any(|request| {
-                        request.method == "WS"
-                            && request.body.as_ref().is_some_and(|body| {
-                                body.get("type") == Some(&serde_json::json!("terminal_attach"))
-                                    && body.get("terminal_id")
-                                        == Some(&serde_json::json!(terminal_id))
-                            })
-                    })
-                };
-                if attached("terminal-a") && attached("terminal-b") {
-                    break;
+                if let (Some(attachment_id), Some(_)) =
+                    (attachment_of("terminal-a"), attachment_of("terminal-b"))
+                {
+                    break attachment_id;
                 }
                 tokio::task::yield_now().await;
             }
         })
         .await
         .expect("focused tab panes attach");
+        let frame = include_bytes!("../../gterminal/tests/fixtures/wire_golden/frame.bin");
+        mock.send_event_and_wait(serde_json::json!({
+            "type": "terminal_frame",
+            "terminal_id": "terminal-a",
+            "attachment_id": attachment_id,
+            "encoding": "bincode-b64",
+            "payload": base64::engine::general_purpose::STANDARD.encode(&frame[4..]),
+        }))
+        .await;
+        // The sidebar fan-out starts only once the first-frame stage is done.
+        timeout(Duration::from_secs(5), async {
+            while !mock.requests().iter().any(|request| {
+                request.method == "GET" && request.target.starts_with("/api/projects")
+            }) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the focused pane's first frame ends the splash");
         drop(input_tx);
     };
     timeout(Duration::from_secs(10), async {
@@ -598,26 +640,31 @@ async fn focused_tab_panes_are_drawn_after_startup_opens_them() {
     .await
     .expect("startup stays responsive");
 
-    let tab = chrome.active_tab().expect("focused tab shown");
-    assert_eq!(
-        tab.slots.len(),
-        2,
-        "both focused-tab panes fill their slots"
-    );
-    assert!(
-        chrome.focused_pane().is_some(),
-        "the focused slot holds a pane"
-    );
-    let screen: String = terminal
-        .backend()
-        .buffer()
-        .content()
+    assert!(matches!(
+        chrome
+            .connection
+            .stages
+            .as_ref()
+            .expect("startup stages")
+            .state(StartupStage::FirstFrame),
+        StageState::Done { .. }
+    ));
+    let frames = std::mem::take(&mut *frames.lock().expect("recorded frames"));
+    // The splash draws no menu bar; the chrome's first row does.
+    let first = frames
         .iter()
-        .map(Cell::symbol)
-        .collect();
+        .find(|frame| frame.lines().next().is_some_and(|row| row.contains("File")))
+        .expect("a frame after the splash");
+    // Each drawn pane's border carries its `hub:workspace:tab:pane` address.
+    for address in ["1:1:1:1", "1:1:1:2"] {
+        assert!(
+            first.contains(address),
+            "the first frame after the splash draws pane {address}:\n{first}"
+        );
+    }
     assert!(
-        !screen.contains("No pane open."),
-        "the focused tab draws its panes, not the empty-tab note"
+        !first.contains("No pane open."),
+        "the first frame after the splash draws the focused tab's panes:\n{first}"
     );
     mock.shutdown().await;
 }
