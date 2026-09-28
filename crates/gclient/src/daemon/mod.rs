@@ -14,7 +14,7 @@ pub use live::{
     LiveDaemon, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE, REQUEST_DEADLINE, SUBSCRIBED_EVENTS,
 };
 pub use projects::{
-    Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
+    Checkout, ProjectRow, RunRow, RunSandbox, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
 pub use roster::{Attention, RosterEntry, TaskRef, TerminalRef};
 pub use workspace::{

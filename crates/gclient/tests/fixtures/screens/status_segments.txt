@@ -76,7 +76,7 @@
 36 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 37 |│                                                                                                                      │|
 37 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-38 |└───────────────────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
-38 : accent/panel_bg*110 accent/panel_bg+b*9 accent/panel_bg*1
-39 | ⍾ 1 needs you │ 1 idle · claude-fable-5.1-xhigh                                           63% · 12,345 │ prefix ctrl+b |
-39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*46 text/surface0*43 subtext0/surface0*28 text/surface0*1
+38 |└───────────────────────────────────────────────────────────────────────────────────────────────────────── ? · gclient ┘|
+38 : accent/panel_bg*106 accent/panel_bg+b*13 accent/panel_bg*1
+39 | ⍾ 1 needs you │ 1 idle · sandbox unknown                                                  63% · 12,345 │ prefix ctrl+b |
+39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*39 text/surface0*50 subtext0/surface0*28 text/surface0*1

@@ -12,8 +12,11 @@ import pytest
 
 from gobby.hooks.terminal_context import (
     clear_codex_seat_index,
+    codex_argv_sandbox,
+    codex_seat_sandbox,
     enrich_terminal_context_with_cwd,
     hook_cwd,
+    hook_sandbox_enabled,
 )
 from gobby.sessions.handoff_identity import terminal_contexts_match
 
@@ -564,3 +567,85 @@ def test_new_thread_never_adopts_an_owned_or_later_seat() -> None:
 
     assert result == {"cwd": "/repo"}
     assert checked == [70100]
+
+
+# #23049: Codex 0.157 sandbox semantics, as its CLI help states them.
+# `--dangerously-bypass-approvals-and-sandbox` (hidden alias `--yolo`) runs
+# commands without sandboxing; `--sandbox read-only|workspace-write` runs them
+# under Seatbelt and `danger-full-access` does not; `--approve-for-me` (alias
+# `--not-so-yolo`) uses the workspace-write sandbox. A bare launch takes its
+# mode from config files and profiles, which the hook does not read.
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["codex", "--yolo", "-m", "gpt-6-sol"], False),
+        (["codex", "--dangerously-bypass-approvals-and-sandbox"], False),
+        (["codex", "--yolo", "--sandbox", "workspace-write"], False),
+        (["codex", "-s", "read-only"], True),
+        (["codex", "--sandbox=workspace-write"], True),
+        (["codex", "-s", "danger-full-access"], False),
+        (["codex", "-c", 'sandbox_mode="danger-full-access"'], False),
+        (["codex", "--config=sandbox_mode=read-only"], True),
+        (["codex", "-s", "read-only", "-c", "sandbox_mode=danger-full-access"], True),
+        (["codex", "--approve-for-me"], True),
+        (["codex", "--not-so-yolo", "-c", "sandbox_mode=danger-full-access"], None),
+        (["codex", "-s", "bogus"], None),
+        (["codex", "resume", "--last"], None),
+        (["codex"], None),
+        (["codex", "--", "--yolo"], None),
+    ],
+)
+def test_codex_argv_sandbox_reads_the_command_line(argv: list[str], expected: bool | None) -> None:
+    assert codex_argv_sandbox(argv) is expected
+
+
+def _seat_process(argv: list[str], create_time: float = 100.0) -> MagicMock:
+    process = MagicMock()
+    process.create_time.return_value = create_time
+    process.cmdline.return_value = argv
+    return process
+
+
+def test_codex_seat_sandbox_reads_the_recorded_seat() -> None:
+    context = {"parent_pid": 4321, "parent_create_time": 100.0}
+    with patch(
+        "gobby.hooks.terminal_context.psutil.Process",
+        return_value=_seat_process(["codex", "--yolo"]),
+    ) as process_cls:
+        assert codex_seat_sandbox(context) is False
+    process_cls.assert_called_once_with(4321)
+
+
+def test_codex_seat_sandbox_is_unknown_without_a_live_matching_seat() -> None:
+    reused = _seat_process(["codex", "--yolo"], create_time=500.0)
+    with patch("gobby.hooks.terminal_context.psutil.Process", return_value=reused):
+        # The pid now belongs to a later process.
+        assert codex_seat_sandbox({"parent_pid": 4321, "parent_create_time": 100.0}) is None
+    with patch(
+        "gobby.hooks.terminal_context.psutil.Process", side_effect=psutil.NoSuchProcess(4321)
+    ):
+        assert codex_seat_sandbox({"parent_pid": 4321, "parent_create_time": 100.0}) is None
+    assert codex_seat_sandbox({"parent_pid": 4321}) is None
+    assert codex_seat_sandbox(None) is None
+
+
+def test_codex_seat_sandbox_leaves_spawned_runs_to_their_launch_record() -> None:
+    context = {"parent_pid": 4321, "parent_create_time": 100.0, "gobby_agent_run_id": "run-1"}
+    with patch("gobby.hooks.terminal_context.psutil.Process") as process_cls:
+        assert codex_seat_sandbox(context) is None
+    process_cls.assert_not_called()
+
+
+def test_hook_sandbox_enabled_prefers_the_launcher_then_codex_argv() -> None:
+    context = {"parent_pid": 4321, "parent_create_time": 100.0}
+    seat = _seat_process(["codex", "-s", "workspace-write"])
+    with patch("gobby.hooks.terminal_context.psutil.Process", return_value=seat):
+        assert hook_sandbox_enabled({"sandbox_enabled": False}, "codex", context) is False
+        assert hook_sandbox_enabled({}, "codex", context) is True
+        # Claude Code's permission mode is an approval policy, so its own
+        # sandbox stays unknown.
+        assert (
+            hook_sandbox_enabled({"permission_mode": "bypassPermissions"}, "claude", context)
+            is None
+        )
+    assert hook_sandbox_enabled({"sandbox_enabled": "yes"}, "claude", None) is None

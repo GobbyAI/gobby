@@ -6,12 +6,13 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use gobby_client::app::sidebar_model::{
-    agent_state, build, provider_label, rollup, AgentEntry, SidebarInputs, SidebarModel,
+    agent_state, build, provider_label, rollup, AgentEntry, SandboxState, SidebarInputs,
+    SidebarModel,
 };
 use gobby_client::app::{Backend, Pane, PaneId};
 use gobby_client::daemon::{
-    Attention, Checkout, ProjectRow, RosterEntry, RunRow, SessionRow, SidebarRows, SourceStatus,
-    TaskRef, TerminalRef, WorktreeRow,
+    Attention, Checkout, ProjectRow, RosterEntry, RunRow, RunSandbox, SessionRow, SidebarRows,
+    SourceStatus, TaskRef, TerminalRef, WorktreeRow,
 };
 use gobby_client::ui::chrome::RowState;
 use serde_json::json;
@@ -476,6 +477,84 @@ fn build_prefers_run_effort_then_falls_back_to_session_effort() {
         model.agents[2].effort.as_deref(),
         Some("minimal"),
         "an interactive row falls back to its session effort"
+    );
+}
+
+/// #23049: a row's sandbox state comes from the launch record only. The SRT
+/// run and the session agree or the state is unknown; no record is unknown,
+/// never unrestricted.
+#[test]
+fn build_resolves_sandbox_state_from_session_and_run_records() {
+    let session = |id: &str, enabled: Option<bool>| SessionRow {
+        id: id.to_string(),
+        sandbox_enabled: enabled,
+        ..Default::default()
+    };
+    let run = |id: &str, enforced: Option<bool>| RunRow {
+        run_id: id.to_string(),
+        sandbox: enforced.map(|enforced| RunSandbox {
+            enforced: Some(enforced),
+        }),
+        ..Default::default()
+    };
+    let rows = SidebarRows {
+        sessions: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![
+                session("sess-srt", Some(true)),
+                session("sess-conflict", Some(false)),
+                session("sess-direct", Some(false)),
+                session("sess-none", None),
+            ],
+        )]),
+        runs: BTreeMap::from([(
+            PROJECT.to_string(),
+            vec![run("run-srt", Some(true)), run("run-conflict", Some(true))],
+        )]),
+        ..Default::default()
+    };
+    let agent = |entry_id: &str, terminal: &str, session: &str, run: Option<&str>| {
+        let mut agent = entry(entry_id, Some(terminal));
+        agent.session_id = Some(session.to_string());
+        agent.run_id = run.map(str::to_string);
+        agent
+    };
+    let model = model(
+        &rows,
+        &[
+            agent("run:run-srt", "terminal-a", "sess-srt", Some("run-srt")),
+            agent(
+                "run:run-conflict",
+                "terminal-b",
+                "sess-conflict",
+                Some("run-conflict"),
+            ),
+            agent("session:sess-direct", "terminal-c", "sess-direct", None),
+            agent("session:sess-none", "terminal-d", "sess-none", None),
+        ],
+        &[
+            pane(1, "terminal-a", false, true),
+            pane(2, "terminal-b", false, true),
+            pane(3, "terminal-c", false, true),
+            pane(4, "terminal-d", false, true),
+        ],
+    );
+
+    let states: Vec<_> = model.agents.iter().map(|agent| agent.sandbox).collect();
+    assert_eq!(
+        states,
+        [
+            SandboxState::Sandboxed,
+            SandboxState::Unknown,
+            SandboxState::Unrestricted,
+            SandboxState::Unknown,
+        ],
+        "enforced SRT locks, disagreeing records and no record stay unknown"
+    );
+    assert_eq!(
+        SandboxState::resolve(None, Some(false)),
+        SandboxState::Unrestricted,
+        "a run record alone decides"
     );
 }
 

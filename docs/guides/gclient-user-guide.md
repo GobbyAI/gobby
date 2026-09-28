@@ -215,10 +215,23 @@ unfocused panes carry no condition word. The focused title is bold in the
 accent, a seat that needs you reads in the warning hue, and a read-only or
 uncertain focused pane is dimmed. The task title stays on the Agents row.
 Over-long pane titles share the Agents ticker. The bottom-left corner is
-empty. The bottom-right corner names the pane's address: its workspace ref
-such as `0:0:1:2`, `tmux %16` for a tmux pane, or the backend alone
+empty. The bottom-right corner reads the pane's sandbox mark, then `tmux` for
+a tmux pane, then its address, joined by ` · `: `<mark> · 0:0:1:2` for a
+workspace pane, `<mark> · tmux · %16` for a tmux pane, or the backend alone
 (`gclient`, `tmux`) until the address is known (see
-[Attach and control](#attach-and-control)). With `pane gaps` off, a pane above
+[Attach and control](#attach-and-control)). The one-cell mark is a closed lock
+(`` U+F023) when an OS sandbox wraps the pane, an open lock (`` U+F09C) when its launch record says none does, and `?` when
+no record says, as for a bare shell, or when the records disagree. A spawned
+agent's mark comes from the SRT sandbox its launch applied. A Codex session
+you start yourself is read from its `--sandbox` mode (`read-only` and
+`workspace-write` lock, `danger-full-access` and
+`--dangerously-bypass-approvals-and-sandbox` unlock). Claude Code's
+permission mode is an approval policy, not a sandbox, so a Claude Code
+session you start yourself shows `?`. The marks come from Nerd Font symbols,
+which Ghostty's default font includes; set `nerd_glyphs = false` under `[ui]`
+in `~/.gobby/client/prefs.toml` to draw `sbx`, `open`, and `?` instead. Add
+`sandbox` to `[status] left` or `right` to name the focused pane's state in
+words: `sandboxed`, `unrestricted`, or `sandbox unknown`. With `pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
 address moves to the top-right of its own title row, unless that would leave the
 title fewer than four cells. A pane that has not yet received

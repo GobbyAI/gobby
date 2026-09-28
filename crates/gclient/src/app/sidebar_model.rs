@@ -114,6 +114,40 @@ pub struct AgentEntry {
     pub state: RowState,
     pub attention: Option<Attention>,
     pub last_activity_at: Option<String>,
+    /// Whether an OS sandbox wraps the agent's process.
+    pub sandbox: SandboxState,
+}
+
+/// The execution boundary around a pane's process, as the daemon recorded it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SandboxState {
+    Sandboxed,
+    Unrestricted,
+    /// No record, or records that disagree: never read as unrestricted.
+    #[default]
+    Unknown,
+}
+
+impl SandboxState {
+    /// Joins the session's recorded boundary with the run's launch record.
+    /// Either one alone decides; two that disagree are unknown.
+    pub fn resolve(session: Option<bool>, run: Option<bool>) -> Self {
+        match (session, run) {
+            (Some(a), Some(b)) if a != b => Self::Unknown,
+            (Some(true), _) | (None, Some(true)) => Self::Sandboxed,
+            (Some(false), _) | (None, Some(false)) => Self::Unrestricted,
+            (None, None) => Self::Unknown,
+        }
+    }
+
+    /// The word the state stands for, for help text and the text glyphs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sandboxed => "sandboxed",
+            Self::Unrestricted => "unrestricted",
+            Self::Unknown => "sandbox unknown",
+        }
+    }
 }
 
 impl AgentEntry {
@@ -335,6 +369,10 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 state: agent_state(entry, pane),
                 attention: entry.attention.clone(),
                 last_activity_at: entry.last_activity_at.clone(),
+                sandbox: SandboxState::resolve(
+                    session.and_then(|(_, session)| session.sandbox_enabled),
+                    run.and_then(|(_, run)| run.sandbox.as_ref()?.enforced),
+                ),
             })
         })
         .collect()
