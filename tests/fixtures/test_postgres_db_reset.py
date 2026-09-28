@@ -153,7 +153,7 @@ def test_seed_rows_survive_reset(
         assert "gobby_migration_state" not in all_tables
 
 
-def test_reset_deletes_rows_with_immediate_restrict_fk(
+def test_reset_handles_restrict_fk_order(
     postgres_database_url: str,
     postgres_schema: str,
     postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
