@@ -311,7 +311,7 @@ already-created registry continue to use the live per-epoch configuration contra
 | memory.dream.reconcile_after_apply | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | memory.dream.reconcile_after_revert | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | memory.code_link_min_score | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
-| memory.temporal_decay_half_life_days | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge |  |
+| memory.temporal_decay_half_life_days | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | memory-knowledge | Half-life counts from the later of last update and last access (#22839). |
 | memory.min_recall_score | Retired with automatic recall injection (#21009); the key had no live reader | (none — no surface) | retired | drop | (none) | removed from the runtime config contract (#21022) |
 | memory_backup.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | memory_backup.backup_path | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |

@@ -92,22 +92,6 @@ Be concise. Focus on what the next agent needs to know to continue effectively."
     )
 
 
-class MemoryUsefulnessConfig(FeatureDefaultConfig):
-    """Turn-end memory-usefulness judge configuration (#17195).
-
-    Routes the de-biased usefulness judge (contract §4). Configure candidates
-    to a model family different from the coding agents whose transcripts are
-    judged; the resolved candidate is recorded as judge_model on every label
-    row. Enablement lives on memory.shadow_relevance_judging.
-    """
-
-    timeout: int = Field(
-        default=30,
-        gt=0,
-        description="Timeout in seconds for usefulness-judge LLM calls (default 30s).",
-    )
-
-
 class MessageTrackingConfig(BaseModel):
     """Configuration for session message tracking."""
 

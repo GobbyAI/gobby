@@ -82,16 +82,6 @@ def is_ai_embedding_config_key(key: str) -> bool:
     return key in AI_EMBEDDING_CONFIG_KEY_SET
 
 
-def is_removed_embedding_config_store_key(key: str) -> bool:
-    """Return true for persisted embedding keys that should be deleted at load/migration time."""
-    prefix_dot = f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}."
-    return (
-        key == RUNTIME_EMBEDDINGS_CONFIG_PREFIX
-        or key.startswith(prefix_dot)
-        or key == _AI_EMBEDDING_PROVIDER_KEY
-    )
-
-
 def _embedding_key_error(key: str) -> str:
     if key == _AI_EMBEDDING_PROVIDER_KEY or key == _RUNTIME_EMBEDDING_PROVIDER_KEY:
         return (

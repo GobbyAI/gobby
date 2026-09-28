@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby import runner_init
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
@@ -147,17 +148,22 @@ async def test_restart_promotes_desired_to_active(monkeypatch: pytest.MonkeyPatc
 
     runtime.close = close
 
-    def initialize_storage(
+    def open_storage_and_config(
         runner: GobbyRunner,
         _config_path: object,
         _verbose: bool,
+        *,
+        broadcast_loop: object = None,
     ) -> None:
         runner.startup_config = desired
         runner.config_runtime = cast(ConfigRuntime, runtime)
         runner.bootstrap_config = BootstrapConfig()
 
     observed: list[DaemonConfig] = []
-    monkeypatch.setattr(GobbyRunner, "_initialize_storage", initialize_storage)
+    # create() runs these startup phases directly (#22888), not _initialize_storage.
+    monkeypatch.setattr(runner_init, "open_storage_and_config", open_storage_and_config)
+    monkeypatch.setattr(runner_init, "bundled_content_refusal", lambda _runner: None)
+    monkeypatch.setattr(runner_init, "init_startup_content", lambda _runner: None)
 
     async def initialize_runtime_services(runner: GobbyRunner) -> None:
         observed.append(runner.startup_config)

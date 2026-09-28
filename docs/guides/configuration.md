@@ -348,6 +348,7 @@ memory:
   crossref_threshold: 0.3
   crossref_max_links: 5
   access_debounce_seconds: 60
+  index_reshow_after_injections: 5  # memory-index re-show horizon, >= 1
 ```
 
 The full `gobby install` and the `gobby install embedding` component accept
