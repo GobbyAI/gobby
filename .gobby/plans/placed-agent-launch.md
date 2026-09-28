@@ -2921,3 +2921,11 @@ brings its own sync-owned fixtures:
   two-seat placement assertions, the failure behavior, and P1, P2 and P4
   are unchanged. No dependency on #22895 is added. The superseded M1 is
   removed, and the Adversary rederives it after consensus.
+- 2026-09-28: Plan Adversary consensus (gobby#14579) on `65f42c93e8`. P1, P2
+  and P4 are byte-identical to `a7f3798a3d`. 3.1 is a test-owned fixture
+  with no bundled or live publication, and it proves placement-level refusal
+  with the roster runbook left to #22895. The V1 smoke runs in an isolated
+  scratch daemon, and acceptance 3.1.1 to 3.1.5 are preserved. No findings
+  remain open, base validation passes, and no implementation tests were run.
+  The Adversary derives and applies a fresh M1 from these bytes. The PD's
+  review and Josh's approval gate expansion of the changed artifact.
