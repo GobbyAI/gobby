@@ -1045,6 +1045,72 @@ class TestSyncBundledAgents:
         assert pinned_row.enabled is False
         assert pinned_row.enabled_pinned is True
 
+    def test_sync_preserves_trusted_network(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        base = {
+            "name": "net-agent",
+            "provider": "claude",
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
+        }
+        assert AgentDefinitionBody.model_validate(base).network == "none"
+        assert AgentDefinitionBody.model_validate({**base, "network": "trusted"}).network == (
+            "trusted"
+        )
+        with pytest.raises(ValueError, match="network"):
+            AgentDefinitionBody.model_validate({**base, "network": "open"})
+
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "net-agent.yaml").write_text(yaml.safe_dump({**base, "network": "trusted"}))
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(definition_db)
+
+        assert result["errors"] == []
+        row = _mgr(definition_db).get_by_name("net-agent")
+        assert row is not None
+        assert _parse_body(row).network == "trusted"
+
+    def test_sync_new_row_uses_sync_entry_point(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """Create, unchanged-skip, update and restore all pass the non-sync guard."""
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        agent_yaml = agents_dir / "net-agent.yaml"
+        template = {
+            "name": "net-agent",
+            "description": "v1",
+            "provider": "claude",
+            "network": "trusted",
+            "prompts": {"agent": "Run the assigned task."},
+            "workflows": {"rule_selectors": {"include": []}},
+            "step_workflow": {"steps": [{"name": "work", "prompt": "do it"}]},
+        }
+        agent_yaml.write_text(yaml.safe_dump(template))
+        mgr = _mgr(definition_db)
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            created = sync_bundled_agents(definition_db)
+            unchanged = sync_bundled_agents(definition_db)
+            agent_yaml.write_text(yaml.safe_dump({**template, "description": "v2"}))
+            updated = sync_bundled_agents(definition_db)
+            agent_yaml.unlink()
+            swept = sync_bundled_agents(definition_db)
+            agent_yaml.write_text(yaml.safe_dump({**template, "description": "v2"}))
+            restored = sync_bundled_agents(definition_db)
+
+        assert (created["synced"], created["errors"]) == (1, [])
+        assert (unchanged["skipped"], unchanged["errors"]) == (1, [])
+        assert (updated["updated"], updated["errors"]) == (1, [])
+        assert (swept["orphaned"], swept["errors"]) == (1, [])
+        assert (restored["updated"], restored["errors"]) == (1, [])
+        row = mgr.get_by_name("net-agent")
+        assert row is not None
+        assert row.description == "v2"
+        assert _parse_body(row).network == "trusted"
+
 
 _STEPLESS_BUNDLED_AGENTS = frozenset({"comms-agent", "default", "memory-curator", "triage-agent"})
 _LEGACY_STEP_KEYS = ("steps", "step_variables", "exit_condition")

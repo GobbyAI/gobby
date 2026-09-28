@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
 
@@ -290,3 +291,58 @@ def test_purge_deleted_cascades_child_and_bumps_both(
     assert after[0] == before[0] + 1
     assert after[1] == before[1] + 1
     assert definition_db.fetchone("SELECT count(*) AS n FROM agent_step_workflows") == {"n": 0}
+
+
+_TRUSTED = {"network": "trusted"}
+
+
+def test_non_sync_writes_refuse_widened_network(definition_db: PostgresHubDatabase) -> None:
+    manager = _mgr(definition_db)
+    plain = manager.create("plain", _body("plain"))
+    synced = manager.upsert_from_sync("synced", _body("synced", _TRUSTED), None)
+
+    refused: dict[str, Callable[[], object]] = {
+        "create": lambda: manager.create("coder", _body(extra=_TRUSTED)),
+        "update": lambda: manager.update(plain.id, definition_json=_body("plain", _TRUSTED)),
+        "upsert_with_steps": lambda: manager.upsert_with_steps(
+            "coder", _body(extra=_TRUSTED), None
+        ),
+        "duplicate": lambda: manager.duplicate(synced.id, "copy"),
+    }
+    for write in refused.values():
+        with pytest.raises(ValueError, match="network is sync-owned"):
+            write()
+
+    assert manager.get_by_name("coder") is None
+    assert manager.get_by_name("copy") is None
+    assert manager.get(plain.id).definition_json.get("network", "none") == "none"
+
+
+def test_widened_network_row_is_immutable_outside_sync(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    manager = _mgr(definition_db)
+    row = manager.upsert_from_sync("synced", _body("synced", _TRUSTED), _STEPS)
+
+    refused: dict[str, Callable[[], object]] = {
+        "update": lambda: manager.update(row.id, description="renamed"),
+        "toggle_enabled": lambda: manager.toggle_enabled(row.id),
+        "set_step_workflow": lambda: manager.set_step_workflow(row.id, None),
+        "move_to_project": lambda: manager.move_to_project(row.id, _PROJECT),
+        "move_to_global": lambda: manager.move_to_global(row.id),
+    }
+    for write in refused.values():
+        with pytest.raises(ValueError, match="network is sync-owned"):
+            write()
+    assert manager.update_from_sync(row.id, description="synced").description == "synced"
+
+    assert manager.delete(row.id) is True
+    with pytest.raises(ValueError, match="network is sync-owned"):
+        manager.restore(row.id)
+
+    stored = manager.get(row.id, include_deleted=True)
+    assert stored.deleted_at is not None
+    assert stored.enabled is True
+    assert stored.project_id is None
+    assert stored.definition_json["network"] == "trusted"
+    assert stored.definition_json["step_workflow"] == _STEPS

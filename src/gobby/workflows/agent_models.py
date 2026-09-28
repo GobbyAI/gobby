@@ -123,6 +123,12 @@ class AgentDefinitionBody(BaseModel):
     )
     model_config = ConfigDict(extra="ignore")  # Tolerate stale YAML with removed fields
 
+    network: Literal["none", "trusted"] = Field(
+        default="none",
+        description=(
+            "Egress for the agent's SRT sandbox; `trusted` is set only by bundled templates"
+        ),
+    )
     isolation: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0

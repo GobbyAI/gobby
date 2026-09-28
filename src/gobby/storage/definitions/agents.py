@@ -63,6 +63,29 @@ def _lock_live_row(txn: Transaction, definition_id: str) -> AgentDefinitionRow:
     return AgentDefinitionRow.from_row(row)
 
 
+def _refuse_network_write(
+    incoming_body: Mapping[str, Any] | None, current_body: Mapping[str, Any] | None
+) -> None:
+    """Keep a widened ``network`` sync-owned for every non-sync write.
+
+    Refuses a write that brings in a network other than ``none`` or that
+    touches a row already carrying one; only the bundled sync may do either.
+    """
+    for body in (incoming_body, current_body):
+        if body is not None and body.get("network", "none") != "none":
+            raise ValueError("network is sync-owned")
+
+
+def _refuse_locked_network(txn: Transaction, definition_id: str) -> None:
+    """Lock the row, live or deleted, and refuse the write if its network is widened."""
+    row = txn.execute(
+        "SELECT definition_json FROM agent_definitions WHERE id = %s FOR UPDATE",
+        (definition_id,),
+    ).fetchone()
+    if row is not None:
+        _refuse_network_write(None, decode_json_object(row["definition_json"]))
+
+
 def _decode_json_array(value: Any) -> list[Any]:
     if value is None:
         return []
@@ -292,6 +315,8 @@ class AgentDefinitionManager:
         tags: list[str] | None = None,
         source: DefinitionSource = "installed",
     ) -> AgentDefinitionRow:
+        parent = _parent_body(definition_json)
+        _refuse_network_write(parent, None)
         definition_id = new_definition_id()
         now = utc_now()
         with self.db.transaction() as txn:
@@ -319,7 +344,7 @@ class AgentDefinitionManager:
                     description,
                     bool(enabled),
                     False,
-                    encode_json_value(_parent_body(definition_json)),
+                    encode_json_value(parent),
                     source,
                     encode_json_list(tags),
                     now,
@@ -384,6 +409,11 @@ class AgentDefinitionManager:
             raise ValueError(f"Unknown definition field(s): {', '.join(sorted(unknown))}")
         with self.db.transaction() as txn:
             current = _lock_live_row(txn, definition_id)
+            if not from_sync:
+                body = fields.get("definition_json")
+                _refuse_network_write(
+                    None if body is None else _parent_body(body), current.definition_json
+                )
             incoming: Mapping[str, Any] = fields
             if from_sync:
                 incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
@@ -416,6 +446,7 @@ class AgentDefinitionManager:
     def toggle_enabled(self, definition_id: str) -> AgentDefinitionRow:
         now = utc_now()
         with self.db.transaction() as txn:
+            _refuse_locked_network(txn, definition_id)
             row = txn.execute(
                 """
                 UPDATE agent_definitions
@@ -474,6 +505,7 @@ class AgentDefinitionManager:
 
     def restore(self, definition_id: str) -> AgentDefinitionRow:
         with self.db.transaction() as txn:
+            _refuse_locked_network(txn, definition_id)
             restore_definition(txn, _TABLE, definition_id, what=_WHAT)
             touch_revision(txn, "agents")
         return self.get(definition_id)
@@ -526,6 +558,7 @@ class AgentDefinitionManager:
 
     def move_to_project(self, definition_id: str, project_id: str) -> AgentDefinitionRow:
         with self.db.transaction() as txn:
+            _refuse_locked_network(txn, definition_id)
             move_definition_scope(
                 txn,
                 _TABLE,
@@ -539,6 +572,7 @@ class AgentDefinitionManager:
 
     def move_to_global(self, definition_id: str) -> AgentDefinitionRow:
         with self.db.transaction() as txn:
+            _refuse_locked_network(txn, definition_id)
             move_definition_scope(
                 txn,
                 _TABLE,
@@ -579,9 +613,12 @@ class AgentDefinitionManager:
         create_only: bool = False,
     ) -> AgentDefinitionRow:
         parent_body = _parent_body(body_json)
+        _refuse_network_write(parent_body, None)
         now = utc_now()
         with self.db.transaction() as txn:
             existing = _find_live(txn, name, project_id)
+            if existing is not None:
+                _refuse_locked_network(txn, str(existing["id"]))
             if existing is not None and create_only:
                 scope = "global" if project_id is None else f"project {project_id}"
                 raise DefinitionNameConflictError(f"{_WHAT} {name!r} already exists in {scope}")
@@ -731,8 +768,26 @@ class AgentDefinitionManager:
         agent_definition_id: str,
         step_workflow: Mapping[str, Any] | None,
     ) -> AgentDefinitionRow:
+        return self._write_step_workflow(agent_definition_id, step_workflow, from_sync=False)
+
+    def set_step_workflow_from_sync(
+        self,
+        agent_definition_id: str,
+        step_workflow: Mapping[str, Any] | None,
+    ) -> AgentDefinitionRow:
+        return self._write_step_workflow(agent_definition_id, step_workflow, from_sync=True)
+
+    def _write_step_workflow(
+        self,
+        agent_definition_id: str,
+        step_workflow: Mapping[str, Any] | None,
+        *,
+        from_sync: bool,
+    ) -> AgentDefinitionRow:
         require_definition_id(agent_definition_id, what=_WHAT)
         with self.db.transaction() as txn:
+            if not from_sync:
+                _refuse_locked_network(txn, agent_definition_id)
             parent = txn.execute(
                 "SELECT id FROM agent_definitions WHERE id = %s AND deleted_at IS NULL",
                 (agent_definition_id,),
