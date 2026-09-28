@@ -25,7 +25,7 @@ rules:
       - type: inject_context
         template: >
           If a Gobby tool call was unavailable during your previous turn, the Gobby MCP
-          proxy had not connected yet; it is connected now. Retry that call instead of
+          proxy was not yet connected; it is connected now. Retry that call instead of
           treating Gobby tools as absent.
       - type: set_variable
         variable: _mcp_proxy_missed_turn

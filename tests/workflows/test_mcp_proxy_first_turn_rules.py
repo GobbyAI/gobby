@@ -23,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 MEMORY_DIRECTIVE = skill_fetch_directive("gobby:references/memory/overview.md")
-RETRY_MARKER = "Gobby MCP proxy had not connected"
+RETRY_MARKER = "Gobby MCP proxy was not yet connected"
 
 
 @pytest.fixture
