@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -13,6 +15,83 @@ import gobby.tasks.close_review_delivery as delivery
 from gobby.storage.task_close_reviews import TaskCloseReview, TaskCloseReviewStatus
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("denials", "log_location", "expected_operations"),
+    [
+        ([], "retained", None),
+        (
+            [
+                "codex(12) deny(1) system-info vfs.disk-space",
+                "codex(12) deny(1) network-outbound",
+                "deny network-outbound raw.githubusercontent.com:443 (host is not on the allow list)",
+            ],
+            "retained",
+            {"network-outbound": 2, "system-info": 1},
+        ),
+        (
+            [
+                "codex(12) deny(1) system-info vfs.disk-space",
+                "codex(12) deny(1) network-outbound",
+                "deny network-outbound raw.githubusercontent.com:443 (host is not on the allow list)",
+            ],
+            "live",
+            {"network-outbound": 2, "system-info": 1},
+        ),
+    ],
+)
+def test_completed_review_reports_sandbox_denials_without_changing_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    denials: list[str],
+    log_location: str,
+    expected_operations: dict[str, int] | None,
+) -> None:
+    home = tmp_path / "gobby-home"
+    retained = home / "logs" / "sandbox-violations" / "run.jsonl"
+    live = home / "run" / "sandbox" / "run" / "violations.jsonl"
+    log = live if log_location == "live" else retained
+    log.parent.mkdir(parents=True)
+    log.write_text("".join(json.dumps({"line": line}) + "\n" for line in denials))
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    original_payload = {"review_id": "review", "status": "closed", "message": "Task closed."}
+    store = _Store(replace(_review("closed"), result_payload=original_payload))
+    run = SimpleNamespace(
+        resume_metadata_json={
+            "sandbox": {
+                "backend": "srt",
+                "enforced": True,
+                "violation_path": str(live) if log_location == "live" else None,
+                "retained_violation_path": str(retained) if log_location == "retained" else None,
+            }
+        }
+    )
+    _install(monkeypatch, store=store, run=run, task=None)
+
+    delivered = delivery.terminal_review_delivery(cast(Any, object()), "run")
+
+    assert delivered is not None
+    payload, message = delivered
+    assert payload["status"] == "closed"
+    assert original_payload == {
+        "review_id": "review",
+        "status": "closed",
+        "message": "Task closed.",
+    }
+    if expected_operations is None:
+        assert "sandbox_denials" not in payload
+        assert message == "Task closed."
+    else:
+        assert payload["sandbox_denials"] == {
+            "violation_count": len(denials),
+            "operations": expected_operations,
+            "retained_violation_path": str(retained) if log_location == "retained" else None,
+            "retained_settings_path": None,
+        }
+        assert "SRT denied 3 operations" in message
+        assert "network-outbound 2" in message
+        assert "get_agent_result(run)" in message
 
 
 @pytest.mark.parametrize(
@@ -59,7 +138,7 @@ def test_interrupted_finalization_recovers_closed_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store(_review("finalizing"))
-    run = SimpleNamespace(status="success", error=None)
+    run = SimpleNamespace(status="success", error=None, resume_metadata_json=None)
     task = SimpleNamespace(id="task", commits=["abc"], closed_at=datetime.now(UTC))
     _install(monkeypatch, store=store, run=run, task=task)
 
@@ -77,7 +156,7 @@ def test_run_end_leaves_finalizing_review_untouched(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _Store(_review("finalizing"))
-    run = SimpleNamespace(status="success", error=None)
+    run = SimpleNamespace(status="success", error=None, resume_metadata_json=None)
     task = SimpleNamespace(id="task", commits=[], closed_at=None)
     _install(monkeypatch, store=store, run=run, task=task)
 

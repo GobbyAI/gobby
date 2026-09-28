@@ -69,6 +69,8 @@ async def test_codex_close_reviewer_launch_hides_execution_wrappers(
 
     overrides = build_command.call_args.kwargs["config_overrides"]
     assert "mcp_servers.gobby.required=true" in overrides
+    assert ("features.plugins=false" in overrides) is plugin_disabled
+    assert ("features.remote_plugin=false" in overrides) is plugin_disabled
     assert (
         'plugins."unified-computer-use@openai-bundled".enabled=false' in overrides
     ) is plugin_disabled
