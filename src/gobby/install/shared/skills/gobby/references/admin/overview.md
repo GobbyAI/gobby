@@ -20,6 +20,7 @@ authorize executing them against the user's running installation.
 8. Load `portability.md` for pack/unpack and hub/node file ownership.
 9. Load `clients.md` for browser, native terminal, and provider client access.
 10. Load [gclient commands](gclient-commands.md) for command-mode verbs, refs, and exits.
+11. Load [gclient visual capture](gclient-visual-capture.md) to see the live gclient window as pixels.
 
 Identify the checkout, machine, Gobby home, hub, and operation before acting.
 Preserve active sessions and their changes. Coordinate disruptive operations
