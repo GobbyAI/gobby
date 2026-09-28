@@ -27,7 +27,7 @@ _ASSERTION_DETAIL_RE = re.compile(
 _PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):\d+:"
-    r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed))?\s*$"
+    r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?)?\s*$"
 )
 _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
     r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
@@ -341,11 +341,14 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
         if match is None:
             continue
         reported_symbol = match.group("symbol")
-        if (
-            reported_symbol is None
-            or not _path_matches_artifact(match.group("path"), test)
-            or not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes)
-        ):
+        if not _path_matches_artifact(match.group("path"), test):
+            continue
+        if reported_symbol is None:
+            # --tb=line names no symbol; the location is attributable only when
+            # the artifact is the sole node the command selected in that file.
+            if same_file_nodes != artifact_nodes or len(artifact_nodes) != 1:
+                continue
+        elif not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes):
             continue
         has_attributable_section = True
         section = _failure_section(lines, index)
