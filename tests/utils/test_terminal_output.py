@@ -29,6 +29,25 @@ def test_redact_terminal_output_scrubs_url_credentials() -> None:
     assert "postgresql://gobby:<redacted>@127.0.0.1:5432/gobby" in redacted
 
 
+@pytest.mark.parametrize(
+    ("text", "secret", "expected"),
+    [
+        ('{"password":"hunter2secret"}', "hunter2secret", '{"password":<redacted>}'),
+        ("{'api_key': 'k3y 9'}", "k3y 9", "{'api_key': <redacted>}"),
+        ("password=secret123 next", "secret123", "password=<redacted> next"),
+        ("token: ab1", "ab1", "token: <redacted>"),
+        ("client_secret=s3cr retry", "s3cr", "client_secret=<redacted> retry"),
+        ("password=ab;c,d} retry", "c,d", "password=<redacted> retry"),
+    ],
+)
+def test_redact_terminal_output_scrubs_quoted_keys_and_short_values(
+    text: str, secret: str, expected: str
+) -> None:
+    redacted = redact_terminal_output(text)
+    assert secret not in redacted
+    assert redacted == expected
+
+
 def test_redact_terminal_output_rewrites_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "home", lambda: Path("/Users/secrethome"))
     redacted = redact_terminal_output("see /Users/secrethome/.gobby/x")
