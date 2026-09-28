@@ -614,6 +614,31 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 variables["target_task_has_edits"] = target_task_has_edits(
                     variables, target_task_id
                 )
+                variables["target_task_has_commits"] = False
+                if (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and variables["target_task_has_edits"]
+                    and target_task_id
+                    and self._task_manager
+                    and _get_tool_identity(event_data)
+                    in {
+                        "gobby-tasks:close_task",
+                        "gobby-tasks:de_escalate_task",
+                        "gobby-tasks-ops:submit_for_review",
+                        "gobby-tasks-ops:approve_review",
+                        "gobby-tasks-ops:reject_review",
+                    }
+                ):
+                    try:
+                        task = await timed_to_thread(
+                            "prelude_target_task_commits",
+                            self._task_manager.get_task,
+                            target_task_id,
+                        )
+                    except ValueError:
+                        logger.debug("Commit gate target task no longer exists: %s", target_task_id)
+                    else:
+                        variables["target_task_has_commits"] = bool(task.commits)
 
                 eval_context: dict[str, Any] = {
                     "foreign_dirty_edit_conflict": "",

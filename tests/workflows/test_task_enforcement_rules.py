@@ -171,6 +171,7 @@ def _close_task_event(
     commit_sha: str | None = "abc123",
     preview: bool = False,
     cwd: str = "/tmp",
+    tool_name: str = "close_task",
 ) -> HookEvent:
     arguments: dict[str, object] = {"task_id": task_id}
     if commit_sha is not None:
@@ -187,7 +188,7 @@ def _close_task_event(
             "tool_name": "mcp__gobby__call_tool",
             "tool_input": {
                 "server_name": "gobby-tasks",
-                "tool_name": "close_task",
+                "tool_name": tool_name,
                 "arguments": arguments,
             },
         },
@@ -267,12 +268,17 @@ async def _evaluate_close_event(
     commit_sha: str | None = "abc123",
     preview: bool = False,
     cwd: str = "/tmp",
+    task_id: str = "#1",
+    tool_name: str = "close_task",
+    task_manager: LocalTaskManager | None = None,
 ) -> HookResponse:
     _sync_bundled(db)
     SessionVariableManager(db).merge_variables(SESSION_ID, variables)
-    handler = WorkflowHookHandler(rule_engine=RuleEngine(db))
+    handler = WorkflowHookHandler(rule_engine=RuleEngine(db), task_manager=task_manager)
     return await handler._evaluate_rules(
-        _close_task_event("#1", commit_sha=commit_sha, preview=preview, cwd=cwd)
+        _close_task_event(
+            task_id, commit_sha=commit_sha, preview=preview, cwd=cwd, tool_name=tool_name
+        )
     )
 
 
@@ -2173,14 +2179,15 @@ class TestRequireCommitBeforeStatus:
         assert "gobby-tasks:de_escalate_task" in body.effects[0].mcp_tools
 
     def test_when_checks_commits_and_reasons(self, db, manager) -> None:
-        """Should check task_has_commits and special close reasons."""
+        """Should check target task commits and special close reasons."""
         _sync_bundled(db)
 
         row = manager.get_by_name("require-commit-before-status")
         body = RuleDefinitionBody.model_validate(row.definition_json)
 
         assert body.when is not None
-        assert "task_has_commits" in body.when
+        assert "target_task_has_commits" in body.when
+        assert "variables.get('task_has_commits')" not in body.when
         assert "commit_sha" in body.when
         assert "preview" not in body.when
 
@@ -2202,6 +2209,58 @@ class TestRequireCommitBeforeStatus:
         assert response.decision == "block"
         assert response.reason is not None
         assert "no commit linked" in response.reason.lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("linked_task", "session_has_commits", "expected_decision"),
+        [
+            pytest.param("target", False, "allow", id="reclaimed-target-has-commit"),
+            pytest.param("other", True, "block", id="other-task-commit-does-not-count"),
+            pytest.param(None, False, "block", id="edited-target-has-no-commit"),
+        ],
+    )
+    async def test_de_escalate_uses_target_task_linked_commits(
+        self,
+        db: HubDatabase,
+        sample_project: dict[str, object],
+        linked_task: str | None,
+        session_has_commits: bool,
+        expected_decision: str,
+    ) -> None:
+        tasks = LocalTaskManager(db)
+        target = tasks.create_task(
+            project_id=str(sample_project["id"]),
+            title="Edited target",
+            validation_criteria="Target has linked commit evidence",
+        )
+        other = tasks.create_task(
+            project_id=str(sample_project["id"]),
+            title="Unrelated task",
+            validation_criteria="Unrelated task does not satisfy target gate",
+        )
+        if linked_task:
+            tasks.link_commit(target.id if linked_task == "target" else other.id, "abc1234")
+
+        target_ref = f"#{target.seq_num}"
+        variables = _status_gate_variables(
+            claimed_tasks={target.id: target_ref, other.id: f"#{other.seq_num}"},
+            active_task_id=target.id,
+            task_edited_files={target.id: ["src/owned.py"]},
+        )
+        variables["task_has_commits"] = session_has_commits
+        response = await _evaluate_close_event(
+            db,
+            variables,
+            task_id=target_ref,
+            tool_name="de_escalate_task",
+            task_manager=tasks,
+            commit_sha=None,
+        )
+
+        assert response.decision == expected_decision
+        if expected_decision == "block":
+            assert response.reason is not None
+            assert "no commit linked" in response.reason.lower()
 
     def test_when_checks_target_task_edits(self, db, manager) -> None:
         """Should only require commit when the target task has edits."""
