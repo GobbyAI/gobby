@@ -46,7 +46,9 @@ sound (`-x`) or window shadow (`-o`):
 screencapture -x -o -l <windowid> <scratchpad>/gclient-window.png
 ```
 
-View the file with the Read tool.
+The image is the whole host Ghostty window at Retina scale: Ghostty's title bar
+and its tab strip, whose titles name the user's other tabs, sit above the
+gclient UI. Judge only the gclient area. View the file with the Read tool.
 
 ## Handling the image
 
