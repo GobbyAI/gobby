@@ -2641,26 +2641,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_hooks_manager.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 2297,
-      "message": "Argument 3 to \"Request\" has incompatible type \"**dict[str, object]\"; expected \"QueryParams | Mapping[str, str | int | float | bool | None | Sequence[str | int | float | bool | None]] | list[tuple[str, str | int | float | bool | None]] | tuple[tuple[str, str | int | float | bool | None], ...] | str | bytes | None\"",
-      "occurrences": 7,
-      "path": "tests/hooks/test_hooks_manager.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/test_hooks_manager.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 1898,
-      "message": "\"HookSessionManager\" has no attribute \"register\"",
-      "occurrences": 1,
-      "path": "tests/hooks/test_hooks_manager.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_hooks_manager.py::::mypy:func-returns-value",
       "issue_code": "mypy:func-returns-value",
       "line": 2371,
