@@ -222,12 +222,15 @@ workspace pane, `<mark> · tmux · %16` for a tmux pane, or the backend alone
 [Attach and control](#attach-and-control)). The one-cell mark is a closed lock
 (`` U+F023) when an OS sandbox wraps the pane, an open lock (`` U+F09C) when its launch record says none does, and `?` when
 no record says, as for a bare shell, or when the records disagree. A spawned
-agent's mark comes from the SRT sandbox its launch applied. A Codex session
+agent locks when its launch applied the SRT sandbox and otherwise shows `?`,
+since the provider's own sandbox may still hold. A Codex session
 you start yourself is read from its `--sandbox` mode (`read-only` and
 `workspace-write` lock, `danger-full-access` and
-`--dangerously-bypass-approvals-and-sandbox` unlock). Claude Code's
-permission mode is an approval policy, not a sandbox, so a Claude Code
-session you start yourself shows `?`. The marks come from Nerd Font symbols,
+`--dangerously-bypass-approvals-and-sandbox` unlock). A Claude Code session
+you start yourself locks when inline `--settings` JSON turns on
+`sandbox.enabled`, and otherwise shows `?`: managed policy can outrank the
+flag, settings files are not read, and the permission mode sets approvals
+only. The marks come from Nerd Font symbols,
 which Ghostty's default font includes; set `nerd_glyphs = false` under `[ui]`
 in `~/.gobby/client/prefs.toml` to draw `sbx`, `open`, and `?` instead. Add
 `sandbox` to `[status] left` or `right` to name the focused pane's state in

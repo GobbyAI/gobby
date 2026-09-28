@@ -130,13 +130,16 @@ pub enum SandboxState {
 
 impl SandboxState {
     /// Joins the session's recorded boundary with the run's launch record.
-    /// Either one alone decides; two that disagree are unknown.
-    pub fn resolve(session: Option<bool>, run: Option<bool>) -> Self {
+    /// Either one alone decides; two that disagree are unknown. A spawned
+    /// run's records say only whether SRT wrapped it, so there `false` proves
+    /// nothing: the provider's own sandbox may still hold. Only a direct
+    /// launch's recorded command line reads as unrestricted.
+    pub fn resolve(session: Option<bool>, run: Option<bool>, spawned: bool) -> Self {
         match (session, run) {
             (Some(a), Some(b)) if a != b => Self::Unknown,
             (Some(true), _) | (None, Some(true)) => Self::Sandboxed,
-            (Some(false), _) | (None, Some(false)) => Self::Unrestricted,
-            (None, None) => Self::Unknown,
+            (Some(false), _) | (None, Some(false)) if !spawned => Self::Unrestricted,
+            _ => Self::Unknown,
         }
     }
 
@@ -329,6 +332,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .or_else(|| run.and_then(|(_, run)| run.machine_id.clone()))
                 .filter(|machine| !machine.is_empty())
                 .unwrap_or_else(|| inputs.local_machine.to_string());
+            let managed = entry.run_id.is_some() || entry.entry_id.starts_with("run:");
             Some(AgentEntry {
                 entry_id: entry.entry_id.clone(),
                 project_id: project_id.to_string(),
@@ -362,7 +366,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     }),
                 context_percent: entry.context_percent,
                 tokens_used: entry.tokens_used,
-                managed: entry.run_id.is_some() || entry.entry_id.starts_with("run:"),
+                managed,
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),
@@ -372,6 +376,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 sandbox: SandboxState::resolve(
                     session.and_then(|(_, session)| session.sandbox_enabled),
                     run.and_then(|(_, run)| run.sandbox.as_ref()?.enforced),
+                    managed,
                 ),
             })
         })

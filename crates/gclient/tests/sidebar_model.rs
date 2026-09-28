@@ -505,11 +505,16 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
                 session("sess-conflict", Some(false)),
                 session("sess-direct", Some(false)),
                 session("sess-none", None),
+                session("sess-native", Some(false)),
             ],
         )]),
         runs: BTreeMap::from([(
             PROJECT.to_string(),
-            vec![run("run-srt", Some(true)), run("run-conflict", Some(true))],
+            vec![
+                run("run-srt", Some(true)),
+                run("run-conflict", Some(true)),
+                run("run-native", Some(false)),
+            ],
         )]),
         ..Default::default()
     };
@@ -531,12 +536,19 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
             ),
             agent("session:sess-direct", "terminal-c", "sess-direct", None),
             agent("session:sess-none", "terminal-d", "sess-none", None),
+            agent(
+                "run:run-native",
+                "terminal-e",
+                "sess-native",
+                Some("run-native"),
+            ),
         ],
         &[
             pane(1, "terminal-a", false, true),
             pane(2, "terminal-b", false, true),
             pane(3, "terminal-c", false, true),
             pane(4, "terminal-d", false, true),
+            pane(5, "terminal-e", false, true),
         ],
     );
 
@@ -548,13 +560,20 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
             SandboxState::Unknown,
             SandboxState::Unrestricted,
             SandboxState::Unknown,
+            SandboxState::Unknown,
         ],
-        "enforced SRT locks, disagreeing records and no record stay unknown"
+        "enforced SRT locks, a direct launch's recorded false unlocks, and \
+         disagreeing records, no record, or a spawned run without SRT stay unknown"
     );
     assert_eq!(
-        SandboxState::resolve(None, Some(false)),
-        SandboxState::Unrestricted,
-        "a run record alone decides"
+        SandboxState::resolve(None, Some(true), true),
+        SandboxState::Sandboxed,
+        "a spawned run's enforced record alone locks"
+    );
+    assert_eq!(
+        SandboxState::resolve(Some(false), Some(false), true),
+        SandboxState::Unknown,
+        "SRT off never unlocks a spawned run: Codex keeps its own sandbox mode"
     );
 }
 

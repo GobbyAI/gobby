@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import time
@@ -473,23 +474,58 @@ def hook_sandbox_enabled(
 ) -> bool | None:
     """The sandbox a session-start hook records, or None when nothing says.
 
-    A launcher's explicit value wins. A direct Codex launch states its own
-    sandbox on its command line. Other providers stay unknown: Claude Code's
-    permission mode sets approvals and says nothing about its OS sandbox.
+    A launcher's explicit value wins. A direct Codex or Claude Code launch
+    states its own sandbox on its command line. Claude Code's permission mode
+    sets approvals and says nothing about its OS sandbox; other providers stay
+    unknown.
     """
     raw = input_data.get("sandbox_enabled")
     if isinstance(raw, bool):
         return raw
-    if cli_source == "codex":
-        return codex_seat_sandbox(terminal_context)
-    return None
+    parse = _ARGV_SANDBOX.get(cli_source)
+    if parse is None:
+        return None
+    argv = seat_argv(terminal_context)
+    return None if argv is None else parse(argv)
 
 
-def codex_seat_sandbox(terminal_context: Mapping[str, Any] | None) -> bool | None:
-    """Codex's own sandbox for the seat a direct launch recorded, else None.
+def claude_argv_sandbox(argv: Sequence[str]) -> bool | None:
+    """Claude Code's OS sandbox as its command line states it, else None.
+
+    Only inline `--settings` JSON with `sandbox.enabled: true` proves it: the
+    Seatbelt sandbox then wraps Bash commands. A settings file, settings in
+    config, or `enabled: false` stay unknown, since managed policy outranks the
+    flag and config files are not read. `--dangerously-skip-permissions` sets
+    approvals only.
+    """
+    settings: str | None = None
+    for index, arg in enumerate(argv):
+        if arg == "--settings" and index + 1 < len(argv):
+            settings = argv[index + 1]
+        elif arg.startswith("--settings="):
+            settings = arg.removeprefix("--settings=")
+    if settings is None or not settings.lstrip().startswith("{"):
+        return None
+    try:
+        parsed = json.loads(settings)
+    except ValueError:
+        return None
+    sandbox = parsed.get("sandbox") if isinstance(parsed, dict) else None
+    enabled = sandbox.get("enabled") if isinstance(sandbox, dict) else None
+    return True if enabled is True else None
+
+
+_ARGV_SANDBOX: dict[str, Callable[[Sequence[str]], bool | None]] = {
+    "codex": codex_argv_sandbox,
+    "claude": claude_argv_sandbox,
+}
+
+
+def seat_argv(terminal_context: Mapping[str, Any] | None) -> list[str] | None:
+    """The command line of the CLI process a direct launch recorded, else None.
 
     A Gobby-spawned run is skipped: its launch record already holds the SRT
-    boundary, and its Codex flags only turn the nested sandbox off.
+    boundary, and its provider flags only turn the nested sandbox off.
     """
     if not terminal_context or terminal_context.get("gobby_agent_run_id"):
         return None
@@ -503,7 +539,6 @@ def codex_seat_sandbox(terminal_context: Mapping[str, Any] | None) -> bool | Non
     if process is None:
         return None
     try:
-        argv = process.cmdline()
+        return list(process.cmdline())
     except _PSUTIL_ERRORS:
         return None
-    return codex_argv_sandbox(argv)
