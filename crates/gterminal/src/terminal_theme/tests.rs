@@ -72,3 +72,49 @@ fn scales_short_hex_components() {
     assert_eq!(parse_hex_component("800"), Some(128));
     assert_eq!(parse_hex_component("8000"), Some(128));
 }
+
+#[test]
+fn theme_declaration_round_trips_a_sparse_terminal_theme() {
+    let rgb = |r, g, b| RgbColor { r, g, b };
+    let mut theme = TerminalTheme {
+        foreground: Some(rgb(0x20, 0x21, 0x22)),
+        background: Some(rgb(0xfa, 0xfb, 0xfc)),
+        ..TerminalTheme::default()
+    };
+    theme.palette[1] = Some(rgb(0xc0, 0x10, 0x20));
+    theme.palette[255] = Some(rgb(1, 2, 3));
+
+    let declared = ThemeDeclaration::from(&theme);
+    assert_eq!(
+        declared.palette,
+        vec![(1, rgb(0xc0, 0x10, 0x20)), (255, rgb(1, 2, 3))]
+    );
+    assert_eq!(declared.terminal_theme(), theme);
+}
+
+#[test]
+fn theme_declaration_appearance_follows_the_background() {
+    let with_background = |background| ThemeDeclaration {
+        background,
+        ..ThemeDeclaration::default()
+    };
+    assert_eq!(
+        with_background(Some(RgbColor {
+            r: 0xfa,
+            g: 0xfb,
+            b: 0xfc
+        }))
+        .appearance(),
+        Some(HostAppearance::Light)
+    );
+    assert_eq!(
+        with_background(Some(RgbColor {
+            r: 0x10,
+            g: 0x11,
+            b: 0x12
+        }))
+        .appearance(),
+        Some(HostAppearance::Dark)
+    );
+    assert_eq!(with_background(None).appearance(), None);
+}

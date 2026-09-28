@@ -202,6 +202,8 @@ pub async fn run_live_loop<B: Backend>(
     switch: &mut dyn MouseCaptureSwitch,
 ) -> Result<(), FrameError> {
     let daemon = workspace.daemon().clone();
+    // Before any spawn this launch requests; the render tick keeps it current.
+    daemon.set_terminal_theme(&(&chrome.theme.terminal_theme()).into());
     let mut loop_error = None;
     let mut supervisor = ReconnectSupervisor::new();
     sync_live_chrome(workspace, chrome);
@@ -563,6 +565,12 @@ pub async fn run_live_loop<B: Backend>(
                 } else if let Some(watcher) = &system_theme_watcher {
                     for _ in watcher.try_iter() {}
                 }
+                // New attachments and theme changes (toggle, menu, system)
+                // all reach the panes' hosts here, and the next spawn carries
+                // the same colours.
+                let terminal_theme = (&chrome.theme.terminal_theme()).into();
+                workspace.daemon().set_terminal_theme(&terminal_theme);
+                workspace.sync_terminal_themes(&terminal_theme).await;
                 chrome.connection.now = std::time::Instant::now();
                 chrome.ticker = chrome.ticker.wrapping_add(1);
                 chrome.expire_toasts(std::time::Instant::now());

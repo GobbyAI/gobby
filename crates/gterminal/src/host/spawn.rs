@@ -16,7 +16,7 @@ use super::gate::{errno_name, GATE_FD, PTY_FD, STATUS_FD};
 #[cfg(debug_assertions)]
 use crate::pane::ChildExitWatch;
 use crate::pane::PaneRuntime;
-use crate::terminal_theme::TerminalTheme;
+use crate::terminal_theme::ThemeDeclaration;
 
 const MIN_INHERITED_FD: RawFd = 10;
 const MAX_STATUS_BYTES: usize = 4096;
@@ -151,6 +151,7 @@ pub fn spawn_prepared(
     argv: &[String],
     env: &[(String, String)],
     scrollback_limit_bytes: usize,
+    theme: Option<&ThemeDeclaration>,
 ) -> io::Result<PreparedChild> {
     if argv.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "argv empty"));
@@ -223,8 +224,10 @@ pub fn spawn_prepared(
         rows,
         cols,
         scrollback_limit_bytes,
-        TerminalTheme::default(),
-        None,
+        theme
+            .map(ThemeDeclaration::terminal_theme)
+            .unwrap_or_default(),
+        theme.and_then(ThemeDeclaration::appearance),
         master,
         pid,
     ) {

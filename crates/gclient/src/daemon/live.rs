@@ -10,6 +10,7 @@ use super::{
     WorktreeRow,
 };
 use futures_util::future::{AbortHandle, Abortable};
+use gobby_terminal::terminal_theme::ThemeDeclaration;
 use reqwest::Url;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -64,6 +65,10 @@ pub(super) struct LiveState {
     /// The workspace this connection attached; the reader drops every other
     /// workspace's `workspace_event`.
     pub(super) attached_workspace: Option<String>,
+    /// The client's terminal colours, sent with every shell spawn this
+    /// connection requests so the child's first OSC 10/11 queries answer
+    /// with them. `None` until the app sets it; the host then decides.
+    pub(super) terminal_theme: Option<ThemeDeclaration>,
     reconnect: Option<ReconnectFlight>,
 }
 
@@ -84,6 +89,7 @@ impl Default for LiveState {
             control_tombstones: HashSet::new(),
             workspace_attaches: HashSet::new(),
             attached_workspace: None,
+            terminal_theme: None,
             reconnect: None,
         }
     }

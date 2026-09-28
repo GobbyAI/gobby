@@ -147,6 +147,7 @@ impl Workspace<LiveDaemon> {
             lease_generation,
             PaneFrameSource::Direct(source),
         );
+        pane.host_themes = super::theme_sync::host_accepts_themes(reply);
         pane.observe_lease_holder(
             reply
                 .get("lease_holder")
@@ -519,6 +520,7 @@ impl Workspace<LiveDaemon> {
             lease_generation,
             PaneFrameSource::Proxy(source),
         );
+        pane.host_themes = super::theme_sync::host_accepts_themes(reply);
         pane.observe_lease_holder(
             reply
                 .get("lease_holder")

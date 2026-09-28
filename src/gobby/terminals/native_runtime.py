@@ -387,6 +387,8 @@ class NativeTerminalRuntime:
             if not reservation_id or not reserve_key:
                 raise HostCommandError("invalid_reservation")
             payload = await self._client.spawn(
+                # None: the host starts the child on its latest client declaration.
+                terminal_theme=request.terminal_theme,
                 terminal_id=str(request.terminal_id),
                 spawn_key=request.spawn_key,
                 reservation_id=reservation_id,

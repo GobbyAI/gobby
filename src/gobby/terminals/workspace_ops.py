@@ -261,8 +261,12 @@ class WorkspaceOps:
         terminal_id: str | None = None,
         cwd: str | None = None,
         node: str | None = None,
+        terminal_theme: dict[str, object] | None = None,
     ) -> LayoutChange:
-        """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``."""
+        """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``.
+
+        ``terminal_theme`` is the requesting client's colours for a spawned shell.
+        """
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         source = await self._db(
@@ -279,7 +283,9 @@ class WorkspaceOps:
                 worktree_id=worktree_id,
                 title=title,
             )
-            pane = await self._fill(target.node, home, change.tabs[0], change.panes[0], source)
+            pane = await self._fill(
+                target.node, home, change.tabs[0], change.panes[0], source, terminal_theme
+            )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)
         await self._emit("tab.created", home.id, tabs=change.tabs, panes=(pane,))
@@ -352,6 +358,7 @@ class WorkspaceOps:
         terminal_id: str | None = None,
         cwd: str | None = None,
         node: str | None = None,
+        terminal_theme: dict[str, object] | None = None,
     ) -> LayoutChange:
         """Split ``pane`` with a new pane that spawns a shell or adopts ``terminal_id``.
 
@@ -376,7 +383,12 @@ class WorkspaceOps:
                 self._workspaces.add_pane, pane_id, beside=beside.id, axis=axis
             )
             added = await self._fill(
-                target.node, target.workspace, change.tabs[0], change.panes[0], source
+                target.node,
+                target.workspace,
+                change.tabs[0],
+                change.panes[0],
+                source,
+                terminal_theme,
             )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)
@@ -708,6 +720,7 @@ class WorkspaceOps:
         tab: WorkspaceTab,
         pane: WorkspacePane,
         source: ShellSpawn | Terminal,
+        terminal_theme: dict[str, object] | None = None,
     ) -> WorkspacePane:
         """Bind a freshly inserted pane to its adopted or newly spawned terminal."""
         if isinstance(source, Terminal):
@@ -736,6 +749,7 @@ class WorkspaceOps:
                     # Bounds the host spawn, so a wedged host cannot hold the pane
                     # in flight (and every close of its workspace busy) forever.
                     timeout_seconds=PANE_SPAWN_TIMEOUT_SECONDS,
+                    terminal_theme=terminal_theme,
                 )
             except Exception as exc:
                 await self._roll_back(pane.id)

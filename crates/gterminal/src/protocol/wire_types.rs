@@ -277,6 +277,16 @@ pub enum ClientMessage {
         end_rows_from_live_edge: u32,
         end_col: u16,
     },
+    /// The client's terminal colours for the attached pane. Any authenticated
+    /// stream may declare (no `BindAttachment` needed, so unfocused panes
+    /// re-theme). A declaration applies only when the slot has no input grant
+    /// or this stream's bound attachment holds it; a later grant applies the
+    /// holder's declaration. Send only to hosts whose control hello advertises
+    /// the `terminal_theme` capability: older hosts cannot decode this tag.
+    /// Keep this variant last so earlier tags stay stable.
+    SetTerminalTheme {
+        theme: crate::terminal_theme::ThemeDeclaration,
+    },
 }
 
 impl ClientMessage {

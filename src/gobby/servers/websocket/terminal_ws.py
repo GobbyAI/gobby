@@ -18,6 +18,7 @@ from gobby.terminals.foreground import (
     shell_cwds,
     shell_pid,
 )
+from gobby.terminals.frame_client import FrameProtocolError
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -61,6 +62,9 @@ def _list_states(raw: object) -> tuple[str, ...] | None:
 
 
 WRITE_FAULT_NAME = "terminal_write_fault"
+
+# The gterm host capability for `SetTerminalTheme` on its frame streams.
+TERMINAL_THEME_CAPABILITY = "terminal_theme"
 
 # Clients reconnect the moment HTTP serves, before the gterm host is adopted or
 # spawned; an attach waits this long for that decision (#22002). With the two
@@ -253,6 +257,15 @@ class TerminalWsMixin:
                 "backend": row.backend,
                 "frame_delivery": record.frame_delivery,
                 "direct": None if locator is None else locator.direct_block(),
+                # What the frame host behind `direct` accepts beyond the base
+                # protocol; a direct client sends nothing else on that stream.
+                # A proxied native pane gets what the daemon relays for it
+                # (`terminal_set_theme`).
+                "host_capabilities": (
+                    list(getattr(self.terminal_host_manager, "capabilities", ()))
+                    if locator is not None
+                    else self._relayed_host_capabilities(row.backend)
+                ),
                 "lease_generation": registry.generation(terminal_id),
                 "lease_holder": registry.holder_info(terminal_id),
                 "success": True,
@@ -463,6 +476,46 @@ class TerminalWsMixin:
         except Exception:
             logger.warning("tmux terminal discovery failed", exc_info=True)
             return {}
+
+    def _relayed_host_capabilities(self, backend: str) -> list[str]:
+        host_capabilities = getattr(self.terminal_host_manager, "capabilities", ())
+        if backend == "native" and TERMINAL_THEME_CAPABILITY in host_capabilities:
+            return [TERMINAL_THEME_CAPABILITY]
+        return []
+
+    async def _handle_terminal_set_theme(self, websocket: Any, data: dict[str, Any]) -> None:
+        """Declare a proxied pane's terminal theme on its host frame stream.
+
+        Only the websocket that owns the attachment may declare for it. The
+        daemon binds its stream to that attachment first, so the host still
+        applies the theme only for the input-grant holder (or an ungranted
+        pane) and an observer's declaration changes nothing.
+        """
+        attachment_id = data.get("attachment_id")
+        record = (
+            self._proxy().attachments.get(attachment_id) if isinstance(attachment_id, str) else None
+        )
+        declare = getattr(getattr(record, "frame", None), "declare_terminal_theme", None)
+        code = None
+        if (
+            record is None
+            or record.websocket is not websocket
+            or not callable(declare)
+            or not self._relayed_host_capabilities(record.backend)
+        ):
+            code = "theme_not_relayed"
+        else:
+            try:
+                await declare(attachment_id, data.get("theme"))
+            except FrameProtocolError:
+                code = "invalid_terminal_theme"
+        if code is not None:
+            # No attachment_id: gclient routes an attachment's terminal_error
+            # as the answer to its pending take/release control request.
+            await self._send_json(
+                websocket,
+                {"type": "terminal_error", "code": code, "terminal_id": data.get("terminal_id")},
+            )
 
     async def _handle_terminal_set_scroll_offset(
         self, websocket: Any, data: dict[str, Any]

@@ -55,6 +55,7 @@ fn attachment() -> (Attachment, FrameMailbox) {
         delta_bytes: 0,
         last_semantic_frame: None,
         encoder: BlitEncoder::new(),
+        declared_theme: None,
     };
     (att, mailbox)
 }

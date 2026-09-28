@@ -13,6 +13,7 @@ pub mod run_loop;
 mod scripted_input;
 pub mod sidebar_model;
 pub mod startup_stages;
+mod theme_sync;
 pub mod viewer_state;
 mod window_state;
 pub mod workspace_ops;

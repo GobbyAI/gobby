@@ -79,11 +79,14 @@ async def spawn_web_terminal(
     env: Mapping[str, str] | None = None,
     timeout_seconds: float | None = None,
     cancel_event: asyncio.Event | None = None,
+    terminal_theme: dict[str, object] | None = None,
 ) -> WebSpawnResult:
     """Create a pending row, prepare, and promote — same CAS matrix as execute_spawn.
 
     ``env`` sits under the runtime's own variables, so it never shadows
-    ``GOBBY_TERMINAL_ID``.
+    ``GOBBY_TERMINAL_ID``. ``terminal_theme`` is the requesting client's
+    colours, forwarded to a native host so the child's first OSC 10/11
+    queries answer with them.
     """
     validated = validate_dimensions(rows, cols)
     terminal_id = mint_terminal_id()
@@ -109,6 +112,7 @@ async def spawn_web_terminal(
         env=None if env is None else dict(env),
         rows=validated[0],
         cols=validated[1],
+        terminal_theme=terminal_theme,
     )
     if runtime.backend == "native":
         if not can_reserve_observer(runtime):
