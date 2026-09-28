@@ -586,9 +586,11 @@ SELECT
     ) -> bool:
         """Record an edit as ``generation + 1`` before it is published; False when stale.
 
-        A new keyboard reopens the decision; an edit without one supersedes a
-        pending decision, because Telegram drops buttons an edit does not resend.
+        A new keyboard replaces the buttons of a pending decision only; a closed one
+        is never reopened. An edit without a keyboard supersedes a pending decision,
+        because Telegram drops buttons an edit does not resend.
         """
+        keyboard_json = None if keyboard is None else json.dumps(keyboard)
         with self.db.transaction() as conn:
             row = conn.execute(
                 """
@@ -596,22 +598,23 @@ SELECT
                    SET content = %s,
                        metadata_json = CASE
                            WHEN %s::jsonb IS NOT NULL THEN
-                               (metadata_json - 'callback_state')
-                               || jsonb_build_object('inline_keyboard', %s::jsonb)
+                               metadata_json || jsonb_build_object('inline_keyboard', %s::jsonb)
                            WHEN metadata_json ? 'callback_state' THEN metadata_json
                            ELSE metadata_json || '{"callback_state": "superseded"}'::jsonb
                        END || jsonb_build_object('callback_generation', %s::int + 1)
                  WHERE id = %s
                    AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
+                   AND (%s::jsonb IS NULL OR NOT metadata_json ? 'callback_state')
                 RETURNING id
                 """,
                 (
                     content,
-                    None if keyboard is None else json.dumps(keyboard),
-                    None if keyboard is None else json.dumps(keyboard),
+                    keyboard_json,
+                    keyboard_json,
                     generation,
                     message_id,
                     generation,
+                    keyboard_json,
                 ),
             ).fetchone()
         return row is not None

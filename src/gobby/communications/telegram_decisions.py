@@ -78,23 +78,20 @@ async def _publish(
     inline_keyboard: list[list[dict[str, str]]] | None,
     generation: int,
 ) -> None:
-    """Rewrite every chunk of a stored message and record where its chunks ended up."""
-    chunk_ids = await adapter.edit_stored_message(
+    """Rewrite every chunk of a stored message, recording new chunk IDs before any keyboard."""
+
+    async def record(chunk_ids: list[str]) -> None:
+        await asyncio.to_thread(manager._store.record_platform_message_ids, source.id, chunk_ids)
+
+    await adapter.edit_stored_message(
         source,
         content,
         chat_id,
         sender_label=_sender_label(source),
         inline_keyboard=inline_keyboard,
         callback_generation=generation,
+        record_chunk_ids=record,
     )
-    if chunk_ids == source.metadata_json.get("platform_message_ids"):
-        return
-    try:
-        await asyncio.to_thread(manager._store.record_platform_message_ids, source.id, chunk_ids)
-    except Exception:
-        # Answers still resolve through their tokens' source; only an expired click
-        # on a chunk this left unrecorded goes unrecognized.
-        logger.exception("Could not record Telegram chunk IDs for %s", source.id)
 
 
 async def _republish_decision(
@@ -226,6 +223,11 @@ async def edit_keyboard_message(
         current = await asyncio.to_thread(store.get_message, message_id)
         if current is None:
             raise ValueError("Cannot edit a Telegram keyboard without its stored message")
+        state = current.metadata_json.get("callback_state")
+        if inline_keyboard is not None and state is not None:
+            raise ValueError(
+                f"Decision {message_id} is {state}; send a new decision instead of new buttons"
+            )
         generation = _generation(current.metadata_json)
         if not await asyncio.to_thread(
             store.stage_callback_edit, message_id, generation, content, inline_keyboard

@@ -563,6 +563,19 @@ async def test_ambiguous_keyboard_edit_failure_keeps_the_staged_keyboard(
     assert routed[0].content == "ship"
     assert _row(decision)["callback_state"] == "answered"
 
+    post_json.reset_mock()
+    with pytest.raises(ValueError, match="is answered; send a new decision"):
+        await edit_keyboard_message(
+            manager,
+            adapter,
+            decision.source.id,
+            "Ship it again?",
+            _CHAT_ID,
+            [[{"text": "Ship", "value": "ship"}]],
+        )
+    assert post_json.await_count == 0
+    assert _row(decision)["callback_state"] == "answered"
+
 
 @pytest.mark.asyncio
 async def test_refused_button_removal_keeps_the_decision_pending(decision: _Decision) -> None:
@@ -589,6 +602,114 @@ async def test_refused_button_removal_keeps_the_decision_pending(decision: _Deci
     assert _row(decision).get("callback_state") is None
     routed = await inbound.handle_messages("telegram", [_click(adapter, approve_token, "q-ok")])
     assert routed[0].metadata_json["callback_status"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_buttons_move_to_an_added_chunk_only_after_it_is_recorded(
+    decision: _Decision,
+) -> None:
+    long_question = "Ship it?\n" + "word " * 1000  # two Telegram chunks
+    recorded_at_attach: list[object] = []
+
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "sendMessage":
+            return {"ok": True, "result": {"message_id": 300}}
+        if method == "editMessageReplyMarkup":
+            recorded_at_attach.append(_row(decision).get("platform_message_ids"))
+        return _OK
+
+    post_json = AsyncMock(side_effect=telegram_api)
+    adapter = _adapter(post_json)
+    manager = _manager(decision, adapter)
+    inbound = InboundCommunications(manager)
+    await _reissue(adapter, inbound)
+    post_json.reset_mock()
+
+    # The database fails after Telegram accepted the added chunk.
+    with (
+        patch.object(
+            decision.store,
+            "record_platform_message_ids",
+            side_effect=ConnectionError("database unavailable"),
+        ),
+        pytest.raises(ConnectionError),
+    ):
+        await edit_keyboard_message(
+            manager,
+            adapter,
+            decision.source.id,
+            long_question,
+            _CHAT_ID,
+            [[{"text": "Ship", "value": "ship"}]],
+        )
+
+    # The unrecorded chunk never got buttons, and the recorded chunk kept its own.
+    assert [call.args[0] for call in post_json.await_args_list] == ["sendMessage"]
+    assert "reply_markup" not in _calls(post_json, "sendMessage")[0]
+
+    # A click on the original chunk republishes; this time the chunk is recorded first.
+    post_json.reset_mock()
+    handled = await inbound.handle_messages("telegram", [_click(adapter, "gobby:lost", "q-1")])
+    assert handled[0].metadata_json["callback_status"] == "reissued"
+    assert recorded_at_attach == [[str(_SOURCE_MESSAGE_ID), "300"]]
+    attach = _calls(post_json, "editMessageReplyMarkup")[0]
+    assert attach["message_id"] == "300"
+    ship_token = attach["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
+
+    # After a restart the button on the added chunk still finds its decision.
+    restarted = _adapter(AsyncMock(side_effect=telegram_api))
+    manager._adapters["telegram"] = restarted
+    lost = await inbound.handle_messages(
+        "telegram", [_click(restarted, ship_token, "q-2", message_id=300)]
+    )
+    assert lost[0].metadata_json["callback_status"] == "reissued"
+
+
+@pytest.mark.asyncio
+async def test_undeletable_surplus_chunk_stays_recorded(decision: _Decision) -> None:
+    long_decision = decision.store.create_message(
+        CommsMessage(
+            id="",
+            channel_id=decision.channel.id,
+            direction="outbound",
+            content="Review the plan below.\n" + "word " * 1000,
+            platform_message_id="200",
+            session_id=decision.session_id,
+            metadata_json={
+                "platform_destination": _CHAT_ID,
+                "platform_message_ids": ["200", "201"],
+                "inline_keyboard": [[{"text": "Approve", "value": "approve"}]],
+            },
+            created_at=_TS,
+        )
+    )
+
+    async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if method == "deleteMessage":
+            return {"ok": False, "description": "Bad Request: message can't be deleted"}
+        return _OK
+
+    adapter = _adapter(AsyncMock(side_effect=telegram_api))
+    manager = _manager(decision, adapter)
+    await edit_keyboard_message(
+        manager,
+        adapter,
+        long_decision.id,
+        "Short now?",
+        _CHAT_ID,
+        [[{"text": "Yes", "value": "yes"}]],
+    )
+
+    stored = decision.store.get_message(long_decision.id)
+    assert stored is not None
+    assert stored.metadata_json["platform_message_ids"] == ["200", "201"]
+    # The old buttons left on chunk 201 still lead back to the decision after a restart.
+    restarted = _adapter(AsyncMock(side_effect=telegram_api))
+    manager._adapters["telegram"] = restarted
+    handled = await InboundCommunications(manager).handle_messages(
+        "telegram", [_click(restarted, "gobby:0.gone", "q-old", message_id=201)]
+    )
+    assert handled[0].metadata_json["callback_status"] == "reissued"
 
 
 @pytest.mark.asyncio
@@ -664,6 +785,9 @@ def test_decision_state_transitions_are_compare_and_set(decision: _Decision) -> 
     assert answer("q-old", 1) is None
     assert answer("q-new", 2) is not None
     assert answer("q-again", 2) is None
+    # New buttons never reopen an answered decision.
+    assert store.stage_callback_edit(source_id, 2, "Ship again?", replacement) is False
+    assert _row(decision)["callback_state"] == "answered"
     # Removing the buttons of an answered decision keeps its answer.
     assert store.stage_callback_edit(source_id, 2, "Shipped", None) is True
     assert _row(decision)["callback_state"] == "answered"
