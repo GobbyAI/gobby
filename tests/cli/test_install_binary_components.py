@@ -15,6 +15,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.cli import install_components
 from gobby.cli.install_components import run_install_components
 from gobby.cli.install_files_home import (
     _install_maintenance_block_message,
@@ -27,6 +28,7 @@ from gobby.cli.install_setup import (
 from gobby.cli.runtime import CliRuntime
 from gobby.install.bin_freshness_promotion import native_bin_predates_source
 from gobby.runner_pid_file import ProbeState
+from gobby.utils import deps
 
 
 def test_binary_components_promote_while_a_daemon_singleton_is_live(
@@ -64,6 +66,52 @@ def test_binary_components_promote_while_a_daemon_singleton_is_live(
     assert results["gclient"]["success"] is True
     assert results["gterm"]["success"] is True
     assert promoted == [("gclient", bin_dir), ("gterm", bin_dir)]
+
+
+@pytest.mark.parametrize(
+    ("name", "crate_dir", "version"),
+    [("gclient", "gclient", "0.7.8"), ("gterm", "gterminal", "0.9.2")],
+)
+@pytest.mark.parametrize("outcome", ["promoted", "current", None])
+def test_component_install_refreshes_crate_version_stamp_only_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    name: str,
+    crate_dir: str,
+    version: str,
+    outcome: str | None,
+) -> None:
+    workspace = tmp_path / "workspace"
+    manifest = workspace / "crates" / crate_dir / "Cargo.toml"
+    manifest.parent.mkdir(parents=True)
+    (workspace / "Cargo.toml").write_text("[workspace]\n")
+    manifest.write_text(f'[package]\nname = "gobby-{crate_dir}"\nversion = "{version}"\n')
+    monkeypatch.setattr(
+        install_components, "__file__", str(workspace / "src/gobby/cli/install_components.py")
+    )
+
+    bin_dir = tmp_path / ".gobby" / "bin"
+    bin_dir.mkdir(parents=True)
+    binary = bin_dir / name
+    binary.write_bytes(b"binary")
+    stamp = bin_dir / f".{name}-version"
+    stamp.write_text("0.0.1\n")
+    installer = MagicMock(return_value=outcome)
+    monkeypatch.setattr(f"gobby.cli.install_setup._install_{name}_from_submodule", installer)
+
+    result = install_components.promote_client_binary(name, bin_dir)
+
+    installer.assert_called_once_with(bin_dir)
+    assert result == {"success": outcome is not None, "outcome": outcome}
+    expected = version if outcome else "0.0.1"
+    assert stamp.read_text().strip() == expected
+    with (
+        patch.object(Path, "home", return_value=tmp_path),
+        patch("gobby.utils.deps.resolve_native_bin", return_value=binary),
+        patch("gobby.utils.deps.probe_native_bin_version", return_value=None),
+    ):
+        get_version = deps.get_gclient_version if name == "gclient" else deps.get_gterm_version
+        assert get_version() == expected
 
 
 def test_full_install_still_refuses_a_live_daemon(monkeypatch: pytest.MonkeyPatch) -> None:
