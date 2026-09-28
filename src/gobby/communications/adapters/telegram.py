@@ -897,6 +897,8 @@ class TelegramAdapter(BaseChannelAdapter):
                 text = "Selection received."
             elif status == "reissued":
                 text = "These buttons were out of date. Current buttons are attached; tap again."
+            elif status == "retrying":
+                text = "Retrying your answer."
             elif status == "answered":
                 text = "This decision was already answered."
             elif status == "superseded":

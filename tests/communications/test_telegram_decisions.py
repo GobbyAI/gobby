@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -20,10 +21,15 @@ from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessa
 from gobby.communications.responder import CommunicationsResponder
 from gobby.communications.telegram_actions import TelegramActionController
 from gobby.communications.telegram_callbacks import TelegramCallbackRegistry
-from gobby.communications.telegram_decisions import DecisionLocks, edit_keyboard_message
+from gobby.communications.telegram_decisions import (
+    DecisionLocks,
+    edit_keyboard_message,
+    publish_answer_status,
+)
 from gobby.config.communications import CommunicationsConfig
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.communications import LocalCommunicationsStore
+from gobby.storage.decision_answers import DecisionAnswerStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager, system_session_id
@@ -954,12 +960,16 @@ class _WakeRecorder:
 
 
 class _ChatHost:
-    """The websocket chat host's turn surface; fails the first ``failures`` turns."""
+    """The websocket chat host's turn surface; fails the first ``failures`` turns.
 
-    def __init__(self, failures: int = 0) -> None:
+    With a ``gate``, every turn waits for it after it starts.
+    """
+
+    def __init__(self, failures: int = 0, gate: asyncio.Event | None = None) -> None:
         self.turns: list[tuple[str, str]] = []
         self.resets: list[str] = []
         self._failures = failures
+        self._gate = gate
 
     async def configure_chat_session(
         self, conversation_id: str, *, chat_mode: str, agent_name: str, project_id: str
@@ -968,6 +978,8 @@ class _ChatHost:
 
     async def _run_chat_turn(self, **kwargs: Any) -> None:
         self.turns.append((str(kwargs["conversation_id"]), str(kwargs["content"])))
+        if self._gate is not None:
+            await self._gate.wait()
         if self._failures:
             self._failures -= 1
             raise RuntimeError("chat turn failed")
@@ -993,6 +1005,8 @@ class _AnswerRoute:
     observed: list[CommsMessage]
     approve_token: str
     manager: MagicMock
+    answers: DecisionAnswerStore
+    backend: ChatSessionCommsBackend
 
 
 async def _answer_route(
@@ -1001,6 +1015,7 @@ async def _answer_route(
     *,
     wake_error: Exception | None = None,
     failed_turns: int = 0,
+    gate: asyncio.Event | None = None,
 ) -> _AnswerRoute:
     """Real accept, action, mailbox and responder paths on a responder-enabled channel."""
     post_json = AsyncMock(return_value=_OK)
@@ -1024,10 +1039,19 @@ async def _answer_route(
         config_json={"responder": {"enabled": True}, "allow_from": ["1111111"]},
     )
     manager.handle_session_action = TelegramActionController(manager, sessions, mailbox).handle
-    host = _ChatHost(failed_turns)
+    host = _ChatHost(failed_turns, gate)
+    answers = DecisionAnswerStore(decision.store.db, machine_id=decision.store.machine_id)
+    manager.decision_answers = answers
+    backend = ChatSessionCommsBackend(host, manager)
     responder = CommunicationsResponder(
-        manager, backend=ChatSessionCommsBackend(host, manager), answers=decision.store
+        manager,
+        backend=backend,
+        answers=answers,
+        daemon_epoch="live-daemon-epoch",
+        answer_status=lambda answer: publish_answer_status(manager, adapter, answer),
+        retry_delays=(0.01,),
     )
+    manager.responder = responder
     observed: list[CommsMessage] = []
 
     async def fan_out(event: str, **kwargs: Any) -> None:
@@ -1044,7 +1068,17 @@ async def _answer_route(
     host.turns.clear()
     post_json.reset_mock()
     return _AnswerRoute(
-        inbound, adapter, post_json, responder, host, wakes, observed, approve_token, manager
+        inbound,
+        adapter,
+        post_json,
+        responder,
+        host,
+        wakes,
+        observed,
+        approve_token,
+        manager,
+        answers,
+        backend,
     )
 
 
@@ -1062,10 +1096,10 @@ def _undelivered(decision: _Decision) -> list[str]:
     return [message.id for message in mailbox.get_undelivered_messages(decision.session_id)]
 
 
-def _outcome(decision: _Decision, answer_id: str) -> object:
+def _outcome(decision: _Decision, answer_id: str) -> str | None:
     answer = decision.store.get_message(answer_id)
     assert answer is not None
-    return answer.metadata_json.get("answer_outcome")
+    return answer.answer_outcome
 
 
 @pytest.mark.asyncio
@@ -1188,13 +1222,12 @@ async def test_policy_revoked_after_the_click_blocks_the_answer_durably(
     decision: _Decision, revoked: dict[str, object]
 ) -> None:
     route = await _answer_route(decision, "comms")
-    backend = ChatSessionCommsBackend(route.host, route.manager)
     route.responder.set_backend(None)
     answer = await _click_approve(route)
     assert _undelivered(decision) == [answer.id]
 
     route.manager.get_channel.return_value = replace(decision.channel, config_json=revoked)
-    route.responder.set_backend(backend)
+    route.responder.set_backend(route.backend)
     await route.responder.recover_decision_answers()
     await route.responder.drain()
     await route.responder.recover_decision_answers()
@@ -1203,3 +1236,263 @@ async def test_policy_revoked_after_the_click_blocks_the_answer_durably(
     assert route.host.turns == []
     assert _outcome(decision, answer.id) == "blocked"
     assert _undelivered(decision) == []
+    # The decision says why the answer went nowhere, once, and offers no retry.
+    [status] = _status_edits(route)
+    assert "not delivered" in status["text"]
+    assert _markup_data(status) == []
+
+
+def _status_edits(route: _AnswerRoute) -> list[dict[str, Any]]:
+    """Decision republishes that carry an answer status line."""
+    return [
+        payload
+        for payload in _calls(route.post_json, "editMessageText")
+        if "Answer “" in payload["text"] or "Retrying answer" in payload["text"]
+    ]
+
+
+def _retry_token(route: _AnswerRoute) -> str:
+    """The single Retry answer button on the latest status."""
+    status = _status_edits(route)[-1]
+    [button] = status["reply_markup"]["inline_keyboard"][0]
+    assert button["text"] == "Retry answer"
+    token: str = button["callback_data"]
+    return token
+
+
+async def _press(route: _AnswerRoute, token: str, query_id: str) -> CommsMessage:
+    handled = await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, token, query_id)]
+    )
+    await route.responder.drain()
+    return handled[0]
+
+
+async def _until(check: Callable[[], object]) -> None:
+    async with asyncio.timeout(5):
+        while not check():
+            await asyncio.sleep(0.01)
+
+
+def _answer(decision: _Decision, answer_id: str) -> CommsMessage:
+    answer = decision.store.get_message(answer_id)
+    assert answer is not None
+    return answer
+
+
+@pytest.mark.asyncio
+async def test_failed_answer_offers_one_retry_that_runs_once_more(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    answer = await _click_approve(route)
+
+    assert _outcome(decision, answer.id) == "failed"
+    failed = _status_edits(route)[-1]
+    # A failed turn may have acted, so the status never claims it had no effect.
+    assert "may have partly acted" in failed["text"]
+    assert "may repeat actions" in failed["text"]
+    retry = _retry_token(route)
+
+    clicked = await _press(route, retry, "q-retry")
+
+    assert clicked.metadata_json["callback_status"] == "retrying"
+    assert len(route.host.turns) == 2
+    retried_turn = route.host.turns[1][1]
+    assert retried_turn.startswith("[Retry of a Telegram decision answer, attempt 2.")
+    assert retried_turn.endswith("\napprove")
+    retried = _answer(decision, answer.id)
+    assert (retried.answer_outcome, retried.answer_attempt) == ("delivered", 2)
+    assert retried.content == "approve"
+    assert "delivered on retry (attempt 2)" in _status_edits(route)[-1]["text"]
+
+    # The button is spent: a second click on it never starts another attempt.
+    again = await _press(route, retry, "q-retry-again")
+    assert again.metadata_json["callback_status"] == "answered"
+    assert len(route.host.turns) == 2
+
+
+@pytest.mark.asyncio
+async def test_repeated_retry_taps_start_one_attempt(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    answer = await _click_approve(route)
+    retry = _retry_token(route)
+
+    handled = await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, retry, f"q-retry-{n}") for n in range(3)]
+    )
+    await route.responder.drain()
+
+    assert [click.metadata_json["callback_status"] for click in handled] == [
+        "retrying",
+        "answered",
+        "answered",
+    ]
+    assert len(route.host.turns) == 2
+    assert _answer(decision, answer.id).answer_attempt == 2
+
+
+@pytest.mark.asyncio
+async def test_retry_click_from_a_revoked_sender_consumes_nothing(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    answer = await _click_approve(route)
+    retry = _retry_token(route)
+    route.manager.admit_inbound_message.return_value = False
+
+    await _press(route, retry, "q-denied-retry")
+
+    failed = _answer(decision, answer.id)
+    assert (failed.answer_outcome, failed.answer_attempt) == ("failed", 1)
+    assert len(route.host.turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_on_a_lapsed_button_reissues_it(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    answer = await _click_approve(route)
+    # A restarted daemon has no live callback tokens.
+    route.adapter._callback_registry = TelegramCallbackRegistry()
+
+    lapsed = await _press(route, "gobby:lost", "q-lapsed")
+
+    assert lapsed.metadata_json["callback_status"] == "reissued"
+    await _press(route, _retry_token(route), "q-reissued-retry")
+    assert len(route.host.turns) == 2
+    assert _outcome(decision, answer.id) == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_turn_claimed_by_an_earlier_daemon_is_in_doubt_not_rerun(
+    decision: _Decision,
+) -> None:
+    route = await _answer_route(decision, "comms")
+    route.responder.set_backend(None)
+    answer = await _click_approve(route)
+    assert route.answers.claim_answer(answer.id, 1, "dead-daemon-epoch")
+
+    route.responder.set_backend(route.backend)
+    await route.responder.recover_decision_answers()
+    await route.responder.drain()
+
+    assert route.host.turns == []
+    assert _outcome(decision, answer.id) == "in_doubt"
+    assert "interrupted" in _status_edits(route)[-1]["text"]
+    await _press(route, _retry_token(route), "q-retry")
+    assert [content.endswith("\napprove") for _, content in route.host.turns] == [True]
+    assert _outcome(decision, answer.id) == "delivered"
+
+
+@pytest.mark.asyncio
+async def test_recovery_leaves_this_daemons_running_turn_alone(decision: _Decision) -> None:
+    gate = asyncio.Event()
+    route = await _answer_route(decision, "comms", gate=gate)
+    await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, route.approve_token, "q-ok")]
+    )
+    await _until(lambda: route.host.turns)
+    answer_id = route.observed[0].id
+
+    await route.responder.recover_decision_answers()
+
+    assert _outcome(decision, answer_id) == "started"
+    gate.set()
+    await route.responder.drain()
+    assert _outcome(decision, answer_id) == "delivered"
+    assert len(route.host.turns) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_answer_turn_is_shown_in_doubt(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", gate=asyncio.Event())
+    await route.inbound.handle_messages(
+        "telegram", [_click(route.adapter, route.approve_token, "q-ok")]
+    )
+    await _until(lambda: route.host.turns)
+    answer_id = route.observed[0].id
+
+    await route.responder.stop()
+
+    assert _outcome(decision, answer_id) == "in_doubt"
+    assert "interrupted" in _status_edits(route)[-1]["text"]
+    assert _retry_token(route)
+
+
+@pytest.mark.asyncio
+async def test_answer_behind_a_full_conversation_is_delivered_without_restart(
+    decision: _Decision,
+) -> None:
+    gate = asyncio.Event()
+    route = await _answer_route(decision, "comms", gate=gate)
+    route.responder.set_backend(None)
+    answer = await _click_approve(route)
+    route.responder.set_backend(route.backend)
+    chatter = {
+        key: value
+        for key, value in answer.metadata_json.items()
+        if not key.startswith(("answer_", "callback_"))
+    }
+    for n in range(8):
+        await route.responder.handle_message(
+            replace(answer, id=f"chatter-{n}", content=f"chatter {n}", metadata_json=chatter)
+        )
+
+    assert await route.responder.handle_message(answer) is None
+
+    assert _outcome(decision, answer.id) == "pending"
+    gate.set()
+    await _until(lambda: _outcome(decision, answer.id) == "delivered")
+    assert route.host.turns[-1] == (decision.session_id, "approve")
+    assert len(route.host.turns) == 9
+
+
+@pytest.mark.asyncio
+async def test_backend_installed_after_recovery_routes_waiting_answers(
+    decision: _Decision,
+) -> None:
+    route = await _answer_route(decision, "comms")
+    route.responder.set_backend(None)
+    answer = await _click_approve(route)
+    await route.responder.recover_decision_answers()
+    assert _outcome(decision, answer.id) == "pending"
+
+    route.responder.set_backend(route.backend)
+
+    await _until(lambda: _outcome(decision, answer.id) == "delivered")
+    assert route.host.turns == [(decision.session_id, "approve")]
+
+
+@pytest.mark.asyncio
+async def test_status_lost_to_telegram_is_republished_once_by_recovery(
+    decision: _Decision,
+) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    route.post_json.side_effect = httpx.ConnectError("telegram unreachable")
+    answer = await _click_approve(route)
+    assert "answer_status_shown" not in _answer(decision, answer.id).metadata_json
+
+    route.post_json.side_effect = None
+    route.post_json.return_value = _OK
+    route.post_json.reset_mock()
+    await route.responder.recover_decision_answers()
+    await route.responder.recover_decision_answers()
+
+    assert len(_status_edits(route)) == 1
+    assert _answer(decision, answer.id).metadata_json["answer_status_shown"] == "1:failed"
+
+
+@pytest.mark.asyncio
+async def test_answer_transitions_are_bound_to_their_attempt(decision: _Decision) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    answer = await _click_approve(route)
+    answers = route.answers
+
+    assert answers.consume_retry(answer.id, 1, "1111111") is not None
+    assert answers.consume_retry(answer.id, 1, "1111111") is None
+    assert answers.claim_answer(answer.id, 2, "live-daemon-epoch")
+    # A late writer for attempt 1 cannot settle attempt 2.
+    assert answers.settle_answer(answer.id, 1, "failed") is None
+    assert _outcome(decision, answer.id) == "started"
+    # Another machine's daemon never sweeps this machine's answers.
+    other_machine = DecisionAnswerStore(
+        decision.store.db, machine_id="0b9f3c2e-5d6a-4e1f-9a7b-3c8d2e1f0a9b"
+    )
+    assert other_machine.sweep_in_doubt_answers("another-epoch") == []
+    assert [swept.id for swept in answers.sweep_in_doubt_answers("next-epoch")] == [answer.id]

@@ -10,7 +10,6 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
 from gobby.communications.models import (
-    AnswerOutcome,
     ChannelConfig,
     CommsAttachment,
     CommsIdentity,
@@ -546,8 +545,9 @@ SELECT
         The answer gets one mailbox row under the callback row's ID, from the system
         session with the Telegram sender in its metadata, and is stamped with who
         consumes it (``CommsMessage.answer_delivery``). A comms asking session has no
-        mailbox reader, so the responder claims the row before running its answer
-        turn; any other asker reads its mailbox after the caller wakes it.
+        mailbox reader, so its answer starts ``pending`` in the responder's
+        ``DecisionAnswerStore`` ledger; any other asker reads its mailbox after the
+        caller wakes it. The decision records the answer as ``callback_answer_id``.
         Returns None, persisting nothing, unless the decision is still pending at
         ``generation``. A persistence failure rolls the answer back.
         """
@@ -575,11 +575,20 @@ SELECT
             )
             if asker is None:
                 return self._insert_message(conn, callback)[0]
-            delivery = "responder" if asker["source"] == "comms" else "mailbox"
-            answer = replace(
-                callback, metadata_json={**callback.metadata_json, "answer_delivery": delivery}
+            stamp: dict[str, Any] = (
+                {"answer_delivery": "responder", "answer_outcome": "pending", "answer_attempt": 1}
+                if asker["source"] == "comms"
+                else {"answer_delivery": "mailbox"}
             )
+            answer = replace(callback, metadata_json={**callback.metadata_json, **stamp})
             persisted, _ = self._insert_message(conn, answer)
+            conn.execute(
+                """UPDATE comms_messages
+                      SET metadata_json = jsonb_set(metadata_json, '{callback_answer_id}',
+                                                    to_jsonb(%s::text))
+                    WHERE id = %s""",
+                (persisted.id, decision_id),
+            )
             InterSessionMessageManager(self.db).create_message(
                 from_session=system_session_id(),
                 to_session=str(asker["id"]),
@@ -589,43 +598,6 @@ SELECT
                 message_id=persisted.id,
             )
         return persisted
-
-    def claim_answer_delivery(self, answer_id: str, outcome: AnswerOutcome) -> bool:
-        """Take a decision answer's undelivered mailbox row, stamping its ``answer_outcome``.
-
-        Exactly one caller wins and the row is never offered again, so an answer turn
-        interrupted after its claim is not replayed; its outcome stays ``started``.
-        """
-        with self.db.transaction() as conn:
-            claimed = conn.execute(
-                """UPDATE inter_session_messages SET delivered_at = %s
-                   WHERE id = %s AND delivered_at IS NULL
-                   RETURNING id""",
-                (utc_now(), answer_id),
-            ).fetchone()
-            if claimed is None:
-                return False
-            _set_answer_outcome(conn, answer_id, outcome)
-        return True
-
-    def record_answer_outcome(self, answer_id: str, outcome: AnswerOutcome) -> None:
-        """Record how a claimed decision answer's delivery ended."""
-        with self.db.transaction() as conn:
-            _set_answer_outcome(conn, answer_id, outcome)
-
-    def list_pending_responder_answers(self) -> list[CommsMessage]:
-        """Decision answers the responder still owes their comms asking sessions."""
-        rows = self.db.fetchall(
-            """SELECT answer.* FROM comms_messages AS answer
-               JOIN inter_session_messages AS delivery ON delivery.id = answer.id
-               JOIN sessions AS asker ON asker.id = delivery.to_session
-               WHERE asker.machine_id = %s
-                 AND answer.metadata_json->>'answer_delivery' = 'responder'
-                 AND delivery.delivered_at IS NULL
-               ORDER BY answer.created_at""",
-            (self.machine_id,),
-        )
-        return [CommsMessage.from_row(dict(row)) for row in rows]
 
     def claim_callback_reissue(self, message_id: str, generation: int) -> bool:
         """Advance a pending decision's keyboard generation if it is still ``generation``."""
@@ -814,12 +786,3 @@ def _decision_answer_metadata(decision_id: str, answer: CommsMessage) -> dict[st
         "telegram_chat_id": answer.metadata_json.get("chat_id"),
         "callback_data": answer.metadata_json.get("callback_value"),
     }
-
-
-def _set_answer_outcome(conn: Transaction, answer_id: str, outcome: AnswerOutcome) -> None:
-    conn.execute(
-        """UPDATE comms_messages
-              SET metadata_json = jsonb_set(metadata_json, '{answer_outcome}', to_jsonb(%s::text))
-            WHERE id = %s""",
-        (outcome, answer_id),
-    )

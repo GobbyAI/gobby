@@ -103,9 +103,8 @@ class ChannelConfig:
         )
 
 
-# How a responder-delivered decision answer ended: its turn is ``started`` at claim and
-# ends ``delivered`` or ``failed``; ``blocked`` means current delivery policy refused it.
-AnswerOutcome = Literal["started", "delivered", "failed", "blocked"]
+# Delivery state of a responder-delivered decision answer (see storage.decision_answers).
+AnswerOutcome = Literal["pending", "started", "delivered", "failed", "in_doubt", "blocked"]
 
 
 @normalize_datetime_model(required=("created_at",))
@@ -151,6 +150,32 @@ class CommsMessage:
         """
         delivery = self.metadata_json.get("answer_delivery")
         return delivery if delivery in {"mailbox", "responder"} else None
+
+    @property
+    def answer_outcome(self) -> str | None:
+        """Delivery state of a responder-delivered decision answer, else None."""
+        outcome = self.metadata_json.get("answer_outcome")
+        return outcome if isinstance(outcome, str) else None
+
+    @property
+    def answer_attempt(self) -> int:
+        """Which delivery attempt of a decision answer is current; 1 until a retry."""
+        attempt = self.metadata_json.get("answer_attempt")
+        return attempt if isinstance(attempt, int) and not isinstance(attempt, bool) else 1
+
+    @property
+    def answer_status_key(self) -> str | None:
+        """The answer status its decision message should show, or None when it needs none.
+
+        A first attempt that is pending, running or delivered looks like any answered
+        decision; every other state is shown on the decision message.
+        """
+        outcome = self.answer_outcome
+        if outcome in {"failed", "in_doubt", "blocked"} or (
+            self.answer_attempt > 1 and outcome in {"pending", "delivered"}
+        ):
+            return f"{self.answer_attempt}:{outcome}"
+        return None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CommsMessage:

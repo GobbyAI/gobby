@@ -13,6 +13,12 @@ can lag the stored decision but never lead it. Any click on a pending decision t
 cannot be accepted at the stored generation republishes the stored text and
 keyboard together, over every chunk of the message, which repairs a publish that
 failed or went unconfirmed after its database write.
+
+An answered decision whose comms-session answer failed, was interrupted or was
+blocked (``storage.decision_answers``) shows that status under its text. Failed and
+in-doubt answers also get one Retry answer button, published at a new generation;
+its click consumes the attempt atomically and routes the next one, and a stale or
+lost Retry button is reissued like a pending decision's keyboard.
 """
 
 from __future__ import annotations
@@ -31,6 +37,10 @@ if TYPE_CHECKING:
     from gobby.communications.models import ChannelConfig
 
 logger = logging.getLogger(__name__)
+
+# A Retry answer button's value names the attempt it retries.
+RETRY_ANSWER_PREFIX = "gobby:retry-answer:"
+_RETRYABLE = frozenset({"failed", "in_doubt"})
 
 
 class DecisionLocks:
@@ -109,6 +119,9 @@ async def _republish_decision(
         message.metadata_json["callback_status"] = "invalid"
         return
     state = current.metadata_json.get("callback_state")
+    if state == "answered" and await _reissue_answer_retry(manager, adapter, current):
+        message.metadata_json["callback_status"] = "reissued"
+        return
     if state is not None:
         message.metadata_json["callback_status"] = str(state)
         return
@@ -183,8 +196,15 @@ async def accept_decision_callback(
     adapter: BaseChannelAdapter | None,
     message: CommsMessage,
 ) -> CommsMessage | None:
-    """Persist an ok decision click as its answer, or None when the decision cannot take it."""
+    """Persist an ok decision click as its answer, or None when the decision cannot take it.
+
+    A Retry answer click is never persisted; it starts its answer's next attempt.
+    """
     decision_id = str(message.metadata_json["callback_decision_id"])
+    retried = _retried_attempt(message)
+    if retried is not None and isinstance(adapter, TelegramAdapter):
+        await _retry_answer(manager, adapter, decision_id, retried, message)
+        return None
     store = manager._store
     async with manager.decision_locks(decision_id):
         accepted = await asyncio.to_thread(
@@ -200,6 +220,141 @@ async def accept_decision_callback(
             else:
                 message.metadata_json["callback_status"] = "invalid"
     return accepted
+
+
+async def publish_answer_status(
+    manager: CommunicationsManager, adapter: TelegramAdapter, answer: CommsMessage
+) -> None:
+    """Show a comms-session answer's current delivery status on its decision message."""
+    decision_id = answer.metadata_json.get("callback_decision_id")
+    if not isinstance(decision_id, str):
+        return
+    async with manager.decision_locks(decision_id):
+        await _publish_answer_status(manager, adapter, decision_id, answer.id)
+
+
+async def _publish_answer_status(
+    manager: CommunicationsManager, adapter: TelegramAdapter, decision_id: str, answer_id: str
+) -> bool:
+    """Under the decision lock, publish the answer's status at a new generation.
+
+    Advancing the generation first refuses every older button, including a Retry
+    answer for an attempt that already ran. True when the status was published.
+    """
+    ledger = manager.decision_answers
+    decision = await asyncio.to_thread(manager._store.get_message, decision_id)
+    answer = await asyncio.to_thread(ledger.get_answer, answer_id)
+    if decision is None or answer is None:
+        return False
+    key = answer.answer_status_key
+    chat_id = answer.metadata_json.get("chat_id")
+    if key is None or not chat_id:
+        return False
+    generation = _generation(decision.metadata_json)
+    if not await asyncio.to_thread(ledger.advance_answered_generation, decision_id, generation):
+        return False
+    keyboard = (
+        [[{"text": "Retry answer", "value": f"{RETRY_ANSWER_PREFIX}{answer.answer_attempt}"}]]
+        if answer.answer_outcome in _RETRYABLE
+        else None
+    )
+    await _publish(
+        manager,
+        adapter,
+        decision,
+        f"{decision.content}\n\n{_status_text(answer)}",
+        str(chat_id),
+        keyboard,
+        generation + 1,
+    )
+    await asyncio.to_thread(ledger.mark_status_shown, answer.id, key)
+    return True
+
+
+async def _reissue_answer_retry(
+    manager: CommunicationsManager, adapter: TelegramAdapter, decision: CommsMessage
+) -> bool:
+    """Republish a lapsed or stale Retry answer button while its answer can still retry."""
+    answer_id = decision.metadata_json.get("callback_answer_id")
+    if not isinstance(answer_id, str):
+        return False
+    answer = await asyncio.to_thread(manager.decision_answers.get_answer, answer_id)
+    if answer is None or answer.answer_outcome not in _RETRYABLE:
+        return False
+    try:
+        return await _publish_answer_status(manager, adapter, decision.id, answer_id)
+    except Exception:
+        logger.exception("Failed to reissue the Retry answer button on decision %s", decision.id)
+        return False
+
+
+async def _retry_answer(
+    manager: CommunicationsManager,
+    adapter: TelegramAdapter,
+    decision_id: str,
+    attempt: int,
+    message: CommsMessage,
+) -> None:
+    """Start the next attempt of a failed or in-doubt answer for one Retry answer click.
+
+    The click already passed current channel access policy; the responder re-applies
+    current delivery policy to the new attempt. A second click, or a click on a
+    replaced button, loses the atomic consume and is answered like any stale click.
+    """
+    store = manager._store
+    async with manager.decision_locks(decision_id):
+        decision = await asyncio.to_thread(store.get_message, decision_id)
+        answer_id = decision.metadata_json.get("callback_answer_id") if decision else None
+        consumed = None
+        if (
+            decision is not None
+            and isinstance(answer_id, str)
+            and _generation(message.metadata_json) == _generation(decision.metadata_json)
+        ):
+            clicked_by = message.metadata_json.get("external_user_id") or message.identity_id
+            consumed = await asyncio.to_thread(
+                manager.decision_answers.consume_retry, answer_id, attempt, str(clicked_by or "")
+            )
+        if consumed is None:
+            await _republish_decision(manager, adapter, decision, message)
+            return
+        message.metadata_json["callback_status"] = "retrying"
+        try:
+            await _publish_answer_status(manager, adapter, decision_id, consumed.id)
+        except Exception:
+            logger.exception("Failed to show the retry of decision %s", decision_id)
+    await manager.responder.handle_message(consumed)
+
+
+def _retried_attempt(message: CommsMessage) -> int | None:
+    value = message.metadata_json.get("callback_value")
+    if not isinstance(value, str) or not value.startswith(RETRY_ANSWER_PREFIX):
+        return None
+    attempt = value.removeprefix(RETRY_ANSWER_PREFIX)
+    return int(attempt) if attempt.isdecimal() else None
+
+
+def _status_text(answer: CommsMessage) -> str:
+    value = answer.content
+    attempt = answer.answer_attempt
+    rerun = "Retry answer runs it once more and may repeat actions that already happened."
+    match answer.answer_outcome:
+        case "failed":
+            return (
+                f"Answer “{value}” was recorded, but its turn failed and may have partly "
+                f"acted. {rerun}"
+            )
+        case "in_doubt":
+            return (
+                f"Answer “{value}” was recorded, but its turn was interrupted before it "
+                f"finished and may have partly acted. {rerun}"
+            )
+        case "blocked":
+            return f"Answer “{value}” was recorded but not delivered: this chat's access changed."
+        case "pending":
+            return f"Retrying answer “{value}” (attempt {attempt})."
+        case _:
+            return f"Answer “{value}” delivered on retry (attempt {attempt})."
 
 
 async def edit_keyboard_message(
