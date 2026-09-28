@@ -1,0 +1,4 @@
+ALARM[errors]: 2 alarm events, 1 signature, in +81 new errors.log lines
+• 2x 17:21:54 agents.tmux.pane_monitor._check_attention_panes - TmuxPaneMonitor: failed to capture terminal for session <id>
+   exception: gobby.terminals.host_client.HostConnectionLost: host_unavailable
+   sessions: 9558f41b-2911-44f1-b6f3-05926322acfc, 685d6860-d154-4b1d-b55c-e62b3c92ace7
