@@ -97,6 +97,36 @@ Root bootstrap stores the local PostgreSQL DSN directly in `database_url`.
 stays owner-readable only. Gobby-generated helper bootstraps also use
 `database_url`; `database_url_ref` values are no longer supported.
 
+#### front_door block
+
+The optional `front_door` block configures the Rust front door (`gdaemon serve`),
+which owns the public `daemon_port` and `websocket_port` and proxies to the Python
+backend on loopback:
+
+```yaml
+front_door:
+  enabled: true            # default; false keeps Python on the public ports
+  routes:                  # route family -> proxy | native | compare; absent = proxy
+    health: native
+    terminal_ws: proxy
+```
+
+`enabled` defaults to `true`. It takes a boolean or, in either quoting, one of
+`true`/`yes`/`on` or `false`/`no`/`off` in any case; both parsers accept the same set. `routes` maps a route family
+name to `proxy` (forward to Python), `native` (served by gdaemon), or `compare`
+(run both, log differences, return the proxied response). Any other value is a
+parse error. Unknown family names are accepted, so a newer family can be
+configured before this daemon serves it. Keys other than `enabled` and `routes`
+are rejected, so a typo such as `enable: false` cannot silently leave the front
+door on. The block is parsed identically by `src/gobby/config/bootstrap.py` and
+`crates/gcore/src/bootstrap.rs`. It stays bootstrap-only and is never copied into
+`DaemonConfig` or `config_store`.
+
+Backend port offset: behind the front door, Python binds `127.0.0.1` on
+`daemon_port + 100` and `websocket_port + 100` (60987 and 60988 by default).
+`backend_ports()` in both modules computes the pair, and it rejects ports that
+would exceed 65535. Choose public ports that leave room for the offset.
+
 Changing bootstrap settings affects startup wiring. Restart the daemon after
 editing this file.
 

@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 from urllib.parse import urlparse
@@ -36,8 +37,15 @@ DEFAULT_WEBSOCKET_PORT = 60888
 DEFAULT_UI_PORT = 60889
 DEFAULT_SERVICES_BIND_ADDRESS = "127.0.0.1"
 
+BACKEND_PORT_OFFSET = 100
+
 DatastoreMode = Literal["local", "remote"]
 UiExposureMode = Literal["tailscale"]
+FrontDoorRouteBackend = Literal["proxy", "native", "compare"]
+FRONT_DOOR_ROUTE_BACKENDS: tuple[FrontDoorRouteBackend, ...] = ("proxy", "native", "compare")
+_FRONT_DOOR_KEYS = frozenset({"enabled", "routes"})
+_YAML_TRUE_WORDS = frozenset({"true", "yes", "on"})
+_YAML_FALSE_WORDS = frozenset({"false", "no", "off"})
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_DATABASE_URL_REQUIRED = (
     "database_url is required in bootstrap.yaml. "
@@ -47,6 +55,19 @@ HUB_BACKEND_DATABASE_URL_REQUIRED = (
 
 class BootstrapConfigError(Exception):
     """Raised when bootstrap.yaml contains an invalid setting."""
+
+
+@dataclass(frozen=True)
+class FrontDoorConfig:
+    """The `front_door` bootstrap block read by `gdaemon serve` and `gobby start`.
+
+    `routes` maps a route family name to its backend. Families absent from the
+    map are proxied. Unknown family names are accepted because Stage 2 leaves
+    introduce families; unknown backend values are rejected.
+    """
+
+    enabled: bool = True
+    routes: Mapping[str, FrontDoorRouteBackend] = field(default_factory=dict, hash=False)
 
 
 @dataclass(frozen=True)
@@ -65,6 +86,7 @@ class BootstrapConfig:
     ui_expose: UiExposureMode | None = None
     files_home: str | None = None
     hub_daemon_url: str | None = None
+    front_door: FrontDoorConfig = FrontDoorConfig()
 
     def to_config_dict(self) -> dict[str, Any]:
         """Convert to a dict suitable for DaemonConfig construction.
@@ -186,7 +208,65 @@ def bootstrap_from_mapping(
         ui_expose=ui_expose,
         files_home=files_home,
         hub_daemon_url=hub_daemon_url,
+        front_door=_parse_front_door(data.get("front_door")),
     )
+
+
+def backend_ports(daemon_port: int, websocket_port: int) -> tuple[int, int]:
+    """Return the loopback (http, ws) ports Python binds behind the front door."""
+    http_port = daemon_port + BACKEND_PORT_OFFSET
+    ws_port = websocket_port + BACKEND_PORT_OFFSET
+    if http_port > 65535 or ws_port > 65535:
+        raise BootstrapConfigError(
+            f"backend ports {http_port}/{ws_port} exceed 65535; "
+            f"daemon_port and websocket_port must leave room for +{BACKEND_PORT_OFFSET}"
+        )
+    return http_port, ws_port
+
+
+def _parse_yaml_bool(value: object, field_name: str) -> bool:
+    """Parse a boolean the same way gcore's bootstrap parser does.
+
+    PyYAML resolves plain YAML 1.1 words such as `yes` to bool while serde_yaml
+    keeps them as strings, so both parsers accept a bool or one of these words.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _YAML_TRUE_WORDS:
+            return True
+        if word in _YAML_FALSE_WORDS:
+            return False
+    raise BootstrapConfigError(f"{field_name} must be a boolean")
+
+
+def _parse_front_door(value: object) -> FrontDoorConfig:
+    if value is None:
+        return FrontDoorConfig()
+    if not isinstance(value, dict):
+        raise BootstrapConfigError("front_door must be a mapping")
+    unknown = sorted(str(key) for key in value if key not in _FRONT_DOOR_KEYS)
+    if unknown:
+        raise BootstrapConfigError(
+            f"front_door has unknown keys: {', '.join(unknown)} (allowed: enabled, routes)"
+        )
+    enabled = _parse_yaml_bool(value.get("enabled", True), "front_door.enabled")
+    raw_routes = value.get("routes")
+    if raw_routes is None:
+        raw_routes = {}
+    if not isinstance(raw_routes, dict):
+        raise BootstrapConfigError("front_door.routes must be a mapping")
+    routes: dict[str, FrontDoorRouteBackend] = {}
+    for family, backend in raw_routes.items():
+        if not isinstance(family, str) or not family:
+            raise BootstrapConfigError("front_door.routes keys must be non-empty strings")
+        if backend not in FRONT_DOOR_ROUTE_BACKENDS:
+            raise BootstrapConfigError(
+                f"front_door.routes.{family} must be one of: {', '.join(FRONT_DOOR_ROUTE_BACKENDS)}"
+            )
+        routes[family] = cast(FrontDoorRouteBackend, backend)
+    return FrontDoorConfig(enabled=enabled, routes=routes)
 
 
 def validate_existing_files_home(files_home: str | Path) -> Path:

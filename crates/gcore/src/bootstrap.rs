@@ -15,20 +15,83 @@
 //!
 //! [`daemon_url`]: crate::daemon_url
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Default daemon port when bootstrap.yaml is missing or malformed.
 pub const DEFAULT_DAEMON_PORT: u16 = 60887;
 
+/// Default websocket port when bootstrap.yaml is missing or malformed.
+pub const DEFAULT_WEBSOCKET_PORT: u16 = 60888;
+
 /// Default bind host when bootstrap.yaml is missing or malformed.
 pub const DEFAULT_BIND_HOST: &str = "127.0.0.1";
 
+/// Offset from a public port to the loopback port Python binds behind the front door.
+pub const BACKEND_PORT_OFFSET: u16 = 100;
+
 const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
+
+const FRONT_DOOR_KEYS: [&str; 2] = ["enabled", "routes"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HubDatabaseBootstrap {
     pub database_url: Option<String>,
     pub daemon_url: Option<String>,
+    pub bind_host: String,
+    pub daemon_port: u16,
+    pub websocket_port: u16,
+    pub front_door: FrontDoorBootstrap,
+}
+
+/// How the front door serves one route family.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteBackend {
+    Proxy,
+    Native,
+    Compare,
+}
+
+impl RouteBackend {
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "proxy" => Some(Self::Proxy),
+            "native" => Some(Self::Native),
+            "compare" => Some(Self::Compare),
+            _ => None,
+        }
+    }
+}
+
+/// The `front_door` bootstrap block. Families absent from `routes` are proxied.
+/// Unknown family names are accepted because Stage 2 leaves introduce families.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrontDoorBootstrap {
+    pub enabled: bool,
+    pub routes: BTreeMap<String, RouteBackend>,
+}
+
+impl Default for FrontDoorBootstrap {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            routes: BTreeMap::new(),
+        }
+    }
+}
+
+/// Return the loopback `(http, ws)` ports Python binds behind the front door.
+pub fn backend_ports(daemon_port: u16, websocket_port: u16) -> anyhow::Result<(u16, u16)> {
+    match (
+        daemon_port.checked_add(BACKEND_PORT_OFFSET),
+        websocket_port.checked_add(BACKEND_PORT_OFFSET),
+    ) {
+        (Some(http), Some(ws)) => Ok((http, ws)),
+        _ => anyhow::bail!(
+            "backend ports for {daemon_port}/{websocket_port} exceed 65535; \
+             daemon_port and websocket_port must leave room for +{BACKEND_PORT_OFFSET}"
+        ),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,7 +225,88 @@ pub fn parse_hub_database_bootstrap(
     Ok(Some(HubDatabaseBootstrap {
         database_url: optional_string_field(map, "database_url")?,
         daemon_url: optional_string_field(map, "daemon_url")?,
+        bind_host: yaml
+            .get("bind_host")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+            .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string()),
+        daemon_port: port_field(&yaml, "daemon_port", DEFAULT_DAEMON_PORT),
+        websocket_port: port_field(&yaml, "websocket_port", DEFAULT_WEBSOCKET_PORT),
+        front_door: parse_front_door(map.get("front_door"))?,
     }))
+}
+
+fn port_field(yaml: &serde_yaml::Value, name: &str, default: u16) -> u16 {
+    yaml.get(name)
+        .and_then(|v| v.as_u64())
+        .and_then(|n| u16::try_from(n).ok())
+        .unwrap_or(default)
+}
+
+/// Parse a boolean the same way `src/gobby/config/bootstrap.py` does. PyYAML
+/// resolves plain YAML 1.1 words such as `yes` to bool while serde_yaml keeps
+/// them as strings, so both parsers accept a bool or one of these words.
+fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
+    if let Some(flag) = value.as_bool() {
+        return Some(flag);
+    }
+    match value.as_str()?.trim().to_ascii_lowercase().as_str() {
+        "true" | "yes" | "on" => Some(true),
+        "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+fn parse_front_door(value: Option<&serde_yaml::Value>) -> anyhow::Result<FrontDoorBootstrap> {
+    let Some(value) = value.filter(|v| !v.is_null()) else {
+        return Ok(FrontDoorBootstrap::default());
+    };
+    let Some(map) = value.as_mapping() else {
+        anyhow::bail!("bootstrap.yaml field `front_door` must be a mapping");
+    };
+    let mut unknown: Vec<String> = map
+        .keys()
+        .filter(|key| !key.as_str().is_some_and(|k| FRONT_DOOR_KEYS.contains(&k)))
+        .map(|key| {
+            key.as_str()
+                .map_or_else(|| format!("{key:?}"), str::to_owned)
+        })
+        .collect();
+    if !unknown.is_empty() {
+        unknown.sort();
+        anyhow::bail!(
+            "front_door has unknown keys: {} (allowed: enabled, routes)",
+            unknown.join(", ")
+        );
+    }
+    let enabled = match value.get("enabled") {
+        None => true,
+        Some(v) => {
+            yaml_bool(v).ok_or_else(|| anyhow::anyhow!("front_door.enabled must be a boolean"))?
+        }
+    };
+    let mut routes = BTreeMap::new();
+    match value.get("routes") {
+        None | Some(serde_yaml::Value::Null) => {}
+        Some(serde_yaml::Value::Mapping(entries)) => {
+            for (family, backend) in entries {
+                let family = family.as_str().filter(|f| !f.is_empty()).ok_or_else(|| {
+                    anyhow::anyhow!("front_door.routes keys must be non-empty strings")
+                })?;
+                let backend = backend
+                    .as_str()
+                    .and_then(RouteBackend::parse)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "front_door.routes.{family} must be one of: proxy, native, compare"
+                        )
+                    })?;
+                routes.insert(family.to_owned(), backend);
+            }
+        }
+        Some(_) => anyhow::bail!("front_door.routes must be a mapping"),
+    }
+    Ok(FrontDoorBootstrap { enabled, routes })
 }
 
 pub fn postgres_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
@@ -610,5 +754,103 @@ mod tests {
         let tilde = dir.path().join("tilde.yaml");
         fs::write(&tilde, "datastore_mode: local\nfiles_home: ~/files\n").unwrap();
         assert!(read_files_home_view_at(&tilde).is_err());
+    }
+
+    #[test]
+    fn hub_bootstrap_defaults_ports_and_front_door() {
+        let parsed = parse_hub_database_bootstrap("database_url: postgresql://x\n")
+            .unwrap()
+            .unwrap();
+        assert_eq!(parsed.bind_host, DEFAULT_BIND_HOST);
+        assert_eq!(parsed.daemon_port, DEFAULT_DAEMON_PORT);
+        assert_eq!(parsed.websocket_port, DEFAULT_WEBSOCKET_PORT);
+        assert_eq!(parsed.front_door, FrontDoorBootstrap::default());
+        assert!(parsed.front_door.enabled);
+    }
+
+    #[test]
+    fn hub_bootstrap_reads_front_door_block() {
+        let parsed = parse_hub_database_bootstrap(
+            "bind_host: 0.0.0.0\ndaemon_port: 61000\nwebsocket_port: 61001\n\
+             front_door:\n  enabled: false\n  routes:\n    health: native\n    \
+             terminal_ws: proxy\n    future_family: compare\n",
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(parsed.bind_host, "0.0.0.0");
+        assert_eq!((parsed.daemon_port, parsed.websocket_port), (61000, 61001));
+        assert!(!parsed.front_door.enabled);
+        assert_eq!(
+            parsed.front_door.routes.get("health"),
+            Some(&RouteBackend::Native)
+        );
+        assert_eq!(
+            parsed.front_door.routes.get("terminal_ws"),
+            Some(&RouteBackend::Proxy)
+        );
+        assert_eq!(
+            parsed.front_door.routes.get("future_family"),
+            Some(&RouteBackend::Compare)
+        );
+    }
+
+    #[test]
+    fn hub_bootstrap_rejects_bad_front_door() {
+        for (contents, needle) in [
+            (
+                "front_door:\n  routes:\n    health: sideways\n",
+                "front_door.routes.health",
+            ),
+            ("front_door:\n  enabled: maybe\n", "front_door.enabled"),
+            ("front_door:\n  enable: false\n", "unknown keys: enable"),
+            ("front_door: true\n", "must be a mapping"),
+            (
+                "front_door:\n  routes: [health]\n",
+                "front_door.routes must be a mapping",
+            ),
+            (
+                "front_door:\n  routes: \"\"\n",
+                "front_door.routes must be a mapping",
+            ),
+        ] {
+            let error = parse_hub_database_bootstrap(contents)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(needle), "{contents:?} -> {error}");
+        }
+    }
+
+    /// Mirrors `tests/config/test_bootstrap.py::test_front_door_enabled_matches_gcore`.
+    #[test]
+    fn front_door_enabled_matches_python() {
+        for (literal, expected) in [
+            ("true", Some(true)),
+            ("yes", Some(true)),
+            ("\"yes\"", Some(true)),
+            ("On", Some(true)),
+            ("false", Some(false)),
+            ("no", Some(false)),
+            ("'off'", Some(false)),
+            ("FALSE", Some(false)),
+            ("maybe", None),
+            ("1", None),
+        ] {
+            let contents = format!("front_door:\n  enabled: {literal}\n");
+            let parsed = parse_hub_database_bootstrap(&contents);
+            match expected {
+                Some(flag) => assert_eq!(
+                    parsed.unwrap().unwrap().front_door.enabled,
+                    flag,
+                    "{literal}"
+                ),
+                None => assert!(parsed.is_err(), "{literal} should be rejected"),
+            }
+        }
+    }
+
+    #[test]
+    fn backend_ports_offset() {
+        assert_eq!(backend_ports(60887, 60888).unwrap(), (60987, 60988));
+        assert!(backend_ports(65500, 60888).is_err());
     }
 }
