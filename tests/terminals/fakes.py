@@ -226,6 +226,25 @@ class MemoryTerminalStore:
         self.attempt_settled.set()
         return current
 
+    def mark_exited_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.state not in {"live", "orphaned"}
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        current.state = "exited"
+        current.updated_at = datetime.now(UTC)
+        return current
+
     @asynccontextmanager
     async def settle_lock(self, terminal_id: str) -> AsyncIterator[None]:
         lock, references = self._settlement_locks.get(terminal_id, (asyncio.Lock(), 0))

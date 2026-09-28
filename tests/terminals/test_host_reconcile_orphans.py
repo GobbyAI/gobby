@@ -12,6 +12,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
+from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.host_protocol import HostListRow
 from gobby.terminals.host_reconcile import reconcile_host_inventory
 from gobby.terminals.in_doubt import in_doubt_spawns
@@ -198,3 +199,79 @@ async def test_reconcile_recovers_orphan_identity(
     )
     assert settled is not None
     assert settled.state == "exited"
+
+
+class _UnreachableHostClient(_HostClient):
+    async def list_terminals(self) -> list[HostListRow]:
+        raise HostUnavailableError("gterm host socket unavailable")
+
+
+def _current_epoch_orphan(manager: TerminalManager, project_id: str) -> Terminal:
+    orphaned = _orphaned_row(manager, project_id)
+    host_id = f"ht-now-{orphaned.id[:8]}"
+    stamped = manager.record_orphan_identity(
+        orphaned.id,
+        attempt_generation=orphaned.attempt_generation,
+        attempt_started_at=orphaned.attempt_started_at,
+        locator={"host_terminal_id": host_id},
+        locator_key=native_locator_key(CURRENT_EPOCH, host_id),
+        host_epoch=CURRENT_EPOCH,
+        process={"host_terminal_id": host_id},
+    )
+    assert stamped is not None
+    return stamped
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+@pytest.mark.asyncio
+async def test_reconcile_settles_current_epoch_orphan_on_host_absence(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = _ChangingManager(temp_db)
+    project_id = sample_project["id"]
+    absent = _current_epoch_orphan(manager, project_id)
+    unreachable = NativeTerminalRuntime(
+        _UnreachableHostClient(),
+        terminal_manager=manager,
+        machine_id=require_machine_id(),
+    )
+    with pytest.raises(HostUnavailableError):
+        await unreachable.reconnect()
+    unproven = manager.get(absent.id)
+    assert unproven is not None
+    assert unproven.state == "orphaned"
+    listed = _current_epoch_orphan(manager, project_id)
+    held = _current_epoch_orphan(manager, project_id)
+    rebumped = _current_epoch_orphan(manager, project_id)
+    manager.changes[rebumped.id] = lambda: temp_db.execute(
+        "UPDATE terminals SET attempt_generation = attempt_generation + 1 WHERE id = %s",
+        (rebumped.id,),
+    )
+    host_kills: list[str] = []
+
+    async def record_kill(host_terminal_id: str) -> None:
+        host_kills.append(host_terminal_id)
+
+    in_doubt_spawns.claim(held.id)
+    try:
+        await reconcile_host_inventory(
+            terminal_manager=manager,
+            machine_id=require_machine_id(),
+            host_epoch=CURRENT_EPOCH,
+            host_rows=[_listed(listed, "ht-listed")],
+            spawn_in_doubt_seconds=30.0,
+            run_manager=None,
+            kill=record_kill,
+        )
+    finally:
+        in_doubt_spawns.release(held.id)
+
+    assert host_kills == []
+    settled = manager.get(absent.id)
+    assert settled is not None
+    assert settled.state == "exited"
+    for kept in (listed, held, rebumped):
+        row = manager.get(kept.id)
+        assert row is not None
+        assert row.state == "orphaned"

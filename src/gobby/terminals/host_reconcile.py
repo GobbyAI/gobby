@@ -56,6 +56,14 @@ class SupportsIdentityLookup(Protocol):
 
     def mark_exited(self, terminal_id: str) -> Terminal | None: ...
 
+    def mark_exited_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None: ...
+
     def mark_orphaned(self, terminal_id: str) -> Terminal | None: ...
 
     def record_orphan_identity(
@@ -168,6 +176,37 @@ async def _record_listed_orphan(
                 locator_key=native_locator_key(host_epoch, host_terminal_id),
                 host_epoch=host_epoch,
                 process=process,
+            )
+        )
+
+
+async def _settle_absent_orphan(
+    terminal_manager: SupportsIdentityLookup,
+    durable: Terminal,
+    host_epoch: str,
+) -> None:
+    """Exit an orphan whose current host answered its listing without it.
+
+    Reconcile runs only on a listing the host returned, so absence here is
+    proven; an unreachable host never reaches this path.
+    """
+    async with terminal_manager.settle_lock(durable.id):
+        current = await asyncio.to_thread(terminal_manager.get, durable.id)
+        if (
+            current is None
+            or current.state != "orphaned"
+            or current.host_epoch != host_epoch
+            or current.attempt_generation != durable.attempt_generation
+            or current.attempt_started_at != durable.attempt_started_at
+            or in_doubt_spawns.holds(durable.id)
+        ):
+            return
+        await _settle_offloop(
+            partial(
+                terminal_manager.mark_exited_attempt,
+                durable.id,
+                attempt_generation=current.attempt_generation,
+                attempt_started_at=current.attempt_started_at,
             )
         )
 
@@ -327,6 +366,9 @@ async def reconcile_host_inventory(
                     durable.agent_run_id,
                 )
             )
+            continue
+        if durable.state == "orphaned" and durable.host_epoch == host_epoch:
+            await _settle_absent_orphan(terminal_manager, durable, host_epoch)
             continue
         if (
             durable.state == "orphaned"
