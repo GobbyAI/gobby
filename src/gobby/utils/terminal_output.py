@@ -21,6 +21,11 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         re.compile(r"(?i)\b(bearer)\s+[A-Za-z0-9._\-]{16,}"),
         r"\1 <redacted>",
     ),
+    # Credentials embedded in URLs, such as postgresql://user:pass@host
+    (
+        re.compile(r"(?i)\b([a-z][a-z0-9+.-]*://[^:/\s@]+:)[^@\s]+(@)"),
+        r"\1<redacted>\2",
+    ),
     # Generic secret-bearing key/value assignments
     (
         re.compile(

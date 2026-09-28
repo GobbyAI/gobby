@@ -1132,7 +1132,7 @@ exit 2 because remote clients hold no datastore credentials.
 gobby sync [--force] [--verify-only] [--fail-on-verify] [--type TYPE] [--verbose] [--reinstall rules|agents|pipelines|variables|all]
 gobby tokens audit [--session SESSION] [--all] [--fix] [--project PROJECT]
 gobby comms status
-gobby comms send CHANNEL MESSAGE
+gobby comms send [--redact] CHANNEL MESSAGE
 gobby comms channels list
 gobby comms channels add CHANNEL_TYPE NAME
 gobby comms channels remove NAME

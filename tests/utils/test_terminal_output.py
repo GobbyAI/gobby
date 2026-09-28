@@ -21,6 +21,14 @@ def test_redact_terminal_output_scrubs_secrets() -> None:
     assert "github_pat_1234567890_abcdefghijklmnopqrstuv" not in redacted
 
 
+def test_redact_terminal_output_scrubs_url_credentials() -> None:
+    redacted = redact_terminal_output(
+        "connect failed: postgresql://gobby:hunter2secret@127.0.0.1:5432/gobby"
+    )
+    assert "hunter2secret" not in redacted
+    assert "postgresql://gobby:<redacted>@127.0.0.1:5432/gobby" in redacted
+
+
 def test_redact_terminal_output_rewrites_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(Path, "home", lambda: Path("/Users/secrethome"))
     redacted = redact_terminal_output("see /Users/secrethome/.gobby/x")

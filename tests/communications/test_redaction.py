@@ -1,0 +1,47 @@
+"""Tests for redacted, length-bounded alert text."""
+
+from __future__ import annotations
+
+import pytest
+
+from gobby.communications.redaction import TRUNCATION_MARKER, redact_and_bound
+
+pytestmark = pytest.mark.unit
+
+SECRET = "abcdefghijklmnopqrstuvwxyz0123"
+
+
+def test_short_text_is_redacted_without_truncation() -> None:
+    text = f"errors.log: api_key={SECRET}"
+
+    assert redact_and_bound(text, 200) == "errors.log: api_key=<redacted>"
+
+
+@pytest.mark.parametrize("chars_before_cut", [4, 8, 11, 20])
+def test_secret_straddling_the_cut_is_never_partially_sent(chars_before_cut: int) -> None:
+    """Truncating first would leave a fragment too short for the patterns to catch."""
+    max_chars = 120
+    cut = max_chars - len(TRUNCATION_MARKER)
+    prefix = "x" * (cut - len(" token=") - chars_before_cut)
+    text = f"{prefix} token={SECRET} trailing log context " + "y" * 200
+
+    result = redact_and_bound(text, max_chars)
+
+    assert len(result) == max_chars
+    assert SECRET[:4] not in result
+    assert "token=<" in result
+
+
+@pytest.mark.parametrize("max_chars", [64, 500, 4096])
+def test_result_never_exceeds_the_bound(max_chars: int) -> None:
+    text = "\n".join(f"2026-09-28 01:{i % 60:02d}:00 - ERROR - line {i}" for i in range(2000))
+
+    result = redact_and_bound(text, max_chars)
+
+    assert len(result) == max_chars
+    assert result.endswith(TRUNCATION_MARKER)
+
+
+def test_bound_must_leave_room_for_content() -> None:
+    with pytest.raises(ValueError, match="max_chars must exceed"):
+        redact_and_bound("anything", len(TRUNCATION_MARKER))

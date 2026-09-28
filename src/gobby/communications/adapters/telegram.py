@@ -20,6 +20,7 @@ import httpx
 from gobby.communications.adapters import register_adapter
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.adapters.telegram_formatting import (
+    TELEGRAM_MAX_MESSAGE_LENGTH,
     markdown_to_telegram_html_chunks,
 )
 from gobby.communications.adapters.telegram_inbound import parse_telegram_update
@@ -162,7 +163,7 @@ class TelegramAdapter(BaseChannelAdapter):
     @property
     def max_message_length(self) -> int:
         """Maximum message length supported by the platform."""
-        return 4096
+        return TELEGRAM_MAX_MESSAGE_LENGTH
 
     @property
     def supports_webhooks(self) -> bool:
