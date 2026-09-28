@@ -438,6 +438,7 @@ Targets:
 - `src/gobby/install/shared/workflows/rules/roles/seat-write-scope.yaml`
 - `src/gobby/workflows/condition_helpers_paths.py`
 - `src/gobby/workflows/safe_evaluator.py::*` — scope-reason: register the write-scope path helpers in the condition namespace beside touches_docker_policy_path
+- `src/gobby/mcp_proxy/services/result_handling.py::build_before_tool_event`
 - `.gobby/roles/_common.md`
 - `tests/workflows/test_seat_rules.py`
 - `tests/workflows/test_condition_helpers_paths.py`
@@ -477,6 +478,30 @@ which the Plan Writer holds on its claimed task; the executor confirms
 `live_session_label_change_error` does not guard this label. No table,
 column, or session-transfer change is needed. One claim per session means
 `claimed_tasks` holds the single planning task the pass is for.
+
+One logical MCP call can be evaluated twice. A provider with hooks runs
+its CLI `before_tool` evaluation first; the proxy then runs
+`result_handling.py::apply_before_tool_enforcement` immediately before
+dispatch, which marks `_mcp_proxy_duplicate_before_tool` when a hook
+evaluation preceded it but still runs every declarative rule
+(`engine/core.py:669`, each `when` rechecked at `evaluation.py:571`; the
+marker only skips the step check at `enforcement_checks.py:842`). A
+proxy-only provider gets the proxy evaluation alone. The proxy evaluation
+is therefore the one boundary every spawn crosses exactly once, just
+before it runs. `build_before_tool_event` (`result_handling.py:31`) builds
+that event; this leaf copies its `metadata` and sets
+`_mcp_proxy_dispatch: True` on the copy, and the receipt rule writes only
+on an event carrying that marker. Rules already read `event.metadata`
+(`build-coordinator/require-build-coordinator-for-gobby-build.yaml:14`).
+Rules run in ascending priority (`engine/core.py:842`), so within the
+proxy evaluation the admission rule reads the pre-receipt state. Same-session
+evaluations are serialized (`workflows/hooks.py:424-435`), and the inline
+`mcp_call` dispatches with `enforce_workflow=False`
+(`hooks/factory.py:414-455`), so it does not re-enter the rule loop.
+
+Consumers unchanged:
+- `src/gobby/mcp_proxy/services/tool_proxy.py` — no-edit-reason: `ToolProxyService._build_before_tool_event` delegates to `build_before_tool_event` unchanged and gains the marker.
+- `tests/mcp_proxy/services/test_direct_tool_session_activation.py` — no-edit-reason: its `_DirectToolService` fixture overrides the builder for its own activation tests; the 2.2 tests copy its harness pattern but call the real `build_before_tool_event`.
 
 Write-scope facts: before-tool normalization annotates every write with
 `event.data['canonical_tool_kind'] == 'write'`,
@@ -545,16 +570,21 @@ Rules in `seat-spawn-policy.yaml`, tags `[roles, seat, enforcement, gobby, defau
   and `gobby-agents:dispatch_batch`, reason naming the exact allowed call
   and that one pass per planning task is permitted and this task's is
   spent.
-- `plan-writer-enhancer-receipt`: `event: before_tool`, priority 11,
-  `when:` the admitted case of the rule above (seat `plan-writer`, a
+- `plan-writer-enhancer-receipt`: `event: before_tool`, priority 95 (after
+  every seat block rule), `when:` `event.metadata.get('_mcp_proxy_dispatch')`
+  and the admitted case of the rule above (seat `plan-writer`, a
   `gobby-agents:spawn_agent` call with that agent and isolation, and the
   claimed task without the label); effect inline `mcp_call` to
   `gobby-tasks:add_label` with `task_id` the claimed task and `label:
-  enhancer-pass-spent`, `block_on_failure: true`. The receipt is written
-  before the spawn runs, so a receipt that cannot be written refuses the
-  spawn. A spawn that fails after its receipt keeps the pass spent: the
-  bound fails closed, and only the PD re-grants a pass by removing the
-  label.
+  enhancer-pass-spent`, `block_on_failure: true`. A provider's CLI hook
+  evaluation admits without writing; the proxy evaluation that follows
+  admits (the label is still absent) and writes the receipt as the last
+  rule before dispatch, so one logical call yields one receipt and one
+  spawn, and the next identical call is refused at whichever evaluation
+  sees it first. A receipt that cannot be written refuses the spawn. A
+  spawn that fails after its receipt, or a later rule that blocks it,
+  keeps the pass spent: the bound fails closed, and only the PD re-grants
+  a pass by removing the label.
 - `seat-keep-enhancer-receipt`: `event: before_tool`, priority 10,
   `when:` seat match and seat is not `program-director` and either a
   `gobby-tasks:remove_label` call whose `label` is `enhancer-pass-spent`,
@@ -575,7 +605,15 @@ Rules in `seat-write-scope.yaml`, same tags, `event: before_tool`, priority 15:
   r'/Users/josh/Desktop/gobby-digest-\d{4}-\d{2}-\d{2}\.md')`; reason:
   the Archivist writes only the dated desktop digest.
 
-Tests with the real engine and a bound task manager as 2.1 does: after one
+Tests with the real engine and a bound task manager as 2.1 does, driving
+the proxy evaluation through `apply_before_tool_enforcement` in the
+`_DirectToolService` harness pattern of
+`tests/mcp_proxy/services/test_direct_tool_session_activation.py`, with
+the real `build_before_tool_event` so the marker is exercised: one
+logical call evaluated first by the provider `before_tool` hook and then
+by the proxy is admitted at both, writes exactly one receipt, and is
+dispatched once; a proxy-only call is admitted and receipted once; two
+same-session calls issued concurrently admit exactly one; after one
 admitted spawn the task carries `enhancer-pass-spent`, and a second spawn
 for the same task is refused from a reclaim answered `already_claimed`, a
 `create_task(claim=true)` of it, a `compact` session_start, a `/clear`
@@ -608,8 +646,10 @@ permitted spawn paths."
   `enhancer-pass-spent` before the spawn runs: a second attempt for the
   same task is refused after a reclaim answered `already_claimed`, a
   `create_task(claim=true)`, a compact, a `/clear` successor, and a
-  release followed by a fresh session's claim; a failed receipt write
-  refuses the spawn; a failed spawn keeps the receipt; a different agent,
+  release followed by a fresh session's claim; one call evaluated by the
+  provider hook and then the proxy, a proxy-only call, and two concurrent
+  same-session calls each yield exactly one receipt and one spawn; a
+  failed receipt write refuses the spawn; a failed spawn keeps the receipt; a different agent,
   another isolation, or no claimed task is refused; a different planning
   task admits exactly one pass; only the PD can remove the receipt. test:
   `tests/workflows/test_seat_rules.py::test_plan_writer_enhancer_pass_is_per_task`.
@@ -1575,7 +1615,11 @@ No disagreements to escalate. This record is kept as history; the 2026-09-27 ref
   change are replaced by a durable receipt on the task, the
   `enhancer-pass-spent` label, written before the spawn by an inline
   `mcp_call` with `block_on_failure`, read with `all_tasks_have_label`,
-  and removable only by the PD (Decision 6, 2.2, 2.2.2). Nits: 3.4.5 says
+  and removable only by the PD (Decision 6, 2.2, 2.2.2). Follow-up
+  PA-001 (duplicate delivery): the receipt is written only in the proxy
+  evaluation, marked `_mcp_proxy_dispatch` by `build_before_tool_event`,
+  at priority 95, so a hook-then-proxy call spends one pass on one
+  spawn (2.2, 2.2.2). Nits: 3.4.5 says
   neither seat invokes an evidence-round tool; `stamp` holds until the
   Writer's rendered-byte commit is verified and reported as
   `EVENT=M1_COMMITTED`, which alone resets the loop (3.4, 3.5). Edited in
