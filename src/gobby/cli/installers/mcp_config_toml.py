@@ -98,10 +98,13 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
     # environment so the stdio wrapper can derive the correct project scope.
     # Gobby's tools are pre-approved so seats running with approval_policy never
     # are not denied when Codex applies a sandboxed permission profile.
+    # ``required`` makes Codex wait for the server before the first turn; an
+    # optional server can be left out of that turn's tool catalog.
     mcp_config = f"""
 [mcp_servers.{server_name}]
 command = "{_GOBBY_MCP_COMMAND}"
 args = ["mcp-server"]
+required = true
 startup_timeout_sec = {_CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC}
 tool_timeout_sec = {_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}
 default_tools_approval_mode = "{_CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE}"

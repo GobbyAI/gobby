@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, suppress
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from mcp.server.mcpserver import MCPServer
 from mcp.types import Tool
@@ -55,13 +55,26 @@ class _StdioMCPServer(MCPServer[None]):
     The SDK's ``exclude_none`` only covers Pydantic model fields; raw
     ``inputSchema`` dicts pass through unchanged, and ``null`` entries break
     strict Jinja prompt templates (e.g. Nemotron Super in LMStudio).
+
+    ``tools_listed`` is set once the client has fetched the tool catalog, the
+    point at which the CLI's turns can see the Gobby tools.
     """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.tools_listed = asyncio.Event()
 
     async def list_tools(self) -> list[Tool]:
         tools = await super().list_tools()
         for tool in tools:
             tool.input_schema = _strip_none(tool.input_schema)
+        self.tools_listed.set()
         return tools
+
+
+async def _report_ready_once_listed(tools_listed: asyncio.Event, proxy: DaemonProxy) -> None:
+    await tools_listed.wait()
+    await proxy.report_bridge_ready()
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,10 +126,22 @@ def create_stdio_mcp_server(
         )
 
     @asynccontextmanager
-    async def proxy_lifespan(_server: MCPServer[None]) -> AsyncIterator[None]:
+    async def proxy_lifespan(server: MCPServer[None]) -> AsyncIterator[None]:
+        ready_report = (
+            asyncio.create_task(
+                _report_ready_once_listed(server.tools_listed, proxy),
+                name="gobby-stdio-bridge-ready",
+            )
+            if isinstance(server, _StdioMCPServer)
+            else None
+        )
         try:
             yield
         finally:
+            if ready_report is not None:
+                ready_report.cancel()
+                with suppress(asyncio.CancelledError):
+                    await ready_report
             await proxy.aclose()
 
     mcp = effective_deps.mcp_server_factory(

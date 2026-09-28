@@ -1611,6 +1611,14 @@ class TestCallMCPTool:
         )
         registry_call = AsyncMock(wraps=registry.call)
         server._internal_manager = cast(Any, FakeInternalManager([registry]))
+        # Wrapper requests fail closed without workflow enforcement (#22961).
+        server._tools_handler = MagicMock(
+            tool_proxy=ToolProxyService(
+                MagicMock(),
+                internal_manager=server._internal_manager,
+                validate_arguments=False,
+            )
+        )
 
         with patch.object(registry, "call", registry_call), TestClient(server.app) as client:
             response = client.post(
@@ -2901,6 +2909,14 @@ class TestMCPProxy:
                     tools=[{"name": "get_handoff", "description": "Wait for a summary"}],
                 ),
             ]
+        )
+        # Wrapper requests fail closed without workflow enforcement (#22961).
+        server._tools_handler = MagicMock(
+            tool_proxy=ToolProxyService(
+                MagicMock(),
+                internal_manager=server._internal_manager,
+                validate_arguments=False,
+            )
         )
 
         with TestClient(server.app) as client:

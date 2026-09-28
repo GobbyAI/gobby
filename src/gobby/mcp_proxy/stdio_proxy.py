@@ -64,6 +64,8 @@ class DaemonProxyDependencies:
 
 
 _MAX_INTENT_QUERY_CHARS = 1_024
+# Waits between readiness reports while the CLI's session registration lags.
+BRIDGE_READY_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0, 8.0, 15.0)
 
 
 def read_project_id() -> str | None:
@@ -287,6 +289,23 @@ class DaemonProxy:
         except Exception as e:
             error_msg = str(e) or f"{type(e).__name__}: (no message)"
             return {"success": False, "error": error_msg}
+
+    async def report_bridge_ready(self) -> None:
+        """Tell the daemon this CLI session has listed the Gobby tools.
+
+        A CLI can list tools before its hook registers the session, so the
+        daemon's SESSION_REQUIRED answer is retried with bounded backoff.
+        """
+        for delay in (0.0, *BRIDGE_READY_RETRY_DELAYS_SECONDS):
+            await asyncio.sleep(delay)
+            result = await self._request("POST", "/api/mcp/bridge/ready", json={})
+            if result.get("error_code") != ToolProxyErrorCode.SESSION_REQUIRED.value:
+                if not result.get("success"):
+                    self._deps_factory().logger.debug(
+                        "Bridge readiness report failed: %s", result.get("error")
+                    )
+                return
+        self._deps_factory().logger.debug("Bridge readiness report found no session")
 
     async def get_status(self, session_id: str | None = None) -> dict[str, Any]:
         """Get daemon status."""

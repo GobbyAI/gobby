@@ -196,6 +196,8 @@ def _repair_stale_gobby_mcp_server_toml(
         updates["startup_timeout_sec"] = _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC
     if _needs_codex_gobby_mcp_tools_approval_mode(server_config):
         updates["default_tools_approval_mode"] = _CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE
+    if server_config.get("required") is not True:
+        updates["required"] = True
 
     if not updates:
         return None, None
