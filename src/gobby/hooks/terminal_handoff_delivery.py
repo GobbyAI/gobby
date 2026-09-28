@@ -304,6 +304,12 @@ def schedule_staged_handoff_on_stop(
     if not isinstance(attempt_id, str) or not attempt_id:
         _log_skipped_delivery(session_id, attempt_id, "staged marker has no attempt_id")
         return False
+    if (
+        marker.get("dispatch_started_at") is not None
+        and marker.get("dispatch_owner") == DISPATCH_OWNER
+    ):
+        # AFTER_TOOL already dispatched this attempt in this daemon; nothing to recover.
+        return False
     claimed = claim_staged_handoff_delivery(
         session_manager.db, session_id, attempt_id, recover_unarmed_gate=True
     )
