@@ -37,7 +37,7 @@ from gobby.terminals.ws_protocol import (
 )
 from gobby.utils.datetime import to_json_safe
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
 pytestmark = pytest.mark.unit

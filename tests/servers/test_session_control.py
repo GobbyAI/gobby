@@ -9,6 +9,7 @@ import asyncio
 import json
 import signal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import psutil
@@ -1815,8 +1816,8 @@ class TestContinueInChatTerminalKill:
         assert ws.send.await_args is None
 
     @pytest.mark.asyncio
-    async def test_send_to_cli_session_uses_recorded_tmux_socket(self) -> None:
-        """CLI proxy send should target the tmux server recorded on the session."""
+    async def test_send_to_cli_session_queues_without_terminal_write(self) -> None:
+        """A persisted web message stays queued for one hook delivery."""
         from gobby.servers.websocket.session_control import SessionControlMixin
 
         ws = MagicMock()
@@ -1847,44 +1848,75 @@ class TestContinueInChatTerminalKill:
         inter_msg_manager = MagicMock()
         inter_msg_manager.create_message.return_value = inter_message
 
-        tmux_manager = MagicMock()
-        tmux_manager.dispatch_keys = AsyncMock(return_value=True)
-
         host = self._make_host()
         host.session_manager = session_manager
         host.clients = {ws: {"attached_session_id": "web-123"}}
         host._send_error = AsyncMock()
         host.inter_session_msg_manager = inter_msg_manager
 
-        with (
-            patch(
-                "gobby.storage.inter_session_messages.InterSessionMessageManager",
-            ) as manager_class,
-            patch(
-                "gobby.servers.websocket.handlers.session_observe.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ) as mock_get_tmux_manager,
-        ):
+        with patch(
+            "gobby.storage.inter_session_messages.InterSessionMessageManager",
+        ) as manager_class:
             await SessionControlMixin._handle_send_to_cli_session(
                 host,
                 ws,
                 {"session_id": "source-uuid", "content": "hello"},
             )
 
-        mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
         manager_class.assert_not_called()
-        tmux_manager.dispatch_keys.assert_awaited_once_with("%7", "hello\n")
         assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
-        inter_msg_manager.mark_delivered.assert_called_once_with("msg-1", "source-uuid")
+        inter_msg_manager.mark_delivered.assert_not_called()
         host._send_error.assert_not_awaited()
 
         payload = ws.send.await_args_list[0].args[0]
         response = json.loads(payload)
         assert response["type"] == "send_to_cli_session_result"
         assert response["session_id"] == "source-uuid"
-        assert response["delivered"] is True
-        assert response["delivery_method"] == "tmux"
+        assert response["delivered"] is False
+        assert response["delivery_method"] == "hook_piggyback"
+        assert response["status"] == "queued"
         assert response["message_id"] == "msg-1"
+
+    @pytest.mark.asyncio
+    async def test_send_to_cli_session_reports_storage_failure_without_delivery(self) -> None:
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = AsyncMock()
+        source_session = SimpleNamespace(
+            id="source-uuid", session_type="terminal", project_id="proj-1"
+        )
+        attached_session = SimpleNamespace(id="web-123")
+        session_manager = SimpleNamespace(
+            get=lambda session_id: attached_session if session_id == "web-123" else source_session,
+            db=object(),
+        )
+        attempts: list[dict[str, str]] = []
+
+        def fail_store(**kwargs: str) -> None:
+            attempts.append(kwargs)
+            raise RuntimeError("storage unavailable")
+
+        inter_msg_manager = SimpleNamespace(create_message=fail_store)
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.clients = {ws: {"attached_session_id": "web-123"}}
+        host.inter_session_msg_manager = inter_msg_manager
+        host._send_error = AsyncMock()
+
+        await SessionControlMixin._handle_send_to_cli_session(
+            host, ws, {"session_id": "source-uuid", "content": "hello"}
+        )
+
+        assert host._send_error.await_args.kwargs["code"] == "MESSAGE_STORE_ERROR"
+        assert attempts == [
+            {
+                "from_session": "web-123",
+                "to_session": "source-uuid",
+                "content": "hello",
+                "message_type": "web_chat",
+            }
+        ]
+        ws.send.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_send_to_cli_session_stores_attachments_and_appends_paths(
@@ -1921,23 +1953,14 @@ class TestContinueInChatTerminalKill:
         inter_msg_manager = MagicMock()
         inter_msg_manager.create_message.return_value = inter_message
 
-        tmux_manager = MagicMock()
-        tmux_manager.dispatch_keys = AsyncMock(return_value=True)
-
         host = self._make_host()
         host.session_manager = session_manager
         host.clients = {ws: {"attached_session_id": "web-123"}}
         host._send_error = AsyncMock()
 
-        with (
-            patch(
-                "gobby.storage.inter_session_messages.InterSessionMessageManager",
-                return_value=inter_msg_manager,
-            ),
-            patch(
-                "gobby.servers.websocket.handlers.session_observe.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ),
+        with patch(
+            "gobby.storage.inter_session_messages.InterSessionMessageManager",
+            return_value=inter_msg_manager,
         ):
             await SessionControlMixin._handle_send_to_cli_session(
                 host,
@@ -1956,13 +1979,16 @@ class TestContinueInChatTerminalKill:
                 },
             )
 
-        delivered_content = tmux_manager.dispatch_keys.await_args.args[1]
-        assert delivered_content.startswith("please inspect\n\nAttachments:\n")
-        attached_path = delivered_content.removesuffix("\n").splitlines()[-1]
+        queued_content = inter_msg_manager.create_message.call_args.kwargs["content"]
+        assert queued_content.startswith("please inspect\n\nAttachments:\n")
+        attached_path = queued_content.splitlines()[-1]
         assert attached_path.endswith("_note.txt")
         assert (tmp_path / "attachments" / "attached-sessions" / "source-uuid").is_dir()
         assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
         assert inter_msg_manager.create_message.call_args.kwargs["content"].endswith(attached_path)
+        inter_msg_manager.mark_delivered.assert_not_called()
+        response = json.loads(ws.send.await_args.args[0])
+        assert response["status"] == "queued"
         assert host._send_error.await_count == 0
 
 

@@ -336,7 +336,7 @@ class TestVoiceWarmup:
 
     @pytest.mark.asyncio
     async def test_attached_voice_transcription_is_sent_to_terminal_session(self) -> None:
-        """STT from an attached web client should relay into the attached tmux pane."""
+        """STT from an attached web client queues for the terminal's next hook."""
         mixin = DummyVoiceMixin(VoiceConfig(enabled=True, stt_enabled=True, tts_enabled=False))
         websocket = MagicMock()
         websocket.send = AsyncMock()
@@ -362,18 +362,9 @@ class TestVoiceWarmup:
         inter_msg_manager = MagicMock()
         inter_msg_manager.create_message.return_value = inter_message
 
-        tmux_manager = MagicMock()
-        tmux_manager.dispatch_keys = AsyncMock(return_value=True)
-
-        with (
-            patch(
-                "gobby.storage.inter_session_messages.InterSessionMessageManager",
-                return_value=inter_msg_manager,
-            ),
-            patch(
-                "gobby.servers.websocket.handlers.session_observe.manager_for_terminal_context",
-                return_value=tmux_manager,
-            ),
+        with patch(
+            "gobby.storage.inter_session_messages.InterSessionMessageManager",
+            return_value=inter_msg_manager,
         ):
             await mixin._handle_voice_audio(
                 websocket,
@@ -385,8 +376,11 @@ class TestVoiceWarmup:
                 },
             )
 
-        tmux_manager.dispatch_keys.assert_awaited_once_with("%21", "run the focused tests\n")
         inter_msg_manager.create_message.assert_called_once()
+        assert inter_msg_manager.create_message.call_args.kwargs["content"] == (
+            "run the focused tests"
+        )
+        inter_msg_manager.mark_delivered.assert_not_called()
         mixin._handle_chat_message.assert_not_awaited()
         sent_payloads = [json.loads(call.args[0]) for call in websocket.send.await_args_list]
         assert len(sent_payloads) >= 1

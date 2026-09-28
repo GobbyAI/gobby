@@ -2,19 +2,25 @@
 
 from __future__ import annotations
 
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.validation_detection import default_validation_detection_config
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence,
 )
+from gobby.storage.session_models import Session
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
 )
+from gobby.utils.machine_id import get_machine_id
 from tests.tasks.test_close_checklist import _run
 
 _SUPPORT = "gobby.mcp_proxy.tools.tasks._close_evaluation_support"
@@ -159,6 +165,287 @@ async def test_single_session_close_derives_once_from_the_owner_window() -> None
 
     assert calls == [(QA, "owner-window")]
     assert merged == [f"evidence:{QA}"]
+
+
+@pytest.mark.asyncio
+async def test_close_uses_only_target_task_checkout_paths_for_linked_session() -> None:
+    session = _session(IMPLEMENTER, "2026-08-27T00:30:00+00:00")
+    session.workspace_path = "/work/task-260"
+    ctx = _context(
+        [_link(IMPLEMENTER, "claimed", "2026-08-27T01:00:00+00:00")],
+        {IMPLEMENTER: session},
+    )
+    ctx.session_var_manager.get_variables.return_value = {
+        "task_edited_file_checkouts": {
+            "task": {
+                "/work/task-259-runbook": ["docs/replenishment.md"],
+                "/work/task-259-supply": ["docs/replenishment.md"],
+            },
+            "task-260": {"/work/task-260": ["docs/replenishment.md"]},
+        }
+    }
+    seen_paths: list[frozenset[tuple[str, str]]] = []
+
+    async def record(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        assert args[4] == "/work/task-260"
+        seen_paths.append(kwargs["task_checkout_paths"])
+        return TranscriptEvidence()
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        merged = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start="2026-08-27T01:00:00+00:00",
+            task_edited_files={"docs/replenishment.md"},
+            repo_path="/work/task-260",
+        )
+
+    assert merged == TranscriptEvidence()
+    assert seen_paths == [
+        frozenset(
+            {
+                ("/work/task-259-runbook", "docs/replenishment.md"),
+                ("/work/task-259-supply", "docs/replenishment.md"),
+            }
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
+    session = _session(IMPLEMENTER, "2026-08-27T00:30:00+00:00")
+    ctx = _context(
+        [_link(IMPLEMENTER, "claimed", "2026-08-27T01:00:00+00:00")],
+        {IMPLEMENTER: session},
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    seen_paths: list[frozenset[tuple[str, str]]] = []
+
+    async def record(*args: Any, **kwargs: Any) -> TranscriptEvidence:
+        seen_paths.append(kwargs["task_checkout_paths"])
+        return TranscriptEvidence()
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        merged = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start="2026-08-27T01:00:00+00:00",
+            task_edited_files={"tests/test_change.py", "src/change.py"},
+            repo_path="/work/task-259",
+            owner_used_commit_fallback=True,
+        )
+
+    assert merged == TranscriptEvidence()
+    ctx.session_var_manager.get_variables.assert_called_once_with(IMPLEMENTER)
+    assert seen_paths == [
+        frozenset(
+            {
+                ("/work/task-259", "tests/test_change.py"),
+                ("/work/task-259", "src/change.py"),
+            }
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "owner_task_ledger,owner_other_task_ledger,owner_other_task_history,legacy_other_task",
+    [
+        (True, False, False, "none"),
+        (False, False, False, "none"),
+        (False, True, False, "none"),
+        (True, True, False, "none"),
+        (False, False, True, "none"),
+        (False, False, False, "overlap"),
+        (True, False, False, "overlap"),
+        (True, False, True, "overlap"),
+        (False, False, False, "closed_before_window"),
+        (False, False, True, "closed_before_window"),
+        (True, False, True, "closed_before_window"),
+        (True, True, True, "closed_before_window"),
+        (False, False, False, "linked_after_history"),
+    ],
+)
+async def test_close_excludes_other_task_edit_in_same_checkout(
+    tmp_path: Path,
+    owner_task_ledger: bool,
+    owner_other_task_ledger: bool,
+    owner_other_task_history: bool,
+    legacy_other_task: str,
+) -> None:
+    start = datetime(2026, 8, 27, 1, tzinfo=UTC)
+    relative_path = "src/shared.py"
+    absolute_path = tmp_path / relative_path
+    machine_id = get_machine_id()
+    assert machine_id is not None
+
+    def session_with_edit(session_id: str, offset: int) -> Session:
+        transcript = tmp_path / f"{session_id}.jsonl"
+        records = [
+            {
+                "type": "assistant",
+                "timestamp": (start + timedelta(seconds=offset)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"edit-{session_id}",
+                            "name": "Edit",
+                            "input": {"file_path": str(absolute_path)},
+                        }
+                    ],
+                },
+            }
+        ]
+        if session_id == IMPLEMENTER:
+            records.extend(
+                [
+                    {
+                        "type": "assistant",
+                        "timestamp": (start + timedelta(seconds=offset + 1)).isoformat(),
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "tool_use",
+                                    "id": "validation",
+                                    "name": "Bash",
+                                    "input": {
+                                        "command": "uv run pytest tests/tasks/test_validation.py -q"
+                                    },
+                                }
+                            ],
+                        },
+                    },
+                    {
+                        "type": "user",
+                        "timestamp": (start + timedelta(seconds=offset + 2)).isoformat(),
+                        "message": {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "tool_result",
+                                    "tool_use_id": "validation",
+                                    "content": {"exit_code": 0, "stdout": "1 passed in 0.1s"},
+                                }
+                            ],
+                        },
+                    },
+                ]
+            )
+        transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+        return Session(
+            id=session_id,
+            external_id=session_id,
+            machine_id=machine_id,
+            source="claude",
+            project_id="project",
+            title=None,
+            status="active",
+            transcript_path=str(transcript),
+            summary_path=None,
+            summary_markdown=None,
+            git_branch="test",
+            parent_session_id=None,
+            created_at=start,
+            updated_at=start,
+        )
+
+    ctx = _context(
+        [
+            _link(IMPLEMENTER, "claimed", start.isoformat()),
+            _link(QA, "worked_on", (start + timedelta(seconds=60)).isoformat()),
+        ],
+        {
+            IMPLEMENTER: session_with_edit(IMPLEMENTER, 30),
+            QA: session_with_edit(QA, 120),
+        },
+    )
+    if legacy_other_task != "none":
+        ctx.session_task_manager.get_session_tasks.return_value = [
+            {
+                "task": SimpleNamespace(
+                    id="other-task",
+                    closed_at=(
+                        start - timedelta(seconds=1)
+                        if legacy_other_task == "closed_before_window"
+                        else None
+                    ),
+                ),
+                "action": "claimed",
+                "link_created_at": start - timedelta(seconds=30),
+            }
+        ]
+    owner_checkouts: dict[str, dict[str, list[str]]] = {}
+    if owner_task_ledger:
+        owner_checkouts["task"] = {str(tmp_path): [relative_path]}
+    if owner_other_task_ledger:
+        # The owner may edit the same path for B, with or without an A ledger.
+        owner_checkouts["other-task"] = {str(tmp_path): [relative_path]}
+    owner_variables: dict[str, Any] = {"task_edited_file_checkouts": owner_checkouts}
+    if legacy_other_task == "linked_after_history":
+        owner_variables["task_edited_file_checkouts_history_started_at"] = (
+            start - timedelta(seconds=60)
+        ).timestamp()
+    if owner_other_task_history:
+        # B's live ledger was released after commit; the durable edit remains.
+        owner_variables["task_edited_file_checkouts_history"] = {
+            "other-task": {str(tmp_path): [relative_path]}
+        }
+    qa_variables = {"task_edited_file_checkouts": {"other-task": {str(tmp_path): [relative_path]}}}
+    ctx.session_var_manager.get_variables.side_effect = {
+        IMPLEMENTER: owner_variables,
+        QA: qa_variables,
+    }.get
+
+    with (
+        patch(
+            f"{_SUPPORT}.resolve_validation_detection_config",
+            return_value=default_validation_detection_config(),
+        ),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start=start.isoformat(),
+            task_edited_files={relative_path},
+            repo_path=str(tmp_path),
+            owner_used_commit_fallback=not owner_task_ledger,
+        )
+
+    history_overlaps = owner_other_task_history and legacy_other_task != "closed_before_window"
+    expected_owner_edits = (
+        []
+        if owner_other_task_ledger or history_overlaps or legacy_other_task == "overlap"
+        else [(relative_path, start + timedelta(seconds=30), IMPLEMENTER)]
+    )
+    assert [(edit.path, edit.timestamp, edit.session_id) for edit in evidence.edits] == (
+        expected_owner_edits
+    )
+    assert all(edit.session_id != QA for edit in evidence.edits)
+    assert [run.command for run in evidence.validation_runs] == [
+        "uv run pytest tests/tasks/test_validation.py -q"
+    ]
+    assert ctx.session_var_manager.get_variables.call_count == 2
 
 
 @pytest.mark.asyncio

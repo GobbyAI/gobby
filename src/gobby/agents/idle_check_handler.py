@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.prompt_detector import PromptDetector
     from gobby.agents.stall_classifier import StallClassifier
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -45,7 +44,6 @@ class IdleCheckHandler:
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
         get_session_manager: Callable[[], SessionManager | None],
-        tmux: TmuxSessionManager,
         idle_detector: IdleDetector,
         prompt_detector: PromptDetector,
         stall_classifier: StallClassifier,
@@ -65,7 +63,6 @@ class IdleCheckHandler:
         # turn; the daemon wakes the session with the result).
         self._is_parked = is_parked
         self._get_session_manager = get_session_manager
-        self._tmux = tmux
         self._terminal_services = terminal_services
         self._idle_detector = idle_detector
         self._prompt_detector = prompt_detector
@@ -86,7 +83,6 @@ class IdleCheckHandler:
             agent_run_manager=agent_run_manager,
             db=db,
             get_session_manager=get_session_manager,
-            tmux=tmux,
             idle_detector=idle_detector,
             watchdog_readers=watchdog_readers,
             cleanup_handler=cleanup_handler,

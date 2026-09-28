@@ -601,14 +601,15 @@ def register_agent_query_tools(
         deadline = agents.time.monotonic() + timeout
         consecutive_capture_failures = 0
         from gobby.storage.terminals import TerminalManager
-        from gobby.terminals.runtime import TerminalRuntime
-        from gobby.terminals.tmux_runtime import configured_tmux_runtime
 
         db = getattr(ctx.runner, "database", None) or getattr(ctx.runner, "db", None)
         injected_manager = getattr(ctx.runner, "terminal_manager", None)
         terminal_manager = injected_manager or (TerminalManager(db) if db is not None else None)
         registry = getattr(ctx.runner, "terminal_runtime_registry", None)
-        runtime: TerminalRuntime | None = None
+        if registry is None:
+            return _wait_for_output_error(
+                "runtime_unavailable", "terminal runtime registry is unavailable"
+            )
 
         while True:
             pane_output: str | None = None
@@ -622,10 +623,7 @@ def register_agent_query_tools(
                 if terminal is None:
                     capture_failed = True
                 else:
-                    if registry is not None:
-                        runtime = registry.resolve(terminal.backend)
-                    elif runtime is None:
-                        runtime = configured_tmux_runtime()
+                    runtime = registry.resolve(terminal.backend)
                     snapshot = await runtime.snapshot(terminal, _WAIT_OUTPUT_CAPTURE_LINES)
                     pane_output = snapshot.text
                     capture_failed = pane_output is None
@@ -675,11 +673,7 @@ def register_agent_query_tools(
                     if terminal is None:
                         pane_exists = False
                     else:
-                        if runtime is None:
-                            if registry is not None:
-                                runtime = registry.resolve(terminal.backend)
-                            else:
-                                runtime = configured_tmux_runtime()
+                        runtime = registry.resolve(terminal.backend)
                         pane_exists = await runtime.is_live(terminal)
                 except asyncio.CancelledError:
                     raise

@@ -44,7 +44,7 @@ from gobby.terminals.ws_protocol import (
     encode_message,
     fragment_event,
 )
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 
 GOLDEN_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "terminal_ws_golden"
 OLD_GOLDEN_DIR = Path(__file__).resolve().parent / "fixtures" / "terminal_ws_golden"
@@ -67,7 +67,7 @@ pytestmark = pytest.mark.unit
 @dataclass
 class _GoldenRow:
     id: str = TERMINAL_ID
-    backend: str = "tmux"
+    backend: str = "native"
     ownership: str = "gobby"
     state: str = "live"
     title: str | None = "sess"
@@ -144,7 +144,7 @@ class _GoldenManager:
 class _GoldenRuntime:
     def __init__(
         self,
-        backend: str = "tmux",
+        backend: str = "native",
         *,
         refuse_spawn: bool = False,
         write_result: object | None = None,
@@ -165,6 +165,9 @@ class _GoldenRuntime:
 
     async def attach_locator(self, _row: object) -> AttachLocator:
         return self.locator
+
+    async def reserve_observer(self, _terminal_id: object) -> dict[str, str]:
+        return {}
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         if self.refuse_spawn:
@@ -201,7 +204,7 @@ class _GoldenRuntime:
 
 def _server(
     *,
-    backend: str = "tmux",
+    backend: str = "native",
     refuse_spawn: bool = False,
     write_result: object | None = None,
 ) -> tuple[WebSocketServer, _GoldenManager, _GoldenRuntime]:
@@ -223,7 +226,6 @@ def _server(
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
     server.write_coordinator = SimpleNamespace(write=AsyncMock(return_value=runtime.write_result))
     server.terminal_config = SimpleNamespace(default_backend=backend)
-    cast(Any, server).sweep_tmux_panes = AsyncMock(return_value={})
     return server, manager, runtime
 
 

@@ -448,6 +448,18 @@ class FakeInternalManager:
         return len(self._registries)
 
 
+def _wire_workflow_proxy(server: HTTPServer) -> None:
+    """Dispatch through ToolProxyService; wrapper requests fail closed without it (#22961)."""
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = None
+    mcp_manager.session_manager = None
+    server._tools_handler = MagicMock(
+        tool_proxy=ToolProxyService(
+            mcp_manager, internal_manager=server._internal_manager, validate_arguments=False
+        )
+    )
+
+
 # ============================================================================
 # list_mcp_tools Endpoint Tests
 # ============================================================================
@@ -1611,14 +1623,7 @@ class TestCallMCPTool:
         )
         registry_call = AsyncMock(wraps=registry.call)
         server._internal_manager = cast(Any, FakeInternalManager([registry]))
-        # Wrapper requests fail closed without workflow enforcement (#22961).
-        server._tools_handler = MagicMock(
-            tool_proxy=ToolProxyService(
-                MagicMock(),
-                internal_manager=server._internal_manager,
-                validate_arguments=False,
-            )
-        )
+        _wire_workflow_proxy(server)
 
         with patch.object(registry, "call", registry_call), TestClient(server.app) as client:
             response = client.post(
@@ -2910,14 +2915,7 @@ class TestMCPProxy:
                 ),
             ]
         )
-        # Wrapper requests fail closed without workflow enforcement (#22961).
-        server._tools_handler = MagicMock(
-            tool_proxy=ToolProxyService(
-                MagicMock(),
-                internal_manager=server._internal_manager,
-                validate_arguments=False,
-            )
-        )
+        _wire_workflow_proxy(server)
 
         with TestClient(server.app) as client:
             response = client.post(

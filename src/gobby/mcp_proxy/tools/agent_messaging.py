@@ -123,8 +123,11 @@ def add_messaging_tools(
             "target='parent' reaches the session that spawned the sender, "
             "forbids target_id, and is available only to spawned agent sessions, which "
             "may use only target='parent' and cannot override from_session. "
-            "Message content never causes wake behavior. wake=true requests immediate "
-            "processing and may steer active work; interrupted, awaiting-input, "
+            "Message content never causes wake behavior. Omitting wake requests immediate "
+            "processing for direct session, parent, or agent targets; global, project, and "
+            "build fanout remains queued without live wakes. wake=true requests immediate "
+            "processing even for fanout; wake=false queues without a live wake. A wake may "
+            "steer active work; interrupted, awaiting-input, "
             "awaiting-approval, and awaiting-handoff sessions retain queued content "
             "without daemon input. Wake-result delivery means trigger dispatch, not "
             "mailbox acknowledgement. Optional priority, message_type, metadata, and wake "
@@ -142,7 +145,7 @@ def add_messaging_tools(
         *,
         project_id: str | None = None,
         priority: str = "normal",
-        wake: bool = False,
+        wake: bool | None = None,
         message_type: str = "message",
         metadata: dict[str, Any] | None = None,
         brief: bool = True,
@@ -262,11 +265,16 @@ def add_messaging_tools(
                 assert target_id is not None
                 resolved_target_id = _resolve(target_id)
 
+            # A direct recipient can be woken once; implicit fanout wakes can
+            # multiply across a project or machine and feed coordination loops.
+            wake_requested = (
+                normalized_target in {"session", "parent", "agent"} if wake is None else wake
+            )
             send_result = await mailbox.send(
                 from_session_id=from_id,
                 target=normalized_target,
                 target_id=resolved_target_id,
-                wake=wake,
+                wake=wake_requested,
                 content=content,
                 priority=priority,
                 message_type=message_type,

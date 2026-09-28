@@ -235,6 +235,7 @@ def _ready_evaluation(
             clean_proof_paths=frozenset(),
             had_attributed_edits=False,
             claim_started_at=None,
+            used_commit_fallback=True,
         )
     evaluation = CloseEvaluation(task.id)
     evaluation.task = task
@@ -2748,6 +2749,7 @@ def _memory_review_close_context(
                 clean_proof_paths=frozenset(),
                 had_attributed_edits=False,
                 claim_started_at=None,
+                used_commit_fallback=True,
             )
         ),
     )

@@ -9,8 +9,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
-from gobby.config.tmux import TmuxConfig
+from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal
 from tests.agents.detection_test_support import replace_detection_manifest
@@ -25,9 +24,7 @@ async def test_warm_pane_monitor_sees_content_edit(temp_db: HubDatabase) -> None
     attention_manager = Mock()
     attention_manager.get.return_value = None
     attention_manager.transition_async = AsyncMock()
-    monitor = TmuxPaneMonitor(
-        session_end_callback=AsyncMock(),
-        config=TmuxConfig(),
+    monitor = InteractiveAttentionMonitor(
         session_manager=session_manager,
         attention_manager=attention_manager,
         detection_registry=registry,
@@ -84,9 +81,7 @@ async def test_native_row_is_snapshotted_through_the_native_runtime(
     tmux_runtime = LifecycleRuntime(backend="tmux", snapshot_text="idle shell")
     native_runtime = LifecycleRuntime(backend="native", snapshot_text="alpha trust")
 
-    monitor = TmuxPaneMonitor(
-        session_end_callback=AsyncMock(),
-        config=TmuxConfig(),
+    monitor = InteractiveAttentionMonitor(
         session_manager=session_manager,
         attention_manager=attention_manager,
         detection_registry=detection_registry,
@@ -136,9 +131,7 @@ async def test_native_session_without_a_tmux_pane_still_gets_attention(
     attention_manager.transition_async = AsyncMock()
     native_runtime = LifecycleRuntime(backend="native", snapshot_text="alpha trust")
 
-    monitor = TmuxPaneMonitor(
-        session_end_callback=AsyncMock(),
-        config=TmuxConfig(),
+    monitor = InteractiveAttentionMonitor(
         session_manager=session_manager,
         attention_manager=attention_manager,
         detection_registry=detection_registry,

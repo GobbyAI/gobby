@@ -6,7 +6,7 @@ import contextvars
 import json
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -30,6 +30,12 @@ from tests.mcp_proxy.result_offload_test_support import TEST_MAX_ENVELOPE_CHARS
 pytestmark = pytest.mark.unit
 
 
+def _bind_anonymous_caller(server: MagicMock) -> None:
+    """Resolve the request principal as an anonymous non-agent caller, as production does."""
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    server.auth_service.request_principal = Mock(return_value=None)
+
+
 def _server(result: dict[str, Any]) -> MagicMock:
     server = MagicMock()
     server.session_manager = None
@@ -38,6 +44,7 @@ def _server(result: dict[str, Any]) -> MagicMock:
     server.tool_proxy.call_tool = AsyncMock(return_value=result)
     server._internal_manager = None
     server.mcp_manager = None
+    _bind_anonymous_caller(server)
     return server
 
 
@@ -85,6 +92,7 @@ def _offload_server(db: HubDatabase) -> tuple[MagicMock, dict[str, Any]]:
     server._internal_manager = manager
     server.mcp_manager = None
     server.services = SimpleNamespace(database=db)
+    _bind_anonymous_caller(server)
     return server, payload
 
 

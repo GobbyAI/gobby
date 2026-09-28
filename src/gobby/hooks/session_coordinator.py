@@ -21,7 +21,6 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakValueDictionary
 
-from gobby.agents.capture import TerminationErrorCode, capture_then_kill_sync
 from gobby.agents.completion_stats import merge_completion_stats, resolve_completion_stats
 from gobby.agents.run_completion import (
     cooperative_close_handoff_pending,
@@ -40,7 +39,6 @@ from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import TerminalAction
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
-from gobby.utils import spawn
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -76,10 +74,6 @@ class SessionCoordinator:
         logger: logging.Logger | None = None,
         completion_registry: Any | None = None,
         transcript_reader: TranscriptReader | None = None,
-        terminal_manager: Any | None = None,
-        terminal_runtime_registry: Any | None = None,
-        write_coordinator: Any | None = None,
-        terminal_effect_bridge: Any | None = None,
     ) -> None:
         """
         Initialize SessionCoordinator.
@@ -103,10 +97,6 @@ class SessionCoordinator:
         self._transcript_reader = transcript_reader
         if self._transcript_reader is None and session_storage is not None:
             self._transcript_reader = TranscriptReader(cast("SessionManager", session_storage))
-        self._terminal_manager = terminal_manager
-        self._terminal_runtime_registry = terminal_runtime_registry
-        self._write_coordinator = write_coordinator
-        self._terminal_effect_bridge = terminal_effect_bridge
 
         # Session registration tracking (to avoid noisy logs)
         # Tracks which sessions have been registered with daemon
@@ -390,7 +380,7 @@ class SessionCoordinator:
         turns_used: int,
         session_id: str,
     ) -> Any | None:
-        """Run the terminal storage chain on the managed executor."""
+        """Complete the agent run on the managed database executor."""
         from gobby.agents.terminal_delivery import submit_terminal_delivery_offload
 
         try:
@@ -443,7 +433,7 @@ class SessionCoordinator:
         turns_used: int,
         session_id: str,
     ) -> Any | None:
-        """Persist intent and capture before killing and terminalizing a run."""
+        """Finish a run after its owning session has already ended."""
         manager = self._agent_run_manager
         if manager is None:
             return None
@@ -464,127 +454,22 @@ class SessionCoordinator:
             self._reap_agent_sandbox_roots(run_id)
             return updated_run
 
-        def terminalize(_action: TerminalAction, payload: str | None) -> Any | None:
-            if _action == "complete":
-                return manager.complete(
-                    run_id=run_id,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                )
-            return manager.fail(
+        if action == "complete":
+            updated = manager.complete(
                 run_id=run_id,
-                error=payload or reason or "Agent failed",
+                result=result_prefix or None,
                 tool_calls_count=tool_calls_count,
                 turns_used=turns_used,
             )
-
-        terminal_id = agent_run.terminal_id
-        if not isinstance(terminal_id, str) or not terminal_id:
-            if action == "complete":
-                updated = manager.complete(
-                    run_id=run_id,
-                    result=result_prefix or None,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                )
-            else:
-                updated = manager.fail(
-                    run_id=run_id,
-                    error=reason or "Agent failed",
-                    result=result_prefix or None,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                )
-            return finish_followups(updated or manager.get(run_id))
-
-        # Fixed tmux argv, exact session target, and shell execution disabled.
-
-        from gobby.agents.tmux import get_configured_tmux_command_prefix
-
-        row = None if self._terminal_manager is None else self._terminal_manager.get(terminal_id)
-        session_name = None if row is None else row.session_name
-        if not isinstance(session_name, str) or not session_name:
-            if action == "complete":
-                updated = manager.complete(
-                    run_id=run_id,
-                    result=result_prefix or None,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                )
-            else:
-                updated = manager.fail(
-                    run_id=run_id,
-                    error=reason or "Agent failed",
-                    result=result_prefix or None,
-                    tool_calls_count=tool_calls_count,
-                    turns_used=turns_used,
-                )
-            return finish_followups(updated or manager.get(run_id))
-        target = f"={session_name}"
-
-        def session_alive() -> bool:
-            cmd = get_configured_tmux_command_prefix()
-            cmd.extend(["has-session", "-t", target])
-            proc = spawn.run(  # nosec B603
-                cmd,
-                capture_output=True,
-                timeout=5,
+        else:
+            updated = manager.fail(
+                run_id=run_id,
+                error=reason or "Agent failed",
+                result=result_prefix or None,
+                tool_calls_count=tool_calls_count,
+                turns_used=turns_used,
             )
-            return proc.returncode == 0
-
-        def capture() -> str:
-            cmd = get_configured_tmux_command_prefix()
-            cmd.extend(["capture-pane", "-t", target, "-p", "-S", "-"])
-            proc = spawn.run(  # nosec B603
-                cmd,
-                capture_output=True,
-                timeout=5,
-                text=True,
-            )
-            if proc.returncode != 0:
-                raise RuntimeError(proc.stderr.strip() or "capture-pane failed")
-            return proc.stdout
-
-        def kill() -> bool:
-            cmd = get_configured_tmux_command_prefix()
-            cmd.extend(["kill-session", "-t", target])
-            proc = spawn.run(  # nosec B603
-                cmd,
-                capture_output=True,
-                timeout=5,
-            )
-            return proc.returncode == 0
-
-        result = capture_then_kill_sync(
-            storage=manager,
-            run_id=run_id,
-            session_name=session_name,
-            action=action,
-            reason=reason,
-            result_prefix=result_prefix or None,
-            session_alive=session_alive,
-            capture=capture,
-            kill=kill,
-            terminalize=terminalize,
-        )
-        if not result.success:
-            if result.error_code == TerminationErrorCode.ALREADY_TERMINAL:
-                # Expected race: the child self-terminated via end_agent_run
-                # before the session-end hook reached inline terminalization.
-                self.logger.info(
-                    "Agent run %s already terminal; inline terminalization skipped (%s)",
-                    run_id,
-                    result.error,
-                )
-                return None
-            self.logger.warning(
-                "Deferred terminalization for agent run %s: %s (%s)",
-                run_id,
-                result.error,
-                result.error_code,
-            )
-            return None
-        return finish_followups(result.run)
+        return finish_followups(updated or manager.get(run_id))
 
     def complete_agent_run(self, session: Any) -> None:
         """

@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -115,8 +115,7 @@ def test_session_end_deletes_workflow_instances_for_ending_session(db: HubDataba
 
     handler = _SessionEndHandler(db)
 
-    with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        response = handler.handle_session_end(_make_event(S1))
+    response = handler.handle_session_end(_make_event(S1))
 
     assert response.decision == "allow"
     assert instance_manager.get_for_session(S1) is None
@@ -139,8 +138,7 @@ def test_session_end_only_deletes_instances_for_target_session(db: HubDatabase) 
 
     handler = _SessionEndHandler(db)
 
-    with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        response = handler.handle_session_end(_make_event(S1))
+    response = handler.handle_session_end(_make_event(S1))
 
     assert response.decision == "allow"
     assert instance_manager.get_for_session(S1) is None

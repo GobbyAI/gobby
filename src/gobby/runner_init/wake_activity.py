@@ -20,35 +20,21 @@ async def probe_terminal_activity(
     terminal: Any | None,
 ) -> TerminalActivity:
     """Classify composer and in-flight evidence from one ANSI snapshot."""
-    from gobby.sessions.tmux_context import parse_terminal_context_value
-    from gobby.terminals.lookup import manager_for_terminal_context
-    from gobby.terminals.pane_io import TmuxPaneIO
-
     unknown = TerminalActivity(ComposerRead("unknown"))
     source = getattr(session, "source", None)
     registry = getattr(runner, "detection_registry", None)
-    if not source or registry is None:
+    if not source or registry is None or terminal is None or terminal.backend != "native":
         return unknown
     try:
-        if terminal is not None:
-            services = runner.terminal_services
-            if services is None:
-                return unknown
-            result = await services.runtime_for(terminal).snapshot(
-                terminal,
-                COMPOSER_PROBE_LINES,
-                mode="ansi",
-            )
-            text: str | None = result.text
-        else:
-            ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
-            target = ctx.get("tmux_pane") if ctx else None
-            if not target:
-                return unknown
-            text = await TmuxPaneIO(manager_for_terminal_context(ctx), str(target)).snapshot(
-                COMPOSER_PROBE_LINES,
-                mode="ansi",
-            )
+        services = runner.terminal_services
+        if services is None:
+            return unknown
+        result = await services.runtime_for(terminal).snapshot(
+            terminal,
+            COMPOSER_PROBE_LINES,
+            mode="ansi",
+        )
+        text: str | None = result.text
         detector = IdleDetector(registry, str(source))
         return TerminalActivity(
             composer=detector.composer_read(text),

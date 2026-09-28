@@ -46,10 +46,9 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn,
 )
 from gobby.config.app import DaemonConfig
-from gobby.config.tmux import TmuxConfig, socket_root
+from gobby.config.tmux import socket_root
 from gobby.integrations.rtk import platform_paths
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
-from gobby.terminals.tmux_discovery import socket_path_for
 from gobby.utils.daemon_git import GitFailed, GitTimeout
 
 pytestmark = pytest.mark.unit
@@ -1907,7 +1906,7 @@ class TestTmuxSocketAllowance:
             monkeypatch.setenv("TMUX_TMPDIR", tmux_tmpdir)
 
         roots = tmux_socket_roots()
-        socket_path = socket_path_for(TmuxConfig(socket_name="gobby"))
+        socket_path = os.path.realpath(os.path.join(socket_root(), "gobby"))
 
         assert roots == [os.path.realpath(socket_root())]
         assert os.path.dirname(socket_path) in roots

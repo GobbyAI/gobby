@@ -347,7 +347,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         logger.warning("Failed to initialize workflow loader", exc_info=True)
 
     from gobby.agents.attention_metadata import AttentionMetadataStore
-    from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.events.wake_recovery import WakeReplayCoordinator
@@ -360,7 +359,6 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
         runner.database,
         credential_manager=runner.managed_credential_manager,
     )
-    configure_tmux(config.tmux)
 
     def publish_attention_event(payload: dict[str, object]) -> None:
         loop = runner.main_loop

@@ -524,7 +524,15 @@ async def _deliver_codex_prompt(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.error("Codex prompt delivery raised %s for run %s", type(exc).__name__, run_id)
+        cause = exc.__cause__
+        logger.error(
+            "Codex prompt delivery raised %s for run %s terminal %s: stage=%s cause=%s",
+            type(exc).__name__,
+            run_id,
+            terminal.id,
+            getattr(exc, "stage", None),
+            type(cause).__name__ if cause is not None else None,
+        )
         await _fail_codex_prompt_delivery(
             runtime,
             terminal,

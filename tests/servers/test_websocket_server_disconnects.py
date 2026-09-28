@@ -96,7 +96,7 @@ class TestHandleConnectionDisconnects:
             }
         )
         server._rebroadcast_pending_interactions = AsyncMock()
-        server._cleanup_tmux_client = AsyncMock()
+        server._cleanup_terminal_client = AsyncMock()
         server._check_voice_idle = AsyncMock()
 
         async def disconnect_after_attach(websocket: IteratingWebSocket, _message: str) -> None:

@@ -178,6 +178,7 @@ async def capture_attribution(
         edited_paths=edited_paths,
         clean_proof_paths=clean_proof_paths,
         had_attributed_edits=attributed and bool(edited_paths),
+        used_commit_fallback=used_commit_fallback,
         claim_started_at=_claimed_session_window_start(
             ctx,
             task=task,

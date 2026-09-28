@@ -66,7 +66,7 @@ def _derive_prelink_runs_sync(
     # Each rebuilt run re-classifies its command, so stripping stays in the pool
     # with the parse; on the daemon loop it stalled close previews (#22708).
     evidence, snapshot = _derive_transcript_evidence_sync(
-        session, None, detection, set(), repo_path, archive_dir, local_machine_id, snapshot
+        session, None, detection, set(), repo_path, None, archive_dir, local_machine_id, snapshot
     )
     runs = tuple(
         replace(run, output=None)

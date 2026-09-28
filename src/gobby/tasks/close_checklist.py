@@ -13,6 +13,7 @@ from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
 )
+from gobby.tasks.close_test_coverage import pytest_module_paths as _pytest_module_paths
 from gobby.tasks.close_test_coverage import (
     test_types_audit_targets as _test_types_audit_targets,
 )
@@ -196,6 +197,8 @@ def evaluate_validation_commands(
             for record in records
             if set(record["categories"]).intersection(gate.details["unresolved_failure_categories"])
         ]
+    elif gate.details.get("pytest_uncovered_paths"):
+        relevant = []
     elif task_category in _TEST_REQUIRED_CATEGORIES:
         relevant = [record for record in records if "test" in record["categories"]]
     nearest = relevant[0] if relevant else None
@@ -452,7 +455,9 @@ def _evaluate_validation_commands(
         )
 
     deleted = frozenset(deleted_paths)
-    pytest_required_paths = tuple(path for path in changed_python_test_paths if path not in deleted)
+    pytest_required_paths = _pytest_module_paths(
+        path for path in changed_python_test_paths if path not in deleted
+    )
     details["pytest_exempt_deleted_paths"] = [
         path for path in changed_python_test_paths if path in deleted
     ]

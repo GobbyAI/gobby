@@ -87,9 +87,12 @@ how the system behaves so you can work with it instead of being surprised by it.
     `gobby-sessions:send_keys` for terminal control. Waits are event-driven: use
     the applicable `wait_for_*` primitive and yield the turn. Reserve sleeps,
     repeated status calls, and repeated `capture_output` for bounded diagnostics.
-    Message text never wakes a session. Set `wake=true` only when immediate processing
-    is intended; it may steer active work, while interrupted, input/approval-waiting,
-    and handoff-waiting sessions keep the durable message queued without daemon input.
+    Message text never wakes a session. Omitting `wake` requests immediate processing
+    for direct `session`, `parent`, and `agent` targets; `project`, `global`, and `build`
+    fanout stays queued without live wakes. Set `wake=true` for immediate processing
+    of a fanout, or `wake=false` to queue any target without a live wake. A wake may
+    steer active work; interrupted, input/approval-waiting, and handoff-waiting
+    sessions keep the durable message queued without daemon input.
     Use one targetless `project` send for repository coordination and `global` for
     machine-local coordination across projects, which includes every daemon restart
     or cutover announcement.

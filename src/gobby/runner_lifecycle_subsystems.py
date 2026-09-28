@@ -255,20 +255,6 @@ async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | No
     )
 
 
-async def _check_tmux_health(tracker: StartupTracker | None) -> None:
-    try:
-        from gobby.agents.tmux import get_tmux_session_manager
-
-        tmux_mgr = get_tmux_session_manager()
-        await tmux_mgr.health_check()
-        if tracker:
-            tracker.complete("tmux healthy")
-    except Exception as e:
-        logger.warning("tmux health check failed on startup: %s", e)
-        if tracker:
-            tracker.error("tmux", str(e))
-
-
 async def _start_terminal_host(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     from gobby.runner_init.services import mark_service_degraded
 
@@ -708,7 +694,6 @@ async def init_subsystems(
         "vector_store", _initialize_vector_store(runner, rebuild_vector_store, tracker)
     )
     await timed_startup_phase("core_services", _start_core_services(runner, tracker))
-    await timed_startup_phase("tmux_health", _check_tmux_health(tracker))
     await timed_startup_phase(
         "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
     )
