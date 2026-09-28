@@ -31,6 +31,8 @@ class TerminalControlMixin:
             self, terminal_id: str, sizing: SizingDecision | None
         ) -> None: ...
 
+        async def _declare_holder_theme(self, attachment_id: str) -> None: ...
+
     async def _handle_terminal_take_control(self, websocket: Any, data: dict[str, Any]) -> None:
         terminal_id = str(data.get("terminal_id") or "")
         attachment_id = str(data.get("attachment_id") or "")
@@ -61,6 +63,8 @@ class TerminalControlMixin:
                 "host_input_granted": result.host_input_granted,
             },
         )
+        if result.granted:
+            await self._declare_holder_theme(attachment_id)
 
     async def _handle_terminal_release_control(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = str(data.get("attachment_id") or "")

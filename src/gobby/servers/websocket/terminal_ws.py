@@ -17,7 +17,7 @@ from gobby.terminals.foreground import (
     shell_cwds,
     shell_pid,
 )
-from gobby.terminals.frame_client import FrameProtocolError
+from gobby.terminals.frame_client import FrameProtocolError, encode_frame
 from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
@@ -413,16 +413,20 @@ class TerminalWsMixin:
     async def _handle_terminal_set_theme(self, websocket: Any, data: dict[str, Any]) -> None:
         """Declare a proxied pane's terminal theme on its host frame stream.
 
-        Only the websocket that owns the attachment may declare for it. The
-        daemon binds its stream to that attachment first, so the host still
-        applies the theme only for the input-grant holder (or an ungranted
-        pane) and an observer's declaration changes nothing.
+        Only the websocket that owns the attachment may declare for it, and
+        only while that attachment holds the writer lease or nobody does. The
+        gterm input grant goes to direct holders alone, so the host treats a
+        proxied holder's pane as ungranted and would apply any stream's
+        theme; this lease check is what keeps an observer from recolouring
+        it. A refused theme is remembered and declared when the attachment
+        takes control (``_declare_holder_theme``).
         """
         attachment_id = data.get("attachment_id")
         record = (
             self._proxy().attachments.get(attachment_id) if isinstance(attachment_id, str) else None
         )
         declare = getattr(getattr(record, "frame", None), "declare_terminal_theme", None)
+        theme = data.get("theme")
         code = None
         if (
             record is None
@@ -433,9 +437,15 @@ class TerminalWsMixin:
             code = "theme_not_relayed"
         else:
             try:
-                await declare(attachment_id, data.get("theme"))
+                encode_frame({"type": "set_terminal_theme", "theme": theme})
             except FrameProtocolError:
                 code = "invalid_terminal_theme"
+            else:
+                record.theme = theme
+                if self._leases().holder(record.terminal_id) in (None, attachment_id):
+                    await declare(attachment_id, theme)
+                else:
+                    code = "theme_not_relayed"
         if code is not None:
             # No attachment_id: gclient routes an attachment's terminal_error
             # as the answer to its pending take/release control request.
@@ -443,6 +453,18 @@ class TerminalWsMixin:
                 websocket,
                 {"type": "terminal_error", "code": code, "terminal_id": data.get("terminal_id")},
             )
+
+    async def _declare_holder_theme(self, attachment_id: str) -> None:
+        """Declare the theme a proxied attachment sent before it took control.
+
+        gclient sends a pane's theme once, so an observer refused while
+        another attachment held the lease would otherwise keep that holder's
+        colours after taking over.
+        """
+        record = self._proxy().attachments.get(attachment_id)
+        declare = getattr(getattr(record, "frame", None), "declare_terminal_theme", None)
+        if record is not None and record.theme is not None and callable(declare):
+            await declare(attachment_id, record.theme)
 
     async def _handle_terminal_set_scroll_offset(
         self, websocket: Any, data: dict[str, Any]

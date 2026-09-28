@@ -1501,3 +1501,53 @@ async def test_a_proxied_theme_is_refused_without_a_theming_native_host(
     # pending take/release control, so the refusal names no attachment.
     assert all("attachment_id" not in m for m in ws.messages_of_type("terminal_error"))
     assert all(frame.themes == [] for frame in harness.frame_list)
+
+
+_OBSERVER_THEME = {
+    "foreground": {"r": 1, "g": 2, "b": 3},
+    "background": {"r": 4, "g": 5, "b": 6},
+}
+
+
+@pytest.mark.asyncio
+async def test_an_observer_theme_waits_until_the_observer_holds_the_lease(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    # A web holder has no gterm input grant, so the host would apply any
+    # stream's theme; the daemon's lease check keeps the holder's colours.
+    harness = _harness(temp_db, sample_project)
+    harness.server.terminal_host_manager = _ThemedHost()
+    row = harness.native_row
+    ws_a = MockWebSocket()
+    ws_b = MockWebSocket()
+    att_a = await _attach(harness, ws_a, row, request_id="a")
+    att_b = await _attach(harness, ws_b, row, request_id="b")
+    frame_a, frame_b = harness.frame_list
+    await _take(harness, ws_a, row, att_a)
+    await _until(lambda: ws_a.messages_of_type("terminal_control_result"))
+
+    await _send(harness.server, ws_a, _set_theme(row, att_a))
+    await _send(harness.server, ws_b, _set_theme(row, att_b, _OBSERVER_THEME))
+    await _send(harness.server, ws_b, _set_theme(row, att_b, {"foreground": {"r": 256}}))
+
+    assert frame_a.themes == [(att_a, _THEME)]
+    assert frame_b.themes == []
+    assert _theme_errors(ws_a) == []
+    assert _theme_errors(ws_b) == ["theme_not_relayed", "invalid_terminal_theme"]
+
+    # gclient sends a pane's theme once, so taking control declares the
+    # theme the observer was refused.
+    await _send(
+        harness.server,
+        ws_b,
+        {
+            "type": "terminal_take_control",
+            "terminal_id": row.id,
+            "attachment_id": att_b,
+            "takeover": True,
+        },
+    )
+    await _until(lambda: frame_b.themes != [])
+
+    assert frame_b.themes == [(att_b, _OBSERVER_THEME)]
+    assert frame_a.themes == [(att_a, _THEME)]
