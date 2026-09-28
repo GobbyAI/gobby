@@ -396,3 +396,67 @@ def test_detached_instance_keeps_runtime_hook_after_reconnect(temp_db: Any, tmp_
     ):
         hooked_args = resolve_runtime_stdio_args(detached.runtime_hook, detached.args)
     assert "--executable-path=/tmp/chrome-bin" in hooked_args
+
+
+def test_bundled_sync_retrofits_playwright_instance_with_chrome_hook(
+    temp_db: Any, tmp_path: Path
+) -> None:
+    from gobby.mcp_proxy.sync_templates import sync_bundled_mcp_templates
+    from gobby.storage.mcp import LocalMCPManager
+    from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+    manager = LocalMCPManager(temp_db)
+    bundled = tmp_path / "bundled"
+    _write_plain(bundled, "playwright")
+    sync_bundled_mcp_templates(temp_db, bundled, tag="gobby")
+    template = manager.get_template("playwright", project_id=GLOBAL_PROJECT_ID)
+    assert template is not None
+    assert template.definition.get("runtime_hook") is None
+
+    # A pre-fix instance row carries the bare template args and no hook.
+    manager.upsert(
+        name="playwright",
+        transport="stdio",
+        command="npx",
+        args=["-y", "@playwright/mcp@latest"],
+        project_id=GLOBAL_PROJECT_ID,
+        template_id=template.id,
+    )
+
+    _write_plain(bundled, "playwright", runtime_hook="chrome_executable_path")
+    result = sync_bundled_mcp_templates(temp_db, bundled, tag="gobby")
+    assert result["errors"] == []
+    assert result["updated"] == 1
+    refreshed_template = manager.get_template("playwright", project_id=GLOBAL_PROJECT_ID)
+    assert refreshed_template is not None
+    assert refreshed_template.definition.get("runtime_hook") == "chrome_executable_path"
+
+    refreshed = manager.refresh_template_instances(
+        lambda template_row, server: {
+            "transport": "stdio",
+            "url": None,
+            "command": "npx",
+            "args": ["-y", "@playwright/mcp@latest"],
+            "env": None,
+            "headers": None,
+            "connect_timeout": 30.0,
+            "runtime_hook": template_row.definition.get("runtime_hook"),
+        }
+    )
+    assert refreshed["errors"] == {}
+    assert refreshed["refreshed"] >= 1
+
+    updated = manager.get_server("playwright", project_id=GLOBAL_PROJECT_ID)
+    assert updated is not None
+    assert updated.runtime_hook == "chrome_executable_path"
+
+    with patch(
+        "gobby.mcp_proxy.bundled.resolve_chrome_devtools_executable_path",
+        return_value="/tmp/bundled-chromium",
+    ):
+        hooked_args = resolve_runtime_stdio_args(updated.runtime_hook, updated.args)
+    assert hooked_args == [
+        "-y",
+        "@playwright/mcp@latest",
+        "--executable-path=/tmp/bundled-chromium",
+    ]

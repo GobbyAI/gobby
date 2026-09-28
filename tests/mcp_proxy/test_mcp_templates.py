@@ -300,7 +300,7 @@ def test_bundled_template_definitions_match_legacy_contracts() -> None:
     playwright = _expand(templates["playwright"], {})
     assert playwright.config.command == "npx"
     assert playwright.config.args == ["-y", "@playwright/mcp@latest"]
-    assert playwright.config.runtime_hook is None
+    assert playwright.config.runtime_hook == "chrome_executable_path"
     assert playwright.template_values == {}
 
     chrome = _expand(templates["chrome-devtools"], {})
