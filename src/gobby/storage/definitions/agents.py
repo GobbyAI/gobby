@@ -85,6 +85,10 @@ def parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
         body = dict(body_json)
     for key in _STEP_BODY_KEYS:
         body.pop(key, None)
+    # Pre-version rows serialized the retired skills map's empty default; a
+    # non-empty map stays so validation surfaces it.
+    if body.get("skills") == {}:
+        del body["skills"]
     return body
 
 
@@ -204,9 +208,7 @@ class AgentDefinitionRow:
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> AgentDefinitionRow:
-        definition = decode_json_object(row["definition_json"]) or {}
-        for key in _STEP_BODY_KEYS:
-            definition.pop(key, None)
+        definition = parent_body(decode_json_object(row["definition_json"]) or {})
         raw_child_id = row["step_workflow_id"] if "step_workflow_id" in row.keys() else None
         step_workflow_id = str(raw_child_id) if raw_child_id is not None else None
         if step_workflow_id is not None:

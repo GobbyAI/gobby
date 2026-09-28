@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -53,7 +54,7 @@ def _make_event_handlers() -> EventHandlers:
 
 def _make_agent_body(
     name: str = "default",
-    variables: dict | None = None,
+    variables: dict[str, Any] | None = None,
 ) -> MagicMock:
     """Create a mock agent body with optional default variables."""
     body = MagicMock()
@@ -66,7 +67,6 @@ def _make_agent_body(
     body.workflows.skills = []
     body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
     body.rules = []
-    body.skills = []
     body.variables = None
     body.blocked_tools = []
     body.blocked_mcp_tools = []
@@ -76,13 +76,17 @@ def _make_agent_body(
     return body
 
 
-def _get_merged_changes(mock_svm: MagicMock) -> dict:
+def _get_merged_changes(mock_svm: MagicMock) -> dict[str, Any]:
     """Extract the changes dict passed to merge_variables."""
     mock_svm.merge_variables.assert_called_once()
-    return mock_svm.merge_variables.call_args[0][1]
+    changes = mock_svm.merge_variables.call_args[0][1]
+    assert isinstance(changes, dict)
+    return changes
 
 
-def _make_hook_event(data: dict | None = None, external_id: str = "external-1") -> HookEvent:
+def _make_hook_event(
+    data: dict[str, Any] | None = None, external_id: str = "external-1"
+) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.SESSION_START,
         session_id=external_id,
@@ -503,7 +507,7 @@ def test_parent_turn_seq_preserved_across_activation(
     assert variables["parent_turn_seq"] == 42
 
 
-def _make_activity_event(data: dict | None = None) -> HookEvent:
+def _make_activity_event(data: dict[str, Any] | None = None) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_AGENT,
         session_id="external-activation",

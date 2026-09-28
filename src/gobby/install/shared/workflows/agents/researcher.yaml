@@ -14,10 +14,6 @@ isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  methodology:
-    - research
-
 prompts:
   persona: |
     Investigate technical questions interactively using primary evidence from the repository and authoritative sources. Report findings, uncertainty, and implications without drifting into implementation workflow.

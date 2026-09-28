@@ -1081,3 +1081,73 @@ def test_memory_recall_helper_not_bundled(definition_db: PostgresHubDatabase) ->
 
     row = _mgr(definition_db).get_by_name("memory-recall-helper")
     assert row is None
+
+
+@pytest.mark.integration
+def test_stored_body_with_empty_skills_map_resolves(
+    tmp_path: Path, definition_db: PostgresHubDatabase
+) -> None:
+    """Pre-change rows carry ``skills: {}``; a non-empty map is surfaced, not dropped."""
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "stored-agent.yaml").write_text(
+        "name: stored-agent\nprompts:\n  agent: Run the assigned task.\n"
+        "workflows:\n  rule_selectors:\n    include: []\n"
+    )
+    with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+        assert sync_bundled_agents(definition_db)["synced"] == 1
+
+    def store_skills(skills: dict[str, list[str]]) -> None:
+        definition_db.execute(
+            """
+            UPDATE agent_definitions
+            SET definition_json = definition_json || jsonb_build_object('skills', %s::jsonb)
+            WHERE name = 'stored-agent'
+            """,
+            (json.dumps(skills),),
+        )
+
+    store_skills({})
+    row = _mgr(definition_db).get_by_name("stored-agent")
+    assert row is not None
+    assert "skills" not in row.definition_json
+    assert _parse_body(row).name == "stored-agent"
+
+    store_skills({"methodology": ["research"]})
+    row = _mgr(definition_db).get_by_name("stored-agent")
+    assert row is not None
+    assert row.definition_json["skills"] == {"methodology": ["research"]}
+    with pytest.raises(ValueError, match="workflows.skill_selectors"):
+        _parse_body(row)
+
+
+@pytest.mark.integration
+def test_sync_refreshes_bundled_row_carrying_retired_skills_map(
+    tmp_path: Path, definition_db: PostgresHubDatabase
+) -> None:
+    """A bundled row stored before the retirement is rewritten by the next sync."""
+    agents_dir = tmp_path / "agents"
+    agents_dir.mkdir()
+    (agents_dir / "stale-agent.yaml").write_text(
+        "name: stale-agent\nprompts:\n  agent: Run the assigned task.\n"
+        "workflows:\n  rule_selectors:\n    include: []\n"
+    )
+    with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+        assert sync_bundled_agents(definition_db)["synced"] == 1
+        definition_db.execute(
+            """
+            UPDATE agent_definitions
+            SET definition_json = definition_json
+                || '{"skills": {"methodology": ["research"]}}'::jsonb
+            WHERE name = 'stale-agent'
+            """
+        )
+
+        result = sync_bundled_agents(definition_db)
+
+    assert result["errors"] == []
+    assert result["updated"] == 1
+    row = _mgr(definition_db).get_by_name("stale-agent")
+    assert row is not None
+    assert "skills" not in row.definition_json
+    assert _parse_body(row).name == "stale-agent"

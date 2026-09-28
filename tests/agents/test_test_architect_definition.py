@@ -41,8 +41,8 @@ def test_architect_loads_test_architecture_methodology() -> None:
     success_hooks = load_skill.get("on_mcp_success", [])
 
     assert agent["name"] == "architect"
-    assert "architecture" in set(agent["skills"]["methodology"])
-    assert "test-architecture" not in set(agent["skills"]["methodology"])
+    assert 'get_skill(name="architecture")' in agent["prompts"]["agent"]
+    assert 'get_skill(name="test-architecture")' not in agent["prompts"]["agent"]
     assert "## Architecture Brief" in agent["prompts"]["agent"]
     assert "## Test Architecture" in agent["prompts"]["agent"]
     assert 'get_skill(name="architecture")' in load_skill["status_message"]
