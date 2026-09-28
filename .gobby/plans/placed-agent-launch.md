@@ -265,8 +265,10 @@ before the agent is placed or rolled back. A launch terminal whose kill fails st
      `project_context_authoritative` boolean in the same resolution that selects the
      agent definition. It is true when the context came from an explicit
      `project_path` or from the resolved parent session, and false for the ambient
-     cwd fallback. It is never inferred from a non-null normalized path. The separate
-     refusal for `parent_session_id == system_session_id()` stays.
+     cwd fallback. It is never inferred from a non-null normalized path. No refusal
+     for `parent_session_id == system_session_id()` exists in `spawn_agent` today
+     (verified on 0.5.0). 1.4 adds it as a separate explicit check for placed spawns
+     only (1.4.8); unplaced spawns keep their current behavior.
 9. **Seat spawn blocks are policy, not code, today.** No bundled rule blocks
    `spawn_agent` by seat. The blocks live in role files, and #22899 /
    `agent-definition-profiles.md` plan their enforcement.

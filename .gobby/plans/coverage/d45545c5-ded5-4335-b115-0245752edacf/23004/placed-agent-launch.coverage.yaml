@@ -1,9 +1,9 @@
 header:
   plan_id: placed-agent-launch
-  plan_hash: d29f8ffabfd4576ddcaaf75a784787fa4bd7d17bfed57ee51eed698822d17240
+  plan_hash: 9adce52f47f1ff20a2e2a4b4f6ed66dc56234c224d7a698d40222c0649dd760f
   root_task_ref: '23004'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-09-28T13:54:20Z'
+  generated_at: '2026-09-28T14:26:59Z'
   task_tree_source: db
   task_tree_source_hash: a841a049a8248482b1d2afed3c27cc0c5038f4ad6b74e88ac0d10a6a0bddaf30
   evidence_summary: []
