@@ -19,6 +19,7 @@ from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
     arm_compact_boundary_waiter,
+    compact_boundary_wait_submitted,
     mark_handoff_compact_continuation_pending,
     notify_compact_boundary,
     register_compact_boundary_waiter,
@@ -48,6 +49,7 @@ MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 ATTEMPT_ID = "a" * 32
 _DELIVERY = "gobby.hooks.terminal_handoff_delivery"
 _COMPACT_DELIVERY = "gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery"
+_RECOVERY = "gobby.hooks.handoff_dispatch_recovery"
 _TERMINAL_CONTEXT = {"parent_pid": 12364, "gobby_session_id": SESSION_ID}
 
 
@@ -260,27 +262,105 @@ def test_dead_compact_dispatch_past_the_in_flight_window_fails_for_reconciliatio
     assert current[HANDOFF_DISPATCH_GATE_VARIABLE]["error_code"] == "compact_unconfirmed"
 
 
-def test_dispatch_killed_mid_compact_is_left_to_its_session_start(
-    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # PreCompact fired before the daemon died; PostCompact has not landed yet.
-    session_manager = _session_manager(hub_db, "claude")
+def _kill_after_precompact(
+    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, source: str, rollout: Path
+) -> SessionManager:
+    """The dispatch typed the compact and PreCompact fired, then the daemon died."""
+    session_manager = _session_manager(hub_db, source, transcript_path=rollout)
     _claim(hub_db)
+    # Marked when the dead dispatch typed the compact, so past its freshness window now.
+    mark_handoff_compact_continuation_pending(
+        hub_db, SESSION_ID, attempt_id=ATTEMPT_ID, now=datetime.now(UTC) - timedelta(hours=1)
+    )
     session_manager.update_session_status(SESSION_ID, "awaiting_handoff")
     _restart_daemon(monkeypatch)
-    loop = MagicMock()
-    loop.is_closed.return_value = False
+    monkeypatch.setattr(f"{_RECOVERY}._COMPACT_BOUNDARY_POLL_SECONDS", 0.01)
+    return session_manager
 
+
+async def _confirm_reclaimed(session_manager: SessionManager, land: Any) -> None:
+    """Sweep the dead claim, land the boundary once its wait is armed, drain the wait."""
     with patch(f"{_DELIVERY}.asyncio.run_coroutine_threadsafe") as submit:
-        assert _sweep(session_manager, loop) == 0
+        assert _sweep(session_manager, asyncio.get_running_loop()) == 1
+    with (
+        patch(f"{_COMPACT_DELIVERY}._send_terminal_compaction_command") as resubmit,
+        patch(f"{_DELIVERY}.shielded_terminal_delivery", side_effect=_run_operation),
+    ):
+        confirm = asyncio.create_task(submit.call_args.args[0])
+        for _ in range(500):
+            if compact_boundary_wait_submitted(SESSION_ID) or confirm.done():
+                break
+            await asyncio.sleep(0.01)
+        if land is not None:
+            land()
+        await asyncio.wait_for(confirm, timeout=5)
+    resubmit.assert_not_called()
 
-    submit.assert_not_called()
-    assert _receipts(hub_db) == 0
-    assert PENDING_HANDOFF_VARIABLE in SessionVariableManager(hub_db).get_variables(SESSION_ID)
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["claude", "codex"])
+async def test_dispatch_killed_after_precompact_confirms_its_boundary_once(
+    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, source: str
+) -> None:
+    rollout = _codex_rollout(tmp_path / "rollout.jsonl")
+    session_manager = _kill_after_precompact(hub_db, monkeypatch, source, rollout)
+
+    def land() -> None:
+        if source == "codex":
+            _append_compacted(rollout)
+        else:
+            notify_compact_boundary(hub_db, SESSION_ID, _TERMINAL_CONTEXT)
+
+    with patch(
+        "gobby.sessions.compact_continuation.schedule_handoff_compact_continuation",
+        return_value=True,
+    ) as continuation:
+        await _confirm_reclaimed(session_manager, land)
+        assert _sweep(session_manager, asyncio.get_running_loop()) == 0
+
+    assert _receipts(hub_db) == 1
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    assert variables[HANDOFF_DISPATCH_GATE_VARIABLE].get("delivery_failed") is not True
+    if source == "codex":
+        # Codex has no compact SessionStart, so the reclaimed wait sends the pull prompt.
+        continuation.assert_called_once()
+        assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
+    else:
+        continuation.assert_not_called()
+    current = session_manager.get(SESSION_ID)
+    assert current is not None
+    # A Claude compact's SessionStart moves the row on; Codex has none, so the wait releases it.
+    assert current.status == ("paused" if source == "codex" else "awaiting_handoff")
     consumed = consume_pending_handoff(hub_db, SESSION_ID)
     assert consumed is not None
-    assert _receipts(hub_db) == 1
     assert consume_pending_handoff(hub_db, SESSION_ID) is None
+    assert _receipts(hub_db) == 1
+
+
+@pytest.mark.asyncio
+async def test_dispatch_killed_after_precompact_fails_when_no_boundary_lands_by_its_deadline(
+    hub_db: HubDatabase, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rollout = _codex_rollout(tmp_path / "rollout.jsonl")
+    session_manager = _kill_after_precompact(hub_db, monkeypatch, "codex", rollout)
+    variables = SessionVariableManager(hub_db)
+    marker = variables.get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
+    # Past the live confirmation deadline, still inside the in-flight window.
+    started = (datetime.now(UTC) - timedelta(minutes=11)).isoformat()
+    variables.merge_variables(
+        SESSION_ID, {PENDING_HANDOFF_VARIABLE: {**marker, "dispatch_started_at": started}}
+    )
+
+    await _confirm_reclaimed(session_manager, None)
+
+    assert _receipts(hub_db) == 0
+    gate = variables.get_variables(SESSION_ID)[HANDOFF_DISPATCH_GATE_VARIABLE]
+    assert gate["delivery_failed"] is True
+    assert gate["error_code"] == "compact_unconfirmed"
+    current = session_manager.get(SESSION_ID)
+    assert current is not None
+    assert current.status == "paused"
+    assert _sweep(session_manager, asyncio.get_running_loop()) == 0
 
 
 @pytest.mark.parametrize("cleared", [False, True])

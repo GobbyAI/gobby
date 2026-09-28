@@ -78,17 +78,17 @@ async def _watch(
         return
     if compacted:
         await asyncio.to_thread(
-            _continue_pending_handoff,
+            continue_pending_handoff,
             db,
             session,
             loop=loop,
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
         )
-    await asyncio.to_thread(_release_awaiting_handoff, db, session_id)
+    await asyncio.to_thread(release_awaiting_handoff, db, session_id)
 
 
-def _continue_pending_handoff(
+def continue_pending_handoff(
     db: HubDatabase,
     session: Any,
     *,
@@ -124,7 +124,7 @@ def _continue_pending_handoff(
     )
 
 
-def _release_awaiting_handoff(db: HubDatabase, session_id: str) -> None:
+def release_awaiting_handoff(db: HubDatabase, session_id: str) -> None:
     manager = SessionManager(db)
     current = manager.get(session_id)
     if current is not None and current.status == "awaiting_handoff":

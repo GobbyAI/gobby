@@ -17,7 +17,10 @@ from gobby.agents.terminal_delivery import (
 )
 from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.handoff_dispatch_recovery import settle_landed_boundary
+from gobby.hooks.handoff_dispatch_recovery import (
+    confirm_reclaimed_compact,
+    settle_landed_boundary,
+)
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
@@ -332,6 +335,7 @@ def _schedule_claimed_delivery(
     if event_loop is None or event_loop.is_closed():
         _compensate_delivery_failure(db, claimed, "daemon event loop is unavailable")
         return False
+    confirm_since: datetime | None = None
     if claimed.reclaimed_dispatch_started_at is not None:
         settled = _settle_dead_dispatch(
             claimed,
@@ -340,8 +344,9 @@ def _schedule_claimed_delivery(
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
         )
-        if settled is not None:
+        if isinstance(settled, bool):
             return settled
+        confirm_since = settled
 
     operation = _settle_delivery(
         claimed,
@@ -349,6 +354,7 @@ def _schedule_claimed_delivery(
         agent_run_manager=agent_run_manager,
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
+        confirm_since=confirm_since,
     )
     try:
         future = asyncio.run_coroutine_threadsafe(operation, event_loop)
@@ -374,8 +380,12 @@ def _settle_dead_dispatch(
     event_loop: asyncio.AbstractEventLoop,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
-) -> bool | None:
-    """Settle a claim a dead process left; ``None`` means dispatch it again."""
+) -> bool | datetime | None:
+    """Settle a claim a dead process left.
+
+    ``None`` means dispatch it again; a datetime means its compact is already
+    running, so only confirm the boundary of the dispatch started then.
+    """
     db = session_manager.db
     session = session_manager.get(claimed.session_id)
     try:
@@ -396,10 +406,10 @@ def _settle_dead_dispatch(
     ):
         return True
     if started_at > utc_now() - timedelta(minutes=HANDOFF_IN_FLIGHT_MINUTES):
-        # PreCompact already moved the row: the compact is running and its
-        # SessionStart consumes the handoff, so typing it again would compact twice.
+        # PreCompact already moved the row: the compact is running, so typing it
+        # again would compact twice.
         if not claimed.clear_session and getattr(session, "status", None) == "awaiting_handoff":
-            return False
+            return started_at
         return None
     _compensate_delivery_failure(
         db,
@@ -456,10 +466,24 @@ async def _settle_delivery(
     agent_run_manager: LocalAgentRunManager,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
+    confirm_since: datetime | None = None,
 ) -> None:
     db = session_manager.db
 
     async def deliver() -> dict[str, Any]:
+        if confirm_since is not None:
+            session = session_manager.get(claimed.session_id)
+            if session is None:
+                return {"compacted": False, "reason": f"Session {claimed.session_id} not found"}
+            return await confirm_reclaimed_compact(
+                db,
+                claimed,
+                session,
+                confirm_since,
+                event_loop=asyncio.get_running_loop(),
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=terminal_runtime_registry,
+            )
         if claimed.clear_session:
             return await deliver_staged_clear_session(
                 claimed.session_id,
