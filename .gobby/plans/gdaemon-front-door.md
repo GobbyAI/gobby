@@ -1232,6 +1232,10 @@ Targets:
 - `tests/runner_init/test_runner_init_storage.py::*` — scope-reason: consumer of `init_storage_and_config`; the dirty-bundled-content case asserts `StartRefusal`
 - `tests/runner_helpers.py::*` — scope-reason: consumer of `init_storage_and_config`; verification only
 - `tests/test_runner_shutdown.py::*` — scope-reason: consumer of `runner.main`; gains the refusal exit status and supervisor-pipe EOF cases
+- `crates/gdaemon/src/lease/mod.rs`
+- `src/gobby/storage/schema_contract.py::*` — scope-reason: adds `SchemaVerifyRefusal` and raises it from `_run_gdaemon`'s missing-binary and nonzero-exit branches
+- `src/gobby/storage/schema_divergence.py::*` — scope-reason: consumer of `SchemaContractError`; the subclass is still caught, verification only
+- `tests/storage/test_schema_contract.py::*` — scope-reason: gains the refusal-versus-transient classification cases
 - `docs/guides/admin-operations.md`
 - `docs/guides/cli-commands.md`
 
@@ -1240,7 +1244,8 @@ ownership of the daemon lifecycle together; any subset leaves two owners of the 
 lock or a launcher that nothing supervises. The start-refusal status and the liveness
 pipe are the supervisor's contract with the backend it spawns: without them the
 supervisor either respawns a refusal forever or leaves an orphan running after its own
-crash, so neither is independently closeable.
+crash, so neither is independently closeable. Releasing the lease on refusal is the same
+supervisor transition, and the verify-failure split decides which exits reach it.
 
 **Cutover restarts with `--full`** (confirmed 2026-09-27 from source): `run_cutover`
 in `src/gobby/cli/cutover.py` promotes the coherent `gcode`/`gdaemon`/`ghook` set
@@ -1283,20 +1288,63 @@ an operator acts, so backoff respawn would only loop and flood the log. This lea
 `StartRefusal(RuntimeError)` beside `bundled_content_refusal` in
 `runner_init/storage.py` (re-exported from `gobby.runner_init`); the two bundled-content
 raise sites raise it, `run_gobby` wraps only its `verify_schema` call's
-`SchemaContractError` in it, and `main` exits with status 78 (`EX_CONFIG`) for it and
+`SchemaVerifyRefusal` in it, and `main` exits with status 78 (`EX_CONFIG`) for it and
 for the worktree refusal. Every other exit keeps status 1 and is a crash. `main` is
 never the service-manager entry after this leaf, so status 78 meets no launchd or
 systemd restart policy. On 78 the supervisor does not respawn; it tees the backend's
 stderr to the log, keeps the last non-empty stderr line as the refusal text, and
 reports the typed 503 with `"backend": {"state": "refused", "refusal": "<text>",
 "target": ...}` (`status` stays `unavailable`, so 1.4's ghook check is unchanged).
-gdaemon stays up holding the lease and the pid claim. In hub mode this blocks a standby
-from taking over while the refusal stands; that is the chosen trade: the schema refusal
-would refuse on every standby against the same database, and the per-machine refusals
-(worktree, dirty bundled content) are operator errors fixed by `gobby restart` on that
-machine. Rejected: releasing the lease on refusal (a standby would promote into the
-same schema refusal, and the refusing machine would lose its place without operator
-action). `gobby start` stops waiting when
+
+**Only a completed verify refuses** (decided 2026-09-28). `_run_gdaemon`
+(`src/gobby/storage/schema_contract.py`) raises `SchemaContractError` for four
+different failures: no installed gdaemon, a launch `OSError`, the 300 s timeout, and a
+nonzero gdaemon exit. The first and last are deterministic until an operator acts; a
+timeout or launch failure can pass on the next attempt, and making it status 78 would
+strand a healthy machine as `refused`. `_run_gdaemon` raises
+`SchemaVerifyRefusal(SchemaContractError)` for the missing binary and the nonzero exit,
+and plain `SchemaContractError` for the timeout and `OSError`; `run_gobby` wraps only
+`SchemaVerifyRefusal`, so the other two stay status 1 and respawn with backoff. The
+subclass keeps every existing `except SchemaContractError` (`daemon_preflight.py`,
+`schema_divergence.py`) unchanged. Residual trade: a gdaemon run that cannot reach
+PostgreSQL also exits nonzero and becomes a refusal. The supervisor's own lease
+connection is alive at that instant, so this needs a failure that hits one connection
+and not the other; the cost is a released lease (below) and one operator `gobby
+restart`.
+
+**A refused gdaemon releases the lease and keeps the pid claim** (decided
+2026-09-28; supersedes the 2026-09-27 hold). The refusals split by what they depend on:
+the worktree and dirty-bundled-content refusals are machine-local by construction,
+and the schema refusal cannot be proven shared, because `gdaemon schema verify` checks
+the live database against the identity compiled into *this machine's* installed
+gdaemon (`verify_database_identity`), so a stale binary set on one machine refuses
+while a current standby would serve. The policy therefore keys on status 78 alone. On
+78 the supervisor releases the lease through the same path intent `stop` uses (the
+advisory lock connection closes, heartbeats stop, and the next acquirer bumps the
+epoch), keeps the pid claim, and stays up in `refused`, a state that never contends for
+the lease again: `refused` is not `standby`, and only process exit leaves it, so there
+is no acquire, spawn, refuse, release loop. The per-machine pid claim never blocks a
+standby on another machine; keeping it stops a service-manager relaunch or a second
+`gobby start` from racing a second gdaemon on this machine, and it is what `gobby stop`
+and `gobby restart --full` use to find the process. When the database is truly
+diverged, every current machine refuses once, releases, and stops contending; the hub
+is down exactly as it would be under a hold, and the machine an operator repairs first
+acquires on its restart without waiting for another refused holder to be restarted.
+Rejected: holding the lease while refused (blocks a healthy standby indefinitely
+behind a machine-local refusal, and gains nothing in the shared case); releasing the
+pid claim and exiting gdaemon (hands the retry to launchd `KeepAlive`/systemd
+`Restart=`, which relaunches into the same refusal); per-class policy (needs a
+shared-versus-local signal the binary-identity check cannot give).
+
+**Operator recovery.** `gobby status` and `gobby start` print `refused` and the
+refusal text, which carries the class's remedy: run from the main checkout (worktree),
+commit or discard bundled content (dirty content), or `gobby install` / `gobby
+cutover` to refresh the installed set and schema (schema verify). After fixing the
+cause on that machine, `gobby restart` there: the backend is not serving, so it takes
+the `--full` form, stops gdaemon through the pid record, and starts a fresh gdaemon
+that contends for the lease and enters `standby` if another machine acquired it
+meanwhile. Each refused machine needs its own restart; a repair elsewhere does not
+clear it. `gobby start` stops waiting when
 public health reports `refused`, prints the refusal, and exits 1 with gdaemon left up;
 `gobby status` prints `refused` and the text. Because the Python admin routes are down
 while the backend is refused or down, `gobby restart` without `--full` reads public
@@ -1376,9 +1424,11 @@ for a healthy daemon or adopts a claim.
 - 5.2.9 - `gobby restart` (both forms) and `gobby cutover` refuse before any stop when `restart_start_refusal` fails, leaving the running daemon untouched, and cutover restarts with `--full`. test: `tests/cli/test_cli_daemon.py::test_restart_backend_only_runs_start_preflight`.
 - 5.2.10 - The supervisor does not respawn after a start-refusal exit (status 78) and reports the typed 503 with `backend.state: refused` and the refusal text, and the spawned backend holds no pid-lock descriptor. test: `crates/gdaemon/tests/lifecycle.rs::start_refusal_is_not_respawned`.
 - 5.2.11 - `gobby stop` reaches the pid-record SIGTERM fallback only after the singleton, protected-run, and handoff admissions pass. test: `tests/cli/test_daemon_handoffs.py::test_stop_fallback_runs_after_admissions`.
-- 5.2.12 - `runner.main` exits 78 for the worktree, dirty-bundled-content, and startup schema refusals and 1 for any other failure. test: `tests/test_runner_shutdown.py::test_start_refusals_exit_78`.
+- 5.2.12 - `runner.main` exits 78 for the worktree, dirty-bundled-content, and startup schema-verify (`SchemaVerifyRefusal`) refusals and 1 for any other failure. test: `tests/test_runner_shutdown.py::test_start_refusals_exit_78`.
 - 5.2.13 - `gobby start` stops waiting when public health reports `backend.state: refused`, prints the refusal text, and exits 1; `gobby restart` without `--full` takes the `--full` form while the backend is not serving. test: `tests/cli/test_cli_daemon.py::test_start_and_restart_handle_refused_backend`.
 - 5.2.14 - The runner requests the shutdown drain with intent `stop` when the supervisor's liveness pipe reaches EOF. test: `tests/test_runner_shutdown.py::test_supervisor_pipe_eof_requests_shutdown`.
+- 5.2.15 - After a start-refusal exit the refused gdaemon releases the lease and keeps its pid claim, a second gdaemon on the same database acquires the lease and starts its backend, and the refused gdaemon stays `refused` without contending when the lock frees again. One test covers every refusal class because the supervisor sees only status 78; 5.2.12 tests the classes. test: `crates/gdaemon/tests/lifecycle.rs::refused_daemon_releases_lease_to_standby`.
+- 5.2.16 - `_run_gdaemon` raises `SchemaVerifyRefusal` for a missing gdaemon and a nonzero exit and plain `SchemaContractError` for a timeout and a launch `OSError`, and `runner.main` exits 1 for the latter two. test: `tests/storage/test_schema_contract.py::test_verify_refusal_versus_transient_failure`.
 
 ### 5.3 Retire the Python lease modules [category: refactor] (depends: 5.2)
 `kind: deliverable`
@@ -1585,6 +1635,19 @@ built and installed binaries:
   the upsert gdaemon performs, following the `tests/code_index/conftest.py` precedent
   (5.1.6); spawning a pinned gdaemon is rejected. New 5.2 consumers:
   `GobbyRunner.create`, `init_storage_and_config`, and their tests.
+- 2026-09-28: PD design review (gobby#14730) of candidate `6d8bf7441e` accepted 4.5 and
+  the liveness pipe and bounced 5.2's start-refusal lease hold, which let a
+  machine-local refusal block a healthy hub standby indefinitely. Revised under #22951
+  by Lane 7 (gobby#14682) against `0.5.0` `4649f87487`: `gdaemon schema verify` checks
+  the database against this machine's compiled identity, so a schema refusal cannot be
+  proven shared and the policy keys on status 78 alone. A refused gdaemon releases the
+  lease, keeps the per-machine pid claim, and stays in a non-contending `refused` state
+  until process exit, with operator recovery written out (5.2.15). New finding: the
+  plan made every `verify_schema` failure a refusal, so a timeout or launch failure
+  would strand a healthy machine; `_run_gdaemon` now raises `SchemaVerifyRefusal` only
+  for a missing binary or a nonzero exit, and the transient failures stay crashes
+  (5.2.16). The 2026-09-27 hold decision is superseded. New 5.2 targets: `lease/mod.rs`,
+  `schema_contract.py`, and `schema_divergence.py`, plus `test_schema_contract.py`.
 
 **Round 1** `kind: enhancement`
 
