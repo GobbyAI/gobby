@@ -658,27 +658,36 @@ class SessionVariableManager:
                 task_times[task_id] = times_for_task
                 variables["task_edited_file_times"] = task_times
                 if normalized_checkout is not None:
-                    raw_checkouts = variables.get("task_edited_file_checkouts") or {}
-                    task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
-                    raw_task_checkouts = task_checkouts.get(task_id, {})
-                    checkouts_for_task = (
-                        raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
+                    # Clean paths leave the live ledger, but close evidence still
+                    # needs their task attribution for later transcript edits.
+                    variables.setdefault(
+                        "task_edited_file_checkouts_history_started_at", time.time()
                     )
-                    stored_for_checkout = checkouts_for_task.get(normalized_checkout, [])
-                    files_for_checkout = (
-                        stored_for_checkout if isinstance(stored_for_checkout, list) else []
-                    )
-                    files_for_checkout = list(
-                        dict.fromkeys(str(file) for file in files_for_checkout if file)
-                    )
-                    files_for_checkout.extend(
-                        path for path in normalized_paths if path not in files_for_checkout
-                    )
-                    checkouts_for_task = dict(checkouts_for_task)
-                    checkouts_for_task[normalized_checkout] = files_for_checkout
-                    task_checkouts = dict(task_checkouts)
-                    task_checkouts[task_id] = checkouts_for_task
-                    variables["task_edited_file_checkouts"] = task_checkouts
+                    for ledger_name in (
+                        "task_edited_file_checkouts",
+                        "task_edited_file_checkouts_history",
+                    ):
+                        raw_checkouts = variables.get(ledger_name) or {}
+                        task_checkouts = raw_checkouts if isinstance(raw_checkouts, dict) else {}
+                        raw_task_checkouts = task_checkouts.get(task_id, {})
+                        checkouts_for_task = (
+                            raw_task_checkouts if isinstance(raw_task_checkouts, dict) else {}
+                        )
+                        stored_for_checkout = checkouts_for_task.get(normalized_checkout, [])
+                        files_for_checkout = (
+                            stored_for_checkout if isinstance(stored_for_checkout, list) else []
+                        )
+                        files_for_checkout = list(
+                            dict.fromkeys(str(file) for file in files_for_checkout if file)
+                        )
+                        files_for_checkout.extend(
+                            path for path in normalized_paths if path not in files_for_checkout
+                        )
+                        checkouts_for_task = dict(checkouts_for_task)
+                        checkouts_for_task[normalized_checkout] = files_for_checkout
+                        task_checkouts = dict(task_checkouts)
+                        task_checkouts[task_id] = checkouts_for_task
+                        variables[ledger_name] = task_checkouts
             return True, True
 
         return self._mutate_variables(session_id, mutate, apply_defaults=True)

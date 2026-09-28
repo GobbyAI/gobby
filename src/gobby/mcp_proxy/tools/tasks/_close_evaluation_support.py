@@ -8,7 +8,7 @@ import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.code_index.storage import CodeIndexStorage
@@ -250,6 +250,8 @@ async def derive_close_transcript_evidence(
             logger.debug("Skipping close evidence for missing linked session %s", session_id)
             continue
         effective_window: str | datetime | None = window_start
+        if session_id != owner_session_id:
+            effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
         task_checkout_paths = task_edited_checkout_paths(variables, task_id)
         other_task_paths = other_task_edited_checkout_paths(variables, task_id)
@@ -266,8 +268,19 @@ async def derive_close_transcript_evidence(
         # A pair attributed to another task cannot identify which transcript edit
         # belongs to this close, even when both task ledgers contain the pair.
         task_checkout_paths -= other_task_paths
-        if session_id != owner_session_id:
-            effective_window = window_start or session.created_at
+        if task_checkout_paths:
+            task_links = await asyncio.to_thread(
+                ctx.session_task_manager.get_session_tasks, session_id
+            )
+            if _has_legacy_other_task_overlap(
+                task_links,
+                task_id,
+                effective_window,
+                variables.get("task_edited_file_checkouts_history_started_at"),
+            ):
+                # Older released edits may lack path history. Independent
+                # validation runs remain admissible with no credited edits.
+                task_checkout_paths = frozenset()
         try:
             session_evidence = await _derive_session_evidence_at_sync_point(
                 session,
@@ -300,6 +313,45 @@ async def derive_close_transcript_evidence(
 
 
 _EVIDENCE_LINK_ACTIONS = frozenset({"claimed", "worked_on"})
+
+
+def _evidence_epoch(value: str | datetime | None) -> float | None:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=UTC)).timestamp()
+    return None
+
+
+def _has_legacy_other_task_overlap(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+    history_started_at: Any,
+) -> bool:
+    """Deny edit credit when another task may predate durable path attribution."""
+    window_epoch = _evidence_epoch(window_start)
+    history_epoch = (
+        float(history_started_at)
+        if isinstance(history_started_at, (int, float)) and not isinstance(history_started_at, bool)
+        else None
+    )
+    for row in task_links:
+        if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
+            continue
+        task = row.get("task")
+        if getattr(task, "id", None) == task_id:
+            continue
+        closed_epoch = _evidence_epoch(getattr(task, "closed_at", None))
+        if window_epoch is not None and closed_epoch is not None and closed_epoch < window_epoch:
+            continue
+        link_epoch = _evidence_epoch(row.get("link_created_at"))
+        if history_epoch is None or link_epoch is None or link_epoch <= history_epoch:
+            return True
+    return False
 
 
 def _linked_session_windows(ctx: RegistryContext, task_id: str) -> dict[str, str | None]:
