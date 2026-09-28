@@ -208,7 +208,14 @@ class MCPClientManager:
         return self._lazy_connector.get_all_states()
 
     async def health_check_all(self) -> dict[str, Any]:
-        return await health.health_check_all(self)
+        server_ids = tuple(self._connections)
+        for server_id in server_ids:
+            self._lazy_connector.start_request(server_id)
+        try:
+            return await health.health_check_all(self)
+        finally:
+            for server_id in server_ids:
+                self._lazy_connector.finish_request(server_id)
 
     def _resolve_secrets_in_config(self, config: MCPServerConfig) -> MCPServerConfig:
         return secrets.resolve_secrets_in_config(self, config, logger)
@@ -245,7 +252,9 @@ class MCPClientManager:
         await connections.disconnect_all(self, logger)
 
     async def ensure_connected(self, server_id: str) -> ClientSession:
-        return await connections.ensure_connected(self, server_id)
+        session = await connections.ensure_connected(self, server_id)
+        self._lazy_connector.mark_used(server_id)
+        return session
 
     async def get_client_session(self, server_id: str) -> ClientSession:
         return await connections.get_client_session(self, server_id)
@@ -258,18 +267,26 @@ class MCPClientManager:
         timeout: float | None = None,
         session_id: str | None = None,
     ) -> Any:
-        return await invocation.call_tool(
-            self,
-            server_id,
-            tool_name,
-            arguments,
-            timeout,
-            session_id,
-            logger,
-        )
+        self._lazy_connector.start_request(server_id)
+        try:
+            return await invocation.call_tool(
+                self,
+                server_id,
+                tool_name,
+                arguments,
+                timeout,
+                session_id,
+                logger,
+            )
+        finally:
+            self._lazy_connector.finish_request(server_id)
 
     async def read_resource(self, server_id: str, uri: str) -> Any:
-        return await invocation.read_resource(self, server_id, uri)
+        self._lazy_connector.start_request(server_id)
+        try:
+            return await invocation.read_resource(self, server_id, uri)
+        finally:
+            self._lazy_connector.finish_request(server_id)
 
     async def list_tools(
         self,
@@ -280,7 +297,11 @@ class MCPClientManager:
         return await tool_inventory.list_tools(self, server_id, logger, project_id=project_id)
 
     async def _list_tools_for_server(self, server_id: str) -> list[dict[str, Any]]:
-        return await tool_inventory.list_tools_for_server(self, server_id, logger)
+        self._lazy_connector.start_request(server_id)
+        try:
+            return await tool_inventory.list_tools_for_server(self, server_id, logger)
+        finally:
+            self._lazy_connector.finish_request(server_id)
 
     async def _retry_list_tools_after_failure(
         self,

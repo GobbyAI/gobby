@@ -297,12 +297,15 @@ fn header_titles_share_the_sidebar_period() {
         let terminal = draw(&ws, chrome, 100, 20);
         cells(&terminal, info.rect.y, info.rect.x, info.rect.right())
     };
-    // Past its own period the header is still parked at its tail, waiting
-    // for the sidebar row; both jump home together.
-    chrome.ticker = (2 * TICKER_PAUSE + own as u64) * TICKER_STEP;
+    // The header rests at its tail, then back at its start while the
+    // sidebar row finishes; both set out again together.
+    chrome.ticker = (2 * TICKER_PAUSE + own as u64 - 1) * TICKER_STEP;
     assert!(header(&chrome).contains(&slice(title.len() - budget..title.len())));
-    chrome.ticker = (2 * TICKER_PAUSE + side as u64) * TICKER_STEP;
+    chrome.ticker = (2 * TICKER_PAUSE + own as u64) * TICKER_STEP;
     assert!(header(&chrome).contains(&slice(0..budget)));
+    let period = (2 * TICKER_PAUSE + side as u64) * TICKER_STEP;
+    chrome.ticker = period + (TICKER_PAUSE + 1) * TICKER_STEP;
+    assert!(header(&chrome).contains(&slice(1..budget + 1)));
 }
 
 #[test]

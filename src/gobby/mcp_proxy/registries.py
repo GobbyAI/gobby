@@ -257,11 +257,8 @@ def setup_internal_registries(
 
         memory_registry = create_memory_registry(
             memory_manager_resolver=memory_manager_resolver,
-            llm_service_resolver=llm_service_resolver,
             memory_backup_manager_resolver=memory_backup_manager_resolver,
             session_manager=session_manager,
-            startup_config=initial_config,
-            config_resolver=config_resolver,
             dream_coordinator_resolver=dream_coordinator_resolver,
             task_manager=task_manager,
         )

@@ -254,7 +254,6 @@ async def derive_close_transcript_evidence(
             effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
         task_checkout_paths = task_edited_checkout_paths(variables, task_id)
-        other_task_paths = other_task_edited_checkout_paths(variables, task_id)
         if (
             not task_checkout_paths
             and session_id == owner_session_id
@@ -265,14 +264,20 @@ async def derive_close_transcript_evidence(
             # the same path later for a different task.
             root = os.path.realpath(repo_path)
             task_checkout_paths = frozenset((root, path) for path in task_edited_files)
-        # A pair attributed to another task cannot identify which transcript edit
-        # belongs to this close, even when both task ledgers contain the pair.
-        task_checkout_paths -= other_task_paths
         if task_checkout_paths:
             task_links = await asyncio.to_thread(
                 ctx.session_task_manager.get_session_tasks, session_id
             )
-            if _has_legacy_other_task_overlap(
+            completed_other_tasks = _closed_before_window_task_ids(
+                task_links, task_id, effective_window
+            )
+            other_task_paths = other_task_edited_checkout_paths(
+                variables, task_id, completed_other_tasks
+            )
+            # A live or overlapping historical pair cannot identify which
+            # transcript edit belongs to this close.
+            task_checkout_paths -= other_task_paths
+            if task_checkout_paths and _has_legacy_other_task_overlap(
                 task_links,
                 task_id,
                 effective_window,
@@ -324,6 +329,37 @@ def _evidence_epoch(value: str | datetime | None) -> float | None:
     if isinstance(value, datetime):
         return (value if value.tzinfo else value.replace(tzinfo=UTC)).timestamp()
     return None
+
+
+def _closed_before_window_task_ids(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+) -> frozenset[str]:
+    """Identify other tasks whose links and closure predate this evidence window."""
+    window_epoch = _evidence_epoch(window_start)
+    if window_epoch is None:
+        return frozenset()
+    completed: set[str] = set()
+    ambiguous: set[str] = set()
+    for row in task_links:
+        if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
+            continue
+        task = row.get("task")
+        other_id = getattr(task, "id", None)
+        if not isinstance(other_id, str) or other_id == task_id:
+            continue
+        closed_epoch = _evidence_epoch(getattr(task, "closed_at", None))
+        link_epoch = _evidence_epoch(row.get("link_created_at"))
+        if (
+            closed_epoch is not None
+            and link_epoch is not None
+            and link_epoch <= closed_epoch < window_epoch
+        ):
+            completed.add(other_id)
+        else:
+            ambiguous.add(other_id)
+    return frozenset(completed - ambiguous)
 
 
 def _has_legacy_other_task_overlap(

@@ -25,7 +25,7 @@ _LW = 18
 # nothing at all: see #22551.
 _MANAGED_BIN_LABELS = ("gcode", "ghook", "gterm", "gclient")
 _CODING_CLI_LABELS = (
-    ("agy", "AGY CLI"),
+    ("agy", "Antigravity CLI"),
     ("claude", "Claude Code"),
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),

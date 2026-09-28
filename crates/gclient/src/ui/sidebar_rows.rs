@@ -505,8 +505,15 @@ pub fn ticker_window(
     }
     let travel = (width - budget) as u64;
     let step = ticker / TICKER_STEP;
+    // One pass per shared period: rest at the start, walk to the end, rest
+    // there, then back to the start while a longer title finishes its pass.
     let period = travel.max(max_travel as u64) + 2 * TICKER_PAUSE;
-    let walked = (step % period).saturating_sub(TICKER_PAUSE).min(travel);
+    let at = step % period;
+    let walked = if at < travel + 2 * TICKER_PAUSE {
+        at.saturating_sub(TICKER_PAUSE).min(travel)
+    } else {
+        0
+    };
     let offset = match direction {
         TitleScrolling::Off | TitleScrolling::Left => walked,
         TitleScrolling::Right => travel - walked,

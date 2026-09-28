@@ -187,14 +187,11 @@ hard-deletes later copies after confirmation (or `--yes`). Preview with
 lessons; it does not transfer project ownership. `invalidate` rebuilds secondary
 indices rather than deleting authoritative hub memories.
 
-Recall telemetry maintenance lives under `gobby memory recall-signals`:
-`backfill-events`, `backfill-labels`, `gate`, `audit-labels`,
-`supersede-legacy-cohort`, `drift`, and `replay-candidate-filter`. Use each
-subcommand's `--help` for required input paths, cohort selectors, and output
-options. Backfills and cohort supersession mutate telemetry. Filter by caller,
-label provenance, and dates when evaluating results; historical automatic recall
-(`memory.recall`) and rule-driven surfacing (`memory.surface`) are separate
-cohorts from explicit agent search.
+The recall-signal stack is retired (#22837): the search sink, shadow judge,
+drift monitor, fitted constants, ship gate, and the `gobby memory recall-signals`
+command group are gone. Search ranks with the configured
+`temporal_decay_half_life_days` and the static graph discount, and no search
+emits telemetry rows or a `recall_request_id`.
 
 ## MCP Tools
 
@@ -229,7 +226,6 @@ for the authoritative signature before calling a tool.
 | `memory_dream_status` | Return status and summary for a memory dream run. |
 | `memory_dream_decisions` | Page proposed and effective actions, outcomes, and historical snapshots by run ID. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
-| `judge_shadow_relevance` | System lifecycle tool for independent turn-end shadow-relevance judging. |
 
 MCP content updates require a fresh rationale. The operator CLI update
 exposes content/tags; HTTP also accepts memory type. Both preserve existing rationale. This is a
@@ -461,7 +457,7 @@ differently at different limits.
 `search_memories` supports an explicit `min_score` threshold. Agents search on
 demand; `surface_memories` is the automated path, called by rules. The tool
 returns
-`memories`, `recall_request_id`, `project_id`, and `diagnostics`; each hit
+`memories`, `project_id`, and `diagnostics`; each hit
 includes its content, rationale, type, provenance, ranking fields, and duplicate
 fold information. Live-corpus raw cosine score bands are p10 `0.62`, p50
 `0.69`, and p90 `0.75`. Compare hits within the returned set and judge their
@@ -567,7 +563,6 @@ sequenceDiagram
     Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
     RuleEngine-->>Agent: post-close review request on turn_end or before set_handoff (when tasks closed)
-    RuleEngine->>Memory: judge_shadow_relevance on turn_end
 ```
 
 The installed `bootstrap-default-agent-core-skills` rule requests memory guidance
@@ -585,7 +580,6 @@ Current bundled memory rules:
 | `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until `gobby:references/memory/overview.md` is loaded or its fetch failed. |
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
-| `judge-shadow-relevance-on-response` | `turn_end` | Judges pending shadow-memory recall candidates in the background. |
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |

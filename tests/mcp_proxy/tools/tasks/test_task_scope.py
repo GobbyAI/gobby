@@ -14,7 +14,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
     TaskScopeEvaluation,
     collect_commit_paths,
     collect_declared_task_targets,
-    collect_surviving_python_tests_async,
+    collect_deleted_commit_paths_async,
     evaluate_task_scope,
     find_targets_not_found,
 )
@@ -355,27 +355,44 @@ def test_collect_commit_paths_includes_root_and_later_commits(tmp_path: Path) ->
     }
 
 
-@pytest.mark.asyncio
-async def test_surviving_python_tests_use_close_worktree_head(tmp_path: Path) -> None:
-    def git(*args: str) -> None:
-        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+async def test_deleted_commit_paths_are_git_deletions_absent_from_head(tmp_path: Path) -> None:
+    def git(*args: str) -> str:
+        result = subprocess.run(
+            ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
+        )
+        return result.stdout.strip()
 
     git("init", "-q")
     git("config", "user.email", "test@example.com")
     git("config", "user.name", "Test User")
-    tests = tmp_path / "tests"
-    tests.mkdir()
-    for name in ("test_deleted.py", "test_surviving.py", "terminal_fakes.py"):
-        (tests / name).write_text("VALUE = 1\n")
-    git("add", "tests")
-    git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "root")
-    (tests / "test_deleted.py").unlink()
-    git("add", "-u")
-    git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete")
+    names = ("test_gone.py", "tests/test_moved.py", "tests/test_readded.py", "tests/test_kept.py")
+    for name in names:
+        path = tmp_path / name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text("def test_it():\n    assert True\n")
+    git("add", *names)
+    git("commit", "-qm", "root")
 
-    surviving = await collect_surviving_python_tests_async(
-        {"tests/test_deleted.py", "tests/test_surviving.py", "tests/terminal_fakes.py"},
-        str(tmp_path),
-    )
+    git("rm", "-q", "test_gone.py", "tests/test_readded.py")
+    git("mv", "tests/test_moved.py", "tests/test_renamed.py")
+    (tmp_path / "tests" / "test_kept.py").write_text("def test_it():\n    assert 1\n")
+    git("commit", "-qam", "delete, rename and modify")
+    delete_sha = git("rev-parse", "HEAD")
 
-    assert surviving == {"tests/test_surviving.py", "tests/terminal_fakes.py"}
+    (tmp_path / "tests" / "test_readded.py").write_text("def test_it():\n    assert True\n")
+    git("add", "tests/test_readded.py")
+    git("commit", "-qm", "readd")
+    readd_sha = git("rev-parse", "HEAD")
+    # Tracked at HEAD but missing from the worktree is not a deletion.
+    (tmp_path / "tests" / "test_readded.py").unlink()
+
+    deleted = await collect_deleted_commit_paths_async((delete_sha, readd_sha), str(tmp_path))
+
+    assert deleted == {"test_gone.py", "tests/test_moved.py"}
+
+
+async def test_deleted_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+
+    with pytest.raises(RuntimeError, match="Cannot inspect changed paths"):
+        await collect_deleted_commit_paths_async(("0" * 40,), str(tmp_path))

@@ -29,10 +29,8 @@ can work without vectors; graph search requires the graph service. Load
 [maintenance](maintenance.md) before changing secondary stores.
 
 Oversized responses are successful offloads: read/search the stored result and
-consume its pages. Keep its `recall_request_id` for diagnostics rather than
-inventing or reusing telemetry IDs. `judge_shadow_relevance` is a lifecycle
-diagnostic, not a replacement for reading and judging search hits yourself.
+consume its pages. Judge search hits by reading their content and rationale.
 
 Guide: [Search](../../../../../../../../docs/guides/memory.md#search).
 
-_Last verified: 2026-09-18_
+_Last verified: 2026-09-27_

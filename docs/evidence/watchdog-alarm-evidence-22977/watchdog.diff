@@ -1,0 +1,126 @@
+--- watchdog.orig.sh	2026-09-27 18:59:45
++++ watchdog.sh	2026-09-27 19:00:31
+@@ -45,6 +45,77 @@
+   perl -e 'alarm shift; exec @ARGV or die "exec $ARGV[0]: $!\n"' "$secs" "$@"
+ }
+
++# Summarize new errors.log lines (stdin) into phone-readable alarm evidence.
++# $1 is the physical new-line count. An event is one log entry (header plus its
++# traceback) that has a traceback, minus known-benign ones, or that mentions a
++# known-bad string. Events group by signature (logger.function and message with
++# UUIDs collapsed); the three most frequent print with count, time range, final
++# exception line, and the distinct session ids they named. Prints nothing when
++# there are no events.
++error_evidence() {
++  awk -v lines="$1" '
++    BEGIN {
++      h = "[0-9a-f]"; h4 = h h h h
++      uuid = h4 h4 "-" h4 "-" h4 "-" h4 "-" h4 h4 h4
++      bad = "pool acquisition failed|DatabaseExecutor is shut down|HostEpochChangedError|spawn_rollback"
++      benign = "search_tool_result - Failed to search stored tool result"
++    }
++    function flush(   t, sig, id, key) {
++      if (hdr == "" && orphan == "") return
++      if (hdr != "" && !((tb && hdr !~ benign) || hit)) { hdr = ""; tb = hit = 0; exc = ""; return }
++      if (hdr != "") {
++        t = substr(hdr, 12, 8)
++        sig = substr(hdr, 21)
++        sub(/^- [A-Z]+ *- /, "", sig)
++      } else {
++        t = "?"; sig = orphan
++      }
++      ids = ""
++      while (match(sig, uuid)) {
++        id = substr(sig, RSTART, RLENGTH)
++        ids = ids " " id
++        sig = substr(sig, 1, RSTART - 1) "<id>" substr(sig, RSTART + RLENGTH)
++      }
++      key = substr(sig, 1, 200)
++      if (!(key in count)) { order[++nsig] = key; first[key] = t; ex[key] = substr(exc, 1, 200) }
++      count[key]++; last[key] = t; events++
++      n = split(ids, idl, " ")
++      for (i = 1; i <= n; i++) {
++        if (!((key, idl[i]) in seen)) {
++          seen[key, idl[i]] = 1; nsess[key]++
++          if (nsess[key] <= 3) sess[key] = sess[key] (nsess[key] > 1 ? ", " : "") idl[i]
++        }
++      }
++      hdr = ""; orphan = ""; tb = hit = 0; exc = ""
++    }
++    /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / {
++      flush(); hdr = $0; if ($0 ~ bad) hit = 1; next
++    }
++    /^Traceback \(most recent call last\)/ { tb = 1; next }
++    {
++      if ($0 ~ bad) { hit = 1; if (hdr == "" && orphan == "") orphan = $0 }
++      if ($0 != "" && $0 !~ /^[ \t]/) exc = $0
++    }
++    END {
++      flush()
++      if (!events) exit
++      printf "ALARM[errors]: %d alarm event%s, %d signature%s, in +%d new errors.log lines\n",
++        events, (events == 1 ? "" : "s"), nsig, (nsig == 1 ? "" : "s"), lines
++      for (r = 1; r <= 3 && r <= nsig; r++) {
++        best = 0
++        for (j = 1; j <= nsig; j++)
++          if (!(j in done) && (best == 0 || count[order[j]] > count[order[best]])) best = j
++        done[best] = 1; k = order[best]
++        span = (first[k] == last[k]) ? first[k] : first[k] "-" last[k]
++        printf "• %dx %s %s\n", count[k], span, k
++        if (ex[k] != "") printf "   exception: %s\n", ex[k]
++        if (nsess[k] > 0)
++          printf "   sessions: %s%s\n", sess[k], (nsess[k] > 3 ? " (+" nsess[k] - 3 " more)" : "")
++      }
++      if (nsig > 3) printf "(+%d more signature%s)\n", nsig - 3, (nsig - 3 == 1 ? "" : "s")
++    }'
++}
++
+ notify() {
+   local msg=$1 short=$2
+   if (cd "$HOME/Projects/gobby" && with_timeout 30 "$gobby" comms send gobby-telegram "$msg") \
+@@ -57,7 +128,7 @@
+ }
+
+ check() {
+-  local load l1 runs builds cur_err base new hits strs cur_vec vbase dvec
++  local load l1 runs builds cur_err base new evidence cur_vec vbase dvec
+   date '+%Y-%m-%d %H:%M:%S'
+   load=$(sysctl -n vm.loadavg | tr -d '{}' | awk '{print $1" "$2" "$3}')
+   echo "load: $load"
+@@ -85,21 +156,8 @@
+   new=$((cur_err - base))
+   echo "errors.log: $cur_err lines (+$new)"
+   if [ "$new" -gt 0 ]; then
+-    # One header per traceback, minus known-benign caller errors.
+-    hits=$(tail -n "$new" "$err" | awk '
+-      /^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] / { hdr = $0; next }
+-      /^Traceback \(most recent call last\)/ {
+-        if (hdr != "" && hdr != seen && hdr !~ /search_tool_result - Failed to search stored tool result/) {
+-          print hdr; seen = hdr
+-        }
+-      }')
+-    strs=$(tail -n "$new" "$err" |
+-      grep -E 'pool acquisition failed|DatabaseExecutor is shut down|HostEpochChangedError|spawn_rollback')
+-    hits=$(printf '%s\n%s\n' "$hits" "$strs" | grep -v '^$' | head -5)
+-    if [ -n "$hits" ]; then
+-      echo "ALARM[errors]: errors.log alarm lines:"
+-      printf '%s\n' "$hits" | cut -c1-240
+-    fi
++    evidence=$(tail -n "$new" "$err" | error_evidence "$new")
++    if [ -n "$evidence" ]; then printf '%s\n' "$evidence"; fi
+   fi
+
+   cur_vec=$(grep -c "transient vector sync failure" "$dlog" 2>/dev/null)
+@@ -129,9 +187,10 @@
+   sig=${sig:-none}
+   now=$(date +%s)
+   if [ "$sig" != none ] && { [ "$sig" != "$last_sig" ] || [ $((now - last_sent)) -ge "$cooldown" ]; }; then
++    # Self-contained for a phone: every line except the per-run listing and the
++    # non-alarm cargo/vector counters; the ALARM lines carry those when they breach.
+     msg="Gobby watchdog ALARM ($(hostname -s)):
+-$(printf '%s\n' "$out" | grep -v -E '^(  |cargo|vector|errors.log:)')
+-Full check: ~/.gobby/watchdog/last.txt"
++$(printf '%s\n' "$out" | grep -v -E '^(  [0-9a-f]{8} |cargo|vector)')"
+     short=$(printf '%s\n' "$out" | grep '^ALARM' | head -3 | paste -sd' ' -)
+     notify "$msg" "$short"
+     last_sent=$now

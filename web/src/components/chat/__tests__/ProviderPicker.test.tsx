@@ -297,7 +297,7 @@ describe("ProviderPicker", () => {
     );
 
     expect(await screen.findByText("Grok Build")).toBeTruthy();
-    expect(screen.queryByText("AGY")).toBeNull();
+    expect(screen.queryByText("Antigravity")).toBeNull();
     expect(screen.queryByText("unavailable")).toBeNull();
     expect(screen.queryByText("No documented machine transport")).toBeNull();
   });

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from typing import cast
+from typing import Literal, cast
 
 import pytest
 
@@ -20,10 +20,100 @@ from gobby.mcp_proxy.tools.workflows._agents import (
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions._shared import DefinitionSource
 from gobby.storage.hub.postgres import PostgresHubDatabase
+from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.session_context import reset_request_principal, set_request_principal
 from tests.fixtures.agent_definitions import make_agent_definition
 
 pytest_plugins = ["tests.storage.definitions.conftest"]
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "create_agent_definition",
+            {"name": "blocked", "definition": {"prompts": {"agent": "Run task."}}},
+        ),
+        ("toggle_agent_definition", {"name": "blocked", "enabled": False}),
+        ("delete_agent_definition", {"name": "blocked", "force": True}),
+        ("update_agent_rules", {"name": "blocked", "add": ["rule"]}),
+        ("update_agent_variables", {"name": "blocked", "set_vars": {"key": "value"}}),
+        ("update_agent_step_workflow", {"name": "blocked", "clear_step_workflow": True}),
+        ("reload_cache", {}),
+    ],
+)
+@pytest.mark.parametrize("rejected_principal", [False, True])
+async def test_agent_token_cannot_mutate_definitions(
+    tool_name: str, arguments: dict[str, object], rejected_principal: bool
+) -> None:
+    async def principal() -> AgentApiTokenClaims | Literal[False]:
+        if rejected_principal:
+            return False
+        return AgentApiTokenClaims(
+            session_id="agent-session",
+            project_id="project",
+            machine_id="machine",
+            iat=1,
+            exp=2,
+        )
+
+    token = set_request_principal(principal)
+    try:
+        registry = create_workflows_registry()
+        result = await registry.call(tool_name, arguments)
+    finally:
+        reset_request_principal(token)
+
+    assert result["success"] is False
+    assert result["error_code"] == "forbidden"
+
+
+async def test_operator_token_can_create_agent_definition(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    async def principal() -> None:
+        return None
+
+    token = set_request_principal(principal)
+    try:
+        registry = create_workflows_registry(db=definition_db)
+        result = await registry.call(
+            "create_agent_definition",
+            {
+                "name": "operator-agent",
+                "definition": {
+                    "provider": "claude",
+                    "prompts": {"agent": "Run task."},
+                    "workflows": {"rule_selectors": {"include": []}},
+                },
+            },
+        )
+    finally:
+        reset_request_principal(token)
+
+    assert result["success"] is True
+    assert AgentDefinitionManager(definition_db).get_by_name("operator-agent") is not None
+
+
+async def test_unseeded_reload_cache_syncs_bundled_agent(
+    definition_db: PostgresHubDatabase, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._import.sync_imported_workflows",
+        lambda *_args, **_kwargs: {"synced": 0, "errors": []},
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.workflows._import._RELOAD_ONLY", frozenset({"agents"})
+    )
+    manager = AgentDefinitionManager(definition_db)
+    assert manager.get_by_name("default") is None
+
+    result = await create_workflows_registry(db=definition_db).call("reload_cache", {})
+
+    assert result["success"] is True
+    assert result["agents_synced"] > 0
+    assert manager.get_by_name("default") is not None
 
 
 def _setup(db: PostgresHubDatabase) -> AgentDefinitionManager:

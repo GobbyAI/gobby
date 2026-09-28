@@ -298,7 +298,3 @@ Staged, compact-only, malformed, imported-without-receipt, and absent handoffs r
 full-transcript/LLM fallback. Missing transcripts may therefore still leave
 `summary_markdown` empty. Rolling digest state, digest watermarks, delta summaries, and
 digest-derived titles do not exist.
-
-Shadow-memory relevance judging runs from its own background `turn_end` rule through
-`gobby-memory:judge_shadow_relevance`; it is independent of archival summaries and
-handoffs.

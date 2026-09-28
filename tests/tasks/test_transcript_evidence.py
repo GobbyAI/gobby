@@ -1971,6 +1971,177 @@ async def test_droid_uses_provider_error_status(tmp_path: Path) -> None:
     assert [(run.outcome, run.exit_code) for run in evidence.validation_runs] == [("success", None)]
 
 
+def _droid_tool_record(
+    *, timestamp: datetime, call_id: str, name: str, tool_input: dict[str, str]
+) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "id": call_id,
+        "timestamp": timestamp.isoformat(),
+        "message": {
+            "role": "assistant",
+            "content": [{"type": "tool_use", "id": call_id, "name": name, "input": tool_input}],
+        },
+    }
+
+
+def _droid_tool_result(
+    *, timestamp: datetime, call_id: str, content: str, is_error: bool = False
+) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "id": f"{call_id}-result",
+        "timestamp": timestamp.isoformat(),
+        "message": {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": call_id,
+                    "is_error": is_error,
+                    "content": content,
+                }
+            ],
+        },
+    }
+
+
+async def test_droid_rotated_epochs_preserve_task_close_gate_evidence(tmp_path: Path) -> None:
+    directory = tmp_path / ".factory" / "sessions" / "encoded-cwd"
+    directory.mkdir(parents=True)
+    oldest = directory / "oldest.jsonl"
+    middle = directory / "middle.jsonl"
+    current = directory / "current.jsonl"
+    sibling = directory / "unrelated.jsonl"
+    test_path = "tests/tasks/test_droid_lineage.py"
+    source_path = "src/gobby/tasks/droid_lineage.py"
+    command = f"GOBBY_TEST_PROTECT=1 uv run pytest {test_path}::test_droid_lineage -q"
+    window_start = BASE_TIME + timedelta(seconds=20)
+
+    _write_jsonl(
+        oldest,
+        [
+            {"type": "session_start", "id": "oldest", "timestamp": BASE_TIME.isoformat()},
+            _droid_tool_record(
+                timestamp=BASE_TIME,
+                call_id="before-claim",
+                name="Bash",
+                tool_input={"command": "uv run pytest tests/tasks/test_before_claim.py -q"},
+            ),
+            _droid_tool_result(
+                timestamp=BASE_TIME + timedelta(seconds=1),
+                call_id="before-claim",
+                content="1 passed",
+            ),
+            _droid_tool_record(
+                timestamp=window_start + timedelta(seconds=1),
+                call_id="test-edit",
+                name="Edit",
+                tool_input={"file_path": str(tmp_path / test_path)},
+            ),
+            _droid_tool_record(
+                timestamp=window_start + timedelta(seconds=2),
+                call_id="red",
+                name="Bash",
+                tool_input={"command": command},
+            ),
+            _droid_tool_result(
+                timestamp=window_start + timedelta(seconds=3),
+                call_id="red",
+                content=(
+                    f"FAILED {test_path}::test_droid_lineage - AssertionError: assert 0 == 1\n"
+                    f"{test_path}:12: in test_droid_lineage\n    assert 0 == 1"
+                ),
+                is_error=True,
+            ),
+        ],
+    )
+    _write_jsonl(
+        middle,
+        [
+            {"type": "session_start", "id": "middle", "parent": "oldest"},
+            _droid_tool_record(
+                timestamp=window_start + timedelta(seconds=4),
+                call_id="source-edit",
+                name="Edit",
+                tool_input={"file_path": str(tmp_path / source_path)},
+            ),
+            _droid_tool_record(
+                timestamp=window_start + timedelta(seconds=5),
+                call_id="green",
+                name="Bash",
+                tool_input={"command": command},
+            ),
+            _droid_tool_result(
+                timestamp=window_start + timedelta(seconds=6),
+                call_id="green",
+                content="1 passed",
+            ),
+        ],
+    )
+    _write_jsonl(
+        current,
+        [
+            {"type": "session_start", "id": "current", "parent": "middle"},
+            _droid_tool_record(
+                timestamp=window_start + timedelta(seconds=7),
+                call_id="current-run",
+                name="Bash",
+                tool_input={"command": command},
+            ),
+            _droid_tool_result(
+                timestamp=window_start + timedelta(seconds=8),
+                call_id="current-run",
+                content="1 passed",
+            ),
+        ],
+    )
+    _write_jsonl(
+        sibling,
+        [
+            {"type": "session_start", "id": "unrelated"},
+            _droid_tool_record(
+                timestamp=window_start + timedelta(seconds=9),
+                call_id="sibling-edit",
+                name="Edit",
+                tool_input={"file_path": str(tmp_path / source_path)},
+            ),
+        ],
+    )
+
+    evidence = await derive_transcript_evidence(
+        _session("droid", current),
+        window_start,
+        default_validation_detection_config(),
+        {test_path, source_path},
+        str(tmp_path),
+    )
+
+    assert evidence.attempted_paths == (str(current), str(oldest), str(middle))
+    assert [(edit.path, edit.tool_name) for edit in evidence.edits] == [
+        (test_path, "Edit"),
+        (source_path, "Edit"),
+    ]
+    assert [(run.command, run.outcome) for run in evidence.validation_runs] == [
+        (command, "failure"),
+        (command, "success"),
+        (command, "success"),
+    ]
+    test_edit, source_edit = evidence.edits
+    red, green, current_run = evidence.validation_runs
+    assert test_edit.order < red.order < source_edit.order < green.order < current_run.order
+    assert evaluate_validation_commands(
+        task_category="code", evidence=evidence, has_attributed_edits=True
+    ).passed
+    acceptance = AcceptanceTest(
+        reference=f"{test_path}::test_droid_lineage",
+        path=test_path,
+        symbol="test_droid_lineage",
+        body="def test_droid_lineage():\n    assert 0 == 1",
+    )
+    assert evaluate_tdd_evidence((acceptance,), evidence).passed
+
+
 @pytest.mark.asyncio
 async def test_grok_uses_terminal_tool_status(tmp_path: Path) -> None:
     transcript = tmp_path / "grok.jsonl"

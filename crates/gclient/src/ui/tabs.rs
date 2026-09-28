@@ -345,7 +345,8 @@ pub fn render_tab_bar<W: WorkspaceView>(
     let tabs = &chrome.tabs().tabs;
     let p = &chrome.palette;
     // A tab takes the most urgent state of the agents on its panes, the
-    // active tab included; an idle tab draws no glyph.
+    // active tab included, and shows only the bell, while one of them needs
+    // you; work and new output stay on the sidebar rows.
     let states: Vec<RowState> = tabs
         .iter()
         .map(|tab| {
@@ -357,7 +358,7 @@ pub fn render_tab_bar<W: WorkspaceView>(
         .collect();
     let glyphs: Vec<Option<(&str, Color)>> = states
         .iter()
-        .map(|&state| (state != RowState::Idle).then(|| state_dot(state, p)))
+        .map(|&state| (state == RowState::Attention).then(|| state_dot(state, p)))
         .collect();
     let attention: Vec<bool> = states
         .iter()
@@ -435,14 +436,15 @@ pub fn render_tab_bar<W: WorkspaceView>(
             continue;
         }
         let active = idx == chrome.active_index();
-        // The active tab opens onto the terminal's own ground below it.
+        // The active tab rises off the bar on the raised surface in every
+        // theme; the host's own ground would read as a hole under System.
         let style = if active {
             Style::default()
                 .fg(p.text)
-                .bg(Color::Reset)
+                .bg(p.surface1)
                 .add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(p.overlay1).bg(p.surface0)
+            Style::default().fg(p.subtext0).bg(p.surface0)
         };
         // A dragged tab lifts off the bar: its own foreground on the bar's
         // surface, reversed, until the release drops it.
@@ -462,6 +464,17 @@ pub fn render_tab_bar<W: WorkspaceView>(
             None => Line::raw(text),
         };
         frame.render_widget(Paragraph::new(line).style(style), rect);
+        // A thin rule in the gap before the next tab tells the two apart.
+        let next_shown = view
+            .tab_hit_areas
+            .get(idx + 1)
+            .is_some_and(|next| next.width > 0 && next.x == rect.right() + 1);
+        if next_shown {
+            frame.render_widget(
+                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.surface0)),
+                Rect::new(rect.right(), rect.y, 1, 1),
+            );
+        }
     }
 
     if view.new_tab_hit_area.width > 0 {

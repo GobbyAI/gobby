@@ -201,9 +201,11 @@ def task_edited_checkout_paths(
 
 
 def other_task_edited_checkout_paths(
-    variables: dict[str, Any], task_id: str
+    variables: dict[str, Any],
+    task_id: str,
+    historical_exempt_task_ids: frozenset[str] = frozenset(),
 ) -> frozenset[tuple[str, str]]:
-    """Return other-task checkout/path pairs, including released edit history."""
+    """Return other-task pairs, retaining live paths for every other task."""
     return frozenset(
         (root, path)
         for ledger_name in (
@@ -212,6 +214,10 @@ def other_task_edited_checkout_paths(
         )
         for other_task_id, checkouts in _task_edited_file_checkouts(variables, ledger_name).items()
         if other_task_id != task_id
+        and not (
+            ledger_name == "task_edited_file_checkouts_history"
+            and other_task_id in historical_exempt_task_ids
+        )
         for root, files in checkouts.items()
         for path in files
     )

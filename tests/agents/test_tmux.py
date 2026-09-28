@@ -1300,7 +1300,7 @@ class TestTmuxOutputReader:
 
         reader.set_output_callback(callback)
 
-        # os is process-wide. Restore these
+        # The reader uses the process-wide os and select modules. Restore these
         # replacements before TemporaryDirectory teardown needs the real os.open.
         with monkeypatch.context() as context:
             context.setattr(os, "open", lambda path, flags: 123)

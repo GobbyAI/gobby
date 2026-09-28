@@ -528,6 +528,54 @@ def test_unrelated_pytest_does_not_cover_a_changed_python_test() -> None:
     assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
 
 
+def _deleted_test_gate(*audit_targets: str) -> CloseGateResult:
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, *audit_targets),
+                _run(2, command="uv run pytest tests/tasks/test_close_checklist.py -q"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/test_runner_recall_drift.py", "tests/tasks/test_close_checklist.py"),
+        deleted_paths=("tests/test_runner_recall_drift.py",),
+    )
+
+
+def test_deleted_test_needs_no_pytest_target() -> None:
+    gate = _deleted_test_gate("tests/", "tests/tasks/test_close_checklist.py")
+
+    assert gate.status == "passed"
+    assert gate.details["pytest_exempt_deleted_paths"] == ["tests/test_runner_recall_drift.py"]
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+def test_deleted_test_still_needs_test_types_audit_coverage() -> None:
+    gate = _deleted_test_gate("tests/tasks/test_close_checklist.py")
+
+    assert gate.status == "failed"
+    assert gate.details["test_types_audit_uncovered_paths"] == ["tests/test_runner_recall_drift.py"]
+
+
+def test_surviving_changed_test_still_needs_a_pytest_target() -> None:
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/"),
+                _run(2, command="uv run pytest tests/other_test.py -q"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/test_runner_recall_drift.py", "tests/tasks/test_close_checklist.py"),
+        deleted_paths=("tests/test_runner_recall_drift.py",),
+    )
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
+
+
 def test_pytest_node_id_covers_the_changed_python_test() -> None:
     gate = evaluate_validation_commands(
         task_category="code",
@@ -565,7 +613,7 @@ def test_pytest_requires_only_surviving_collected_modules() -> None:
         ),
         has_attributed_edits=True,
         changed_paths=changed,
-        surviving_python_test_paths=changed[1:],
+        deleted_paths=(changed[0],),
     )
 
     assert gate.status == "passed", gate.message
@@ -593,7 +641,7 @@ def test_pytest_gap_names_surviving_module_without_stale_audit_blame() -> None:
         ),
         has_attributed_edits=True,
         changed_paths=("tests/tasks/test_deleted.py", survivor),
-        surviving_python_test_paths=(survivor,),
+        deleted_paths=("tests/tasks/test_deleted.py",),
     )
 
     assert gate.status == "failed"
@@ -616,7 +664,6 @@ def test_repo_sandbox_module_pattern_still_requires_pytest_coverage() -> None:
         ),
         has_attributed_edits=True,
         changed_paths=(sandbox,),
-        surviving_python_test_paths=(sandbox,),
     )
 
     assert gate.status == "failed"

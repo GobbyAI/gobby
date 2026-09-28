@@ -58,7 +58,7 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
     collect_commit_paths_async as collect_commit_paths,
 )
 from gobby.mcp_proxy.tools.tasks._task_scope import (
-    collect_surviving_python_tests_async as collect_surviving_python_tests,
+    collect_deleted_commit_paths_async as collect_deleted_commit_paths,
 )
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     evaluate_task_scope_async as evaluate_task_scope,
@@ -74,6 +74,7 @@ from gobby.tasks.acceptance_artifacts import (
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_test_coverage import changed_python_test_paths
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.commits import collect_commit_rename_aliases_async
 from gobby.tasks.criteria_contract import operational_actions_from_command
@@ -522,6 +523,11 @@ async def _evaluate_close(
 
     try:
         committed_paths = await collect_commit_paths(commit_shas, repo_path)
+        deleted_paths = (
+            await collect_deleted_commit_paths(commit_shas, repo_path)
+            if changed_python_test_paths(committed_paths)
+            else set()
+        )
     except RuntimeError as exc:
         return evaluation.fail(
             10,
@@ -530,15 +536,6 @@ async def _evaluate_close(
             f"Cannot determine changed paths for validation requirements: {exc}",
         ).block_remaining()
     validation_paths = evaluation.edited_paths | committed_paths
-    try:
-        surviving_python_tests = await collect_surviving_python_tests(validation_paths, repo_path)
-    except RuntimeError as exc:
-        return evaluation.fail(
-            10,
-            "validation_commands",
-            "validation_paths_unavailable",
-            f"Cannot determine surviving Python tests for validation requirements: {exc}",
-        ).block_remaining()
     transcript = TranscriptEvidence()
     command_gate = replace(
         evaluate_validation_commands(
@@ -546,7 +543,6 @@ async def _evaluate_close(
             evidence=TranscriptEvidence(),
             has_attributed_edits=evaluation.had_attributed_edits,
             changed_paths=validation_paths,
-            surviving_python_test_paths=surviving_python_tests,
         ),
         item=10,
     )
@@ -622,7 +618,7 @@ async def _evaluate_close(
                 has_attributed_edits=evaluation.had_attributed_edits,
                 validation_criteria=task.validation_criteria or "",
                 changed_paths=validation_paths,
-                surviving_python_test_paths=surviving_python_tests,
+                deleted_paths=deleted_paths,
             ),
             item=10,
         )

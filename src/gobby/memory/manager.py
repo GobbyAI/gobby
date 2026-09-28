@@ -17,11 +17,6 @@ from gobby.memory.facade import (
 )
 from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.protocol import MemoryBackendProtocol
-from gobby.memory.recall_constants import resolve_recall_constants
-from gobby.memory.recall_signal_log import (
-    make_injection_outcome_recorder,
-    make_recall_signal_sink,
-)
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.memory.services.indexing import IndexingService
 from gobby.memory.services.keyword import MemoryKeywordSearchService
@@ -101,8 +96,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
 
         self.storage = LocalMemoryManager(db)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
-        # #17200: daemon-global effective recall ranking constants, resolved once.
-        self._recall_constants = resolve_recall_constants(config)
         self._background_tasks: set[asyncio.Task[Any]] = set()
         self._last_vector_store_warning_at = -VECTORSTORE_WARNING_INTERVAL_SECONDS
 
@@ -168,14 +161,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             falkordb_rrf_k=falkordb_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
             run_db=run_db,
-            search_debug_sink=make_recall_signal_sink(
-                config, db, recall_constants=self._recall_constants
-            ),
-            recall_constants=self._recall_constants,
         )
-        # #21011: the search tool records which returned hits reached the agent
-        # (usefulness-label contract §5.1); None while the signal hub is off.
-        self.injection_outcome_recorder = make_injection_outcome_recorder(config, db)
         self._indexing_service = IndexingService(
             storage=self.storage,
             vector_store=vector_store,
@@ -304,16 +290,6 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 cluster_expansion_per_entity=self.config.cluster_expansion_per_entity,
                 cluster_min_cluster_size=self.config.cluster_min_cluster_size,
                 cluster_min_samples=self.config.cluster_min_samples,
-                cooccur_alpha=(
-                    self._recall_constants.cooccur_alpha
-                    if self._recall_constants.source == "fitted"
-                    else None
-                ),
-                cooccur_support_cap=(
-                    self._recall_constants.cooccur_support_cap
-                    if self._recall_constants.source == "fitted"
-                    else None
-                ),
                 active_memory_lookup=_active_memory_lookup,
                 write_fence=self._project_write_fence,
             )

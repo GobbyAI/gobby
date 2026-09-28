@@ -927,7 +927,7 @@ def test_generate_returns_deterministic_unavailable_error(
                 AICapability.TEXT_GENERATE,
                 "agy",
                 adapter_style=AIAdapterStyle.CLI,
-                reason="AGY CLI is not installed.",
+                reason="Antigravity CLI is not installed.",
                 models=("gemini-3.5-flash",),
             )
         ]
@@ -950,7 +950,7 @@ def test_generate_returns_deterministic_unavailable_error(
         "capability": "text_generate",
         "provider": "agy",
         "model": "gemini-3.5-flash",
-        "reason": "AGY CLI is not installed.",
+        "reason": "Antigravity CLI is not installed.",
     }
 
 

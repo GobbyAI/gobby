@@ -60,7 +60,7 @@ _SECRET_FIELD_KEYS = frozenset(
     }
 )
 _PUBLIC_ERROR_FIELDS = ("error", "error_description", "message")
-_NAMED_FAILURE_HEADERS = ("retry-after", "content-type", "server", "cf-ray")
+_NAMED_FAILURE_HEADERS = ("retry-after", "x-retry-after", "content-type", "server", "cf-ray")
 
 
 def _request_credentials(response: httpx2.Response) -> set[str]:
@@ -435,7 +435,8 @@ class PersistentOAuthProvider(OAuthClientProvider):
         schedule_backoff(
             self.persistent_storage.state,
             status=response.status_code,
-            retry_after=response.headers.get("retry-after"),
+            retry_after=response.headers.get("retry-after")
+            or response.headers.get("x-retry-after"),
             now=time.time(),
         )
         await self.persistent_storage.save()

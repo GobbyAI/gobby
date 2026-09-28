@@ -13,9 +13,7 @@ from gobby.config.shell_lexing import parse_shell_command
 from gobby.tasks.close_test_coverage import (
     changed_python_test_paths as _changed_python_test_paths,
 )
-from gobby.tasks.close_test_coverage import (
-    pytest_module_paths as _pytest_module_paths,
-)
+from gobby.tasks.close_test_coverage import pytest_module_paths as _pytest_module_paths
 from gobby.tasks.close_test_coverage import (
     test_types_audit_targets as _test_types_audit_targets,
 )
@@ -133,22 +131,19 @@ def evaluate_validation_commands(
     has_attributed_edits: bool,
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
-    surviving_python_test_paths: Iterable[str] | None = None,
+    deleted_paths: Iterable[str] = (),
 ) -> CloseGateResult:
     """Keep credit decisions separate from observed-run explanations."""
     from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
 
     paths = tuple(changed_paths)
-    surviving = (
-        tuple(surviving_python_test_paths) if surviving_python_test_paths is not None else paths
-    )
     gate = _evaluate_validation_commands(
         task_category=task_category,
         evidence=evidence,
         has_attributed_edits=has_attributed_edits,
         validation_criteria=validation_criteria,
         changed_paths=paths,
-        surviving_python_test_paths=surviving,
+        deleted_paths=deleted_paths,
     )
     changed_tests = _changed_python_test_paths(paths)
 
@@ -248,7 +243,7 @@ def _evaluate_validation_commands(
     has_attributed_edits: bool,
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
-    surviving_python_test_paths: Iterable[str] = (),
+    deleted_paths: Iterable[str] = (),
 ) -> CloseGateResult:
     """Evaluate checklist item 9 from transcript-derived validation commands.
 
@@ -259,11 +254,12 @@ def _evaluate_validation_commands(
     definitive outcome for each validation category wins, so a later clean run cures
     an earlier failure in the same category. ``latest_runs`` records the latest
     definitive run for each distinct core command so the criteria reviewer can treat
-    them as the authoritative account of what ran.
+    them as the authoritative account of what ran. ``deleted_paths`` are tests that a
+    linked commit deleted and HEAD no longer tracks: pytest cannot target them, so only
+    the test type audit still has to cover them.
     """
     category = (task_category or "").strip().casefold()
     changed_python_test_paths = _changed_python_test_paths(changed_paths)
-    pytest_test_paths = _pytest_module_paths(surviving_python_test_paths)
     test_types_audit_required = bool(changed_python_test_paths)
     details = _validation_details(evidence)
 
@@ -458,14 +454,21 @@ def _evaluate_validation_commands(
             details=details,
         )
 
-    if pytest_test_paths:
+    deleted = frozenset(deleted_paths)
+    pytest_required_paths = _pytest_module_paths(
+        path for path in changed_python_test_paths if path not in deleted
+    )
+    details["pytest_exempt_deleted_paths"] = [
+        path for path in changed_python_test_paths if path in deleted
+    ]
+    if pytest_required_paths:
         uncovered_pytest = uncovered_pytest_paths(
             (
                 run.core_command if run.core_command is not None else run.command
                 for run in credited
                 if run.outcome == "success"
             ),
-            pytest_test_paths,
+            pytest_required_paths,
         )
         details["pytest_uncovered_paths"] = list(uncovered_pytest)
         if uncovered_pytest:

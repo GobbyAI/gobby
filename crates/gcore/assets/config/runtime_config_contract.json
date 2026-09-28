@@ -4692,17 +4692,6 @@
     },
     {
       "activation": "live",
-      "default": 5.0,
-      "description": "Seconds of session activity allowed during initialization before the agent is considered initialized.",
-      "key": "tmux.init_activity_grace_seconds",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": 120,
       "description": "Seconds before an uninitialized agent is killed as a provider failure.",
       "key": "tmux.init_timeout_seconds",

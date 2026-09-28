@@ -272,7 +272,11 @@ async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
         (False, False, True, "none"),
         (False, False, False, "overlap"),
         (True, False, False, "overlap"),
+        (True, False, True, "overlap"),
         (False, False, False, "closed_before_window"),
+        (False, False, True, "closed_before_window"),
+        (True, False, True, "closed_before_window"),
+        (True, True, True, "closed_before_window"),
         (False, False, False, "linked_after_history"),
     ],
 )
@@ -428,9 +432,10 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
             owner_used_commit_fallback=not owner_task_ledger,
         )
 
+    history_overlaps = owner_other_task_history and legacy_other_task != "closed_before_window"
     expected_owner_edits = (
         []
-        if owner_other_task_ledger or owner_other_task_history or legacy_other_task == "overlap"
+        if owner_other_task_ledger or history_overlaps or legacy_other_task == "overlap"
         else [(relative_path, start + timedelta(seconds=30), IMPLEMENTER)]
     )
     assert [(edit.path, edit.timestamp, edit.session_id) for edit in evidence.edits] == (
