@@ -523,7 +523,8 @@ def _classify_shell_segment(
         )
 
     if input_paths:
-        base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
+        # Input redirection operands are stdin, never positional arguments.
+        base_metadata = _classify_shell_segment_without_redirection(stdin_parts, cwd)
         if _interpreter_reads_program_from_stdin(stdin_parts):
             base_metadata = _ShellSegmentMetadata(
                 "write",
@@ -532,7 +533,9 @@ def _classify_shell_segment(
                 cwd=cwd,
             )
         base_paths = list(base_metadata.paths)
-        if base_metadata.repo_mutation and not base_paths:
+        if base_metadata.repo_mutation:
+            # A mutating segment only reads its stdin source, so that path
+            # must not widen the mutation scope.
             input_paths = []
         return _ShellSegmentMetadata(
             base_metadata.kind,
@@ -553,7 +556,8 @@ def _classify_shell_segment(
                 stdin_program_interpreter=_stdin_program_interpreter(stdin_parts),
                 cwd=cwd,
             )
-        return _ShellSegmentMetadata("execute")
+        # A heredoc only feeds stdin; the command still writes what it names.
+        return _classify_shell_segment_without_redirection(stdin_parts, cwd)
 
     if _is_neutral_echo_segment(tokens, plain_parts):
         return _ShellSegmentMetadata("execute", neutral_setup=True)

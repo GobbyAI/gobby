@@ -9,6 +9,7 @@ rules:
     when: >
       not skill_loaded('elixir')
       and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_repo_mutation')
       and (
         event.data.get('canonical_write_file_path', '').endswith(('.ex', '.exs', '.eex', '.heex', '.leex', '.sface', '.livemd'))
         or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('mix.exs', 'mix.lock', '.formatter.exs', '.credo.exs', '.dialyzer_ignore.exs', '.iex.exs')

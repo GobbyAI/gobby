@@ -225,6 +225,20 @@ def scan_shell_command(command: str) -> ShellScan:
             index += 1
             continue
 
+        # Arithmetic ``((``/``$((`` and a ``[[`` test are one word, so their
+        # ``<``, ``>``, ``&&`` and ``||`` stay comparisons, never operators.
+        compound_end = _compound_word_end(command, index, word_start=not current and not quoted)
+        if compound_end is not None:
+            begin(index)
+            current.append(command[index:compound_end])
+            index = compound_end
+            continue
+
+        # Bash ends a word at an unquoted ``)``; a redirect target inside
+        # ``$(...)`` or ``( ... )`` must not keep it, or the write is dropped.
+        if char == ")" and current and tokens and is_shell_output_redirection_token(tokens[-1]):
+            flush(index)
+
         operator = _scan_unquoted_shell_operator(command, index)
         if operator:
             flush(index)
@@ -256,6 +270,71 @@ def scan_shell_command(command: str) -> ShellScan:
 
     flush(len(command))
     return ShellScan(tokens, spans, heredocs)
+
+
+def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | None:
+    """Return the end of an arithmetic or ``[[`` compound word starting at ``index``.
+
+    ``$((`` may open anywhere in a word; ``((`` and ``[[ `` only at a word start.
+    Returns None when nothing opens here or the construct never closes, so the
+    caller falls back to ordinary word scanning.
+    """
+    if command.startswith("$((", index):
+        return _balanced_parens_end(command, index + 1)
+    if not word_start:
+        return None
+    if command.startswith("((", index):
+        return _balanced_parens_end(command, index)
+    if command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
+        return _double_bracket_end(command, index + 2)
+    return None
+
+
+def _balanced_parens_end(command: str, index: int) -> int | None:
+    depth = 0
+    quote = ""
+    position = index
+    while position < len(command):
+        char = command[position]
+        if char == "\\" and quote != "'":
+            position += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return position + 1
+        position += 1
+    return None
+
+
+def _double_bracket_end(command: str, index: int) -> int | None:
+    quote = ""
+    position = index
+    while position < len(command):
+        char = command[position]
+        if char == "\\" and quote != "'":
+            position += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif (
+            command.startswith("]]", position)
+            and command[position - 1].isspace()
+            and (position + 2 == len(command) or command[position + 2] in " \t\n;&|)")
+        ):
+            return position + 2
+        position += 1
+    return None
 
 
 def _skip_heredoc_bodies(
