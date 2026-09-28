@@ -8,6 +8,8 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.communications import comms
+from gobby.communications.adapters.telegram_formatting import TELEGRAM_MAX_MESSAGE_LENGTH
+from gobby.communications.redaction import TRUNCATION_MARKER
 
 pytestmark = pytest.mark.unit
 
@@ -112,6 +114,52 @@ def test_send_success(runner: CliRunner, mock_client: MagicMock) -> None:
         method="POST",
         json_data={"channel_name": "my-slack", "content": "Hello world"},
     )
+
+
+def test_send_redact_scrubs_and_bounds_content(runner: CliRunner, mock_client: MagicMock) -> None:
+    """send --redact posts redacted content cut to Telegram's message limit."""
+    mock_client.call_http_api.return_value = _mock_response(status_code=200)
+    message = "ALARM token=abcdefghijklmnopqrstuv\n" + "x" * 5000
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(comms, ["send", "--redact", "gobby-telegram", message])
+
+    assert result.exit_code == 0
+    content = mock_client.call_http_api.call_args.kwargs["json_data"]["content"]
+    assert content.startswith("ALARM token=<redacted>\n")
+    assert "abcdefghijklmnopqrstuv" not in content
+    assert len(content) == TELEGRAM_MAX_MESSAGE_LENGTH
+    assert content.endswith(TRUNCATION_MARKER)
+
+
+def test_send_redact_scrubs_quoted_keys_and_short_values(
+    runner: CliRunner, mock_client: MagicMock
+) -> None:
+    """send --redact scrubs JSON-quoted secrets and short values in log excerpts."""
+    mock_client.call_http_api.return_value = _mock_response(status_code=200)
+    message = 'ALARM body={"password":"hunter2secret"} retry password=secret123'
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(comms, ["send", "--redact", "gobby-telegram", message])
+
+    assert result.exit_code == 0
+    content = mock_client.call_http_api.call_args.kwargs["json_data"]["content"]
+    assert content == 'ALARM body={"password":<redacted>} retry password=<redacted>'
+
+
+def test_send_redact_scrubs_quoted_value_with_escaped_quote(
+    runner: CliRunner, mock_client: MagicMock
+) -> None:
+    """send --redact never leaks the suffix after an escaped quote in a JSON value."""
+    mock_client.call_http_api.return_value = _mock_response(status_code=200)
+    message = 'ALARM body={"password":"ab\\"secretTAIL"} end'
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(comms, ["send", "--redact", "gobby-telegram", message])
+
+    assert result.exit_code == 0
+    content = mock_client.call_http_api.call_args.kwargs["json_data"]["content"]
+    assert content == 'ALARM body={"password":<redacted>} end'
 
 
 def test_send_failure(runner: CliRunner, mock_client: MagicMock) -> None:

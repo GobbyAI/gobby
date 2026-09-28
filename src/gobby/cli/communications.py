@@ -93,9 +93,23 @@ def status_cmd(ctx: click.Context) -> None:
 @comms.command(name="send")
 @click.argument("channel_name")
 @click.argument("message")
+@click.option(
+    "--redact",
+    is_flag=True,
+    help="Scrub secrets and home paths, then cut the message to Telegram's "
+    "message-length limit. For alerts that quote log lines.",
+)
 @click.pass_context
-def send_cmd(ctx: click.Context, channel_name: str, message: str) -> None:
+def send_cmd(ctx: click.Context, channel_name: str, message: str, redact: bool) -> None:
     """Send a message to a specific channel."""
+    if redact:
+        # Deferred: the communications package imports the channel manager.
+        from gobby.communications.adapters.telegram_formatting import (
+            TELEGRAM_MAX_MESSAGE_LENGTH,
+        )
+        from gobby.communications.redaction import redact_and_bound
+
+        message = redact_and_bound(message, TELEGRAM_MAX_MESSAGE_LENGTH)
     client = get_daemon_client(ctx)
 
     try:

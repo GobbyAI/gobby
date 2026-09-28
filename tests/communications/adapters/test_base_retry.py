@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -15,7 +17,7 @@ from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
-from gobby.communications.models import ChannelCapabilities, CommsMessage
+from gobby.communications.models import ChannelCapabilities, ChannelConfig, CommsMessage
 
 pytestmark = pytest.mark.unit
 
@@ -39,13 +41,15 @@ class ConcreteAdapter(BaseChannelAdapter):
     def supports_polling(self) -> bool:
         return False
 
-    async def initialize(self, config, secret_resolver):
+    async def initialize(
+        self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
+    ) -> None:
         pass
 
     async def send_message(self, message: CommsMessage) -> str | None:
         return None
 
-    async def shutdown(self):
+    async def shutdown(self) -> None:
         pass
 
     def capabilities(self) -> ChannelCapabilities:
@@ -53,14 +57,16 @@ class ConcreteAdapter(BaseChannelAdapter):
             threading=False, reactions=False, files=False, markdown=False, max_message_length=1000
         )
 
-    def parse_webhook(self, payload, headers):
+    def parse_webhook(
+        self, payload: dict[str, Any] | bytes, headers: dict[str, str]
+    ) -> list[CommsMessage]:
         return []
 
-    def verify_webhook(self, payload, headers, secret):
+    def verify_webhook(self, payload: bytes, headers: dict[str, str], secret: str) -> bool:
         return False
 
 
-def _make_response(status_code: int, headers: dict | None = None) -> MagicMock:
+def _make_response(status_code: int, headers: dict[str, str] | None = None) -> MagicMock:
     """Create a mock httpx.Response with the given status code."""
     resp = MagicMock(spec=httpx.Response)
     resp.status_code = status_code
@@ -215,3 +221,66 @@ async def test_429_exhausted_retries_raises(
 
     # 429 retries all attempts including the last, then raises
     assert factory.await_count == 2
+
+
+_UNSENT = [
+    httpx.ConnectError(""),
+    httpx.ConnectTimeout(""),
+    httpx.PoolTimeout(""),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", _UNSENT, ids=lambda e: type(e).__name__)
+@patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock)
+async def test_unsent_request_error_reconnects_with_backoff(
+    mock_sleep: AsyncMock, adapter: ConcreteAdapter, error: httpx.TransportError
+) -> None:
+    success = _make_response(200)
+    factory = AsyncMock(side_effect=[error, error, success])
+
+    result = await adapter._retry_request(factory, max_retries=3, backoff_base=1.0)
+
+    assert result is success
+    assert factory.await_count == 3
+    assert [c.args for c in mock_sleep.await_args_list] == [(1.0,), (2.0,)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("error", _UNSENT, ids=lambda e: type(e).__name__)
+@patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock)
+async def test_unsent_request_error_exhausts_retry_budget(
+    mock_sleep: AsyncMock, adapter: ConcreteAdapter, error: httpx.TransportError
+) -> None:
+    factory = AsyncMock(side_effect=error)
+
+    with pytest.raises(type(error)):
+        await adapter._retry_request(factory, max_retries=2)
+
+    assert factory.await_count == 3
+    assert mock_sleep.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        httpx.ReadTimeout(""),
+        httpx.WriteError(""),
+        httpx.RemoteProtocolError(""),
+        httpx.ReadError(""),
+    ],
+    ids=lambda e: type(e).__name__,
+)
+@patch("gobby.communications.adapters.base.asyncio.sleep", new_callable=AsyncMock)
+async def test_possibly_delivered_request_error_is_not_retried(
+    mock_sleep: AsyncMock, adapter: ConcreteAdapter, error: httpx.TransportError
+) -> None:
+    """A request that may have reached the server is never resent: it could post twice."""
+    factory = AsyncMock(side_effect=error)
+
+    with pytest.raises(type(error)):
+        await adapter._retry_request(factory, max_retries=3)
+
+    assert factory.await_count == 1
+    mock_sleep.assert_not_awaited()
