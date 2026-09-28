@@ -67,6 +67,8 @@ async def test_seat_common_injected_once_per_epoch(engine: RuleEngine) -> None:
 
     assert GUIDANCE_HEADING in first
     assert "only when Josh asks" in first
+    assert "Game Goblins jobs are never rerun" in first
+    assert "Give no load numbers unless load is breaching" in first
     assert GUIDANCE_HEADING not in second
 
 
