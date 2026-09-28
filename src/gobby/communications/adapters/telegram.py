@@ -451,7 +451,8 @@ class TelegramAdapter(BaseChannelAdapter):
                         "deleteMessage",
                         {"chat_id": conversation_id, "message_id": stale_message_id},
                     )
-                except (RuntimeError, httpx.HTTPError):
+                except (RuntimeError, httpx.HTTPError) as exc:
+                    logger.warning("Could not delete Telegram chunk %s: %s", stale_message_id, exc)
                     deleted = {}
                 if not deleted.get("ok"):
                     undeleted.append(stale_message_id)
