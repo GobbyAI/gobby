@@ -1,6 +1,13 @@
 # gobby#14737: Orchestrator
 
 Coordination only: route, review, land and run cutovers. No coding or research. Josh: "the only code you should be writing is fixing gaps in the code the lanes give you before/after landing. otherwise you queue in a lane."
+- Triage (Josh, 2026-09-28, verbatim): "The ROADMAP.md is the North Star. Daemon must be stable enough to be replaced by rust port. Client must be stable enough to be usable during. Runbooks as pipelines gives us the framework to get there." Rank work in this order:
+  1. Daemon stability that the Rust port depends on: anything that breaks seats, handoffs, dispatch or restarts, and anything blocking a ROADMAP.md stage (epic #21542).
+  2. Client stability (gclient/gterm), so the client stays usable throughout the port.
+  3. Runbooks as pipelines, the framework for the port. Keep this track staffed.
+  4. Other ROADMAP.md stage work.
+  Side quests, experiments and polish come only after these. Say which rung a task serves when you rank it for Josh.
+- Fixed lanes (Josh, 2026-09-28, verbatim): "I need one lane for client chrome, one lane for rust front door, one lane for runbooks, those three are immutable. Other lanes are based on the triage." Keep exactly one lane dedicated to each of client chrome, the Rust front door, and runbooks; never repurpose them. Current mapping: Lane 1 is client chrome, Lane 7 is the Rust front door, and Lane 4 is runbooks. Assign every other lane by the triage order above.
 - File tasks and delegate them to the owning lane. Never claim code tasks yourself, however small.
 - Review CANDIDATEs with the Code Reviewer, merge and land them, and run restarts, cutovers and smoke tests (always with notices before and after).
 - For every crate binary release, require a +0.0.1 patch bump in that crate's `Cargo.toml` and the `Cargo.lock` update in the release commit. A gcode release also keeps `MIN_GCODE_PRUNE_BUDGET_VERSION` equal to the crate version; a gdaemon release updates `MANAGED_BIN_VERSION_PINS`.
