@@ -94,6 +94,7 @@ async def test_model_config_short_gfm_separator_is_parsed() -> None:
         ("| Model alias | Behavior |", "| Name | Behavior |"),
         ("| Provider | `opus` | `sonnet` |", "| Vendor | `opus` | `sonnet` |"),
         ("| Anthropic API | Opus 5 | Sonnet 5 |", "| Anthropic API | Opus 9 | Sonnet 5 |"),
+        ("| - | - |", "| - |"),
     ],
 )
 async def test_model_config_short_separator_still_fails_closed(old: str, new: str) -> None:

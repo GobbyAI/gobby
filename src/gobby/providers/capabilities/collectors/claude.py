@@ -454,13 +454,12 @@ def _markdown_tables(document: str) -> tuple[_MarkdownTable, ...]:
         if len(block) < 3:
             continue
         rows = tuple(_split_markdown_row(line) for line in block)
+        headers = rows[0]
+        if any(len(row) != len(headers) for row in rows[1:]):
+            continue
         if not _is_separator_row(rows[1]):
             continue
-        headers = rows[0]
-        body = rows[2:]
-        if any(len(row) != len(headers) for row in body):
-            continue
-        tables.append(_MarkdownTable(headers=headers, rows=body))
+        tables.append(_MarkdownTable(headers=headers, rows=rows[2:]))
     return tuple(tables)
 
 
