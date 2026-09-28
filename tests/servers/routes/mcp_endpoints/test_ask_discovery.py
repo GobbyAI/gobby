@@ -13,6 +13,7 @@ from gobby.mcp_proxy.services import server_resolution
 from gobby.servers.routes.dependencies import get_metrics_manager, get_server
 from gobby.servers.routes.mcp.endpoints import ask_policy, discovery, execution, request_context
 from gobby.servers.routes.mcp.tools import create_mcp_router
+from gobby.utils.session_context import reset_request_principal, set_request_principal
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -27,13 +28,23 @@ def _request(body: dict[str, object]) -> MagicMock:
     return request
 
 
-def _context(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        request_context,
-        "_set_context_for_request",
-        AsyncMock(return_value=SimpleNamespace(resolved_session_id=None)),
-    )
-    monkeypatch.setattr(request_context, "_reset_context", Mock())
+def _context(monkeypatch: pytest.MonkeyPatch, *, resolved_session_id: str | None = None) -> None:
+    """Stand in for request seeding, binding an anonymous non-agent caller as production does."""
+
+    async def anonymous_caller() -> None:
+        return None
+
+    async def seed(*_args: object, **_kwargs: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            resolved_session_id=resolved_session_id,
+            principal_token=set_request_principal(anonymous_caller),
+        )
+
+    def reset(tokens: SimpleNamespace) -> None:
+        reset_request_principal(tokens.principal_token)
+
+    monkeypatch.setattr(request_context, "_set_context_for_request", seed)
+    monkeypatch.setattr(request_context, "_reset_context", reset)
     monkeypatch.setattr(execution, "_http_request_scope", lambda *_args: "project")
 
 
@@ -66,13 +77,7 @@ async def test_discovery_authorizes_before_foreign_server_side_effects(
     monkeypatch.setattr(server_resolution, "resolve_server", resolve)
     monkeypatch.setattr(execution, "resolve_server", resolve)
     monkeypatch.setattr(request_context, "request_mcp_scope", lambda *_args: "project")
-    monkeypatch.setattr(execution, "_http_request_scope", lambda *_args: "project")
-    monkeypatch.setattr(
-        request_context,
-        "_set_context_for_request",
-        AsyncMock(return_value=SimpleNamespace(resolved_session_id="caller")),
-    )
-    monkeypatch.setattr(request_context, "_reset_context", Mock())
+    _context(monkeypatch, resolved_session_id="caller")
     allowed = frozenset({("gobby-ask", "query_evidence")}) if restricted else None
     monkeypatch.setattr(ask_policy, "current_ask_allowed_tools", lambda _service: allowed)
     monkeypatch.setattr(discovery, "_current_ask_tools", AsyncMock(return_value=allowed))
