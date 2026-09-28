@@ -574,6 +574,7 @@ async def _evaluate_close(
                 task_edited_files=evaluation.edited_paths,
                 repo_path=repo_path,
                 require_task_link=not evaluation.had_attributed_edits,
+                owner_used_commit_fallback=attribution.used_commit_fallback,
             )
         except (TranscriptEvidenceUnavailable, RemoteSessionOwnershipError) as exc:
             if commands_required and isinstance(exc, RemoteSessionOwnershipError):

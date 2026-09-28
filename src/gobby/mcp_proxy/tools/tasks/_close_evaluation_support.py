@@ -56,6 +56,7 @@ class CloseAttributionSnapshot:
     clean_proof_paths: frozenset[str]
     had_attributed_edits: bool
     claim_started_at: str | None
+    used_commit_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -201,6 +202,7 @@ async def derive_close_transcript_evidence(
     task_edited_files: set[str],
     repo_path: str,
     require_task_link: bool = False,
+    owner_used_commit_fallback: bool = False,
 ) -> TranscriptEvidence:
     """Parse and merge every session transcript that worked the task.
 
@@ -247,9 +249,14 @@ async def derive_close_transcript_evidence(
         effective_window: str | datetime | None = window_start
         variables = ctx.session_var_manager.get_variables(session_id)
         task_checkout_paths = task_edited_checkout_paths(variables, task_id)
-        if not task_checkout_paths:
-            # Commit fallback proves these task files in the checkout being closed.
-            # Transcript edits still need an absolute path or a call-time cwd.
+        if (
+            not task_checkout_paths
+            and session_id == owner_session_id
+            and owner_used_commit_fallback
+        ):
+            # Only the owner's commit-recovery attribution proves these task files
+            # in the closing checkout. A ledger-empty linked session may have edited
+            # the same path later for a different task.
             root = os.path.realpath(repo_path)
             task_checkout_paths = frozenset((root, path) for path in task_edited_files)
         if session_id != owner_session_id:
