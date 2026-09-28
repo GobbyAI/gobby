@@ -121,7 +121,7 @@ class OutboundCommunications:
             message.status = "sent"
         except Exception as e:
             message.status = "failed"
-            message.error = str(e)
+            message.error = str(e) or type(e).__name__
             logger.exception("Failed to send message to %r: %s", channel_name, e)
 
         try:
@@ -205,7 +205,7 @@ class OutboundCommunications:
             logger.error("Adapter %r does not support attachments", channel_name)
         except Exception as e:
             message.status = "failed"
-            message.error = str(e)
+            message.error = str(e) or type(e).__name__
             logger.exception("Failed to send attachment to %r: %s", channel_name, e)
 
         try:
@@ -257,7 +257,7 @@ class OutboundCommunications:
             ) from exc
         except Exception as exc:
             message.status = "failed"
-            message.error = str(exc)
+            message.error = str(exc) or type(exc).__name__
             logger.exception("Failed to send proactive message to %r: %s", channel_name, exc)
 
         try:

@@ -1431,26 +1431,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/communications/adapters/test_base_retry.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 42,
-      "message": "Function is missing a type annotation",
-      "occurrences": 4,
-      "path": "tests/communications/adapters/test_base_retry.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/communications/adapters/test_base_retry.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 63,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 1,
-      "path": "tests/communications/adapters/test_base_retry.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/communications/adapters/test_discord_extra.py::::mypy:assignment",
       "issue_code": "mypy:assignment",
       "line": 14,

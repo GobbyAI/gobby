@@ -602,6 +602,29 @@ async def test_send_message_adapter_failure_marks_failed() -> None:
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_send_message_failure_with_empty_exception_text_names_the_type() -> None:
+    """An exception with empty str() (httpx.ConnectError) still leaves a usable error."""
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter.send_message = AsyncMock(side_effect=httpx.ConnectError(""))
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    msg = await manager.send_message("test-channel", "Hello!")
+
+    stored_message = store.create_message.call_args.args[0]
+    assert msg.status == "failed"
+    assert msg.error == "ConnectError"
+    assert stored_message.error == "ConnectError"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_send_message_rate_limit_timeout_marks_failed() -> None:
     """send_message() marks message failed if rate-limit waiting exceeds its bound."""
     channel = make_channel()

@@ -64,11 +64,16 @@ The CLI surface is:
 
 ```bash
 gobby comms status
-gobby comms send CHANNEL_NAME MESSAGE
+gobby comms send [--redact] CHANNEL_NAME MESSAGE
 gobby comms channels list
 gobby comms channels add CHANNEL_TYPE NAME
 gobby comms channels remove NAME
 ```
+
+Alerts that quote log lines should pass `--redact`. It scrubs secrets, URL
+credentials, and the home-directory path, then cuts the message to Telegram's
+4,096-character limit. Redaction runs before the cut, so a truncated line never
+exposes part of a secret. Without the flag, the message is sent unchanged.
 
 `channels add` prompts for adapter-specific credentials and configuration.
 The optional Slack channel ID, Telegram chat ID, and Discord channel ID are

@@ -2,8 +2,8 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+bd*120
-01 |▀▀┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐▀▀|
-01 : line/panel_bg+d*2 accent/panel_bg*116 line/panel_bg+d*2
+01 |  ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  |
+01 : text/panel_bg+d*2 accent/panel_bg*116 text/panel_bg+d*2
 02 | M│keybinds                                                                                                esc close │  |
 02 : text/surface0+d*1 subtext0/surface0+bd*1 accent/panel_bg*1 text/panel_bg+b*8 text/panel_bg*95 panel_bg/accent+b*11 accent/panel_bg*1 text/surface0+d*2
 03 | ⍾│ press / to filter by command or shortcut                                                                         │─┐|
