@@ -562,12 +562,23 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
                 session("sess-named", "#77", "Assistant", Some("manual")),
                 session("sess-bare-ref", "#78", "alpha#78", Some("manual")),
                 session("sess-auto", "#79", "alpha#79: Codex", Some("provisional")),
+                session("sess-suffix", "#80", "Release #80", Some("manual")),
+                session("sess-other", "#81", "other#81: Handoff", Some("manual")),
+                session("sess-ref", "#82", "#82: Ship", Some("manual")),
             ],
         )]
         .into_iter()
         .collect(),
         ..SidebarRows::default()
     });
+    let ids = [
+        "sess-named",
+        "sess-bare-ref",
+        "sess-auto",
+        "sess-suffix",
+        "sess-other",
+        "sess-ref",
+    ];
     let seat = |id: &str| {
         json!({
             "entry_id": format!("session:{id}"),
@@ -579,11 +590,11 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
-        "entries": [seat("sess-named"), seat("sess-bare-ref"), seat("sess-auto")]
+        "entries": ids.map(seat)
     }));
     ws.select_project("proj-alpha");
     ws.reconcile_subscribe_first().unwrap();
-    for id in ["sess-named", "sess-bare-ref", "sess-auto"] {
+    for id in ids {
         ws.open_terminal(&format!("term-{id}"), "native", "epoch")
             .unwrap();
     }
@@ -609,4 +620,15 @@ fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
         " ○ #79: Codex",
         "an automatic title keeps the provider"
     );
+    assert_eq!(
+        line_one("sess-suffix"),
+        " ○ #80: Release #80",
+        "a ref inside the title is part of the name"
+    );
+    assert_eq!(
+        line_one("sess-other"),
+        " ○ #81: other#81: Handoff",
+        "another project's prefix is not this session's ref"
+    );
+    assert_eq!(line_one("sess-ref"), " ○ #82: Ship");
 }

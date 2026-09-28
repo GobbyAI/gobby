@@ -281,7 +281,14 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
                 .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
             let manual_title = session
-                .and_then(|(_, session)| session.manual_title())
+                .and_then(|(project, session)| {
+                    let name = rows
+                        .projects
+                        .iter()
+                        .find(|row| row.id == project)
+                        .map_or("", |row| row.name.as_str());
+                    session.manual_title(name)
+                })
                 .map(str::to_owned);
             let machine_id = session
                 .and_then(|(_, session)| session.machine_id.clone())
