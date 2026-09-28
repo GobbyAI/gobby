@@ -1496,3 +1496,59 @@ async def test_answer_transitions_are_bound_to_their_attempt(decision: _Decision
     )
     assert other_machine.sweep_in_doubt_answers("another-epoch") == []
     assert [swept.id for swept in answers.sweep_in_doubt_answers("next-epoch")] == [answer.id]
+
+
+@pytest.mark.asyncio
+async def test_retry_reapplies_current_policy_and_blocks_without_a_button(
+    decision: _Decision,
+) -> None:
+    route = await _answer_route(decision, "comms", failed_turns=1)
+    answer = await _click_approve(route)
+    retry = _retry_token(route)
+    # The sender may still click, but the responder no longer serves this chat.
+    route.manager.get_channel.return_value = replace(
+        decision.channel, config_json={"responder": {"enabled": False}}
+    )
+
+    await _press(route, retry, "q-retry")
+
+    blocked = _answer(decision, answer.id)
+    assert (blocked.answer_outcome, blocked.answer_attempt) == ("blocked", 2)
+    assert len(route.host.turns) == 1
+    status = _status_edits(route)[-1]
+    assert "not delivered" in status["text"]
+    assert _markup_data(status) == []
+
+
+@pytest.mark.asyncio
+async def test_transient_ledger_failures_back_off_until_the_answer_is_delivered(
+    decision: _Decision, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = await _answer_route(decision, "comms")
+    route.responder.set_backend(None)
+    answer = await _click_approve(route)
+    calls = {"sweep": 0, "claim": 0}
+    sweep = route.answers.sweep_in_doubt_answers
+    claim = route.answers.claim_answer
+
+    def flaky_sweep(epoch: str) -> list[CommsMessage]:
+        calls["sweep"] += 1
+        if calls["sweep"] == 1:
+            raise ConnectionError("database restarting")
+        return sweep(epoch)
+
+    def flaky_claim(answer_id: str, attempt: int, epoch: str) -> bool:
+        calls["claim"] += 1
+        if calls["claim"] == 1:
+            raise ConnectionError("database restarting")
+        return claim(answer_id, attempt, epoch)
+
+    monkeypatch.setattr(route.answers, "sweep_in_doubt_answers", flaky_sweep)
+    monkeypatch.setattr(route.answers, "claim_answer", flaky_claim)
+    route.responder.set_backend(route.backend)
+
+    await route.responder.recover_decision_answers()
+
+    await _until(lambda: _outcome(decision, answer.id) == "delivered")
+    assert route.host.turns == [(decision.session_id, "approve")]
+    assert calls == {"sweep": 2, "claim": 2}
