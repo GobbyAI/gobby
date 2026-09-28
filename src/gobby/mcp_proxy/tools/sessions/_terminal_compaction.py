@@ -56,7 +56,7 @@ _OBSERVED_INTERRUPT_SETTLE_SECONDS = 12.0
 _INTERRUPT_ATTEMPTS = 3
 _INTERRUPT_POLL_SECONDS = 0.05
 # After submitting the command, poll the pane this long for the CLI rejecting it
-# because its turn is still running; a rejection interrupts again and resubmits.
+# because its turn is still running; a rejected /clear interrupts again and resubmits.
 _COMPACTION_REJECTION_SETTLE_SECONDS = 1.0
 _COMPACTION_REJECTION_POLL_SECONDS = 0.1
 # When a turn_settled observer exists, poll it this long before the first interrupt.
@@ -409,8 +409,9 @@ async def _send_terminal_compaction_command(
     (Ctrl+C on an idle Codex or Grok composer quits or escalates toward quit), so
     the command is submitted directly and the success detail carries
     ``interrupted: False``. Interrupt only on timeout. A CLI that rejects the
-    command because its turn is still running (Grok) is interrupted again and the
-    command resubmitted once before the delivery fails. ``composer_read`` probes
+    command because its turn is still running (Grok) fails a compact command at
+    once, since it may have started; ``/clear`` is interrupted again and resubmitted
+    once before the delivery fails. ``composer_read`` probes
     the composer first: a positive operator draft refuses the whole delivery with
     ``composer_occupied`` before any key is sent, so the operator's draft and the
     live turn are both left alone; the agent retries once the draft is submitted.

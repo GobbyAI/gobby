@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from gobby.events.live_wake import (
     ActivityProbe,
     composer_occupied_result,
+    handoff_delivery_skip,
     normalize_live_wake_result,
     wake_debounced_result,
     wake_failure,
@@ -37,6 +38,7 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -552,7 +554,14 @@ class WakeDispatcher:
                 "skipped": "session_active",
                 "ism_persisted": True,
             }
-        return session, wake_state_failure(session_id, status)
+        state_failure = wake_state_failure(session_id, status)
+        if state_failure is not None:
+            return session, state_failure
+
+        def read_variables() -> dict[str, Any]:
+            return SessionVariableManager(self._session_manager.db).get_variables(session_id)
+
+        return session, handoff_delivery_skip(session_id, await self._run_db(read_variables))
 
     async def _composer_blocks_wake(
         self,

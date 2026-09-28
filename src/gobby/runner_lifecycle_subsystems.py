@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.hooks.background_tasks import create_background_task
+from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
 from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
@@ -24,6 +25,8 @@ from gobby.runner_lifecycle_reconcile import (
 )
 from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -518,6 +521,28 @@ def _record_websocket_startup_result(
         tracker.error("WebSocket server", str(error))
 
 
+async def _resume_dead_handoff_dispatches(runner: GobbyRunner) -> None:
+    """Redeliver staged handoffs whose dispatch died with the previous daemon."""
+    hook_manager = getattr(getattr(runner, "http_server", None), "_hook_manager", None)
+    handlers = getattr(hook_manager, "event_handlers", None)
+    if handlers is None or handlers._session_manager is None:
+        return
+    if handlers._agent_run_manager is None:
+        return
+    try:
+        await asyncio.to_thread(
+            resume_dead_handoff_dispatches,
+            require_machine_id(),
+            session_manager=cast(SessionManager, handlers._session_manager),
+            agent_run_manager=handlers._agent_run_manager,
+            event_loop=asyncio.get_running_loop(),
+            terminal_manager=getattr(handlers, "terminal_manager", None),
+            terminal_runtime_registry=handlers._terminal_runtime_registry,
+        )
+    except Exception:
+        logger.warning("Failed resuming dead handoff dispatches", exc_info=True)
+
+
 def _schedule_workflow_skill_prewarm(runner: GobbyRunner) -> None:
     server = getattr(runner, "http_server", None)
     services = getattr(server, "services", None)
@@ -641,6 +666,7 @@ async def init_subsystems(
             "Reconciled %d restart-stale active session(s)",
             len(paused_sessions),
         )
+    await _resume_dead_handoff_dispatches(runner)
     wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
     if wake_replay_coordinator is not None:
         await timed_startup_phase("wake_replay_open", wake_replay_coordinator.open())

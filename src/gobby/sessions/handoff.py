@@ -66,6 +66,8 @@ _FEEDBACK_SESSION_REF_RE = re.compile(
 )
 _TASK_DISPOSITIONS = frozenset({"filed-task", "fixed"})
 _RUNG_THREE_LABELS = frozenset({"needs-decision", "needs-planning", "clean-window"})
+# Dispatches live in this process; a claim stamped by another process died with it.
+DISPATCH_OWNER = uuid4().hex
 
 
 def build_handoff_continue_prompt() -> str:
@@ -111,6 +113,7 @@ class ClaimedHandoffDelivery:
     attempt_id: str
     handoff_record_id: str
     clear_session: bool
+    reclaimed_dispatch_started_at: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -624,7 +627,10 @@ def staged_handoff_rejection(variables: Mapping[str, Any], attempt_id: str) -> s
         return f"no {PENDING_HANDOFF_VARIABLE} marker"
     if marker.get("attempt_id") != attempt_id:
         return f"{PENDING_HANDOFF_VARIABLE} holds attempt {marker.get('attempt_id')!r}"
-    if marker.get("dispatch_started_at") is not None:
+    if (
+        marker.get("dispatch_started_at") is not None
+        and marker.get("dispatch_owner") == DISPATCH_OWNER
+    ):
         return f"dispatch already started at {marker['dispatch_started_at']}"
     clear_session = marker.get("clear_session")
     if not isinstance(clear_session, bool):
@@ -675,6 +681,7 @@ def claim_staged_handoff_delivery(
         variables[PENDING_HANDOFF_VARIABLE] = {
             **marker,
             "dispatch_started_at": utc_now().isoformat(),
+            "dispatch_owner": DISPATCH_OWNER,
         }
         _store_variables(conn, session_id, variables, exists=True)
     return ClaimedHandoffDelivery(
@@ -682,6 +689,7 @@ def claim_staged_handoff_delivery(
         attempt_id=attempt_id,
         handoff_record_id=marker["handoff_record_id"],
         clear_session=marker["clear_session"],
+        reclaimed_dispatch_started_at=marker.get("dispatch_started_at"),
     )
 
 

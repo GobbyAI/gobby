@@ -43,6 +43,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff import (
+    DISPATCH_OWNER,
     FAILED_HANDOFF_VARIABLE,
     FOUND_WORK_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -351,6 +352,7 @@ def test_unclaimed_completion_is_logged(caplog: pytest.LogCaptureFixture) -> Non
         PENDING_HANDOFF_VARIABLE: {
             "attempt_id": ATTEMPT_ID,
             "dispatch_started_at": "2026-09-03T21:47:00+00:00",
+            "dispatch_owner": DISPATCH_OWNER,
             "clear_session": False,
             "handoff_record_id": "handoff-1",
         },
