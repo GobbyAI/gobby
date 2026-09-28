@@ -191,7 +191,16 @@ The recall-signal stack is retired (#22837): the search sink, shadow judge,
 drift monitor, fitted constants, ship gate, and the `gobby memory recall-signals`
 command group are gone. Search ranks with the configured
 `temporal_decay_half_life_days` and the static graph discount, and no search
-emits telemetry rows or a `recall_request_id`.
+emits telemetry rows or a `recall_request_id`. Its config keys are gone too
+(#22839): `memory.recall_signal_*`, `memory.shadow_relevance_judging`,
+`memory.use_fitted_recall_constants`, `memory.fitted_recall_decision_path`,
+`memory.recall_drift_*`, and the `memory_usefulness` section fail validation when
+named, and daemon startup deletes their persisted `config_store` rows.
+
+The temporal-decay half-life counts from the later of a memory's last update
+and last access. `index_reshow_after_injections` (default 5, minimum 1) is the
+memory-index re-show horizon: the number of index injections in a session
+before an already-shown, unread memory may be listed again (epic #22641).
 
 ## MCP Tools
 
@@ -486,6 +495,7 @@ memory:
   crossref_threshold: 0.3
   crossref_max_links: 5
   access_debounce_seconds: 60
+  index_reshow_after_injections: 5
   temporal_decay_half_life_days: 30.0
   code_link_min_score: 0.82
   kg:

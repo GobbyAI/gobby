@@ -1162,6 +1162,54 @@ def test_tdd_evidence_accepts_rtk_class_dot_failure() -> None:
     assert non_assertion.red_runs == ()
 
 
+def test_tdd_evidence_credits_tb_line_failure_for_sole_selected_node() -> None:
+    started = datetime(2026, 9, 28, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/config/test_persistence.py::test_removed_memory_keys_raise",
+        path="tests/config/test_persistence.py",
+        symbol="test_removed_memory_keys_raise",
+        body="def test_removed_memory_keys_raise(): assert key not in fields",
+    )
+    edits = (
+        _edit("tests/config/test_persistence.py", started, 1),
+        _edit("src/gobby/config/persistence.py", started + timedelta(minutes=2), 3),
+    )
+    green = _run(test, started + timedelta(minutes=3), "success", "1 passed", 4)
+    # pytest --tb=line prints the location without the test symbol (#22839 red).
+    tb_line_failure = (
+        "tests/config/test_persistence.py F\n"
+        "=================================== FAILURES ===================================\n"
+        "E   AssertionError: assert 'recall_signal_hub' not in {...}\n"
+        "/repo/tests/config/test_persistence.py:145: AssertionError: "
+        "assert 'recall_signal_hub' not in {...}\n"
+        "============================== 1 failed in 1.20s ==============================\n"
+    )
+
+    accepted = evaluate_tdd_evidence(
+        (test,),
+        TranscriptEvidence(
+            edits=edits,
+            validation_runs=(
+                _run(test, started + timedelta(minutes=1), "failure", tb_line_failure, 2),
+                green,
+            ),
+        ),
+    )
+
+    assert accepted.passed is True
+    assert accepted.red_runs
+
+    sibling = replace(
+        _run(test, started + timedelta(minutes=1), "failure", tb_line_failure, 2),
+        command=f"pytest {test.reference} tests/config/test_persistence.py::test_other",
+    )
+    ambiguous = evaluate_tdd_evidence(
+        (test,), TranscriptEvidence(edits=edits, validation_runs=(sibling, green))
+    )
+    assert ambiguous.passed is False
+    assert "no attributable failure section" in ambiguous.findings[0]
+
+
 def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> None:
     started = datetime(2026, 9, 26, tzinfo=UTC)
     test = AcceptanceTest(

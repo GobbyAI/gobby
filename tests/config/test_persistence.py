@@ -65,7 +65,6 @@ class TestMemoryConfigDefaults:
         assert config.dream.prompt_path == "memory/dream"
         assert config.dream.schedule_cron == "0 2 * * *"
         assert config.dream.min_action_confidence == 0.72
-        assert config.shadow_relevance_judging is False
         assert "digest_memory_usefulness" not in MemoryConfig.model_fields
 
 
@@ -123,18 +122,29 @@ class TestMemoryConfigValidation:
         with pytest.raises(ValidationError):
             MemoryConfig(crossref_max_links=0)
 
-    def test_shadow_relevance_judging_requires_signal_hub(self) -> None:
-        """Shadow judging cannot start without its durable request source."""
-        from gobby.config.persistence import MemoryConfig
 
-        with pytest.raises(ValidationError, match="recall_signal_hub"):
-            MemoryConfig(shadow_relevance_judging=True)
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("recall_signal_logging", True),
+        ("recall_signal_log_path", "/tmp/recall_signal.jsonl"),
+        ("recall_signal_log_max_mb", 50),
+        ("recall_signal_hub", True),
+        ("shadow_relevance_judging", True),
+        ("use_fitted_recall_constants", True),
+        ("fitted_recall_decision_path", "/tmp/decision.json"),
+        ("recall_drift_monitor_enabled", True),
+        ("recall_drift_interval_hours", 24.0),
+        ("recall_drift_accuracy_drop", 0.05),
+    ],
+)
+def test_removed_memory_keys_raise(key: str, value: object) -> None:
+    """Retired recall-signal stack keys fail loudly instead of being ignored."""
+    from gobby.config.persistence import MemoryConfig
 
-        config = MemoryConfig(
-            shadow_relevance_judging=True,
-            recall_signal_hub=True,
-        )
-        assert config.shadow_relevance_judging is True
+    assert key not in MemoryConfig.model_fields
+    with pytest.raises(ValidationError, match=key):
+        MemoryConfig.model_validate({key: value})
 
 
 class TestMemoryKnowledgeGraphConfig:
@@ -284,7 +294,7 @@ class TestMemoryDreamConfig:
         from gobby.config.persistence import MemoryDreamConfig
 
         with pytest.raises(ValidationError):
-            MemoryDreamConfig(not_a_real_dream_field=1)
+            MemoryDreamConfig.model_validate({"not_a_real_dream_field": 1})
 
 
 # =============================================================================

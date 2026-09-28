@@ -786,13 +786,10 @@ const CONFIG_VALUES = {
     access_debounce_seconds: 2,
     code_link_min_score: 0.5,
     temporal_decay_half_life_days: 30,
-    min_recall_score: 0.2,
     graph_edge_weighting: true,
     materialize_cooccurrence: false,
     graph_edge_decay: true,
     edge_half_life_days: 14,
-    recall_signal_logging: false,
-    recall_signal_log_path: null,
     kg: { profile: "feature_low", candidates: ["claude/haiku"] },
     dream: {
       profile: "feature_mid",

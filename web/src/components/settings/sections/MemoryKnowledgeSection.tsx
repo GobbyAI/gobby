@@ -40,8 +40,6 @@ const MEMORY_PATHS = [
   "memory.materialize_cooccurrence",
   "memory.graph_edge_decay",
   "memory.edge_half_life_days",
-  "memory.recall_signal_logging",
-  "memory.recall_signal_log_path",
   "memory.kg.profile",
   "memory.kg.candidates",
   "memory.dream.profile",
@@ -189,20 +187,6 @@ function MemoryGroup({ fields }: { fields: SettingsSectionFields }) {
         path="memory.edge_half_life_days"
         label="Edge decay half-life (days)"
         ariaLabel="Edge decay half-life (days)"
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="memory.recall_signal_logging"
-        label="Log recall signals"
-        ariaLabel="Log recall signals"
-      />
-      <TextConfigField
-        fields={fields}
-        path="memory.recall_signal_log_path"
-        label="Recall signal log path"
-        ariaLabel="Recall signal log path"
-        placeholder="Default location"
-        nullable
       />
     </Subsection>
   );

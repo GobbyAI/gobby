@@ -1631,16 +1631,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/config/test_persistence.py::::mypy:call-arg",
-      "issue_code": "mypy:call-arg",
-      "line": 287,
-      "message": "Unexpected keyword argument \"not_a_real_dream_field\" for \"MemoryDreamConfig\"",
-      "occurrences": 1,
-      "path": "tests/config/test_persistence.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/config/test_servers.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 295,

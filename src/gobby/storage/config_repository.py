@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import functools
 import json
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
@@ -21,11 +22,14 @@ from gobby.config.registry import (
     RegistrySpec,
     UnknownConfigKeyError,
     config_key_secrecy,
+    is_removed_config_store_key,
 )
 from gobby.config.runtime_contracts import StoredSecretBinding
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase, Row, Transaction
 from gobby.storage.secrets import SecretStore
+
+logger = logging.getLogger(__name__)
 
 MAX_CONFIG_REVISION = (1 << 53) - 1
 
@@ -169,15 +173,20 @@ class ConfigRepository:
         return self._validated_revision(row)
 
     def reconcile_registry(self) -> frozenset[str]:
-        """Repair derived secrecy flags and fail closed on residual keys."""
+        """Delete removed-config rows, repair secrecy flags, and fail closed on residual keys."""
         with self.db.transaction() as transaction:
             revision = self.read_revision(transaction, lock=True)
             rows = transaction.execute(
                 "SELECT key, value, is_secret, revision FROM config_store ORDER BY key FOR UPDATE"
             ).fetchall()
             repaired: set[str] = set()
+            swept: list[str] = []
             for row in rows:
                 key = str(row["key"])
+                if is_removed_config_store_key(key):
+                    transaction.execute("DELETE FROM config_store WHERE key = %s", (key,))
+                    swept.append(key)
+                    continue
                 spec = self._resolve(key)
                 self._validate_row_revision(key, int(row["revision"]), revision)
                 expected = registry_is_secret(spec, key)
@@ -188,6 +197,8 @@ class ConfigRepository:
                     (expected, key),
                 )
                 repaired.add(key)
+            if swept:
+                logger.warning("Deleted stored keys of removed config: %s", ", ".join(swept))
             return frozenset(repaired)
 
     def read_revision(self, transaction: Transaction, *, lock: bool = False) -> int:
