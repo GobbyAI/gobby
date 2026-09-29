@@ -106,6 +106,20 @@ The Python tests cover redaction and the cap:
 
 ## Live proof
 
-This is pending: it needs a natural `ALARM[errors]` after activation that shows
-the document, or the omission line, on Telegram. The earlier inline receipt
-(comms_messages `dedc3eb8`) predates this decision and does not count.
+Observed on 2026-09-29, after the daemon restart (PID 99308) and the swap from
+`7de4c801` to `6cace777`:
+
+- A route check sent nothing: `gobby comms attach gobby-telegram x.sh < /dev/null` returned
+  400 `filename must be a bare .txt or .log name`.
+- At 01:59:40 CT a natural `ALARM[errors]` (+97 lines) sent alert comms_messages
+  `6c390203`. Its text is the counts plus
+  `• 1x 01:54:42 communications.polling._poll_loop - Error polling channel 'gobby-telegram': ReadTimeout (backing off 5s)`,
+  with no traceback, path, or id.
+- It then sent a redacted document, comms_messages `5127611f`, caption
+  `errors.log new lines, redacted`. The window was under 64 KiB, so no omission
+  note was needed.
+- `watchdog.log` shows `Message sent to gobby-telegram` followed by
+  `errors-new.txt attached to gobby-telegram`.
+
+The earlier inline receipt (comms_messages `dedc3eb8`) predates this decision and
+is superseded.
