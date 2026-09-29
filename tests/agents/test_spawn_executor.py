@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import signal
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -3667,7 +3667,22 @@ async def test_retry_generation_fences_the_reaper() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
+def _run_read_failing_once(run: SimpleNamespace) -> Callable[[str], SimpleNamespace]:
+    """Fail cleanup's ownership read once; later reads see the persisted run."""
+    reads = 0
+
+    def get(_run_id: str) -> SimpleNamespace:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise RuntimeError("hub blip")
+        return run
+
+    return get
+
+
+@pytest.mark.parametrize("read_fails", [False, True])
+async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
 
     request = SpawnRequest(
@@ -3712,9 +3727,11 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
     # a None terminal_id, so the run row keeps pointing at the live terminal.
     run_storage = MagicMock()
     run_storage.db = None
-    run_storage.get.return_value = SimpleNamespace(
-        terminal_id=live.id, child_session_id="child-live", pid=None
-    )
+    live_run = SimpleNamespace(terminal_id=live.id, child_session_id="child-live", pid=None)
+    run_storage.get.return_value = live_run
+    if read_fails:
+        # An unread run's ownership is unknown, so it is left alone too.
+        run_storage.get.side_effect = _run_read_failing_once(live_run)
     monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(return_value=True))
     sessions = MagicMock()
     runner = SimpleNamespace(
@@ -3760,11 +3777,16 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
 
 
 @pytest.mark.parametrize(
-    ("failure", "kill_proven"),
-    [("result", True), ("result", False), ("liveness", True)],
+    ("failure", "kill_proven", "read_fails"),
+    [
+        ("result", True, False),
+        ("result", False, False),
+        ("liveness", True, False),
+        ("result", True, True),
+    ],
 )
 async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_terminal(
-    failure: str, kill_proven: bool, monkeypatch: pytest.MonkeyPatch
+    failure: str, kill_proven: bool, read_fails: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
 
@@ -3814,9 +3836,11 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
     run_storage = MagicMock()
     run_storage.db = None
     run_storage.update_runtime.side_effect = RuntimeError("hub unavailable")
-    run_storage.get.return_value = SimpleNamespace(
-        terminal_id=bound.id, child_session_id="child-bound", pid=None
-    )
+    bound_run = SimpleNamespace(terminal_id=bound.id, child_session_id="child-bound", pid=None)
+    run_storage.get.return_value = bound_run
+    if read_fails:
+        # An unread run's ownership is unknown, so only terminal B is cleaned.
+        run_storage.get.side_effect = _run_read_failing_once(bound_run)
     monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(return_value=True))
     sessions = MagicMock()
     handler = SimpleNamespace(cleanup_environment=AsyncMock())

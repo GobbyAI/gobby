@@ -592,7 +592,9 @@ async def spawn_agent_impl(
         and Path(isolation_ctx.cwd).resolve()
         != Path(managed_runtime_profile.scratch_root).resolve()
     ):
-        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
+        await cleanup_created_isolation(
+            handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=reserved_run_id
+        )
         return {
             "success": False,
             "error": "managed runtime cwd does not match immutable scratch root",
@@ -602,7 +604,7 @@ async def spawn_agent_impl(
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=reserved_run_id
             )
             return {"success": False, "error": config_error}
     code_index_mode = code_index_preflight_mode(
@@ -649,7 +651,9 @@ async def spawn_agent_impl(
 
     async def cleanup_unattached_spawn() -> None:
         await run_thread_to_completion(task_spawn_lease.release_unattached)
-        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
+        await cleanup_created_isolation(
+            handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=run_id
+        )
 
     lease_response = await admit_task_spawn(
         task_spawn_lease,
@@ -744,7 +748,7 @@ async def spawn_agent_impl(
         except Exception as exc:
             await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=run_id
             )
             return {
                 "success": False,

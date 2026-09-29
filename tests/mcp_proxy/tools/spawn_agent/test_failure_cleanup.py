@@ -1071,6 +1071,25 @@ async def test_cleanup_steps_are_independent(
     assert _SECRET not in caplog.text
 
 
+@pytest.mark.parametrize("run_id", ["run-9", None])
+async def test_created_isolation_cleanup_failure_logs_phase_run_and_terminal(
+    run_id: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            raise RuntimeError(f"isolation leaked {_SECRET}")
+
+    caplog.set_level(logging.WARNING, logger=_failure_cleanup.__name__)
+    await _failure_cleanup.cleanup_created_isolation(
+        Handler(), SimpleNamespace(), cleanup=True, run_id=run_id
+    )
+
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Spawn cleanup step isolation failed for run {run_id} (terminal None): RuntimeError"
+    ]
+    assert _SECRET not in caplog.text
+
+
 async def test_cleanup_survives_cancellation() -> None:
     ran: list[str] = []
     terminalize_entered = asyncio.Event()

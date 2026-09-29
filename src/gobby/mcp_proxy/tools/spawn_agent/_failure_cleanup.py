@@ -84,7 +84,9 @@ def _forget_spawn_run(run_id: str | None) -> None:
         _RUN_STARTTIMES.pop(run_id, None)
 
 
-def _log_step_failure(phase: str, run_id: str, terminal_id: str | None, exc: BaseException) -> None:
+def _log_step_failure(
+    phase: str, run_id: str | None, terminal_id: str | None, exc: BaseException
+) -> None:
     # Exception text can carry prompt, environment or command-line content.
     logger.warning(
         "Spawn cleanup step %s failed for run %s (terminal %s): %s",
@@ -100,13 +102,18 @@ async def cleanup_created_isolation(
     spawn_config: Any,
     *,
     cleanup: bool,
+    run_id: str | None,
 ) -> None:
+    """Remove isolation created for a spawn that failed before any terminal existed.
+
+    ``run_id`` is ``None`` when the failure precedes run-id allocation.
+    """
     if not cleanup:
         return
     try:
         await handler.cleanup_environment(spawn_config)
     except Exception as exc:
-        logger.warning("Spawn failure isolation cleanup failed: %s", type(exc).__name__)
+        _log_step_failure("isolation", run_id, None, exc)
 
 
 async def cleanup_failed_spawn(
@@ -174,16 +181,21 @@ async def _cleanup_failed_spawn(
     run_storage = getattr(runner, "run_storage", None)
     terminal_manager = getattr(runner, "terminal_manager", None)
     run = None
+    run_unread = False
     if run_storage is not None:
         try:
             run = await asyncio.to_thread(run_storage.get, run_id)
         except Exception as exc:
+            run_unread = True
             _log_step_failure("read_run", run_id, terminal_id, exc)
     bound_terminal_id = _string_attr(run, "terminal_id")
     # A run bound to a terminal other than this attempt's belongs to that other
-    # attempt: failing, terminalizing or unbinding it would kill that attempt. This
-    # attempt still terminates its own terminal, and its isolation waits on that proof.
-    foreign_run = attempt_terminal_known and bound_terminal_id not in {None, terminal_id}
+    # attempt: failing, terminalizing or unbinding it would kill that attempt. An
+    # unread run may be that other attempt's too. This attempt still terminates its
+    # own terminal, and its isolation waits on that proof.
+    foreign_run = attempt_terminal_known and (
+        run_unread or bound_terminal_id not in {None, terminal_id}
+    )
     if foreign_run:
         logger.info(
             "Leaving run %s to the attempt on terminal %s; cleaning only terminal %s",
