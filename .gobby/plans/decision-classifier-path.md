@@ -112,17 +112,27 @@ The plan also sets:
      actually sends, because every consumer runs far beyond Kev's training
      length.
 9. **Failure and cooldown.**
-   - 401, 403 and 422 raise without retry.
-   - 429, 529 and 5xx retry through `retry_async`
-     (`llm/claude_runtime.py:141`), at most twice and within the caller's
-     timeout.
+   - 401, 403, 422 and every other 4xx raise without retry. Every 3xx is a
+     non-retryable `http_status`.
+   - Transport errors and 429, 529 and 5xx retry through `retry_async`
+     (`llm/claude_runtime.py:141`): one attempt plus at most two retries.
+     `asyncio.timeout(timeout_seconds)` bounds the whole call, backoff
+     included. `retry_async` gains an optional caller retry predicate, because
+     its default `is_transient_error` (`:40-53`) would retry a 422.
    - Any final transport failure opens a cooldown of
      `failure_cooldown_seconds` (default 60). During it, calls fail fast with
      `reason="cooldown"` and never dial. This keeps a dead server from charging
      the found-work hook its timeout on every Stop.
-   - One service instance per `(api_base, model)` is cached by
-     `get_decision_service(config)`, the same pattern as
-     `EmbeddingService.from_config`, so the cooldown is shared.
+   - `get_decision_service(config)` keeps one cached service, identified by a
+     fingerprint of every service-affecting field: `api_base`, `model`, a hash
+     of the resolved `api_key`, `timeout_seconds`, `max_input_tokens`, and
+     `failure_cooldown_seconds`. It is replaced whenever the fingerprint
+     changes.
+     - The cache exists only to share cooldown state.
+     - The credential hash is used for identity only and is never logged.
+     - The httpx client opens and closes per call, following the embedding
+       transport pattern. `EmbeddingService.from_config` itself caches
+       nothing.
 10. **Per-consumer policy, typed.** `DecisionsConfig` carries one typed field
     per consumer rather than a free map:
     - `community_label`: `mode`, `min_confidence` (default `0.5`), and
@@ -392,9 +402,14 @@ add one for a single binding.
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
 | `max_input_tokens` | `int` | `8192`, `ge=256` |
 | `failure_cooldown_seconds` | `float` | `60`, `ge=0` |
-| `community_label` | `ChoiceConsumerConfig` | |
-| `tool_rerank` | `RerankConsumerConfig` | |
-| `found_work` | `CascadeConsumerConfig` | |
+| `community_label` | `ChoiceConsumerConfig` | `default_factory` |
+| `tool_rerank` | `RerankConsumerConfig` | `default_factory` |
+| `found_work` | `CascadeConsumerConfig` | `default_factory` |
+
+`AIConfig.decisions = Field(default_factory=DecisionsConfig)`, so an existing
+config loads with the capability unconfigured and every consumer `off`.
+`min_confidence`, `min_probability`, `accept_below`, and `accept_above` each
+carry `Field(ge=0, le=1)`.
 
 The consumer configs:
 - `ChoiceConsumerConfig`: `mode: Literal["off", "shadow", "enforce"] = "off"`,
@@ -467,7 +482,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   message; `localhost`, `127.0.0.1`, and `[::1]` pass. test:
   `tests/config/test_decisions_config.py::test_api_base_must_be_loopback`.
 - 1.1.2 - `model` is required with `api_base`, `enforce` requires
-  `evaluated_model`, and `accept_below < accept_above`. test:
+  `evaluated_model`, `accept_below < accept_above`, every threshold outside
+  [0,1] is rejected, and an empty `AIConfig` loads with every consumer `off`.
+  test:
   `tests/config/test_decisions_config.py::test_decisions_config_invariants`.
 - 1.1.3 - The five `code_index.community_label.decisions_*` keys no longer
   exist on the model. symbol:
@@ -483,6 +500,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 Targets:
 - `src/gobby/ai/decisions.py`
+- `src/gobby/llm/claude_runtime.py::retry_async`
+- `tests/llm/test_llm_claude.py::TestRetryAsync`
 - `tests/ai/test_decisions_service.py`
 - `tests/ai/fixtures/systemone_choice_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
@@ -519,21 +538,34 @@ Module contents:
 - `ChoiceQuestion`, `ChoiceAnswer`.
 - `DecisionsUnavailable(reason: Literal["unconfigured", "cooldown",
   "oversize", "timeout", "http_status", "parse"], detail: str)`.
-- `DecisionService`, holding the config, one `httpx.AsyncClient`, and a
-  cooldown deadline. Its method is `async choose(consumer: str, state:
+- `DecisionService`, holding the config and a cooldown deadline. Each call
+  opens its own `httpx.AsyncClient`. Its method is `async choose(consumer: str, state:
   Mapping[str, Any], questions: Mapping[str, ChoiceQuestion]) -> dict[str,
   ChoiceAnswer]`.
 - `estimate_tokens(body) -> int`, computed as `len(json.dumps(body)) // 4`.
-- `get_decision_service(config: DecisionsConfig) -> DecisionService`, a
-  module-level cache keyed by `(api_base, model, api_key is not None)`, which
-  is rebuilt when the key changes.
+- `get_decision_service(config: DecisionsConfig) -> DecisionService`, which
+  returns the one cached service while the Decision 9 fingerprint is
+  unchanged, and replaces it when the fingerprint changes.
 
 Transport, per Decisions 8 and 9:
 - the oversize check runs before sending;
+- the client is `httpx.AsyncClient(trust_env=False,
+  follow_redirects=False)`, so proxy environment variables and redirects can
+  never carry a request off the loopback host. This follows the local-daemon
+  hardening in `utils/daemon_client.py:396-466`. There is no config knob to
+  change it;
 - `Authorization: Bearer` is sent only when `api_key` is set;
-- 401, 403 and 422 raise `http_status` without retry;
-- 429, 529 and 5xx retry through `retry_async` at most twice, inside
-  `timeout_seconds` overall;
+- every 3xx and every 4xx except 429 raise `http_status` without retry;
+- transport errors and 429, 529 and 5xx retry through `retry_async` with the
+  caller predicate: one attempt plus at most two retries, and
+  `asyncio.timeout(timeout_seconds)` around the whole call;
+- responses are parsed strictly. Any violation raises `parse` before any
+  consumer policy sees it:
+  - answer keys must match the question keys exactly;
+  - each `choice` must be one of that question's option keys;
+  - probability keys must match the option keys;
+  - every probability, confidence, and Noul value must be finite and in
+    [0,1];
 - a final failure sets the cooldown, and calls inside the cooldown raise
   `cooldown` without dialing.
 
@@ -550,12 +582,22 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 **Acceptance:**
 
 - 1.2.1 - `choose` posts `{model, state, questions}` to
-  `{api_base}/v1/systemone`, parses the captured fixture, and fails when an
-  answer key is missing. test:
+  `{api_base}/v1/systemone`, parses the captured fixture, and raises `parse`
+  for these responses: a missing or extra answer key, a choice outside the
+  offered options, mismatched probability keys, and any non-finite or
+  out-of-range value. test:
   `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_captured_wire`.
-- 1.2.2 - 401 and 422 raise without retry, while 429 and 529 retry at most
-  twice. test:
+- 1.2.2 - Call counts are exact per status: 3xx, 401, 403, 404, and 422 make
+  one call each; 429, 529, 500, and transport errors make three. The whole call
+  including backoff ends at `timeout_seconds`. `retry_async` without a
+  predicate keeps its current behavior. test:
   `tests/ai/test_decisions_service.py::test_retry_only_on_transient_status`.
+- 1.2.7 - The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a
+  redirect. test:
+  `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.
+- 1.2.8 - A rotated secret or a changed timeout or ceiling yields a new
+  service, while identical config shares one cooldown. test:
+  `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.
 - 1.2.3 - A request over `max_input_tokens` raises `oversize` without sending.
   test:
   `tests/ai/test_decisions_service.py::test_oversize_request_never_dials`.
@@ -606,8 +648,13 @@ The file is machine-local and never committed.
 Labeling:
 - The labeling queue is the shadow records where the classifier and the
   incumbent disagree, plus an equal random sample of agreements.
-- At expansion, the PD files the labeling of each consumer's set as a lane
-  task, once that consumer has 200 or more records.
+- Plan expansion creates no labeling task, because no data exists before
+  deployment.
+- After deployment, once a consumer's shadow file reaches 200 records, the
+  PD files one labeling request per consumer per activation as a lane task.
+  The PD records the task ref with that consumer's promotion evidence.
+- The consumer stays in `shadow` until the labeling task and its eval report
+  are complete, and `enforce` stays gated on that report.
 - The lane adds a `gold` field to a curated copy.
 - The Assistant presents 20 disagreements per consumer to Josh as a spot
   audit before any promotion.
@@ -626,9 +673,17 @@ runs against `ai.decisions` loaded from the daemon config:
    pinned OpenRouter Jev price ($0.042 per million input tokens, `jev.md`).
    The local backend's per-call cost is zero, so this gives one
    local-versus-hosted number per consumer.
-5. Add the consumer's bar from Decision 12.
-6. Write a Markdown report naming the model, the dataset hash, and both
-   splits.
+5. Compute every Decision 12 metric for the consumer:
+   - tool rerank: Recall@k and reject-all accuracy, each against the LLM
+     rerank;
+   - found-work: the false-clear rate, the false-alert rate, and the
+     escalation rate.
+   Thresholds are selected on the development split only, and the frozen
+   holdout is evaluated once. Community labels import #22604's Q1.6 results
+   through an adapter and do not redefine them.
+6. Write a Markdown report. It names the model, the dataset hash, and both
+   splits, and ends in an explicit gate `PASS` or `FAIL` listing each measured
+   value against its threshold.
 
 A labeled set holds at least 200 records per consumer. Reports live under
 `docs/evidence/decisions/<consumer>-<date>.md`.
@@ -648,6 +703,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 2.1.3 - The report names the model, the dataset hash, both splits, and the
   consumer bar. test:
   `tests/scripts/test_decisions_eval.py::test_report_identifies_run`.
+- 2.1.4 - Synthetic passing and failing datasets for `tool_rerank` and
+  `found_work` produce the expected metric values and gate verdicts. Thresholds
+  come from the development split only. test:
+  `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
 
 ## P3: Consumers
 `kind: framing`
@@ -693,8 +752,9 @@ By `tool_rerank.mode`:
 - `enforce`, with a matching `evaluated_model`: candidates at or above
   `min_probability` come back in probability order (`search_mode="decide"`),
   and an empty result is a valid reject-all. On `DecisionsUnavailable`, the
-  consumer returns semantic order with `search_mode="hybrid_fallback"`, the
-  same fallback as today.
+  consumer runs the existing LLM rerank over the semantic candidates it
+  already fetched. It returns semantic order with
+  `search_mode="hybrid_fallback"` only if that incumbent also fails.
 
 `decisions_resolver` returns the daemon's `DecisionsConfig`, or `None` when
 the config is unavailable. `None` means `off`.
@@ -714,8 +774,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   record. test:
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
 - 3.1.3 - Enforce mode ranks by probability, drops candidates below
-  `min_probability`, and can return none; an unavailable classifier returns
-  semantic order. test:
+  `min_probability`, and can return none. An unavailable classifier invokes
+  the LLM rerank; semantic order is returned only when both the classifier and
+  the LLM fail. test:
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_enforce_ranks_rejects_and_falls_back`.
 - 3.1.4 - Enforce mode with a mismatched `evaluated_model` behaves as shadow.
   test:
@@ -765,8 +826,15 @@ By `found_work.mode`:
   - `DecisionsUnavailable` also escalates to today's LLM path, whose own
     `None` keeps the fast-path alert.
 
-The whole confirmation stays within today's 8 s cap: the escalated LLM call
-gets `8.0 - classifier_elapsed` seconds.
+The whole confirmation stays within today's 8 s cap:
+- A wrapper converts every classifier failure, typed or unexpected, into an
+  unavailable result. So a classifier exception never cancels the incumbent
+  in `shadow`.
+- The classifier's own timeout is bounded by the remaining budget.
+- The escalated LLM call gets `remaining = max(0, 8.0 -
+  classifier_elapsed)` seconds.
+- When `remaining` is 0, confirmation returns `None`, so the caller keeps the
+  fast-path alert and no LLM call is made with an invalid timeout.
 
 So a classifier outage never clears a finding, and only a confident
 classifier verdict skips the LLM.
@@ -785,11 +853,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   band between escalates to the LLM. test:
   `tests/workflows/test_found_work_confirm.py::test_cascade_accepts_confident_and_escalates_uncertain`.
 - 3.2.3 - An unavailable classifier escalates to the LLM path and never
-  returns `False` by itself, and the escalated call's timeout is the 8 s cap
-  minus the classifier's elapsed time. test:
+  returns `False` by itself. The escalated call's timeout is the 8 s cap minus
+  the classifier's elapsed time, and an exhausted budget returns `None`. test:
   `tests/workflows/test_found_work_confirm.py::test_outage_never_clears_a_finding`.
 - 3.2.4 - Shadow mode returns the LLM verdict and writes one shadow record.
-  test:
+  An unexpected classifier exception leaves the LLM verdict intact. test:
   `tests/workflows/test_found_work_confirm.py::test_shadow_returns_llm_verdict`.
 
 ## P4: Documentation
@@ -835,8 +903,11 @@ Run after each leaf's final edit and again before the PD lands the branch:
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/ai/test_capability_registry.py tests/ai/test_decisions_service.py tests/ai/test_decisions_shadow.py tests/scripts/test_decisions_eval.py tests/mcp_proxy/services tests/workflows/test_found_work_confirm.py -q
 uv run ruff format --check src/ scripts/ && uv run ruff check src/ scripts/ && uv run mypy src/
-uv run gobby plans validate .gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
+uv run gobby plans validate /Users/josh/.gobby/worktrees/gobby/task-23024-classifier-path-plan/.gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
 ```
+
+Plan validation takes the absolute worktree plan path, with the project root
+`/Users/josh/Projects/gobby`.
 
 Live check after the PD-owned restart, on Josh's machine with a loopback
 `/v1/systemone` server configured: `GET /api/llm/status` lists `decide` as
@@ -846,3 +917,10 @@ the full pytest suite.
 
 Plan changelog:
 - 2026-09-29: First draft by Plan Writer gobby#14578.
+- 2026-09-29: Enhancer pass (run 4aeff78d) and PD dispositions applied:
+  - accepted E1 to E8 and E10: transport hardening, the status-aware retry
+    predicate, the incumbent-first rerank fallback, the complete gate harness,
+    strict response parsing, config defaults and bounds, the service
+    fingerprint, found-work budget containment, and post-deployment labeling;
+  - modified E9: V1 validates the absolute worktree plan path against the
+    `/Users/josh/Projects/gobby` root.
