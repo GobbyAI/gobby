@@ -63,17 +63,26 @@ pub fn pin_image_linking(
 ) -> io::Result<PinnedImage> {
     ensure_private_dir(images_dir)?;
     let temp = images_dir.join(format!(".gterm-pin-{}", uuid::Uuid::new_v4()));
-    if let Err(err) = link(src, &temp) {
-        if !link_unsupported(&err) {
-            return Err(err);
-        }
-        fs::copy(src, &temp)?;
-    }
-    let pinned = finish_pin(images_dir, &temp);
+    // Any failure after staging starts removes the temp: a partial link or
+    // copy is never a `gterm-*` pin, so `prune_images` would not reclaim it.
+    let pinned = stage_pin(src, &temp, link).and_then(|()| finish_pin(images_dir, &temp));
     if pinned.is_err() {
         let _ = fs::remove_file(&temp);
     }
     pinned
+}
+
+/// Links `src` to `temp`, copying instead when the link is unsupported.
+fn stage_pin(
+    src: &Path,
+    temp: &Path,
+    link: impl Fn(&Path, &Path) -> io::Result<()>,
+) -> io::Result<()> {
+    match link(src, temp) {
+        Ok(()) => Ok(()),
+        Err(err) if link_unsupported(&err) => fs::copy(src, temp).map(drop),
+        Err(err) => Err(err),
+    }
 }
 
 /// Hashes the staged link or copy and moves it to its content name, reusing

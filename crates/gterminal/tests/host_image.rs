@@ -143,6 +143,43 @@ fn pin_image_is_content_addressed_and_private() {
     );
 }
 
+/// A pin attempt that fails after staging bytes, in the link or in its copy
+/// fallback, leaves no partial file behind for a later start to trip over.
+#[test]
+fn failed_pin_leaves_no_partial_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let images = dir.path().join(IMAGES_DIR);
+    let src = dir.path().join("gterm");
+    write_file(&src, b"gterm image");
+    let partial_link = |_: &Path, to: &Path, err: i32| {
+        write_file(to, b"partial");
+        Err(std::io::Error::from_raw_os_error(err))
+    };
+
+    assert!(
+        pin_image_linking(&images, &src, |from, to| partial_link(from, to, libc::EIO)).is_err()
+    );
+    let missing = dir.path().join("missing");
+    assert!(
+        pin_image_linking(&images, &missing, |from, to| partial_link(
+            from,
+            to,
+            libc::EXDEV
+        ))
+        .is_err(),
+        "the copy fallback fails on a missing source"
+    );
+
+    let leftovers: Vec<_> = std::fs::read_dir(&images)
+        .expect("read images dir")
+        .map(|entry| entry.expect("dir entry").file_name())
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "partial pins left behind: {leftovers:?}"
+    );
+}
+
 #[test]
 fn pins_survive_promotion_of_the_source() {
     let dir = tempfile::tempdir().expect("tempdir");
