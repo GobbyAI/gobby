@@ -68,6 +68,21 @@ pub struct PreparedCommit {
 }
 
 impl PreparedChild {
+    /// A child carried across a host upgrade, in the state `spawn_commit`
+    /// leaves a committed child: no gate to release and no status to read.
+    pub fn from_restored(runtime: PaneRuntime, pid: u32, pgid: i32, start_time: f64) -> Self {
+        Self {
+            runtime,
+            pid,
+            pgid,
+            start_time,
+            gate_writer: None,
+            status_reader: None,
+            #[cfg(debug_assertions)]
+            wait_for_child_exit_before_status: false,
+        }
+    }
+
     /// Release the gate. A failed gate write still reads the status pipe in
     /// `finish`: a child that failed before commit reported its stage there
     /// and exited, which is exactly what closes the gate and fails the write.
@@ -123,16 +138,7 @@ impl PreparedCommit {
 #[cfg(test)]
 impl PreparedChild {
     pub(crate) fn from_test_runtime(runtime: PaneRuntime) -> Self {
-        Self {
-            runtime,
-            pid: 0,
-            pgid: 0,
-            start_time: 0.0,
-            gate_writer: None,
-            status_reader: None,
-            #[cfg(debug_assertions)]
-            wait_for_child_exit_before_status: false,
-        }
+        Self::from_restored(runtime, 0, 0, 0.0)
     }
 }
 

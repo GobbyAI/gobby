@@ -496,30 +496,29 @@ impl HostState {
         drop(inner);
         #[cfg(feature = "vt-engine")]
         if let Some(exit_watch) = exit_watch {
-            let watch_state = Arc::clone(self);
-            let watch_identity = identity.clone();
-            let watch_host_terminal_id = host_terminal_id.clone();
-            tokio::spawn(async move {
-                let Some(exit) = exit_watch.wait().await else {
-                    return;
-                };
-                if !watch_state
-                    .settle_leader_exit(&watch_identity, &watch_host_terminal_id)
-                    .await
-                {
-                    return;
-                }
-                watch_state
-                    .events
-                    .emit_terminal_exited(
-                        watch_identity.terminal_id,
-                        watch_host_terminal_id,
-                        exit.exit_code,
-                    )
-                    .await;
-            });
+            self.watch_leader_exit(identity, host_terminal_id, exit_watch);
         }
         response
+    }
+
+    /// Settles a committed pane when its leader exits: the watcher is the
+    /// only path that removes a committed pane (see `settle_leader_exit`).
+    #[cfg(feature = "vt-engine")]
+    pub(crate) fn watch_leader_exit(
+        self: &Arc<Self>,
+        identity: Identity,
+        host_terminal_id: String,
+        exit_watch: crate::pane::ChildExitWatch,
+    ) {
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            let Some(exit) = exit_watch.wait().await else {
+                return;
+            };
+            state
+                .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code)
+                .await;
+        });
     }
 
     /// `grace_ms` is the request's typed field, which serde never leaves in `extra`.
@@ -663,23 +662,38 @@ impl HostState {
         })
     }
 
-    /// Retire a committed slot whose leader exited, returning whether its
-    /// `terminal_exited` may be emitted. A slot that still holds a live group
-    /// stays listed and silent: that event would settle a live row.
+    /// Removes a committed pane whose leader exited and emits its
+    /// `terminal_exited`, under the `inner` lock and then the events lock.
+    /// The exit watcher is the only caller, so it alone removes a committed
+    /// pane for an exit. Returns `false`, doing nothing, when a kill owns
+    /// the slot: one in flight, or an unproven one whose group lives on.
     #[cfg(any(feature = "vt-engine", test))]
-    async fn settle_leader_exit(&self, identity: &Identity, host_terminal_id: &str) -> bool {
+    async fn settle_leader_exit(
+        &self,
+        identity: &Identity,
+        host_terminal_id: &str,
+        exit_code: Option<u32>,
+    ) -> bool {
         let mut inner = self.inner.lock().await;
-        let Some(slot) = inner
+        if let Some(slot) = inner
             .terminals
             .get(identity)
             .filter(|slot| slot.host_terminal_id == host_terminal_id)
-        else {
-            return true;
-        };
-        if holds_live_group(slot) {
-            return false;
+        {
+            if holds_live_group(slot) {
+                return false;
+            }
+            remove_terminal_slot(&mut inner, identity, None);
         }
-        remove_terminal_slot(&mut inner, identity, None);
+        // Emitted before the `inner` lock is released: no reader sees the
+        // slot gone while its event is still unwritten.
+        self.events
+            .emit_terminal_exited(
+                identity.terminal_id.clone(),
+                host_terminal_id.to_owned(),
+                exit_code,
+            )
+            .await;
         true
     }
 
@@ -699,13 +713,17 @@ impl HostState {
         for identity in expired {
             remove_terminal_slot(&mut inner, &identity, Some(libc::SIGKILL));
         }
+        // An unproven kill settled its slot with its ack and kept it only for
+        // the group it left alive, so its exited leader's watcher is done and
+        // owes no event. Once that group is gone the slot goes too. Any other
+        // exited pane belongs to its watcher, which removes it with its event.
         #[cfg(feature = "vt-engine")]
-        let exited: Vec<Identity> = inner
+        let abandoned: Vec<Identity> = inner
             .terminals
             .iter()
             .filter(|(_, slot)| {
-                !holds_live_group(slot)
-                    && slot.commit_state == CommitState::Committed
+                slot.kill_unproven
+                    && !holds_live_group(slot)
                     && slot
                         .child
                         .as_ref()
@@ -714,7 +732,7 @@ impl HostState {
             .map(|(identity, _)| identity.clone())
             .collect();
         #[cfg(feature = "vt-engine")]
-        for identity in exited {
+        for identity in abandoned {
             remove_terminal_slot(&mut inner, &identity, None);
         }
     }

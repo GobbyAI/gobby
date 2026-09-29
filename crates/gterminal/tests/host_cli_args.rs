@@ -1,6 +1,6 @@
 //! `gterm host` argv and startup contract: help exits 0, bad argv exits 2,
-//! neither starts a host, and a host losing the busy-socket check leaves the
-//! live host's pidfile alone (#22425).
+//! `--probe-resume` exits 0 or 3, none of them starts a host, and a host
+//! losing the busy-socket check leaves the live host's pidfile alone (#22425).
 //!
 //! The argv runs point `GTERM_SOCKET_DIR` and `--socket-dir` at a temp dir and
 //! write no control token there, so a binary that regressed to ignoring
@@ -150,4 +150,97 @@ fn host_losing_the_busy_socket_check_keeps_the_live_pidfile() {
         "the live host keeps serving its control socket"
     );
     first.kill().expect("stop the live host");
+}
+
+/// Runs `gterm host --probe-resume <version>` and returns its output, killing
+/// it if it outlives the timeout (a probe that falls through to a cold start).
+fn probe_resume(socket_dir: &Path, version: &str) -> Output {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gterm"))
+        .args(["host", "--socket-dir"])
+        .arg(socket_dir)
+        .args(["--probe-resume", version])
+        .env("GTERM_SOCKET_DIR", socket_dir)
+        .env("GTERM_LOG_FILE", socket_dir.join("gterm.log"))
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn gterm host --probe-resume");
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while child.try_wait().expect("poll probe").is_none() {
+        if std::time::Instant::now() >= deadline {
+            child.kill().expect("kill probe");
+            panic!("--probe-resume {version} did not exit");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.wait_with_output().expect("probe output")
+}
+
+fn dir_listing(dir: &Path) -> Vec<(String, u64, std::time::SystemTime)> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .expect("read images dir")
+        .map(|entry| {
+            let entry = entry.expect("images dir entry");
+            let meta = entry.metadata().expect("images entry metadata");
+            (
+                entry.file_name().to_string_lossy().into_owned(),
+                meta.len(),
+                meta.modified().expect("images entry mtime"),
+            )
+        })
+        .collect();
+    entries.sort();
+    entries
+}
+
+#[test]
+fn probe_resume_reports_supported_formats() {
+    use gobby_terminal::host::handover::SUPPORTED_FORMAT_VERSIONS;
+    use gobby_terminal::host::image::IMAGES_DIR;
+
+    let dir = host_support::temp_socket_dir();
+    // A token lets a probe that fell through reach pinning and bind.
+    host_support::write_token(dir.path(), "token-probe");
+    let images = dir.path().join(IMAGES_DIR);
+    std::fs::create_dir(&images).expect("images dir");
+    std::fs::write(images.join("stale-pin"), b"earlier image").expect("stale pin");
+    let before = dir_listing(&images);
+    let supported = SUPPORTED_FORMAT_VERSIONS
+        .iter()
+        .map(u32::to_string)
+        .collect::<Vec<_>>()
+        .join(",");
+
+    let newest = *SUPPORTED_FORMAT_VERSIONS.iter().max().expect("a version");
+    for version in 0..=newest + 1 {
+        let output = probe_resume(dir.path(), &version.to_string());
+        let expected = if SUPPORTED_FORMAT_VERSIONS.contains(&version) {
+            0
+        } else {
+            3
+        };
+        assert_eq!(
+            output.status.code(),
+            Some(expected),
+            "--probe-resume {version}, stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("{supported}\n")
+        );
+    }
+    let output = probe_resume(dir.path(), "one");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a non-numeric version is bad argv"
+    );
+
+    assert_eq!(
+        dir_listing(&images),
+        before,
+        "the probe pins and prunes nothing"
+    );
+    assert_no_host_state(dir.path());
 }

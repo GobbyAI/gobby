@@ -153,6 +153,32 @@ pub(crate) struct Inner {
     pub(crate) latest_theme: Option<crate::terminal_theme::ThemeDeclaration>,
 }
 
+impl Inner {
+    /// Registry state with no connections: attachments and control owners
+    /// are connection-scoped and never outlive the image that held them.
+    pub(crate) fn restored(
+        terminals: HashMap<Identity, TerminalSlot>,
+        next_host_id: u64,
+        reservations: HashMap<String, Reservation>,
+        latest_theme: Option<ThemeDeclaration>,
+    ) -> Self {
+        let by_host_id = terminals
+            .values()
+            .map(|slot| (slot.host_terminal_id.clone(), slot.identity.clone()))
+            .collect();
+        Self {
+            terminals,
+            by_host_id,
+            next_host_id,
+            reservations,
+            attachments: HashMap::new(),
+            next_attachment: 1,
+            control_owners: HashSet::new(),
+            latest_theme,
+        }
+    }
+}
+
 pub struct HostState {
     pub config: HostConfig,
     pub token: String,
@@ -166,6 +192,12 @@ pub struct HostState {
     pub socket_dir_removed: AtomicBool,
     pub shutdown: watch::Sender<bool>,
     pub next_conn: AtomicU64,
+    /// Upgrades this host epoch has survived; a cold start is generation 0.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) generation: u64,
+    /// The last upgrade attempt and its outcome, carried across the exec.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) upgrade: std::sync::Mutex<Option<super::handover::UpgradeRecord>>,
     pub(crate) events: HostEvents,
     pub(crate) inner: Mutex<Inner>,
     pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -182,6 +214,7 @@ impl HostState {
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
         let events = HostEvents::new(host_epoch.clone(), config.event_queue_bytes as usize);
+        let inner = Inner::restored(HashMap::new(), 1, HashMap::new(), None);
         Arc::new(Self {
             config,
             token,
@@ -194,18 +227,45 @@ impl HostState {
             socket_dir_removed: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
+            #[cfg(all(unix, feature = "vt-engine"))]
+            generation: 0,
+            #[cfg(all(unix, feature = "vt-engine"))]
+            upgrade: std::sync::Mutex::new(None),
             events,
             polls: Mutex::new(HashMap::new()),
-            inner: Mutex::new(Inner {
-                terminals: HashMap::new(),
-                by_host_id: HashMap::new(),
-                next_host_id: 1,
-                reservations: HashMap::new(),
-                attachments: HashMap::new(),
-                next_attachment: 1,
-                control_owners: HashSet::new(),
-                latest_theme: None,
-            }),
+            inner: Mutex::new(inner),
+        })
+    }
+
+    /// A host rebuilt from a handover: the carried epoch, generation, event
+    /// log, slots, and reservations, with this image's config and tokens.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) fn restored(
+        config: HostConfig,
+        token: String,
+        local_token: String,
+        image: PinnedImage,
+        host_pid: u32,
+        shutdown: watch::Sender<bool>,
+        carried: super::handover::CarriedHost,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            config,
+            token,
+            local_token,
+            host_epoch: carried.host_epoch,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            image,
+            host_pid,
+            draining: AtomicBool::new(false),
+            socket_dir_removed: AtomicBool::new(false),
+            shutdown,
+            next_conn: AtomicU64::new(1),
+            generation: carried.generation,
+            upgrade: std::sync::Mutex::new(Some(carried.upgrade)),
+            events: carried.events,
+            polls: Mutex::new(HashMap::new()),
+            inner: Mutex::new(carried.inner),
         })
     }
 

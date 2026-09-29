@@ -16,6 +16,18 @@ impl PaneRuntime {
         self.preserve_processes_on_drop = true;
     }
 
+    /// Starts a staged pane's reads and user writes; see
+    /// [`PaneRuntime::stage_restore`].
+    #[cfg(unix)]
+    pub fn resume_restored(&self) -> std::io::Result<()> {
+        self.io.resume_restored()
+    }
+
+    /// The terminal snapshot and wrapper state a host upgrade carries.
+    pub fn encode_handover(&self) -> std::io::Result<(Vec<u8>, super::PaneCoreHandover)> {
+        self.terminal.ghostty.encode_handover()
+    }
+
     #[cfg(unix)]
     pub fn assume_handoff_ownership(&mut self) {
         self.preserve_processes_on_drop = false;

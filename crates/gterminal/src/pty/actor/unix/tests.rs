@@ -646,3 +646,71 @@ fn release_after_commit_prevents_further_io() {
     let _ = peer.write_all(b"ignored");
     assert!(read_rx.recv_timeout(Duration::from_millis(150)).is_err());
 }
+
+#[test]
+fn resume_restored_starts_reads_and_accepts_user_writes() {
+    let (handle, mut peer, read_rx) = actor_with_socket_pair(true);
+
+    assert!(handle
+        .try_write_user_input(Bytes::from_static(b"refused"))
+        .is_err());
+    peer.write_all(b"held").expect("peer write while quiesced");
+    assert!(
+        read_rx.recv_timeout(Duration::from_millis(150)).is_err(),
+        "a restored actor must not read before resume"
+    );
+
+    handle.resume_restored().expect("resume restored actor");
+    handle
+        .try_write_user_input(Bytes::from_static(b"after"))
+        .expect("write accepted right after resume");
+
+    let read = read_rx
+        .recv_timeout(Duration::from_secs(1))
+        .expect("actor reads held bytes after resume");
+    assert_eq!(read, Bytes::from_static(b"held"));
+    let mut buf = [0u8; 5];
+    peer.read_exact(&mut buf).expect("peer receives after");
+    assert_eq!(&buf, b"after");
+    handle.shutdown();
+}
+
+#[test]
+fn data_drain_applies_resume_queued_before_a_write() {
+    let (actor_socket, _peer) = UnixStream::pair().expect("socket pair");
+    let (data_tx, data_rx) = mpsc::channel(ACTOR_COMMAND_BUFFER);
+    let (control_tx, control_rx) = std_mpsc::channel();
+    let mut runner = PtyIoActorRunner {
+        pane_id: 1,
+        file: std::fs::File::from(unsafe { OwnedFd::from_raw_fd(actor_socket.into_raw_fd()) }),
+        data_rx,
+        control_rx,
+        state: ActorState::Quiesced,
+        pending_writes: VecDeque::new(),
+        current_write_offset: 0,
+        wake_read_fd: fd::create_wake_pipe().expect("wake pipe").read_fd,
+        controls: Arc::new(Mutex::new(SharedPtyControls::default())),
+        response_order: Arc::new(Mutex::new(())),
+        on_read: Box::new(|_| PtyReadResult::empty()),
+        on_reader_exit: None,
+        poll_observer: None,
+    };
+    // The runner already drained an empty control queue when the resume and
+    // then the write arrive, so only the data drain sees them.
+    control_tx
+        .send(PtyIoControlCommand::ResumeRestored)
+        .expect("queue resume");
+    data_tx
+        .try_send(PtyIoDataCommand::WriteUserInput(Bytes::from_static(
+            b"first",
+        )))
+        .expect("queue write");
+
+    assert!(!runner.drain_data_commands());
+
+    assert_eq!(runner.state, ActorState::Running);
+    assert_eq!(
+        runner.pending_writes,
+        VecDeque::from([Bytes::from_static(b"first")])
+    );
+}

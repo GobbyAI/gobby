@@ -124,7 +124,9 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
     };
 
     assert!(
-        !state.settle_leader_exit(&identity, "ht-lingering").await,
+        !state
+            .settle_leader_exit(&identity, "ht-lingering", Some(0))
+            .await,
         "leader exit settled a live group after an unproven kill"
     );
     assert!(
@@ -142,7 +144,9 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
         inner.terminals.get_mut(&identity).expect("slot").pgid = dead_pgid;
     }
     assert!(
-        state.settle_leader_exit(&identity, "ht-lingering").await,
+        state
+            .settle_leader_exit(&identity, "ht-lingering", Some(0))
+            .await,
         "a dead group's exit was withheld"
     );
     assert!(!listed(&state, "ht-lingering").await, "dead slot kept");

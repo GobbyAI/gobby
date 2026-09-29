@@ -81,6 +81,7 @@ enum PtyIoControlCommand {
     ForegroundProcessGroup(std_mpsc::Sender<Option<u32>>),
     RollbackHandoff(std_mpsc::Sender<std::io::Result<()>>),
     ReleaseAfterCommit(std_mpsc::Sender<std::io::Result<()>>),
+    ResumeRestored,
     Shutdown,
 }
 
@@ -307,6 +308,21 @@ impl PtyIoActorHandle {
         result
     }
 
+    /// Starts a restored actor without waiting: the runner applies the resume
+    /// before any user write queued after it.
+    pub(crate) fn resume_restored(&self) -> std::io::Result<()> {
+        self.control_tx
+            .send(PtyIoControlCommand::ResumeRestored)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pty actor closed"))?;
+        self.wake_actor();
+        let mut user_writes = self
+            .user_writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        user_writes.accepting = true;
+        Ok(())
+    }
+
     pub(crate) fn release_after_commit(&self) -> std::io::Result<()> {
         {
             let mut user_writes = self
@@ -526,6 +542,12 @@ impl PtyIoActorRunner {
         loop {
             match self.data_rx.try_recv() {
                 Ok(command) => {
+                    // A resume sent before this write may still be queued on
+                    // the control channel; apply it so the write is not dropped.
+                    if self.state != ActorState::Running && self.drain_control_commands() {
+                        should_exit = true;
+                        break;
+                    }
                     if self.handle_data_command(command) {
                         should_exit = true;
                         break;
@@ -591,6 +613,7 @@ impl PtyIoActorRunner {
                 let _ = reply.send(Ok(()));
                 return true;
             }
+            PtyIoControlCommand::ResumeRestored => self.state = ActorState::Running,
             PtyIoControlCommand::Shutdown => return true,
         }
         false
