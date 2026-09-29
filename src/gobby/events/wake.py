@@ -295,22 +295,22 @@ class WakeDispatcher:
 
         task.add_done_callback(forget)
 
-    async def _pause_idle_prompt(self, session_id: str) -> None:
-        """Drop active when a composer-capable terminal is idle at an empty prompt.
+    async def _pause_idle_prompt(self, session_id: str) -> str:
+        """Drop active when a terminal's turn has visibly ended; return the outcome.
 
         ``lifecycle_refresh`` only flushes the transcript. A provider turn can
-        end on screen while the row stays active, and the retry would then
-        decline ``session_active`` again. Two idle reads plus an exact
-        compare-and-set pause the row before that retry.
+        end while the row stays active, and the retry would then decline
+        ``session_active`` again. Two idle reads plus an exact compare-and-set
+        pause the row before that retry.
         """
         probe = self._activity_probe
         if probe is None:
-            return
+            return "no_probe"
         observed = await self._run_db(self._session_manager.get, session_id)
         if observed is None:
-            return
+            return "no_session"
         route = await self._terminal_route_for_session(observed)
-        await reconcile_idle_prompt_session(
+        return await reconcile_idle_prompt_session(
             session_manager=self._session_manager,
             observed=observed,
             terminal=route.managed_terminal,
@@ -336,10 +336,11 @@ class WakeDispatcher:
             return
         refreshed = time.monotonic()
         try:
-            await self._pause_idle_prompt(session_id)
+            idle = await self._pause_idle_prompt(session_id)
         except asyncio.CancelledError:
             raise
         except Exception:
+            idle = "error"
             logger.warning(
                 "Idle-prompt reconcile failed before retrying wake for session %s",
                 session_id,
@@ -365,13 +366,14 @@ class WakeDispatcher:
         # the only trace of a session stranded as active (#22887).
         logger.log(
             logging.DEBUG if skipped == "debounced" else logging.INFO,
-            "Deferred wake for session %s: delivered=%s method=%s skipped=%s "
+            "Deferred wake for session %s: delivered=%s method=%s skipped=%s idle=%s "
             "duration_ms=%.1f refresh_ms=%.1f reconcile_ms=%.1f lock_wait_ms=%.1f "
             "dispatch_ms=%.1f",
             session_id,
             result.get("delivered"),
             result.get("method"),
             skipped,
+            idle,
             (finished - started) * 1000,
             (refreshed - started) * 1000,
             (reconciled - refreshed) * 1000,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -12,6 +13,10 @@ from gobby.events.live_wake import ActivityProbe, TerminalActivity
 from gobby.events.wake_terminal_resolution import (
     LiveTerminalResolver,
     resolve_session_terminal_route,
+)
+from gobby.sessions.transcript_cursor import (
+    TranscriptObservationError,
+    build_turn_settled_observer,
 )
 from gobby.utils.machine_id import require_machine_id
 
@@ -126,6 +131,49 @@ async def reconcile_restart_stale_session(
     )
 
 
+def transcript_turn_settled(session: Session) -> bool:
+    """True only when the provider's own transcript records its last turn ended.
+
+    Codex and Grok record turn boundaries. Every other source, a missing or
+    unreadable transcript, and a last record that opens a turn read False.
+    """
+    try:
+        observer = build_turn_settled_observer(
+            session.source,
+            session.transcript_path,
+            session_id=session.id,
+        )
+    except TranscriptObservationError:
+        return False
+    return observer is not None and observer() is True
+
+
+def idle_decline_reason(activity: TerminalActivity, *, settled: bool) -> str | None:
+    """Return why one read keeps the row active, or None when it may pause.
+
+    An in-flight fingerprint or a draft always keeps the row active. Otherwise
+    an empty composer may pause, and so may an unreadable one once the provider
+    transcript has recorded the turn's end.
+    """
+    if activity.turn_in_flight_fingerprint is not None:
+        return "turn_in_flight"
+    if activity.composer.state == "draft":
+        return "draft"
+    if idle_prompt_allows_wake(activity) or settled:
+        return None
+    return f"composer_{activity.composer.state}"
+
+
+async def _idle_read_decline(
+    activity_probe: ActivityProbe,
+    session: Session,
+    terminal: Any | None,
+) -> str | None:
+    settled = await asyncio.to_thread(transcript_turn_settled, session)
+    activity = await _read_activity(activity_probe, session, terminal)
+    return idle_decline_reason(activity, settled=settled)
+
+
 async def reconcile_idle_prompt_session(
     *,
     session_manager: SessionManager,
@@ -133,23 +181,21 @@ async def reconcile_idle_prompt_session(
     terminal: Any | None,
     activity_probe: ActivityProbe,
     run_db: RunDb,
-) -> Session | None:
-    """Pause an active row whose provider can read an idle, empty composer.
+) -> str:
+    """Pause an active row whose turn has visibly ended; return the outcome.
 
     Two agreeing reads, then an exact ``updated_at`` compare-and-set. Unlike
     restart recovery, the row does not have to predate a daemon restart: a
-    finished turn can leave ``sessions.status`` active while the pane is
-    already back at the prompt. Unsupported providers return ``unknown`` from
-    their composer probe; a turn still in flight or a draft stays active.
+    finished turn can leave ``sessions.status`` active while the pane is back
+    at the prompt, or after its lifecycle STOP was lost (#23102). Returns
+    ``"paused"`` or the reason the row stayed active.
     """
     if observed.status != "active":
-        return None
-    first = await _read_activity(activity_probe, observed, terminal)
-    if not idle_prompt_allows_wake(first):
-        return None
-    second = await _read_activity(activity_probe, observed, terminal)
-    if not idle_prompt_allows_wake(second):
-        return None
+        return "not_active"
+    for _ in range(2):
+        reason = await _idle_read_decline(activity_probe, observed, terminal)
+        if reason is not None:
+            return reason
     current = await run_db(session_manager.get, observed.id)
     if (
         current is None
@@ -157,15 +203,13 @@ async def reconcile_idle_prompt_session(
         or current.status != "active"
         or current.updated_at != observed.updated_at
     ):
-        return None
-    return cast(
-        "Session | None",
-        await run_db(
-            session_manager._pause_idle_prompt_active,
-            observed.id,
-            observed_updated_at=observed.updated_at,
-        ),
+        return "row_changed"
+    paused = await run_db(
+        session_manager._pause_idle_prompt_active,
+        observed.id,
+        observed_updated_at=observed.updated_at,
     )
+    return "row_changed" if paused is None else "paused"
 
 
 async def reconcile_restart_stale_sessions(

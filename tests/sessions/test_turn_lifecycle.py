@@ -396,6 +396,35 @@ def test_stale_provider_turn_rejection_is_logged(
     )
 
 
+def test_rejected_turn_end_is_logged_at_info(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A stale turn end leaves the row active, so the reject must reach INFO logs."""
+    sessions = SessionManager(temp_db)
+    session_id = _session(sessions, sample_project["id"], external_id="stale-stop")
+    lifecycle = TurnLifecycleReducer(sessions)
+    lifecycle.begin_turn(session_id, TurnEvidence(source="codex", provider_turn_key="turn-1"))
+    lifecycle.begin_turn(session_id, TurnEvidence(source="codex", provider_turn_key="turn-2"))
+
+    with caplog.at_level("INFO", logger="gobby.sessions.turn_lifecycle"):
+        ended = lifecycle.end_turn(
+            session_id,
+            "completed",
+            TurnEvidence(source="codex", generation=1, provider_turn_key="turn-1"),
+        )
+
+    assert ended.applied is False
+    assert ended.reason == "stale_generation"
+    current = sessions.get(session_id)
+    assert current is not None and current.status == "active"
+    assert [record.getMessage() for record in caplog.records if record.levelname == "INFO"] == [
+        f"Rejected completed turn end for session {session_id}: stale_generation "
+        "(source=codex evidence_generation=1 generation=2 status=active)"
+    ]
+
+
 def test_resolved_wait_cannot_be_resurrected_by_delayed_notification(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
