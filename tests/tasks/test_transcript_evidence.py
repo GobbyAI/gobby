@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -24,6 +24,7 @@ import psutil
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
+from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.storage.session_models import Session
 from gobby.tasks import transcript_evidence_pool, transcript_outcomes
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
@@ -3644,3 +3645,29 @@ async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: P
     assert heartbeat_gaps
     assert max(heartbeat_gaps) < 0.5
     assert validation_command in [run.command for run in evidence.validation_runs]
+
+
+def _sleep_then_return(seconds: float) -> float:
+    time.sleep(seconds)
+    return seconds
+
+
+async def test_pool_reports_worker_cpu_beside_work_wall_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A derivation that only waits reports its work wall time with almost no CPU (#23063)."""
+    wait_seconds = 0.2
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(
+            transcript_evidence_pool, "_get_pool", lambda: cast(ProcessPoolExecutor, executor)
+        )
+        timings = HookPhaseTimings()
+        with hook_phase_timing_scope(timings):
+            result = await transcript_evidence_pool.run_in_transcript_evidence_pool(
+                _sleep_then_return, wait_seconds
+            )
+
+    assert result == wait_seconds
+    breakdown = timings.breakdown()
+    assert breakdown["prelude_transcript_pool_work"] >= wait_seconds
+    assert breakdown["prelude_transcript_pool_cpu"] < wait_seconds / 4
