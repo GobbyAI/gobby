@@ -33,7 +33,7 @@ Apply this to every candidate:
 
 `review` is the escape hatch, not a branch of this tree: choose it only when you genuinely cannot answer the current-ness or value questions, or when the memory is an unresolved issue that is plausibly still active. A malformed, unknown, or below-threshold verdict degrades to a visible `keep`, never to `review` — so reserve `review` for a deliberate "a human should decide."
 
-A `delete` requires a concrete, citable obsolescence signal in your `reason` — for example: it contradicts the current truth below (removed or renamed API, superseded infrastructure, retired config key, stale daemon path); a newer related memory records a decision or state change that contradicts or supersedes this memory; it references a task, epic, branch, or migration that is completed or closed; or it bakes in a hard date that marks it as time-bound state (a test-run snapshot, an in-progress investigation, a status or progress report). High `age_days` with `access_count` at or near zero may corroborate a `delete`; a citable `delete` does not require low `access_count` when a contradiction signal exists. Absent such a signal, do not assign high `delete` confidence.
+A `delete` requires a concrete, citable obsolescence signal in your `reason` — for example: it contradicts the current truth below (removed or renamed API, superseded infrastructure, retired config key, stale daemon path); a newer related memory records a decision or state change that contradicts or supersedes this memory; it references a task, epic, branch, or migration that is completed or closed; or it bakes in a hard date that marks it as time-bound state (a test-run snapshot, an in-progress investigation, a status or progress report). High `age_days` with both `surfaced_count` and `access_count` at or near zero may corroborate a `delete`; a citable `delete` does not require low counters when a contradiction signal exists. Absent such a signal, do not assign high `delete` confidence.
 
 Judge each candidate against its `rationale`. `rationale` is the writer's own claim about why the memory deserved to persist; `source_task_id` and `created_by_agent` say which task and agent produced it. A rationale that names a one-time event — a specific review run, test run, task, or dated status — is a concrete, citable time-bound-state signal once that event is over; `source_task_id` referring to a completed or closed task corroborates it. A `delete` or `refresh` on a candidate with a non-null rationale must quote or paraphrase that rationale in its `reason`. For `delete`, say why the claim no longer holds. For `refresh`, explain what became stale and how the replacement preserves or updates that rationale. Reserve “claim no longer holds” for deletions or for a `refresh` that changes the rationale itself. A `NULL` rationale is a legacy row, not evidence — absence of a rationale may corroborate other signals but never justifies `delete` on its own.
 
@@ -65,7 +65,7 @@ Absent or empty `related_newer_memories` is not evidence of currentness.
 8. `refresh` must include replacement `content`.
 9. Use only candidate IDs shown below.
 10. Cover every rendered candidate exactly once. Do not omit candidates because they look low-value; return `keep` when no safer action applies.
-11. High `access_count` is never evidence of correctness: recall frequency measures retrieval, not truth, and a wrong-but-popular memory self-reinforces. Only `access_count` at or near zero may corroborate a `delete`; never use high `access_count` to justify `keep` against a concrete obsolescence signal.
+11. Neither counter is evidence of correctness: `surfaced_count` measures exposure (how often search showed the memory to an agent or person) and `access_count` measures deliberate reads (fetches of the full memory), and a wrong-but-popular memory self-reinforces. High `surfaced_count` with `access_count` at zero flags a misfiring `when:` clause or noise. Only both counters at or near zero over a long `age_days` may corroborate a `delete`; never use either counter to justify `keep` against a concrete obsolescence signal.
 
 ## Candidates
 
@@ -97,7 +97,7 @@ Return strict JSON only:
       "action": "delete",
       "memory_id": "memory-id",
       "confidence": 0.9,
-      "reason": "Progress report for epic #8803, which is closed; age_days 120, access_count 0."
+      "reason": "Progress report for epic #8803, which is closed; age_days 120, surfaced_count 0, access_count 0."
     }
   ]
 }

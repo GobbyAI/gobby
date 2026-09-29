@@ -31,8 +31,9 @@ Operator-only `gobby memory` commands include Markdown `export`, JSONL
 `backup`/`restore`, exact-content `dedupe`, `backfill-unscoped-lessons`, graph
 `graph-counts`/`clear-graph`/`rebuild-graph`, `reconcile`, `reindex-embeddings`,
 `rebuild-crossrefs`, and `invalidate`. Read command help before execution.
-`dedupe --dry-run` previews same-project duplicates and keeps the earliest row;
-apply hard-deletes duplicates. `invalidate` clears and rebuilds secondary indices;
+`dedupe --dry-run` previews same-project exact-content duplicates and keeps the
+earliest-created row regardless of access or surfaced counts; apply hard-deletes
+the later copies. `invalidate` clears and rebuilds secondary indices;
 it is broader than correcting one memory. Use isolated fixtures for verification.
 
 If a backup is missing, create an explicit backup of the intended scope. If a
