@@ -58,6 +58,13 @@ The plan also sets:
      creates. That is the user's choice, outside Gobby.
    - Rejected: policy prose alone. Prose makes "provider-agnostic" and "no
      hosted" read as a contradiction and enforces neither.
+   - This also makes hosted Jev unconfigurable, while Josh's 2026-09-28 note
+     names Jev as a candidate backend. The ruling was stated for pilots, so
+     this goes to Josh as a button: keep the loopback-only validator
+     (recommended, as drafted), or add an explicit `allow_remote: true`
+     opt-in for a hosted backend. If he picks the opt-in, 1.1 gains that one
+     field. The OpenRouter path stays a separate later task either way
+     (Decision 1).
 3. **Gobby points at a server and never runs one.** Kev's server is its own
    process. Gobby does not install, start, stop or load models (memory
    606b6838). Josh ruled on 2026-09-24 that local Kev is an opt-in installer
@@ -290,7 +297,17 @@ stamped M1, so that file is not edited. At expansion, the PD updates task
 - records its wire spike against the local `/v1/systemone` server only. The
   OpenRouter alpha arm is dropped under Decisions 1 and 2, and 1.2's wire
   capture satisfies the spike;
-- keeps every other 6.3 acceptance item unchanged.
+- keeps 6.3.2 to 6.3.5 unchanged.
+
+Two stamped 6.3 items change their anchors:
+- 6.3.1's test anchor (`tests/llm/test_decisions_client.py`) is satisfied by
+  1.2.1 here.
+- 6.3.6's two-arm spike is satisfied by 1.2.6, with the OpenRouter arm
+  dropped under Decision 2.
+
+The completed plan's M1 is not edited. The PD records both substitutions in
+#22604's description and validation criteria at expansion, so the close
+reviewer checks the new anchors. This is one of the PD's disposition items.
 
 #22604 keeps its `enhancement` parking (Josh, 2026-09-23). Its own admission
 leads the consumer order, as the research doc's §5 ruling set.
@@ -314,10 +331,13 @@ The Assistant presents that state to Josh when it holds. Until then, #22075
 (Detect provider usage outages across all providers and fall back to the next
 candidate) stays blocked.
 
-#22075 also remains `deferred-by-josh` under his 2026-09-10 instruction. It
-becomes executable only when Josh lifts that deferral, even after the gate
-holds. Closing #23024 does not unblock it: at expansion the PD moves #22075's
-`blocked_by` edge from #23024 to the leaf that satisfies gate item 4.
+#22075 also remains `deferred-by-josh` under his 2026-09-10 instruction.
+Closing #23024 does not unblock it.
+- At expansion, the PD moves #22075's `blocked_by` edge from #23024 to leaf
+  3.2, the last consumer leaf.
+- Gate items 2 to 4 are operational conditions, not leaves. The PD verifies
+  them and records them on #22075 before lifting anything.
+- Josh lifting `deferred-by-josh` is the final hold.
 
 The consumer contract #22075's own plan inherits (Decision 14):
 
@@ -482,6 +502,17 @@ The wire shape is pinned by capture, before any code:
 - If the captured field names differ from 6.3's, the capture wins. The evidence
   file records the difference.
 
+The same capture sends one deliberately oversized request, over 8,192
+tokens of path-heavy state like the community-label batches. It records
+whether the server rejects it with an error or silently truncates the state.
+It also records the server-reported token count for a path-heavy request that
+fits.
+- The estimate's divisor is set from that count: the default stays 4 unless
+  the measured ratio is lower.
+- If the server truncates silently, the ceiling check applies a 20% margin
+  (`estimate * 1.25 <= max_input_tokens`). This keeps a truncated request
+  from ever reaching a consumer as a valid answer.
+
 This capture is also #22604's wire spike (Coordination With #22604).
 
 Module contents:
@@ -533,7 +564,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.
 - 1.2.5 - Log records carry no state or option text. test:
   `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.
-- 1.2.6 - The wire capture from a local server is recorded. behavior:
+- 1.2.6 - The wire capture from a local server is recorded, including
+  the oversized request's outcome and the measured token ratio. behavior:
   "/v1/systemone" in `docs/evidence/decisions/systemone-wire.md`.
 
 ## P2: Evaluation
@@ -569,8 +601,16 @@ single fitted temperature, and its answers are order-sensitive (research doc
 - Writes are best effort: a failure logs once at WARNING and never raises into
   the consumer.
 
-The file is machine-local and never committed. Labelers add a `gold` field to
-the copies they curate.
+The file is machine-local and never committed.
+
+Labeling:
+- The labeling queue is the shadow records where the classifier and the
+  incumbent disagree, plus an equal random sample of agreements.
+- At expansion, the PD files the labeling of each consumer's set as a lane
+  task, once that consumer has 200 or more records.
+- The lane adds a `gold` field to a curated copy.
+- The Assistant presents 20 disagreements per consumer to Josh as a spot
+  audit before any promotion.
 
 `scripts/decisions_eval.py --consumer <name> --dataset <jsonl> --out <md>`
 runs against `ai.decisions` loaded from the daemon config:
@@ -581,8 +621,11 @@ runs against `ai.decisions` loaded from the daemon config:
 3. Compute accuracy, Brier score, ECE (10 equal-width bins on confidence for
    Choice, or on probability for Noul), and selective accuracy and coverage at
    thresholds from 0.50 to 0.95 in steps of 0.05.
-4. Compute the order-flip rate, p50 and p95 latency, and cost, reported as
-   `local` for a loopback backend.
+4. Compute the order-flip rate and p50 and p95 latency. Also compute cost:
+   estimated input tokens per call, and a hosted-equivalent cost at the
+   pinned OpenRouter Jev price ($0.042 per million input tokens, `jev.md`).
+   The local backend's per-call cost is zero, so this gives one
+   local-versus-hosted number per consumer.
 5. Add the consumer's bar from Decision 12.
 6. Write a Markdown report naming the model, the dataset hash, and both
    splits.
@@ -722,6 +765,9 @@ By `found_work.mode`:
   - `DecisionsUnavailable` also escalates to today's LLM path, whose own
     `None` keeps the fast-path alert.
 
+The whole confirmation stays within today's 8 s cap: the escalated LLM call
+gets `8.0 - classifier_elapsed` seconds.
+
 So a classifier outage never clears a finding, and only a confident
 classifier verdict skips the LLM.
 
@@ -739,7 +785,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   band between escalates to the LLM. test:
   `tests/workflows/test_found_work_confirm.py::test_cascade_accepts_confident_and_escalates_uncertain`.
 - 3.2.3 - An unavailable classifier escalates to the LLM path and never
-  returns `False` by itself. test:
+  returns `False` by itself, and the escalated call's timeout is the 8 s cap
+  minus the classifier's elapsed time. test:
   `tests/workflows/test_found_work_confirm.py::test_outage_never_clears_a_finding`.
 - 3.2.4 - Shadow mode returns the LLM verdict and writes one shadow record.
   test:
