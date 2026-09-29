@@ -320,6 +320,8 @@ class WakeDispatcher:
 
     async def _refresh_and_retry_wake(self, session_id: str, *, priority: str) -> None:
         assert self._lifecycle_refresh is not None
+        # Phase marks: refresh, idle-prompt reconcile, lock wait, dispatch. The
+        # four phases tile the span, so their sum is duration_ms.
         started = time.monotonic()
         try:
             await self._lifecycle_refresh(session_id)
@@ -332,6 +334,7 @@ class WakeDispatcher:
                 exc_info=True,
             )
             return
+        refreshed = time.monotonic()
         try:
             await self._pause_idle_prompt(session_id)
         except asyncio.CancelledError:
@@ -342,25 +345,38 @@ class WakeDispatcher:
                 session_id,
                 exc_info=True,
             )
+        reconciled = time.monotonic()
         lock = self._live_wake_locks.get(session_id)
         if lock is None:
             lock = asyncio.Lock()
             self._live_wake_locks[session_id] = lock
         try:
             async with lock:
+                locked = time.monotonic()
                 result = await self._dispatch_live_wake_unlocked(session_id, priority=priority)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("Deferred wake failed for session %s", session_id, exc_info=True)
             return
-        logger.info(
-            "Deferred wake for session %s: delivered=%s method=%s skipped=%s duration_ms=%.1f",
+        finished = time.monotonic()
+        skipped = result.get("skipped")
+        # A debounced skip is routine; session_active stays at INFO because it is
+        # the only trace of a session stranded as active (#22887).
+        logger.log(
+            logging.DEBUG if skipped == "debounced" else logging.INFO,
+            "Deferred wake for session %s: delivered=%s method=%s skipped=%s "
+            "duration_ms=%.1f refresh_ms=%.1f reconcile_ms=%.1f lock_wait_ms=%.1f "
+            "dispatch_ms=%.1f",
             session_id,
             result.get("delivered"),
             result.get("method"),
-            result.get("skipped"),
-            (time.monotonic() - started) * 1000,
+            skipped,
+            (finished - started) * 1000,
+            (refreshed - started) * 1000,
+            (reconciled - refreshed) * 1000,
+            (locked - reconciled) * 1000,
+            (finished - locked) * 1000,
         )
 
     async def _dispatch_live_wake_unlocked(
