@@ -1349,11 +1349,19 @@ def test_takeover_fencing(
                         headers=boundary.grant_headers(),
                         json={"project_id": E2E_PROJECT_ID},
                     )
-                assert refused.status_code == 409, refused.text
+                # Front-door mode: gdaemon answers for the drained backend, 503 once it
+                # refuses connections and 502 when it closes an accepted socket.
+                if refused.status_code == 503:
+                    assert refused.json()["backend"]["state"] == "down", refused.text
+                elif refused.status_code == 502:
+                    assert refused.json()["status"] == "bad_gateway", refused.text
+                else:
+                    assert refused.status_code == 409, refused.text
             except (httpx.ConnectError, httpx.RemoteProtocolError):
                 # Lease-loss drain also shuts the displaced listener down: the
                 # connect is refused, or an accepted socket closes before any
-                # response. Either 409 or a dropped socket proves it cannot mutate.
+                # response. A 409, a down backend, or a dropped socket proves it
+                # cannot mutate.
                 pass
         finally:
             release_path.write_text("1")
