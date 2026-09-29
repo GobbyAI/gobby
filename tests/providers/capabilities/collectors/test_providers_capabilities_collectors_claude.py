@@ -67,6 +67,47 @@ async def test_alias_to_undocumented_model_version_fails_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_model_config_short_gfm_separator_is_parsed() -> None:
+    """The live document uses single-dash GFM separators (``| - | - |``).
+
+    Requiring three dashes discarded every table in that document, which
+    surfaced as ``required Markdown table ('model alias', 'behavior') is
+    missing`` and left the Claude capability snapshot stale (#23060).
+    """
+    documents = _documents()
+    documents["model-config"] = (_FIXTURES / "model-config-short-separator.md").read_text()
+
+    collector = _collector(documents)
+    snapshot = validate_snapshot(await collector.collect(), collector.sources)
+    models = {model.canonical_model: model for model in snapshot.models}
+
+    assert {"opus", "opus[1m]", "opusplan"} <= set(models["claude-opus-5"].aliases)
+    assert {"sonnet", "sonnet[1m]"} <= set(models["claude-sonnet-5"].aliases)
+    assert "fable" in models["claude-fable-5-1"].aliases
+    assert "haiku" in models["claude-haiku-4-5-20251001"].aliases
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("| Model alias | Behavior |", "| Name | Behavior |"),
+        ("| Provider | `opus` | `sonnet` |", "| Vendor | `opus` | `sonnet` |"),
+        ("| Anthropic API | Opus 5 | Sonnet 5 |", "| Anthropic API | Opus 9 | Sonnet 5 |"),
+        ("| - | - |", "| - |"),
+    ],
+)
+async def test_model_config_short_separator_still_fails_closed(old: str, new: str) -> None:
+    documents = _documents()
+    documents["model-config"] = (
+        (_FIXTURES / "model-config-short-separator.md").read_text().replace(old, new)
+    )
+
+    with pytest.raises(ClaudeSourceError, match="model-config"):
+        await _collector(documents).collect()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
