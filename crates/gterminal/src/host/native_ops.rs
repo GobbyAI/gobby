@@ -46,6 +46,48 @@ pub(crate) fn kill_group(pgid: i32, signal: i32) -> Result<(), KillGroupError> {
     }
 }
 
+/// Bound on waiting for a SIGKILLed group to be reaped before reporting it alive.
+const KILL_REAP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Whether `pgid` still has members; a permission refusal counts as alive.
+fn group_alive(pgid: i32) -> bool {
+    match kill_group(pgid, 0) {
+        Ok(()) => true,
+        Err(KillGroupError::Io(err)) => err.raw_os_error() != Some(libc::ESRCH),
+        Err(KillGroupError::InvalidPgid) => false,
+    }
+}
+
+async fn group_exits_by(pgid: i32, deadline: Instant) -> bool {
+    loop {
+        if !group_alive(pgid) {
+            return true;
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            return false;
+        }
+        tokio::time::sleep((deadline - now).min(Duration::from_millis(20))).await;
+    }
+}
+
+/// SIGTERM the group, SIGKILL it after `grace`, and report whether it is gone.
+async fn terminate_group(pgid: i32, grace: Duration) -> bool {
+    if pgid <= 0 {
+        return false;
+    }
+    if let Err(err) = kill_group(pgid, libc::SIGTERM) {
+        tracing::debug!(%err, pgid, "kill_group SIGTERM failed");
+    }
+    if group_exits_by(pgid, Instant::now() + grace).await {
+        return true;
+    }
+    if let Err(err) = kill_group(pgid, libc::SIGKILL) {
+        tracing::debug!(%err, pgid, "kill_group SIGKILL failed");
+    }
+    group_exits_by(pgid, Instant::now() + KILL_REAP_TIMEOUT).await
+}
+
 pub(crate) fn trim_to_char_boundary(text: &str, max_bytes: usize) -> String {
     if text.len() <= max_bytes {
         return text.to_string();
@@ -461,36 +503,63 @@ impl HostState {
         response
     }
 
-    pub async fn kill(&self, extra: &Map<String, Value>) -> Value {
+    /// `grace_ms` is the request's typed field, which serde never leaves in `extra`.
+    pub async fn kill(
+        self: &Arc<Self>,
+        extra: &Map<String, Value>,
+        grace_ms: Option<u64>,
+    ) -> Value {
         let host_terminal_id = s(extra, "host_terminal_id");
-        let grace_ms = extra.get("grace_ms").and_then(Value::as_u64).unwrap_or(100);
-        let mut inner = self.inner.lock().await;
-        let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
-            return json!({"ok": true, "killed": false});
-        };
-        if inner
-            .terminals
-            .get(&identity)
-            .is_some_and(|slot| slot.locator.is_some())
-        {
-            return err("not_native");
-        }
-        if let Some(slot) = inner.terminals.remove(&identity) {
+        let grace_ms = grace_ms.unwrap_or(100);
+        // Take the slot out of inventory before signalling, so a commit waiting
+        // on it reports not_found instead of reading the death as an exec.
+        let (identity, slot) = {
+            let mut inner = self.inner.lock().await;
+            let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
+                return json!({"ok": true, "killed": false});
+            };
+            if inner
+                .terminals
+                .get(&identity)
+                .is_some_and(|slot| slot.locator.is_some())
+            {
+                return err("not_native");
+            }
+            let Some(slot) = inner.terminals.remove(&identity) else {
+                return json!({"ok": true, "killed": false});
+            };
             inner.by_host_id.remove(&host_terminal_id);
+            (identity, slot)
+        };
+        // Ack only once the group is proven gone, so a host that dies
+        // mid-kill never acked a live child. The proof runs in its own task:
+        // a dropped connection cancels this request, and the removed slot
+        // must still be finalized or restored.
+        let state = Arc::clone(self);
+        let grace = Duration::from_millis(grace_ms);
+        let proof = tokio::spawn(async move {
+            let proven = terminate_group(slot.pgid, grace).await;
+            let mut inner = state.inner.lock().await;
+            if !proven {
+                tracing::warn!(pgid = slot.pgid, %host_terminal_id, "kill left the process group alive");
+                if !inner.terminals.contains_key(&identity) {
+                    inner.by_host_id.insert(host_terminal_id, identity.clone());
+                    inner.terminals.insert(identity, slot);
+                }
+                return false;
+            }
             inner.reservations.remove(&slot.reservation_id);
             remove_slot_attachments(&mut inner, &slot);
-            if let Err(err) = kill_group(slot.pgid, libc::SIGTERM) {
-                tracing::debug!(%err, pgid = slot.pgid, "kill_group SIGTERM failed");
+            true
+        });
+        match proof.await {
+            Ok(true) => json!({"ok": true, "killed": true}),
+            Ok(false) => err("kill_unproven"),
+            Err(join_err) => {
+                tracing::error!(%join_err, "kill proof task failed");
+                err("kill_unproven")
             }
-            let pgid = slot.pgid;
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(grace_ms)).await;
-                if let Err(err) = kill_group(pgid, libc::SIGKILL) {
-                    tracing::debug!(%err, pgid, "kill_group SIGKILL failed");
-                }
-            });
         }
-        json!({"ok": true, "killed": true})
     }
 
     pub async fn resize(&self, extra: &Map<String, Value>) -> Value {

@@ -379,6 +379,51 @@ fn commit_returns_after_exec() {
 }
 
 #[test]
+fn kill_acks_only_after_group_exit() {
+    let (_dir, mut host, mut stream) = test_host("control-token-kill-proof");
+    let (terminal_id, spawn_key, host_terminal_id, pgid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "kill-proof",
+        &["sh", "-c", "trap '' TERM; exec sleep 30"],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    // The leader ignores SIGTERM only once the trap ran and exec replaced sh.
+    wait_until("TERM-ignoring sleep leader", || {
+        process_name(pgid).as_deref() == Some("sleep")
+    });
+    // Longer than the host's 100ms default, so an ignored grace_ms shows.
+    let grace = Duration::from_millis(400);
+    let started = Instant::now();
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": grace.as_millis() as u64,
+        }),
+    );
+    let killed = recv_json(&mut stream);
+    // SAFETY: signal 0 only probes whether the group still has members.
+    let probe = unsafe { libc::killpg(pgid as i32, 0) };
+    let probe_errno = std::io::Error::last_os_error().raw_os_error();
+    assert_eq!(killed["ok"], true, "{killed}");
+    assert_eq!(killed["killed"], true, "{killed}");
+    assert_eq!(probe, -1, "group {pgid} is alive after the kill ack");
+    assert_eq!(probe_errno, Some(libc::ESRCH));
+    assert!(
+        started.elapsed() >= grace,
+        "kill acked after {:?}, before the requested grace ran out",
+        started.elapsed()
+    );
+    assert_no_terminals(&mut stream);
+}
+
+#[test]
 fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
     let (_dir, mut host, mut stream) = test_host("control-token-preexec-faults");
     let (terminal_id, spawn_key, _, _) = prepare_terminal(

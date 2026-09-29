@@ -15,7 +15,7 @@ import pytest
 from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
-from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.host_client import HostCommandError, HostUnavailableError
 from gobby.terminals.host_protocol import HostListRow
 from gobby.terminals.in_doubt import InDoubtRegistry, in_doubt_spawns
 from gobby.terminals.native_runtime import NativeTerminalRuntime
@@ -374,6 +374,24 @@ async def test_native_kill_ack_needs_dead_recorded_group(monkeypatch: pytest.Mon
     )
     assert bare.state == "exited"
     assert dead_reaps.alive_checks == 1
+
+    # The host itself reports the group alive after TERM, grace and KILL.
+    refused = _current_native_row({"pgid": 8383, "start_time": 5.0})
+    client = _UnprovenKillClient()
+    client.list_rows = [_host_row(refused, "ht-now")]
+    runtime = NativeTerminalRuntime(client)
+    with pytest.raises(HostCommandError, match="kill_unproven"):
+        await kill_terminal(
+            MemoryTerminalStore(refused), runtime_registry(runtime), refused, grace_seconds=0.05
+        )
+    assert refused.state == "live"
+    assert dead_reaps.alive_checks == 1
+
+
+class _UnprovenKillClient(_HostClient):
+    async def kill(self, host_terminal_id: str, grace_ms: int = 50) -> None:
+        del host_terminal_id, grace_ms
+        raise HostCommandError("kill_unproven")
 
 
 @pytest.mark.usefixtures("_local_machine_identity")
