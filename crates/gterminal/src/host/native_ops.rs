@@ -238,14 +238,17 @@ fn remove_terminal_slot(
     }
 }
 
+/// Whether a native slot still owns a live group for the shutdown drain,
+/// including a group retained past its leader after an unproven kill.
 #[cfg(feature = "vt-engine")]
 fn native_slot_alive(slot: &TerminalSlot) -> bool {
     slot.locator.is_none()
         && slot.pgid > 0
-        && slot
+        && (slot
             .child
             .as_ref()
             .is_some_and(|child| child.runtime.child_exit().is_none())
+            || holds_live_group(slot))
 }
 
 /// Whether a slot's leader exit must not retire it: an in-flight kill owns

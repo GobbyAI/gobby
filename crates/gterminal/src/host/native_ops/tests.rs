@@ -148,6 +148,53 @@ async fn leader_exit_after_unproven_kill_waits_for_its_group() {
     assert!(!listed(&state, "ht-lingering").await, "dead slot kept");
 }
 
+#[cfg(feature = "vt-engine")]
+#[tokio::test]
+async fn shutdown_drain_reaches_a_group_retained_after_an_unproven_kill() {
+    use std::os::unix::process::CommandExt;
+
+    let (shutdown, _) = watch::channel(false);
+    let state = HostState::new(
+        HostConfig::default(),
+        "control".to_string(),
+        "local".to_string(),
+        "epoch".to_string(),
+        "version".to_string(),
+        1,
+        shutdown,
+    );
+    let mut survivor = std::process::Command::new("sleep")
+        .arg("30")
+        .process_group(0)
+        .spawn()
+        .expect("spawn sleep");
+    let survivor_pgid = i32::try_from(survivor.id()).expect("pid fits pgid");
+    insert_native_slot(&state, "ht-retained", 24, 80).await;
+    {
+        let mut inner = state.inner.lock().await;
+        let identity = inner.by_host_id["ht-retained"].clone();
+        let slot = inner.terminals.get_mut(&identity).expect("slot");
+        // The leader is gone (no live child), but the unproven kill left
+        // this group alive, so the slot is retained for it.
+        slot.kill_unproven = true;
+        slot.pgid = survivor_pgid;
+    }
+
+    state
+        .drain_native_children(Duration::from_millis(200))
+        .await;
+
+    let status = survivor.try_wait().expect("probe survivor");
+    if status.is_none() {
+        survivor.kill().expect("clean up survivor");
+        survivor.wait().expect("reap survivor");
+    }
+    assert!(
+        status.is_some(),
+        "shutdown drain skipped a retained live group"
+    );
+}
+
 #[test]
 fn kill_group_refuses_non_positive_pgid() {
     assert!(matches!(
