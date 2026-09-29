@@ -10,6 +10,7 @@ from gobby.storage.terminals import TerminalManager
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
     is_interactive_terminal_claim,
+    recorded_process_exited,
     resolve_pane_ownership,
     terminal_session_creation_order,
     terminal_session_identity,
@@ -70,6 +71,18 @@ class _TerminalRevivalMixin:
                     "clear_successor_session_id": successor_id,
                     "status": current.status,
                 },
+            )
+            return current
+
+        if current.status == "expired" and recorded_process_exited(current):
+            # Activity from a hook that names no seat, such as a shared Codex
+            # app-server, cannot bring back a row whose CLI exited; the live row
+            # would only draw wakes and handoffs into its old pane. A CLI that
+            # merely lost the foreground, as under a nested CLI, still revives.
+            get_logger().info(
+                "Suppressed revival of terminal session %s; its recorded CLI process exited",
+                session_id,
+                extra={"event": "terminal_session_revival_suppressed_process_exited"},
             )
             return current
 

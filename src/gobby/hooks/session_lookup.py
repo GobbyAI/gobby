@@ -148,8 +148,7 @@ class SessionLookupService:
 
         if explicit_platform_session_id:
             if apply_session_mutations:
-                self._revive_expired_terminal_session(explicit_platform_session_id, event)
-                self._backfill_terminal_context(explicit_platform_session_id, event)
+                self.apply_session_mutations(event, explicit_platform_session_id)
             self._enrich_task_context(explicit_platform_session_id, event)
             event.metadata["_platform_session_id"] = explicit_platform_session_id
             return explicit_platform_session_id
@@ -163,8 +162,7 @@ class SessionLookupService:
         # Resolve active task for this session
         if platform_session_id:
             if apply_session_mutations:
-                self._revive_expired_terminal_session(platform_session_id, event)
-                self._backfill_terminal_context(platform_session_id, event)
+                self.apply_session_mutations(event, platform_session_id)
             self._enrich_task_context(platform_session_id, event)
 
         # Store platform session_id in event metadata for handlers. Never
@@ -188,8 +186,10 @@ class SessionLookupService:
         """
         if not platform_session_id:
             return
-        self._revive_expired_terminal_session(platform_session_id, event)
+        # The incoming seat is recorded first so revival judges the process that
+        # sent this hook, such as a resumed CLI, rather than the one that left.
         self._backfill_terminal_context(platform_session_id, event)
+        self._revive_expired_terminal_session(platform_session_id, event)
 
     def validate_platform_session_metadata(self, event: HookEvent) -> str | None:
         """Validate caller-supplied _platform_session_id without side effects.

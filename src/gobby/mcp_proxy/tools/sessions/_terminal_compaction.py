@@ -54,6 +54,10 @@ _DEFAULT_INTERRUPT_SETTLE_SECONDS = 0.1
 # after the last Ctrl+C. Keep observing before another potentially quitting press.
 _OBSERVED_INTERRUPT_SETTLE_SECONDS = 12.0
 _INTERRUPT_ATTEMPTS = 3
+# Codex takes a Ctrl+C on an idle composer as a step toward quitting, so a press
+# that lands just after its turn ends can make the next one exit the CLI. It gets
+# a single press observed across the whole window (#23095).
+_CLI_INTERRUPT_PRESSES: dict[str, int] = {"codex": 1}
 _INTERRUPT_POLL_SECONDS = 0.05
 # After submitting the command, poll the pane this long for the CLI rejecting it
 # because its turn is still running; a rejected /clear interrupts again and resubmits.
@@ -79,6 +83,8 @@ _COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
 _INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
+# The session's recorded CLI process no longer owns its pane, so no key may be sent.
+NO_TERMINAL_TARGET_ERROR_CODE = "no_terminal_target"
 _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE = "interrupt_observation_unavailable"
 
 
@@ -166,10 +172,19 @@ async def _confirm_interrupt(
     *,
     attempt_seconds: float,
     turn_settled: Callable[[], bool | None] | None = None,
+    seat_left: Callable[[], bool] | None = None,
+    presses: int = _INTERRUPT_ATTEMPTS,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
     pressed = False
-    for _attempt in range(_INTERRUPT_ATTEMPTS):
+    for attempt in range(presses + 1):
+        if pressed and seat_left is not None and await asyncio.to_thread(seat_left):
+            # The CLI quit under the last press; the next one would reach its shell.
+            return (
+                False,
+                "the recorded CLI process no longer owns its terminal",
+                {"error_code": NO_TERMINAL_TARGET_ERROR_CODE, "continuation_pending": False},
+            )
         if pressed and turn_settled is not None and (await asyncio.to_thread(turn_settled)) is True:
             # Grok goal mode can start a successor about 92 ms after a completed
             # turn. Confirm that the composer stays idle before treating it as
@@ -177,6 +192,8 @@ async def _confirm_interrupt(
             await asyncio.sleep(_TURN_SETTLE_POLL_SECONDS)
             if (await asyncio.to_thread(turn_settled)) is True:
                 return True, None, None
+        if attempt == presses:
+            break
         ok, reason = await send_pane_key(
             pane, key, session_id, action="sending compaction interrupt"
         )
@@ -197,7 +214,7 @@ async def _confirm_interrupt(
             return True, None, None
     return (
         False,
-        f"CLI did not confirm interruption after {_INTERRUPT_ATTEMPTS} attempts",
+        f"CLI did not confirm interruption after {presses} attempts",
         {
             "error_code": _INTERRUPT_UNCONFIRMED_ERROR_CODE,
             "continuation_pending": False,
@@ -257,6 +274,8 @@ async def _interrupt_turn(
     *,
     settle_seconds: float,
     turn_settled: Callable[[], bool | None] | None = None,
+    seat_left: Callable[[], bool] | None = None,
+    presses: int = _INTERRUPT_ATTEMPTS,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Interrupt the running turn: transcript-confirmed, or blind with a settle."""
     if observe_interrupt is not None:
@@ -265,8 +284,11 @@ async def _interrupt_turn(
             key,
             session_id,
             observe_interrupt,
-            attempt_seconds=settle_seconds,
+            # Fewer presses keep the whole observation window.
+            attempt_seconds=settle_seconds * _INTERRUPT_ATTEMPTS / presses,
             turn_settled=turn_settled,
+            seat_left=seat_left,
+            presses=presses,
         )
     ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
     if not ok:
@@ -398,6 +420,7 @@ async def _send_terminal_compaction_command(
     rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
     composer_read: ComposerReader | None = None,
     on_command_submitting: Callable[[], None] | None = None,
+    seat_left: Callable[[], bool] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Interrupt a live turn, drain the composer, submit the command, watch for a rejection.
 
@@ -417,7 +440,9 @@ async def _send_terminal_compaction_command(
     live turn are both left alone; the agent retries once the draft is submitted.
     It then reads the composer back after Enter, so a command the CLI typed but
     never submitted fails with ``command_not_submitted`` instead of reporting
-    success on the strength of the write outcome.
+    success on the strength of the write outcome. ``seat_left`` is checked before
+    every repeated interrupt: a CLI that quit under a press fails the delivery with
+    ``no_terminal_target`` before its shell receives another key.
     """
     continuation_pending = False
     if composer_read is not None:
@@ -490,6 +515,8 @@ async def _send_terminal_compaction_command(
                 observe_interrupt,
                 settle_seconds=interrupt_seconds,
                 turn_settled=turn_settled,
+                seat_left=seat_left,
+                presses=_CLI_INTERRUPT_PRESSES.get(cli_source or "", _INTERRUPT_ATTEMPTS),
             )
             if not interrupted:
                 if continuation_pending:

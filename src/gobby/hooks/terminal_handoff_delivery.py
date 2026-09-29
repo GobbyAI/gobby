@@ -23,6 +23,7 @@ from gobby.hooks.handoff_dispatch_recovery import (
 )
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import NO_TERMINAL_TARGET_ERROR_CODE
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
@@ -75,6 +76,13 @@ _COMPOSER_OCCUPIED_GUIDANCE = (
     "composer. Nothing was interrupted. Tell the operator the handoff is waiting on "
     "their draft, then retry gobby-sessions:set_handoff once they have sent or "
     "cleared it."
+)
+# The recorded CLI no longer owns its pane: no terminal can take the command, so the
+# attempt settles without counting toward abandonment and stays readable (#23095).
+_NO_TERMINAL_TARGET_GUIDANCE = (
+    "Terminal handoff delivery found no live terminal seat for this session; no keys "
+    "were sent. Do not call set_handoff again; its payload stays recoverable as "
+    "recovery_guidance describes."
 )
 # Consecutive failures per session before terminal delivery is abandoned: a CLI
 # that cannot take the command twice will not take it a ninth time (#22364).
@@ -591,13 +599,16 @@ def _compensate_delivery_failure(
     *,
     error_code: str | None = None,
 ) -> None:
+    seatless = error_code == NO_TERMINAL_TARGET_ERROR_CODE
     failures = _consecutive_delivery_failures(db, claimed.session_id) + 1
-    abandoned = failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
+    abandoned = not seatless and failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
     guidance = _RETRY_GUIDANCE
     if error_code == _COMPOSER_OCCUPIED_ERROR_CODE:
         guidance = _COMPOSER_OCCUPIED_GUIDANCE
     elif error_code == "compact_unconfirmed":
         guidance = _COMPACT_UNCONFIRMED_GUIDANCE
+    elif seatless:
+        guidance = _NO_TERMINAL_TARGET_GUIDANCE
     recovery_guidance = (
         "Authored content is available through "
         f"gobby-sessions:get_handoff(failed_attempt_id={claimed.attempt_id!r}); "
@@ -647,11 +658,14 @@ def _compensate_delivery_failure(
             claimed.attempt_id,
         )
         return
-    updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
-    if abandoned:
-        # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
-        updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
-    SessionVariableManager(db).merge_variables(claimed.session_id, updates)
+    # A missing seat is not a delivery the CLI refused, so it neither nears
+    # abandonment nor lifts require-handoff-at-context-limit for the next seat.
+    if not seatless:
+        updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
+        if abandoned:
+            # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
+            updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
+        SessionVariableManager(db).merge_variables(claimed.session_id, updates)
     if error_code == "compact_failed":
         try:
             _attention_manager(db).transition(

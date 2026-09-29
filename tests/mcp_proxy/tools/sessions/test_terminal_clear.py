@@ -239,6 +239,37 @@ async def test_clear_fails_closed_when_the_interrupt_cannot_be_observed() -> Non
     restore_failed_attempt.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_clear_delivery_sends_no_keys_to_a_departed_seat() -> None:
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
+    send_command = AsyncMock()
+
+    with (
+        patch.object(
+            _terminal_clear,
+            "_resolve_session_for_compaction",
+            return_value=(session.id, session, None),
+        ),
+        patch.object(_terminal_clear, "recorded_seat_left", return_value=True),
+        patch.object(_terminal_clear, "_resolve_pane_io", return_value=(pane, None)),
+        patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+    ):
+        result = await _terminal_clear.deliver_staged_clear_session(
+            session.id,
+            "a" * 32,
+            session_manager=MagicMock(),
+            db=MagicMock(),
+            agent_run_manager=MagicMock(),
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "no_terminal_target"
+    assert result["command_sent"] is False
+    assert pane.keys == []
+    send_command.assert_not_awaited()
+
+
 def _clear_patches(
     session: SimpleNamespace,
     send_command: Any,

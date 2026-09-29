@@ -16,6 +16,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 )
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _CLI_COMPACT_COMMANDS,
+    NO_TERMINAL_TARGET_ERROR_CODE,
     _fresh_output_delta,
     composer_reader,
 )
@@ -38,6 +39,7 @@ from gobby.sessions.transcript_cursor import (
     TurnSettledObserver,
     build_turn_settled_observer,
 )
+from gobby.terminal_ownership import recorded_seat_left
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -175,6 +177,12 @@ async def deliver_staged_compact_handoff(
     command = _CLI_COMPACT_COMMANDS.get(source) if source else None
     if command is None:
         return {"compacted": False, "reason": f"no compaction command known for cli={source!r}"}
+    if recorded_seat_left(session):
+        return {
+            "compacted": False,
+            "reason": "the recorded CLI process no longer owns its terminal",
+            "error_code": NO_TERMINAL_TARGET_ERROR_CODE,
+        }
     pane, error = _resolve_pane_io(
         session_id,
         session_manager,
@@ -253,6 +261,7 @@ async def deliver_staged_compact_handoff(
             turn_settled=turn_settled,
             composer_read=composer_reader(db, source),
             on_command_submitting=command_submitting,
+            seat_left=lambda: recorded_seat_left(session),
         )
         if not ok and not _compact_receipt_exists(db, handoff_record_id, attempt_id):
             failure_result = {"compacted": False, "reason": reason}
