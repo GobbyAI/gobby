@@ -4,10 +4,6 @@
 //! pinned `gterm host --resume-state`. The exec'd host keeps the helper's pid,
 //! so it is the parent's child and every pane's parent.
 
-// Some helpers (list_rows, state_path) serve only the later restore tests
-// until they land; drop this once every helper has a caller.
-#![allow(dead_code)]
-
 use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{IntoRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -25,7 +21,7 @@ use gobby_terminal::host::handover::{
 use gobby_terminal::host::image;
 use gobby_terminal::pane::{PaneLaunchEnv, PaneRuntime};
 use gobby_terminal::protocol::ObservationState;
-use gobby_terminal::terminal_theme::TerminalTheme;
+use gobby_terminal::terminal_theme::{TerminalTheme, ThemeDeclaration};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -62,6 +58,8 @@ pub struct HelperPane {
     pub input_grant: Option<String>,
     /// Carries a prepared reservation and an `Entitled` observer bind.
     pub entitled: bool,
+    /// The host theme the pane starts with; `None` is the default theme.
+    pub theme: Option<ThemeDeclaration>,
 }
 
 impl HelperPane {
@@ -79,6 +77,7 @@ impl HelperPane {
             title: String::new(),
             input_grant: None,
             entitled: false,
+            theme: None,
         }
     }
 }
@@ -130,10 +129,6 @@ impl RestoredHost {
         let hello = hello_control(&mut stream, TOKEN);
         assert_eq!(hello["ok"], true, "{hello}");
         stream
-    }
-
-    pub fn state_path(&self) -> PathBuf {
-        self.socket_dir.join(STATE_FILE)
     }
 
     pub fn diagnostics(&self) -> String {
@@ -296,7 +291,9 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
             &["sh".into(), "-c".into(), pane.script.clone()],
             &PaneLaunchEnv::default(),
             1 << 20,
-            TerminalTheme::default(),
+            pane.theme
+                .as_ref()
+                .map_or_else(TerminalTheme::default, ThemeDeclaration::terminal_theme),
             None,
         )
         .expect("spawn pane");

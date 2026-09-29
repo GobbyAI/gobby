@@ -6,18 +6,28 @@
 mod handover_support;
 mod host_support;
 
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::os::unix::net::UnixStream;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use gobby_terminal::host::handover::CarriedEvents;
 use gobby_terminal::pane::{ChildExit, PaneLaunchEnv, PaneRuntime};
-use gobby_terminal::terminal_theme::TerminalTheme;
-use handover_support::{
-    ino, is_zombie, mtime_ns, restore, wait_until, Bound, HelperPane, HelperSpec, BOUND_FILE, WAIT,
+use gobby_terminal::protocol::{
+    read_message, write_message, ClientMessage, RenderEncoding, ServerMessage, MAX_FRAME_SIZE,
+    PROTOCOL_VERSION,
 };
-use host_support::{recv_json, rpc, temp_socket_dir, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE};
-use serde_json::json;
+use gobby_terminal::terminal_theme::{RgbColor, TerminalTheme, ThemeDeclaration};
+use handover_support::{
+    ino, is_zombie, list_rows, mtime_ns, restore, wait_until, Bound, HelperPane, HelperSpec,
+    BOUND_FILE, WAIT,
+};
+use host_support::{
+    connect, recv_json, rpc, temp_socket_dir, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
+};
+use serde_json::{json, Value};
 
 /// The helper process lane's entry point; see `handover_support`.
 #[test]
@@ -210,6 +220,282 @@ fn state_round_trips_host_and_pane_fields() {
         spawned["host_terminal_id"], "ht-100",
         "next_host_id survives: {spawned}"
     );
+}
+
+/// The next event line on `stream`, or `None` once `timeout` passes quietly.
+fn next_event(stream: &mut UnixStream, timeout: Duration) -> Option<Value> {
+    stream
+        .set_read_timeout(Some(timeout))
+        .expect("read timeout");
+    // One-byte buffer: nothing past this line is read and lost.
+    let mut reader = BufReader::with_capacity(1, stream);
+    let mut line = String::new();
+    match reader.read_line(&mut line) {
+        Ok(0) => panic!("event stream closed"),
+        Ok(_) => Some(serde_json::from_str(line.trim_end()).expect("event json")),
+        Err(err) if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => None,
+        Err(err) => panic!("read event: {err}"),
+    }
+}
+
+/// Collects `terminal_exited` exit codes by host terminal id until `done`.
+fn collect_exits(
+    stream: &mut UnixStream,
+    exits: &mut HashMap<String, Vec<Value>>,
+    done: impl Fn(&HashMap<String, Vec<Value>>) -> bool,
+) {
+    let deadline = Instant::now() + WAIT;
+    while !done(exits) {
+        assert!(Instant::now() < deadline, "exits so far: {exits:?}");
+        if let Some(event) = next_event(stream, Duration::from_millis(100)) {
+            if event["event"] == "terminal_exited" {
+                let id = event["host_terminal_id"].as_str().unwrap_or_default();
+                exits
+                    .entry(id.to_string())
+                    .or_default()
+                    .push(event["exit_code"].clone());
+            }
+        }
+    }
+}
+
+#[test]
+fn exit_and_output_during_window_survive() {
+    let dir = temp_socket_dir();
+    let path = |name: &str| dir.path().join(name);
+    // Panes run in the socket dir, so their scripts name these files bare.
+    let wait_for = |name: &str| format!("while [ ! -e {name} ]; do sleep 0.02; done");
+
+    let mut recorded = HelperPane::new("ht-b", &format!("{}; exit 4", wait_for("b-go")));
+    recorded.window_trigger = Some(path("b-go"));
+    recorded.recorded_exit = true;
+    let mut frozen = HelperPane::new("ht-c", &format!("{}; exit 5", wait_for("c-go")));
+    frozen.window_trigger = Some(path("c-go"));
+    frozen.exits_in_window = true;
+    let mut later = HelperPane::new(
+        "ht-d",
+        &format!(
+            "{}; echo window-output; touch d-done; {}; exit 6",
+            wait_for("d-go"),
+            wait_for("d-exit")
+        ),
+    );
+    later.window_trigger = Some(path("d-go"));
+    later.window_done = Some(path("d-done"));
+    let mut spec = HelperSpec::new(dir.path(), vec![recorded, frozen, later]);
+    // ht-a exited and was delivered before capture: only its event remains.
+    spec.events = CarriedEvents {
+        cursor: 1,
+        ring: vec![json!({
+            "event": "terminal_exited",
+            "epoch": "epoch-handover",
+            "seq": 1,
+            "terminal_id": "term-ht-a",
+            "host_terminal_id": "ht-a",
+            "exit_code": 3,
+        })],
+    };
+    let host = restore(&spec);
+    let mut events = host.control();
+    let ack = rpc(&mut events, "subscribe_events", json!({"since": 0}));
+    assert_eq!(ack["gap"], false, "{ack}");
+
+    let mut exits = HashMap::new();
+    collect_exits(&mut events, &mut exits, |exits| {
+        ["ht-a", "ht-b", "ht-c"]
+            .iter()
+            .all(|id| exits.contains_key(*id))
+    });
+    let mut control = host.control();
+    let mut text = String::new();
+    wait_until("window output after restore", || {
+        text = snapshot_text(&mut control, "ht-d");
+        text.contains("window-output")
+    });
+    std::fs::write(path("d-exit"), b"").expect("release ht-d");
+    collect_exits(&mut events, &mut exits, |exits| exits.contains_key("ht-d"));
+    while let Some(event) = next_event(&mut events, Duration::from_millis(300)) {
+        if event["event"] == "terminal_exited" {
+            panic!("duplicate exit {event} after {exits:?}");
+        }
+    }
+
+    let expected: HashMap<String, Vec<Value>> =
+        [("ht-a", 3), ("ht-b", 4), ("ht-c", 5), ("ht-d", 6)]
+            .into_iter()
+            .map(|(id, code)| (id.to_string(), vec![json!(code)]))
+            .collect();
+    assert_eq!(exits, expected, "each exit once, with its real status");
+}
+
+/// Queries OSC 10 and 11 every 300 ms and prints the raw answers, as in
+/// `terminal_theme.rs`, so a marker written to the pane dates the answers.
+const QUERY_LOOP: &str = "stty raw -echo min 0 time 2; \
+    while :; do printf '\\033]10;?\\033\\\\\\033]11;?\\033\\\\'; sleep 0.1; \
+    printf 'A<'; dd bs=256 count=1 2>/dev/null | cat -v; printf '>\\r\\n'; sleep 0.2; done";
+
+/// The first answer line after the line that echoed `marker`: its queries
+/// were sent after the child read the marker.
+fn answer_after<'a>(screen: &'a str, marker: &str) -> Option<&'a str> {
+    screen
+        .lines()
+        .skip_while(|line| !line.contains(marker))
+        .skip(1)
+        .find(|line| line.contains("A<") && line.contains('>'))
+}
+
+fn declaration(fg: (u8, u8, u8), bg: (u8, u8, u8)) -> ThemeDeclaration {
+    let rgb = |(r, g, b)| RgbColor { r, g, b };
+    ThemeDeclaration {
+        foreground: Some(rgb(fg)),
+        background: Some(rgb(bg)),
+        palette: Vec::new(),
+    }
+}
+
+fn write_msg(stream: &mut UnixStream, msg: &ClientMessage) {
+    let mut buf = Vec::new();
+    write_message(&mut buf, msg).expect("encode message");
+    stream.write_all(&buf).expect("write message");
+}
+
+fn read_msg(stream: &mut UnixStream) -> ServerMessage {
+    stream.set_read_timeout(Some(WAIT)).expect("read timeout");
+    read_message(stream, MAX_FRAME_SIZE).expect("frame message")
+}
+
+/// Attaches a frames stream to `host_terminal_id` and returns it once the
+/// first broadcast frame arrives.
+fn attach(socket_dir: &Path, host_terminal_id: &str, reservation_id: Option<&str>) -> UnixStream {
+    let mut stream = connect(&socket_dir.join(FRAMES_SOCKET));
+    write_msg(
+        &mut stream,
+        &ClientMessage::Hello {
+            version: PROTOCOL_VERSION,
+            encoding: RenderEncoding::SemanticFrame,
+            local_token: "local-token".into(),
+            cols: 80,
+            rows: 24,
+            tmux_identity: None,
+        },
+    );
+    assert!(matches!(
+        read_msg(&mut stream),
+        ServerMessage::Welcome { .. }
+    ));
+    write_msg(
+        &mut stream,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: host_terminal_id.into(),
+            reservation_id: reservation_id.map(Into::into),
+            locator: None,
+        },
+    );
+    loop {
+        match read_msg(&mut stream) {
+            ServerMessage::Frame(_) | ServerMessage::Terminal(_) => return stream,
+            ServerMessage::Error { code, .. } => panic!("attach refused: {code}"),
+            _ => {}
+        }
+    }
+}
+
+/// Returns once the host has handled everything sent on `stream` so far.
+fn barrier(stream: &mut UnixStream) {
+    write_msg(
+        stream,
+        &ClientMessage::ReadText {
+            start_rows_from_live_edge: 0,
+            start_col: 0,
+            end_rows_from_live_edge: 0,
+            end_col: 1,
+        },
+    );
+    loop {
+        match read_msg(stream) {
+            ServerMessage::TextRead { .. } => return,
+            ServerMessage::Error { code, .. } => panic!("barrier refused: {code}"),
+            _ => {}
+        }
+    }
+}
+
+#[test]
+fn restored_panes_keep_wrapper_state_and_entitlements() {
+    let dir = temp_socket_dir();
+    let light = declaration((0x20, 0x21, 0x22), (0xfa, 0xfb, 0xfc));
+    let dark = declaration((0xe0, 0xe1, 0xe2), (0x10, 0x11, 0x12));
+    let query = |id: &str, prefix: &str| {
+        let mut pane = HelperPane::new(id, &format!("{prefix}{QUERY_LOOP}"));
+        pane.ready_text = Some("A<".into());
+        pane
+    };
+    let mut titled = query("ht-light", "printf '\\033]0;agent-light\\007'; ");
+    titled.title = "agent-light".into();
+    titled.theme = Some(light.clone());
+    titled.entitled = true;
+    let mut dark_pane = query("ht-dark", "");
+    dark_pane.theme = Some(dark.clone());
+    let overridden = query(
+        "ht-osc",
+        "printf '\\033]10;rgb:12/34/56\\033\\\\\\033]11;rgb:65/43/21\\033\\\\'; ",
+    );
+    let host = restore(&HelperSpec::new(
+        dir.path(),
+        vec![titled, dark_pane, overridden],
+    ));
+    let mut control = host.control();
+
+    // The carried entitlement rebinds, and the broadcast that answered the
+    // attach kept the agent title.
+    let _bound = attach(dir.path(), "ht-light", Some("res-ht-light"));
+    let rows = list_rows(&mut control);
+    let row = rows
+        .iter()
+        .find(|row| row["host_terminal_id"] == "ht-light")
+        .expect("ht-light row");
+    assert_eq!(row["title"], "agent-light", "{row}");
+    assert_eq!(row["observer_bind"], "bound", "{row}");
+    assert_eq!(row["reservation_id"], "res-ht-light", "{row}");
+
+    // A host theme refresh leaves the child's OSC 10/11 override in place.
+    let mut refresh = attach(dir.path(), "ht-osc", None);
+    write_msg(
+        &mut refresh,
+        &ClientMessage::SetTerminalTheme { theme: dark },
+    );
+    barrier(&mut refresh);
+
+    let expected = [
+        ("ht-light", "rgb:2020/2121/2222", "rgb:fafa/fbfb/fcfc"),
+        ("ht-dark", "rgb:e0e0/e1e1/e2e2", "rgb:1010/1111/1212"),
+        ("ht-osc", "rgb:1212/3434/5656", "rgb:6565/4343/2121"),
+    ];
+    for (seq, (id, fg, bg)) in (1..).zip(expected) {
+        let marker = format!("MARK-{id}");
+        let written = rpc(
+            &mut control,
+            "write",
+            json!({
+                "operation_seq": seq,
+                "host_terminal_id": id,
+                "kind": "text",
+                "encoding": "utf8-b64",
+                "data": base64::engine::general_purpose::STANDARD.encode(&marker),
+            }),
+        );
+        assert_eq!(written["ok"], true, "{written}");
+        let mut screen = String::new();
+        wait_until(&format!("{id} answers after its marker"), || {
+            screen = snapshot_text(&mut control, id);
+            answer_after(&screen, &marker).is_some()
+        });
+        let answer = answer_after(&screen, &marker).unwrap_or_default();
+        assert!(
+            answer.contains(fg) && answer.contains(bg),
+            "{id} answered {answer:?}"
+        );
+    }
 }
 
 #[test]
