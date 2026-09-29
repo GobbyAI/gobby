@@ -1418,6 +1418,32 @@ Neither says how a new gterm reaches a running host. Add:
   the one-shot fallback. behavior: "gterm-images" in
   `src/gobby/install/shared/skills/gobby/references/admin/daemon.md`.
 
+## V1: Plan Changelog
+`kind: framing`
+
+- 2026-09-28: First draft (a7a0446a1d): exec-in-place gterm host upgrade that
+  keeps `host_epoch`, detached native panes, and daemon and gclient behavior
+  across the host replacement. One enhancer pass; the Program Director
+  disposed its edits and the Writer applied them (851fcc0bfa).
+- 2026-09-28: Adversary review by `send_message` dialogue (memory 55b8c14e).
+  H1-H6 resolved and the ghostty snapshot codec adopted (54738923c5); H1-H11
+  resolved (0b75bbc8fb), including committed-pane reservations carried across
+  the upgrade, the host-wide mutation gate, pinned images pruned only by the
+  socket owner, the daemon-minted attempt record, and the
+  `live_loop/host_recovery.rs` split; residuals on expiry ownership, the fixed
+  window deadline with its fresh post-deadline check, and the rollback bound
+  (d8111099dc); quiesce bounded by the soft cutoff with expired attempts
+  settled (e0f42fcf43); every pre-accept exit clears the alarm while holding
+  `upgrade_lock` (ce7459bad3).
+- 2026-09-28: Adversary consensus on ce7459bad3 (plan sha256
+  `dd36bfc26cba1ab10d8d317c192e35b462c39e1d93130511cb15697c780978e0`) with no
+  outstanding findings; requirements traceability, runtime invariants, and
+  repository blast radius complete. The approval presentation keeps two
+  stated losses: the attended first move off gterm 0.1.2 ends existing native
+  panes, and a timeout or failed rollback falls back to a host failure.
+  M1 pending from the Adversary; expansion waits for PD review and Josh's
+  approval.
+
 ## V2: Verification
 `kind: verification`
 
