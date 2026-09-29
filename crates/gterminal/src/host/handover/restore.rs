@@ -1,7 +1,7 @@
 //! Restore from a handover as one transaction (Decision 12). Stage verifies
 //! the state file and builds everything on close-on-exec duplicates, so an
 //! error leaves the carried descriptors untouched. Commit takes ownership and
-//! does no fallible I/O.
+//! does no fallible I/O. A Stage failure ends in `fallback`.
 
 use std::collections::{HashMap, HashSet};
 use std::io;
@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::{info, warn};
 
 use super::{
-    decode_snapshot, monotonic_now_ns, read_state, CarriedHost, CarriedObserverBind, CarriedPane,
+    decode_snapshot, monotonic_now_ns, CarriedHost, CarriedObserverBind, CarriedPane,
     HandoverState, UpgradeOutcome, UpgradeRecord,
 };
 use crate::host::events::HostEvents;
@@ -39,16 +39,16 @@ pub(crate) struct PendingCommit {
     outcome: UpgradeOutcome,
 }
 
-/// Verifies the state file at `path` and builds every pane, listener, and
+/// Verifies `state`, read from `path`, and builds every pane, listener, and
 /// registry record on duplicates. Nothing reads, reaps, or accepts yet.
 pub(crate) fn stage(
+    state: HandoverState,
     path: &Path,
     pid_file: &Path,
     scrollback_limit_bytes: usize,
     event_queue_bytes: usize,
     fallback: bool,
 ) -> io::Result<Staged> {
-    let state = read_state(path)?;
     verify(&state, pid_file)?;
     let control = listener(state.control_listener_fd)?;
     let frames = listener(state.frames_listener_fd)?;
@@ -65,7 +65,7 @@ pub(crate) fn stage(
             )));
         }
         originals.push(pane.master_fd);
-        let (slot, reservation, exit) = stage_pane(pane, scrollback_limit_bytes)?;
+        let (slot, reservation, exit) = stage_pane(pane, scrollback_limit_bytes, fallback)?;
         if let Some(reservation) = reservation {
             reservations.insert(reservation.id.clone(), reservation);
         }
@@ -136,11 +136,28 @@ fn verify(state: &HandoverState, pid_file: &Path) -> io::Result<()> {
 fn stage_pane(
     pane: CarriedPane,
     scrollback_limit_bytes: usize,
+    fallback: bool,
 ) -> io::Result<(TerminalSlot, Option<Reservation>, Option<ChildExit>)> {
+    let fault = |kind| injected_fault(fallback, kind, &pane.host_terminal_id);
     let master = duplicate(pane.master_fd, libc::S_IFCHR)?;
-    let snapshot = decode_snapshot(&pane.snapshot_b64)?;
+    if fault("panic") {
+        panic!("injected restore panic");
+    }
+    if fault("wedge") {
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+        }
+    }
+    let snapshot = decode_snapshot(if fault("decode") {
+        "!"
+    } else {
+        &pane.snapshot_b64
+    })?;
     let terminal =
         GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limit_bytes)?;
+    if fault("actor") {
+        return Err(io::Error::other("injected actor construction failure"));
+    }
     let runtime = PaneRuntime::stage_restore(
         terminal,
         (pane.rows, pane.cols, pane.pixel_width, pane.pixel_height),
@@ -259,6 +276,25 @@ fn duplicate(fd: RawFd, kind: libc::mode_t) -> io::Result<OwnedFd> {
 
 fn invalid(message: String) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidData, message)
+}
+
+/// A test-helper fault (as in `gate.rs`) of `kind` at one pane, set by
+/// `GTERM_RESTORE_FAULT` for a first restore and `GTERM_FALLBACK_FAULT` for a
+/// fallback, as `<kind>:<host_terminal_id>`.
+#[cfg(debug_assertions)]
+fn injected_fault(fallback: bool, kind: &str, host_terminal_id: &str) -> bool {
+    let var = if fallback {
+        "GTERM_FALLBACK_FAULT"
+    } else {
+        "GTERM_RESTORE_FAULT"
+    };
+    std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1")
+        && std::env::var(var).is_ok_and(|value| value == format!("{kind}:{host_terminal_id}"))
+}
+
+#[cfg(not(debug_assertions))]
+fn injected_fault(_fallback: bool, _kind: &str, _host_terminal_id: &str) -> bool {
+    false
 }
 
 impl PendingCommit {

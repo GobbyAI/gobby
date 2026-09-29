@@ -9,6 +9,7 @@ mod host_support;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::os::unix::net::UnixStream;
+use std::os::unix::process::ExitStatusExt;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
@@ -21,8 +22,8 @@ use gobby_terminal::protocol::{
 };
 use gobby_terminal::terminal_theme::{RgbColor, TerminalTheme, ThemeDeclaration};
 use handover_support::{
-    ino, is_zombie, list_rows, mtime_ns, restore, wait_until, Bound, HelperPane, HelperSpec,
-    BOUND_FILE, WAIT,
+    ino, is_zombie, launch, list_rows, mtime_ns, pgid_file, restore, wait_until, Bound, HelperPane,
+    HelperSpec, BOUND_FILE, WAIT,
 };
 use host_support::{
     connect, recv_json, rpc, temp_socket_dir, CONTROL_SOCKET, FRAMES_SOCKET, PID_FILE,
@@ -33,6 +34,7 @@ use serde_json::{json, Value};
 #[test]
 #[ignore = "run only as the helper process of the restore tests"]
 fn handover_helper() {
+    // test-quality: allow NO_ASSERTION, UNCONDITIONAL_SKIP -- not a test: the entry point of the helper process the restore tests launch, which becomes the host they assert on
     handover_support::run_helper();
 }
 
@@ -82,12 +84,9 @@ async fn rollback_reaps_exit_seen_while_frozen() {
 
     runtime.freeze_reaping();
     std::fs::write(dir.path().join("go"), b"").expect("release child");
-    wait_until("the frozen child to exit", || is_zombie(pid));
-    std::thread::sleep(Duration::from_millis(200));
-    assert!(
-        is_zombie(pid),
-        "a frozen pane leaves its exited child unreaped"
-    );
+    // A reaper that kept running would reap the exit before any poll saw it
+    // as a zombie, so seeing one proves the frozen pane left it unreaped.
+    wait_until("the frozen child to linger as a zombie", || is_zombie(pid));
     assert_eq!(
         runtime.child_exit(),
         None,
@@ -572,4 +571,170 @@ fn restored_panes_accept_input_after_commit() {
             "writes arrive in order: {text}"
         );
     }
+}
+
+/// Faults the second staged pane, `ht-b`, in the run `var` names:
+/// `GTERM_RESTORE_FAULT` for the first restore, `GTERM_FALLBACK_FAULT` for
+/// the fallback.
+fn fault(var: &str, kind: &str) -> [(String, String); 2] {
+    [
+        ("GTERM_TEST_HELPER".into(), "1".into()),
+        (var.into(), format!("{kind}:ht-b")),
+    ]
+}
+
+/// The `gterm host restored` lines the host logged.
+fn restored_lines(socket_dir: &Path) -> Vec<String> {
+    std::fs::read_to_string(socket_dir.join("gterm.log"))
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| line.contains("gterm host restored"))
+        .map(str::to_string)
+        .collect()
+}
+
+fn echo_pane(id: &str) -> HelperPane {
+    let mut pane = HelperPane::new(id, "stty -echo; echo READY; exec cat");
+    pane.ready_text = Some("READY".into());
+    pane
+}
+
+#[test]
+fn stage_failure_falls_back_with_checkpoint_intact() {
+    for kind in ["decode", "panic", "actor"] {
+        let dir = temp_socket_dir();
+        let path = |name: &str| dir.path().join(name);
+        let mut recorded =
+            HelperPane::new("ht-c", "while [ ! -e c-go ]; do sleep 0.02; done; exit 4");
+        recorded.window_trigger = Some(path("c-go"));
+        recorded.recorded_exit = true;
+        let mut queued = HelperPane::new(
+            "ht-d",
+            "stty -echo; while [ ! -e d-go ]; do sleep 0.02; done; \
+             echo window-output; touch d-done; exec cat",
+        );
+        queued.window_trigger = Some(path("d-go"));
+        queued.window_done = Some(path("d-done"));
+        let mut spec = HelperSpec::new(
+            dir.path(),
+            vec![echo_pane("ht-a"), echo_pane("ht-b"), recorded, queued],
+        );
+        spec.env = fault("GTERM_RESTORE_FAULT", kind).to_vec();
+        let host = restore(&spec);
+        let mut control = host.control();
+
+        let mut restored = Vec::new();
+        wait_until(&format!("{kind}: the fallback commits"), || {
+            restored = restored_lines(dir.path());
+            !restored.is_empty()
+        });
+        assert_eq!(
+            restored.len(),
+            1,
+            "{kind}: one restore commits: {restored:?}"
+        );
+        assert!(
+            restored[0].contains("Fallback"),
+            "{kind}: the fallback image committed: {restored:?}"
+        );
+
+        let bound: Bound =
+            serde_json::from_slice(&std::fs::read(path(BOUND_FILE)).expect("bound file"))
+                .expect("decode bound file");
+        assert_eq!(ino(&path(CONTROL_SOCKET)), bound.control_ino, "{kind}");
+        assert_eq!(ino(&path(FRAMES_SOCKET)), bound.frames_ino, "{kind}");
+        for id in ["ht-a", "ht-b", "ht-d"] {
+            let pgid: i32 = std::fs::read_to_string(path(&pgid_file(id)))
+                .expect("pgid file")
+                .trim()
+                .parse()
+                .expect("pgid");
+            // SAFETY: signal 0 only checks that the pane leader exists.
+            let alive = unsafe { libc::kill(pgid, 0) } == 0;
+            assert!(alive && !is_zombie(pgid as u32), "{kind}: {id} survives");
+        }
+
+        let mut events = host.control();
+        let ack = rpc(&mut events, "subscribe_events", json!({"since": 0}));
+        assert_eq!(ack["gap"], false, "{kind}: {ack}");
+        let mut exits = HashMap::new();
+        collect_exits(&mut events, &mut exits, |exits| exits.contains_key("ht-c"));
+        assert_eq!(
+            exits["ht-c"],
+            vec![json!(4)],
+            "{kind}: the real exit status"
+        );
+
+        let mut text = String::new();
+        wait_until(&format!("{kind}: window output"), || {
+            text = snapshot_text(&mut control, "ht-d");
+            text.contains("window-output")
+        });
+        for (seq, id) in (1..).zip(["ht-a", "ht-b", "ht-d"]) {
+            let line = format!("{id}-after-{kind}");
+            let written = rpc(
+                &mut control,
+                "write",
+                json!({
+                    "operation_seq": seq,
+                    "host_terminal_id": id,
+                    "kind": "text",
+                    "encoding": "utf8-b64",
+                    "data": base64::engine::general_purpose::STANDARD.encode(format!("{line}\n")),
+                }),
+            );
+            assert_eq!(written["ok"], true, "{kind}: {written}");
+            wait_until(&format!("{kind}: {id} echoes"), || {
+                snapshot_text(&mut control, id).contains(&line)
+            });
+        }
+    }
+}
+
+#[test]
+fn fallback_failure_and_wedged_restore_end_the_process() {
+    let panes = || vec![echo_pane("ht-a"), echo_pane("ht-b")];
+
+    // The fallback's own Stage fails.
+    let dir = temp_socket_dir();
+    let mut spec = HelperSpec::new(dir.path(), panes());
+    spec.env = fault("GTERM_RESTORE_FAULT", "decode").to_vec();
+    spec.env.extend(fault("GTERM_FALLBACK_FAULT", "decode"));
+    let mut host = launch(&spec);
+    let status = host.wait_exit(WAIT);
+    assert_eq!(
+        status.and_then(|status| status.code()),
+        Some(70),
+        "a failed fallback stage: {}",
+        host.diagnostics()
+    );
+
+    // The fallback exec fails.
+    let dir = temp_socket_dir();
+    let mut spec = HelperSpec::new(dir.path(), panes());
+    spec.env = fault("GTERM_RESTORE_FAULT", "decode").to_vec();
+    spec.previous_image = Some(dir.path().join("missing-gterm"));
+    let mut host = launch(&spec);
+    let status = host.wait_exit(WAIT);
+    assert_eq!(
+        status.and_then(|status| status.code()),
+        Some(70),
+        "a failed fallback exec: {}",
+        host.diagnostics()
+    );
+
+    // Stage wedges; the alarm the earlier image armed ends it well before
+    // the state file's 30 s deadline.
+    let dir = temp_socket_dir();
+    let mut spec = HelperSpec::new(dir.path(), panes());
+    spec.env = fault("GTERM_RESTORE_FAULT", "wedge").to_vec();
+    spec.alarm_secs = Some(3);
+    let mut host = launch(&spec);
+    let status = host.wait_exit(WAIT);
+    assert_eq!(
+        status.and_then(|status| status.signal()),
+        Some(libc::SIGALRM),
+        "a wedged restore: {}",
+        host.diagnostics()
+    );
 }

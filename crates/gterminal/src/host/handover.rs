@@ -18,6 +18,7 @@ use crate::pane::{ChildExit, PaneCoreHandover};
 use crate::protocol::{ObservationState, PaneLocator};
 use crate::terminal_theme::ThemeDeclaration;
 
+pub(crate) mod fallback;
 pub(crate) mod restore;
 
 pub const FORMAT_VERSION: u32 = 1;

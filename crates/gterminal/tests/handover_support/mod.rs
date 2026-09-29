@@ -10,7 +10,7 @@ use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use gobby_terminal::host::handover::{
@@ -90,6 +90,12 @@ pub struct HelperSpec {
     pub next_host_id: u64,
     pub events: CarriedEvents,
     pub panes: Vec<HelperPane>,
+    /// Environment the helper and every image it execs run with.
+    pub env: Vec<(String, String)>,
+    /// The state file's `previous_image`; `None` names the helper's own pin.
+    pub previous_image: Option<PathBuf>,
+    /// Seconds of the upgrade alarm the helper arms before exec.
+    pub alarm_secs: Option<u32>,
 }
 
 impl HelperSpec {
@@ -104,6 +110,9 @@ impl HelperSpec {
                 ring: Vec::new(),
             },
             panes,
+            env: Vec::new(),
+            previous_image: None,
+            alarm_secs: None,
         }
     }
 }
@@ -129,6 +138,20 @@ impl RestoredHost {
         let hello = hello_control(&mut stream, TOKEN);
         assert_eq!(hello["ok"], true, "{hello}");
         stream
+    }
+
+    /// The helper's exit status, or `None` if it still runs after `timeout`.
+    pub fn wait_exit(&mut self, timeout: Duration) -> Option<ExitStatus> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if let Some(status) = self.child.try_wait().expect("poll helper") {
+                return Some(status);
+            }
+            if Instant::now() >= deadline {
+                return None;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
     }
 
     pub fn diagnostics(&self) -> String {
@@ -175,30 +198,12 @@ impl Drop for RestoredHost {
 
 /// Runs the helper for `spec` and waits until the restored host answers.
 pub fn restore(spec: &HelperSpec) -> RestoredHost {
-    let dir = &spec.socket_dir;
-    write_token(dir, TOKEN);
-    std::fs::write(dir.join("local_cli_token"), "local-token").expect("local token");
-    let stderr = std::fs::File::create(dir.join("helper.stderr")).expect("helper stderr");
-    let child = Command::new(std::env::current_exe().expect("test binary"))
-        .args([HELPER_TEST, "--exact", "--ignored", "--nocapture"])
-        .env(SPEC_ENV, serde_json::to_string(spec).expect("encode spec"))
-        .env("GTERM_LOG_FILE", dir.join("gterm.log"))
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::from(stderr))
-        .spawn()
-        .expect("spawn helper");
-    let pid = child.id();
-    let mut host = RestoredHost {
-        child,
-        pid,
-        socket_dir: dir.clone(),
-    };
+    let mut host = launch(spec);
     // The helper binds before it captures, so a connect proves nothing: wait
     // for the bound record it writes last before exec, then for the exec'd
     // image to answer on the adopted listener.
-    let bound = dir.join(BOUND_FILE);
-    let control = dir.join(CONTROL_SOCKET);
+    let bound = spec.socket_dir.join(BOUND_FILE);
+    let control = spec.socket_dir.join(CONTROL_SOCKET);
     let deadline = Instant::now() + WAIT;
     while !(bound.exists() && answers(&control)) {
         if let Ok(Some(status)) = host.child.try_wait() {
@@ -215,6 +220,29 @@ pub fn restore(spec: &HelperSpec) -> RestoredHost {
         std::thread::sleep(Duration::from_millis(10));
     }
     host
+}
+
+/// Starts the helper and returns without waiting for the restore.
+pub fn launch(spec: &HelperSpec) -> RestoredHost {
+    let dir = &spec.socket_dir;
+    write_token(dir, TOKEN);
+    std::fs::write(dir.join("local_cli_token"), "local-token").expect("local token");
+    let stderr = std::fs::File::create(dir.join("helper.stderr")).expect("helper stderr");
+    let child = Command::new(std::env::current_exe().expect("test binary"))
+        .args([HELPER_TEST, "--exact", "--ignored", "--nocapture"])
+        .env(SPEC_ENV, serde_json::to_string(spec).expect("encode spec"))
+        .env("GTERM_LOG_FILE", dir.join("gterm.log"))
+        .envs(spec.env.iter().map(|(name, value)| (name, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .expect("spawn helper");
+    RestoredHost {
+        pid: child.id(),
+        child,
+        socket_dir: dir.clone(),
+    }
 }
 
 /// Whether a host answers `hello` on `control`, without panicking when the
@@ -245,7 +273,7 @@ fn answers(control: &Path) -> bool {
     serde_json::from_str::<Value>(reply.trim_end()).is_ok_and(|reply| reply["ok"] == true)
 }
 
-fn pgid_file(host_terminal_id: &str) -> String {
+pub fn pgid_file(host_terminal_id: &str) -> String {
     format!("helper-{host_terminal_id}.pgid")
 }
 
@@ -425,7 +453,10 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
             candidate_sha256: pin.sha256.clone(),
             previous_sha256: pin.sha256.clone(),
         },
-        previous_image: pin.path.clone(),
+        previous_image: spec
+            .previous_image
+            .clone()
+            .unwrap_or_else(|| pin.path.clone()),
         argv: argv.clone(),
         control_listener_fd: control,
         frames_listener_fd: frames,
@@ -449,6 +480,10 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
     .expect("bound file");
     for (runtime, _, _) in runtimes {
         runtime.preserve_for_handoff();
+    }
+    if let Some(secs) = spec.alarm_secs {
+        // SAFETY: alarm only schedules SIGALRM; the pending alarm crosses exec.
+        unsafe { libc::alarm(secs) };
     }
     Command::new(&pin.path)
         .arg0("gterm")

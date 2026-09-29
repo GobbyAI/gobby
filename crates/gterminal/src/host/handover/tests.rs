@@ -148,7 +148,8 @@ async fn stage_rebuilds_generation_attempt_and_registry() {
     )
     .expect("write state");
 
-    let staged = stage(&path, &pid_file, 1 << 20, 1 << 20, false).expect("stage");
+    let carried = read_state(&path).expect("read state");
+    let staged = stage(carried, &path, &pid_file, 1 << 20, 1 << 20, false).expect("stage");
 
     assert_eq!(staged.host.host_epoch, "epoch-1");
     assert_eq!(staged.host.generation, 3);

@@ -101,19 +101,31 @@ pub async fn run() -> io::Result<()> {
         }
         #[cfg(all(unix, feature = "vt-engine"))]
         Some(resume) => {
+            use handover::fallback::Fallback;
             // A restore runs from the pin the earlier image exec'd and adopts
-            // its sockets and pidfile as they are.
-            let exe = std::env::current_exe()?;
-            let running_image = image::pinned_image(&images_dir, &exe)?.ok_or_else(|| {
-                io::Error::other(format!("{} is not a pinned gterm image", exe.display()))
-            })?;
-            let staged = handover::restore::stage(
-                &resume.state,
-                &args.pid_file,
-                host_config.native_scrollback_max_bytes as usize,
-                host_config.event_queue_bytes as usize,
-                resume.fallback,
-            )?;
+            // its sockets and pidfile as they are. From here to Commit, an
+            // error or a panic ends in the fallback.
+            let carried = handover::read_state(&resume.state).unwrap_or_else(|err| {
+                Fallback::unreadable(&resume.state, resume.fallback).fail(&err)
+            });
+            let fallback = Fallback::new(&carried, &resume.state, resume.fallback);
+            let panic_guard = fallback.arm();
+            let staged = (|| {
+                let exe = std::env::current_exe()?;
+                let running_image = image::pinned_image(&images_dir, &exe)?.ok_or_else(|| {
+                    io::Error::other(format!("{} is not a pinned gterm image", exe.display()))
+                })?;
+                let staged = handover::restore::stage(
+                    carried,
+                    &resume.state,
+                    &args.pid_file,
+                    host_config.native_scrollback_max_bytes as usize,
+                    host_config.event_queue_bytes as usize,
+                    resume.fallback,
+                )?;
+                io::Result::Ok((running_image, staged))
+            })();
+            let (running_image, staged) = staged.unwrap_or_else(|err| fallback.fail(&err));
             let state = HostState::restored(
                 host_config,
                 token,
@@ -123,6 +135,7 @@ pub async fn run() -> io::Result<()> {
                 shutdown_tx.clone(),
                 staged.host,
             );
+            panic_guard.disarm();
             let mut commit = staged.commit;
             commit.take_ownership(&state).await;
             (
