@@ -133,7 +133,10 @@ class ProcessorLifecycleMixin:
             return SessionFlushResult(flushed=False, error="session is not registered")
 
         try:
-            await self._process_session(session_id, transcript_path, at_eof=True)
+            # Each pass is bounded; a flush promises the whole transcript, so keep
+            # passing until one reaches EOF. The lock is released between passes.
+            while not await self._process_session(session_id, transcript_path, at_eof=True):
+                pass
         except Exception as exc:
             logger.exception(
                 "Failed to flush session transcript",

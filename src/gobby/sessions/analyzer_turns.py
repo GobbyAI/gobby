@@ -367,7 +367,10 @@ def _content_text(value: Any) -> str:
 
 
 def _result_error(value: Mapping[str, Any]) -> str | None:
-    status = value.get("status")
+    # Some tool results carry a structured (unhashable) status; only a string
+    # status names a failure.
+    raw_status = value.get("status")
+    status = raw_status if isinstance(raw_status, str) else None
     failed = (
         status in {"error", "cancelled", "failed"}
         or value.get("is_error") is True
