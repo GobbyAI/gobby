@@ -697,12 +697,16 @@ fn lagged_observer_is_closed_and_released() {
     let _ = drain_frames(&mut fast, Duration::from_millis(80));
     let _ = drain_frames(&mut slow, Duration::from_millis(80));
 
-    // `slow` stops reading here. The host must close it at the configured lag
-    // timeout, release its slot, and keep serving `fast` the whole time.
+    // `slow` stops reading here. Keep changing the screen so unchanged-frame
+    // suppression cannot leave its mailbox empty. The host must close it at
+    // the configured lag timeout, release its slot, and keep serving `fast`.
     let stopped = Instant::now();
     let mut kept_reading = 0usize;
     let mut released = None;
+    let mut operation_seq = 2u64;
     while stopped.elapsed() < lag * 8 {
+        write_line(&mut control, &host_terminal_id, operation_seq);
+        operation_seq += 1;
         kept_reading += read_frames_for(&mut fast, Duration::from_millis(60));
         match try_attach_observer(
             &frames_path,
