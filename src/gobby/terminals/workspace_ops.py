@@ -97,6 +97,7 @@ PANE_ROWS, PANE_COLS = 24, 80
 PANE_SPAWN_TIMEOUT_SECONDS = 30.0
 WAIT_CAPTURE_LINES = 200
 WAIT_CAPTURE_FAILURE_LIMIT = 3
+SLOW_WORKSPACE_SNAPSHOT_SECONDS = 1.0
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _ACTIVE_STATES = frozenset({"pending", "live"})
 
@@ -220,6 +221,7 @@ class WorkspaceOps:
         before the fence opens, and ``lifecycle_seq`` is that last removal so a
         workspace publish waiting on the fence stays above the watermark.
         """
+        started = time.monotonic()
         if workspace is None and project_id is None:
             workspace = (await self.workspace_create(actor, node=node)).id
         elif workspace is None:
@@ -235,9 +237,38 @@ class WorkspaceOps:
             if created:
                 await self._emit("workspace.created", resolved.id, workspace=resolved)
             workspace = resolved.id
+        fence_start = time.monotonic()
+        storage_timing: dict[str, float] = {}
         async with self._publish_fence:
-            snapshot, change = await self._db(self._snapshot_storage, workspace, node)
+            fence_acquired = time.monotonic()
+            snapshot, change = await self._db(
+                self._snapshot_storage, workspace, node, storage_timing
+            )
+            storage_done = time.monotonic()
             seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+            published = time.monotonic()
+        if published - started >= SLOW_WORKSPACE_SNAPSHOT_SECONDS:
+            worker_started = storage_timing["worker_started"]
+            worker_finished = storage_timing["worker_finished"]
+            logger.warning(
+                "Slow workspace snapshot | workspace_id=%s total_ms=%.1f resolve_ms=%.1f "
+                "fence_wait_ms=%.1f worker_wait_ms=%.1f worker_ms=%.1f "
+                "worker_return_ms=%.1f target_ms=%.1f sweep_ms=%.1f "
+                "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d",
+                snapshot.workspace.id,
+                (published - started) * 1000,
+                (fence_start - started) * 1000,
+                (fence_acquired - fence_start) * 1000,
+                (worker_started - fence_acquired) * 1000,
+                (worker_finished - worker_started) * 1000,
+                (storage_done - worker_finished) * 1000,
+                storage_timing["target"],
+                storage_timing["sweep"],
+                storage_timing["tabs"],
+                storage_timing["panes"],
+                (published - storage_done) * 1000,
+                len(change.removed_panes),
+            )
         if seq is None:
             return snapshot
         return WorkspaceSnapshot(
@@ -642,21 +673,37 @@ class WorkspaceOps:
             return self._workspaces.sweep_dead_panes(workspace_id)
 
     def _snapshot_storage(
-        self, reference: str, node: str | None
+        self, reference: str, node: str | None, timing: dict[str, float]
     ) -> tuple[WorkspaceSnapshot, LayoutChange]:
         """Sweep and read rows on one thread so the watermark matches the rows."""
+        started = time.monotonic()
         target = self._resolve(reference, node)
+        resolved = time.monotonic()
         change = self._sweep_storage(target.workspace.id)
+        swept = time.monotonic()
         if change.removed_panes:
             target = self._resolve(reference, node)
         home = _workspace_of(target, reference)
+        target_done = time.monotonic()
         with storage_errors():
+            tabs = tuple(self._workspaces.list_tabs(home.id))
+            tabs_done = time.monotonic()
+            panes = tuple(self._workspaces.list_panes(home.id))
+            panes_done = time.monotonic()
             snapshot = WorkspaceSnapshot(
                 node=target.node,
                 workspace=home,
-                tabs=tuple(self._workspaces.list_tabs(home.id)),
-                panes=tuple(self._workspaces.list_panes(home.id)),
+                tabs=tabs,
+                panes=panes,
             )
+        timing.update(
+            worker_started=started,
+            target=(resolved - started + target_done - swept) * 1000,
+            sweep=(swept - resolved) * 1000,
+            tabs=(tabs_done - target_done) * 1000,
+            panes=(panes_done - tabs_done) * 1000,
+        )
+        timing["worker_finished"] = time.monotonic()
         return snapshot, change
 
     async def _publish_removal(

@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -310,6 +311,36 @@ async def test_attach_translates_lifecycle_close_when_shutdown_starts_mid_reques
     assert reply["type"] == "workspace_error"
     assert reply["code"] == "shutdown_in_progress"
     assert reply["reason"] == "Daemon is shutting down"
+
+
+async def test_slow_failed_workspace_attach_logs_snapshot_and_error_send(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = _bare_server()
+    server.shutdown_in_progress = lambda: False
+    websocket = MockWebSocket()
+    server.clients[websocket] = {"id": "client-1"}
+    ticks = iter((0.0, 1.2, 1.5))
+    with (
+        patch(
+            "gobby.servers.websocket.workspace_ws.time", SimpleNamespace(monotonic=ticks.__next__)
+        ),
+        patch.object(
+            server, "_read_workspace", AsyncMock(side_effect=WorkspaceOpError("busy", "busy"))
+        ),
+        patch.object(server, "_send_json", AsyncMock()) as send,
+    ):
+        await server._handle_workspace_attach(websocket, {"type": "workspace_attach"})
+
+    assert send.await_count == 1
+    sent_call = send.await_args
+    assert sent_call is not None
+    assert sent_call.args[1]["type"] == "workspace_error"
+    assert sent_call.args[1]["code"] == "busy"
+    assert (
+        "client_id=client-1 workspace_id=None outcome=busy total_ms=1500.0 "
+        "snapshot_ms=1200.0 reply_ms=0.0 send_ms=300.0"
+    ) in caplog.text
 
 
 async def test_attach_propagates_lifecycle_publication_fault_while_running(
