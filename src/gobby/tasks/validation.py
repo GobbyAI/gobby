@@ -91,9 +91,6 @@ class TaskValidator:
         # growth cannot stale a verdict.
         review_policy = {
             "close_review_min_severity": self.config.close_review_min_severity,
-            "close_review_max_concurrency_per_project": (
-                self.config.close_review_max_concurrency_per_project
-            ),
         }
         stable_facts = {
             **stable_checklist_facts(checklist_facts),

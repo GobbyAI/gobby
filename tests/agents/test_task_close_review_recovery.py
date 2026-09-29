@@ -6,6 +6,7 @@ import json
 from contextlib import ExitStack
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -128,6 +129,71 @@ async def test_terminal_payload_without_run_is_redelivered_on_startup(
     assert recovered == 1
     wake.assert_awaited_once_with("parent", "launch failed", payload)
     assert store.delivered is True
+
+
+async def test_closed_review_waits_for_run_exit_and_delivers_retained_denials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "gobby-home"
+    retained_log = home / "logs" / "sandbox-violations" / "run.jsonl"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    payload = {
+        "event": "task_close_review_completed",
+        "review_id": "review",
+        "run_id": "run",
+        "status": "closed",
+        "message": "Task closed after background validation.",
+    }
+    store = _Store(replace(_review(status="closed", run_id="run"), result_payload=payload))
+    run = SimpleNamespace(
+        id="run",
+        status="running",
+        resume_metadata_json={
+            "sandbox": {
+                "backend": "srt",
+                "enforced": True,
+                "retained_violation_path": str(retained_log),
+            }
+        },
+    )
+    subscribers = _Subscribers()
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    _install(monkeypatch, store=store, run=run, subscribers=subscribers)
+    _install_delivery(monkeypatch, store=store, run=run, task=None)
+
+    assert await lifecycle_agents._reconcile_task_close_reviews(_runner(wake)) == 0
+    wake.assert_not_awaited()
+    assert store.delivered is False
+    assert subscribers.removed == []
+
+    run.status = "success"
+    retained_log.parent.mkdir(parents=True)
+    retained_log.write_text(
+        "\n".join(
+            json.dumps({"line": f"deny {operation}"})
+            for operation in ("system-info", "network-outbound", "system-info")
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    assert await lifecycle_agents._reconcile_task_close_reviews(_runner(wake)) == 1
+    wake.assert_awaited_once()
+    call = wake.await_args
+    assert call is not None
+    owner, message, delivered_payload = call.args
+    assert owner == "parent"
+    assert "SRT denied 3 operations (system-info 2, network-outbound 1)." in message
+    assert delivered_payload["sandbox_denials"]["violation_count"] == 3
+    assert delivered_payload["sandbox_denials"]["operations"] == {
+        "system-info": 2,
+        "network-outbound": 1,
+    }
+    assert store.delivered is True
+    assert subscribers.removed == [("run", ["parent"])]
+
+    assert await lifecycle_agents._reconcile_task_close_reviews(_runner(wake)) == 0
+    wake.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -274,7 +340,11 @@ async def test_close_verdict_survives_daemon_restart(
             result_payload={"kind": SUBMITTED_VERDICT_KIND, "verdict": {"valid": True}},
         )
     )
-    run = SimpleNamespace(id="run", status=run_status) if run_status else None
+    run = (
+        SimpleNamespace(id="run", status=run_status, resume_metadata_json={})
+        if run_status
+        else None
+    )
     wake = AsyncMock(return_value={"ism_persisted": True})
     _install(monkeypatch, store=store, run=run, subscribers=_Subscribers())
     _install_delivery(monkeypatch, store=store, run=run, task=task)
@@ -360,7 +430,9 @@ async def test_periodic_tick_sweeps_only_a_proven_orphaned_finalizing_review(
             updated_at=_NOW - timedelta(seconds=age_seconds),
         )
     )
-    run = SimpleNamespace(id="run", status="running", machine_id=machine_id)
+    run = SimpleNamespace(
+        id="run", status="running", machine_id=machine_id, resume_metadata_json={}
+    )
     wake = AsyncMock(return_value={"ism_persisted": True})
     _install(monkeypatch, store=store, run=run, subscribers=_Subscribers())
     _install_delivery(monkeypatch, store=store, run=run, task=None)
@@ -414,7 +486,9 @@ async def test_a_reviving_submission_wins_the_periodic_sweep_race(
         updated_at=_NOW - timedelta(seconds=FINALIZING_ORPHAN_GRACE_SECONDS + 1),
     )
     store = _Store(stale)
-    run = SimpleNamespace(id="run", status="running", machine_id=_THIS_MACHINE)
+    run = SimpleNamespace(
+        id="run", status="running", machine_id=_THIS_MACHINE, resume_metadata_json={}
+    )
     wake = AsyncMock(return_value={"ism_persisted": True})
     _install(monkeypatch, store=store, run=run, subscribers=_Subscribers())
     _install_delivery(monkeypatch, store=store, run=run, task=None)
@@ -583,6 +657,7 @@ class _Store:
 
     def mark_delivered(self, _review_id: str) -> bool:
         self.delivered = True
+        self.review = replace(self.review, delivered_at=_NOW)
         return True
 
 

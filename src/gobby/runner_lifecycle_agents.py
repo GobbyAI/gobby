@@ -303,17 +303,33 @@ async def _reconcile_task_close_reviews(
                 [current.caller_session_id],
             )
             continue
+        # A closed task can precede reviewer exit and SRT log retention.
         if (
             current.terminal
             and current.delivered_at is None
             and current.result_payload is not None
+            and (
+                current.status != "closed"
+                or run is None
+                or run.status in TERMINAL_AGENT_RUN_STATUSES
+            )
             and callable(wake)
         ):
             try:
+                delivery = (
+                    await _run_db(runner, terminal_review_delivery, db, current.agent_run_id)
+                    if current.agent_run_id
+                    and (run is None or run.status in TERMINAL_AGENT_RUN_STATUSES)
+                    else None
+                )
+                payload, message = delivery or (
+                    current.result_payload,
+                    str(current.result_payload.get("message") or "Task-close review completed."),
+                )
                 outcome = await wake(
                     current.caller_session_id,
-                    str(current.result_payload.get("message") or "Task-close review completed."),
-                    current.result_payload,
+                    message,
+                    payload,
                 )
             except Exception:
                 logger.warning(

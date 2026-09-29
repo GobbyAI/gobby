@@ -93,6 +93,16 @@ def sandbox_record(
         violation_path,
         include_events=include_events,
     )
+    # The terminal transition freezes the count before retention replaces the live log.
+    if violation_path is None:
+        frozen_count = raw.get("violation_count")
+        if (
+            isinstance(frozen_count, int)
+            and not isinstance(frozen_count, bool)
+            and frozen_count >= 0
+        ):
+            count = frozen_count
+            count_truncated = raw.get("violation_count_truncated") is True
     record["violation_count"] = count
     if count_truncated:
         record["violation_count_truncated"] = True
