@@ -16,7 +16,6 @@ use super::{
     HandoverState, UpgradeOutcome, UpgradeRecord,
 };
 use crate::host::events::HostEvents;
-use crate::host::image::{self, PinnedImage};
 use crate::host::spawn::PreparedChild;
 use crate::host::state::{
     CommitState, HostState, Identity, Inner, ObserverBind, Reservation, TerminalSlot,
@@ -140,7 +139,8 @@ fn stage_pane(
 ) -> io::Result<(TerminalSlot, Option<Reservation>, Option<ChildExit>)> {
     let master = duplicate(pane.master_fd, libc::S_IFCHR)?;
     let snapshot = decode_snapshot(&pane.snapshot_b64)?;
-    let terminal = GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limit_bytes)?;
+    let terminal =
+        GhosttyPaneTerminal::from_handover(&snapshot, pane.core, scrollback_limit_bytes)?;
     let runtime = PaneRuntime::stage_restore(
         terminal,
         (pane.rows, pane.cols, pane.pixel_width, pane.pixel_height),
@@ -303,8 +303,9 @@ impl PendingCommit {
     }
 
     /// Commit steps after the listeners accept: cancel the upgrade alarm,
-    /// record the outcome, delete the state file, prune pins, redraw panes.
-    pub(crate) async fn finish(self, state: &Arc<HostState>, images_dir: &Path, keep: &PinnedImage) {
+    /// record the outcome, delete the state file, redraw panes. `run` prunes
+    /// the pins afterwards, as it does for a cold start.
+    pub(crate) async fn finish(self, state: &Arc<HostState>) {
         // SAFETY: alarm(0) only cancels a pending alarm.
         unsafe { libc::alarm(0) };
         if let Ok(mut upgrade) = state.upgrade.lock() {
@@ -321,11 +322,12 @@ impl PendingCommit {
         if let Err(err) = std::fs::remove_file(&self.path) {
             warn!(path = %self.path.display(), err = %err, "handover state removal failed");
         }
-        if let Err(err) = image::prune_images(images_dir, keep) {
-            warn!(error = %err, "gterm image prune failed");
-        }
         let inner = state.inner.lock().await;
-        for child in inner.terminals.values().filter_map(|slot| slot.child.as_ref()) {
+        for child in inner
+            .terminals
+            .values()
+            .filter_map(|slot| slot.child.as_ref())
+        {
             child.runtime.nudge_child_redraw_after_handoff();
         }
     }

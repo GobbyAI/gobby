@@ -4,8 +4,11 @@
 //! pinned `gterm host --resume-state`. The exec'd host keeps the helper's pid,
 //! so it is the parent's child and every pane's parent.
 
+// Some helpers (list_rows, state_path) serve only the later restore tests
+// until they land; drop this once every helper has a caller.
 #![allow(dead_code)]
 
+use std::io::{BufRead, BufReader, Write};
 use std::os::fd::{IntoRawFd, RawFd};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -34,7 +37,7 @@ use crate::host_support::{
 pub const HELPER_TEST: &str = "handover_helper";
 pub const TOKEN: &str = "handover-token";
 const SPEC_ENV: &str = "GTERM_HANDOVER_HELPER_SPEC";
-const WAIT: Duration = Duration::from_secs(10);
+pub const WAIT: Duration = Duration::from_secs(10);
 /// Socket and pidfile identities the helper saw before exec.
 pub const BOUND_FILE: &str = "helper-bound.json";
 
@@ -119,7 +122,6 @@ pub struct RestoredHost {
     child: Child,
     pub pid: u32,
     pub socket_dir: PathBuf,
-    pgids: Vec<i32>,
 }
 
 impl RestoredHost {
@@ -146,7 +148,28 @@ impl RestoredHost {
 
 impl Drop for RestoredHost {
     fn drop(&mut self) {
-        for pgid in &self.pgids {
+        // Read the pgid files here, not after restore: a helper that dies
+        // before restoring still leaves its pane groups behind.
+        let pgids = std::fs::read_dir(&self.socket_dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with("helper-") && name.ends_with(".pgid")
+            })
+            .filter_map(|entry| {
+                std::fs::read_to_string(entry.path())
+                    .ok()?
+                    .trim()
+                    .parse::<i32>()
+                    .ok()
+            })
+            // 0 would signal this test's own group and a failed getpgid's -1
+            // would become pid 1.
+            .filter(|pgid| *pgid > 1);
+        for pgid in pgids {
             // SAFETY: signalling a test-owned process group.
             unsafe { libc::kill(-pgid, libc::SIGKILL) };
         }
@@ -175,30 +198,56 @@ pub fn restore(spec: &HelperSpec) -> RestoredHost {
         child,
         pid,
         socket_dir: dir.clone(),
-        pgids: Vec::new(),
     };
+    // The helper binds before it captures, so a connect proves nothing: wait
+    // for the bound record it writes last before exec, then for the exec'd
+    // image to answer on the adopted listener.
+    let bound = dir.join(BOUND_FILE);
     let control = dir.join(CONTROL_SOCKET);
     let deadline = Instant::now() + WAIT;
-    while UnixStream::connect(&control).is_err() {
+    while !(bound.exists() && answers(&control)) {
         if let Ok(Some(status)) = host.child.try_wait() {
-            panic!("helper exited {status} before binding: {}", host.diagnostics());
+            panic!(
+                "helper exited {status} before restoring: {}",
+                host.diagnostics()
+            );
         }
         assert!(
             Instant::now() < deadline,
-            "helper never bound: {}",
+            "helper never restored: {}",
             host.diagnostics()
         );
         std::thread::sleep(Duration::from_millis(10));
     }
-    host.pgids = spec
-        .panes
-        .iter()
-        .filter_map(|pane| {
-            let text = std::fs::read_to_string(dir.join(pgid_file(&pane.host_terminal_id)));
-            text.ok()?.trim().parse().ok()
-        })
-        .collect();
     host
+}
+
+/// Whether a host answers `hello` on `control`, without panicking when the
+/// image behind it has exited or not exec'd yet.
+fn answers(control: &Path) -> bool {
+    let Ok(mut stream) = UnixStream::connect(control) else {
+        return false;
+    };
+    let hello = serde_json::json!({
+        "id": "restore-probe",
+        "method": "hello",
+        "protocol_version": 1,
+        "control_token": TOKEN,
+    });
+    let mut line = hello.to_string();
+    line.push('\n');
+    if stream.write_all(line.as_bytes()).is_err()
+        || stream
+            .set_read_timeout(Some(Duration::from_millis(500)))
+            .is_err()
+    {
+        return false;
+    }
+    let mut reply = String::new();
+    if BufReader::new(&stream).read_line(&mut reply).is_err() {
+        return false;
+    }
+    serde_json::from_str::<Value>(reply.trim_end()).is_ok_and(|reply| reply["ok"] == true)
 }
 
 fn pgid_file(host_terminal_id: &str) -> String {
@@ -209,10 +258,7 @@ fn pgid_file(host_terminal_id: &str) -> String {
 pub fn list_rows(stream: &mut UnixStream) -> Vec<Value> {
     let listed = rpc(stream, "list", serde_json::json!({}));
     assert_eq!(listed["ok"], true, "{listed}");
-    listed["terminals"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
+    listed["terminals"].as_array().cloned().unwrap_or_default()
 }
 
 /// The ignored helper test's body: a no-op unless the parent set a spec.
@@ -257,8 +303,11 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
         let pid = runtime.child_pid().expect("pane pid");
         // SAFETY: getpgid only reads the child's process group.
         let pgid = unsafe { libc::getpgid(pid as libc::pid_t) };
-        std::fs::write(dir.join(pgid_file(&pane.host_terminal_id)), pgid.to_string())
-            .expect("pgid file");
+        std::fs::write(
+            dir.join(pgid_file(&pane.host_terminal_id)),
+            pgid.to_string(),
+        )
+        .expect("pgid file");
         if let Some(text) = &pane.ready_text {
             wait_until(&format!("pane text {text:?}"), || {
                 runtime.visible_text().contains(text.as_str())
@@ -424,7 +473,11 @@ fn bind(path: &Path) -> RawFd {
 /// Clears close-on-exec so the next image inherits `fd`.
 fn inherit(fd: RawFd) {
     // SAFETY: fd is open and owned by this helper for the next image.
-    assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETFD, 0) }, 0, "clear CLOEXEC");
+    assert_eq!(
+        unsafe { libc::fcntl(fd, libc::F_SETFD, 0) },
+        0,
+        "clear CLOEXEC"
+    );
 }
 
 pub fn ino(path: &Path) -> u64 {

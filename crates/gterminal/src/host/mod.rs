@@ -47,6 +47,13 @@ const PID_FILE: &str = "gterm.pid";
 const TOKEN_FILE: &str = "gterm-control.token";
 const LOCAL_CLI_TOKEN_FILE: &str = "local_cli_token";
 
+/// Commit steps a restore leaves for after the listeners accept. A build
+/// without the vt engine never restores, so it has none.
+#[cfg(all(unix, feature = "vt-engine"))]
+type PendingRestore = handover::restore::PendingCommit;
+#[cfg(not(all(unix, feature = "vt-engine")))]
+type PendingRestore = std::convert::Infallible;
+
 pub async fn run() -> io::Result<()> {
     let args = HostArgs::parse();
     init_tracing(&args.log_file);
@@ -68,47 +75,96 @@ pub async fn run() -> io::Result<()> {
         .validate()
         .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
     let images_dir = args.socket_dir.join(image::IMAGES_DIR);
-    let running_image = run_from_pin(&images_dir)
-        .map_err(|err| io::Error::new(err.kind(), format!("gterm image pin: {err}")))?;
     let local_token = read_local_token(&args.socket_dir);
-    let host_epoch = uuid::Uuid::new_v4().to_string();
     let host_pid = std::process::id();
-
     let control_path = args.socket_dir.join(CONTROL_SOCKET);
     let frames_path = args.socket_dir.join(FRAMES_SOCKET);
-    prepare_socket_path(&control_path, |path| {
-        format!("gterm control socket busy at {}", path.display())
-    })?;
-    prepare_socket_path(&frames_path, |path| {
-        format!("gterm frames socket busy at {}", path.display())
-    })?;
-
-    let control_listener = UnixListener::bind(&control_path)?;
-    restrict_socket_permissions(&control_path, 0o600)?;
-    let frames_listener = UnixListener::bind(&frames_path)?;
-    restrict_socket_permissions(&frames_path, 0o600)?;
-    // Only a host that owns both sockets may publish its pid: a second host
-    // losing the busy check above must leave the live host's pidfile alone.
-    write_pidfile(&args.pid_file, host_pid)?;
-    // Pruning belongs to the socket owner: a start that lost the busy check
-    // above returned before reaching here and leaves every pin in place.
-    if let Err(err) = image::prune_images(&images_dir, &running_image) {
-        tracing::warn!(error = %err, "gterm image prune failed");
-    }
-
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-    let state = HostState::new(
-        host_config,
-        token,
-        local_token,
-        host_epoch.clone(),
-        running_image,
-        host_pid,
-        shutdown_tx.clone(),
-    );
+
+    let (state, control_listener, frames_listener, running_image, pending) = match &args.resume {
+        #[cfg(not(all(unix, feature = "vt-engine")))]
+        Some(Resume { state, fallback }) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "cannot restore {}{}: this gterm has no vt engine",
+                    state.display(),
+                    if *fallback { " as a fallback" } else { "" }
+                ),
+            ))
+        }
+        #[cfg(all(unix, feature = "vt-engine"))]
+        Some(resume) => {
+            // A restore runs from the pin the earlier image exec'd and adopts
+            // its sockets and pidfile as they are.
+            let exe = std::env::current_exe()?;
+            let running_image = image::pinned_image(&images_dir, &exe)?.ok_or_else(|| {
+                io::Error::other(format!("{} is not a pinned gterm image", exe.display()))
+            })?;
+            let staged = handover::restore::stage(
+                &resume.state,
+                &args.pid_file,
+                host_config.native_scrollback_max_bytes as usize,
+                host_config.event_queue_bytes as usize,
+                resume.fallback,
+            )?;
+            let state = HostState::restored(
+                host_config,
+                token,
+                local_token,
+                running_image.clone(),
+                host_pid,
+                shutdown_tx.clone(),
+                staged.host,
+            );
+            let mut commit = staged.commit;
+            commit.take_ownership(&state).await;
+            (
+                state,
+                staged.control,
+                staged.frames,
+                running_image,
+                Some(commit),
+            )
+        }
+        None => {
+            let running_image = run_from_pin(&images_dir)
+                .map_err(|err| io::Error::new(err.kind(), format!("gterm image pin: {err}")))?;
+            prepare_socket_path(&control_path, |path| {
+                format!("gterm control socket busy at {}", path.display())
+            })?;
+            prepare_socket_path(&frames_path, |path| {
+                format!("gterm frames socket busy at {}", path.display())
+            })?;
+
+            let control_listener = UnixListener::bind(&control_path)?;
+            restrict_socket_permissions(&control_path, 0o600)?;
+            let frames_listener = UnixListener::bind(&frames_path)?;
+            restrict_socket_permissions(&frames_path, 0o600)?;
+            // Only a host that owns both sockets may publish its pid: a second host
+            // losing the busy check above must leave the live host's pidfile alone.
+            write_pidfile(&args.pid_file, host_pid)?;
+            let state = HostState::new(
+                host_config,
+                token,
+                local_token,
+                uuid::Uuid::new_v4().to_string(),
+                running_image.clone(),
+                host_pid,
+                shutdown_tx.clone(),
+            );
+            (
+                state,
+                control_listener,
+                frames_listener,
+                running_image,
+                None::<PendingRestore>,
+            )
+        }
+    };
 
     info!(
-        epoch = %host_epoch,
+        epoch = %state.host_epoch,
         pid = host_pid,
         "gterm host listening"
     );
@@ -136,6 +192,17 @@ pub async fn run() -> io::Result<()> {
             }
         })
     };
+    if let Some(commit) = pending {
+        #[cfg(all(unix, feature = "vt-engine"))]
+        commit.finish(&state).await;
+        #[cfg(not(all(unix, feature = "vt-engine")))]
+        match commit {}
+    }
+    // Pruning belongs to the socket owner: a start that lost the busy check
+    // returned before binding, and a restore reaches here only once committed.
+    if let Err(err) = image::prune_images(&images_dir, &running_image) {
+        tracing::warn!(error = %err, "gterm image prune failed");
+    }
 
     let ticker = {
         let state = Arc::clone(&state);
@@ -198,6 +265,16 @@ struct HostArgs {
     log_file: PathBuf,
     shutdown_grace_ms: u64,
     host_config: HostConfig,
+    /// Restore from a handover instead of binding fresh.
+    resume: Option<Resume>,
+}
+
+/// `--resume-state PATH`, with `--resume-fallback` when this restore is the
+/// fallback into the earlier image.
+#[derive(Debug)]
+struct Resume {
+    state: PathBuf,
+    fallback: bool,
 }
 
 impl HostArgs {
@@ -228,6 +305,8 @@ impl HostArgs {
                     .unwrap_or_else(|| PathBuf::from("."))
             });
         let mut host_config = HostConfig::default();
+        let mut resume_state = None;
+        let mut resume_fallback = false;
         let mut args = argv.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -235,6 +314,10 @@ impl HostArgs {
                 "--socket-dir" => {
                     socket_dir = PathBuf::from(value_for(&arg, &mut args)?);
                 }
+                "--resume-state" => {
+                    resume_state = Some(PathBuf::from(value_for(&arg, &mut args)?));
+                }
+                "--resume-fallback" => resume_fallback = true,
                 "--max-attachments-per-terminal" => {
                     host_config.max_attachments_per_terminal =
                         parse_u32(value_for(&arg, &mut args)?)
@@ -287,6 +370,10 @@ impl HostArgs {
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| socket_dir.join("logs").join("gterm.log"));
+        let resume = resume_state.map(|state| Resume {
+            state,
+            fallback: resume_fallback,
+        });
         Ok(Self {
             token_file: socket_dir.join(TOKEN_FILE),
             pid_file: socket_dir.join(PID_FILE),
@@ -294,6 +381,7 @@ impl HostArgs {
             socket_dir,
             shutdown_grace_ms: 150,
             host_config,
+            resume,
         })
     }
 }
@@ -324,6 +412,8 @@ Options:
       --control-deadline-ms N            control delivery deadline in milliseconds
       --control-queue-entries N          control queue entry ceiling
       --event-queue-bytes N              event queue byte ceiling
+      --resume-state PATH                restore from a handover state file
+      --resume-fallback                  the restore is a fallback into the earlier image
   -h, --help                             print this help and exit
 
 Environment: GTERM_SOCKET_DIR overrides the default socket dir, GTERM_LOG_FILE

@@ -73,6 +73,7 @@ impl HostEvents {
     /// Rebuilds the log a host upgrade carried: `cursor` is the last issued
     /// seq and each ring event keeps the `seq` it was emitted with, so
     /// `subscribe(since)` replays and reports gaps as the earlier image did.
+    #[cfg(all(unix, feature = "vt-engine"))]
     pub fn restore(
         epoch: String,
         event_queue_bytes: usize,
@@ -153,7 +154,7 @@ impl HostEvents {
         .await;
     }
 
-    #[cfg(feature = "vt-engine")]
+    #[cfg(any(feature = "vt-engine", test))]
     pub async fn emit_terminal_exited(
         &self,
         terminal_id: String,

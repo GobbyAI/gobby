@@ -193,6 +193,7 @@ pub struct HostState {
     pub shutdown: watch::Sender<bool>,
     pub next_conn: AtomicU64,
     /// Upgrades this host epoch has survived; a cold start is generation 0.
+    #[cfg(all(unix, feature = "vt-engine"))]
     pub(crate) generation: u64,
     /// The last upgrade attempt and its outcome, carried across the exec.
     #[cfg(all(unix, feature = "vt-engine"))]
@@ -226,6 +227,7 @@ impl HostState {
             socket_dir_removed: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
+            #[cfg(all(unix, feature = "vt-engine"))]
             generation: 0,
             #[cfg(all(unix, feature = "vt-engine"))]
             upgrade: std::sync::Mutex::new(None),

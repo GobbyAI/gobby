@@ -662,15 +662,12 @@ impl HostState {
         })
     }
 
-    /// Retire a committed slot whose leader exited, returning whether its
-    /// `terminal_exited` may be emitted. A slot that still holds a live group
-    /// stays listed and silent: that event would settle a live row.
-    #[cfg(any(feature = "vt-engine", test))]
     /// Removes a committed pane whose leader exited and emits its
     /// `terminal_exited`, under the `inner` lock and then the events lock.
     /// The exit watcher is the only caller, so it alone removes a committed
     /// pane for an exit. Returns `false`, doing nothing, when a kill owns
     /// the slot: one in flight, or an unproven one whose group lives on.
+    #[cfg(any(feature = "vt-engine", test))]
     async fn settle_leader_exit(
         &self,
         identity: &Identity,
