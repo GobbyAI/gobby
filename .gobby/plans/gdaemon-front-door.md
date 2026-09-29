@@ -51,11 +51,12 @@ decision-complete; every deliverable below carries its settled design.
   `hub_daemon_url` over one warm pinned-TLS connection. S2.11 closes as relay. The hub
   reaches a node only over the node-opened channel; there is no daemon-endpoint
   column.
-- **Expansion mapping.** The root is #21543. Phases P1, P2, P4, P5, P3 correspond to
-  the existing placeholder epics #21551, #21553, #21555, #21554, #21552. At expansion
+- **Expansion mapping.** The root is #21543. Phases P1, P4, P5 correspond to
+  the existing placeholder epics #21551, #21555, #21554. At expansion
   apply the coordinator either re-parents the generated leaves under those epics or
-  closes the placeholders as `duplicate` of the generated phase sub-epics; the
-  placeholders have no children today. #21575 (S4.2) is delivered by 2.3 and closed as
+  closes the placeholders as `duplicate` of the generated phase sub-epics. Run modes
+  (#21553) and the HTTP contract corpus (#21552) expand from their slice plans.
+  #21575 (S4.2) is delivered by the run-modes slice's 2.2 and closed as
   `duplicate` at apply. ROADMAP.md S1.4 row, #21555 text (`sk-` prefix, migration 421,
   runtime-handshake bootstrap, endpoint columns) and #21578's mode wording are
   reconciled at materialization to match this plan.
@@ -355,195 +356,34 @@ changing `status`, so this check needs no later edit.
 
 - 1.4.1 - A typed 503 classifies as `Connect` and suppresses fail-open hooks under a fresh shutdown marker; an untyped 503 stays `Http`. test: `crates/ghook/tests/contract.rs::typed_503_counts_as_unreachable`.
 
-## P2: Run modes (S1.2, #21553; S4.2 #21575 pulled forward) (depends: P1)
+## Run modes and HTTP contract corpus (S1.2, S1.5): slice plans
 `kind: framing`
 
-**Goal**: bootstrap names the mode, gdaemon carries mode-specific services in a typed
-container, and a node refuses to run hub maintenance.
+Former P2 (run modes, #21553) is planned in `.gobby/plans/gdaemon-run-modes.md` and
+former P3 (HTTP contract corpus, #21552) in `.gobby/plans/gdaemon-http-contract-corpus.md`;
+each is a single-phase slice rooted at its epic. The former 2.2 `AppState` containers
+move to their first consumer (4.4 or 5.1), and P4 slice planning restores its waits
+(former P2, 2.3, 3.1) against the slice leaves.
 
-### 2.1 `hub` flag in both parsers and writers, mode name on health [category: config]
-`kind: deliverable`
+Open ordering gap for P4 and 5.1 slice planning (from the #23098 audit). 4.4's pair
+test asserts that the node runs no maintenance loop (run-modes 2.2), which needs a
+running Python node runner. `run_gobby` takes `ActiveDaemonLease` for every bootstrap,
+so that runner stands by until 5.1 exempts `node` from the lease. A runnable node
+therefore needs the lease exemption before 4.4's pair test. P4 slice planning orders
+the exemption first or drops that assertion from 4.4.
+- A 4.4 edge to 5.1 would form a cycle, because P5 depends on P4.
+- PD disposition (2026-09-29), to apply in P4 and P5 slice planning:
+  - 4.4 stays before P5. Its pair test launches the node as a bare `gdaemon serve`
+    with the node bootstrap (`watch_parent_fd` needs no Python parent).
+  - 4.4 drops the clause "that the node runs no maintenance loop (2.3)" and its `2.3`
+    dependency.
+  - 5.2 gains the acceptance item "a `node` gdaemon never spawns or supervises a
+    Python backend".
+  - Before P5, a code guard refuses `gobby start` and lease promote or recover on a
+    `node` bootstrap, so no operator action can activate a node on the hub database.
+    Documentation alone is not enough.
 
-Targets:
-- `crates/gcore/src/bootstrap.rs::HubDatabaseBootstrap`
-- `crates/gcore/src/bootstrap.rs::DatastoreMode`
-- `crates/gcore/src/bootstrap.rs::parse_hub_database_bootstrap`
-- `src/gobby/config/bootstrap.py::*` — scope-reason: the dataclass, `_parse_datastore_mode`, `bootstrap_from_mapping`, and the new `run_mode()` accessor change together; `hub` defaults to false so constructor sites need no edit
-- `src/gobby/config/bootstrap_io.py::update_bootstrap_yaml`
-- `src/gobby/config/postgres_bootstrap.py::*` — scope-reason: consumer of `update_bootstrap_yaml`; the writer's signature is unchanged, verification only
-- `src/gobby/ui_exposure.py::*` — scope-reason: consumer of `update_bootstrap_yaml`; verification only
-- `src/gobby/cli/install_setup.py::ensure_daemon_config`
-- `src/gobby/cli/install_files_home.py::*` — scope-reason: consumer of `ensure_daemon_config`; verification only
-- `src/gobby/install/shared/config/bootstrap.yaml.j2`
-- `crates/gdaemon/src/front_door/health.rs`
-- `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
-- `docs/guides/configuration.md`
-- `tests/config/test_bootstrap.py::*` — scope-reason: bootstrap parser tests gain the new block's cases
-- `tests/config/test_files_home.py::*` — scope-reason: consumer of `update_bootstrap_yaml` and `ensure_daemon_config`; written files gain the `hub` line
-- `tests/cli/test_install_setup.py::*` — scope-reason: consumer of `ensure_daemon_config`; written files gain the `hub` line
-- `tests/integration/sandbox/test_public_ghook_install.py::*` — scope-reason: consumer of `ensure_daemon_config`; verification only
-
-Keep `datastore_mode: local | remote` and add `hub: bool` (default `false`).
-`(local, false)` is `standalone`, `(local, true)` is `hub`, `(remote, false)` is
-`node`; `(remote, true)` is rejected by both parsers with the same message. Add a
-`run_mode()` accessor in both languages returning the mode name. Writers
-(`update_bootstrap_yaml`, installer setup, the bundled template) emit the one extra
-line. Native `/api/health` (proxied or native) adds `"mode": "standalone" | "hub" |
-"node"`; when proxied, gdaemon injects the field into Python's JSON body. Reconcile
-#21578's `runtime_mode: node` wording to `datastore_mode: remote` plus `hub: false`
-at materialization. Regenerate the runtime config contract carrier.
-
-**Acceptance:**
-
-- 2.1.1 - Both parsers derive the mode from the pair and reject `(remote, true)`. symbol: `_parse_datastore_mode`. symbol: `DatastoreMode`.
-- 2.1.2 - Writers emit `hub: false` by default. test: `tests/config/test_bootstrap.py::test_writers_emit_hub_flag`.
-- 2.1.3 - `/api/health` reports the mode name. file: `crates/gdaemon/src/front_door/health.rs`.
-- 2.1.4 - The config contract carrier is regenerated. file: `crates/gcore/assets/config/runtime_config_contract.json`.
-
-### 2.2 `AppState` mode containers in gdaemon [category: code] (depends: 2.1)
-`kind: deliverable`
-
-Targets:
-- `crates/gdaemon/src/serve.rs`
-- `crates/gdaemon/src/state.rs`
-- `crates/gdaemon/src/front_door/routes.rs`
-- `crates/gdaemon/tests/front_door.rs`
-
-Add `crates/gdaemon/src/state.rs`:
-
-```rust
-pub struct AppState { pub common: Arc<CommonServices>, pub mode: ModeServices }
-pub enum ModeServices { Standalone(StandaloneServices), Hub(HubServices), Node(NodeServices) }
-```
-
-`CommonServices` holds the front door (proxy client, routing table, backend target),
-bootstrap view, and health state. Stage 1 variant structs are empty except for the
-handles later leaves add (4.4 adds the node channel to `NodeServices` and the
-registry to `HubServices`; 5.1 adds the lease to `StandaloneServices` and
-`HubServices`). Families needing a mode-only service take that variant's struct and
-are mounted only inside its `match` arm; no `Option` fields for mode-dependent
-services. A node starts the front door and native health like the other modes and
-reports `mode: node`; every other node refusal arrives with the leaf that owns it.
-
-**Acceptance:**
-
-- 2.2.1 - `AppState` is constructed per mode with no `Option` mode fields. file: `crates/gdaemon/src/state.rs`.
-- 2.2.2 - A `node` bootstrap serves native health with `mode: node`. test: `crates/gdaemon/tests/front_door.rs::node_mode_serves_health_only`.
-
-### 2.3 Python guards hub-only loops behind the mode flag (S4.2) [category: code] (depends: 2.1)
-`kind: deliverable`
-
-Targets:
-- `src/gobby/runner.py::GobbyRunner._initialize_runtime_services`
-- `src/gobby/runner_init/services.py::*` — scope-reason: every maintenance loop registration reads the mode
-- `tests/test_runner_lifecycle.py::*` — scope-reason: node-mode startup assertions
-
-Every hub-only loop (cron scheduler, memory dream, code-index maintenance, session
-reconcilers, backup rehearsal, agent launchers) is registered only when
-`run_mode()` is `standalone` or `hub`. In `node` mode the runner refuses to start
-them and logs one line per skipped loop at INFO. Nothing else changes: this exists so
-the first hub-node pair test in 4.4 has a node that runs no maintenance. #21575 is
-closed as `duplicate` of the leaf created from this section.
-
-**Acceptance:**
-
-- 2.3.1 - A `node` bootstrap starts no hub-only loop and logs each skip. test: `tests/test_runner_lifecycle.py::test_node_mode_skips_hub_loops`.
-- 2.3.2 - `standalone` and `hub` start every loop as today. symbol: `GobbyRunner._initialize_runtime_services`.
-
-## P3: HTTP contract corpus (S1.5, #21552)
-`kind: framing`
-
-**Goal**: a recorded request/response corpus for the proxied surface that pytest and
-Rust both replay; the parity gate for every Stage 2 takeover. Independent of P1; can
-start immediately.
-
-### 3.1 Fixture format, Python recorder and replay, first corpus [category: test]
-`kind: deliverable`
-
-Targets:
-- `tests/contracts/http/manifest.json`
-- `tests/contracts/http/README.md`
-- `tests/contracts/http_corpus.py`
-- `tests/contracts/test_http_corpus.py`
-- `tests/contracts/conftest.py`
-
-Fixture format (`schema_version` 1), one case per file under `tests/contracts/http/`:
-
-```json
-{
-  "schema_version": 1,
-  "name": "health_ok",
-  "family": "health",
-  "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
-  "response": {"status": 200, "headers": {"content-type": "application/json"}, "body": {"status": "ok", "version": "@mask@"}},
-  "mask": ["/response/body/version", "/response/body/uptime_seconds"]
-}
-```
-
-`manifest.json` lists cases in order and carries the corpus-level `schema_version`
-and, per family, `"parity": "proxy" | "native"` (Stage 2 flips a family to `native`
-when gdaemon serves it). Headers are an allowlist on both sides: `content-type`,
-`retry-after`, `x-gobby-user-id`, `x-gobby-machine-id`, `x-gobby-key-id`. `mask`
-names volatile fields by JSON pointer; both harnesses replace them with `"@mask@"`
-before comparing, and the recorder applies masks at write time so recordings are
-deterministic.
-
-`tests/contracts/http_corpus.py` holds the loader, mask, and compare helpers. The
-recorder is a pytest option `--record-http-contracts` (in `tests/contracts/conftest.py`)
-that drives each manifest case against the existing e2e `daemon_instance` fixture (the
-fixture is consumed, not modified; it records whatever topology the fixture runs,
-which is direct Python until 1.3 lands and the front door afterwards, and the
-recorded Python behavior is the same either way) and rewrites the file.
-`test_http_corpus.py` replays every case against the same fixture and asserts
-equality, parametrized by case name.
-
-First corpus: `GET /api/health` (200) and the typed 503 body from 1.2; `/api/config/*`
-schema and values; reduced `GET /api/tasks`; `POST /api/runtime/handshake/challenge`
-and `POST /api/runtime/handshake`; the 401 body shapes (`missing_auth`,
-`missing_grant`, `forged_identity`, and the generic Authentication-required message);
-the HTTP-200 internal-error envelope from `src/gobby/servers/exception_handlers.py`
-(`{"status":"error","message":"Internal error occurred but request acknowledged","error_logged":true}`),
-reproduced not fixed. The `X-Gobby-Local-Token` alias is not recorded: leaf 4.3
-deletes it and re-records the auth cases with a `schema_version` bump.
-
-**Acceptance:**
-
-- 3.1.1 - The loader rejects a case whose `schema_version` differs from the manifest's. test: `tests/contracts/test_http_corpus.py::test_schema_version_mismatch_rejected`.
-- 3.1.2 - `--record-http-contracts` rewrites every manifest case deterministically (two runs produce identical files). test: `tests/contracts/test_http_corpus.py::test_recorder_is_deterministic`.
-- 3.1.3 - Every first-corpus case replays equal against the front-door fixture. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
-- 3.1.4 - The manifest carries per-family parity flags and the README documents the format, masks, and re-record procedure. file: `tests/contracts/http/README.md`.
-
-### 3.2 Rust replay harness against gdaemon [category: test] (depends: 3.1, 1.2)
-`kind: deliverable`
-
-Targets:
-- `crates/gdaemon/tests/http_contracts.rs`
-- `crates/gdaemon/tests/support/contracts.rs`
-
-`crates/gdaemon/tests/http_contracts.rs` reads `tests/contracts/http/manifest.json`
-from the workspace root, starts `gdaemon serve` on free ports with a case-driven stub
-backend that answers each recorded request with the recorded response for `proxy`
-families and with no backend for `native` families, sends each request through the
-front door, masks, and asserts equality. A `native` family whose replay differs fails
-the crate's test suite: that is the parity gate Stage 2 flips. The support module
-holds the Rust loader, mask, and compare helpers (serde_json + JSON pointer), kept
-behaviorally identical to `tests/contracts/http_corpus.py`.
-
-A completeness precheck runs before replay: every family gdaemon can serve natively
-(the static handler table in `front_door/routes.rs`; `health` alone in Stage 1) must
-appear in the manifest with at least one case, and the test fails naming the missing
-family. Bootstrap route names outside that table are not checked. This keeps the
-parity gate closed when a Stage 2 leaf adds a native handler without recording its
-family.
-
-**Acceptance:**
-
-- 3.2.1 - Every `proxy` family case replays byte-equal through gdaemon. test: `crates/gdaemon/tests/http_contracts.rs::proxy_families_replay_equal`.
-- 3.2.2 - The `health` family replays equal in `native` mode. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal`.
-- 3.2.3 - Masking in Rust matches Python on a shared vector. test: `crates/gdaemon/tests/http_contracts.rs::mask_matches_python_vector`.
-- 3.2.4 - Every natively servable family has at least one manifest case, and a missing family fails the suite by name. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
-
-## P4: API keys and node registration (S1.4, #21555) (depends: P2)
+## P4: API keys and node registration (S1.4, #21555) (depends: P1)
 `kind: framing`
 
 **Goal**: user API keys bound to machines replace the shared daemon token; the hub
@@ -784,7 +624,7 @@ CLI (`src/gobby/cli/auth_login.py`, registered under the existing `auth` group;
 - 4.5.2 - Rotate mints, verifies, then revokes the old key, and rolls back on verify failure. test: `tests/cli/test_auth_login.py::test_rotate_verifies_before_revoke`.
 - 4.5.3 - Login refuses a `datastore_mode: local` bootstrap and a `--hub` that differs from `hub_daemon_url`, before any network call and with bootstrap byte-identical. test: `tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch`.
 
-### 4.3 Hub-side key validation, front-door identity, and shared-token cutover [category: code] (depends: 4.2, 4.5, 3.1)
+### 4.3 Hub-side key validation, front-door identity, and shared-token cutover [category: code] (depends: 4.2, 4.5)
 `kind: deliverable`
 
 Targets:
@@ -1014,7 +854,7 @@ cookie), `admin-operations.md` (rotation procedure).
 - 4.3.8 - `src/gobby/hooks/inbox.py` is below 1,000 lines after the loop and retention move, and the moved loop still drains and prunes on its own cadence. file: `src/gobby/hooks/inbox_maintenance.py`.
 - 4.3.9 - `src/gobby/mcp_proxy/tools/spawn_agent/_implementation.py` is below 1,000 lines after the selection move. file: `src/gobby/mcp_proxy/tools/spawn_agent/_selection.py`.
 
-### 4.4 Node channel, relay backend, and `/api/machines` [category: code] (depends: 4.1, 4.3, 4.5, 2.3)
+### 4.4 Node channel, relay backend, and `/api/machines` [category: code] (depends: 4.1, 4.3, 4.5)
 `kind: deliverable`
 
 Targets:
@@ -1067,7 +907,7 @@ with `tls="self-signed"` and a second gdaemon in `node` mode (bootstrap
 `/api/machines`, that a request through the node's loopback front door reaches the
 hub and returns the hub's identity, that one WS upgrade through the node's loopback
 front door reaches the hub's `WebSocketServer` and echoes a frame, that the node
-runs no maintenance loop (2.3), and that revoking the key closes the channel within
+runs no maintenance loop (run-modes 2.2), and that revoking the key closes the channel within
 30 s and makes the next relayed request fail with 401.
 
 **Acceptance:**
@@ -1672,6 +1512,13 @@ built and installed binaries:
   as absent, which also stops a consumed `restart` marker from respawning without
   backoff (5.2.8 extended with both cases); timestamp comparison and pre-spawn deletion
   are recorded as rejected.
+- 2026-09-29: Under #23098 (PD option (a)), P2 and P3 moved to single-phase slice
+  plans `gdaemon-run-modes.md` (root #21553) and `gdaemon-http-contract-corpus.md`
+  (root #21552), each refreshed against the landed P1 code; this plan keeps a pointer
+  section. 2.2 `AppState` moves to its first consumer (4.4 or 5.1). The P4, 4.3, and
+  4.4 waits on P2, 3.1, and 2.3 are dropped here and restored by P4 slice planning
+  against the slice leaves; P4 now depends on P1 directly, which keeps the P1-before-P4
+  ordering that ran through P2.
 
 **Round 1** `kind: enhancement`
 
