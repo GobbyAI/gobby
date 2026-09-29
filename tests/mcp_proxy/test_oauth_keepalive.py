@@ -1,6 +1,7 @@
 """Cross-process OAuth keep-alive: one refresh, backoff, and shape-only inspection."""
 
 import asyncio
+import logging
 import os
 import time
 from pathlib import Path
@@ -560,6 +561,44 @@ async def test_keepalive_lead_refresh_posts_token_once_and_skips_mcp_url(
     assert did_second is False
     assert posts == ["/token"]
     assert config.url not in urls
+
+
+@pytest.mark.asyncio
+async def test_keepalive_refresh_error_logs_exception_class_only(
+    postgres_db: PostgresHubDatabase, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A raised refresh error logs the server and exception class, never its text."""
+    config = _config("keepalive-connect-error")
+    now = time.time()
+    seeded = MCPOAuthStorage(SecretStore(postgres_db, gobby_home=tmp_path), config)
+    seeded.state.tokens = OAuthToken(
+        access_token="old-access", token_type="Bearer", refresh_token="old-refresh"
+    )
+    seeded.state.client = _oauth_client()
+    seeded.state.metadata = _oauth_metadata()
+    seeded.state.expires_at = now + 300
+    await seeded.save()
+    detail = "connect failed https://auth.example.com/token body=old-refresh"
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        raise httpx2.ConnectError(detail, request=request)
+
+    caplog.set_level(logging.WARNING, logger="gobby.mcp_proxy.oauth_keepalive")
+    store = SecretStore(postgres_db, gobby_home=tmp_path)
+
+    refreshed = await refresh_server_if_due(
+        config, store, now=now, transport=httpx2.MockTransport(respond)
+    )
+
+    assert refreshed is False
+    [record] = [r for r in caplog.records if r.name == "gobby.mcp_proxy.oauth_keepalive"]
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == (
+        "OAuth keep-alive refresh failed for keepalive-connect-error: ConnectError"
+    )
+    assert record.exc_info is None
+    for secret in (detail, "https://auth.example.com", "old-refresh", "old-access"):
+        assert secret not in caplog.text
 
 
 @pytest.mark.asyncio
