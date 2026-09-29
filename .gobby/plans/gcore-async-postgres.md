@@ -196,9 +196,10 @@ and wires the pool into `gdaemon`'s service container.
   `database_concurrency.rs::shared_sizing_vectors_conform` and
   `tests/storage/test_database_concurrency.py`. Rules: `pool_budget =
   floor8(usable * 3 / 4)`, auto pool `min(64, budget)`, pool at least 32.
-- DB-backed Rust tests follow `crates/gcore/src/schema/runner_tests.rs:134`:
-  skip when `GOBBY_SCHEMA_TEST_DATABASE_URL` is unset, require a `*_test`
-  database, apply the schema first.
+- DB-backed Rust tests in `crates/gcore/src/schema/runner_tests.rs`
+  (`scratch_database`, `:134`) skip when `GOBBY_SCHEMA_TEST_DATABASE_URL` is
+  unset and `ScratchDatabase::create` makes a random scratch database; they do
+  not check that the source URL names a `*_test` database.
 
 ## Constraints
 `kind: framing`
@@ -341,9 +342,9 @@ prefer/require unverified, verify-ca, verify-full) over
   queues `ROLLBACK` on drop, and the next recycle's verify query runs after
   it, so the connection returns clean or is discarded.
 
-Tests follow `runner_tests.rs:134` (skip when
-`GOBBY_SCHEMA_TEST_DATABASE_URL` is unset, `*_test` database only, schema
-applied first).
+Tests skip when `GOBBY_SCHEMA_TEST_DATABASE_URL` is unset, as
+`runner_tests.rs::scratch_database` does; this plan additionally requires the
+URL to name the isolated `*_test` hub with the schema applied first.
 
 **Acceptance:**
 
@@ -398,8 +399,9 @@ postgres_pool` with `GOBBY_SCHEMA_TEST_DATABASE_URL` pointing at the
 deadpool-postgres` and `cargo tree -p gobby-code -i deadpool-postgres` (each
 expects no match); `cargo tree -p gobby-core --features postgres-pool -i
 tokio-postgres`. `GOBBY_SCHEMA_TEST_DATABASE_URL` must point at the isolated `gobby_test`
-hub (a `*_test` database, schema applied first, as `runner_tests.rs:134`
-requires); a skipped DB test is not close evidence.
+hub (a `*_test` database, schema applied first; this plan's fixture
+requirement, since `runner_tests.rs` only skips when the variable is unset);
+a skipped DB test is not close evidence.
 
 ## P2: Transaction Seam
 `kind: framing`
@@ -531,8 +533,9 @@ free functions taking `&Transaction`, returning `FromRow` types.
 Verification planned: `cargo test -p gobby-core --features postgres-pool
 postgres_pool`; `cargo clippy -p gobby-core --features postgres-pool
 --all-targets -- -D warnings`. `GOBBY_SCHEMA_TEST_DATABASE_URL` must point at the isolated `gobby_test`
-hub (a `*_test` database, schema applied first, as `runner_tests.rs:134`
-requires); a skipped DB test is not close evidence.
+hub (a `*_test` database, schema applied first; this plan's fixture
+requirement, since `runner_tests.rs` only skips when the variable is unset);
+a skipped DB test is not close evidence.
 
 ### 2.2 Dedicated session connections [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -568,8 +571,9 @@ state survives into another checkout. The session counts against
 Verification planned: `cargo test -p gobby-core --features postgres-pool
 postgres_pool::tests::dedicated_session`; `cargo clippy -p gobby-core
 --features postgres-pool --all-targets -- -D warnings`. `GOBBY_SCHEMA_TEST_DATABASE_URL` must point at the isolated `gobby_test`
-hub (a `*_test` database, schema applied first, as `runner_tests.rs:134`
-requires); a skipped DB test is not close evidence.
+hub (a `*_test` database, schema applied first; this plan's fixture
+requirement, since `runner_tests.rs` only skips when the variable is unset);
+a skipped DB test is not close evidence.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -589,8 +593,8 @@ requires); a skipped DB test is not close evidence.
 ## V2: Verification
 `kind: verification`
 
-Each leaf runs its own `Verification planned` commands. After the last leaf
-(2.2), once the PD lifts the load breach, the combined check:
+Each leaf runs its own `Verification planned` commands. After all four
+leaves complete (1.1 is independent of the 1.2, 2.1, 2.2 chain), once the PD lifts the load breach, the combined check:
 
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_database_concurrency.py -q
