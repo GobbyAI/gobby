@@ -14,6 +14,7 @@ use super::backpressure::FrameMailbox;
 use super::config::HostConfig;
 use super::events::{EventReceiver, HostEvents};
 use super::helpers::{err, list_rows, resolved_spawn_cwd, s, spawn_fingerprint};
+use super::image::PinnedImage;
 #[cfg(feature = "vt-engine")]
 use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
@@ -158,6 +159,8 @@ pub struct HostState {
     pub local_token: String,
     pub host_epoch: String,
     pub version: String,
+    /// The pinned image this host runs from; `version` is its `CARGO_PKG_VERSION`.
+    pub image: PinnedImage,
     pub host_pid: u32,
     pub draining: AtomicBool,
     pub socket_dir_removed: AtomicBool,
@@ -174,7 +177,7 @@ impl HostState {
         token: String,
         local_token: String,
         host_epoch: String,
-        version: String,
+        image: PinnedImage,
         host_pid: u32,
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
@@ -184,7 +187,8 @@ impl HostState {
             token,
             local_token,
             host_epoch,
-            version,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            image,
             host_pid,
             draining: AtomicBool::new(false),
             socket_dir_removed: AtomicBool::new(false),
@@ -219,6 +223,8 @@ impl HostState {
             "ok": true,
             "host_epoch": self.host_epoch,
             "version": self.version,
+            "binary_version": self.version,
+            "binary_sha256": self.image.sha256,
             "host_pid": self.host_pid,
         })
     }
