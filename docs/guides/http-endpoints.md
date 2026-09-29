@@ -851,6 +851,7 @@ daemon config.
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/comms/send` | Send content through an active named channel with optional session and adapter metadata. |
+| `POST` | `/api/comms/attachment` | Send caller-supplied text (at most 64 KiB, bare `.txt`/`.log` filename) as a `text/plain` document; reads no host path. |
 | `GET` | `/api/comms/channels` | List communication channels. |
 | `POST` | `/api/comms/channels` | Create a channel. |
 | `PUT` | `/api/comms/channels/{channel_id}` | Update a channel. |

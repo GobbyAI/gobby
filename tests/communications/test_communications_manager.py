@@ -2913,3 +2913,35 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
     store.get_message_by_platform_id.assert_called_once_with(
         channel.name, "platform-1", platform_destination="99"
     )
+
+
+@pytest.mark.unit
+async def test_send_attachment_telegram_ok_false_is_failed_not_sent(tmp_path: Path) -> None:
+    """A sendDocument reply with ok=false stores a failed message, never a sent one."""
+    channel = make_channel(channel_type="telegram")
+    manager = CommunicationsManager(make_config(), make_store(), make_secret_store(), MagicMock())
+    adapter = TelegramAdapter()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", f"{adapter._api_base}/sendDocument"),
+        json={"ok": False, "description": "Bad Request: chat not found"},
+    )
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    adapter._client = client
+    manager._adapters[channel.name] = adapter
+    manager._channel_by_name[channel.name] = channel
+    file_path = tmp_path / "errors-new.txt"
+    file_path.write_text("boom\n", encoding="utf-8")
+
+    with patch.object(
+        manager._outbound, "enrich_metadata", return_value={"platform_destination": "chat999"}
+    ):
+        message, _ = await manager.send_attachment(
+            channel.name, file_path, content_type="text/plain"
+        )
+
+    assert message.status == "failed"
+    assert message.platform_message_id is None
+    assert message.error == "Telegram sendDocument failed: Bad Request: chat not found"

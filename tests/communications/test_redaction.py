@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.communications.redaction import TRUNCATION_MARKER, redact_and_bound
+from gobby.communications.redaction import (
+    MAX_LOG_ATTACHMENT_BYTES,
+    TRUNCATION_MARKER,
+    redact_and_bound,
+    redact_for_attachment,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -78,3 +83,22 @@ def test_result_never_exceeds_the_bound(max_chars: int) -> None:
 def test_bound_must_leave_room_for_content() -> None:
     with pytest.raises(ValueError, match="max_chars must exceed"):
         redact_and_bound("anything", len(TRUNCATION_MARKER))
+
+
+def test_attachment_content_is_redacted_without_truncation() -> None:
+    text = f"line one\napi_key={SECRET}\n" + "y" * 5000
+
+    assert redact_for_attachment(text) == "line one\napi_key=<redacted>\n" + "y" * 5000
+
+
+def test_attachment_at_cap_passes_and_one_byte_over_is_omitted() -> None:
+    assert redact_for_attachment("x" * MAX_LOG_ATTACHMENT_BYTES) == "x" * MAX_LOG_ATTACHMENT_BYTES
+    assert redact_for_attachment("x" * (MAX_LOG_ATTACHMENT_BYTES + 1)) is None
+
+
+def test_attachment_cap_counts_utf8_bytes() -> None:
+    # 3 bytes per character: under the cap in characters, over it in bytes.
+    text = "✓" * (MAX_LOG_ATTACHMENT_BYTES // 3 + 1)
+
+    assert len(text) < MAX_LOG_ATTACHMENT_BYTES
+    assert redact_for_attachment(text) is None
