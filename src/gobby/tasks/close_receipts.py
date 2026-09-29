@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
-from gobby.tasks.state_semantics import get_claimed_session_id
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -78,7 +77,8 @@ def record_close_receipt(
     """Record one receipt, or return the author's existing one for this kind and commit.
 
     The caller has already verified that ``commit_sha`` names a commit in the
-    task's repository.
+    task's repository. Authority comes from the task row as locked here, so
+    ``task`` contributes only its id.
     """
     if kind not in CLOSE_RECEIPT_KINDS:
         raise CloseReceiptError(f"kind must be one of {sorted(CLOSE_RECEIPT_KINDS)}")
@@ -86,22 +86,34 @@ def record_close_receipt(
     if not _FULL_SHA_RE.fullmatch(sha):
         raise CloseReceiptError("commit_sha must be a full 40-character commit SHA")
     bounded_facts = _bounded_facts(facts)
-    if author_session_id == get_claimed_session_id(task):
-        raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
-    if kind == ACTIVATION and author_session_id not in {
-        task.created_in_session_id,
-        task.delegated_by_session_id,
-    }:
-        raise CloseReceiptError(
-            "activation receipts come only from the task's creator or delegator"
-        )
     body: dict[str, Any] = {"kind": kind, "commit_sha": sha, "facts": bounded_facts}
     if kind == INDEPENDENT_REVIEW_APPROVAL:
         body["verdict"] = _APPROVAL_VERDICT
 
     with db.transaction() as conn:
-        # Serialize receipts per task so a replay cannot insert a duplicate.
-        conn.execute("SELECT 1 FROM tasks WHERE id = %s FOR UPDATE", (task.id,))
+        # Authorize against the locked row, never the caller's snapshot: the claim or
+        # delegation can change while the caller awaits commit verification. The lock
+        # also serializes receipts per task so a replay cannot insert a duplicate.
+        authority = conn.execute(
+            """
+            SELECT claimed_by_session_id::text AS claimed_by_session_id,
+                   created_in_session_id::text AS created_in_session_id,
+                   delegated_by_session_id::text AS delegated_by_session_id
+            FROM tasks WHERE id = %s FOR UPDATE
+            """,
+            (task.id,),
+        ).fetchone()
+        if authority is None:
+            raise CloseReceiptError(f"task {task.id} no longer exists")
+        if author_session_id == authority["claimed_by_session_id"]:
+            raise CloseReceiptError("the task's claimant cannot attest evidence for its own close")
+        if kind == ACTIVATION and author_session_id not in {
+            authority["created_in_session_id"],
+            authority["delegated_by_session_id"],
+        }:
+            raise CloseReceiptError(
+                "activation receipts come only from the task's creator or delegator"
+            )
         reviewer = conn.execute(
             """
             SELECT 1 FROM agent_runs

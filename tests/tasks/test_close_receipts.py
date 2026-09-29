@@ -337,3 +337,44 @@ async def test_tool_refuses_claimant_unknown_commit_and_missing_session(
     assert unknown == {"error": f"Invalid or unresolved commit SHA: {_TIP}"}
     assert "No session context" in anonymous["error"]
     assert list_close_receipts(temp_db, task.id) == []
+
+
+def _mutate_during_commit_check(db: HubDatabase, sql: str, params: tuple[str, ...]) -> Any:
+    """Patch commit verification to change the task row while the tool awaits it."""
+
+    def verify(sha: str, **_kwargs: object) -> str:
+        db.execute(sql, params)
+        return sha
+
+    return patch("gobby.mcp_proxy.tools.task_commits.normalize_commit_sha", side_effect=verify)
+
+
+async def test_tool_refuses_author_who_claims_the_task_during_commit_check(
+    temp_db: HubDatabase, task: Task, roles: dict[str, str], receipt_tool: Any
+) -> None:
+    claim = "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s"
+    with (
+        session_context_for_test(roles["reviewer"]),
+        _mutate_during_commit_check(temp_db, claim, (roles["reviewer"], task.id)),
+    ):
+        result = await receipt_tool(
+            task_id=task.id, kind=INDEPENDENT_REVIEW_APPROVAL, commit_sha=_LANDED
+        )
+
+    assert "claimant" in result["error"]
+    assert list_close_receipts(temp_db, task.id) == []
+
+
+async def test_tool_refuses_activation_from_delegator_replaced_during_commit_check(
+    temp_db: HubDatabase, task: Task, roles: dict[str, str], receipt_tool: Any
+) -> None:
+    delegate = "UPDATE tasks SET delegated_by_session_id = %s WHERE id = %s"
+    temp_db.execute(delegate, (roles["bystander"], task.id))
+    with (
+        session_context_for_test(roles["bystander"]),
+        _mutate_during_commit_check(temp_db, delegate, (roles["creator"], task.id)),
+    ):
+        result = await receipt_tool(task_id=task.id, kind=ACTIVATION, commit_sha=_LANDED)
+
+    assert "creator or delegator" in result["error"]
+    assert list_close_receipts(temp_db, task.id) == []
