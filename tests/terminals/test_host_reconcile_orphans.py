@@ -104,6 +104,7 @@ def _listed(terminal: Terminal, host_terminal_id: str, **process: Any) -> HostLi
 async def test_reconcile_recovers_orphan_identity(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = _ChangingManager(temp_db)
     project_id = sample_project["id"]
@@ -160,6 +161,10 @@ async def test_reconcile_recovers_orphan_identity(
     assert moved_row is not None
     assert moved_row.state == "exited"
 
+    # The recovered pgid is fictional; its group must not be probed on this machine.
+    monkeypatch.setattr(
+        "gobby.terminals.native_runtime.recorded_process_group_is_alive", lambda _process: False
+    )
     client = _HostClient(list_rows=[host_rows[0]])
     runtime = NativeTerminalRuntime(client)
     exited = await kill_terminal(manager, runtime_registry(runtime), recovered)

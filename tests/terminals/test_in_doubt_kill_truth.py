@@ -325,6 +325,57 @@ async def test_kill_terminal_requires_proven_kill(monkeypatch: pytest.MonkeyPatc
     assert stored.state == "exited"
 
 
+def _current_native_row(process: dict[str, Any] | None) -> Terminal:
+    row = _stale_native_row()
+    row.host_epoch = "epoch-now"
+    row.locator = {"host_terminal_id": "ht-now"}
+    row.locator_key = native_locator_key("epoch-now", "ht-now")
+    row.process = process
+    return row
+
+
+@pytest.mark.asyncio
+async def test_native_kill_ack_needs_dead_recorded_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The host acks a kill before its child exits, so a usable recorded group
+    # that outlives the grace window leaves the row unsettled.
+    alive_reaps = _ReapRecorder(monkeypatch, group_alive=True)
+    survivor = _current_native_row({"pgid": 8181, "start_time": 5.0})
+    client = _HostClient()
+    client.list_rows = [_host_row(survivor, "ht-now")]
+    runtime = NativeTerminalRuntime(client)
+    with pytest.raises(TerminalKillUnprovenError):
+        await kill_terminal(
+            MemoryTerminalStore(survivor), runtime_registry(runtime), survivor, grace_seconds=0.05
+        )
+    assert client.kills == ["ht-now"]
+    assert survivor.state == "live"
+    assert alive_reaps.alive_checks >= 1
+
+    # The recorded group is dead after the ack: settled.
+    dead_reaps = _ReapRecorder(monkeypatch, group_alive=False)
+    dead = _current_native_row({"pgid": 8282, "start_time": 5.0})
+    client = _HostClient()
+    client.list_rows = [_host_row(dead, "ht-now")]
+    runtime = NativeTerminalRuntime(client)
+    exited = await kill_terminal(
+        MemoryTerminalStore(dead), runtime_registry(runtime), dead, grace_seconds=0.05
+    )
+    assert exited is dead
+    assert dead.state == "exited"
+    assert dead_reaps.alive_checks == 1
+
+    # No usable recorded group: the host ack plus its strict absence stay the proof.
+    bare = _current_native_row({"host_terminal_id": "ht-now"})
+    client = _HostClient()
+    client.list_rows = [_host_row(bare, "ht-now")]
+    runtime = NativeTerminalRuntime(client)
+    await kill_terminal(
+        MemoryTerminalStore(bare), runtime_registry(runtime), bare, grace_seconds=0.05
+    )
+    assert bare.state == "exited"
+    assert dead_reaps.alive_checks == 1
+
+
 @pytest.mark.usefixtures("_local_machine_identity")
 def test_record_orphan_identity_cas(
     temp_db: HubDatabase,

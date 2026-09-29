@@ -56,9 +56,13 @@ from gobby.terminals.runtime import (
     WriteOutcome,
     is_named_key,
 )
+from gobby.terminals.termination import TerminalKillUnprovenError
 from gobby.utils.local_token import LOCAL_API_TOKEN_FILENAME, local_token_path
 
 MAX_SPAWN_ERROR_CODE_LENGTH = 128
+# The host escalates to SIGKILL after grace; allow for its delivery and reap.
+GROUP_EXIT_MARGIN_SECONDS = 2.0
+GROUP_EXIT_POLL_SECONDS = 0.05
 type NativeSpawnSettlement = Literal["fail_pending", "fail_pending_kill", "pending"]
 
 
@@ -68,6 +72,32 @@ class HostEpochMismatch:
 
     expected_epoch: str | None
     current_epoch: str | None
+
+
+def _usable_process_group(process: Mapping[str, Any]) -> bool:
+    # recorded_process_group_is_alive answers false for a missing or invalid
+    # pgid, so only a positive integer pgid makes its false mean death.
+    pgid = process.get("pgid")
+    return isinstance(pgid, int) and not isinstance(pgid, bool) and pgid > 0
+
+
+async def _await_group_exit(terminal: Terminal, grace_seconds: float) -> None:
+    """Prove a killed terminal's recorded group died before its row may settle.
+
+    gterm acks a kill once SIGTERM is sent and SIGKILL is only scheduled, so a
+    group that ignores SIGTERM outlives the ack when the host dies in grace.
+    """
+    process = terminal.process
+    if process is None or not _usable_process_group(process):
+        return
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + grace_seconds + GROUP_EXIT_MARGIN_SECONDS
+    while await asyncio.to_thread(recorded_process_group_is_alive, process):
+        if loop.time() >= deadline:
+            raise TerminalKillUnprovenError(
+                f"Terminal {terminal.id} process group is alive after the host kill"
+            )
+        await asyncio.sleep(GROUP_EXIT_POLL_SECONDS)
 
 
 def _bounded_spawn_code(code: str) -> str:
@@ -748,6 +778,7 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
         except (HostUnavailableError, ConnectionError, OSError):
             await self._reconnect_epoch(expected_epoch)
             await self._client.kill(host_terminal_id, grace_ms=grace_ms)
+        await _await_group_exit(terminal, grace_seconds)
 
     async def _terminate_stale(
         self,
@@ -785,13 +816,7 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
         # recorded_process_group_is_alive also answers false for a missing or
         # invalid pgid, so that false is never read as death.
         process = terminal.process
-        pgid = None if process is None else process.get("pgid")
-        if (
-            process is not None
-            and isinstance(pgid, int)
-            and not isinstance(pgid, bool)
-            and pgid > 0
-        ):
+        if process is not None and _usable_process_group(process):
             await asyncio.to_thread(reap_recorded_process, process, grace_seconds=grace_seconds)
             if not recorded_process_group_is_alive(process):
                 return
