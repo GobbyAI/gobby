@@ -365,6 +365,13 @@ each is a single-phase slice rooted at its epic. The former 2.2 `AppState` conta
 move to their first consumer (4.4 or 5.1), and P4 slice planning restores its waits
 (former P2, 2.3, 3.1) against the slice leaves.
 
+Open ordering gap for P4 and 5.1 slice planning (from the #23098 audit). 4.4's pair
+test asserts that the node runs no maintenance loop (run-modes 2.2), which needs a
+running Python node runner. `run_gobby` takes `ActiveDaemonLease` for every bootstrap,
+so that runner stands by until 5.1 exempts `node` from the lease. A runnable node
+therefore needs the lease exemption before 4.4's pair test. P4 slice planning orders
+the exemption first or drops that assertion from 4.4.
+
 ## P4: API keys and node registration (S1.4, #21555) (depends: P1)
 `kind: framing`
 
