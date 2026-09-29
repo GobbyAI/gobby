@@ -28,6 +28,7 @@ from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.dependency_requirements import (
     unsupported_platform_error,
 )
+from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.status import fetch_rich_status, format_status_message
 
 from ._daemon_handoffs import protect_pending_handoffs
@@ -230,10 +231,11 @@ def _do_stop(
     try:
         with protect_pending_handoffs(get_cli_runtime(ctx), force=force, wait=wait, report=_step):
             shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
-            # If OS service is installed and running, delegate to it
+            # If OS service is installed and running, delegate to it. The service
+            # manager is user-global, so test protection never drives it.
             docker_stopped = False
             docker_stop_succeeded = True
-            svc = get_service_status()
+            svc = {} if is_test_protect_enabled() else get_service_status()
             if svc.get("installed") and svc.get("running"):
                 previous_pid = _get_running_daemon_pid(svc)
                 click.echo("Stopping via OS service manager...")

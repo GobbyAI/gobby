@@ -66,6 +66,9 @@ def stop_daemon(
                 )
             return False
 
+    def sweep_orphans() -> int:
+        return 0 if protected else int(deps.kill_all_gobby_daemons())
+
     if not quiet:
         click.echo("Stopping Gobby daemon...")
 
@@ -96,7 +99,7 @@ def stop_daemon(
 
     if not bool(deps._is_process_alive(pid)):
         pid_file.unlink(missing_ok=True)
-        killed = int(deps.kill_all_gobby_daemons())
+        killed = sweep_orphans()
         if not quiet:
             if killed > 0:
                 deps._stop_step(f"Cleaned up {killed} orphaned process(es)")
@@ -104,12 +107,27 @@ def stop_daemon(
                 deps._stop_step("Daemon is not running (stale PID file removed)")
         return True
 
+    if protected:
+        # The marked home's pid file must name the holder of that home's daemon
+        # lock; a mispointed pid file must not reach another home's daemon.
+        from gobby.runner_pid_file import ProbeState, probe_daemon_lock
+
+        owner = probe_daemon_lock(pid_file)
+        if owner.state is not ProbeState.DAEMON or owner.pid != pid:
+            if not quiet:
+                deps._stop_step(
+                    f"Refusing to stop PID {pid}: it does not hold the daemon lock "
+                    f"of {pid_file.parent}",
+                    error=True,
+                )
+            return False
+
     try:
         proc = psutil.Process(pid)
         cmdline_str = " ".join(proc.cmdline())
         if "gobby" not in cmdline_str.lower():
             pid_file.unlink(missing_ok=True)
-            killed = int(deps.kill_all_gobby_daemons())
+            killed = sweep_orphans()
             if not quiet:
                 if killed > 0:
                     deps._stop_step(f"Cleaned up {killed} orphaned process(es)")
@@ -145,7 +163,7 @@ def stop_daemon(
                 time.sleep(0.1)
                 if not bool(deps._is_process_alive(pid)):
                     break
-            deps.kill_all_gobby_daemons()
+            sweep_orphans()
             if bool(deps._is_process_alive(pid)):
                 if not quiet:
                     deps._stop_step(
@@ -174,7 +192,7 @@ def stop_daemon(
                 if not quiet:
                     deps._stop_step(f"Daemon stopped ({elapsed:.1f}s)")
                 pid_file.unlink(missing_ok=True)
-                deps.kill_all_gobby_daemons()
+                sweep_orphans()
                 _report_lock_survivor(deps, quiet)
                 return True
 
@@ -192,7 +210,7 @@ def stop_daemon(
             if not quiet:
                 deps._stop_step(f"Force killed ({elapsed:.1f}s)")
             pid_file.unlink(missing_ok=True)
-            deps.kill_all_gobby_daemons()
+            sweep_orphans()
             _report_lock_survivor(deps, quiet)
             return True
 

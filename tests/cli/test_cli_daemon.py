@@ -472,6 +472,7 @@ class TestStartCommand:
         return_value={"installed": True, "platform": "macos"},
     )
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_start_via_service_waits_for_health(
         self,
         mock_load_config: MagicMock,
@@ -510,6 +511,31 @@ class TestStartCommand:
         mock_ui_exposure_reconciliation.assert_called_once_with(mock_daemon_config.daemon_port)
         assert call_order == ["ready", "reconcile"]
 
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
+    @patch(
+        "gobby.cli.daemon_start.get_service_status",
+        return_value={"installed": True, "platform": "macos"},
+    )
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    def test_start_under_test_protect_never_drives_the_service_manager(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_start: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The start half of a protected restart stays off the user-global service."""
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        mock_load_config.return_value = mock_daemon_config
+
+        result = runner.invoke(cli, ["start"])
+
+        assert "Starting via OS service manager" not in result.output
+        mock_get_service_status.assert_not_called()
+        mock_service_start.assert_not_called()
+
     @patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=2.5)
     @patch("gobby.cli.daemon_start._services_start")
@@ -520,6 +546,7 @@ class TestStartCommand:
     )
     @patch("gobby.cli.daemon_start.get_gobby_home")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_start_via_service_starts_docker_dependencies_first(
         self,
         mock_load_config: MagicMock,
@@ -1149,6 +1176,7 @@ class TestStopCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_stop_via_service_waits_for_shutdown(
         self,
         mock_load_config: MagicMock,
@@ -1183,6 +1211,45 @@ class TestStopCommand:
             timeout=SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
         )
 
+    @pytest.mark.parametrize(
+        ("marker", "exit_code"),
+        [(None, 0), ("other-home", 1)],
+    )
+    @patch("gobby.cli.daemon.service_stop")
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "running": True, "platform": "macos", "pid": 4321},
+    )
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    def test_stop_under_test_protect_never_drives_the_service_manager(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_stop: MagicMock,
+        marker: str | None,
+        exit_code: int,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The user-global service is out of reach without a matching e2e marker."""
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        if marker is None:
+            monkeypatch.delenv("GOBBY_E2E_ISOLATED_HOME", raising=False)
+        else:
+            monkeypatch.setenv("GOBBY_E2E_ISOLATED_HOME", str(tmp_path / marker))
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_load_config.return_value = mock_config
+
+        with patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path):
+            result = runner.invoke(cli, ["stop"])
+
+        assert result.exit_code == exit_code
+        assert "Stopping via OS service manager" not in result.output
+        mock_get_service_status.assert_not_called()
+        mock_service_stop.assert_not_called()
+
     @patch("gobby.runner_maintenance.write_shutdown_source")
     @patch("gobby.cli.installers.service.subprocess.run")
     @patch("gobby.cli.installers.service._plist_path")
@@ -1193,6 +1260,7 @@ class TestStopCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_stop_via_service_falls_back_when_launchctl_bootout_fails(
         self,
         mock_load_config: MagicMock,
@@ -1293,6 +1361,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_waits_for_health(
         self,
         mock_load_config: MagicMock,
@@ -1356,6 +1425,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_allows_slow_launchd_stop(
         self,
         mock_load_config: MagicMock,
@@ -1407,6 +1477,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_fails_when_startup_readiness_does_not_complete(
         self,
         mock_load_config: MagicMock,
@@ -1448,6 +1519,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_fails_when_health_does_not_return(
         self,
         mock_load_config: MagicMock,
@@ -1504,6 +1576,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_fails_when_stop_does_not_complete(
         self,
         mock_load_config: MagicMock,
