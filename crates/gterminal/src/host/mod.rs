@@ -54,6 +54,12 @@ type PendingRestore = handover::restore::PendingCommit;
 #[cfg(not(all(unix, feature = "vt-engine")))]
 type PendingRestore = std::convert::Infallible;
 
+/// The handover state format versions this build can restore.
+#[cfg(all(unix, feature = "vt-engine"))]
+const RESUMABLE_FORMATS: &[u32] = handover::SUPPORTED_FORMAT_VERSIONS;
+#[cfg(not(all(unix, feature = "vt-engine")))]
+const RESUMABLE_FORMATS: &[u32] = &[];
+
 pub async fn run() -> io::Result<()> {
     let args = HostArgs::parse();
     init_tracing(&args.log_file);
@@ -267,6 +273,8 @@ struct HostArgs {
     host_config: HostConfig,
     /// Restore from a handover instead of binding fresh.
     resume: Option<Resume>,
+    /// Report whether this build restores that state format, then exit.
+    probe_resume: Option<u32>,
 }
 
 /// `--resume-state PATH`, with `--resume-fallback` when this restore is the
@@ -282,6 +290,19 @@ impl HostArgs {
     /// bad argument) before anything touches the socket dir (#22425).
     fn parse() -> Self {
         match Self::from_args(std::env::args().skip(2)) {
+            // Before tracing, the token, or pinning: a probe touches nothing.
+            Ok(Self {
+                probe_resume: Some(version),
+                ..
+            }) => {
+                let formats: Vec<String> = RESUMABLE_FORMATS.iter().map(u32::to_string).collect();
+                println!("{}", formats.join(","));
+                std::process::exit(if RESUMABLE_FORMATS.contains(&version) {
+                    0
+                } else {
+                    3
+                });
+            }
             Ok(args) => args,
             Err(ArgError::Help) => {
                 print!("{HOST_USAGE}");
@@ -307,6 +328,7 @@ impl HostArgs {
         let mut host_config = HostConfig::default();
         let mut resume_state = None;
         let mut resume_fallback = false;
+        let mut probe_resume = None;
         let mut args = argv.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -318,6 +340,12 @@ impl HostArgs {
                     resume_state = Some(PathBuf::from(value_for(&arg, &mut args)?));
                 }
                 "--resume-fallback" => resume_fallback = true,
+                "--probe-resume" => {
+                    let value = value_for(&arg, &mut args)?;
+                    probe_resume = Some(value.parse().map_err(|_| {
+                        ArgError::Invalid(format!("`{arg}` needs a format version, got `{value}`"))
+                    })?);
+                }
                 "--max-attachments-per-terminal" => {
                     host_config.max_attachments_per_terminal =
                         parse_u32(value_for(&arg, &mut args)?)
@@ -382,6 +410,7 @@ impl HostArgs {
             shutdown_grace_ms: 150,
             host_config,
             resume,
+            probe_resume,
         })
     }
 }
@@ -414,6 +443,7 @@ Options:
       --event-queue-bytes N              event queue byte ceiling
       --resume-state PATH                restore from a handover state file
       --resume-fallback                  the restore is a fallback into the earlier image
+      --probe-resume N                   print the restorable state formats; exit 0 if N is one, else 3
   -h, --help                             print this help and exit
 
 Environment: GTERM_SOCKET_DIR overrides the default socket dir, GTERM_LOG_FILE
