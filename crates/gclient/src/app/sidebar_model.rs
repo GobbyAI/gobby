@@ -118,28 +118,25 @@ pub struct AgentEntry {
     pub sandbox: SandboxState,
 }
 
-/// The execution boundary around a pane's process, as the daemon recorded it.
+/// Whether Gobby's SRT launch sandbox wraps a pane's process.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SandboxState {
     Sandboxed,
-    Unrestricted,
-    /// No record, or records that disagree: never read as unrestricted.
+    /// Every pane Gobby did not launch under SRT: hand-opened seats, bare
+    /// shells, and panes with no agent row.
     #[default]
-    Unknown,
+    Unrestricted,
 }
 
 impl SandboxState {
-    /// Joins the session's recorded boundary with the run's launch record.
-    /// Either one alone decides; two that disagree are unknown. A spawned
-    /// run's records say only whether SRT wrapped it, so there `false` proves
-    /// nothing: the provider's own sandbox may still hold. Only a direct
-    /// launch's recorded command line reads as unrestricted.
-    pub fn resolve(session: Option<bool>, run: Option<bool>, spawned: bool) -> Self {
-        match (session, run) {
-            (Some(a), Some(b)) if a != b => Self::Unknown,
-            (Some(true), _) | (None, Some(true)) => Self::Sandboxed,
-            (Some(false), _) | (None, Some(false)) if !spawned => Self::Unrestricted,
-            _ => Self::Unknown,
+    /// Locked only on a Gobby launch record: the run's SRT record says it was
+    /// enforced, or a managed session's launch contract enabled it. A direct
+    /// session's own claim never locks the pane.
+    pub fn resolve(session: Option<bool>, run: Option<bool>, managed: bool) -> Self {
+        if run == Some(true) || (managed && session == Some(true)) {
+            Self::Sandboxed
+        } else {
+            Self::Unrestricted
         }
     }
 
@@ -148,7 +145,6 @@ impl SandboxState {
         match self {
             Self::Sandboxed => "sandboxed",
             Self::Unrestricted => "unrestricted",
-            Self::Unknown => "sandbox unknown",
         }
     }
 }

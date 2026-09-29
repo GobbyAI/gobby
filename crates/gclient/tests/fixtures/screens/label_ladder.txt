@@ -76,7 +76,7 @@
 36 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 37 |│                                                          ││                            ││                            │|
 37 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
-38 |└───────────────────────────────────────────── ? · gclient ┘└─────────────── ? · gclient ┘└─────────────── ? · gclient ┘|
+38 |└─────────────────────────────────────────────  · gclient ┘└───────────────  · gclient ┘└───────────────  · gclient ┘|
 38 : overlay0/panel_bg*90 accent/panel_bg*16 accent/panel_bg+b*13 accent/panel_bg*1
 39 | 1 idle                                                                                                   prefix ctrl+b |
 39 : text/surface0*1 subtext0/surface0*6 text/surface0*99 subtext0/surface0*13 text/surface0*1

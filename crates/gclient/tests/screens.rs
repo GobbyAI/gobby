@@ -757,7 +757,7 @@ fn status_segments_golden() {
     let status = rows[usize::from(HEIGHT - 1)];
     assert!(status.contains("⍾ 1 needs you │ 1 idle"), "{status:?}");
     // #23049: the sandbox state in words; the model stays on the Agents row.
-    assert!(status.contains("1 idle · sandbox unknown"), "{status:?}");
+    assert!(status.contains("1 idle · unrestricted"), "{status:?}");
     assert!(!status.contains("claude-fable"), "{status:?}");
     assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");
