@@ -2941,6 +2941,7 @@ def test_arithmetic_expansion_is_not_a_redirect(command: str) -> None:
         ("echo $(cat a > out.txt)", "out.txt"),
         ("x=$(cat a >> log.txt) && echo $x", "log.txt"),
         ("(printf hi > note.md)", "note.md"),
+        ("echo `cat a > out.txt`", "out.txt"),
         ("[[ -n $x ]] && printf hi > out.txt", "out.txt"),
     ],
 )
@@ -2976,3 +2977,31 @@ def test_input_redirect_source_is_not_a_write_target(tmp_path: Path) -> None:
     assert data["canonical_tool_kind"] == "write"
     assert data["canonical_write_file_paths"] == [f"{tmp_path}/copy.txt"]
     assert data["canonical_repo_mutation"] is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "[[ $(printf x > src/out.txt) > 0 ]]",
+        "(( x = $(printf x > src/out.txt) ))",
+        "echo $(( $(printf x > src/out.txt) + 1 ))",
+        "[[ `printf x > src/out.txt` == y ]]",
+    ],
+)
+def test_command_substitution_inside_compound_word_keeps_repository_write(
+    tmp_path: Path, command: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": command},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert "src/out.txt" in data["canonical_write_file_paths"]
+    assert data["canonical_repo_mutation"] is True

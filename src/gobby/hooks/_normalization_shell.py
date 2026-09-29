@@ -59,6 +59,8 @@ _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 # `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
 # positional parameter (`$1`), or special parameter — anything expanded at runtime.
 _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
+# `$(cmd)` (but not arithmetic `$((`) or a backtick substitution: commands that run.
+_COMMAND_SUBSTITUTION = re.compile(r"\$\((?!\()|`")
 _KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
     r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
 )
@@ -234,9 +236,9 @@ def scan_shell_command(command: str) -> ShellScan:
             index = compound_end
             continue
 
-        # Bash ends a word at an unquoted ``)``; a redirect target inside
-        # ``$(...)`` or ``( ... )`` must not keep it, or the write is dropped.
-        if char == ")" and current and tokens and is_shell_output_redirection_token(tokens[-1]):
+        # Bash ends a word at an unquoted ``)`` or closing backtick; a redirect
+        # target inside ``$(...)``, ``( ... )`` or `` `...` `` must not keep it.
+        if char in ")`" and current and tokens and is_shell_output_redirection_token(tokens[-1]):
             flush(index)
 
         operator = _scan_unquoted_shell_operator(command, index)
@@ -277,17 +279,22 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
 
     ``$((`` may open anywhere in a word; ``((`` and ``[[ `` only at a word start.
     Returns None when nothing opens here or the construct never closes, so the
-    caller falls back to ordinary word scanning.
+    caller falls back to ordinary word scanning. A span holding a command
+    substitution also returns None: its commands run, and ordinary scanning keeps
+    their redirects as writes.
     """
+    end: int | None = None
     if command.startswith("$((", index):
-        return _balanced_parens_end(command, index + 1)
-    if not word_start:
+        end = _balanced_parens_end(command, index + 1)
+    elif not word_start:
         return None
-    if command.startswith("((", index):
-        return _balanced_parens_end(command, index)
-    if command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
-        return _double_bracket_end(command, index + 2)
-    return None
+    elif command.startswith("((", index):
+        end = _balanced_parens_end(command, index)
+    elif command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
+        end = _double_bracket_end(command, index + 2)
+    if end is None or _COMMAND_SUBSTITUTION.search(command, index + 1, end):
+        return None
+    return end
 
 
 def _balanced_parens_end(command: str, index: int) -> int | None:
