@@ -43,6 +43,8 @@ def _write_event(file_path: str = "/project/src/app.py") -> HookEvent:
         timestamp=datetime.now(UTC),
         data={
             "tool_name": "Write",
+            "cwd": "/project",
+            "project_path": "/project",
             "canonical_tool_kind": "write",
             "canonical_file_path": file_path,
             "tool_input": {"file_path": file_path},
@@ -161,6 +163,22 @@ async def test_guidance_gates_allow_loaded_skills_and_unclaimed_writes(
     assert loaded.decision == "allow"
     # Nothing claimed, so the discipline gate has no source work to govern.
     assert markdown.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_restraint_gate_skips_writes_outside_the_repository(temp_db: HubDatabase) -> None:
+    _sync_only_guidance_rules(temp_db)
+    engine = RuleEngine(temp_db)
+
+    scratch = await engine.evaluate(
+        _write_event("/scratch/probe.py"),
+        session_id=SESSION_ID,
+        variables={},
+    )
+    repo = await engine.evaluate(_write_event(), session_id=SESSION_ID, variables={})
+
+    assert scratch.decision == "allow", scratch.reason
+    assert repo.decision == "block"
 
 
 @pytest.mark.asyncio

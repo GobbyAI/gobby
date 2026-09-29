@@ -20,12 +20,13 @@ P = ParamSpec("P")
 R = TypeVar("R")
 
 ENGINE_EXECUTOR_THREAD_PREFIX = "rule-engine"
+RULE_LOOP_THREAD_PREFIX = "rule-loop"
 
 _ENGINE_EXECUTOR = ThreadPoolExecutor(
     max_workers=16,
     thread_name_prefix=ENGINE_EXECUTOR_THREAD_PREFIX,
 )
-_RULE_LOOP_EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix="rule-loop")
+_RULE_LOOP_EXECUTOR = ThreadPoolExecutor(max_workers=16, thread_name_prefix=RULE_LOOP_THREAD_PREFIX)
 _INLINE_OFFLOAD: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "rule_engine_inline_offload", default=False
 )

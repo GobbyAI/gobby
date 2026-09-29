@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import subprocess
 import threading
 from datetime import UTC, datetime
@@ -17,21 +16,25 @@ from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows import tdd_paths
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
-from gobby.workflows.engine._offload import ENGINE_EXECUTOR_THREAD_PREFIX
+from gobby.workflows.engine._offload import ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX
 from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
+# Hook evaluation runs synchronous rule work on a rule-loop worker (#22864);
+# direct offloads use the rule-engine pool. Both keep Git off the event loop.
+RULE_WORKER_PREFIXES = (ENGINE_EXECUTOR_THREAD_PREFIX, RULE_LOOP_THREAD_PREFIX)
 
 
 def _thread_state() -> tuple[str, bool]:
-    """Name the calling thread and say whether an event loop runs on it."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return threading.current_thread().name, False
-    return threading.current_thread().name, True
+    """Name the calling thread and say whether it is the caller's event-loop thread.
+
+    A rule-loop worker runs a private loop for its pass, so a running loop alone
+    does not mean the caller's loop is blocked; the test's loop owns the main thread.
+    """
+    thread = threading.current_thread()
+    return thread.name, thread is threading.main_thread()
 
 
 async def _decide(db: HubDatabase, when: str, event: HookEvent, variables: dict[str, Any]) -> str:
@@ -91,7 +94,7 @@ async def test_navigation_asks_git_only_from_the_rule_engine_executor(
     assert decision == "block"
     assert len(calls) == 1
     thread_name, loop_running = calls[0]
-    assert thread_name.startswith(ENGINE_EXECUTOR_THREAD_PREFIX)
+    assert thread_name.startswith(RULE_WORKER_PREFIXES)
     assert loop_running is False
 
 
@@ -121,5 +124,5 @@ async def test_tdd_gate_asks_git_only_from_the_rule_engine_executor(
 
     assert decision == "block"
     assert calls
-    assert all(name.startswith(ENGINE_EXECUTOR_THREAD_PREFIX) for name, _ in calls)
+    assert all(name.startswith(RULE_WORKER_PREFIXES) for name, _ in calls)
     assert not any(loop_running for _, loop_running in calls)
