@@ -502,3 +502,80 @@ uv run gobby plans validate .gobby/plans/gdaemon-run-modes.md -p .
 Run these from the worktree root.
 
 Do not run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: '`hub` flag, writers, and the mode on `/api/health`'
+  category: config
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.1.1: The parser derives `standalone`, `hub`, and `node`
+    from the pair and rejects `(remote, true)`. test: `tests/config/test_bootstrap.py::test_run_mode_from_datastore_mode_and_hub`.
+
+    2.1.2: Fresh and injected bootstraps carry `hub: false`, and converting to `remote`
+    drops `hub`. test: `tests/config/test_bootstrap.py::test_writers_emit_hub_flag`.
+
+    2.1.3: `/api/health` reports the mode name. test: `tests/servers/test_admin_health.py::test_health_reports_run_mode`.
+
+    2.1.4: A `node` bootstrap serves health with `mode: node`. test: `tests/servers/test_admin_health.py::test_node_bootstrap_reports_node_mode`.
+
+    2.1.5: The config contract carrier is regenerated and the configuration guide
+    documents the modes. file: `crates/gcore/assets/config/runtime_config_contract.json`.
+
+    2.1.6: `gobby datastores expose` writes `hub: true`, and a failed exposure restores
+    the prior flag. test: `tests/cli/test_datastores_expose.py::test_expose_promotes_hub_and_rollback_restores_flag`.'
+  labels:
+  - covers:gdaemon-run-modes:2.1:2.1.1
+  - covers:gdaemon-run-modes:2.1:2.1.2
+  - covers:gdaemon-run-modes:2.1:2.1.3
+  - covers:gdaemon-run-modes:2.1:2.1.4
+  - covers:gdaemon-run-modes:2.1:2.1.5
+  - covers:gdaemon-run-modes:2.1:2.1.6
+  tdd: true
+  source_section: '2.1'
+  assigned_agent: backend-developer
+- title: Node runners skip hub-only loops (S4.2)
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: A `node` runner starts exactly the machine-local periodic
+    tasks and logs one skip per hub-only task. test: `tests/test_runner_lifecycle_periodic.py::test_node_mode_skips_hub_only_periodic_tasks`.
+
+    2.2.2: A `node` runner skips exactly the hub-only startup phases, with the code-index
+    tasks skipped alongside `code_index_bm25`, and still starts `agent_lifecycle_monitor`;
+    each skip is logged. test: `tests/test_runner_lifecycle_subsystems.py::test_node_mode_skips_hub_only_phases`.
+
+    2.2.3: `standalone` and `hub` start every periodic task as today. test: `tests/test_runner_lifecycle_periodic.py::test_standalone_and_hub_start_every_periodic_task`.
+
+    2.2.4: `standalone` and `hub` run every startup phase as today. test: `tests/test_runner_lifecycle_subsystems.py::test_standalone_and_hub_run_every_phase`.
+
+    2.2.5: In `node` mode `_reconcile_task_close_reviews` returns 0 without listing
+    reviews, from both the monitor callback and startup recovery. test: `tests/agents/test_task_close_review_recovery.py::test_node_mode_skips_close_review_reconciliation`.
+
+    2.2.6: In `node` mode `_schedule_scoped_tool_backfill` starts no backfill and
+    writes no config marker, and `standalone` and `hub` schedule it as today. test:
+    `tests/runner_init/test_services_mcp_stack.py::test_node_mode_skips_scoped_tool_backfill`.
+
+    2.2.7: In `node` mode neither a lease re-ack nor a healthy rebuild calls `reconcile_stores`,
+    and the rebuild still re-prepares `memory_services`; `hub` repairs as today. test:
+    `tests/ai/test_ai_runner_lease_lifecycle.py::test_node_mode_skips_projection_repair`.
+
+    2.2.8: Terminal-completion recovery wakes and removes subscribers only for runs
+    owned by this machine; a foreign terminal run''s subscribers get no wake, no row
+    removal, and no close-review mark. test: `tests/test_runner_lifecycle.py::test_terminal_completion_recovery_skips_foreign_machine_runs`.'
+  labels:
+  - covers:gdaemon-run-modes:2.2:2.2.1
+  - covers:gdaemon-run-modes:2.2:2.2.2
+  - covers:gdaemon-run-modes:2.2:2.2.3
+  - covers:gdaemon-run-modes:2.2:2.2.4
+  - covers:gdaemon-run-modes:2.2:2.2.5
+  - covers:gdaemon-run-modes:2.2:2.2.6
+  - covers:gdaemon-run-modes:2.2:2.2.7
+  - covers:gdaemon-run-modes:2.2:2.2.8
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+```
