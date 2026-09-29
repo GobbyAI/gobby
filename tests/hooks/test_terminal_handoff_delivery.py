@@ -1628,3 +1628,71 @@ async def test_tmux_pane_only_session_gets_no_continuation(
 
     assert scheduled is False
     assert runtime.write_log == []
+
+
+@pytest.mark.parametrize(
+    ("dispatch_owner", "recovers"),
+    [(DISPATCH_OWNER, False), ("dead-daemon-owner", True)],
+    ids=["dispatched-by-this-daemon", "abandoned-by-a-dead-daemon"],
+)
+def test_stop_recovers_only_a_dispatch_this_daemon_does_not_own(
+    hub_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+    dispatch_owner: str,
+    recovers: bool,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"}, source="grok")
+    variables = SessionVariableManager(hub_db)
+    started_at = datetime.now(UTC).isoformat()
+    variables.merge_variables(
+        SESSION_ID,
+        {
+            PENDING_HANDOFF_VARIABLE: {
+                "attempt_id": ATTEMPT_ID,
+                "clear_session": False,
+                "handoff_record_id": "22222222-2222-4222-8222-222222222222",
+                "created_at": started_at,
+                "dispatch_started_at": started_at,
+                "dispatch_owner": dispatch_owner,
+            },
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": ATTEMPT_ID,
+                "clear_session": False,
+            },
+        },
+    )
+    event_loop = MagicMock()
+    event_loop.is_closed.return_value = False
+    event = HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="provider-session",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger=LOGGER_NAME),
+        patch("gobby.hooks.terminal_handoff_delivery._settle_delivery", new_callable=AsyncMock),
+        patch("gobby.hooks.terminal_handoff_delivery.asyncio.run_coroutine_threadsafe") as submit,
+    ):
+        scheduled = terminal_handoff_delivery.schedule_staged_handoff_on_stop(
+            event,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            event_loop=event_loop,
+        )
+
+    marker = variables.get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
+    assert scheduled is recovers
+    assert _warnings(caplog) == []
+    assert submit.call_count == int(recovers)
+    if recovers:
+        assert marker["dispatch_owner"] == DISPATCH_OWNER
+        submit.call_args.args[0].close()
+    else:
+        assert marker["dispatch_owner"] == dispatch_owner
+        assert marker["dispatch_started_at"] == started_at

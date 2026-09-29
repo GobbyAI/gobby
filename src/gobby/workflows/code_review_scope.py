@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING
 
@@ -140,6 +140,8 @@ class CommitScope:
     """``-a``: every tracked path whose working tree differs from the index."""
     include_staged: bool
     """``-i``: the staged changes as well as the pathspec'd working-tree ones."""
+    added_paths: tuple[str, ...] = ()
+    """Literal paths a chained ``git add`` stages before an only-mode commit."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,8 +164,15 @@ def parse_commit_scope(command: str | None) -> CommitScope | None:
 
     parsed = parse_shell_command(command)
     wrapper_chdir: str | None = None
+    added_paths: tuple[str, ...] = ()
     if len(parsed.segments) == 1:
         tokens = list(parsed.segments[0])
+    elif set(parsed.operators) == {"&&"} and len(parsed.segments) == len(parsed.operators) + 1:
+        chained = _chained_add_paths(parsed.segments[:-1])
+        if chained is None:
+            return None
+        added_paths = chained
+        tokens = list(parsed.segments[-1])
     elif len(parsed.segments) == 3 and parsed.operators == ("&&", "|"):
         wrapper = re.fullmatch(r"(?s)\s*(.*?)\s+2>&1\s*\|\s*tail\s+-20\s*", command)
         if wrapper is None:
@@ -192,7 +201,31 @@ def parse_commit_scope(command: str | None) -> CommitScope | None:
     index, chdir = parsed_globals
     if wrapper_chdir is not None and chdir is not None:
         return None
-    return _parse_commit_arguments(tokens[1 + index :], wrapper_chdir or chdir)
+    scope = _parse_commit_arguments(tokens[1 + index :], wrapper_chdir or chdir)
+    if scope is None or not added_paths:
+        return scope
+    # Only mode ignores whatever else is staged, so earlier adds can change the
+    # recorded set only by making pathspec'd untracked paths trackable. A chain
+    # ending in any other commit form records a staged set this cannot predict.
+    if chdir is not None or not scope.pathspecs or scope.include_staged:
+        return None
+    return replace(scope, added_paths=added_paths)
+
+
+def _chained_add_paths(segments: Sequence[tuple[str, ...]]) -> tuple[str, ...] | None:
+    """Return the literal paths of plain ``git add`` segments, or None for any other shape."""
+    paths: list[str] = []
+    for segment in segments:
+        if segment[:2] != ("git", "add"):
+            return None
+        operands = segment[3:] if segment[2:3] == ("--",) else segment[2:]
+        if not operands or any(
+            operand.startswith(("-", ":")) or any(char in operand for char in "*?[$`\\")
+            for operand in operands
+        ):
+            return None
+        paths.extend(operands)
+    return tuple(paths)
 
 
 def _parse_git_global_options(tokens: Sequence[str]) -> tuple[int, str | None] | None:
@@ -350,7 +383,29 @@ async def _recorded_paths(scope: CommitScope, cwd: str) -> set[str] | None:
     worktree = await _diff_paths(cwd, (), scope.pathspecs)
     if worktree is None:
         return None
-    return staged | worktree
+    if not scope.added_paths:
+        return staged | worktree
+
+    # A chained add makes untracked paths trackable; the commit records those
+    # its pathspec also matches.
+    pathspec_untracked = await _untracked_paths(cwd, scope.pathspecs)
+    added_untracked = await _untracked_paths(cwd, scope.added_paths)
+    if pathspec_untracked is None or added_untracked is None:
+        return None
+    return staged | worktree | (pathspec_untracked & added_untracked)
+
+
+async def _untracked_paths(cwd: str, pathspecs: tuple[str, ...]) -> set[str] | None:
+    """Repository-relative untracked, non-ignored paths matching ``pathspecs``."""
+    args = ["ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--", *pathspecs]
+    result = await daemon_git.run(args, cwd=cwd, timeout=10.0)
+    if not isinstance(result, GitOk):
+        logger.debug(
+            "Code-review scope inspection could not list untracked paths: %s",
+            result.stderr.strip() or result.status,
+        )
+        return None
+    return {path for path in result.stdout.split("\0") if path}
 
 
 async def _diff_paths(

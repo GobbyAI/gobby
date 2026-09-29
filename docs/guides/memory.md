@@ -454,7 +454,9 @@ similarity first: undecayed similarity, and the fused score (`ranking_score`).
 Each hit keeps the earlier of its two slots, so the best semantic match stays
 first, the hit the searches most agree on comes second, and a memory that
 several searches confirm can outrank one with higher similarity. Temporal decay
-only breaks ties between otherwise equal hits. Hits no search could score come
+only breaks ties between otherwise equal hits, and it counts from the later of
+`updated_at` and `last_accessed_at`, so an older memory that is still being
+fetched outranks a newer one nobody reads. Hits no search could score come
 last. A graded cohort of 24 queries
 (`tests/memory/fixtures/ranking_cohort.json`) selected this order over
 similarity alone, the fused score alone, and three weighted blends;
@@ -473,6 +475,15 @@ fold information. Live-corpus raw cosine score bands are p10 `0.62`, p50
 content and rationale instead of treating one score as a universal relevance
 boundary. `min_score` filters the reported `undecayed_similarity` axis;
 `similarity` includes temporal decay.
+
+A search counts its hits as surfaced only when it shows them to an agent or a
+person: `surface_memories` (`memory.surface`), `search_memories`,
+`review_task_memories`, the HTTP search route, and `gobby memory recall`. Each
+such hit gains one `surfaced_count` and a new `last_surfaced_at`, at most once per
+`access_debounce_seconds`. Probe searches — the `memory.search` default, the
+`create_memory` similarity check, and review-lesson lookups — change neither
+counter. Search never touches `access_count`, which counts deliberate reads of
+the full memory.
 
 ### Knowledge Graph
 

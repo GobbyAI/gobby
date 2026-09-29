@@ -454,13 +454,12 @@ def _markdown_tables(document: str) -> tuple[_MarkdownTable, ...]:
         if len(block) < 3:
             continue
         rows = tuple(_split_markdown_row(line) for line in block)
+        headers = rows[0]
+        if any(len(row) != len(headers) for row in rows[1:]):
+            continue
         if not _is_separator_row(rows[1]):
             continue
-        headers = rows[0]
-        body = rows[2:]
-        if any(len(row) != len(headers) for row in body):
-            continue
-        tables.append(_MarkdownTable(headers=headers, rows=body))
+        tables.append(_MarkdownTable(headers=headers, rows=rows[2:]))
     return tuple(tables)
 
 
@@ -469,7 +468,10 @@ def _split_markdown_row(line: str) -> tuple[str, ...]:
 
 
 def _is_separator_row(row: tuple[str, ...]) -> bool:
-    return bool(row) and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in row)
+    # GFM permits a separator cell with a single dash (``| - | - |``); the
+    # authoritative Claude ``model-config`` document uses that short form, so
+    # requiring three dashes silently discarded every table in it.
+    return bool(row) and all(re.fullmatch(r":?-+:?", cell.replace(" ", "")) for cell in row)
 
 
 def _required_feature(

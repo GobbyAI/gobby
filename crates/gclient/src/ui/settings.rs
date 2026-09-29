@@ -179,6 +179,9 @@ pub struct ClientPrefs {
     pub title_scrolling: TitleScrolling,
     pub status_left: Vec<String>,
     pub status_right: Vec<String>,
+    /// Draw Nerd Font symbols (the pane's sandbox lock); `false` spells them
+    /// in plain text for a font without them.
+    pub nerd_glyphs: bool,
 }
 
 impl Default for ClientPrefs {
@@ -202,6 +205,7 @@ impl Default for ClientPrefs {
             title_scrolling: TitleScrolling::Left,
             status_left: vec!["focus".to_string()],
             status_right: Vec::new(),
+            nerd_glyphs: true,
         }
     }
 }

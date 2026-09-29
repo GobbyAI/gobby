@@ -1,25 +1,8 @@
+use super::refs::{self, Rows, Target};
 use super::{CommandEnv, CommandError, Parsed};
 use crate::daemon::{project_rows, Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use serde_json::Value;
 use tokio::time::{Duration, Instant};
-
-pub(super) const HELP: &str = "gclient <verb> [options]\n\
-  list [--workspace REF]              List tabs and panes\n\
-  new-tab --project NAME|ID [--workspace REF]  Create a tab\n\
-  split [REF] --right|--down           Split a pane\n\
-  resize [REF] RATIO                   Resize a split\n\
-  title [REF] TEXT                     Rename a tab or pane\n\
-  select [REF] [--workspace REF]       Set focus hints\n\
-  send-keys [REF] TEXT [--enter]       Send pane text\n\
-  capture-pane [REF] [--lines N]      Read pane text\n\
-  wait-for-output [REF] --pattern REGEX [--timeout S] [--interval S]\n\
-  kill [REF]                           Close a tab or pane\n\
-  help                                 Show this table\n\
-Action options: --json, --daemon-url URL, --token-file PATH.\n\
---workspace applies to list, new-tab, select; list/new-tab default to GOBBY_WORKSPACE_ID.\n\
-select derives workspace from a full REF, otherwise from GOBBY_WORKSPACE_ID.\n\
-Omitted pane REF uses GOBBY_PANE_REF; outside a pane, pass explicit values.\n\
-UUID tab refs: use --kind tab with title/kill; UUID pane focus: use --tab-ref TAB.\n";
 
 #[derive(Debug)]
 pub(super) struct CommandOutput {
@@ -43,10 +26,12 @@ pub(super) enum Action {
         pane: String,
         axis: LayoutAxis,
         cmd: Option<String>,
+        target: Option<Target>,
     },
     Op {
         op: WorkspaceOp,
         kind: OutputKind,
+        target: Option<Target>,
     },
 }
 
@@ -75,6 +60,30 @@ fn pane_ref_before_value(parsed: &mut Parsed, env: &CommandEnv) -> Result<String
         return required(env.pane_ref.clone(), "pane REF");
     }
     pane_ref(parsed, env)
+}
+
+/// The workspace check a pane or tab REF needs under `--workspace`.
+fn ref_target(
+    reference: &str,
+    parsed: &mut Parsed,
+    env: &CommandEnv,
+    rows: Rows,
+) -> Result<Option<Target>, CommandError> {
+    Target::new(
+        reference,
+        parsed.take("--workspace"),
+        env.workspace_id.as_ref(),
+        rows,
+    )
+}
+
+/// Which rows a title or kill REF may name under its `--kind`.
+fn kind_rows(kind: Option<&str>) -> Rows {
+    match kind {
+        Some("tab") => Rows::Tabs,
+        Some("pane") => Rows::Panes,
+        _ => Rows::Either,
+    }
 }
 
 fn workspace(parsed: &mut Parsed, env: &CommandEnv) -> Result<String, CommandError> {
@@ -144,11 +153,15 @@ impl Action {
                     title: args.take("--name"),
                 }
             }
-            "split" => Self::Split {
-                pane: pane_ref(&mut args, env)?,
-                axis: axis(&mut args)?,
-                cmd: args.take("--cmd"),
-            },
+            "split" => {
+                let pane = pane_ref(&mut args, env)?;
+                Self::Split {
+                    target: ref_target(&pane, &mut args, env, Rows::Panes)?,
+                    pane,
+                    axis: axis(&mut args)?,
+                    cmd: args.take("--cmd"),
+                }
+            }
             "resize" => {
                 let pane = pane_ref_before_value(&mut args, env)?;
                 let ratio = positive_f64(&required(args.position(), "RATIO")?, "RATIO")?;
@@ -156,6 +169,7 @@ impl Action {
                     return Err(CommandError::usage("RATIO must be less than 1"));
                 }
                 Self::Op {
+                    target: ref_target(&pane, &mut args, env, Rows::Panes)?,
                     op: WorkspaceOp::PaneResize {
                         pane,
                         ratio,
@@ -171,6 +185,7 @@ impl Action {
                 if kind.as_deref().is_some_and(|s| s != "tab" && s != "pane") {
                     return Err(CommandError::usage("--kind requires tab or pane"));
                 }
+                let target = ref_target(&reference, &mut args, env, kind_rows(kind.as_deref()))?;
                 let tab = kind.as_deref() == Some("tab")
                     || (kind.is_none() && ref_depth(&reference) == 3);
                 let op = if tab {
@@ -189,14 +204,26 @@ impl Action {
                 Self::Op {
                     op,
                     kind: OutputKind::Json,
+                    target,
                 }
             }
             "select" => {
                 let reference = pane_ref(&mut args, env)?;
                 let workspace_override = args.take("--workspace");
                 let tab_hint = args.take("--tab-ref").or_else(|| env.tab_id.clone());
+                let target = Target::new(
+                    &reference,
+                    workspace_override.clone(),
+                    env.workspace_id.as_ref(),
+                    Rows::Either,
+                )?;
                 let parts: Vec<_> = reference.split(':').collect();
-                let (workspace, tab, pane) = if parts.len() == 3 || parts.len() == 4 {
+                // A short ID's tab and pane come from its resolved row.
+                let (workspace, tab, pane) = if let Some(short) =
+                    target.as_ref().filter(|_| refs::is_short_id(&reference))
+                {
+                    (short.workspace.clone(), None, None)
+                } else if parts.len() == 3 || parts.len() == 4 {
                     let workspace = parts[..2].join(":");
                     let tab = Some(parts[..3].join(":"));
                     let pane = (parts.len() == 4).then_some(reference);
@@ -221,6 +248,7 @@ impl Action {
                         node: None,
                     },
                     kind: OutputKind::Json,
+                    target,
                 }
             }
             "send-keys" => {
@@ -228,6 +256,7 @@ impl Action {
                 let text = required(args.position(), "TEXT")?;
                 let submit = args.switch("--enter");
                 Self::Op {
+                    target: ref_target(&pane, &mut args, env, Rows::Panes)?,
                     op: WorkspaceOp::PaneSendText {
                         pane,
                         text,
@@ -251,6 +280,7 @@ impl Action {
                     return Err(CommandError::usage("--lines must be positive"));
                 }
                 Self::Op {
+                    target: ref_target(&pane, &mut args, env, Rows::Panes)?,
                     op: WorkspaceOp::PaneRead {
                         pane,
                         lines,
@@ -271,6 +301,7 @@ impl Action {
                     .map(|s| positive_f64(&s, "--interval"))
                     .transpose()?;
                 Self::Op {
+                    target: ref_target(&pane, &mut args, env, Rows::Panes)?,
                     op: WorkspaceOp::PaneWaitForOutput {
                         pane,
                         pattern,
@@ -287,6 +318,7 @@ impl Action {
                 if kind.as_deref().is_some_and(|s| s != "tab" && s != "pane") {
                     return Err(CommandError::usage("--kind requires tab or pane"));
                 }
+                let target = ref_target(&reference, &mut args, env, kind_rows(kind.as_deref()))?;
                 let tab = kind.as_deref() == Some("tab")
                     || (kind.is_none() && ref_depth(&reference) == 3);
                 let op = if tab {
@@ -303,6 +335,7 @@ impl Action {
                 Self::Op {
                     op,
                     kind: OutputKind::Json,
+                    target,
                 }
             }
             _ => return Err(CommandError::usage("unknown verb")),
@@ -315,7 +348,7 @@ impl Action {
         let daemon = LiveDaemon::connect(url, token.to_owned())
             .await
             .map_err(daemon_error)?;
-        let output = match self {
+        let output = match self.resolved(&daemon).await? {
             Self::List { workspace } => {
                 let snapshot = daemon
                     .attach_workspace(None, Some(&workspace), None)
@@ -376,7 +409,9 @@ impl Action {
                     .map_err(daemon_error)?;
                 output(reply.result, OutputKind::CreatedTab(prefix))
             }
-            Self::Split { pane, axis, cmd } => {
+            Self::Split {
+                pane, axis, cmd, ..
+            } => {
                 let prefix = numeric_prefix(&pane, 3);
                 let reply = daemon
                     .workspace_op(WorkspaceOp::PaneSplit {
@@ -404,7 +439,7 @@ impl Action {
                 }
                 output(result, OutputKind::CreatedPane(prefix))
             }
-            Self::Op { op, kind } => {
+            Self::Op { op, kind, .. } => {
                 let reply = if let WorkspaceOp::PaneWaitForOutput {
                     timeout_seconds, ..
                 } = &op
@@ -424,6 +459,48 @@ impl Action {
         };
         let _ = daemon.close(Instant::now() + Duration::from_secs(2)).await;
         output
+    }
+
+    /// The action with its REF checked against the selected workspace and
+    /// a short ID swapped for the row it names.
+    async fn resolved(self, daemon: &LiveDaemon) -> Result<Self, CommandError> {
+        let (Self::Split {
+            target: Some(target),
+            ..
+        }
+        | Self::Op {
+            target: Some(target),
+            ..
+        }) = &self
+        else {
+            return Ok(self);
+        };
+        let snapshot = daemon
+            .attach_workspace(None, Some(&target.workspace), None)
+            .await
+            .map_err(daemon_error)?;
+        let Some(row) = target.resolve(&snapshot)? else {
+            return Ok(self);
+        };
+        Ok(match self {
+            Self::Split { axis, cmd, .. } => {
+                let refs::Row::Pane { id, .. } = row else {
+                    unreachable!("a split resolves panes only");
+                };
+                Self::Split {
+                    pane: id,
+                    axis,
+                    cmd,
+                    target: None,
+                }
+            }
+            Self::Op { op, kind, .. } => Self::Op {
+                op: refs::retarget(op, row),
+                kind,
+                target: None,
+            },
+            other => other,
+        })
     }
 }
 
@@ -509,6 +586,11 @@ fn daemon_error(error: DaemonError) -> CommandError {
                 message: format!("{code}: {}", refused.reason),
             }
         }
+        DaemonError::Timeout { .. } => CommandError::connection(format!(
+            "{error} It may still take effect, and text sent to a pane may already be there: \
+             inspect the pane with `gclient capture-pane REF` before retrying. \
+             `gobby status` shows whether the daemon is healthy."
+        )),
         other => CommandError::connection(other.to_string()),
     }
 }

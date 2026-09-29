@@ -13,6 +13,8 @@ import os
 import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
@@ -27,11 +29,15 @@ from gobby.storage.hub.managed import managed_grant_path
 from gobby.utils import spawn
 from gobby.utils.dependency_requirements import collect_dependency_report
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
+from gobby.utils.probes import ProbeBatch
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+# One budget for every `gobby status` dependency probe, run concurrently.
+STATUS_PROBE_DEADLINE_SECONDS = 5.0
 
 
 def _run_cmd(args: list[str], timeout: int = 5) -> str | None:
@@ -424,28 +430,19 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     """Get LM Studio status."""
     if not shutil.which("lms"):
         return None
-    output = _run_cmd(["lms", "server", "status"])
-    # lms writes status to stderr, but _run_cmd captures stdout
-    # Check if running based on output or fallback
+    # lms prints its status on stderr, so read both streams from one spawn.
     running = False
-    if output:
-        normalized_output = output.lower()
-        running = "running" in normalized_output and "not running" not in normalized_output
-    else:
-        # Try with stderr too
-        try:
-            result = spawn.run(  # nosec B603
-                ["lms", "server", "status"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            combined = (result.stdout + result.stderr).lower()
-            running = (
-                result.returncode == 0 and "running" in combined and "not running" not in combined
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            logger.debug("Failed to determine LM Studio server status", exc_info=True)
+    try:
+        result = spawn.run(  # nosec B603
+            ["lms", "server", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        combined = (result.stdout + result.stderr).lower()
+        running = result.returncode == 0 and "running" in combined and "not running" not in combined
+    except (subprocess.TimeoutExpired, OSError):
+        logger.debug("Failed to determine LM Studio server status", exc_info=True)
     return {"running": running}
 
 
@@ -685,52 +682,82 @@ def collect_all_deps(db: HubDatabase, *, managed_services: bool) -> dict[str, An
         path = local_native_bin_path(name)
         return str(path) if path.exists() else None
 
-    try:
-        embeddings_provider: str | dict[str, str] | None = get_configured_embedding_provider(
-            db, raise_storage_errors=True
-        )
-    except Exception as exc:
-        logger.debug("Failed to probe embeddings provider for status", exc_info=True)
-        embeddings_provider = {"status": "degraded", "error": type(exc).__name__}
+    def _embeddings_provider() -> str | dict[str, str] | None:
+        try:
+            return get_configured_embedding_provider(db, raise_storage_errors=True)
+        except Exception as exc:
+            logger.debug("Failed to probe embeddings provider for status", exc_info=True)
+            return {"status": "degraded", "error": type(exc).__name__}
 
-    dependency_payload = collect_dependency_report(
+    # Every probe below is independent and most spawn a subprocess, so they share
+    # one deadline instead of summing their individual timeouts.
+    deadline = time.monotonic() + STATUS_PROBE_DEADLINE_SECONDS
+    probes: dict[str, Callable[[], Any]] = {
+        "gobby.gobby": get_gobby_version,
+        "gobby.gcode": get_gcode_version,
+        "gobby.ghook": get_ghook_version,
+        "gobby.gterm": get_gterm_version,
+        "gobby.gclient": get_gclient_version,
+        "gobby.impeccable": get_impeccable_version,
+        "coding_clis.claude": get_claude_code_version,
+        "coding_clis.grok": get_grok_cli_version,
+        "coding_clis.codex": get_codex_cli_version,
+        "coding_clis.droid": get_droid_cli_version,
+        "coding_clis.qwen": get_qwen_cli_version,
+        "coding_clis.agy": get_agy_cli_version,
+        "coding_clis.hooks": get_coding_cli_hooks_status,
+        "coding_clis.hook_drift": get_coding_cli_hook_drift,
+        "git_hook_drift": lambda: get_git_hook_drift(db),
+        "integrations.tailscale": get_tailscale_info,
+        "integrations.embeddings_provider": _embeddings_provider,
+        "integrations.ollama": get_ollama_info,
+        "integrations.lmstudio": get_lmstudio_info,
+    }
+    batch = ProbeBatch(probes, deadline=deadline)
+    report = collect_dependency_report(
         managed_services=managed_services,
         # A managed execution cannot read tools/srt (sandbox_policy credential roots), and
         # the daemon verified SRT fail-closed before launching it; only unsandboxed status
         # can observe the installation.
         include_srt=managed_grant_path() is None,
-    ).to_payload()
+        deadline=deadline,
+    )
+    results = batch.collect()
+    value = results.values.get
     return {
         "gobby": {
-            "gobby": get_gobby_version(),
-            "gcode": get_gcode_version(),
+            "gobby": value("gobby.gobby"),
+            "gcode": value("gobby.gcode"),
             "gcode_path": _local_binary_path("gcode"),
-            "ghook": get_ghook_version(),
+            "ghook": value("gobby.ghook"),
             "ghook_path": _local_binary_path("ghook"),
-            "gterm": get_gterm_version(),
+            "gterm": value("gobby.gterm"),
             "gterm_path": _local_binary_path("gterm"),
             "gterm_stale": native_bin_predates_source("gterm"),
-            "gclient": get_gclient_version(),
+            "gclient": value("gobby.gclient"),
             "gclient_path": _local_binary_path("gclient"),
             "gclient_stale": native_bin_predates_source("gclient"),
-            "impeccable": get_impeccable_version(),
+            "impeccable": value("gobby.impeccable"),
         },
         "coding_clis": {
-            "claude": get_claude_code_version(),
-            "grok": get_grok_cli_version(),
-            "codex": get_codex_cli_version(),
-            "droid": get_droid_cli_version(),
-            "qwen": get_qwen_cli_version(),
-            "agy": get_agy_cli_version(),
-            "hooks": get_coding_cli_hooks_status(),
-            "hook_drift": get_coding_cli_hook_drift(),
+            "claude": value("coding_clis.claude"),
+            "grok": value("coding_clis.grok"),
+            "codex": value("coding_clis.codex"),
+            "droid": value("coding_clis.droid"),
+            "qwen": value("coding_clis.qwen"),
+            "agy": value("coding_clis.agy"),
+            "hooks": value("coding_clis.hooks", {}),
+            "hook_drift": value("coding_clis.hook_drift", {}),
         },
-        "git_hook_drift": get_git_hook_drift(db),
-        **dependency_payload,
+        "git_hook_drift": value("git_hook_drift", {}),
+        **report.to_payload(),
         "integrations": {
-            "tailscale": get_tailscale_info(),
-            "embeddings_provider": embeddings_provider,
-            "ollama": get_ollama_info(),
-            "lmstudio": get_lmstudio_info(),
+            "tailscale": value("integrations.tailscale"),
+            "embeddings_provider": value("integrations.embeddings_provider"),
+            "ollama": value("integrations.ollama"),
+            "lmstudio": value("integrations.lmstudio"),
         },
+        "timed_out": sorted(
+            [*results.timed_out, *(f"dependencies.{name}" for name in report.timed_out)]
+        ),
     }

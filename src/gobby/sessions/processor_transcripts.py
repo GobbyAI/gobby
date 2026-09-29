@@ -29,6 +29,11 @@ from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
 
 logger = logging.getLogger(__name__)
 
+# Upper bound on transcript bytes one processing pass ingests. A catch-up over a
+# large transcript then yields its lock between passes instead of holding it for
+# the whole file (a 122 MB Claude transcript held one for 15 minutes, #22884).
+CATCHUP_CHUNK_BYTES = 8 * 1024 * 1024
+
 
 def _parser_source(parser: object | None) -> str | None:
     source = getattr(parser, "cli_name", None)
@@ -68,6 +73,8 @@ class ProcessorTranscriptMixin:
         self: ProcessorHost,
         session_id: str,
         records: Sequence[StatsRecord],
+        *,
+        publish_occupancy: bool = True,
     ) -> MessageStats:
         """Run fallible batch work and roll back processor-local state on failure."""
         messages = [record for record in records if isinstance(record, ParsedMessage)]
@@ -77,7 +84,9 @@ class ProcessorTranscriptMixin:
         had_render_state = session_id in self._render_states
         previous_render_state = deepcopy(self._render_states.get(session_id))
         try:
-            await self._persist_usage_events(session_id, messages)
+            await self._persist_usage_events(
+                session_id, messages, publish_occupancy=publish_occupancy
+            )
             await self._render_and_broadcast_messages(
                 session_id,
                 messages,
@@ -121,14 +130,14 @@ class ProcessorTranscriptMixin:
         transcript_path: str,
         *,
         at_eof: bool = False,
-    ) -> None:
-        """Process a single session."""
+    ) -> bool:
+        """Process one bounded pass of a session; False while a catch-up has bytes left."""
         lock = self._processing_locks.setdefault(session_id, asyncio.Lock())
         try:
             async with lock:
                 if self._active_sessions.get(session_id) != transcript_path:
-                    return
-                await self._process_session_unlocked(
+                    return True
+                return await self._process_session_unlocked(
                     session_id,
                     transcript_path,
                     at_eof=at_eof,
@@ -143,10 +152,15 @@ class ProcessorTranscriptMixin:
         transcript_path: str,
         *,
         at_eof: bool = False,
-    ) -> None:
-        """Process a single session while its processing lock is held."""
+    ) -> bool:
+        """Process one bounded pass while the session's processing lock is held.
+
+        A pass reads at most ``CATCHUP_CHUNK_BYTES`` so a long catch-up (a missing
+        or stale index sidecar) releases the lock between passes. Returns False
+        when the pass stopped before the end of the transcript.
+        """
         if not await asyncio.to_thread(os.path.exists, transcript_path):
-            return
+            return True
 
         try:
             transcript_stat = await asyncio.to_thread(os.stat, transcript_path)
@@ -159,7 +173,7 @@ class ProcessorTranscriptMixin:
                     "error": str(exc),
                 },
             )
-            return
+            return True
 
         last_offset = self._byte_offsets.get(session_id, 0)
         previous_state = self._transcript_file_state.get(session_id)
@@ -181,19 +195,27 @@ class ProcessorTranscriptMixin:
             last_offset = 0
         self._transcript_file_state[session_id] = current_state
 
+        if transcript_stat.st_size - last_offset > CATCHUP_CHUNK_BYTES:
+            # History ingest will take several passes; publish live occupancy from
+            # the tail first so the context-pressure guard is never left reading a
+            # pre-catch-up value.
+            await self._publish_tail_occupancy(session_id, transcript_path)
+
         last_index = self._message_indices.get(session_id, -1)
         new_lines: list[str] = []
         new_line_offsets: list[int] = []
         valid_offset = last_offset
+        reached_eof = False
 
         try:
             async with aiofiles.open(transcript_path, "rb") as f:
                 await f.seek(last_offset)
 
-                while True:
+                while valid_offset - last_offset < CATCHUP_CHUNK_BYTES:
                     line_start = await f.tell()
                     raw_line = await f.readline()
                     if not raw_line:
+                        reached_eof = True
                         break
 
                     if raw_line.endswith(b"\n"):
@@ -205,6 +227,7 @@ class ProcessorTranscriptMixin:
                         new_line_offsets.append(line_start)
                         valid_offset = await f.tell()
                     else:
+                        reached_eof = True
                         break
         except (OSError, UnicodeDecodeError) as e:
             logger.error(
@@ -215,15 +238,16 @@ class ProcessorTranscriptMixin:
                     "error": str(e),
                 },
             )
-            return
+            return True
+        caught_up = reached_eof or valid_offset >= transcript_stat.st_size
 
         if not new_lines:
-            return
+            return True
 
         await self._run_db(self._revive_expired_terminal_session, session_id)
         parser = self._parsers.get(session_id)
         if not parser:
-            return
+            return True
 
         parser_state = (
             parser.snapshot_state() if _parser_supports_incremental_state(parser) else None
@@ -322,10 +346,14 @@ class ProcessorTranscriptMixin:
                     pending_appender,
                     appender_stat,
                 )
-            return
+            return caught_up
 
         try:
-            stats = await self._process_parsed_batch(session_id, stats_records)
+            # A pass that stops short of EOF carries historical occupancy; publishing
+            # it would walk the live value backwards through past context epochs.
+            stats = await self._process_parsed_batch(
+                session_id, stats_records, publish_occupancy=caught_up
+            )
         except Exception:
             if parser_state is not None:
                 parser.hydrate_state(parser_state)
@@ -353,6 +381,7 @@ class ProcessorTranscriptMixin:
                 "message_count": len(parsed_messages),
             },
         )
+        return caught_up
 
     async def _render_and_broadcast_messages(
         self: ProcessorHost,

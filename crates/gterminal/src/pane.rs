@@ -16,7 +16,8 @@ pub use self::runtime::PaneRuntime;
 pub use self::shell::{PaneLaunchEnv, PaneShellConfig, ShellMode};
 pub use self::state::PaneState;
 pub use self::terminal::{
-    InputState, ScrollMetrics, TerminalCursorState, TerminalDirtyPatchOutcome,
+    GhosttyPaneTerminal, InputState, PaneCoreHandover, ScrollMetrics, TerminalCursorState,
+    TerminalDirtyPatchOutcome, PANE_CONTINUATION_MAX_BYTES,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -25,7 +26,5 @@ pub(crate) enum WheelRouting {
     MouseReport,
     AlternateScroll,
 }
-#[cfg(test)]
-pub(crate) use self::terminal::GhosttyPaneTerminal;
 #[cfg(test)]
 pub(crate) use self::terminal::TerminalReadSnapshot;

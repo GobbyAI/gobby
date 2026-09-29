@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
@@ -20,9 +21,16 @@ from urllib.parse import urlparse
 from gobby.agents.credential_inventory import denied_ambient_keys
 from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
 from gobby.agents.sandbox_run_environment import RUN_CACHE_ENV_VARS, SandboxRunPaths
+from gobby.agents.zig_packages import (
+    ZIG_PACKAGES,
+    machine_zig_packages,
+    materialize_zig_packages,
+    vendored_libghostty_vt,
+)
 from gobby.config.tmux import socket_root
 from gobby.paths import get_gobby_home
 from gobby.utils import spawn
+from gobby.utils.dev import linked_worktree_root
 
 if TYPE_CHECKING:
     from gobby.agents.sandbox import SandboxConfig, SandboxCredentialEnv
@@ -842,7 +850,39 @@ def prepare_sandbox_run_paths(
         workspace=workspace,
         destination=Path(paths.environment("unknown")["XDG_CACHE_HOME"]) / "pre-commit",
     )
-    return paths
+    zig_system_dir = _prepare_zig_system_dir(
+        workspace=workspace,
+        cache_root=Path(paths.environment("unknown")["ZIG_GLOBAL_CACHE_DIR"]),
+    )
+    return replace(paths, zig_system_dir=zig_system_dir)
+
+
+def _prepare_zig_system_dir(*, workspace: Path, cache_root: Path) -> Path | None:
+    """Back a sandboxed libghostty-vt build with the machine's Zig packages.
+
+    Zig otherwise unpacks packages into the checkout's zig-pkg, where the
+    sandbox denies their `.gitmodules`, and the machine cache is read-only to
+    the run. A linked worktree's zig-pkg is empty, so reuse the main checkout's
+    extractions; symlinking them keeps this to milliseconds per spawn.
+    """
+    if not vendored_libghostty_vt(workspace).is_dir():
+        return None
+    machine_pkgs = machine_zig_packages()
+    if not machine_pkgs.is_dir():
+        return None
+    linked = linked_worktree_root(workspace)
+    checkout = linked.main_checkout if linked is not None else workspace
+    try:
+        complete = materialize_zig_packages(
+            machine_pkgs,
+            cache_root,
+            vendored_libghostty_vt(checkout) / "zig-pkg",
+            report=logger.warning,
+        )
+    except OSError:
+        logger.warning("Failed to prepare the run's Zig package directory", exc_info=True)
+        return None
+    return cache_root / ZIG_PACKAGES if complete else None
 
 
 def previous_run_write_paths(env: Mapping[str, str]) -> set[str]:

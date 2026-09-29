@@ -7,29 +7,155 @@ use std::process::{Command, Output};
 
 const PROJECT: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
-#[test]
-fn help_scopes_workspace_option_to_supported_verbs() {
-    let output = Command::new(env!("CARGO_BIN_EXE_gclient"))
-        .arg("help")
+const VERBS: [&str; 11] = [
+    "list",
+    "new-tab",
+    "split",
+    "resize",
+    "title",
+    "select",
+    "send-keys",
+    "capture-pane",
+    "wait-for-output",
+    "kill",
+    "help",
+];
+
+fn gclient(args: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_gclient"))
+        .args(args)
+        .env_remove("GOBBY_PANE_REF")
+        .env_remove("GOBBY_WORKSPACE_ID")
+        .env_remove("GOBBY_TAB_ID")
         .output()
-        .expect("run gclient help");
+        .expect("run gclient")
+}
+
+#[test]
+fn help_documents_one_workspace_contract_for_every_verb() {
+    let output = gclient(&["help"]);
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
     let help = stdout(&output);
+    for verb in VERBS {
+        assert!(help.contains(&format!("\n  {verb}")), "{verb}");
+    }
     assert!(help.contains("list [--workspace REF]"));
     assert!(help.contains("new-tab --project NAME|ID [--workspace REF]"));
     assert!(help.contains("select [REF] [--workspace REF]"));
-    assert!(help.contains("--workspace applies to list, new-tab, select"));
-    assert!(help.contains("list/new-tab default to GOBBY_WORKSPACE_ID"));
-    assert!(help.contains("select derives workspace from a full REF"));
+    assert!(help.contains("Every verb takes --workspace REF"));
+    assert!(help.contains("defaults to GOBBY_WORKSPACE_ID"));
+    assert!(help.contains("other verbs resolve a short ID in it"));
+    assert!(help.contains("an explicit --workspace\nrefuses a REF outside it"));
     assert!(help.contains("Omitted pane REF uses GOBBY_PANE_REF"));
-    assert!(!help.contains("Common: --json, --daemon-url URL, --token-file PATH, --workspace"));
+    assert!(help.contains("gclient VERB --help shows one verb."));
+}
 
-    let unsupported = Command::new(env!("CARGO_BIN_EXE_gclient"))
-        .args(["capture-pane", "0:0:0:0", "--workspace", "0"])
-        .output()
-        .expect("run unsupported option");
-    assert_eq!(unsupported.status.code(), Some(2));
-    assert!(stderr(&unsupported).contains("unexpected arguments for capture-pane"));
+#[test]
+fn every_verb_has_its_own_help() {
+    for verb in VERBS {
+        for args in [vec![verb, "--help"], vec![verb, "-h"], vec!["help", verb]] {
+            let output = gclient(&args);
+            assert_eq!(
+                output.status.code(),
+                Some(0),
+                "{args:?}: {}",
+                stderr(&output)
+            );
+            let help = stdout(&output);
+            assert!(
+                help.starts_with(&format!("usage: gclient {verb}")),
+                "{args:?}: {help}"
+            );
+            assert!(
+                help.contains("Every verb takes --workspace REF"),
+                "{args:?}"
+            );
+        }
+    }
+    let send_keys = stdout(&gclient(&["send-keys", "--help"]));
+    assert!(send_keys.starts_with("usage: gclient send-keys [REF] TEXT [--enter]\n"));
+    assert!(send_keys.contains("check it with capture-pane before retrying"));
+
+    for args in [
+        vec!["help", "--workspace", "0"],
+        vec!["help", "send-keys", "--workspace", "0", "--json"],
+        vec!["help", "--daemon-url", "http://x", "--token-file", "t"],
+    ] {
+        let output = gclient(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{args:?}: {}",
+            stderr(&output)
+        );
+    }
+
+    let unknown = gclient(&["help", "bogus"]);
+    assert_eq!(unknown.status.code(), Some(2));
+    assert_eq!(stderr(&unknown), "gclient help: unknown verb: bogus\n");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn capture_pane_takes_workspace_like_list() {
+    let daemon = MockDaemon::start("command-token").await;
+    let seeded = daemon.seed_workspace(PROJECT, &[(&["terminal-a"], "first")]);
+    let listed = invoke(&daemon, &["list", "--workspace", "default", "--json"]).await;
+    assert_eq!(listed.status.code(), Some(0), "{}", stderr(&listed));
+    let workspace = &serde_json::from_str::<Value>(&stdout(&listed)).unwrap()["workspace"];
+    let node = workspace["node_ref"].as_u64().unwrap_or(0);
+    let number = workspace["ref"].as_u64().expect("workspace ref");
+    let inside = format!("{node}:{number}:1:0");
+    let outside = format!("{node}:{}:1:0", number + 7);
+
+    for reference in [inside.as_str(), seeded[0].1[0].as_str()] {
+        let output = invoke(
+            &daemon,
+            &["capture-pane", reference, "--workspace", "default"],
+        )
+        .await;
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "{reference}: {}",
+            stderr(&output)
+        );
+        assert_eq!(stdout(&output), "mock pane output\n");
+        assert_eq!(
+            daemon.workspace_requests().last().unwrap()["op"],
+            "pane.read"
+        );
+    }
+
+    let sent = daemon.workspace_requests().len();
+    let output = invoke(
+        &daemon,
+        &["capture-pane", &outside, "--workspace", "default"],
+    )
+    .await;
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        stderr(&output),
+        format!("gclient capture-pane: {outside} is not in workspace default\n")
+    );
+    assert_eq!(daemon.workspace_requests().len(), sent);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn short_id_resolves_in_the_workspace_never_as_its_name() {
+    let daemon = MockDaemon::start("command-token").await;
+    daemon.seed_workspace(PROJECT, &[(&["terminal-a"], "first")]);
+    let output = invoke(&daemon, &["capture-pane", "abcd", "--workspace", "default"]).await;
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(
+        stderr(&output),
+        "gclient capture-pane: no pane in workspace default starts with abcd\n"
+    );
+    assert!(daemon.workspace_requests().is_empty());
+
+    let output = invoke(&daemon, &["send-keys", "abcd", "hello"]).await;
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr(&output).contains("short ID abcd needs --workspace REF or GOBBY_WORKSPACE_ID"));
+    assert!(daemon.workspace_requests().is_empty());
 }
 
 async fn invoke(daemon: &MockDaemon, args: &[&str]) -> Output {
@@ -178,6 +304,22 @@ async fn refused_op_exits_one_with_code_and_reason() {
     let output = invoke(&daemon, &["send-keys", "0:1:2:3", "hello"]).await;
     assert_eq!(output.status.code(), Some(1));
     assert!(stderr(&output).contains("forbidden: pane is protected"));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn send_keys_timeout_is_visible_and_fails() {
+    let daemon = MockDaemon::start("command-token").await;
+    daemon.suppress_ws("workspace_op");
+    let output = invoke(&daemon, &["send-keys", "0:1:2:3", "hello"]).await;
+    assert_eq!(output.status.code(), Some(3));
+    assert_eq!(stdout(&output), "");
+    let error = stderr(&output);
+    assert!(
+        error.starts_with("gclient send-keys: Daemon did not answer workspace_op in time."),
+        "{error}"
+    );
+    assert!(error.contains("text sent to a pane may already be there"));
+    assert!(error.contains("`gclient capture-pane REF` before retrying"));
 }
 
 #[tokio::test(flavor = "multi_thread")]

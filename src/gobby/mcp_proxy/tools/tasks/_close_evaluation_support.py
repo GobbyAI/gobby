@@ -255,6 +255,13 @@ async def derive_close_transcript_evidence(
             effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
         task_checkout_paths = task_edited_checkout_paths(variables, task_id)
+        task_links: list[dict[str, Any]] | None = None
+        window_end: float | None = None
+        if session_id not in required:
+            task_links = await asyncio.to_thread(
+                ctx.session_task_manager.get_session_tasks, session_id
+            )
+            window_end = _moved_on_epoch(task_links, task_id, effective_window)
         if (
             not task_checkout_paths
             and session_id == owner_session_id
@@ -266,9 +273,10 @@ async def derive_close_transcript_evidence(
             root = os.path.realpath(repo_path)
             task_checkout_paths = frozenset((root, path) for path in task_edited_files)
         if task_checkout_paths:
-            task_links = await asyncio.to_thread(
-                ctx.session_task_manager.get_session_tasks, session_id
-            )
+            if task_links is None:
+                task_links = await asyncio.to_thread(
+                    ctx.session_task_manager.get_session_tasks, session_id
+                )
             completed_other_tasks = _closed_before_window_task_ids(
                 task_links, task_id, effective_window
             )
@@ -290,16 +298,23 @@ async def derive_close_transcript_evidence(
                 task_checkout_paths = await _without_closed_task_paths(
                     task_checkout_paths, legacy_closed_tasks, repo_path
                 )
+        session_task_files = task_edited_files
+        if session_id != owner_session_id:
+            # A linked session's own proven pairs attribute its edits; a reclaiming
+            # owner's ledger can hold only what it touched afterwards (#23017).
+            session_task_files = task_edited_files | {path for _, path in task_checkout_paths}
         try:
             session_evidence = await _derive_session_evidence_at_sync_point(
                 session,
                 effective_window,
                 detection,
-                task_edited_files,
+                session_task_files,
                 repo_path,
                 task_checkout_paths,
                 archive_dir=archive_dir,
             )
+            if window_end is not None:
+                session_evidence = _before_epoch(session_evidence, window_end)
             try:
                 excluded = await derive_prelink_runs(
                     session, effective_window, detection, repo_path, archive_dir=archive_dir
@@ -333,6 +348,45 @@ def _evidence_epoch(value: str | datetime | None) -> float | None:
     if isinstance(value, datetime):
         return (value if value.tzinfo else value.replace(tzinfo=UTC)).timestamp()
     return None
+
+
+def _moved_on_epoch(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+) -> float | None:
+    """When a linked session first claimed a different task after joining this one.
+
+    Its later shell runs and edits belong to that work, so a failing validation
+    there must not count against this task's close (#22884 found work, #23017).
+    """
+    start = _evidence_epoch(window_start)
+    if start is None:
+        return None
+    later_claims = [
+        epoch
+        for row in task_links
+        if (row.get("action") or row.get("session_action")) == "claimed"
+        and getattr(row.get("task"), "id", None) != task_id
+        and (epoch := _evidence_epoch(row.get("link_created_at"))) is not None
+        and epoch > start
+    ]
+    return min(later_claims, default=None)
+
+
+def _before_epoch(evidence: TranscriptEvidence, end: float) -> TranscriptEvidence:
+    """Keep only the runs and edits a linked session made before it moved on."""
+
+    def before(value: datetime) -> bool:
+        epoch = _evidence_epoch(value)
+        return epoch is not None and epoch < end
+
+    return replace(
+        evidence,
+        validation_runs=tuple(r for r in evidence.validation_runs if before(r.started_at)),
+        command_runs=tuple(r for r in evidence.command_runs if before(r.started_at)),
+        edits=tuple(e for e in evidence.edits if before(e.timestamp)),
+    )
 
 
 def _closed_before_window_task_ids(

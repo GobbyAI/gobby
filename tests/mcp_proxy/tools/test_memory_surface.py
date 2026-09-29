@@ -136,7 +136,7 @@ async def test_surface_returns_nothing_for_an_unresolvable_session() -> None:
     registry, memory_manager = _registry(candidates=[_memory(1)])
 
     with patch(
-        "gobby.mcp_proxy.tools.memory_surface.resolve_session_reference",
+        "gobby.mcp_proxy.tools.memory_session.resolve_session_reference",
         side_effect=ValueError("Session 'nope' not found"),
     ):
         result = await registry.call(

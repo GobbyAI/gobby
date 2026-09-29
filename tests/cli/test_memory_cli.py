@@ -1225,6 +1225,29 @@ class TestMemoryShowNotFound:
         assert "Access Count: 5" in result.output
 
 
+@patch("gobby.cli.memory.resolve_memory_id")
+@patch("gobby.cli.memory.get_memory_manager")
+def test_show_prints_surfaced_line(mock_get_manager: MagicMock, mock_resolve: MagicMock) -> None:
+    mock_item = MagicMock()
+    mock_item.id = "mem-123"
+    mock_item.content = "Content"
+    mock_item.memory_type = "fact"
+    mock_item.created_at = "2024-01-01"
+    mock_item.updated_at = "2024-01-01"
+    mock_item.source_type = "agent"
+    mock_item.access_count = 1
+    mock_item.surfaced_count = 12
+    mock_item.tags = []
+    mock_get_manager.return_value.get_memory.return_value = mock_item
+    mock_resolve.return_value = "mem-123"
+
+    result = CliRunner().invoke(cli, ["memory", "show", "mem-123"])
+
+    assert result.exit_code == 0
+    assert "Access Count: 1" in result.output
+    assert "Surfaced: 12" in result.output
+
+
 class TestMemoryReindexCommand:
     """Tests for gobby memory reindex-embeddings command."""
 

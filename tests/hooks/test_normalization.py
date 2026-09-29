@@ -2883,3 +2883,157 @@ class TestExternalNavigationScope:
 
         assert data["canonical_tool_kind"] == "search"
         assert data["canonical_code_navigation_repo_scope"] is True
+
+
+def _normalized_bash(command: str) -> dict[str, Any]:
+    data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+    normalize_tool_fields(data)
+    return data
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if (( s > 0 )); then echo hit; fi",
+        "(( count >= 3 )) && echo many",
+        "(( x << 2 )); echo done",
+    ],
+)
+def test_arithmetic_comparison_is_not_a_redirect(command: str) -> None:
+    data = _normalized_bash(command)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "canonical_write_file_paths" not in data
+    assert not data.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "if [[ $s > 0 ]]; then echo hit; fi",
+        "[[ -n $x && $y < 3 ]] || echo no",
+        '[[ "$a" > "]] b" ]] && echo yes',
+    ],
+)
+def test_double_bracket_comparison_is_not_a_redirect(command: str) -> None:
+    data = _normalized_bash(command)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "canonical_file_paths" not in data
+    assert not data.get("canonical_repo_mutation")
+
+
+@pytest.mark.parametrize(
+    "command",
+    ["x=$(( a > b )); echo $x", "echo $((a>b))", "echo $(( (a + 1) > b ))"],
+)
+def test_arithmetic_expansion_is_not_a_redirect(command: str) -> None:
+    data = _normalized_bash(command)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "canonical_write_file_paths" not in data
+
+
+@pytest.mark.parametrize(
+    ("command", "target"),
+    [
+        ('[ "$s" > 0 ]', "0"),
+        ("echo $(cat a > out.txt)", "out.txt"),
+        ("x=$(cat a >> log.txt) && echo $x", "log.txt"),
+        ("(printf hi > note.md)", "note.md"),
+        ("echo `cat a > out.txt`", "out.txt"),
+        ("[[ -n $x ]] && printf hi > out.txt", "out.txt"),
+        ('echo "$(cat a > out.txt)"', "out.txt"),
+        ('echo "pre $(cat a > out.txt) post"', "out.txt"),
+        ('x="$(cat a >> log.txt)" && echo $x', "log.txt"),
+        ('echo "`cat a > out.txt`"', "out.txt"),
+        ('echo "$(echo "$(cat a > out.txt)")"', "out.txt"),
+        ("echo \"$(cat <<'EOF' > out.txt\ndon't (x)\nEOF\n)\"", "out.txt"),
+    ],
+)
+def test_single_bracket_and_command_substitution_redirects_still_write(
+    command: str, target: str
+) -> None:
+    data = _normalized_bash(command)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_write_file_paths"] == [target]
+
+
+def test_heredoc_fed_tee_reports_its_write_target() -> None:
+    data = _normalized_bash("tee src/a.py <<'EOF'\nvalue = 1\nEOF")
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_write_file_paths"] == ["src/a.py"]
+    assert data["canonical_repo_mutation"] is True
+
+
+def test_input_redirect_source_is_not_a_write_target(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": f"tee {tmp_path}/copy.txt < src/in.txt"},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_write_file_paths"] == [f"{tmp_path}/copy.txt"]
+    assert data["canonical_repo_mutation"] is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "[[ $(printf x > src/out.txt) > 0 ]]",
+        "(( x = $(printf x > src/out.txt) ))",
+        "echo $(( $(printf x > src/out.txt) + 1 ))",
+        "[[ `printf x > src/out.txt` == y ]]",
+        '[[ "$(printf x > src/out.txt)" == x ]]',
+        '[[ "`printf x > src/out.txt`" == y ]]',
+    ],
+)
+def test_command_substitution_inside_compound_word_keeps_repository_write(
+    tmp_path: Path, command: str
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "cwd": str(repo),
+        "project_path": str(repo),
+        "tool_input": {"command": command},
+    }
+
+    normalize_tool_fields(data)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_write_file_paths"] == ["src/out.txt"]
+    assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "[[ $(wc -l < a.txt) > 0 ]] && echo big",
+        "(( $(date +%s) >= 5 )) || echo early",
+        "[[ `cat n` < 3 && $(id -u) > 0 ]]",
+        '[[ "$(id -u)" > 0 ]]',
+        'echo "a > b"',
+        'echo "$(( 2 > 1 ))"',
+        "echo '$(cat a > out.txt)'",
+        'echo "\\$(cat a > out.txt)"',
+        "git commit -m \"$(cat <<'EOF'\nfix: a > b, don't (x)\nEOF\n)\"",
+    ],
+)
+def test_compound_comparison_around_command_substitution_is_not_a_redirect(
+    command: str,
+) -> None:
+    data = _normalized_bash(command)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "canonical_write_file_paths" not in data
+    assert not data.get("canonical_repo_mutation")

@@ -32,6 +32,8 @@ enum Command {
         #[command(subcommand)]
         command: SchemaCommand,
     },
+    /// Own the public HTTP and WS ports and proxy to the Python backend.
+    Serve,
 }
 
 #[derive(Debug, Subcommand)]
@@ -79,6 +81,7 @@ fn main() -> Result<()> {
         Command::Schema {
             command: SchemaCommand::SweepTestSchemas { age_hours },
         } => sweep_test_schemas(age_hours),
+        Command::Serve => gobby_daemon::serve::run(),
     }
 }
 

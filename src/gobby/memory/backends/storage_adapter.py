@@ -220,6 +220,8 @@ class StorageAdapter:
             created_by_agent=memory.created_by_agent,
             access_count=memory.access_count,
             last_accessed_at=last_accessed,
+            surfaced_count=memory.surfaced_count,
+            last_surfaced_at=parse_stored_datetime(memory.last_surfaced_at),
             metadata=metadata or {},
             deleted_at=deleted_at,
             dream_action=memory.dream_action,

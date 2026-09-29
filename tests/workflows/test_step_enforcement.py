@@ -3157,7 +3157,7 @@ class TestProviderToolNameNormalization:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mcp_key",
-    ["gobby-sessions:set_handoff", "gobby-sessions:feedback"],
+    ["gobby-sessions:set_handoff", "gobby-sessions:feedback", "gobby-memory:get_memory"],
 )
 async def test_capability_neutral_tools_pass_step_allowlist(
     db: "HubDatabase",

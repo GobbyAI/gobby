@@ -119,6 +119,7 @@ def register_send_keys_tool(
     write_coordinator: Any | None = None,
 ) -> None:
     """Register coordinator-backed terminal input with the sessions tool registry."""
+
     @registry.tool(
         name="send_keys",
         description=(

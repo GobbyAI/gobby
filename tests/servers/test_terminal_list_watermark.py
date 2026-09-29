@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -96,6 +97,10 @@ class _LifecycleManager:
 
     def get(self, terminal_id: str) -> _Row | None:
         return self.row if terminal_id == self.row.id else None
+
+    @asynccontextmanager
+    async def settle_lock(self, _terminal_id: str) -> AsyncIterator[None]:
+        yield
 
     def mark_exited(self, terminal_id: str) -> _Row | None:
         if terminal_id != self.row.id or self.exited or self.row.state not in {"live", "orphaned"}:
@@ -315,7 +320,11 @@ async def test_create_and_kill_publish_ordered_lifecycle_events(
     server = _server()
     row = _Row()
     manager = _LifecycleManager(row)
-    runtime = SimpleNamespace(backend="native", terminate=AsyncMock())
+    runtime = SimpleNamespace(
+        backend="native",
+        terminate=AsyncMock(),
+        session_present=AsyncMock(return_value=False),
+    )
     server.terminal_manager = manager
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
     server.terminal_config = SimpleNamespace(default_backend="native")

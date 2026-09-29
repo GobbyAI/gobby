@@ -667,7 +667,12 @@ fn render_pane_address(frame: &mut Frame, chrome: &Chrome, info: &PaneInfo, corn
         tone => tone,
     };
     let style = corner_style(chrome, info, tone);
-    buf.set_string(rect.x, rect.y, format!(" {} ", corners.address), style);
+    buf.set_string(
+        rect.x,
+        rect.y,
+        format!(" {} ", corners.address_label()),
+        style,
+    );
 }
 
 fn line_cell_symbol(line: LineCell) -> &'static str {

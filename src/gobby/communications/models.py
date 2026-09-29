@@ -18,6 +18,13 @@ def _required(data: Mapping[str, Any], key: str) -> Any:
     return value
 
 
+class ChannelNotFoundError(ValueError):
+    """The named channel is not configured or its adapter is not active."""
+
+    def __init__(self, channel_name: str) -> None:
+        super().__init__(f"Channel {channel_name!r} not found or not active")
+
+
 @dataclass
 class ChannelCapabilities:
     """Capabilities of a communication channel."""

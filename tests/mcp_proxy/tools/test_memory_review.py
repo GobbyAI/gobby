@@ -250,7 +250,7 @@ async def test_review_resolves_session_reference_when_direct_lookup_misses() -> 
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.memory_review.resolve_session_reference",
+            "gobby.mcp_proxy.tools.memory_session.resolve_session_reference",
             return_value=SESSION_ID,
         ) as resolver,
         patch(
@@ -296,7 +296,7 @@ async def test_review_rejects_unresolvable_session() -> None:
     registry, memory_manager, _task_manager, _session_manager = _registry(task=_task())
 
     with patch(
-        "gobby.mcp_proxy.tools.memory_review.resolve_session_reference",
+        "gobby.mcp_proxy.tools.memory_session.resolve_session_reference",
         side_effect=ValueError("Session 'nope' not found"),
     ):
         result = await registry.call(

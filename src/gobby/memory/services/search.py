@@ -6,7 +6,10 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.memory.services._search_access import update_access_stats as update_memory_access_stats
+from gobby.memory.services._search_access import SURFACED_CALLERS
+from gobby.memory.services._search_access import (
+    update_surfaced_stats as update_memory_surfaced_stats,
+)
 from gobby.memory.services._search_backfill import collect_active_results
 from gobby.memory.services._search_constants import DEFAULT_SEARCH_LIMIT
 from gobby.memory.services._search_graph import GraphScoredResult, search_graph_scored
@@ -31,6 +34,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_SEARCH_LIMIT",
+    "SURFACED_CALLERS",
     "SearchService",
 ]
 
@@ -205,7 +209,8 @@ class SearchService:
                 tags_none=tags_none,
             )
 
-        await self.update_access_stats(memories)
+        if caller in SURFACED_CALLERS:
+            await self.update_surfaced_stats(memories)
         return memories
 
     async def _search_with_graph(
@@ -425,10 +430,10 @@ class SearchService:
             include_global=include_global,
         )
 
-    async def update_access_stats(self, memories: list[Memory]) -> None:
-        """Update access count and time for memories (debounced)."""
+    async def update_surfaced_stats(self, memories: list[Memory]) -> None:
+        """Count delivered hits as surfaced (debounced)."""
         await self._run_storage(
-            update_memory_access_stats,
+            update_memory_surfaced_stats,
             storage=self._storage,
             config=self._config,
             memories=memories,

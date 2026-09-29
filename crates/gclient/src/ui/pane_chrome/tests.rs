@@ -20,6 +20,9 @@ fn corners(title: &str, address: &str) -> PaneCorners {
     PaneCorners {
         title: title.to_owned(),
         address: address.to_owned(),
+        backend: None,
+        sandbox: SandboxState::Sandboxed,
+        sandbox_mark: sandbox_mark(SandboxState::Sandboxed, true),
         tone: MetadataTone::Focused,
         actionable: false,
     }
@@ -93,10 +96,12 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
 
     let mut tmux_pane = Pane::new(PaneId(100), "term-alpha", Backend::Tmux, "epoch");
     tmux_pane.address = Some("%15".to_owned());
-    assert_eq!(
-        pane_corners(&ws, &chrome, &tmux_pane, true).address,
-        "tmux %15"
-    );
+    // Josh's order (#23049): mark, then tmux for a tmux pane, then the address.
+    let tmux = pane_corners(&ws, &chrome, &tmux_pane, true);
+    assert_eq!(tmux.address_label(), "? · tmux · %15");
+    tmux_pane.address = None;
+    let unaddressed = pane_corners(&ws, &chrome, &tmux_pane, true);
+    assert_eq!(unaddressed.address_label(), "? · tmux");
 
     // No session ref: the definition alone.
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
@@ -308,6 +313,8 @@ fn the_address_takes_the_bottom_right_corner_alone() {
     let address = address_rect(&bordered, &text).unwrap();
     assert_eq!(address.right(), rect.right() - 1);
     assert_eq!(address.y, rect.bottom() - 1);
+    // " <lock> · 0:0:1:2 ": the mark is one cell and leads the address.
+    assert_eq!(usize::from(address.width), 1 + 3 + "0:0:1:2".len() + 2);
     assert_eq!(top_reserve(&bordered, &text), 0);
     let title = title_rect(&bordered, &text).unwrap();
     assert_eq!((title.x, title.y), (rect.x + 1, rect.y));
@@ -331,7 +338,8 @@ fn shared_divider_moves_upper_address_beside_title() {
         true,
     );
     let reserve = top_reserve(&upper, &text);
-    assert_eq!(reserve, display_width(&text.address) + 3);
+    // The lock, " · ", then the address, padded, plus one rule cell.
+    assert_eq!(reserve, 1 + 3 + display_width(&text.address) + 3);
     let address = address_rect(&upper, &text).unwrap();
     assert_eq!(address.y, upper.rect.y);
     assert_eq!(address.right(), upper.rect.right() - 1);
@@ -362,4 +370,42 @@ fn title_travel_measures_each_header_window() {
     assert_eq!(title_travel(&ws, &chrome, &pane, &borderless), 0);
     let tiny = info(Rect::new(0, 0, 7, 6), Borders::ALL, true);
     assert_eq!(title_travel(&ws, &chrome, &pane, &tiny), 0);
+}
+
+/// #23049: each state has its own shape, the Nerd marks are one cell, and
+/// the text fallback widens the address corner rather than truncating it.
+#[test]
+fn sandbox_mark_leads_the_address_by_shape_not_hue() {
+    let states = [
+        SandboxState::Sandboxed,
+        SandboxState::Unrestricted,
+        SandboxState::Unknown,
+    ];
+    for nerd in [true, false] {
+        let marks: Vec<_> = states.iter().map(|s| sandbox_mark(*s, nerd)).collect();
+        assert_eq!(
+            marks.len(),
+            marks
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            "every state draws a distinct mark (nerd={nerd})"
+        );
+    }
+    for state in states {
+        assert_eq!(display_width(sandbox_mark(state, true)), 1);
+    }
+
+    let mut text = corners("○ zsh", "0:0:1:2");
+    assert_eq!(text.address_label(), "\u{f023} · 0:0:1:2");
+    text.sandbox_mark = sandbox_mark(SandboxState::Unrestricted, false);
+    text.backend = Some("tmux");
+    assert_eq!(text.address_label(), "open · tmux · 0:0:1:2");
+    let rect = Rect::new(10, 2, 50, 8);
+    let address = address_rect(&info(rect, Borders::ALL, true), &text).unwrap();
+    assert_eq!(
+        usize::from(address.width),
+        display_width("open · tmux · 0:0:1:2") + 2
+    );
+    assert_eq!(address.right(), rect.right() - 1);
 }

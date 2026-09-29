@@ -8,19 +8,14 @@ and arbitrary application tables.
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pytest
 
 pytestmark = pytest.mark.integration
 
-
-def _require_database_url() -> str:
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        pytest.skip("DATABASE_URL is required for postgres_db reset semantics tests")
-    return dsn
+_RESET_FK_USER_ID = "00000000-0000-4000-8000-00000000f001"
+_RESET_FK_MACHINE_ID = "00000000-0000-4000-8000-00000000f002"
 
 
 def test_isolated_test_schema_reclaims_each_completed_schema(
@@ -52,6 +47,7 @@ def test_isolated_test_schema_reclaims_each_completed_schema(
 
 
 def test_seed_rows_survive_reset(
+    postgres_database_url: str,
     postgres_schema: str,
     postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
 ) -> None:
@@ -76,7 +72,7 @@ def test_seed_rows_survive_reset(
 
     from tests.fixtures.postgres import _SCHEMA_BOOKKEEPING_TABLES, _reset_schema
 
-    dsn = _require_database_url()
+    dsn = postgres_database_url
 
     # 1) Capture happened before this test was created; seed must already
     # include the canonical baseline rows.
@@ -157,7 +153,8 @@ def test_seed_rows_survive_reset(
         assert "gobby_migration_state" not in all_tables
 
 
-def test_reset_deletes_rows_with_immediate_restrict_fk(
+def test_reset_handles_restrict_fk_order(
+    postgres_database_url: str,
     postgres_schema: str,
     postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
 ) -> None:
@@ -165,7 +162,7 @@ def test_reset_deletes_rows_with_immediate_restrict_fk(
 
     from tests.fixtures.postgres import _reset_schema
 
-    dsn = _require_database_url()
+    dsn = postgres_database_url
     _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
 
     with psycopg.connect(dsn, autocommit=True) as conn:
@@ -173,15 +170,12 @@ def test_reset_deletes_rows_with_immediate_restrict_fk(
             psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
         )
         conn.execute(
-            "INSERT INTO recall_gate_runs "
-            "(holdout_consumption_key, status, fit_settings_digest, claim_token, "
-            "created_at, updated_at) VALUES (%s, 'reserved', %s, %s, NOW(), NOW())",
-            ("reset-fk", "digest", "claim"),
+            "INSERT INTO users (id, email, name, password_hash) VALUES (%s, %s, %s, %s)",
+            (_RESET_FK_USER_ID, "reset-fk@example.test", "reset-fk", "hash"),
         )
         conn.execute(
-            "INSERT INTO recall_holdout_consumed "
-            "(request_id, holdout_consumption_key, consumed_at) VALUES (%s, %s, NOW())",
-            ("reset-request", "reset-fk"),
+            "INSERT INTO machines (id, owner_user_id) VALUES (%s, %s)",
+            (_RESET_FK_MACHINE_ID, _RESET_FK_USER_ID),
         )
 
     _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
@@ -190,11 +184,16 @@ def test_reset_deletes_rows_with_immediate_restrict_fk(
         conn.execute(
             psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(postgres_schema))
         )
-        assert conn.execute("SELECT count(*) FROM recall_gate_runs").fetchone() == (0,)
-        assert conn.execute("SELECT count(*) FROM recall_holdout_consumed").fetchone() == (0,)
+        assert conn.execute(
+            "SELECT count(*) FROM users WHERE id = %s", (_RESET_FK_USER_ID,)
+        ).fetchone() == (0,)
+        assert conn.execute(
+            "SELECT count(*) FROM machines WHERE id = %s", (_RESET_FK_MACHINE_ID,)
+        ).fetchone() == (0,)
 
 
 def test_reset_restarts_owned_sequences(
+    postgres_database_url: str,
     postgres_schema: str,
     postgres_canonical_seed: dict[str, list[tuple[Any, ...]]],
 ) -> None:
@@ -202,7 +201,7 @@ def test_reset_restarts_owned_sequences(
 
     from tests.fixtures.postgres import _reset_schema
 
-    dsn = _require_database_url()
+    dsn = postgres_database_url
     _reset_schema(dsn, postgres_schema, postgres_canonical_seed)
 
     with psycopg.connect(dsn, autocommit=True) as conn:

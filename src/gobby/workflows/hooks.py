@@ -863,7 +863,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         if k not in staged_keys and (k not in pre_eval or pre_eval[k] != v)
                     }
                     if changed:
-                        await asyncio.to_thread(
+                        await timed_to_thread(
+                            "rule_persist_variables",
                             self._session_var_manager.merge_variables,
                             session_id,
                             changed,

@@ -11,7 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from gobby.guard_set_g import _isolated_child_env, _materialize_zig_packages
+from gobby.agents.zig_packages import materialize_zig_packages
+from gobby.guard_set_g import _isolated_child_env
 
 pytestmark = pytest.mark.unit
 
@@ -40,20 +41,24 @@ def _make_tarball_package(parent: Path, pkgid: str, marker: str) -> Path:
     return tarball
 
 
+def _materialize(source: Path, cache_root: Path, vendored_zig_pkg: Path | None) -> bool:
+    return materialize_zig_packages(source, cache_root, vendored_zig_pkg, report=print)
+
+
 def test_materialize_extracts_tarball_only_package(tmp_path: Path) -> None:
     source = tmp_path / "p"
     source.mkdir()
     _make_tarball_package(source, "libxev-0.0.0-86vtcXXXX", "tarball-payload")
     cache_root = tmp_path / "zig-cache"
 
-    assert _materialize_zig_packages(source, cache_root, None)
+    assert _materialize(source, cache_root, None)
 
     packages = cache_root / "p"
     extracted = packages / "libxev-0.0.0-86vtcXXXX"
     assert not extracted.is_symlink()
     assert (extracted / "src" / "marker.txt").read_text(encoding="utf-8") == "tarball-payload"
     assert list(packages.iterdir()) == [extracted]
-    assert _materialize_zig_packages(source, cache_root, None)
+    assert _materialize(source, cache_root, None)
 
 
 def test_materialize_links_already_extracted_package(tmp_path: Path) -> None:
@@ -62,13 +67,33 @@ def test_materialize_links_already_extracted_package(tmp_path: Path) -> None:
     extracted = _make_extracted_package(source, "uucode-0.2.0-ZZjBPXXXX", "extracted-payload")
     cache_root = tmp_path / "zig-cache"
 
-    assert _materialize_zig_packages(source, cache_root, None)
+    assert _materialize(source, cache_root, None)
 
     package = cache_root / "p" / "uucode-0.2.0-ZZjBPXXXX"
-    assert package.is_symlink(), "an already-extracted package is linked, never copied"
-    assert package.readlink() == extracted
+    assert package.is_dir() and not package.is_symlink()
+    assert (package / "src").readlink() == extracted / "src", "entries are linked, never copied"
     assert (package / "src" / "marker.txt").read_text(encoding="utf-8") == "extracted-payload"
     assert extracted.is_dir()
+
+
+def test_materialized_package_root_resolves_relative_paths_from_its_cache_location(
+    tmp_path: Path,
+) -> None:
+    # Zig runs uucode_generate from the package root through a path it derives
+    # lexically; the kernel resolves each `..` from the root's physical location.
+    source = tmp_path / "machine" / "zig" / "p"
+    source.mkdir(parents=True)
+    _make_extracted_package(source, "uucode-0.2.0-ZZjBPXXXX", "extracted-payload")
+    cache_root = tmp_path / "run" / "cache" / "zig-cache"
+    tool = tmp_path / "worktree" / ".zig-cache" / "o" / "uucode_generate"
+    tool.parent.mkdir(parents=True)
+    tool.write_text("tool", encoding="utf-8")
+
+    assert _materialize(source, cache_root, None)
+
+    package = cache_root / "p" / "uucode-0.2.0-ZZjBPXXXX"
+    relative = os.path.relpath(tool, package)
+    assert (package / relative).read_text(encoding="utf-8") == "tool"
 
 
 def test_materialize_reuses_vendored_extracted_copy_when_hashes_match(tmp_path: Path) -> None:
@@ -79,10 +104,11 @@ def test_materialize_reuses_vendored_extracted_copy_when_hashes_match(tmp_path: 
     _make_extracted_package(vendored_zig_pkg, "vaxis-0.6.0-BWNVXXXX", "vendored-payload")
     cache_root = tmp_path / "zig-cache"
 
-    assert _materialize_zig_packages(source, cache_root, vendored_zig_pkg)
+    assert _materialize(source, cache_root, vendored_zig_pkg)
 
     package = cache_root / "p" / "vaxis-0.6.0-BWNVXXXX"
-    assert package.readlink() == vendored_zig_pkg / "vaxis-0.6.0-BWNVXXXX"
+    assert not package.is_symlink()
+    assert (package / "src").readlink() == vendored_zig_pkg / "vaxis-0.6.0-BWNVXXXX" / "src"
     assert (package / "src" / "marker.txt").read_text(encoding="utf-8") == "vendored-payload"
 
 
@@ -93,7 +119,7 @@ def test_materialize_reports_incomplete_for_unrecognized_entry(tmp_path: Path) -
     (source / "mystery.entry").write_text("not a zig package\n", encoding="utf-8")
     cache_root = tmp_path / "zig-cache"
 
-    assert not _materialize_zig_packages(source, cache_root, None)
+    assert not _materialize(source, cache_root, None)
 
     marker = cache_root / "p" / "uucode-0.2.0-ZZjBPXXXX" / "src" / "marker.txt"
     assert marker.read_text(encoding="utf-8") == "extracted-payload"
@@ -125,10 +151,10 @@ def test_isolated_child_env_materializes_run_scoped_zig_package_cache(
     assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == str(cache_root / "p")
     packages = cache_root / "p"
     extracted = packages / "uucode-0.2.0-ZZjBPXXXX"
-    assert extracted.readlink() == machine_pkgs / "uucode-0.2.0-ZZjBPXXXX"
+    assert (extracted / "src").readlink() == machine_pkgs / "uucode-0.2.0-ZZjBPXXXX" / "src"
     assert (extracted / "src" / "marker.txt").read_text(encoding="utf-8") == "extracted-payload"
     reused = packages / "libxev-0.0.0-86vtcXXXX"
-    assert reused.readlink() == vendored_zig_pkg / "libxev-0.0.0-86vtcXXXX"
+    assert (reused / "src").readlink() == vendored_zig_pkg / "libxev-0.0.0-86vtcXXXX" / "src"
     assert (reused / "src" / "marker.txt").read_text(encoding="utf-8") == "vendored-payload"
     assert sorted(entry.name for entry in packages.iterdir()) == [
         "libxev-0.0.0-86vtcXXXX",

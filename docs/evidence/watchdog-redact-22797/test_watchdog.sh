@@ -25,17 +25,29 @@ make_home() {
   printf 'database_url: postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test\n' \
     >"$home/.gobby/bootstrap.yaml"
   printf '%s 0 none 0\n' "$2" >"$home/.gobby/watchdog/state"
+  # Fake CLI: `comms attach` records its args and stdin; `comms send` records the
+  # alert, or fails when $home/fail-send exists.
   cat >"$home/.local/bin/gobby" <<EOF
 #!/bin/bash
+if [ "\$2" = attach ]; then
+  printf '%s\n' "\$@" >"$home/attach-args.txt"
+  cat >"$home/attached.txt"
+  echo "attached"
+  exit 0
+fi
+[ -f "$home/fail-send" ] && exit 1
 printf '%s\n' "\$@" >"$home/args.txt"
 printf '%s' "\${@: -1}" >"$home/sent.txt"
 echo "Message sent"
 EOF
-  chmod +x "$home/.local/bin/gobby"
+  # Fake osascript so the fallback never raises a real macOS notification.
+  mkdir -p "$home/bin"
+  printf '#!/bin/bash\ntouch "%s/osascript-called"\n' "$home" >"$home/bin/osascript"
+  chmod +x "$home/.local/bin/gobby" "$home/bin/osascript"
   echo "$home"
 }
 
-run() { HOME="$1" bash "$1/.gobby/watchdog/watchdog.sh" 2>"$1/stderr.txt"; }
+run() { HOME="$1" PATH="$1/bin:$PATH" bash "$1/.gobby/watchdog/watchdog.sh" 2>"$1/stderr.txt"; }
 
 s1=9558f41b-2911-44f1-b6f3-05926322acfc
 s2=685d6860-d154-4b1d-b55c-e62b3c92ace7
@@ -84,11 +96,15 @@ check "event and signature counts are distinct from line delta" \
   grep -q "^ALARM\[errors\]: 8 alarm events, 5 signatures, in +$new_lines new errors.log lines" "$sent"
 check "top signature is the 4x pane-monitor warning with time" \
   grep -q "^• 4x 17:21:54 agents.tmux.pane_monitor._check_attention_panes - TmuxPaneMonitor: failed to capture terminal for session <id>" "$sent"
-check "exception context line is present" \
-  grep -q "^   exception: gobby.terminals.host_client.HostConnectionLost: host_unavailable" "$sent"
-check "session ids are listed, capped at 3 with overflow" \
-  grep -q "^   sessions: $s1, $s2, $s4 (+1 more)" "$sent"
+check "no exception line quoted in the alert" test "$(grep -c 'exception:\|HostConnectionLost' "$sent")" -eq 0
+check "no session ids quoted in the alert" test "$(grep -c "$s1\|$s2\|$s3\|$s4\|$s5" "$sent")" -eq 0
+check "no traceback text in the alert" test "$(grep -c 'Traceback\|File \"' "$sent")" -eq 0
 check "orphan bad-string line counts as an event" grep -q "HostEpochChangedError" "$sent"
+check "new lines are attached as errors-new.txt to gobby-telegram" \
+  test "$(paste -sd' ' - <"$home/attach-args.txt")" = \
+  "comms attach --caption errors.log new lines, redacted gobby-telegram errors-new.txt"
+check "attached content is exactly the new errors.log window" \
+  cmp -s "$home/attached.txt" <(tail -n "$new_lines" "$home/.gobby/logs/errors.log")
 check "only three signatures are expanded" test "$(grep -c '^• ' "$sent")" -eq 3
 check "remaining signatures are summarized" grep -q "^(+2 more signatures)" "$sent"
 check "benign search_tool_result traceback is excluded" \
@@ -111,6 +127,33 @@ check "quiet run keeps the physical delta in last.txt" \
   grep -q "^errors.log: 4 lines (+1)" "$home/.gobby/watchdog/last.txt"
 check "state keeps its four-field format" \
   grep -Eq '^[0-9]+ [0-9]+ [a-z,]+ [0-9]+$' "$home/.gobby/watchdog/state"
+check "quiet run attaches nothing" test ! -e "$home/attached.txt"
+
+# --- path fixture: host paths in a header never reach the alert text ---
+home=$(
+  {
+    echo "2026-09-27 17:00:01 - INFO     - old.line - baseline"
+    echo "2026-09-27 17:25:30 - ERROR    - storage.files.open - failed to open /tmp/errors.log, '/Users/someone/.gobby/x.db' (cwd=~/private/dir) cwd:/tmp/a url=file:///var/b [/opt/c]"
+    tb "OSError: denied"
+  } | make_home paths 1
+)
+run "$home"
+sent="$home/sent.txt"
+check "path signature is sent" \
+  grep -Fqx "• 1x 17:25:30 storage.files.open - failed to open <path>, '<path>' (cwd=<path>) cwd:<path> url=file:<path> [<path>]" "$sent"
+check "no host path in the alert" test "$(grep -c '/tmp/\|/Users/\|/var/\|/opt/\|~/' "$sent")" -eq 0
+
+# --- failed-send fixture: Telegram down, so no attachment follows the fallback ---
+home=$(
+  {
+    echo "2026-09-27 17:00:01 - INFO     - old.line - baseline"
+    echo "2026-09-27 17:23:00 - ERROR    - storage.pool.acquire - pool acquisition failed after 5s"
+  } | make_home failsend 1
+)
+touch "$home/fail-send"
+run "$home"
+check "failed send falls back to osascript" test -e "$home/osascript-called"
+check "failed send attaches nothing" test ! -e "$home/attached.txt"
 
 echo "failures: $fails"
 [ "$fails" -eq 0 ]

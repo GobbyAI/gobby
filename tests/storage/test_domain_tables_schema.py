@@ -137,3 +137,11 @@ def test_catalog_pins_task_close_review_state_and_active_lock() -> None:
     )
     assert "CREATE UNIQUE INDEX" in active["definition"]
     assert all(value in active["definition"] for value in ("launching", "running", "finalizing"))
+
+
+def test_memories_surfaced_columns() -> None:
+    columns = {entry["name"]: entry["definition"] for entry in _catalog_entries("columns")}
+
+    assert columns["memories.surfaced_count"] == "integer|int4|YES|0|NEVER"
+    assert columns["memories.last_surfaced_at"] == "timestamp with time zone|timestamptz|YES||NEVER"
+    assert not {table for table in _table_names(set(columns)) if table.startswith("recall_")}
