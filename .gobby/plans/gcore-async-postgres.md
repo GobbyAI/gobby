@@ -72,10 +72,14 @@ and wires the pool into `gdaemon`'s service container.
    dependency is `baseline@420`'s capability roles.
    - Every pooled connection runs as `gobby_daemon_runtime` in UTC:
      `post_create` issues `SET ROLE gobby_daemon_runtime` and `SET TIME ZONE
-     'UTC'`; `post_recycle` re-issues `SET TIME ZONE 'UTC'` (`Fast` recycling
-     resets no session state, so a borrower's timezone change would otherwise
-     leak); both hooks then verify `SELECT current_user,
-     current_setting('TimeZone')` in autocommit and fail on either mismatch.
+     'UTC'`; `post_recycle` re-issues `SET TIME ZONE 'UTC'` and restores the
+     configured `application_name` with `SELECT set_config('application_name',
+     $1, false)` (`Fast` recycling resets no session state, so a borrower's
+     timezone or name change would otherwise leak, and a renamed backend would
+     escape the Decision 7 maintenance filter); both hooks then verify
+     `SELECT current_user, current_setting('TimeZone'),
+     current_setting('application_name')` in autocommit and fail on any
+     mismatch.
      A recycled connection that fails
      is discarded and never handed out; a new connection that cannot take the
      role (an unapplied database) fails the checkout with a typed
@@ -297,10 +301,12 @@ prefer/require unverified, verify-ca, verify-full) over
   generic display text (Decision 5); an `application_name` without the
   `gobby-gdaemon` prefix returns `PoolError::InvalidApplicationName`.
 - `post_create` hook: `SET ROLE gobby_daemon_runtime`, `SET TIME ZONE 'UTC'`,
-  then the verify query; `post_recycle` hook: `SET TIME ZONE 'UTC'`, then the
-  verify query. Verify is `SELECT current_user,
-  current_setting('TimeZone')` through `simple_query` (autocommit); anything
-  other than `gobby_daemon_runtime` and `UTC`, or an error, fails the hook.
+  then the verify query; `post_recycle` hook: `SET TIME ZONE 'UTC'` and
+  `SELECT set_config('application_name', $1, false)` with the configured name
+  bound as `$1`, then the verify query. Verify is `SELECT current_user,
+  current_setting('TimeZone'), current_setting('application_name')` outside
+  any transaction (autocommit); anything other than `gobby_daemon_runtime`,
+  `UTC`, and the configured name, or an error, fails the hook.
   `RecyclingMethod::Fast` (Decision 2).
 - `Pool::get()` is `tokio::time::timeout(acquire_timeout, inner.get())`
   with no retry loop of its own: deadpool already discards a failed recycled
@@ -345,8 +351,9 @@ applied first).
   `crates/gcore/src/postgres_pool/tests.rs::checkout_runs_as_runtime_role`.
 - 1.2.2 - With `max_size=2` and one connection held by the test, a borrower that runs `RESET ROLE` hands back a
   connection the next checkout discards (a different `pg_backend_pid()`); a
-  borrower that runs `SET TIME ZONE 'America/Chicago'` hands back a
-  connection the next checkout reuses (same PID) in `UTC`. test:
+  borrower that runs `SET TIME ZONE 'America/Chicago'` and `SET
+  application_name = 'unrelated'` hands back a connection the next checkout
+  reuses (same PID) in `UTC` with the configured `application_name`. test:
   `crates/gcore/src/postgres_pool/tests.rs::recycle_restores_or_discards_session_state`.
 - 1.2.3 - With `max_size=2` and one connection held by the test, a connection dropped mid-transaction is reused by
   the next checkout (same `pg_backend_pid()`), which sees no open transaction
@@ -386,8 +393,11 @@ Verification planned: `cargo test -p gobby-core --features postgres-pool
 postgres_pool` with `GOBBY_SCHEMA_TEST_DATABASE_URL` pointing at the
 `gobby_test` hub; `cargo clippy -p gobby-core --features postgres-pool
 --all-targets -- -D warnings`; `cargo tree -p gobby-hooks -i
-deadpool-postgres` (expects no match); `cargo tree -p gobby-core --features
-postgres-pool -i tokio-postgres`.
+deadpool-postgres` and `cargo tree -p gobby-code -i deadpool-postgres` (each
+expects no match); `cargo tree -p gobby-core --features postgres-pool -i
+tokio-postgres`. `GOBBY_SCHEMA_TEST_DATABASE_URL` must point at the isolated `gobby_test`
+hub (a `*_test` database, schema applied first, as `runner_tests.rs:134`
+requires); a skipped DB test is not close evidence.
 
 ## P2: Transaction Seam
 `kind: framing`
@@ -511,7 +521,11 @@ free functions taking `&Transaction`, returning `FromRow` types.
 - 2.1.7 - A `FromRow` type round-trips through `query_as`. test:
   `crates/gcore/src/postgres_pool/tests.rs::from_row_maps_rows`.
 
-Verification planned: as 1.2.
+Verification planned: `cargo test -p gobby-core --features postgres-pool
+postgres_pool`; `cargo clippy -p gobby-core --features postgres-pool
+--all-targets -- -D warnings`. `GOBBY_SCHEMA_TEST_DATABASE_URL` must point at the isolated `gobby_test`
+hub (a `*_test` database, schema applied first, as `runner_tests.rs:134`
+requires); a skipped DB test is not close evidence.
 
 ### 2.2 Dedicated session connections [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -544,7 +558,11 @@ state survives into another checkout. The session counts against
 - 2.2.2 - A dedicated session runs as `gobby_daemon_runtime`. test:
   `crates/gcore/src/postgres_pool/tests.rs::dedicated_session_runs_as_runtime_role`.
 
-Verification planned: as 1.2.
+Verification planned: `cargo test -p gobby-core --features postgres-pool
+postgres_pool::tests::dedicated_session`; `cargo clippy -p gobby-core
+--features postgres-pool --all-targets -- -D warnings`. `GOBBY_SCHEMA_TEST_DATABASE_URL` must point at the isolated `gobby_test`
+hub (a `*_test` database, schema applied first, as `runner_tests.rs:134`
+requires); a skipped DB test is not close evidence.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -564,13 +582,15 @@ Verification planned: as 1.2.
 ## V2: Verification
 `kind: verification`
 
-After each leaf, once the PD lifts the load breach:
+Each leaf runs its own `Verification planned` commands. After the last leaf
+(2.2), once the PD lifts the load breach, the combined check:
 
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_database_concurrency.py -q
 cargo test -p gobby-core --features postgres-pool
 cargo clippy -p gobby-core --features postgres-pool --all-targets -- -D warnings
 cargo tree -p gobby-hooks -i deadpool-postgres
+cargo tree -p gobby-code -i deadpool-postgres
 cargo tree -p gobby-core --features postgres-pool -i tokio-postgres
 uv run gobby plans validate .gobby/plans/gcore-async-postgres.md -p /Users/josh/Projects/gobby
 ```
