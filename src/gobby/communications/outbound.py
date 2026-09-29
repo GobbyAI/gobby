@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
+from gobby.communications.telegram_callbacks import bounded_callback_ttl
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -98,6 +99,9 @@ class OutboundCommunications:
             session_id,
             metadata,
         )
+        if "callback_ttl_seconds" in effective_metadata:
+            # Caller input: reject before a failed row or daemon error is recorded.
+            bounded_callback_ttl(effective_metadata["callback_ttl_seconds"])
         explicit_thread_id = effective_metadata.get("thread_id")
         if isinstance(explicit_thread_id, str) and explicit_thread_id.strip():
             platform_thread_id = explicit_thread_id.strip()

@@ -1,6 +1,7 @@
 """Tests for gobby-communications MCP tool registry."""
 
 import asyncio
+import logging
 import threading
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -511,6 +512,32 @@ def test_unlink_identity(registry: Any, mock_store: MagicMock) -> None:
 
     assert res["success"] is True
     mock_store.update_identity_session.assert_called_once_with("id-1", None)
+
+
+@pytest.mark.asyncio
+async def test_send_message_returns_invalid_callback_ttl_to_caller_without_error_log(
+    registry: Any,
+    mock_manager: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_manager.send_message.side_effect = ValueError(
+        "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)"
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = await registry.get_tool("send_message")(
+            channel="telegram",
+            content="Proceed?",
+            session_id="session-1",
+            inline_keyboard=[[{"text": "Approve", "value": "approve"}]],
+            callback_ttl_seconds=86400,
+        )
+
+    assert result == {
+        "success": False,
+        "error": "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)",
+    }
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
 @pytest.mark.asyncio
