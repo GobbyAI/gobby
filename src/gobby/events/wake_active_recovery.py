@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -13,10 +12,6 @@ from gobby.events.live_wake import ActivityProbe, TerminalActivity
 from gobby.events.wake_terminal_resolution import (
     LiveTerminalResolver,
     resolve_session_terminal_route,
-)
-from gobby.sessions.transcript_cursor import (
-    TranscriptObservationError,
-    build_turn_settled_observer,
 )
 from gobby.utils.machine_id import require_machine_id
 
@@ -131,47 +126,13 @@ async def reconcile_restart_stale_session(
     )
 
 
-def transcript_turn_settled(session: Session) -> bool:
-    """True only when the provider's own transcript records its last turn ended.
-
-    Codex and Grok record turn boundaries. Every other source, a missing or
-    unreadable transcript, and a last record that opens a turn read False.
-    """
-    try:
-        observer = build_turn_settled_observer(
-            session.source,
-            session.transcript_path,
-            session_id=session.id,
-        )
-    except TranscriptObservationError:
-        return False
-    return observer is not None and observer() is True
-
-
-def idle_decline_reason(activity: TerminalActivity, *, settled: bool) -> str | None:
-    """Return why one read keeps the row active, or None when it may pause.
-
-    An in-flight fingerprint or a draft always keeps the row active. Otherwise
-    an empty composer may pause, and so may an unreadable one once the provider
-    transcript has recorded the turn's end.
-    """
+def idle_decline_reason(activity: TerminalActivity) -> str | None:
+    """Return why one read keeps the row active, or None for an idle empty prompt."""
     if activity.turn_in_flight_fingerprint is not None:
         return "turn_in_flight"
-    if activity.composer.state == "draft":
-        return "draft"
-    if idle_prompt_allows_wake(activity) or settled:
-        return None
-    return f"composer_{activity.composer.state}"
-
-
-async def _idle_read_decline(
-    activity_probe: ActivityProbe,
-    session: Session,
-    terminal: Any | None,
-) -> str | None:
-    settled = await asyncio.to_thread(transcript_turn_settled, session)
-    activity = await _read_activity(activity_probe, session, terminal)
-    return idle_decline_reason(activity, settled=settled)
+    if not idle_prompt_allows_wake(activity):
+        return f"composer_{activity.composer.state}"
+    return None
 
 
 async def reconcile_idle_prompt_session(
@@ -182,18 +143,19 @@ async def reconcile_idle_prompt_session(
     activity_probe: ActivityProbe,
     run_db: RunDb,
 ) -> str:
-    """Pause an active row whose turn has visibly ended; return the outcome.
+    """Pause an active row whose provider reads an idle, empty composer.
 
     Two agreeing reads, then an exact ``updated_at`` compare-and-set. Unlike
     restart recovery, the row does not have to predate a daemon restart: a
-    finished turn can leave ``sessions.status`` active while the pane is back
-    at the prompt, or after its lifecycle STOP was lost (#23102). Returns
-    ``"paused"`` or the reason the row stayed active.
+    finished turn can leave ``sessions.status`` active while the pane is
+    already back at the prompt. Only a positive empty composer pauses: an
+    unknown composer may hide a draft, and a paused row accepts terminal
+    input (#23102). Returns ``"paused"`` or the reason the row stayed active.
     """
     if observed.status != "active":
         return "not_active"
     for _ in range(2):
-        reason = await _idle_read_decline(activity_probe, observed, terminal)
+        reason = idle_decline_reason(await _read_activity(activity_probe, observed, terminal))
         if reason is not None:
             return reason
     current = await run_db(session_manager.get, observed.id)

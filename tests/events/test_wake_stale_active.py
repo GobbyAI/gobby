@@ -1,19 +1,18 @@
-"""A bound Codex seat stranded active after its turn ended still takes a wake (#23102)."""
+"""A bound Codex seat stranded active at an empty prompt still takes a wake (#23102)."""
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from dataclasses import replace
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.idle_detector import ComposerRead, ComposerState
+from gobby.agents.idle_detector import ComposerRead
 from gobby.events.live_wake import TerminalActivity
 from gobby.events.wake import WakeDispatcher
 from gobby.storage.hub.protocol import HubDatabase
@@ -24,6 +23,14 @@ from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 pytestmark = pytest.mark.integration
 
 _STRANDED_AT = datetime(2026, 9, 28, 14, 30, tzinfo=UTC)
+_EMPTY = TerminalActivity(ComposerRead("empty"))
+
+
+@dataclass
+class _Wake:
+    session_id: str
+    sender: AsyncMock
+    messages: InterSessionMessageManager
 
 
 async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -34,26 +41,14 @@ async def _flush(_session_id: str) -> None:
     return None
 
 
-def _rollout(path: Path, *turn_events: str) -> Path:
-    records = [{"type": "session_meta", "payload": {"id": "rollout"}}]
-    records += [{"type": "event_msg", "payload": {"type": event}} for event in turn_events]
-    path.write_text("".join(json.dumps(record) + "\n" for record in records))
-    return path
-
-
-def _stranded_codex_seat(
-    session_manager: SessionManager,
-    project_id: str,
-    transcript: Path,
-) -> str:
-    """Register a Codex row and leave it active well after the restart horizon."""
+def _stranded_codex_seat(session_manager: SessionManager, project_id: str) -> str:
+    """Register a Codex row and leave it active well after any restart horizon."""
     session_id = session_manager.register(
         external_id="stranded-codex",
         machine_id=None,
         source="codex",
         project_id=project_id,
         title="stranded-codex",
-        transcript_path=str(transcript),
     ).id
     with session_manager.db.transaction():
         session_manager.db.execute(
@@ -68,13 +63,10 @@ async def _deferred_wake(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     project_id: str,
-    transcript: Path,
-    reads: list[TerminalActivity],
-    *,
-    after_first_read: Any = None,
-) -> tuple[str, AsyncMock, dict[str, Any]]:
+    read: Callable[[str], TerminalActivity],
+) -> _Wake:
     """Queue one mailbox wake and run the real decline, reconcile, CAS and retry."""
-    recipient_id = _stranded_codex_seat(session_manager, project_id, transcript)
+    recipient_id = _stranded_codex_seat(session_manager, project_id)
     sender_id = session_manager.register(
         external_id="wake-sender",
         machine_id=None,
@@ -91,14 +83,9 @@ async def _deferred_wake(
     )
     terminal = replace(make_memory_terminal(backend="native"), session_id=recipient_id)
     sender = AsyncMock(return_value=None)
-    probed = 0
 
     async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
-        nonlocal probed
-        probed += 1
-        if probed == 1 and after_first_read is not None:
-            after_first_read(recipient_id)
-        return reads[min(probed, len(reads)) - 1]
+        return read(recipient_id)
 
     dispatcher = WakeDispatcher(
         session_manager=session_manager,
@@ -113,7 +100,7 @@ async def _deferred_wake(
     assert first["skipped"] == "session_active"
     sender.assert_not_awaited()
     await asyncio.wait_for(dispatcher._deferred_refreshes[recipient_id], timeout=2)
-    return recipient_id, sender, first
+    return _Wake(recipient_id, sender, messages)
 
 
 def _deferred_line(caplog: pytest.LogCaptureFixture, session_id: str) -> str:
@@ -126,92 +113,72 @@ def _deferred_line(caplog: pytest.LogCaptureFixture, session_id: str) -> str:
     return lines[0]
 
 
-@pytest.mark.parametrize("composer", ["empty", "unknown"])
-async def test_settled_rollout_pauses_stranded_row_and_delivers_wake(
+async def test_empty_prompt_pauses_stranded_row_and_delivers_wake(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
-    composer: ComposerState,
 ) -> None:
-    """Settled rollout, stale active row, no in-flight fingerprint: pause, then wake."""
-    transcript = _rollout(tmp_path / "rollout.jsonl", "task_started", "task_complete")
+    """Stale active row, positive empty composer, no in-flight fingerprint: pause, then wake."""
     caplog.set_level(logging.INFO, logger="gobby.events.wake")
 
-    session_id, sender, _ = await _deferred_wake(
-        temp_db,
-        session_manager,
-        sample_project["id"],
-        transcript,
-        [TerminalActivity(ComposerRead(composer))],
-    )
+    wake = await _deferred_wake(temp_db, session_manager, sample_project["id"], lambda _id: _EMPTY)
 
-    row = session_manager.get(session_id)
+    row = session_manager.get(wake.session_id)
     assert row is not None and row.status == "paused"
-    sender.assert_awaited_once()
-    line = _deferred_line(caplog, session_id)
+    wake.sender.assert_awaited_once()
+    line = _deferred_line(caplog, wake.session_id)
     assert "delivered=True" in line
     assert "idle=paused" in line
     assert "reconcile_ms=" in line
 
 
+def _probe_error(_session_id: str) -> TerminalActivity:
+    raise RuntimeError("snapshot failed")
+
+
 @pytest.mark.parametrize(
-    ("turn_events", "activity", "reason"),
+    ("read", "reason"),
     [
         pytest.param(
-            ("task_complete", "task_started"),
-            TerminalActivity(ComposerRead("unknown")),
+            lambda _id: TerminalActivity(ComposerRead("unknown")),
             "composer_unknown",
-            id="rollout-turn-open",
+            id="unknown-composer",
         ),
+        pytest.param(_probe_error, "composer_unknown", id="probe-error"),
         pytest.param(
-            (),
-            TerminalActivity(ComposerRead("unknown")),
-            "composer_unknown",
-            id="rollout-without-turn",
-        ),
-        pytest.param(
-            ("task_complete",),
-            TerminalActivity(ComposerRead("empty"), "spinner:esc to interrupt"),
+            lambda _id: TerminalActivity(ComposerRead("empty"), "spinner:esc to interrupt"),
             "turn_in_flight",
             id="live-spinner",
         ),
         pytest.param(
-            ("task_complete",),
-            TerminalActivity(ComposerRead("draft", "half-typed reply")),
-            "draft",
+            lambda _id: TerminalActivity(ComposerRead("draft", "half-typed reply")),
+            "composer_draft",
             id="draft",
         ),
     ],
 )
-async def test_active_turn_protection_keeps_row_active(
+async def test_unconfirmed_prompt_keeps_row_active_and_message_durable(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
-    turn_events: tuple[str, ...],
-    activity: TerminalActivity,
+    read: Callable[[str], TerminalActivity],
     reason: str,
 ) -> None:
-    """An open turn, a live fingerprint, or a draft never loses its active status."""
-    transcript = _rollout(tmp_path / "rollout.jsonl", *turn_events)
+    """Without a positive empty prompt the row stays active and no terminal input is sent."""
     caplog.set_level(logging.INFO, logger="gobby.events.wake")
 
-    session_id, sender, _ = await _deferred_wake(
-        temp_db,
-        session_manager,
-        sample_project["id"],
-        transcript,
-        [activity],
-    )
+    wake = await _deferred_wake(temp_db, session_manager, sample_project["id"], read)
 
-    row = session_manager.get(session_id)
+    row = session_manager.get(wake.session_id)
     assert row is not None and row.status == "active"
     assert row.updated_at == _STRANDED_AT
-    sender.assert_not_awaited()
-    line = _deferred_line(caplog, session_id)
+    wake.sender.assert_not_awaited()
+    assert [m.content for m in wake.messages.get_undelivered_wake_messages(wake.session_id)] == [
+        "pending wake"
+    ]
+    line = _deferred_line(caplog, wake.session_id)
     assert "skipped=session_active" in line
     assert f"idle={reason}" in line
 
@@ -220,32 +187,28 @@ async def test_row_touched_between_reads_is_refused_by_exact_cas(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
-    tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A lifecycle write that lands during the reads wins over the stale observation."""
-    transcript = _rollout(tmp_path / "rollout.jsonl", "task_complete")
     caplog.set_level(logging.INFO, logger="gobby.events.wake")
     touched_at = _STRANDED_AT + timedelta(microseconds=1)
+    reads = 0
 
-    def touch(session_id: str) -> None:
-        with session_manager.db.transaction():
-            session_manager.db.execute(
-                "UPDATE sessions SET updated_at = %s WHERE id = %s",
-                (touched_at, session_id),
-            )
+    def touch_on_first_read(session_id: str) -> TerminalActivity:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            with session_manager.db.transaction():
+                session_manager.db.execute(
+                    "UPDATE sessions SET updated_at = %s WHERE id = %s",
+                    (touched_at, session_id),
+                )
+        return _EMPTY
 
-    session_id, sender, _ = await _deferred_wake(
-        temp_db,
-        session_manager,
-        sample_project["id"],
-        transcript,
-        [TerminalActivity(ComposerRead("unknown"))],
-        after_first_read=touch,
-    )
+    wake = await _deferred_wake(temp_db, session_manager, sample_project["id"], touch_on_first_read)
 
-    row = session_manager.get(session_id)
+    row = session_manager.get(wake.session_id)
     assert row is not None and row.status == "active"
     assert row.updated_at == touched_at
-    sender.assert_not_awaited()
-    assert "idle=row_changed" in _deferred_line(caplog, session_id)
+    wake.sender.assert_not_awaited()
+    assert "idle=row_changed" in _deferred_line(caplog, wake.session_id)

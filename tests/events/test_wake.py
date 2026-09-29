@@ -88,7 +88,7 @@ async def test_codex_idle_recovery_rechecks_composer_and_exact_row(race: str) ->
         run_db=run_db,
     )
 
-    assert result == ("draft" if race == "composer_changed" else "row_changed")
+    assert result == ("composer_draft" if race == "composer_changed" else "row_changed")
     assert reads == []
     manager._pause_idle_prompt_active.assert_not_called()
 
@@ -111,7 +111,6 @@ class FakeSession:
     session_type: str = "terminal"
     source: str | None = None
     updated_at: datetime | None = None
-    transcript_path: str | None = None
 
 
 def _managed_terminal() -> MagicMock:

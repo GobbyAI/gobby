@@ -296,12 +296,12 @@ class WakeDispatcher:
         task.add_done_callback(forget)
 
     async def _pause_idle_prompt(self, session_id: str) -> str:
-        """Drop active when a terminal's turn has visibly ended; return the outcome.
+        """Drop active at an idle empty prompt; return the reconcile outcome.
 
         ``lifecycle_refresh`` only flushes the transcript. A provider turn can
-        end while the row stays active, and the retry would then decline
-        ``session_active`` again. Two idle reads plus an exact compare-and-set
-        pause the row before that retry.
+        end on screen while the row stays active, and the retry would then
+        decline ``session_active`` again. Two idle reads plus an exact
+        compare-and-set pause the row before that retry.
         """
         probe = self._activity_probe
         if probe is None:
