@@ -20,7 +20,7 @@
 | code-reviewer.md | gobby#14681 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
-| archivist.md | gobby#14308 |
+| archivist.md | gobby#14860 |
 | monitor.md | gobby#14573 |
 | plan-writer.md | gobby#14578 |
 | plan-adversary.md | gobby#14579 |
