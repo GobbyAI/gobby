@@ -24,7 +24,7 @@ and wires the pool into `gdaemon`'s service container.
    is rejected.** The sync `postgres` 0.19.13 crate is a wrapper: each `Client`
    owns its own current-thread tokio runtime (`postgres-0.19.13/src/connection.rs:14-19`,
    runtime built per connect at `config.rs:460`) and drives `tokio-postgres`
-   0.7.17, which is already in `Cargo.lock` (tokio 1.50 too). Behind
+   0.7, already in `Cargo.lock` at 0.7.17 (tokio 1.50 too). Behind
    `spawn_blocking` every query would park a blocking-pool thread while a nested
    runtime runs the socket; the front door's own runtime would then carry two
    runtime layers per connection and an unbounded blocking pool as its only
@@ -38,7 +38,11 @@ and wires the pool into `gdaemon`'s service container.
    workers active. The decision rests on structure, and one confirming test
    (1.2) pins the property that matters: a pool of N under K > N concurrent
    transactions never holds more than N server connections.
-2. **Pool library: `deadpool-postgres` 0.14.** It takes a
+2. **Pool library: `deadpool-postgres` 0.14.2 (over `deadpool` 0.13.1) with
+   `tokio-postgres` at least 0.7.18.** 0.7.17 carries RUSTSEC-2026-0178 (a
+   malformed `DataRow` panics; 0.7.18 returns an error), and the sync
+   `postgres` crate shares the same `tokio-postgres` in the lockfile, so the
+   floor lifts both paths. It takes a
    `tokio_postgres::Config` plus any `MakeTlsConnect<Socket>` connector
    (`Manager::from_config`), exposes `post_create` and `post_recycle` hooks on
    `PoolBuilder`, and bounds wait, create, and recycle phases through
@@ -62,10 +66,13 @@ and wires the pool into `gdaemon`'s service container.
 4. **Runtime-role compatibility is three obligations.** S1.6's tunnel and
    machine-scoped role were dropped by decision 17 (#22068); the live
    dependency is `baseline@420`'s capability roles.
-   - Every pooled connection runs as `gobby_daemon_runtime`: `post_create`
-     issues `SET ROLE gobby_daemon_runtime` and `SET TIME ZONE 'UTC'`, and
-     `post_create` and `post_recycle` both verify `SELECT current_user` in
-     autocommit and fail the hook on mismatch. A recycled connection that fails
+   - Every pooled connection runs as `gobby_daemon_runtime` in UTC:
+     `post_create` issues `SET ROLE gobby_daemon_runtime` and `SET TIME ZONE
+     'UTC'`; `post_recycle` re-issues `SET TIME ZONE 'UTC'` (`Fast` recycling
+     resets no session state, so a borrower's timezone change would otherwise
+     leak); both hooks then verify `SELECT current_user,
+     current_setting('TimeZone')` in autocommit and fail on either mismatch.
+     A recycled connection that fails
      is discarded and never handed out; a new connection that cannot take the
      role (an unapplied database) fails the checkout with a typed
      `RuntimeRoleUnavailable` error. Deadpool recycles on every checkout of an
@@ -85,34 +92,44 @@ and wires the pool into `gdaemon`'s service container.
    only when `pool_budget >= 66`, which on budget multiples of 8 means
    `pool_budget >= 72` (97 usable connections, PostgreSQL's default
    `max_connections=100` less 3 superuser slots). Below that the share is 0
-   and building the native pool with a share below 2 fails with a typed
-   `NativeShareTooSmall` error that states the floor: when `pool_budget >= 34`
-   the operator sets `database_concurrency.pool_max_size` to at most
-   `pool_budget - 2` or raises PostgreSQL `max_connections`; when
-   `pool_budget < 34` only raising `max_connections` works, because the
-   Python pool cannot go below `MIN_POOL_SIZE = 32`. Such hosts run no native
-   family until the Python daemon retires; S2.3 keeps every family on its
-   decision 16 `Proxy` backend and logs the error when the build fails. The
+   and building the native pool with a share below 2 fails with the typed
+   `PoolError::NativeShareTooSmall { actual, minimum: 2 }`. The builder sees
+   only the share, so the operator guidance belongs to S2.3, which holds the
+   full resolution: when `pool_budget >= 34` the operator sets
+   `database_concurrency.pool_max_size` to at most `pool_budget - 2` or
+   raises PostgreSQL `max_connections`; when `pool_budget < 34` only raising
+   `max_connections` works, because the Python pool cannot go below
+   `MIN_POOL_SIZE = 32`. Such hosts run no native family until the Python
+   daemon retires; S2.3 keeps every family on its decision 16 `Proxy` backend
+   and logs that guidance when the build fails. The
    measured peak of 14 of 64 shows Python needs no reduction to make room. No
    new config key: the share has one rule.
 6. **Transaction seam mirrors the Python hub contract**
    (`src/gobby/storage/hub/postgres_pool.py::transaction_context`).
    - One transaction per logical operation, run as an async closure over
      `&Transaction`; the seam commits on `Ok` and rolls back on `Err`.
+   - A connection whose state is uncertain never returns to the pool: after
+     `IndeterminateCommit`, a failed rollback, or cancellation while `COMMIT`
+     or `ROLLBACK` is in flight, the seam detaches and closes it.
    - After the COMMIT is submitted, an error is a definite server rejection
      when its SQLSTATE class is `23` or `40` or its severity is `ERROR`, and
      its code is none of `57014` (query canceled), `55P03` (lock not
      available), `40003` (statement completion unknown). Every other error
      after submission, including I/O loss and a `FATAL` termination, is
      `IndeterminateCommit`.
-   - `after_commit` callbacks run in registration order after a confirmed
-     commit; a callback error is logged and never changes the result.
+   - `after_commit` callbacks return `Result` and run in registration order
+     after a confirmed commit and after the checkout is released, as
+     `transaction_context` runs them after leaving its connection context; a
+     callback error is logged, the next callback still runs, and the
+     operation's result never changes.
    - Transaction-scoped advisory locks through lock targets: each target
      yields string keys and a priority; each key is taken with
      `pg_advisory_xact_lock(hashtext($1))` as `_acquire_advisory_lock` does,
      so a native and a Python transaction using the same key string contend on
      the same lock. Nested targets must strictly increase in priority (the
-     `_acquire_lock` rule); re-acquiring a held target is a no-op.
+     `_acquire_lock` rule). A target's identity is its priority plus its
+     ordered keys: re-acquiring an identical target is a no-op, and a target
+     with no keys is rejected.
    - `dedicated_session()` checks a connection out for session-level work
      (session advisory locks, leases) and discards it on release.
    - Parameters bind positionally (`$1`, `$2`, …); identifiers go through a
@@ -128,7 +145,10 @@ and wires the pool into `gdaemon`'s service container.
    (`postgres.rs::connection_config`) and managed agents keep `gobby-agent-*`.
    The Python hub appends a lifecycle-unique marker
    (`src/gobby/storage/hub/postgres.py:122`); S2.3 chooses the suffix it needs
-   when it builds the settings.
+   when it builds the settings. The `gobby` prefix is load-bearing:
+   maintenance-epoch quiescence filters `pg_stat_activity` with
+   `application_name LIKE 'gobby%'`, so native backends are counted with the
+   Python pools during a maintenance fence.
 
 ## As-Is Facts
 `kind: framing`
@@ -136,7 +156,8 @@ and wires the pool into `gdaemon`'s service container.
 - `crates/gcore/Cargo.toml` feature `postgres` enables `postgres` 0.19
   (`with-uuid-1`), `postgres-openssl` 0.5, `base64`, `scrypt`, `sha2`, `time`.
   Consumers: `gdaemon`, `gcode`, `ghook` (each `features = ["postgres", …]`).
-  `deadpool-postgres` and `bb8` are absent from `Cargo.lock`.
+  `deadpool-postgres` and `bb8` are absent from `Cargo.lock`, which pins
+  `tokio-postgres` 0.7.17.
 - `crates/gcore/src/postgres.rs` (780 lines) owns the sync connect path:
   `connection_config` (`:120`, forces `application_name=gobby-cli`, pinned by
   `connection_config_enforces_gobby_application_name`), `sslmode` normalization
@@ -156,9 +177,11 @@ and wires the pool into `gdaemon`'s service container.
   2-connection bootstrap pool with `runtime_role="gobby_daemon_runtime"`;
   `configure_runtime_role` (`postgres_pool.py:511`) sets the role;
   `assert_runtime_role` (`:522`) verifies every checkout in autocommit and
-  closes on mismatch; `pool_connection` (`:116`) retries a failed ordinary
-  acquire at 0.5 s, 1 s, 2 s with 25% jitter; `validate_identifier` (`:558`);
-  `advisory_lock_keys` (`:645`).
+  closes on mismatch; `pool_connection` (`:116`) retries only a
+  `PoolTimeout` for ordinary callers, with backoff, and makes one bounded
+  attempt for deadline-owned callers; `validate_identifier` (`:558`);
+  `advisory_lock_keys` (`:645`). Hub connections set TCP keepalives 1, idle
+  30 s, interval 10 s, count 3 (`src/gobby/storage/hub/postgres.py:99-102`).
 - Sizing: `crates/gcore/src/database_concurrency.rs::resolve_database_concurrency`
   and `src/gobby/storage/concurrency.py::resolve_database_concurrency` share
   `docs/contracts/database-concurrency-v1.json` (8 cases), checked by
@@ -239,45 +262,53 @@ Targets:
 - `crates/gcore/src/postgres_pool/tests.rs`
 - `Cargo.lock`
 
-**Granularity:** seven acceptance items and seven Targets, one behavior:
-the pool is untestable apart from its role hooks and bounds, and the
-consumer-lean check (1.2.6) and sync-path check (1.2.7) guard the same
-feature wiring.
+**Granularity:** eight acceptance items and seven Targets, one behavior:
+the pool is untestable apart from its role hooks, bounds, and error mapping,
+and the dependency checks (1.2.6, 1.2.8) and sync-path check (1.2.7) guard
+the same feature wiring.
 
 **Research context:** feature `postgres-pool = ["postgres",
 "dep:tokio-postgres", "dep:deadpool-postgres", "dep:tokio"]` with
-`tokio-postgres = { version = "0.7", features = ["with-uuid-1"] }`,
-`deadpool-postgres = { version = "0.14", features = ["rt_tokio_1"] }`,
+`tokio-postgres = { version = "0.7.18", features = ["with-uuid-1"] }`,
+`deadpool-postgres = { version = "0.14.2", features = ["rt_tokio_1"] }`,
 `tokio = { version = "1", features = ["rt", "time"] }`; tests use
 `#[tokio::test]` through a dev-dependency with `macros` and
 `rt-multi-thread`. `config.rs` builds a `tokio_postgres::Config` from the
 database URL: parse `normalize_sslmode_for_parser(url)`, set
-`application_name("gobby-gdaemon")`, `connect_timeout(5 s)` as
-`DEFAULT_CONNECT_TIMEOUT` does, and choose the connector from
+`application_name` from the validated `PoolSettings::application_name`,
+`connect_timeout(5 s)` as `DEFAULT_CONNECT_TIMEOUT` does, keepalives on with
+`keepalives_idle(30 s)`, `keepalives_interval(10 s)`, `keepalives_retries(3)`
+(the hub values; no config knob), and choose the connector from
 `requested_ssl_mode` exactly as `connect_for_mode` maps modes (disable,
 prefer/require unverified, verify-ca, verify-full) over
 `postgres_openssl::MakeTlsConnector` built from `tls_connector_builder`.
 `mod.rs` exposes:
 
 - `PoolSettings { max_size, application_name, wait_timeout, create_timeout,
-  recycle_timeout }` and `Pool::build(database_url, settings)`; `max_size`
-  below 2 returns `PoolError::NativeShareTooSmall` carrying the Decision 5
-  floor text; an `application_name` without the `gobby-gdaemon` prefix is
-  rejected.
+  recycle_timeout }` and `Pool::build(database_url, settings)`; the builder
+  calls `.runtime(Runtime::Tokio1)` and sets all three `Timeouts`; `max_size`
+  below 2 returns `PoolError::NativeShareTooSmall { actual, minimum: 2 }` with
+  generic display text (Decision 5); an `application_name` without the
+  `gobby-gdaemon` prefix returns `PoolError::InvalidApplicationName`.
 - `post_create` hook: `SET ROLE gobby_daemon_runtime`, `SET TIME ZONE 'UTC'`,
-  then the verify query; `post_recycle` hook: the verify query. Verify is
-  `SELECT current_user` through `simple_query` (autocommit); anything other
-  than `gobby_daemon_runtime` or an error fails the hook, and deadpool
-  discards the object. `RecyclingMethod::Fast` (Decision 2).
-- `Pool::get()`: an exhausted pool returns `PoolError::WaitTimeout` after
-  `wait_timeout` with no retry. A create failure (connect error or create
-  timeout) retries after 0.5 s, 1 s, and 2 s with 25% jitter, as the Python
-  ordinary acquire does (`pool_connection`), so four attempts in all, then
-  returns `PoolError::Unavailable` carrying a host, port, and database label
-  built the way `postgres.rs::endpoint_label` builds it, and no secret. A
-  `post_create` role failure is `RuntimeRoleUnavailable` and is not retried.
-  The retry sleeps do not count against `wait_timeout`, which bounds only the
-  wait for a free slot.
+  then the verify query; `post_recycle` hook: `SET TIME ZONE 'UTC'`, then the
+  verify query. Verify is `SELECT current_user,
+  current_setting('TimeZone')` through `simple_query` (autocommit); anything
+  other than `gobby_daemon_runtime` and `UTC`, or an error, fails the hook.
+  `RecyclingMethod::Fast` (Decision 2).
+- `Pool::get()` is one bounded deadpool `get()` with no retry loop of its
+  own: deadpool already discards a failed recycled object and moves on, and
+  the Python retry covers only a pool-wait timeout that native callers have
+  no measured need to repeat. Mapping from `deadpool::managed::PoolError`:
+  `Timeout(Wait)` to `PoolError::WaitTimeout`; `Timeout(Create)` and
+  `Backend` to `PoolError::Unavailable`; `Timeout(Recycle)` to
+  `PoolError::Unavailable`; `PostCreateHook` to
+  `PoolError::RuntimeRoleUnavailable` (that hook exists only to establish the
+  role and session invariants); `Closed` to `PoolError::Closed`;
+  `NoRuntimeSpecified` is unreachable because the builder sets the runtime
+  and maps to `PoolError::Closed` if it ever occurs. `Unavailable` and
+  `RuntimeRoleUnavailable` carry a host, port, and database label built the
+  way `postgres.rs::endpoint_label` builds it, and no secret.
 - A connection dropped with an open transaction: `tokio_postgres::Transaction`
   queues `ROLLBACK` on drop, and the next recycle's verify query runs after
   it, so the connection returns clean or is discarded.
@@ -289,33 +320,46 @@ applied first).
 **Acceptance:**
 
 - 1.2.1 - Every checkout runs as `gobby_daemon_runtime` with `TimeZone=UTC`
-  and `application_name=gobby-gdaemon`. test:
+  and exactly the configured `application_name` (for example
+  `gobby-gdaemon-test-1`); a name without the prefix is refused. test:
   `crates/gcore/src/postgres_pool/tests.rs::checkout_runs_as_runtime_role`.
-- 1.2.2 - A connection whose role was changed while checked out is discarded
-  at the next checkout. test:
-  `crates/gcore/src/postgres_pool/tests.rs::role_mismatch_discards_connection`.
-- 1.2.3 - A connection dropped mid-transaction returns with no open
-  transaction and none of its writes visible. test:
+- 1.2.2 - With `max_size=1`, a borrower that runs `RESET ROLE` hands back a
+  connection the next checkout discards (a different `pg_backend_pid()`); a
+  borrower that runs `SET TIME ZONE 'America/Chicago'` hands back a
+  connection the next checkout reuses (same PID) in `UTC`. test:
+  `crates/gcore/src/postgres_pool/tests.rs::recycle_restores_or_discards_session_state`.
+- 1.2.3 - With `max_size=1`, a connection dropped mid-transaction is reused by
+  the next checkout (same `pg_backend_pid()`), which sees no open transaction
+  and none of the dropped writes. test:
   `crates/gcore/src/postgres_pool/tests.rs::dropped_transaction_is_rolled_back`.
 - 1.2.4 - A pool of N under K > N concurrent checkouts never exceeds N server
   connections with its application name, and a waiter past `wait_timeout`
   gets `PoolError` without opening a connection. test:
   `crates/gcore/src/postgres_pool/tests.rs::pool_bounds_server_connections`.
-- 1.2.5 - A share below 2 fails the build with the typed error, and an
-  unreachable endpoint returns `Unavailable` after four attempts spanning at
-  least 2.6 s (the jittered backoff floor) without leaking the password. test:
+- 1.2.5 - A share of 1 returns `NativeShareTooSmall { actual: 1, minimum: 2
+  }`; an unreachable endpoint returns `Unavailable` whose display text omits
+  the URL password; an unapplied database (no runtime-role membership)
+  returns `RuntimeRoleUnavailable`. test:
   `crates/gcore/src/postgres_pool/tests.rs::build_and_connect_failures_are_typed`.
 - 1.2.6 - `gobby-hooks` and `gobby-code` build without `deadpool-postgres` in
   their dependency tree. behavior: "no deadpool-postgres entry" in
   `cargo tree -p gobby-hooks` output recorded in the close summary.
 - 1.2.7 - The sync path still forces `gobby-cli`. test:
   `crates/gcore/src/postgres.rs::connection_config_enforces_gobby_application_name`.
+- 1.2.8 - `Cargo.lock` holds one `tokio-postgres` at 0.7.18 or later and
+  `deadpool-postgres` at 0.14.2 or later; the pool config sets keepalives
+  1/30 s/10 s/3. test:
+  `crates/gcore/src/postgres_pool/config.rs::config_sets_hub_keepalives` and
+  behavior: "one tokio-postgres >= 0.7.18" in `cargo tree -p gobby-core
+  --features postgres-pool -i tokio-postgres` output recorded in the close
+  summary.
 
 Verification planned: `cargo test -p gobby-core --features postgres-pool
 postgres_pool` with `GOBBY_SCHEMA_TEST_DATABASE_URL` pointing at the
 `gobby_test` hub; `cargo clippy -p gobby-core --features postgres-pool
 --all-targets -- -D warnings`; `cargo tree -p gobby-hooks -i
-deadpool-postgres` (expects no match).
+deadpool-postgres` (expects no match); `cargo tree -p gobby-core --features
+postgres-pool -i tokio-postgres`.
 
 ## P2: Transaction Seam
 `kind: framing`
@@ -332,19 +376,33 @@ Targets:
 - `crates/gcore/src/postgres_pool/row.rs`
 - `crates/gcore/src/postgres_pool/tests.rs`
 
+**Granularity:** seven acceptance items, one behavior: the transaction
+boundary owns its checkout, commit outcome, callbacks, and locks together, and
+row mapping and identifier quoting are the seam's small value helpers that
+the same tests exercise.
+
 **Research context:** `Pool::transaction(lock: Option<LockTarget>, f)` where
 `f: for<'t> AsyncFnOnce(&'t Transaction<'t>) -> Result<T, E>`, with `E:
 From<TransactionError>`. The seam checks out, begins, acquires `lock` if
-given, runs `f`, commits on `Ok`, rolls back on `Err`, and then runs
-`after_commit` callbacks. `Transaction` wraps
+given, runs `f`, commits on `Ok`, rolls back on `Err`, releases the
+checkout, and then runs `after_commit` callbacks. A checkout guard owns the
+pooled object: it is armed before `COMMIT` or `ROLLBACK` is awaited and
+disarmed only when rollback succeeds, commit succeeds, or `COMMIT` returns a
+definite server rejection; if the guard drops armed (an `IndeterminateCommit`,
+a failed rollback, or the future cancelled mid-command) it detaches the
+object with `Object::take` and drops the client, so the connection closes.
+After a failed rollback the closure's error is returned and the rollback
+error is logged. `Transaction` wraps
 `deadpool_postgres::Transaction` and offers `query`, `query_opt`,
 `query_one`, `execute` (positional `$n` parameters through `&(dyn ToSql +
-Sync)`), `acquire_lock(LockTarget)`, and `after_commit(Box<dyn FnOnce() +
-Send>)`. Commit classification (Decision 6): an error from the `COMMIT`
-itself is `TransactionError::Server` when its `SqlState` class is `23` or
-`40` (except `40003`) or its severity is `ERROR` and its code is none of
-`57014`, `55P03`, `40003`; anything else after submission, including I/O loss,
-is `TransactionError::IndeterminateCommit`. Errors before submission are
+Sync)`), `acquire_lock(&dyn LockTarget)`, and `after_commit(Box<dyn FnOnce()
+-> anyhow::Result<()> + Send>)`. Commit classification (Decision 6) is a pure
+function `is_definite_commit_rejection(code: Option<&SqlState>, severity:
+Option<&str>) -> bool`: true when the code is none of `57014`, `55P03`,
+`40003` and either the code's class is `23` or `40` or the severity is
+`ERROR`; false with no database diagnostic. A `COMMIT` error for which it
+returns true is `TransactionError::Server`; every other `COMMIT` error is
+`TransactionError::IndeterminateCommit`. Errors before submission are
 plain `Server` or `Pool` errors. `LockTarget` is a trait with `fn priority(&self)
 -> i32` and `fn keys(&self) -> Vec<String>`, mirroring the Python protocol
 (`storage/hub/protocol.py:57`, class-level `PRIORITY`) and
@@ -352,10 +410,12 @@ plain `Server` or `Pool` errors. `LockTarget` is a trait with `fn priority(&self
 `task_lifecycle:{task_id}`. Each key is locked with `SELECT
 pg_advisory_xact_lock(hashtext($1))` (`postgres_pool.py:404`); `hashtext` runs
 in the server, so a family target that returns the Python key string contends
-with the Python daemon. The transaction keeps a stack of held targets: a held
-target is a no-op; a new target whose priority is not strictly greater than
-the top returns `TransactionError::LockOrder` before any SQL (`_acquire_lock`,
-`:695-704`). Family crates define their own targets; this seam defines none.
+with the Python daemon. The transaction keeps a stack of held identities,
+each the `(priority, keys)` value the target returned: an identity already
+held is a no-op; an empty key list returns `TransactionError::EmptyLockTarget`;
+otherwise a priority not strictly greater than the top returns
+`TransactionError::LockOrder` before any SQL (`_acquire_lock`, `:695-704`),
+and the keys are then locked in the order given. Family crates define their own targets; this seam defines none.
 `quote_identifier(name) -> Result<String, IdentifierError>` accepts exactly
 `^[A-Za-z_][A-Za-z0-9_]*$` (`_SQL_IDENTIFIER_PATTERN`, `:71`, used by
 `validate_identifier`, `:558`) and returns it double-quoted.
@@ -366,26 +426,39 @@ free functions taking `&Transaction`, returning `FromRow` types.
 
 **Acceptance:**
 
-- 2.1.1 - `Ok` commits and `Err` rolls back; `after_commit` callbacks run only
-  after a confirmed commit, in order, and a failing callback does not change
-  the result. test:
+- 2.1.1 - `Ok` commits and `Err` rolls back. With `max_size=1`, after a
+  confirmed commit callback 1 checks out a connection (proving the checkout
+  was released), callback 2 returns `Err`, and callback 3 still runs, in that
+  order; a rolled-back transaction and an `IndeterminateCommit` run none.
+  test:
   `crates/gcore/src/postgres_pool/tests.rs::transaction_commits_and_runs_callbacks`.
-- 2.1.2 - A deferred unique violation at COMMIT (a temp table with an
-  `INITIALLY DEFERRED` unique constraint) is `Server`; a transaction whose
-  closure reads `pg_backend_pid()`, has a second connection run
-  `pg_terminate_backend` on that pid, and returns `Ok` fails its COMMIT with
-  `57P01` (`FATAL`) and is `IndeterminateCommit`. test:
+- 2.1.2 - `is_definite_commit_rejection` matches a table covering classes
+  `23` and `40`, the exclusions `57014`, `55P03`, `40003`, a generic `ERROR`
+  severity, a `FATAL` severity, and no diagnostic. test:
+  `crates/gcore/src/postgres_pool/transaction.rs::commit_rejection_table`.
+- 2.1.3 - A deferred unique violation at COMMIT (a temp table with an
+  `INITIALLY DEFERRED` unique constraint) is `Server` and its connection is
+  reused; a transaction whose closure reads `pg_backend_pid()`, has a second
+  connection run `pg_terminate_backend` on that pid, and returns `Ok` is
+  `IndeterminateCommit` (from `57P01` or a closed connection), and the next
+  checkout has a different PID. test:
   `crates/gcore/src/postgres_pool/tests.rs::commit_outcome_is_classified`.
-- 2.1.3 - A native transaction holding a target keyed `task_lifecycle:t1`
+- 2.1.4 - With `max_size=1`, a transaction future dropped while its `COMMIT`
+  is in flight (a closure that holds a lock another connection waits on,
+  cancelled by `tokio::time::timeout`) leaves a pool whose next checkout has a
+  different PID. test:
+  `crates/gcore/src/postgres_pool/tests.rs::cancelled_transaction_discards_connection`.
+- 2.1.5 - A native transaction holding a target keyed `task_lifecycle:t1`
   blocks a second connection's `pg_advisory_xact_lock(hashtext('task_lifecycle:t1'))`
-  until commit; a nested target with a lower or equal priority returns
-  `LockOrder` with no SQL sent. test:
+  until commit; re-acquiring the identical target sends no SQL; a different
+  target at equal or lower priority returns `LockOrder` and an empty target
+  returns `EmptyLockTarget`, both with no SQL sent. test:
   `crates/gcore/src/postgres_pool/tests.rs::lock_targets_share_python_keys_and_order`.
-- 2.1.4 - `quote_identifier` accepts and rejects the same names as
+- 2.1.6 - `quote_identifier` accepts and rejects the same names as
   `validate_identifier`. test:
   `crates/gcore/src/postgres_pool/tests.rs::identifiers_match_python_validation`
   (cases: `tasks`, `_x9`, `9x`, `a-b`, `a b`, `"q"`, empty).
-- 2.1.5 - A `FromRow` type round-trips through `query_as`. test:
+- 2.1.7 - A `FromRow` type round-trips through `query_as`. test:
   `crates/gcore/src/postgres_pool/tests.rs::from_row_maps_rows`.
 
 Verification planned: as 1.2.
@@ -413,13 +486,30 @@ state survives into another checkout. The session counts against
 
 **Acceptance:**
 
-- 2.2.1 - A session lock taken on a dedicated session is released when the
-  session drops, and the connection never returns to the pool. test:
+- 2.2.1 - A session lock taken on a dedicated session (PID recorded) becomes
+  acquirable from a control connection within a bounded poll after the
+  session drops, and the next pooled checkout has a different PID with the
+  pool's size restored. test:
   `crates/gcore/src/postgres_pool/tests.rs::dedicated_session_is_discarded`.
 - 2.2.2 - A dedicated session runs as `gobby_daemon_runtime`. test:
   `crates/gcore/src/postgres_pool/tests.rs::dedicated_session_runs_as_runtime_role`.
 
 Verification planned: as 1.2.
+
+## V1: Plan Changelog
+`kind: framing`
+
+- 2026-09-28: First draft (e6db320): async pool over `tokio-postgres` with
+  `deadpool-postgres`, the `postgres-pool` feature (PD-approved), runtime-role
+  verification, the native share from the single-daemon budget, the
+  transaction seam, and dedicated sessions. One enhancer pass (run
+  8f30e16f); the Program Director accepted ENH-01 through ENH-11 and the
+  Writer applied them: dependency floors, no native acquire retry and an
+  explicit deadpool error mapping, timezone reset on recycle, a checkout
+  guard for uncertain connections, result-returning callbacks after release,
+  a pure commit classifier, lock identity, PID-based lifecycle tests, hub
+  keepalives, a numeric share error, and this changelog; plus the `gobby`
+  application-name prefix note.
 
 ## V2: Verification
 `kind: verification`
@@ -431,6 +521,7 @@ DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY
 cargo test -p gobby-core --features postgres-pool
 cargo clippy -p gobby-core --features postgres-pool --all-targets -- -D warnings
 cargo tree -p gobby-hooks -i deadpool-postgres
+cargo tree -p gobby-core --features postgres-pool -i tokio-postgres
 uv run gobby plans validate .gobby/plans/gcore-async-postgres.md -p /Users/josh/Projects/gobby
 ```
 
