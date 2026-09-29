@@ -59,7 +59,7 @@ def project_busy_review_response(
     if task is None:
         return None
     review = TaskCloseReviewStore(ctx.task_manager.db).get_active_for_project(str(task.project_id))
-    if review is None or review.task_id == task.id:
+    if review is None or (review.task_id == task.id and review.active):
         return None
     return busy_review_response(task.id, review, preview=True)
 

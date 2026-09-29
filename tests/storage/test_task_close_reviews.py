@@ -62,6 +62,7 @@ def _task_row(temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
 
 def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) -> None:
     store = TaskCloseReviewStore(temp_db)
+    runs = LocalAgentRunManager(temp_db)
     first, created = store.create_or_get_active(**_intent())
     repeated, repeated_created = store.create_or_get_active(
         **{**_intent(), "review_fingerprint": "different"}
@@ -72,10 +73,15 @@ def test_one_active_review_per_task_and_terminal_unlock(temp_db: HubDatabase) ->
     assert repeated.id == first.id
     assert repeated.review_fingerprint == "review"
 
+    assert first.agent_run_id is not None
+    _activate_run(runs, first.agent_run_id)
     payload = {"event": "task_close_review_completed", "status": "error"}
     terminal = store.finish(first.id, status="error", result_payload=payload, error="failed")
     assert terminal is not None and terminal.status == "error"
 
+    with pytest.raises(TaskCloseReviewBusyError):
+        store.create_or_get_active(**_intent())
+    assert runs.complete(first.agent_run_id) is not None
     fresh, fresh_created = store.create_or_get_active(**_intent())
     assert fresh_created is True
     assert fresh.id != first.id
@@ -85,6 +91,7 @@ def test_project_admission_refuses_other_task_without_queued_run(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     store = TaskCloseReviewStore(temp_db)
+    runs = LocalAgentRunManager(temp_db)
     tasks = LocalTaskManager(temp_db)
     first, created = store.create_or_get_active(**_intent())
     assert created is True
@@ -110,7 +117,14 @@ def test_project_admission_refuses_other_task_without_queued_run(
         is None
     )
 
-    store.finish(first.id, status="error", result_payload={"error": "done"})
+    assert first.agent_run_id is not None
+    _activate_run(runs, first.agent_run_id)
+    store.finish(first.id, status="invalid", result_payload={"error": "done"})
+    with pytest.raises(TaskCloseReviewBusyError) as terminal_busy:
+        store.create_or_get_active(**other_intent)
+    assert terminal_busy.value.active_review.id == first.id
+    assert store.get_active_for_project(str(sample_project["id"])) == store.get(first.id)
+    assert runs.complete(first.agent_run_id) is not None
     second, second_created = store.create_or_get_active(**other_intent)
     assert second_created is True
     assert second.task_id == other.id
@@ -324,6 +338,8 @@ def test_late_claim_yields_to_newer_active_review(temp_db: HubDatabase) -> None:
     old_review, _created = store.create_or_get_active(**_intent())
     old_review = _promote(store, old_review)
     assert store.bind_run(old_review.id, old_review.agent_run_id or "") is not None
+    assert old_review.agent_run_id is not None
+    assert LocalAgentRunManager(temp_db).fail(old_review.agent_run_id, "run ended") is not None
     prior_payload = {"status": "error", "message": REVIEWER_RUN_ENDED_SUCCESS_ERROR}
     assert (
         store.finish(
@@ -598,6 +614,7 @@ def _finish_terminal_review(
     }
     terminal = store.finish(review.id, status=status, result_payload=payload)
     assert terminal is not None
+    assert LocalAgentRunManager(store.db).fail(promoted.agent_run_id, "review ended") is not None
     if delivered:
         assert store.mark_delivered(review.id) is True
     result = store.get(review.id)
@@ -728,12 +745,16 @@ def test_queue_promotes_one_per_project_and_keeps_projects_independent(
     other_wave = store.claim_queued(project_id=other_project.id, max_concurrency=1)
     assert [review.id for review in other_wave] == [other_review.id]
 
+    assert first_wave[0].agent_run_id is not None
+    _activate_run(LocalAgentRunManager(temp_db), first_wave[0].agent_run_id)
     store.finish(
         first_wave[0].id,
         status="error",
         result_payload={"error": "test slot release"},
         error="test slot release",
     )
+    assert store.claim_queued(project_id=str(sample_project["id"]), max_concurrency=1) == []
+    assert LocalAgentRunManager(temp_db).fail(first_wave[0].agent_run_id, "review failed")
     next_wave = store.claim_queued(project_id=str(sample_project["id"]), max_concurrency=1)
     assert [review.id for review in next_wave] == [legacy_queued_id]
 
@@ -778,6 +799,8 @@ def test_retry_supersedes_wait_durably(temp_db: HubDatabase, retry: str) -> None
         error_class="retryable_infrastructure",
     )
     store.finish(review.id, status="error", result_payload=payload)
+    assert review.agent_run_id is not None
+    assert LocalAgentRunManager(temp_db).fail(review.agent_run_id, "review ended") is not None
     assert store.has_retry_wait(_TASK_ID, caller_session_id=system_session_id()) is True
     if retry == "entry":
         store.supersede_retry_wait(_TASK_ID, caller_session_id=system_session_id())

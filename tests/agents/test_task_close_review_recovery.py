@@ -131,9 +131,11 @@ async def test_terminal_payload_without_run_is_redelivered_on_startup(
     assert store.delivered is True
 
 
-async def test_closed_review_waits_for_run_exit_and_delivers_retained_denials(
+@pytest.mark.parametrize("status", ["closed", "invalid", "external_pending", "stale", "error"])
+async def test_terminal_review_waits_for_run_exit_and_delivers_retained_denials(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    status: str,
 ) -> None:
     home = tmp_path / "gobby-home"
     retained_log = home / "logs" / "sandbox-violations" / "run.jsonl"
@@ -142,10 +144,10 @@ async def test_closed_review_waits_for_run_exit_and_delivers_retained_denials(
         "event": "task_close_review_completed",
         "review_id": "review",
         "run_id": "run",
-        "status": "closed",
-        "message": "Task closed after background validation.",
+        "status": status,
+        "message": "Task-close review completed.",
     }
-    store = _Store(replace(_review(status="closed", run_id="run"), result_payload=payload))
+    store = _Store(replace(_review(status=status, run_id="run"), result_payload=payload))
     run = SimpleNamespace(
         id="run",
         status="running",
@@ -207,10 +209,15 @@ async def test_periodic_reconciliation_expires_review_and_wakes_subscriber(
     )
     store = _Store(review)
     subscribers = _Subscribers()
-    run = SimpleNamespace(id="run", status="running")
-    cleanup = AsyncMock()
+    run = SimpleNamespace(id="run", status="running", resume_metadata_json={}, error=None)
+
+    async def cleanup_run(*_args: object, **_kwargs: object) -> None:
+        run.status = "timeout"
+
+    cleanup = AsyncMock(side_effect=cleanup_run)
     wake = AsyncMock(return_value={"ism_persisted": True})
     _install(monkeypatch, store=store, run=run, subscribers=subscribers)
+    _install_delivery(monkeypatch, store=store, run=run, task=None)
     monkeypatch.setattr(lifecycle_agents, "utc_now", lambda: now)
 
     recovered = await lifecycle_agents._reconcile_task_close_reviews(_runner(wake, cleanup=cleanup))
@@ -354,9 +361,14 @@ async def test_close_verdict_survives_daemon_restart(
     assert store.review.status == expected_status
     assert store.writes == expected_writes
 
-    # A terminal review releases uq_task_close_reviews_active_task, which is
-    # what makes the task closable again.
+    # A terminal review releases its per-task unique index; project admission
+    # still waits for the reviewer run to exit.
     assert store.review.active is False
+    if run is not None and run.status == "running":
+        assert store.delivered is False
+        wake.assert_not_awaited()
+        run.status = "success"
+        await lifecycle_agents._reconcile_task_close_reviews(_runner(wake))
     assert store.delivered is True
     payload = wake.call_args.args[2]
     assert payload["event"] == "task_close_review_completed"
@@ -458,9 +470,13 @@ async def test_periodic_tick_sweeps_only_a_proven_orphaned_finalizing_review(
         wake.assert_not_awaited()
         return
 
-    # The sweep releases uq_task_close_reviews_active_task and tells the caller
-    # to close again rather than replaying the dead verdict.
+    # The sweep releases the per-task unique index, but delivery waits for run
+    # exit before telling the caller to close again.
     assert store.review.active is False
+    assert store.delivered is False
+    wake.assert_not_awaited()
+    run.status = "success"
+    await lifecycle_agents._reconcile_task_close_reviews(_runner(wake))
     assert store.delivered is True
     payload = wake.call_args.args[2]
     assert payload["closed"] is False

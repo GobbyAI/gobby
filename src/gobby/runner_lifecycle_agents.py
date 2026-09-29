@@ -202,6 +202,7 @@ async def _reconcile_task_close_reviews(
                     await cleanup_agent(run, terminal_payload=message, is_timeout=True)
                 else:
                     await _run_db(runner, run_manager.timeout, run.id, error=message)
+                run = await _run_db(runner, run_manager.get, run.id)
             current = await _run_db(runner, store.get, review.id) or review
             if current.active:
                 payload = build_terminal_review_payload(
@@ -303,23 +304,18 @@ async def _reconcile_task_close_reviews(
                 [current.caller_session_id],
             )
             continue
-        # A closed task can precede reviewer exit and SRT log retention.
+        # A terminal verdict can precede reviewer exit and SRT log retention.
         if (
             current.terminal
             and current.delivered_at is None
             and current.result_payload is not None
-            and (
-                current.status != "closed"
-                or run is None
-                or run.status in TERMINAL_AGENT_RUN_STATUSES
-            )
+            and (run is None or run.status in TERMINAL_AGENT_RUN_STATUSES)
             and callable(wake)
         ):
             try:
                 delivery = (
                     await _run_db(runner, terminal_review_delivery, db, current.agent_run_id)
                     if current.agent_run_id
-                    and (run is None or run.status in TERMINAL_AGENT_RUN_STATUSES)
                     else None
                 )
                 payload, message = delivery or (

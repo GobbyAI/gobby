@@ -216,6 +216,9 @@ describe("AutomationWorkflowsSection", () => {
   it("reads checklist validation rows including the escalation-notify enum select", () => {
     renderSection(makeContext());
 
+    expect(
+      screen.queryByLabelText("Concurrent close reviewers per project"),
+    ).not.toBeInTheDocument();
     const notify = screen.getByLabelText("Escalation notify method");
     expect(notify).toHaveValue("none");
     expect(within(notify).getAllByRole("option")).toHaveLength(3);

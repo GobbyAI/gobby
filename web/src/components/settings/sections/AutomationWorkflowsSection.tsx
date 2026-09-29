@@ -58,7 +58,6 @@ const VALIDATION_PATHS = [
   "gobby-tasks.validation.max_iterations",
   "gobby-tasks.validation.close_review_prompt_max_chars",
   "gobby-tasks.validation.close_review_min_severity",
-  "gobby-tasks.validation.close_review_max_concurrency_per_project",
   "gobby-tasks.validation.escalation_enabled",
   "gobby-tasks.validation.escalation_notify",
   "gobby-tasks.validation.escalation_webhook_url",
@@ -306,12 +305,6 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
         path="gobby-tasks.validation.close_review_min_severity"
         label="Minimum blocking finding severity"
         ariaLabel="Minimum blocking finding severity"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.validation.close_review_max_concurrency_per_project"
-        label="Concurrent close reviewers per project"
-        ariaLabel="Concurrent close reviewers per project"
       />
       <SwitchConfigField
         fields={fields}

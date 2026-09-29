@@ -127,6 +127,27 @@ async def test_preview_reports_another_task_busy_without_directing_real_close(
 
 
 @pytest.mark.asyncio
+async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminal = _review(status="invalid", run_id=_FIRST_REVIEW_RUN_ID)
+    store = _Store(terminal)
+    monkeypatch.setattr(store, "get_active_for_project", lambda _project_id: terminal)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx())
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert result["preview"] is True
+    assert result["error"] == "close_review_busy"
+    assert result["active_review_status"] == "invalid"
+    assert store.created_arguments is None
+
+
+@pytest.mark.asyncio
 async def test_close_persists_and_launches_one_taskless_reviewer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -860,6 +881,7 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
     assert terminal.result_payload["validation_status"] == "invalid"
     # The wake payload references the rejection; it does not re-carry the verdict.
     assert "verdict" not in terminal.result_payload
+    assert LocalAgentRunManager(temp_db).fail(first_review.agent_run_id, "review ended")
 
     registry = _successful_registry()
     evaluation.extra.update(
@@ -1483,6 +1505,8 @@ async def test_late_submission_yields_to_newer_active_review(
         )
         is not None
     )
+    assert old_review.agent_run_id is not None
+    assert LocalAgentRunManager(temp_db).fail(old_review.agent_run_id, "run ended")
     newer, created = store.create_or_get_active(
         **{
             **_persisted_review_intent(task, caller_session_id=caller.id),

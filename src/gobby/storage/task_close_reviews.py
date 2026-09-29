@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 from psycopg.errors import UniqueViolation
 
-from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS
+from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS, TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
@@ -245,13 +245,27 @@ class TaskCloseReviewStore:
                     SELECT {_QUALIFIED_COLUMNS}
                     FROM task_close_reviews AS r
                     JOIN tasks AS t ON t.id = r.task_id
-                    WHERE t.project_id = %s AND r.status = ANY(%s)
+                    LEFT JOIN agent_runs AS a ON a.id = r.agent_run_id
+                    WHERE t.project_id = %s
+                      AND (
+                          r.status = ANY(%s)
+                          OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                      )
                     ORDER BY (r.task_id = %s) DESC, r.created_at, r.id
                     LIMIT 1
                     """,  # nosec B608 - static column fragment
-                    (project_id, active, task_id),
+                    (
+                        project_id,
+                        active,
+                        list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                        list(TERMINAL_AGENT_RUN_STATUSES),
+                        task_id,
+                    ),
                 ).fetchone()
-                if admitted is not None and str(admitted["task_id"]) != task_id:
+                if admitted is not None and (
+                    str(admitted["task_id"]) != task_id
+                    or admitted["status"] in TERMINAL_TASK_CLOSE_REVIEW_STATUSES
+                ):
                     raise TaskCloseReviewBusyError(_review_from_row(admitted))
             row = conn.execute(
                 f"""
@@ -396,10 +410,19 @@ class TaskCloseReviewStore:
                 SELECT COUNT(*) AS count
                 FROM task_close_reviews r
                 JOIN tasks t ON t.id = r.task_id
+                LEFT JOIN agent_runs a ON a.id = r.agent_run_id
                 WHERE t.project_id = %s
-                  AND r.status = ANY(%s)
+                  AND (
+                      r.status = ANY(%s)
+                      OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                  )
                 """,
-                (project_id, ["launching", "running", "finalizing"]),
+                (
+                    project_id,
+                    ["launching", "running", "finalizing"],
+                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_AGENT_RUN_STATUSES),
+                ),
             ).fetchone()
             active_count = int(active["count"]) if isinstance(active, Mapping) else 0
             slots = max_concurrency - active_count
@@ -479,11 +502,21 @@ class TaskCloseReviewStore:
                 SELECT {_QUALIFIED_COLUMNS}
                 FROM task_close_reviews AS r
                 JOIN tasks AS t ON t.id = r.task_id
-                WHERE t.project_id = %s AND r.status = ANY(%s)
+                LEFT JOIN agent_runs AS a ON a.id = r.agent_run_id
+                WHERE t.project_id = %s
+                  AND (
+                      r.status = ANY(%s)
+                      OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                  )
                 ORDER BY r.created_at, r.id
                 LIMIT 1
                 """,  # nosec B608 - static column fragment
-                (project_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
+                (
+                    project_id,
+                    list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_AGENT_RUN_STATUSES),
+                ),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
 

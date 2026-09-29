@@ -332,8 +332,11 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
             has_attributable_section = True
             if _section_has_failure_detail(section):
                 return True, ""
-    if _has_ordered_pytest_failure(lines, test):
+    ordered_failure = _has_ordered_pytest_failure(lines, test)
+    if ordered_failure:
         return True, ""
+    if ordered_failure is False:
+        return False, _red_section_rejection(test, has_attributable_section)
     if not artifact_nodes:
         # Location-only shapes (RTK, --tb=short) carry no failure header, so an
         # unqualified frame symbol is attributable only through explicit node
@@ -360,13 +363,13 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
     return False, _red_section_rejection(test, has_attributable_section)
 
 
-def _has_ordered_pytest_failure(lines: list[str], test: AcceptanceTest) -> bool:
-    """Pair --tb=line failure locations with pytest's ordered node summaries."""
+def _has_ordered_pytest_failure(lines: list[str], test: AcceptanceTest) -> bool | None:
+    """Pair --tb=line locations with ordered summaries; None means no complete report."""
     failures = next(
         (index for index, line in enumerate(lines) if line.strip("= ") == "FAILURES"), None
     )
     if failures is None:
-        return False
+        return None
     summary = next(
         (
             index
@@ -376,7 +379,7 @@ def _has_ordered_pytest_failure(lines: list[str], test: AcceptanceTest) -> bool:
         None,
     )
     if summary is None:
-        return False
+        return None
     sections: list[str] = []
     start = failures + 1
     for index in range(start, summary):
