@@ -1349,10 +1349,15 @@ def test_takeover_fencing(
                         headers=boundary.grant_headers(),
                         json={"project_id": E2E_PROJECT_ID},
                     )
-                # Front-door mode: gdaemon answers for the drained backend, 503 once it
-                # refuses connections and 502 when it closes an accepted socket.
+                # A draining backend refuses with 503 shutdown_in_progress. In front-door
+                # mode gdaemon then answers for it: 503 once it refuses connections and
+                # 502 when it closes an accepted socket.
                 if refused.status_code == 503:
-                    assert refused.json()["backend"]["state"] == "down", refused.text
+                    body = refused.json()
+                    assert (
+                        body.get("code") == "shutdown_in_progress"
+                        or body.get("backend", {}).get("state") == "down"
+                    ), refused.text
                 elif refused.status_code == 502:
                     assert refused.json()["status"] == "bad_gateway", refused.text
                 else:
