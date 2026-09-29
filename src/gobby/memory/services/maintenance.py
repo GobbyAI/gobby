@@ -1,4 +1,4 @@
-"""Memory maintenance functions: stats, export, and finder helpers.
+"""Memory maintenance functions: stats and export.
 
 Extracted from manager.py as part of Strangler Fig decomposition (Wave 2).
 """
@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -171,116 +170,3 @@ def _append_metadata(lines: list[str], memory: Memory) -> None:
         lines.append(f"- **Accessed:** {memory.access_count} times")
 
     lines.append("")
-
-
-# ---------------------------------------------------------------------------
-# Finder helpers reused by memory dream.
-# ---------------------------------------------------------------------------
-
-# Patterns that indicate a memory is just describing code structure.
-# These memories can be re-derived by reading the codebase.
-_CODE_DERIVABLE_PATTERNS: list[re.Pattern[str]] = [
-    # "File X contains ...", "The file X has ..."
-    re.compile(
-        r"^(?:the\s+)?file\s+[`'\"]?[\w./-]+[`'\"]?\s+(?:contains?|has|defines?|exports?|includes?)",
-        re.IGNORECASE,
-    ),
-    # "Function/method/class X is defined in Y"
-    re.compile(
-        r"^(?:the\s+)?(?:function|method|class|module|variable|constant)\s+[`'\"]?\w+[`'\"]?\s+"
-        r"(?:is\s+)?(?:defined|located|found|declared)\s+in",
-        re.IGNORECASE,
-    ),
-    # "The directory X contains ..."
-    re.compile(
-        r"^(?:the\s+)?directory\s+[`'\"]?[\w./-]+[`'\"]?\s+(?:contains?|has|holds)",
-        re.IGNORECASE,
-    ),
-    # "X is imported from Y" / "import X from Y"
-    re.compile(
-        r"^(?:the\s+)?(?:import|from)\s+[`'\"]?[\w./-]+[`'\"]?",
-        re.IGNORECASE,
-    ),
-    # Bare file path (just a path, nothing else)
-    re.compile(r"^[`'\"]?[\w./-]+\.(?:py|ts|tsx|js|jsx|yaml|yml|json|toml|md|rs|go)[`'\"]?\s*$"),
-]
-
-# Maximum content length for code-derivable heuristic — longer memories
-# are more likely to contain substantive context beyond code structure.
-_CODE_DERIVABLE_MAX_LEN = 200
-
-
-def find_code_derivable_memories(
-    storage: LocalMemoryManager,
-    project_id: str | None = None,
-    limit: int = 500,
-) -> list[Memory]:
-    """Find memories whose content just describes code structure.
-
-    Uses regex heuristics to detect memories like "File X contains function Y"
-    that can be re-derived from the codebase. Only flags short memories
-    (< _CODE_DERIVABLE_MAX_LEN chars) to avoid false positives on longer
-    memories that may contain substantive design context.
-
-    Args:
-        storage: Local memory storage.
-        project_id: Optional project filter.
-        limit: Maximum memories to scan.
-
-    Returns:
-        List of code-derivable Memory objects.
-    """
-    memories = storage.list_memories(scope=_maintenance_scope(project_id), limit=limit)
-    results: list[Memory] = []
-
-    for memory in memories:
-        content = memory.content.strip()
-        if len(content) > _CODE_DERIVABLE_MAX_LEN:
-            continue
-        if any(pattern.match(content) for pattern in _CODE_DERIVABLE_PATTERNS):
-            results.append(memory)
-
-    return results
-
-
-def find_orphaned_memories(
-    db: HubDatabase,
-    min_age_days: int = 30,
-    project_id: str | None = None,
-    limit: int = 500,
-) -> list[Memory]:
-    """Find memories whose source session no longer exists.
-
-    Only flags orphaned memories that are also old (> min_age_days), since
-    a recently created memory whose session was cleaned up is still likely
-    valuable.
-
-    Args:
-        db: Database connection.
-        min_age_days: Only flag orphans older than this many days.
-        project_id: Optional project filter.
-        limit: Maximum results to return.
-
-    Returns:
-        List of orphaned Memory objects.
-    """
-    from gobby.storage.memories import Memory
-
-    cutoff = (datetime.now(UTC) - timedelta(days=min_age_days)).isoformat()
-
-    params: list[Any] = [cutoff]
-    project_clause = ""
-    if project_id:
-        project_clause = "AND ((m.project_id = %s AND m.is_global IS FALSE) OR m.is_global IS TRUE)"
-        params.append(project_id)
-    params.append(limit)
-
-    sql = (
-        f"SELECT m.* FROM memories m "  # nosec
-        "LEFT JOIN sessions s ON m.source_session_id = s.id "
-        "WHERE m.source_session_id IS NOT NULL AND s.id IS NULL "
-        f"AND m.created_at < %s {project_clause} ORDER BY m.created_at ASC LIMIT %s"
-    )
-    rows = db.fetchall(sql, tuple(params))
-
-    return [Memory.from_row(row) for row in rows]
