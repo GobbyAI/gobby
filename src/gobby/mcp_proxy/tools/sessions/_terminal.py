@@ -68,7 +68,9 @@ from gobby.sessions.handoff_records import (
 )
 from gobby.sessions.transcript_cursor import (
     TranscriptObservationError,
+    TurnSettledObserver,
     build_interrupt_observer,
+    build_turn_settled_observer,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import LocalProjectManager
@@ -116,6 +118,7 @@ __all__ = [
     "_resolve_session_for_compaction",
     "_authorize_send_keys_target",
     "_send_terminal_compaction_command",
+    "_turn_settled_observer",
     "asyncio",
     "LocalAgentRunManager",
     "register_terminal_tools",
@@ -165,6 +168,22 @@ def _interrupt_observer(
         )
         return None, str(exc)
     return observer, None
+
+
+def _turn_settled_observer(source: Any, session: Any) -> TurnSettledObserver | None:
+    """Turn-state observer for CLIs that record turn boundaries; ``None`` interrupts first."""
+    session_id = getattr(session, "id", None)
+    try:
+        return build_turn_settled_observer(
+            source if isinstance(source, str) else None,
+            getattr(session, "transcript_path", None),
+            session_id=session_id,
+        )
+    except TranscriptObservationError as exc:
+        logger.warning(
+            "Cannot observe %s turn state for handoff on session %s: %s", source, session_id, exc
+        )
+        return None
 
 
 async def _send_terminal_compaction_command(

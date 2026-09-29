@@ -99,6 +99,8 @@ def _patches(predecessor: Any, pane: _Pane, send_command: Any) -> list[Any]:
         # Grok fails closed without a transcript to observe (#22358); the sender is
         # faked here, so the observer is irrelevant to acknowledgment semantics.
         patch.object(_terminal_clear, "_interrupt_observer", return_value=(None, None)),
+        # The fixture's fake parent pid owns no terminal; seat departure has its own tests.
+        patch.object(_terminal_clear, "recorded_seat_left", return_value=False),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
     ]
 

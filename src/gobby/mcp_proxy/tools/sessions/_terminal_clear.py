@@ -18,6 +18,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_pane_io,
     _resolve_session_for_compaction,
     _send_terminal_compaction_command,
+    _turn_settled_observer,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     NO_TERMINAL_TARGET_ERROR_CODE,
@@ -532,6 +533,9 @@ async def deliver_staged_clear_session(
             mark_continuation_pending=lambda: True,
             clear_continuation_pending=lambda: True,
             observe_interrupt=observe_interrupt,
+            # Without it a turn that ends under the first press gets pressed again,
+            # and a second Ctrl+C on an idle Codex composer quits the CLI.
+            turn_settled=_turn_settled_observer(source, session),
             composer_read=composer_reader(db, cli_source),
             seat_left=lambda: recorded_seat_left(session),
         )

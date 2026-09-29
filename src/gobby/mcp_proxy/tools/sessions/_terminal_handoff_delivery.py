@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _interrupt_observer,
     _resolve_pane_io,
     _send_terminal_compaction_command,
+    _turn_settled_observer,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _CLI_COMPACT_COMMANDS,
@@ -36,8 +37,6 @@ from gobby.sessions.transcript_cursor import (
     CodexRolloutCursor,
     TranscriptObservationError,
     TranscriptTailCursor,
-    TurnSettledObserver,
-    build_turn_settled_observer,
 )
 from gobby.terminal_ownership import recorded_seat_left
 
@@ -142,20 +141,6 @@ async def _wait_for_compact_boundary(
         except TimeoutError:
             pass
     return None
-
-
-def _turn_settled_observer(source: str | None, session: Any) -> TurnSettledObserver | None:
-    """Turn-state observer for CLIs that record turn boundaries; ``None`` interrupts first."""
-    session_id = getattr(session, "id", None)
-    try:
-        return build_turn_settled_observer(
-            source, getattr(session, "transcript_path", None), session_id=session_id
-        )
-    except TranscriptObservationError as exc:
-        logger.warning(
-            "Cannot observe %s turn state for handoff on session %s: %s", source, session_id, exc
-        )
-        return None
 
 
 async def deliver_staged_compact_handoff(

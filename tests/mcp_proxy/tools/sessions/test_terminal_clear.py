@@ -206,6 +206,35 @@ async def test_clear_delivery_failure_restores_staged_attempt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_clear_delivery_waits_on_the_turn_settled_observer() -> None:
+    # gobby#14556 13:45: a clear delivered without it pressed Ctrl+C on the idle
+    # Codex composer after the turn ended, and the second press quit the CLI.
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
+    send_command = AsyncMock(return_value=(False, "delivery failed", False, None))
+
+    def turn_settled() -> bool:
+        return True
+
+    patches = [
+        p
+        for p in _base_patches(session, pane, restore_failed_attempt=MagicMock(return_value=True))
+        if p.attribute not in {"_send_terminal_compaction_command"}
+    ]
+    patches.extend(
+        [
+            patch.object(_terminal_clear, "_turn_settled_observer", return_value=turn_settled),
+            patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+        ]
+    )
+    await _run_clear(patches)
+
+    await_args = send_command.await_args
+    assert await_args is not None
+    assert await_args.kwargs["turn_settled"] is turn_settled
+
+
+@pytest.mark.asyncio
 async def test_clear_fails_closed_when_the_interrupt_cannot_be_observed() -> None:
     session = _terminal_session(source="claude")
     pane = _Pane("> ")
