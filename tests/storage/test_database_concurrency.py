@@ -29,6 +29,10 @@ def test_shared_database_concurrency_vectors() -> None:
     )
     contract = json.loads(contract_path.read_text())
     assert contract["version"] == 1
+    native_shares = {
+        case["expected"]["native_pool_max_size"] for case in contract["cases"] if "expected" in case
+    }
+    assert native_shares == {0, 6, 8}
 
     for case in contract["cases"]:
         config = DatabaseConcurrencyConfig.model_validate(case["config"])
