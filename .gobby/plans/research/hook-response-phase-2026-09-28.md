@@ -76,9 +76,9 @@ residual (4.318 s). Same arithmetic as the stalled cluster, but a normal hook ha
 Same 2026-09-28 timeline, `errors.log`:
 
 - **19:56:09** — lines 10402–10404, a second response-dominated no-fanout cluster (three
-  hooks, three sources): codex PreToolUse total 5.378 `response` 4.951; claude
+  hooks, two sources): codex PreToolUse total 5.378 `response` 4.951; claude
   message-display total 5.222 `response` 4.523; codex PreToolUse total 5.823 `response`
-  4.255. Same shape: tiny metered phases, large residual.
+  4.255. Same shape: metered phases (0.43 s, 0.70 s, 1.57 s) small next to the residual.
 - **20:11:39–20:11:40** — lines 10420–10424, the contrasting cluster: dominant phase was
   `rule_evaluation` (5.597 s) or `session_resolution` (2.56 s), with `response` small
   (0.126–2.56 s). This is the workers/rule-engine shape, distinct from the 20:23:49
@@ -105,8 +105,11 @@ the running log level, so there is no per-hook baseline beyond the ≥5 s warnin
    the max phase and logs it when `total_seconds >= 5.0`.
 
 Because `response` is a residual, a slow-hook warning naming it means "some unmetered
-wall time", not "response assembly is slow". The metered phases account for < 0.3 s of a
-5.4 s hook in every cluster sample, leaving ~5 s of loop time outside the phase meters.
+wall time", not "response assembly is slow". In each cluster sample the metered phases
+account for `total − response` — 1.105 s of 5.423 s (sample 1), 0.925 s of 5.606 s
+(sample 2), 2.011 s of 5.363 s (sample 3) — and the matching residual (4.318 s, 4.681 s,
+3.352 s) is the unmetered loop time outside the phase meters. That unmetered share is
+62–84% of each hook, far more than the metered phases explain.
 
 ## Corroborating loop evidence (same file, same window)
 
@@ -133,9 +136,10 @@ wall time", not "response assembly is slow". The metered phases account for < 0.
 3. **Slow response assembly (hold-open / receipt persistence)** — not supported.
    `persistence_broadcast` ≤ 0.167 s; no hold-open interaction was created (no web-chat
    session). The residual has no metered owner.
-4. **Daemon-wide event-loop stall** — favored. Three independent sessions, three sources,
-   same second, near-zero admission/queue, large unmetered residual, bracketed by a
-   daemon log-spine gap and concurrent multi-second loop work (terminal wake dispatch).
+4. **Daemon-wide event-loop stall** — favored. Three independent sessions across two
+   sources (codex, claude), same second, near-zero admission/queue, large unmetered
+   residual, bracketed by a daemon log-spine gap and concurrent multi-second loop work
+   (terminal wake dispatch).
    A per-session or per-worker cause cannot produce simultaneity across three sessions.
 
 ## Measurement limit
