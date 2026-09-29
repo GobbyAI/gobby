@@ -483,3 +483,19 @@ async def test_summary_prompt_turn_formatting_runs_off_the_event_loop_thread(
     assert len(parser_threads) == 2
     assert threading.get_ident() not in parser_threads
     assert context["last_messages"] == ""
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        ({"status": {"state": "ok"}, "output": "done"}, None),
+        ({"status": {"state": "failed"}, "is_error": True, "output": "boom"}, "boom"),
+        ({"status": {"state": "failed"}, "is_error": True}, "failed"),
+        ({"status": "error", "output": "bad"}, "bad"),
+    ],
+)
+def test_result_error_accepts_structured_status(
+    result: dict[str, Any], expected: str | None
+) -> None:
+    # A Codex tool result with a dict status aborted the whole session summary.
+    assert analyzer_turns_module._result_error(result) == expected

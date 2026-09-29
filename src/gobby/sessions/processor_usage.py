@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from datetime import UTC, datetime
 
 import psycopg
@@ -11,6 +13,7 @@ from gobby.llm.context_windows import reconcile_model_context, reconcile_observe
 from gobby.sessions.context_usage import grok_epoch_max_occupancy, normalize_context_usage_source
 from gobby.sessions.message_stats import TURN_BOUNDARY_CONTENT_TYPE
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
+from gobby.sessions.transcripts import get_parser
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import (
@@ -21,6 +24,9 @@ from gobby.storage.token_events import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Enough transcript tail to hold the latest assistant turn's usage record.
+TAIL_OCCUPANCY_BYTES = 512 * 1024
 
 _OCCUPANCY_PAYLOAD_KEYS = (
     "context_used_tokens",
@@ -40,6 +46,8 @@ class ProcessorUsageMixin:
         self: ProcessorHost,
         session_id: str,
         messages: list[ParsedMessage],
+        *,
+        publish_occupancy: bool = True,
     ) -> None:
         if not self.session_manager:
             return
@@ -210,6 +218,11 @@ class ProcessorUsageMixin:
                     )
                 )
 
+        if not publish_occupancy:
+            # A catch-up batch short of EOF ends on a historical message; keep the
+            # stored (tail-published) occupancy instead of regressing it.
+            latest_context_snapshot = None
+
         if not saw_insert:
             session_totals = running_totals
             if saw_token_usage:
@@ -308,3 +321,75 @@ class ProcessorUsageMixin:
                 for key in _OCCUPANCY_PAYLOAD_KEYS:
                     del payload[key]
             await self.websocket_server.broadcast_session_usage_updated(payload)
+
+    async def _publish_tail_occupancy(
+        self: ProcessorHost, session_id: str, transcript_path: str
+    ) -> None:
+        """Publish the latest occupancy found in the transcript tail.
+
+        Runs while a catch-up has history left to ingest, so the context-pressure
+        guard reads the live context size rather than a value from before the
+        catch-up began. Token events and totals stay with the ordered history pass.
+        """
+        source = self._session_sources.get(session_id)
+        normalized_source = normalize_context_usage_source(source)
+        if self.session_manager is None or source is None or normalized_source is None:
+            return
+        try:
+            lines = await asyncio.to_thread(
+                _read_complete_tail_lines, transcript_path, TAIL_OCCUPANCY_BYTES
+            )
+            session = await self._run_db(self.session_manager.get, session_id)
+        except (OSError, psycopg.Error):
+            logger.warning("Tail occupancy unavailable for session %s", session_id, exc_info=True)
+            return
+        if session is None or not lines:
+            return
+        parser = get_parser(source, session_id=session_id, transcript_path=transcript_path)
+        try:
+            records = await asyncio.to_thread(parser.parse_lines, lines)
+        except ValueError:
+            logger.warning("Tail occupancy parse failed for session %s", session_id, exc_info=True)
+            return
+        session_window = self._coerce_context_window(getattr(session, "context_window", None))
+        session_model = getattr(session, "model", None)
+        for msg in reversed(records):
+            if not isinstance(msg, ParsedMessage):
+                continue
+            window = self._message_context_window(msg) or session_window
+            model = msg.model if isinstance(msg.model, str) and msg.model else session_model
+            snapshot: ContextUsageSnapshot | None = None
+            if msg.context_used_tokens is not None:
+                snapshot = ContextUsageSnapshot.from_reported_occupancy(
+                    source=normalized_source,
+                    context_window=window,
+                    context_used_tokens=msg.context_used_tokens,
+                    model=model,
+                    epoch_reset=msg.context_epoch_reset,
+                )
+            elif (
+                msg.usage is not None
+                and self._usage_has_tokens(msg)
+                and msg.content_type != TURN_BOUNDARY_CONTENT_TYPE
+                and source != "droid"
+            ):
+                snapshot = self._snapshot_from_token_usage(
+                    source=source, context_window=window, usage=msg.usage, model=model
+                )
+            if snapshot is not None and snapshot.context_used_tokens is not None:
+                await self._run_db(self.session_manager.update_context_usage, session_id, snapshot)
+                return
+
+
+def _read_complete_tail_lines(path: str, limit: int) -> list[str]:
+    """Return the complete lines within the last ``limit`` bytes of ``path``."""
+    with open(path, "rb") as handle:
+        size = handle.seek(0, os.SEEK_END)
+        start = max(0, size - limit)
+        handle.seek(start)
+        data = handle.read()
+    # The final element is unterminated; the first began mid-line unless at byte 0.
+    complete = data.split(b"\n")[:-1]
+    if start > 0:
+        complete = complete[1:]
+    return [line.decode("utf-8", errors="replace") for line in complete]

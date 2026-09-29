@@ -86,6 +86,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
     Thread-safe: All methods are stateless and can be called concurrently.
     """
 
+    # Stateless across lines: the empty base snapshot is complete, so a sidecar
+    # whose prefix still matches resumes after the transcript grows (a daemon
+    # restart while the session keeps writing).
+    supports_incremental_state = True
+
     # Claude Code session-metadata envelope records. These are not conversation
     # content (auto titles, prompt-queue ops, hook traces, mode/permission
     # flags, PR/agent/worktree coordination) and were silently dropped before
