@@ -219,6 +219,7 @@ async def run_adapter_hook(
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
         started_at = time.perf_counter()
+        started_cpu = time.thread_time()
         # This scope is the boundary of one logical delivery. Rule evaluation
         # hops to the workflow runtime thread and offloads to the rule-engine
         # executor; both inherit this context, so they share this delivery's
@@ -237,6 +238,9 @@ async def run_adapter_hook(
             finally:
                 _current_session_admission_release.reset(release_token)
                 finished_at = time.perf_counter()
+                # CPU this thread burned; far below adapter_worker wall time means the
+                # worker waited (locks, I/O, or not being scheduled), not code cost (#23063).
+                timings.add("adapter_worker_cpu", time.thread_time() - started_cpu)
 
     def durations() -> tuple[float, float, float]:
         """Return admission wait, executor queue, and execution seconds so far."""

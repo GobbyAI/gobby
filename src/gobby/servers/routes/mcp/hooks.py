@@ -378,13 +378,15 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             if envelope_id and not await timed_hop(
                 "envelope_claim", claim_envelope_processing, envelope_id
             ):
-                stored_response = await asyncio.to_thread(envelope_terminal_response, envelope_id)
+                stored_response = await timed_hop(
+                    "envelope_claim", envelope_terminal_response, envelope_id
+                )
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                marker = await asyncio.to_thread(read_envelope_marker, envelope_id)
-                if marker is None and await asyncio.to_thread(
-                    claim_envelope_processing, envelope_id
+                marker = await timed_hop("envelope_claim", read_envelope_marker, envelope_id)
+                if marker is None and await timed_hop(
+                    "envelope_claim", claim_envelope_processing, envelope_id
                 ):
                     logger.info("Reclaimed expired hook envelope marker %s", envelope_id)
                 elif not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
@@ -394,9 +396,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         status_code=409,
                         content={"status": "malformed_marker", "reason": reason},
                     )
-                elif await asyncio.to_thread(
-                    clear_stale_envelope_processing_marker, envelope_id
-                ) and await asyncio.to_thread(claim_envelope_processing, envelope_id):
+                elif await timed_hop(
+                    "envelope_claim", clear_stale_envelope_processing_marker, envelope_id
+                ) and await timed_hop("envelope_claim", claim_envelope_processing, envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
                     status = marker["status"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -175,3 +176,48 @@ def test_claim_release_reports_executor_queue_apart_from_work(
     # The worker finished, so the loop's delay in resuming the request is recorded too.
     assert breakdown["adapter_worker"] > 0
     assert "adapter_resume" in breakdown
+
+
+def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
+    session_storage: SessionManager,
+    processed_dir: Path,
+    renewal_tasks: list[asyncio.Task[None]],
+) -> None:
+    """A duplicate's replay and marker lookups land in envelope_claim, not `response` (#23063)."""
+    server = _server(session_storage)
+    lookup_seconds = 0.05
+
+    def slow_terminal_response(envelope_id: str) -> None:
+        time.sleep(lookup_seconds)
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        adapter = MagicMock()
+        adapter.handle_native.return_value = {"continue": True}
+        adapter_cls.return_value = adapter
+        first = client.post(
+            "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
+        )
+        with (
+            patch.object(hooks_route, "envelope_terminal_response", slow_terminal_response),
+            patch.object(hooks_route, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+            patch.object(hooks_route.logger, "warning") as warning,
+        ):
+            duplicate = client.post(
+                "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
+            )
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 409
+    (slow,) = [
+        entry
+        for entry in warning.call_args_list
+        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
+    ]
+    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
+    assert breakdown["envelope_claim_work"] >= lookup_seconds
+    assert breakdown["envelope_claim"] >= (
+        breakdown["envelope_claim_queue"] + breakdown["envelope_claim_work"]
+    )

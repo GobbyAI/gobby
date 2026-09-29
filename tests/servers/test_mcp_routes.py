@@ -3520,6 +3520,7 @@ class TestHooksEndpoints:
         assert set(extra["rule_evaluation_breakdown_seconds"]) == {
             "request_body",
             "adapter_worker",
+            "adapter_worker_cpu",
             "adapter_resume",
             "persistence_consume_receipts",
             "persistence_consume_receipts_queue",
@@ -3955,6 +3956,25 @@ class TestHooksEndpoints:
         assert peak_workers <= worker_limit
         assert active_workers == 0
         assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_adapter_worker_cpu_separates_waiting_from_work(self) -> None:
+        """A worker that only waits reports its wall time with almost no CPU (#23063)."""
+        from gobby.hooks.adapter_execution import run_adapter_hook
+        from gobby.hooks.phase_timing import HookPhaseTimings
+
+        wait_seconds = 0.2
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = lambda *_args: time.sleep(wait_seconds) or {}
+        timings = HookPhaseTimings()
+
+        await run_adapter_hook(
+            adapter, {}, MagicMock(), timeout_seconds=None, phase_timings=timings
+        )
+
+        breakdown = timings.breakdown()
+        assert breakdown["adapter_worker"] >= wait_seconds
+        assert breakdown["adapter_worker_cpu"] < wait_seconds / 4
 
     @pytest.mark.asyncio
     async def test_adapter_executor_runs_sixteen_sessions_concurrently(self) -> None:
