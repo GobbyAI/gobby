@@ -76,7 +76,7 @@
 36 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 37 |│                                                                                                                      │|
 37 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-38 |└─────────────────────────────────────────────────────────────────────────────────────────────────────────  · gclient ┘|
-38 : accent/panel_bg*106 accent/panel_bg+b*13 accent/panel_bg*1
+38 |└───────────────────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
+38 : accent/panel_bg*110 accent/panel_bg+b*9 accent/panel_bg*1
 39 | ⍾ 1 needs you │ 1 idle · unrestricted                                                     63% · 12,345 │ prefix ctrl+b |
 39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*36 text/surface0*53 subtext0/surface0*28 text/surface0*1

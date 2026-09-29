@@ -76,7 +76,7 @@
 36 : text/panel_bg*34 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 37 |                                                           ││                                                          │|
 37 : text/panel_bg*34 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
-38 |                                  ────────────  · gclient ┘└─────────────────────────────────────────────  · gclient ┘|
-38 : text/panel_bg*34 yellow/panel_bg*12 overlay0/panel_bg*13 yellow/panel_bg*1 accent/panel_bg*46 accent/panel_bg+b*13 accent/panel_bg*1
+38 |                                  ──────────────── gclient ┘└───────────────────────────────────────────────── gclient ┘|
+38 : text/panel_bg*34 yellow/panel_bg*16 overlay0/panel_bg*9 yellow/panel_bg*1 accent/panel_bg*50 accent/panel_bg+b*9 accent/panel_bg*1
 39 | ⍾ 1 needs you                                                                                 prefix ctrl+b │ navigate |
 39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*12 text/surface0*81 subtext0/surface0*16 text/surface0*9

@@ -215,20 +215,21 @@ unfocused panes carry no condition word. The focused title is bold in the
 accent, a seat that needs you reads in the warning hue, and a read-only or
 uncertain focused pane is dimmed. The task title stays on the Agents row.
 Over-long pane titles share the Agents ticker. The bottom-left corner is
-empty. The bottom-right corner reads the pane's sandbox mark, then `tmux` for
-a tmux pane, then its address, joined by ` · `: `<mark> · 0:0:1:2` for a
-workspace pane, `<mark> · tmux · %16` for a tmux pane, or the backend alone
+empty. The bottom-right corner reads the sandbox lock on an SRT pane, then
+`tmux` for a tmux pane, then its address, joined by ` · `: `0:0:1:2` for a
+workspace pane, `tmux · %16` for a tmux pane, or the backend alone
 (`gclient`, `tmux`) until the address is known (see
-[Attach and control](#attach-and-control)). The one-cell mark is a closed lock
-(`` U+F023) when Gobby launched the pane under its SRT sandbox, meaning
-the agent run records the sandbox as enforced or the managed session's launch
-contract enabled it, and an open lock (`` U+F09C) on every other pane: a
-seat you start yourself, a bare shell, or a pane with no agent row. A
-provider's own sandbox settings never lock a pane. The marks come from Nerd
-Font symbols, which Ghostty's default font includes; set `nerd_glyphs = false`
-under `[ui]` in `~/.gobby/client/prefs.toml` to draw `sbx` and `open`
-instead. Add `sandbox` to `[status] left` or `right` to name the focused
-pane's state in words: `sandboxed` or `unrestricted`. With `pane gaps` off, a pane above
+[Attach and control](#attach-and-control)). A red closed lock
+(`` U+F023, in the destructive hue) leads the address only when Gobby
+launched the pane under its SRT sandbox, meaning the agent run records the
+sandbox as enforced or the managed session's launch contract enabled it.
+Every other pane (a seat you start yourself, a bare shell, or a pane with no
+agent row) shows no mark, so the lock's presence carries the state in any
+colour setting. A provider's own sandbox settings never lock a pane. The lock
+is a Nerd Font symbol, which Ghostty's default font includes; set
+`nerd_glyphs = false` under `[ui]` in `~/.gobby/client/prefs.toml` to draw
+`sbx` instead. Add `sandbox` to `[status] left` or `right` to name the
+focused pane's state in words: `sandboxed` or `unrestricted`. With `pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
 address moves to the top-right of its own title row, unless that would leave the
 title fewer than four cells. A pane that has not yet received
