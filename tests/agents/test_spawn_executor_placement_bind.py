@@ -1337,6 +1337,36 @@ async def test_owner_retry_survives_cancellation_until_shutdown(
         release(row.id)
 
 
+async def test_cancelled_release_still_runs_every_deferred_step_once() -> None:
+    terminal_id = mint_terminal_id()
+    gate = asyncio.Event()
+    entered = asyncio.Event()
+    first = _Compensation()
+    second = _Compensation()
+
+    async def blocking_step() -> None:
+        entered.set()
+        await gate.wait()
+        await first()
+
+    assert in_doubt_spawns.claim(terminal_id)
+    assert in_doubt_spawns.defer(terminal_id, blocking_step)
+    assert in_doubt_spawns.defer(terminal_id, second)
+    releasing = asyncio.create_task(
+        spawn_in_doubt_owner.release_claim(terminal_id, run_deferred=True)
+    )
+    await entered.wait()
+    releasing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await releasing
+    gate.set()
+    for _ in range(5):
+        await asyncio.sleep(0)
+
+    assert (first.runs, second.runs) == (1, 1)
+    assert not in_doubt_spawns.holds(terminal_id)
+
+
 INDETERMINATE = [
     "create-commits-then-raises",
     "create-rolls-back",

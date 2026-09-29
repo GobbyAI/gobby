@@ -42,6 +42,7 @@ from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
 from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.host_reap import reap_recorded_group_proven_dead
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.native_runtime import HostEpochMismatch, classify_native_spawn_failure
 from gobby.terminals.runtime import (
@@ -522,7 +523,12 @@ async def _stale_pending_absent(runtime: TerminalRuntime, row: Terminal) -> bool
                 host_epoch=row.host_epoch,
             )
         find = getattr(runtime, "find_host_terminal", None)
-        return callable(find) and await find(row.id, spawn_key) is None
+        if not callable(find) or await find(row.id, spawn_key) is not None:
+            return False
+        # A strict host miss still needs the recorded group itself dead.
+        return await asyncio.to_thread(
+            reap_recorded_group_proven_dead, row.process, grace_seconds=0.05
+        )
     await kill_spawn_key(runtime, spawn_key, pending=row)
     return not await backend_session_present(runtime, replace(row, session_name=spawn_key))
 

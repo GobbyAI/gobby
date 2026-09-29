@@ -20,7 +20,7 @@ from typing import Any, Literal
 
 from gobby.storage.terminal_settlement import OrphanIdentity
 from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals.in_doubt import in_doubt_spawns
+from gobby.terminals.in_doubt import DeferredStep, in_doubt_spawns
 from gobby.terminals.runtime import PreparedSpawn, TerminalRuntime
 
 logger = logging.getLogger(__name__)
@@ -439,10 +439,17 @@ async def confirm_exited(attempt: InDoubtAttempt) -> bool:
 
 
 async def release_claim(terminal_id: str, *, run_deferred: bool) -> None:
-    """Release after a confirmed settlement and run the returned steps at most once."""
+    """Release after a confirmed settlement and run the returned steps exactly once.
+
+    The released steps have no other owner, so they run shielded: cancelling the
+    caller mid-step neither abandons that step nor skips the rest.
+    """
     steps = in_doubt_spawns.release(terminal_id)
-    if not run_deferred:
-        return
+    if run_deferred and steps:
+        await _shielded(_run_deferred(terminal_id, steps))
+
+
+async def _run_deferred(terminal_id: str, steps: list[DeferredStep]) -> None:
     for step in steps:
         try:
             await step()
