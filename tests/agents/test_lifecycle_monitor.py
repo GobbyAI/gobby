@@ -185,20 +185,37 @@ def _fake_terminal_services(
     )
 
 
-def _runtime_of(monitor: AgentLifecycleMonitor) -> LifecycleRuntime:
-    return cast(LifecycleRuntime, monitor._terminal_services.registry.resolve("tmux"))
+def _runtime_of(monitor: AgentLifecycleMonitor, backend: str = "tmux") -> LifecycleRuntime:
+    return cast(LifecycleRuntime, monitor._terminal_services.registry.resolve(backend))
+
+
+def _native_host_for(monitor: AgentLifecycleMonitor, run: AgentRun) -> tuple[str, str]:
+    """Serve ``run``'s native row from a recording host on its epoch.
+
+    Returns the row's ``(host_terminal_id, host_epoch)``.
+    """
+    terminal = monitor._terminal_services.manager.get(run.terminal_id or "")
+    assert terminal is not None
+    assert terminal.host_epoch is not None
+    host_terminal_id = (terminal.locator or {})["host_terminal_id"]
+    assert isinstance(host_terminal_id, str)
+    monitor._terminal_services.registry.register(
+        LifecycleRuntime(backend="native", host_epoch=terminal.host_epoch)
+    )
+    return host_terminal_id, terminal.host_epoch
 
 
 @contextmanager
 def _pane_text(
     monitor: AgentLifecycleMonitor,
     text: str | BaseException | list[str | BaseException] | None,
+    backend: str = "tmux",
 ) -> Iterator[LifecycleRuntime]:
     """Scope what the monitor's snapshots return (or raise) to a block.
 
     A list is consumed one snapshot at a time, like an AsyncMock side_effect.
     """
-    runtime = _runtime_of(monitor)
+    runtime = _runtime_of(monitor, backend)
     previous = (runtime.snapshot_text, runtime.snapshot_error, runtime.snapshot_effects)
     if isinstance(text, BaseException):
         runtime.snapshot_error = text
@@ -933,6 +950,7 @@ def _make_terminal_run(
     requested_reasoning_effort: str | None = None,
     task_id: str | None = None,
     provider: str = "claude",
+    backend: str = "tmux",
 ) -> AgentRun:
     """Helper to create a running terminal-mode agent in the DB."""
     run = agent_run_manager.create(
@@ -960,6 +978,7 @@ def _make_terminal_run(
     assert stored_run is not None
     make_live_terminal(
         stored_run,
+        backend,
         db=agent_run_manager.db,
         session_name=terminal_id,
     )
@@ -1565,17 +1584,20 @@ async def test_reconcile_pending_termination_captures_kills_and_terminalizes(
         sample_session,
         run_id=_rid("run-reconcile-termination"),
         terminal_id="gobby-reconcile-termination",
+        backend="native",
     )
+    host_terminal_id, host_epoch = _native_host_for(monitor, run)
     agent_run_manager.record_termination_intent(
         run.id,
         action="timeout",
         reason="reconciled timeout",
     )
-    with _pane_text(monitor, "complete pane history") as runtime:
+    with _pane_text(monitor, "complete pane history", backend="native") as runtime:
         reconciled = await monitor.reconcile_pending_terminations()
 
     assert reconciled == 1
-    assert runtime.killed == ["gobby-reconcile-termination"]
+    assert runtime.terminated_host_ids == [(host_terminal_id, host_epoch)]
+    assert runtime.killed_host_ids == [host_terminal_id]
     updated = agent_run_manager.get(run.id)
     assert updated is not None
     assert updated.status == "timeout"
@@ -5918,16 +5940,18 @@ async def test_reconcile_still_warns_on_a_retryable_termination_failure(
         sample_session,
         run_id=_rid("run-kill-failed"),
         terminal_id="gobby-kill-failed",
+        backend="native",
     )
+    _native_host_for(monitor, run)
     agent_run_manager.record_termination_intent(
         run.id,
         action="timeout",
         reason="reconciled timeout",
     )
 
-    _runtime_of(monitor).sticky = True
+    _runtime_of(monitor, "native").sticky = True
     with (
-        _pane_text(monitor, "pane"),
+        _pane_text(monitor, "pane", backend="native"),
         caplog.at_level(logging.INFO, logger="gobby.agents.lifecycle_reconciliation"),
     ):
         reconciled = await monitor.reconcile_pending_terminations()

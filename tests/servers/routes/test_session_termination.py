@@ -18,13 +18,15 @@ pytestmark = pytest.mark.unit
 
 def test_expire_session_marks_tracked_terminal_exited_before_reply() -> None:
     session_id = "session-1"
-    terminal = SimpleNamespace(id="terminal-1", backend="tmux")
+    terminal = SimpleNamespace(id="terminal-1", backend="tmux", state="live")
     session = SimpleNamespace(id=session_id, status="active", terminal_context=None)
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = terminal
+    terminal_manager.get.return_value = terminal
     terminal_manager.mark_exited.return_value = terminal
     runtime = MagicMock()
     runtime.terminate = AsyncMock()
+    runtime.session_present = AsyncMock(return_value=False)
     runtime_registry = MagicMock()
     runtime_registry.resolve.return_value = runtime
     server = MagicMock()
@@ -58,7 +60,7 @@ def test_expire_session_marks_tracked_terminal_exited_before_reply() -> None:
 
 def test_expire_session_does_not_fall_back_after_tracked_terminal_failure() -> None:
     session_id = "session-1"
-    terminal = SimpleNamespace(id="terminal-1", backend="tmux")
+    terminal = SimpleNamespace(id="terminal-1", backend="tmux", state="live")
     session = SimpleNamespace(
         id=session_id,
         status="active",
@@ -66,6 +68,7 @@ def test_expire_session_does_not_fall_back_after_tracked_terminal_failure() -> N
     )
     terminal_manager = MagicMock()
     terminal_manager.get_live_for_session.return_value = terminal
+    terminal_manager.get.return_value = terminal
     runtime = MagicMock()
     runtime.terminate = AsyncMock(side_effect=RuntimeError("tmux kill failed"))
     runtime_registry = MagicMock()

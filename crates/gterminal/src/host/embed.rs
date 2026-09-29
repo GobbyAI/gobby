@@ -140,6 +140,8 @@ async fn attach_tmux(
             reserve_generation: 0,
             observer_bind: ObserverBind::None,
             commit_deadline: None,
+            killing: false,
+            kill_unproven: false,
             #[cfg(feature = "vt-engine")]
             child: None,
             #[cfg(feature = "vt-engine")]

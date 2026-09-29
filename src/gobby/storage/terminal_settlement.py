@@ -22,6 +22,8 @@ from gobby.utils.datetime import utc_now
 UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES = 256
 UNRESOLVED_WRITE_MAX_ENTRIES = 32
 UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
+# Process keys owned by the host that listed the terminal, replaced as a set.
+HOST_PROCESS_KEYS = ("host_terminal_id", "pgid", "start_time")
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
@@ -270,6 +272,70 @@ class TerminalSettlementMixin:
             expected=("live", "orphaned"),
             new_state="exited",
         )
+
+    def mark_exited_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        """CAS live or orphaned to exited only while the captured attempt owns the row."""
+        return self._cas(
+            terminal_id,
+            expected=("live", "orphaned"),
+            new_state="exited",
+            predicate_sql="""
+                AND attempt_generation = %s
+                AND attempt_started_at = %s
+            """,
+            predicate_params=(attempt_generation, attempt_started_at),
+        )
+
+    def record_orphan_identity(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        locator: Mapping[str, object],
+        locator_key: str,
+        host_epoch: str,
+        process: Mapping[str, object] | None,
+    ) -> Terminal | None:
+        """Record the current host identity of an orphan the host still lists.
+
+        ``locator`` must already be the normalized native locator. The captured
+        attempt pair guards against a row that moved on since it was reread.
+        The prior host's process keys are dropped first, so a listing without a
+        pgid cannot inherit a stale group as kill proof.
+        """
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET locator = %s,
+                locator_key = %s,
+                host_epoch = %s,
+                process = (COALESCE(process, '{}'::jsonb) - %s::text[]) || %s,
+                updated_at = now()
+            WHERE id = %s
+              AND state = 'orphaned'
+              AND attempt_generation = %s
+              AND attempt_started_at = %s
+            RETURNING *
+            """,
+            (
+                Jsonb(dict(locator)),
+                locator_key,
+                host_epoch,
+                list(HOST_PROCESS_KEYS),
+                Jsonb(dict(process or {})),
+                str(UUID(terminal_id)),
+                attempt_generation,
+                attempt_started_at,
+            ),
+        )
+        return _terminal(row)
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None:
         """CAS live to orphaned after native host-epoch or host-crash loss."""

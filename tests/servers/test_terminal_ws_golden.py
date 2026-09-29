@@ -189,6 +189,9 @@ class _GoldenRuntime:
     async def terminate(self, _row: object, _grace_seconds: float) -> None:
         return None
 
+    async def session_present(self, _row: object) -> bool:
+        return False
+
     async def resize(self, _row: object, _rows: int, _cols: int) -> None:
         return None
 

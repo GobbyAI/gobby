@@ -414,7 +414,7 @@ async fn dispatch(
         "release_observer" => state.release_observer(&request.extra).await,
         "spawn" => state.spawn(conn_id, &request.extra).await,
         "spawn_commit" => state.spawn_commit(&request.extra).await,
-        "kill" => state.kill(&request.extra).await,
+        "kill" => state.kill(&request.extra, request.grace_ms).await,
         "resize" => state.resize(&request.extra).await,
         "write" => state.write(&request.extra).await,
         "write_batch" => state.write_batch(&request.extra).await,

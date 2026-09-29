@@ -26,6 +26,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter, observe_histogram
+from gobby.terminals.in_doubt import in_doubt_spawns
 
 logger = logging.getLogger(__name__)
 
@@ -315,6 +316,8 @@ class LifecycleReconciliation:
         stale = manager.list_stale_pending(self._spawn_in_doubt_seconds)
         reaped = 0
         for row in stale:
+            if in_doubt_spawns.holds(row.id):
+                continue
             failed = manager.fail_pending(row.id)
             if failed is not None:
                 reaped += 1
