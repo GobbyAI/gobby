@@ -620,3 +620,170 @@ uv run gobby plans validate .gobby/plans/gcore-async-postgres.md -p /Users/josh/
 The Rust DB tests need `GOBBY_SCHEMA_TEST_DATABASE_URL` set to the
 `gobby_test` hub; without it they skip, and a skip is not a pass for 1.2 or
 P2 close evidence.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Native pool share in the shared sizing contract
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: Both resolvers report `native_pool_max_size = min(8,
+    pool_budget - pool_max_size)` and agree on every vector. test: `crates/gcore/src/database_concurrency.rs::shared_sizing_vectors_conform`.
+
+    1.1.2: The Python resolver matches the same vectors, including the 0 and 6 shares.
+    test: `tests/storage/test_database_concurrency.py::test_shared_database_concurrency_vectors`.
+
+    1.1.3: Python pool, worker, coverage, and reserve values are unchanged for every
+    pre-existing case. file: `docs/contracts/database-concurrency-v1.json`.'
+  labels:
+  - covers:gcore-async-postgres:1.1:1.1.1
+  - covers:gcore-async-postgres:1.1:1.1.2
+  - covers:gcore-async-postgres:1.1:1.1.3
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Pooled connections with runtime-role verification
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.2.1: Every checkout runs as `gobby_daemon_runtime` with
+    `TimeZone=UTC` and exactly the configured `application_name` (for example `gobby-gdaemon-test-1`);
+    a name without the prefix is refused. test: `crates/gcore/src/postgres_pool/tests.rs::checkout_runs_as_runtime_role`.
+
+    1.2.2: With `max_size=2` and one connection held by the test, a borrower that
+    runs `RESET ROLE` hands back a connection the next checkout discards (a different
+    `pg_backend_pid()`); a borrower that runs `SET TIME ZONE ''America/Chicago''`
+    and `SET application_name = ''unrelated''` hands back a connection the next checkout
+    reuses (same PID) in `UTC` with the configured `application_name`. test: `crates/gcore/src/postgres_pool/tests.rs::recycle_restores_or_discards_session_state`.
+
+    1.2.3: With `max_size=2` and one connection held by the test, a connection dropped
+    mid-transaction is reused by the next checkout (same `pg_backend_pid()`), which
+    sees no open transaction and none of the dropped writes. test: `crates/gcore/src/postgres_pool/tests.rs::dropped_transaction_is_rolled_back`.
+
+    1.2.4: A pool of N under K > N concurrent checkouts never exceeds N server connections
+    with its application name, and a waiter past `acquire_timeout` gets `AcquireTimeout`
+    without opening a connection. test: `crates/gcore/src/postgres_pool/tests.rs::pool_bounds_server_connections`.
+
+    1.2.5: A share of 1 returns `NativeShareTooSmall { actual: 1, minimum: 2 }`; an
+    unreachable endpoint returns `Unavailable` whose display text omits the URL password;
+    an unapplied database (no runtime-role membership) returns `RuntimeRoleUnavailable`.
+    test: `crates/gcore/src/postgres_pool/tests.rs::build_and_connect_failures_are_typed`.
+
+    1.2.6: `gobby-hooks` and `gobby-code` build without `deadpool-postgres` in their
+    dependency tree. behavior: "no deadpool-postgres entry" in `cargo tree -p gobby-hooks`
+    output recorded in the close summary.
+
+    1.2.7: The sync path still forces `gobby-cli`. test: `crates/gcore/src/postgres.rs::connection_config_enforces_gobby_application_name`.
+
+    1.2.9: With `max_size=2`, one connection held, and `acquire_timeout` of 1 s: a
+    stalled `post_create` returns `AcquireTimeout` within 2 s, the pool''s size returns
+    to 1, and after clearing the stall the next checkout succeeds as `gobby_daemon_runtime`
+    in `UTC`; a stalled `post_recycle` does the same and the next checkout has a different
+    `pg_backend_pid()` than the stalled connection. test: `crates/gcore/src/postgres_pool/tests.rs::stalled_hooks_are_bounded_and_release_capacity`.
+
+    1.2.8: `Cargo.lock` holds one `tokio-postgres` at 0.7.18 or later and `deadpool-postgres`
+    at 0.14.2 or later; the pool config sets keepalives 1/30 s/10 s/3. test: `crates/gcore/src/postgres_pool/config.rs::config_sets_hub_keepalives`
+    and behavior: "one tokio-postgres >= 0.7.18" in `cargo tree -p gobby-core --features
+    postgres-pool -i tokio-postgres` output recorded in the close summary.'
+  labels:
+  - covers:gcore-async-postgres:1.2:1.2.1
+  - covers:gcore-async-postgres:1.2:1.2.2
+  - covers:gcore-async-postgres:1.2:1.2.3
+  - covers:gcore-async-postgres:1.2:1.2.4
+  - covers:gcore-async-postgres:1.2:1.2.5
+  - covers:gcore-async-postgres:1.2:1.2.6
+  - covers:gcore-async-postgres:1.2:1.2.7
+  - covers:gcore-async-postgres:1.2:1.2.9
+  - covers:gcore-async-postgres:1.2:1.2.8
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Transaction boundary, lock targets, and row mapping
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+    and one connection held by the test, after a confirmed commit callback 1 reads
+    `Pool::status()` synchronously and records one available connection (proving the
+    checkout was released before callbacks), callback 2 returns `Err`, and callback
+    3 still runs and signals a `tokio::sync::Notify` that the test awaits before it
+    checks a connection out; the order is recorded 1, 2, 3 and the operation''s result
+    is unchanged. A rolled-back transaction and an `IndeterminateCommit` run none.
+    test: `crates/gcore/src/postgres_pool/tests.rs::transaction_commits_and_runs_callbacks`.
+
+    2.1.2: `is_definite_commit_rejection` matches a table covering classes `23` and
+    `40`, the exclusions `57014`, `55P03`, `40003`, a generic `ERROR` severity, a
+    `FATAL` severity, and no diagnostic. test: `crates/gcore/src/postgres_pool/transaction.rs::commit_rejection_table`.
+
+    2.1.3: A deferred unique violation at COMMIT (a temp table with an `INITIALLY
+    DEFERRED` unique constraint) is `Server` and its connection is reused; a transaction
+    whose closure reads `pg_backend_pid()`, has a second connection run `pg_terminate_backend`
+    on that pid, and returns `Ok` is `IndeterminateCommit` (from `57P01` or a closed
+    connection), and the next checkout has a different PID. test: `crates/gcore/src/postgres_pool/tests.rs::commit_outcome_is_classified`.
+
+    2.1.4: With `max_size=2` and one connection held by the test, a transaction cancelled
+    while its `COMMIT` is in flight discards its connection. Fixture: a control connection
+    holds session advisory lock `k`; the transaction inserts into a temp table carrying
+    an `INITIALLY DEFERRED` constraint trigger whose `pg_temp` function calls `pg_advisory_xact_lock(k)`,
+    so `COMMIT` blocks in the trigger. The test spawns the transaction, polls `pg_stat_activity`
+    from the control connection until the transaction''s PID shows `query = ''COMMIT''`
+    and `wait_event_type = ''Lock''`, then aborts and awaits the task. The pool''s
+    size returns to 1 within a bounded poll and no callback runs. Only then does the
+    control connection release `k` (PostgreSQL need not notice a vanished client during
+    a blocked query; `client_connection_check_interval` defaults to 0), after which
+    the unobserved COMMIT may settle either way and the old PID leaves `pg_stat_activity`
+    within a bounded poll; the next checkout has a different PID. The guarantee is
+    client and pool disposal, not instant server termination. test: `crates/gcore/src/postgres_pool/tests.rs::cancelled_commit_discards_connection`.
+
+    2.1.8: A closure returning `Err` after a control connection has run `pg_terminate_backend`
+    on its PID gets its own error back (the rollback error is logged), runs no callbacks,
+    and the next checkout has a different PID. Cancellation while `ROLLBACK` is in
+    flight: a `#[cfg(test)]` one-shot gate in the seam suspends after the guard is
+    armed and before `ROLLBACK` is awaited; the test cancels the real `Pool::transaction`
+    future at that gate, and the connection is discarded (next checkout has a different
+    PID, pool size restored) with no callbacks run. test: `crates/gcore/src/postgres_pool/tests.rs::failed_rollback_and_armed_guard_discard`.
+
+    2.1.5: A native transaction holding a target keyed `task_lifecycle:t1` blocks
+    a second connection''s `pg_advisory_xact_lock(hashtext(''task_lifecycle:t1''))`
+    until commit; re-acquiring the identical target sends no SQL; a different target
+    at equal or lower priority returns `LockOrder` and an empty target returns `EmptyLockTarget`,
+    both with no SQL sent. test: `crates/gcore/src/postgres_pool/tests.rs::lock_targets_share_python_keys_and_order`.
+
+    2.1.6: `quote_identifier` accepts and rejects the same names as `validate_identifier`.
+    test: `crates/gcore/src/postgres_pool/tests.rs::identifiers_match_python_validation`
+    (cases: `tasks`, `_x9`, `9x`, `a-b`, `a b`, `"q"`, empty).
+
+    2.1.7: A `FromRow` type round-trips through `query_as`. test: `crates/gcore/src/postgres_pool/tests.rs::from_row_maps_rows`.'
+  labels:
+  - covers:gcore-async-postgres:2.1:2.1.1
+  - covers:gcore-async-postgres:2.1:2.1.2
+  - covers:gcore-async-postgres:2.1:2.1.3
+  - covers:gcore-async-postgres:2.1:2.1.4
+  - covers:gcore-async-postgres:2.1:2.1.8
+  - covers:gcore-async-postgres:2.1:2.1.5
+  - covers:gcore-async-postgres:2.1:2.1.6
+  - covers:gcore-async-postgres:2.1:2.1.7
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Dedicated session connections
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: A session lock taken on a dedicated session (PID recorded)
+    becomes acquirable from a control connection within a bounded poll after the session
+    drops, and the next pooled checkout has a different PID with the pool''s size
+    restored. test: `crates/gcore/src/postgres_pool/tests.rs::dedicated_session_is_discarded`.
+
+    2.2.2: A dedicated session runs as `gobby_daemon_runtime`. test: `crates/gcore/src/postgres_pool/tests.rs::dedicated_session_runs_as_runtime_role`.'
+  labels:
+  - covers:gcore-async-postgres:2.2:2.2.1
+  - covers:gcore-async-postgres:2.2:2.2.2
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+```
