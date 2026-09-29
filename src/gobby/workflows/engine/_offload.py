@@ -10,11 +10,14 @@ from __future__ import annotations
 
 import contextvars
 import functools
+import time
 from asyncio import get_running_loop
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from typing import ParamSpec, TypeVar
+
+from gobby.hooks.phase_timing import add_hook_phase
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -46,8 +49,13 @@ async def offload_rule_loop(func: Callable[P, R], /, *args: P.args, **kwargs: P.
     """Run a complete rule pass on an executor separate from effect offloads."""
     loop = get_running_loop()
     ctx = contextvars.copy_context()
-    call = functools.partial(ctx.run, func, *args, **kwargs)
-    return await loop.run_in_executor(_RULE_LOOP_EXECUTOR, call)
+    queued_at = time.perf_counter()
+
+    def run() -> R:
+        add_hook_phase("rule_loop_executor_queue", time.perf_counter() - queued_at)
+        return func(*args, **kwargs)
+
+    return await loop.run_in_executor(_RULE_LOOP_EXECUTOR, functools.partial(ctx.run, run))
 
 
 async def offload(func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:

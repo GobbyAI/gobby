@@ -396,6 +396,45 @@ async def test_inline_mcp_effect_runs_on_daemon_loop(
     assert dispatch_loops == [loop]
 
 
+@pytest.mark.asyncio
+async def test_rule_loop_timing_attributes_executor_bridge_and_mcp_call(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "timed-dispatch",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.AFTER_TOOL,
+            effects=[
+                RuleEffect(type="mcp_call", server="gobby-test", tool="slow", inject_result=True)
+            ],
+        ),
+    )
+
+    async def dispatcher(
+        _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+    ) -> dict[str, Any]:
+        released = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.01, released.set)
+        await released.wait()
+        return {"success": True, "result": {}}
+
+    timings = HookPhaseTimings()
+    with hook_phase_timing_scope(timings):
+        await RuleEngine(db, mcp_dispatcher=dispatcher).evaluate(
+            _make_event(HookEventType.AFTER_TOOL),
+            SESSION_ID,
+            {"project": {"id": "project-id", "path": "/tmp/project"}},
+        )
+
+    breakdown = timings.breakdown()
+    assert "rule_loop_executor_queue" in breakdown
+    assert "rule_loop_bridge_queue" in breakdown
+    assert breakdown["rule_loop_bridge_work"] > 0
+    assert breakdown["rule_mcp_call:gobby-test:slow"] >= breakdown["rule_loop_bridge_work"]
+
+
 async def _assert_evaluation(
     db: HubDatabase,
     event: HookEvent,
