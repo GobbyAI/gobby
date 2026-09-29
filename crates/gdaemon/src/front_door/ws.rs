@@ -9,6 +9,7 @@ use tokio::net::TcpStream;
 
 use super::FrontDoorState;
 use super::health::{bad_gateway, unavailable};
+use super::proxy::filter_response;
 
 /// True when the request asks to switch protocols (`Connection: upgrade` plus `Upgrade`).
 pub fn is_upgrade(headers: &HeaderMap) -> bool {
@@ -47,7 +48,8 @@ pub async fn splice(state: &FrontDoorState, mut request: Request<Body>) -> Respo
         Err(error) => return bad_gateway(target, error),
     };
     if response.status() != StatusCode::SWITCHING_PROTOCOLS {
-        return response.map(Body::new);
+        // A refused upgrade is an ordinary response; the 101 handshake keeps its headers.
+        return filter_response(response);
     }
 
     let backend_upgrade = hyper::upgrade::on(&mut response);

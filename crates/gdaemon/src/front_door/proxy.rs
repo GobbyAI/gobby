@@ -52,11 +52,7 @@ pub async fn forward(state: &FrontDoorState, request: Request<Body>) -> Response
     parts.version = Version::HTTP_11;
 
     match state.client.request(Request::from_parts(parts, body)).await {
-        Ok(response) => {
-            let (mut parts, body) = response.into_parts();
-            let removed = strip_hop_by_hop(&mut parts.headers);
-            Response::from_parts(parts, strip_trailers(body, removed))
-        }
+        Ok(response) => filter_response(response),
         Err(error) if error.is_connect() => unavailable(target, state.backend_state),
         Err(error) => bad_gateway(target, error),
     }
@@ -76,6 +72,17 @@ pub fn strip_hop_by_hop(headers: &mut HeaderMap) -> Vec<HeaderName> {
         headers.remove(name);
     }
     removed
+}
+
+/// Strip connection-specific fields from a backend response's headers and trailers.
+pub fn filter_response<B>(response: Response<B>) -> Response<Body>
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<axum::BoxError>,
+{
+    let (mut parts, body) = response.into_parts();
+    let removed = strip_hop_by_hop(&mut parts.headers);
+    Response::from_parts(parts, strip_trailers(body, removed))
 }
 
 /// RFC 9110 section 7.6.1 applies to trailer fields too: drop the `removed` names

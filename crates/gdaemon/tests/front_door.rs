@@ -312,3 +312,37 @@ async fn connection_listed_trailers_are_stripped_both_ways() {
     assert!(response_trailers.contains("x-kept: yes"), "{response}");
     assert!(!response_trailers.contains("x-private"), "{response}");
 }
+
+#[tokio::test]
+async fn refused_upgrade_strips_connection_listed_fields() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind backend");
+    let backend = listener.local_addr().expect("backend addr");
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut head = Vec::new();
+        while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut chunk = [0_u8; 1024];
+            let read = stream.read(&mut chunk).await.expect("read upgrade");
+            assert_ne!(read, 0, "closed before the end of the upgrade head");
+            head.extend_from_slice(&chunk[..read]);
+        }
+        stream
+            .write_all(
+                b"HTTP/1.1 403 Forbidden\r\nconnection: x-private\r\nx-private: secret\r\n\
+                  x-kept: yes\r\ncontent-length: 0\r\n\r\n",
+            )
+            .await
+            .expect("write refusal");
+    });
+    let front_door = start_front_door(backend).await;
+
+    let (_stream, head, _) = tokio::time::timeout(TIMEOUT, ws_client(front_door, "/ws"))
+        .await
+        .expect("refusal timed out");
+
+    assert!(head.starts_with("HTTP/1.1 403"), "{head}");
+    assert!(head_has(&head, "x-kept: yes"), "{head}");
+    assert!(!head.to_ascii_lowercase().contains("x-private"), "{head}");
+}
