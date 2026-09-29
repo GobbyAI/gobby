@@ -380,6 +380,7 @@ async def test_lost_cas_with_non_running_run_cleans_up_and_reports_error() -> No
         "pid": 4242,
         "terminal_id": "terminal-1",
         "cleanup_once": None,
+        "attempt_terminal_known": True,
     }
 
 

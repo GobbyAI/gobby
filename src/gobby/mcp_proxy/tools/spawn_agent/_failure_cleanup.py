@@ -381,6 +381,8 @@ async def start_run_or_cleanup(
             pid=pid,
             terminal_id=terminal_id,
             cleanup_once=cleanup_once,
+            # The caller passes the attempt's own terminal from its spawn result.
+            attempt_terminal_known=True,
         )
         return {
             "success": False,

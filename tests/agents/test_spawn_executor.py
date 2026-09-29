@@ -3759,9 +3759,12 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
     sessions.delete.assert_not_called()
 
 
-@pytest.mark.parametrize("kill_proven", [True, False])
+@pytest.mark.parametrize(
+    ("failure", "kill_proven"),
+    [("result", True), ("result", False), ("liveness", True)],
+)
 async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_terminal(
-    kill_proven: bool, monkeypatch: pytest.MonkeyPatch
+    failure: str, kill_proven: bool, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
 
@@ -3794,8 +3797,14 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
     assert failed.terminal_id is not None
     own = manager.get(failed.terminal_id)
     assert own is not None and own.id != bound.id
-    failed.success = False
-    failed.error = "provider boot failed"
+    if failure == "result":
+        failed.success = False
+        failed.error = "provider boot failed"
+    else:
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.spawn_agent._execution._terminal_is_live",
+            AsyncMock(return_value=(False, "")),
+        )
     if not kill_proven:
         monkeypatch.setattr(
             runtime, "terminate", AsyncMock(side_effect=RuntimeError("tmux server unreachable"))

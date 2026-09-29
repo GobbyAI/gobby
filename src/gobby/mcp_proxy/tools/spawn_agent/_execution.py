@@ -158,6 +158,7 @@ async def finalize_executed_spawn(
                 pid=spawn_result.pid,
                 terminal_id=terminal_id,
                 cleanup_once=cleanup_once,
+                attempt_terminal_known=True,
             )
             return {
                 "success": False,
@@ -316,6 +317,7 @@ async def finalize_executed_spawn(
                     pid=spawn_result.pid,
                     terminal_id=terminal_id,
                     cleanup_once=cleanup_once,
+                    attempt_terminal_known=True,
                 )
                 return {
                     "success": False,
