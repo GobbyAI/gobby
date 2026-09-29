@@ -436,6 +436,13 @@ def _gone(process: psutil.Process) -> bool:
         return True
 
 
+def _label(process: psutil.Process) -> str:
+    try:
+        return f"{process.pid} {' '.join(process.cmdline())[:160]}"
+    except psutil.Error:
+        return str(process.pid)
+
+
 def _ports_free(*ports: int) -> bool:
     return all(is_port_available(port, "127.0.0.1") for port in ports)
 
@@ -486,21 +493,30 @@ class TestFrontDoor:
         try:
             wait_for_daemon_health(http_port, log_file=config_path.parent / "logs" / "daemon.log")
             child = _front_door_child(runner.pid)
-            # gdaemon plus the transcript evidence pool: none may outlive a SIGKILL.
             descendants = psutil.Process(runner.pid).children(recursive=True)
+            labels = {p.pid: _label(p) for p in descendants}
+            # gdaemon, the transcript evidence pool, and the rest may not outlive a SIGKILL.
+            # The gterm host is exempt: it survives by design for the next daemon to adopt.
+            mortal = [p for p in descendants if "gterm host" not in labels[p.pid]]
             os.kill(runner.pid, signal.SIGKILL)
             runner.wait(timeout=5)
             front_door = child
-            wait_for_condition(
-                lambda: all(_gone(p) for p in descendants) and _ports_free(http_port, ws_port),
-                timeout=10.0,
-                description="every runner descendant exits after SIGKILL",
-            )
+            try:
+                wait_for_condition(
+                    lambda: all(_gone(p) for p in mortal),
+                    timeout=10.0,
+                    interval=0.1,
+                    description="runner descendants exit after SIGKILL",
+                )
+            except AssertionError as timed_out:
+                survivors = [labels[p.pid] for p in mortal if not _gone(p)]
+                raise AssertionError(f"survived SIGKILL: {survivors}") from timed_out
             # The liveness pipe and the pool's parent watch, not runner cleanup, did it.
             assert runner.returncode == -signal.SIGKILL
             assert _gone(front_door)
-            assert [p.pid for p in descendants if not _gone(p)] == []
-            assert _ports_free(http_port, ws_port)
+            wait_for_condition(
+                lambda: _ports_free(http_port, ws_port), timeout=5.0, description="ports free"
+            )
         finally:
             if runner.poll() is None:
                 terminate_process_tree(runner.pid)
