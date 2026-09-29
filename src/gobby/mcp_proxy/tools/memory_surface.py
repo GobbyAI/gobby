@@ -7,8 +7,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.memory_session import resolve_session
 from gobby.memory.prompt_triage import is_substantive_prompt
-from gobby.storage.session_resolution import resolve_session_reference
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -36,22 +36,6 @@ SurfaceTrigger = Literal["turn", "spawn_agent", "task", "handoff"]
 
 def _empty(trigger: str) -> dict[str, Any]:
     return {"trigger": trigger, "count": 0, "memories": []}
-
-
-def _resolve_session(
-    session_manager: SessionManager,
-    session_id: str,
-) -> tuple[str, Any] | None:
-    session = session_manager.get(session_id)
-    if session is not None:
-        return str(session.id), session
-
-    try:
-        resolved_id = resolve_session_reference(session_manager.db, session_id)
-    except ValueError:
-        return None
-    session = session_manager.get(resolved_id)
-    return (resolved_id, session) if session is not None else None
 
 
 def _serialize(memory: Any) -> dict[str, Any]:
@@ -101,7 +85,7 @@ def register_memory_surface_tools(
             if session_manager is None or (not fall_back and not query.strip()):
                 return _empty(trigger)
 
-            resolved = await asyncio.to_thread(_resolve_session, session_manager, session_id)
+            resolved = await asyncio.to_thread(resolve_session, session_manager, session_id)
             if resolved is None:
                 return _empty(trigger)
             resolved_session_id, session = resolved

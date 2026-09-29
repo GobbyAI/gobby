@@ -29,12 +29,14 @@ from gobby.mcp_proxy.tools.memory_scope import (
     memory_owned_by_current_project,
     resolve_current_memory_id,
 )
+from gobby.mcp_proxy.tools.memory_session import resolve_claimed_task_id, resolve_session
 from gobby.mcp_proxy.tools.memory_surface import register_memory_surface_tools
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
 from gobby.memory.manager import MemoryManager
 from gobby.memory.scoring import undecay
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -44,6 +46,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SEARCH_CALLER = "mcp_proxy.memory.search_memories"
+ACCESSED_MEMORY_IDS_VARIABLE = "accessed_memory_ids"
+# One record per (memory, fetching task); the oldest is evicted at the cap.
+_ACCESSED_MEMORY_IDS_MAX = 1000
 
 
 def create_memory_registry(
@@ -350,24 +355,48 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _record_accessed_memory(session_id: str, memory_id: str) -> None:
+        if session_manager is None:
+            return
+        resolved = resolve_session(session_manager, session_id)
+        if resolved is None:
+            return
+        resolved_session_id = resolved[0]
+        record = {
+            "memory_id": memory_id,
+            "task_id": resolve_claimed_task_id(session_manager.db, resolved_session_id),
+        }
+        SessionVariableManager(session_manager.db).upsert_bounded_list_variable(
+            resolved_session_id,
+            ACCESSED_MEMORY_IDS_VARIABLE,
+            record,
+            identity=record,
+            max_items=_ACCESSED_MEMORY_IDS_MAX,
+        )
+
     @registry.tool(
         name="get_memory",
-        read_only=True,
         description="Get details of a specific memory by ID.",
     )
-    def get_memory(memory_id: str) -> dict[str, Any]:
+    async def get_memory(memory_id: str, session_id: str) -> dict[str, Any]:
         """
-        Get details of a specific memory.
+        Get details of a specific memory, counting the fetch as an access.
 
         Args:
             memory_id: The ID of the memory to retrieve
+            session_id: The fetching session; its claimed task tags the access record
         """
         try:
-            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            manager = _memory_manager()
+            resolved_id = await asyncio.to_thread(resolve_current_memory_id, manager, memory_id)
             if resolved_id is None:
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = _memory_manager().get_memory(resolved_id, project_id=get_current_project_id())
+            memory = await asyncio.to_thread(
+                manager.get_memory, resolved_id, project_id=get_current_project_id()
+            )
             if memory:
+                await manager.record_memory_access(memory.id)
+                await asyncio.to_thread(_record_accessed_memory, session_id, memory.id)
                 return {
                     "success": True,
                     "memory": {
@@ -383,6 +412,7 @@ def create_memory_registry(
                         "source_task_id": getattr(memory, "source_task_id", None),
                         "created_by_agent": getattr(memory, "created_by_agent", None),
                         "access_count": memory.access_count,
+                        "surfaced_count": memory.surfaced_count,
                         "tags": memory.tags,
                     },
                 }

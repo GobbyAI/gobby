@@ -36,6 +36,9 @@ _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
     {
         "gobby-sessions:set_handoff",
         "gobby-sessions:feedback",
+        # Records the fetch as access, so it is not read-only, yet every step
+        # must be able to read the memories its index points at.
+        "gobby-memory:get_memory",
     }
 )
 # Grok's read-only poll for a backgrounded call. It returns the result of a call

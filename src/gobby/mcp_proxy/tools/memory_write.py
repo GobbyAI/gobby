@@ -19,6 +19,7 @@ from gobby.mcp_proxy.tools.memory_scope import (
     memory_owned_by_current_project,
     resolve_current_memory_id,
 )
+from gobby.mcp_proxy.tools.memory_session import resolve_claimed_task_id
 from gobby.memory.embedding_text import memory_embedding_text
 from gobby.memory.scoring import undecay
 from gobby.memory.services.lifecycle import MAX_MEMORY_CONTENT_CHARS
@@ -122,15 +123,7 @@ def derive_memory_create_provenance(
 
             task_id = resolve_task_reference(db, source_task_id, project_id)
         elif resolved_session_id:
-            from gobby.storage.tasks import LocalTaskManager
-
-            claimed = LocalTaskManager(db).list_tasks(
-                claimed_by_session_id=resolved_session_id,
-                closed=False,
-                sort_by="updated_at",
-                sort_order="desc",
-            )
-            task_id = str(claimed[0].id) if claimed else None
+            task_id = resolve_claimed_task_id(db, resolved_session_id)
     except (ValueError, LookupError, TaskNotFoundError):
         logger.debug("Could not derive source_task_id", exc_info=True)
         task_id = None
