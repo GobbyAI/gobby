@@ -22,11 +22,11 @@ fn embedded_assets_publish_a_complete_schema_identity() {
     assert_eq!(identity.latest_asset.filename, "455_drop_ask_artifacts.sql");
     assert_eq!(
         identity.latest_asset.checksum,
-        "dc8eba3d25f2742d813c60f7e0dcf1e23b168bdbd88ec0f58da9cd71606976f2"
+        "360581f4e095b3e1ff1fb7e4ef3e6fedd575f3c7f97971ca7124e94500513686"
     );
     assert_eq!(
         identity.root_hash,
-        "8091c2f0f4cbf9b83de8bee5756592799d868db564daf5f4690ade1dee96e868"
+        "d295f1907cda41a7fcea1d4382737f23e7542ac217576b364e6bc23886ca7c6d"
     );
 
     let _public_runner_type = std::any::type_name::<SchemaRunner<'static>>();

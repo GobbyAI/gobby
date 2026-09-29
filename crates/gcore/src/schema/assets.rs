@@ -253,7 +253,7 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
     EmbeddedMigration {
         version: 455,
         filename: "455_drop_ask_artifacts.sql",
-        checksum: "dc8eba3d25f2742d813c60f7e0dcf1e23b168bdbd88ec0f58da9cd71606976f2",
+        checksum: "360581f4e095b3e1ff1fb7e4ef3e6fedd575f3c7f97971ca7124e94500513686",
         sql: include_str!("../../assets/schema/migrations/455_drop_ask_artifacts.sql"),
     },
 ];

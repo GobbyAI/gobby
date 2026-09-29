@@ -15,10 +15,10 @@ const GOLDEN_BASELINE_CHECKSUM: &str =
     "f8e4cea2f63769a2fd2b32a93a56574c4fda3d335a745aa0970cfea6a2596b55";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_LATEST_CHECKSUM: &str =
-    "dc8eba3d25f2742d813c60f7e0dcf1e23b168bdbd88ec0f58da9cd71606976f2";
+    "360581f4e095b3e1ff1fb7e4ef3e6fedd575f3c7f97971ca7124e94500513686";
 #[cfg(not(feature = "postgres"))]
 const GOLDEN_ASSETS_ROOT_HASH: &str =
-    "8091c2f0f4cbf9b83de8bee5756592799d868db564daf5f4690ade1dee96e868";
+    "d295f1907cda41a7fcea1d4382737f23e7542ac217576b364e6bc23886ca7c6d";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
