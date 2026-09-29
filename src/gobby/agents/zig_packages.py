@@ -38,6 +38,27 @@ def _extract_zig_package(tarball: Path, dest: Path, *, staging_parent: Path) -> 
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _link_zig_package(package: Path, dest: Path, *, staging_parent: Path) -> None:
+    """Mirror one extracted package as a real directory of links to its entries.
+
+    Zig derives a run step's path lexically from the package root, while the
+    kernel resolves each `..` from the root's physical location, so the root
+    itself must live in this cache rather than be a symlink out of it.
+    """
+    staging = Path(tempfile.mkdtemp(prefix=".zig-pkg-", dir=staging_parent))
+    try:
+        for child in package.iterdir():
+            (staging / child.name).symlink_to(child, target_is_directory=child.is_dir())
+        try:
+            os.replace(staging, dest)
+        except OSError:
+            # A concurrent run materialized the same package first.
+            if not dest.is_dir():
+                raise
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
 def materialize_zig_packages(
     source: Path,
     cache_root: Path,
@@ -50,10 +71,11 @@ def materialize_zig_packages(
     A `zig build --system <dir>` run resolves packages by id with fetching
     disabled, so tarball-only entries must be unpacked (reusing the vendored
     zig-pkg extraction when the package id matches) before that directory can
-    back a sandboxed build. Entries the machine cache already holds extracted
-    are symlinked instead: Zig resolves a `--system` package through a symlink,
-    and copying the cache costs a minute and half a gigabyte per run. Returns
-    True only when every source package resolved to a usable directory.
+    back a sandboxed build. Already-extracted packages are mirrored as real
+    directories of entry symlinks: copying the cache costs half a gigabyte and
+    seconds per run, and a symlinked package root breaks the relative paths Zig
+    runs build tools through. Returns True only when every source package
+    resolved to a usable directory.
     """
     packages = cache_root / ZIG_PACKAGES
     packages.mkdir(parents=True, exist_ok=True)
@@ -69,7 +91,7 @@ def materialize_zig_packages(
             continue
         try:
             if entry.is_dir():
-                dest.symlink_to(entry, target_is_directory=True)
+                _link_zig_package(entry, dest, staging_parent=cache_root)
                 continue
             if not entry.name.endswith(_ZIG_TARBALL_SUFFIX):
                 report(f"zig package cache entry {entry} is not a directory or tarball")
@@ -77,7 +99,7 @@ def materialize_zig_packages(
                 continue
             vendored_copy = vendored_zig_pkg / pkgid if vendored_zig_pkg is not None else None
             if vendored_copy is not None and vendored_copy.is_dir():
-                dest.symlink_to(vendored_copy, target_is_directory=True)
+                _link_zig_package(vendored_copy, dest, staging_parent=cache_root)
                 continue
             _extract_zig_package(entry, dest, staging_parent=cache_root)
         except (OSError, tarfile.TarError) as exc:

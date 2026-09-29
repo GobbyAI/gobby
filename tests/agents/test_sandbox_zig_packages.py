@@ -80,7 +80,8 @@ def test_worktree_run_links_main_checkout_packages_into_run_zig_cache(
     assert zig_cache.is_dir()
     assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == str(zig_cache / "p")
     package = zig_cache / "p" / PKGID
-    assert package.readlink() == main_zig_pkg / PKGID
+    assert not package.is_symlink()
+    assert (package / "src").readlink() == main_zig_pkg / PKGID / "src"
     assert (package / "src" / "marker.txt").read_text(encoding="utf-8") == ("main-checkout-payload")
 
 
