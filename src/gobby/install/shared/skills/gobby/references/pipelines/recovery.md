@@ -17,8 +17,7 @@ an authorized fresh run; idempotency is required wherever a step can repeat.
 
 `resume_on_restart: true` independently opts enabled definitions into recovery
 of running executions. Completed/skipped steps are retained; unfinished work can
-repeat. Non-recovered running executions become interrupted. Native Ask delegates
-restart handling to its own service; follow code-index Ask guidance for those runs.
+repeat. Non-recovered running executions become interrupted.
 
 `cancel_pipeline(execution_id=...)` cancels the tracked background task and
 attempts to kill agents owned by the pipeline child session. It does not undo

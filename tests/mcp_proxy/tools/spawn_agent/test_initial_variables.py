@@ -127,7 +127,7 @@ def test_initial_self_transition_stays_on_step_without_chain_warning(
 ) -> None:
     from gobby.mcp_proxy.tools.spawn_agent import _step_state
 
-    # Mirrors ask-investigator: its only step re-enters itself until the run ends.
+    # A self-transition must not spin through the initial transition chain.
     snapshot = AgentStepWorkflowBody.model_validate(
         {
             "steps": [
@@ -142,7 +142,7 @@ def test_initial_self_transition_stays_on_step_without_chain_warning(
 
     with caplog.at_level(logging.WARNING, logger=_step_state.logger.name):
         step, _variables = _step_state.initial_step_state_for_spawn(
-            snapshot, agent_name="ask-investigator", task_owned_by_child=False
+            snapshot, agent_name="self-transition-agent", task_owned_by_child=False
         )
 
     assert step == "investigate"

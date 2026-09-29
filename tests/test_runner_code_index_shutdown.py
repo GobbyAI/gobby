@@ -51,7 +51,6 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
         startup_ready=True,
         shutdown_in_progress=False,
         http_admission_closed=False,
-        stop_ask_services=AsyncMock(),
     )
     release_cleanup = asyncio.Event()
     entered = {name: asyncio.Event() for name in ("maintenance", "projection")}
@@ -109,18 +108,6 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     runner.vector_store = None
     runner.mcp_proxy = SimpleNamespace(disconnect_all=AsyncMock())
     runner.database = MagicMock()
-    ask_cleanup_states: list[tuple[bool, bool, bool]] = []
-
-    async def stop_ask_services() -> None:
-        ask_cleanup_states.append(
-            (
-                services.startup_ready,
-                services.shutdown_in_progress,
-                runner.database.close.called,
-            )
-        )
-
-    services.stop_ask_services.side_effect = stop_ask_services
     server = uvicorn.Server(uvicorn.Config(app=MagicMock()))
 
     async def server_done() -> None:
@@ -160,8 +147,6 @@ async def test_shutdown_drains_code_index_before_config_becomes_unavailable(
     assert services.startup_ready is False
     assert services.shutdown_in_progress is True
     assert services.http_admission_closed is True
-    assert ask_cleanup_states == [(False, True, False)]
-    services.stop_ask_services.assert_awaited_once_with()
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
     assert pending_file.vectors_synced is False

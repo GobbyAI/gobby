@@ -407,7 +407,7 @@ fn database_contract() -> anyhow::Result<()> {
     let implicit: gobby_code::evidence::EvidenceResponse = serde_json::from_slice(&output.stdout)?;
     assert_eq!(implicit.binding, binding);
     assert_eq!(implicit.items, response.items);
-    assert!(!home.join("ask-debug").exists());
+    assert!(!home.join("gcode-evidence-debug").exists());
     assert_eq!(
         response, repeated,
         "identical reads are byte-contract deterministic"

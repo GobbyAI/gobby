@@ -176,7 +176,9 @@ async def test_chained_add_then_pathspec_commit_of_new_documentation_needs_no_re
     _edit(repo, "docs/new.md", "new page\n")
 
     # The add stages the untracked page; only mode leaves the staged code out.
-    assert await _reviewable("git add -- docs/new.md && git commit -m d -- docs/new.md", repo) is False
+    assert (
+        await _reviewable("git add -- docs/new.md && git commit -m d -- docs/new.md", repo) is False
+    )
 
 
 async def test_chained_add_then_heredoc_message_commit_needs_no_review(repo: Path) -> None:

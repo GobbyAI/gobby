@@ -481,6 +481,29 @@ fn catalog_manifest_is_fresh_for_embedded_assets() -> anyhow::Result<()> {
 }
 
 #[test]
+fn migration_retires_ask_artifacts_and_index() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let table: Option<String> = client
+        .query_one("SELECT to_regclass('public.ask_artifacts')::text", &[])?
+        .get(0);
+    assert!(table.is_none());
+    let index: Option<String> = client
+        .query_one(
+            "SELECT to_regclass('public.idx_ask_terminal_retention')::text",
+            &[],
+        )?
+        .get(0);
+    assert!(index.is_none());
+    Ok(())
+}
+
+#[test]
 fn baseline_enforces_workspace_session_machine_ownership() -> anyhow::Result<()> {
     let manifest: serde_json::Value = serde_json::from_str(CATALOG_MANIFEST_JSON)?;
     let entries = |kind: &str| {

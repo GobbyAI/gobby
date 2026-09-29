@@ -24,7 +24,6 @@ def create_lifespan(
     *,
     hook_manager_factory_getter: Callable[[], Callable[..., Any]],
     codex_adapter_cls_getter: Callable[[], Any],
-    additional_mcp_apps: tuple[Any, ...] = (),
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Build the FastAPI lifespan handler for the daemon server."""
 
@@ -317,8 +316,8 @@ def create_lifespan(
             logger.warning("Failed to start SessionLivenessMonitor: %s", e)
 
         async with AsyncExitStack() as mcp_lifespans:
-            for transport in ((mcp_app,) if mcp_app is not None else ()) + additional_mcp_apps:
-                await mcp_lifespans.enter_async_context(transport.router.lifespan_context(app))
+            if mcp_app is not None:
+                await mcp_lifespans.enter_async_context(mcp_app.router.lifespan_context(app))
             logger.debug("MCP server lifespans initialized")
             yield
         logger.debug("MCP server lifespans shutdown complete")

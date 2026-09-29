@@ -47,23 +47,11 @@ installed.
 
 ## Evidence And Repository Questions
 
-Ordinary authenticated agents can use `gobby-ask:evidence` for native JSON search,
-read, graph, communities, and commit-patch evidence without starting an Ask run.
-communities orients you; it is not citable, cite `read` items from its members.
-Project and checkout come from caller context. `gcode evidence --request-json ...` supports
-the same retrieval contract and resolves an omitted binding from the selected
-project. Source hashes, bounds, and continuation tokens remain part of the result.
-
-Use `gcode ask "<question>"` for a managed investigation with independent review.
-Foreground completion prints cited Markdown; `--format json` returns the answer
-and run metadata. `--background` returns the run ID immediately. Citations are
-retrievable without local files, and retained answers describe recorded source
-observations rather than proving current checkout freshness.
-
-Default calls create no output bundles. PostgreSQL retains Ask results for seven
-days after terminal completion by default. CLI-only `--output-debug-files` writes
-local diagnostics; explicit export keeps its destination option. MCP never writes
-output files. See the [Ask guide](ask.md) for retention, exports, and recovery.
+Use `gcode evidence --request-json ...` for native JSON search, read, graph,
+communities, and commit-patch evidence. Communities orient an investigation;
+cite `read` items from their members. An omitted binding resolves from the
+selected project. Source hashes, bounds, and continuation tokens remain part
+of the result. See the [CLI contract](../contracts/gcode-cli.md#deterministic-evidence).
 
 ## How It Works
 

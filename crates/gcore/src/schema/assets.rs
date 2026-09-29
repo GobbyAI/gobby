@@ -250,6 +250,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/454_memory_surfaced_stats_retire_recall_signals.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 455,
+        filename: "455_drop_ask_artifacts.sql",
+        checksum: "360581f4e095b3e1ff1fb7e4ef3e6fedd575f3c7f97971ca7124e94500513686",
+        sql: include_str!("../../assets/schema/migrations/455_drop_ask_artifacts.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

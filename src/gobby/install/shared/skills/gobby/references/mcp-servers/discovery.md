@@ -32,7 +32,7 @@ needs diagnostics, not an invented tool name or an eager all-schema download.
 `list_mcp_servers` includes internal registries and visible external instances,
 connection state, and the template catalog. Pending lazy connections are not
 proof of failure. A template entry is not an instance. Discovery of guarded
-internal tools may depend on the caller's current role, as with Ask stages.
+internal tools may depend on the caller's current role.
 
 The daemon MCP surface additionally exposes `read_mcp_resource`; the stdio
 carrier does not register it. Downstream resource availability is separate from
