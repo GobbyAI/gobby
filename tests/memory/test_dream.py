@@ -2860,14 +2860,32 @@ def test_prompt_contract_evidence_and_access_count(temp_db: HubDatabase) -> None
         "a newer related memory records a decision or state change that contradicts or "
         "supersedes this memory"
     ) in prompt
-    assert "High `access_count` is never evidence of correctness" in prompt
-    assert "recall frequency measures retrieval, not truth" in prompt
+    assert "Neither counter is evidence of correctness" in prompt
+    assert "`surfaced_count` measures exposure" in prompt
+    assert "`access_count` measures deliberate reads" in prompt
     assert "a wrong-but-popular memory self-reinforces" in prompt
-    assert "Only `access_count` at or near zero may corroborate a `delete`" in prompt
     assert (
-        "never use high `access_count` to justify `keep` against a concrete obsolescence signal"
+        "High `surfaced_count` with `access_count` at zero flags a misfiring `when:` clause "
+        "or noise"
     ) in prompt
-    assert "does not require low `access_count` when a contradiction signal exists" in prompt
+    assert (
+        "Only both counters at or near zero over a long `age_days` may corroborate a `delete`"
+    ) in prompt
+    assert (
+        "never use either counter to justify `keep` against a concrete obsolescence signal"
+    ) in prompt
+    assert "does not require low counters when a contradiction signal exists" in prompt
+    assert "recall frequency" not in prompt
+
+
+def test_curator_payload_carries_both_counters() -> None:
+    curator = (
+        Path(__file__).parents[2] / "src/gobby/install/shared/workflows/agents/memory-curator.yaml"
+    ).read_text()
+
+    assert "access_count, surfaced_count, last_surfaced_at" in curator
+    assert "useful_labels" not in curator
+    assert "total_labels" not in curator
 
 
 def test_dream_prompt_judges_staleness_against_rationale() -> None:
