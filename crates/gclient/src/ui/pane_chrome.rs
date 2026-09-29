@@ -52,7 +52,7 @@ pub struct PaneCorners {
     /// Drawn just before the address: whether an OS sandbox wraps the pane.
     pub sandbox: SandboxState,
     /// The mark `sandbox` draws as, from the glyph preference.
-    pub sandbox_mark: &'static str,
+    pub sandbox_mark: Option<&'static str>,
     pub tone: MetadataTone,
     /// An exceptional condition a click resolves by taking control.
     pub actionable: bool,
@@ -62,28 +62,24 @@ impl PaneCorners {
     /// The address corner's text: the sandbox mark, the backend on a tmux
     /// pane, then the address (`<lock> · tmux · %16`).
     pub fn address_label(&self) -> String {
-        [
-            Some(self.sandbox_mark),
-            self.backend,
-            Some(self.address.as_str()),
-        ]
-        .into_iter()
-        .flatten()
-        .collect::<Vec<_>>()
-        .join(" · ")
+        [self.sandbox_mark, self.backend, Some(self.address.as_str())]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" · ")
     }
 }
 
-/// The mark for a sandbox state. Nerd Font lock and unlock (U+F023,
-/// U+F09C) are one cell and ship in Ghostty's default font; each state also
-/// has a plain-text mark for fonts without them. Shape carries the state,
-/// never hue alone.
-pub fn sandbox_mark(state: SandboxState, nerd_glyphs: bool) -> &'static str {
+/// The mark for a sandbox state: only an SRT pane draws one (#23096). The
+/// Nerd Font lock (U+F023) is one cell and ships in Ghostty's default font;
+/// `sbx` stands in for fonts without it. An unrestricted pane draws nothing,
+/// since even an open padlock reads as locked in one cell, so presence
+/// carries the state, never hue alone.
+pub fn sandbox_mark(state: SandboxState, nerd_glyphs: bool) -> Option<&'static str> {
     match (state, nerd_glyphs) {
-        (SandboxState::Sandboxed, true) => "\u{f023}",
-        (SandboxState::Unrestricted, true) => "\u{f09c}",
-        (SandboxState::Sandboxed, false) => "sbx",
-        (SandboxState::Unrestricted, false) => "open",
+        (SandboxState::Sandboxed, true) => Some("\u{f023}"),
+        (SandboxState::Sandboxed, false) => Some("sbx"),
+        (SandboxState::Unrestricted, _) => None,
     }
 }
 

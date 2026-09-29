@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::{Backend, PaneId, Workspace};
-use crate::daemon::{ProjectRow, SessionRow, SidebarRows, WorkspaceSnapshot};
+use crate::daemon::{ProjectRow, RunRow, RunSandbox, SessionRow, SidebarRows, WorkspaceSnapshot};
 use crate::ui::pane_layout;
 use crate::ui::settings::AgentSort;
 use serde_json::json;
@@ -97,11 +97,12 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
     let mut tmux_pane = Pane::new(PaneId(100), "term-alpha", Backend::Tmux, "epoch");
     tmux_pane.address = Some("%15".to_owned());
     // Josh's order (#23049): mark, then tmux for a tmux pane, then the address.
+    // This seat has no SRT record, so no mark leads (#23096).
     let tmux = pane_corners(&ws, &chrome, &tmux_pane, true);
-    assert_eq!(tmux.address_label(), "\u{f09c} · tmux · %15");
+    assert_eq!(tmux.address_label(), "tmux · %15");
     tmux_pane.address = None;
     let unaddressed = pane_corners(&ws, &chrome, &tmux_pane, true);
-    assert_eq!(unaddressed.address_label(), "\u{f09c} · tmux");
+    assert_eq!(unaddressed.address_label(), "tmux");
 
     // No session ref: the definition alone.
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
@@ -372,36 +373,146 @@ fn title_travel_measures_each_header_window() {
     assert_eq!(title_travel(&ws, &chrome, &pane, &tiny), 0);
 }
 
-/// #23049: each state has its own shape, the Nerd marks are one cell, and
-/// the text fallback widens the address corner rather than truncating it.
+/// #23096: only an SRT pane draws a mark. The Nerd lock is one cell, the
+/// text fallback widens the address corner rather than truncating it, and an
+/// unrestricted pane draws no padlock of either shape.
 #[test]
-fn sandbox_mark_leads_the_address_by_shape_not_hue() {
-    let states = [SandboxState::Sandboxed, SandboxState::Unrestricted];
+fn only_a_sandboxed_pane_leads_its_address_with_a_mark() {
+    assert_eq!(
+        sandbox_mark(SandboxState::Sandboxed, true),
+        Some("\u{f023}")
+    );
+    assert_eq!(sandbox_mark(SandboxState::Sandboxed, false), Some("sbx"));
+    assert_eq!(display_width("\u{f023}"), 1);
     for nerd in [true, false] {
-        let marks: Vec<_> = states.iter().map(|s| sandbox_mark(*s, nerd)).collect();
         assert_eq!(
-            marks.len(),
-            marks
-                .iter()
-                .collect::<std::collections::BTreeSet<_>>()
-                .len(),
-            "every state draws a distinct mark (nerd={nerd})"
+            sandbox_mark(SandboxState::Unrestricted, nerd),
+            None,
+            "an unrestricted pane draws no mark (nerd={nerd})"
         );
-    }
-    for state in states {
-        assert_eq!(display_width(sandbox_mark(state, true)), 1);
     }
 
     let mut text = corners("○ zsh", "0:0:1:2");
     assert_eq!(text.address_label(), "\u{f023} · 0:0:1:2");
-    text.sandbox_mark = sandbox_mark(SandboxState::Unrestricted, false);
+    text.sandbox_mark = sandbox_mark(SandboxState::Sandboxed, false);
     text.backend = Some("tmux");
-    assert_eq!(text.address_label(), "open · tmux · 0:0:1:2");
+    assert_eq!(text.address_label(), "sbx · tmux · 0:0:1:2");
     let rect = Rect::new(10, 2, 50, 8);
     let address = address_rect(&info(rect, Borders::ALL, true), &text).unwrap();
     assert_eq!(
         usize::from(address.width),
-        display_width("open · tmux · 0:0:1:2") + 2
+        display_width("sbx · tmux · 0:0:1:2") + 2
     );
     assert_eq!(address.right(), rect.right() - 1);
+
+    text.sandbox = SandboxState::Unrestricted;
+    text.sandbox_mark = sandbox_mark(SandboxState::Unrestricted, true);
+    assert_eq!(text.address_label(), "tmux · 0:0:1:2");
+    text.backend = None;
+    assert_eq!(text.address_label(), "0:0:1:2");
+}
+
+/// #23096: Josh's live roster held one SRT run among interactive seats; only
+/// the run's pane is locked, and every seat's address stands alone.
+#[test]
+fn a_mixed_roster_locks_only_the_srt_pane() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_owned(),
+            name: "gobby".to_owned(),
+            display_name: "gobby".to_owned(),
+            ..ProjectRow::default()
+        }],
+        sessions: [(
+            "proj-alpha".to_owned(),
+            vec![
+                SessionRow {
+                    id: "sess-run".to_owned(),
+                    sandbox_enabled: Some(true),
+                    ..SessionRow::default()
+                },
+                SessionRow {
+                    id: "sess-seat".to_owned(),
+                    sandbox_enabled: None,
+                    ..SessionRow::default()
+                },
+                SessionRow {
+                    id: "sess-off".to_owned(),
+                    sandbox_enabled: Some(false),
+                    ..SessionRow::default()
+                },
+            ],
+        )]
+        .into_iter()
+        .collect(),
+        runs: [(
+            "proj-alpha".to_owned(),
+            vec![RunRow {
+                run_id: "run-srt".to_owned(),
+                sandbox: Some(RunSandbox {
+                    enforced: Some(true),
+                }),
+                ..RunRow::default()
+            }],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "run:run-srt",
+                "run_id": "run-srt",
+                "session_id": "sess-run",
+                "provider": "codex",
+                "terminal": {"terminal_id": "term-srt", "backend": "native"}
+            },
+            {
+                "entry_id": "session:sess-seat",
+                "session_id": "sess-seat",
+                "provider": "claude",
+                "terminal": {"terminal_id": "term-seat", "backend": "native"}
+            },
+            {
+                "entry_id": "session:sess-off",
+                "session_id": "sess-off",
+                "provider": "claude",
+                "terminal": {"terminal_id": "term-off", "backend": "native"}
+            }
+        ]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    for terminal in ["term-srt", "term-seat", "term-off"] {
+        ws.open_terminal(terminal, "native", "epoch").unwrap();
+    }
+    let chrome = Chrome::dark();
+    let corners_for = |terminal: &str| {
+        let pane_id = ws.pane_for_terminal(terminal).unwrap();
+        pane_corners(&ws, &chrome, ws.pane(pane_id), false)
+    };
+
+    let srt = corners_for("term-srt");
+    assert_eq!(srt.sandbox, SandboxState::Sandboxed);
+    assert_eq!(srt.address_label(), format!("\u{f023} · {}", srt.address));
+    for terminal in ["term-seat", "term-off"] {
+        let seat = corners_for(terminal);
+        assert_eq!(seat.sandbox, SandboxState::Unrestricted, "{terminal}");
+        assert_eq!(
+            seat.address_label(),
+            seat.address,
+            "{terminal} draws no mark"
+        );
+    }
+    let bare = Pane::new(PaneId(99), "term-bare", Backend::Native, "epoch");
+    let bare = pane_corners(&ws, &chrome, &bare, false);
+    assert_eq!(
+        bare.address_label(),
+        bare.address,
+        "a bare shell draws no mark"
+    );
 }

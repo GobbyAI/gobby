@@ -76,7 +76,7 @@
 36 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 37 |│                                                                                                                      │|
 37 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-38 |└─────────────────────────────────────────────────────────────────────────────────────────────────────────  · gclient ┘|
-38 : accent/panel_bg*106 accent/panel_bg+b*13 accent/panel_bg*1
+38 |└───────────────────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
+38 : accent/panel_bg*110 accent/panel_bg+b*9 accent/panel_bg*1
 39 |                                                                                                   prefix ctrl+b │ menu |
 39 : text/surface0*99 subtext0/surface0*16 text/surface0*5

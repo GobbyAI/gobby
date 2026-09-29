@@ -482,7 +482,7 @@ fn build_prefers_run_effort_then_falls_back_to_session_effort() {
 
 /// #23049 option A: a row locks only when Gobby launched it under SRT, from
 /// the run's enforced record or a managed session's launch contract. Every
-/// other row, with or without records, unlocks; there is no unknown state.
+/// other row, with or without records, is unrestricted; there is no unknown state.
 #[test]
 fn build_resolves_sandbox_state_from_session_and_run_records() {
     let session = |id: &str, enabled: Option<bool>| SessionRow {
@@ -563,7 +563,7 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
             SandboxState::Unrestricted,
         ],
         "an enforced SRT run locks whatever its session says; a direct launch, \
-         no record, and a spawned run without SRT unlock"
+         no record, and a spawned run without SRT stay unrestricted"
     );
     assert_eq!(
         SandboxState::resolve(Some(true), None, true),
@@ -578,7 +578,7 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
     assert_eq!(
         SandboxState::resolve(None, None, false),
         SandboxState::Unrestricted,
-        "a bare shell with no records unlocks"
+        "a bare shell with no records is unrestricted"
     );
 }
 
