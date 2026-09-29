@@ -5,7 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.hooks.events import HookEvent
-from gobby.workflows.engine.injection_tracking import InjectionTrackingMixin
+from gobby.workflows.engine.injection_tracking import (
+    DEFAULT_RESHOW_AFTER_INJECTIONS,
+    InjectionTrackingMixin,
+)
 
 _MEMORY_RESULT_FORMATTERS = {
     ("gobby-review-learning", "recall_review_lessons_for_files"): "review_file",
@@ -68,7 +71,12 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         memories = result.get("memories") or []
         if not memories:
             return None
-        new_memories = self._filter_and_track_new_memories(memories, platform_session_id)
+        reshow = result.get("reshow_after_injections")
+        new_memories = self._filter_and_track_new_memories(
+            memories,
+            platform_session_id,
+            reshow if isinstance(reshow, int) and reshow >= 1 else DEFAULT_RESHOW_AFTER_INJECTIONS,
+        )
         if not new_memories:
             return None
         return format_memory_index(str(result.get("trigger") or "turn"), new_memories)

@@ -283,3 +283,20 @@ class TestPreserveContextOnCompact:
         assert assignments["context_compact_block_message"] == ""
         assert "context_compact_handoff_result" not in assignments
         assert "context_compact_highest_announced_threshold" not in assignments
+
+    def test_compact_rule_clears_memory_tracking_variables(self, db: HubDatabase) -> None:
+        row = RuleDefinitionManager(db).get_by_name("preserve-context-on-compact")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate(row.definition_json)
+
+        assignments = {
+            effect.variable: effect.value
+            for effect in body.resolved_effects
+            if effect.type == "set_variable"
+        }
+
+        assert assignments["surfaced_memory_ids"] == []
+        assert assignments["accessed_memory_ids"] == []
+        assert assignments["_memory_surface_seq"] == 0
+        assert assignments["injected_review_lesson_ids"] == []
+        assert "injected_memory_ids" not in assignments

@@ -8,7 +8,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.mcp_proxy.tools.memory_session import resolve_session
+from gobby.mcp_proxy.tools.memory_session import ACCESSED_MEMORY_IDS_VARIABLE, resolve_session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.workflows.memory_review_conditions import (
@@ -68,6 +68,34 @@ def _record_review(
 
 def _enum_value(value: Any) -> Any:
     return value.value if isinstance(value, Enum) else value
+
+
+def _serialize(memory: Any, source: str) -> dict[str, Any]:
+    return {
+        "id": memory.id,
+        "content": memory.content,
+        "rationale": getattr(memory, "rationale", None),
+        "type": _enum_value(memory.memory_type),
+        "tags": memory.tags,
+        "similarity": getattr(memory, "similarity", None),
+        "source": source,
+    }
+
+
+def _accessed_ids(
+    variables: SessionVariableManager, session_ids: list[str], task_id: str
+) -> list[str]:
+    """Ids fetched under ``task_id`` or no task, in first-access order across sessions."""
+    ids: list[str] = []
+    for session_id in session_ids:
+        records = variables.get_variables(session_id).get(ACCESSED_MEMORY_IDS_VARIABLE) or []
+        for record in records:
+            if not isinstance(record, dict) or record.get("task_id") not in (task_id, None):
+                continue
+            memory_id = record.get("memory_id")
+            if isinstance(memory_id, str) and memory_id and memory_id not in ids:
+                ids.append(memory_id)
+    return ids
 
 
 def _resolve_task(
@@ -168,9 +196,24 @@ def register_memory_review_tools(
                 "spawned descendants.",
             )
 
+        variables = SessionVariableManager(session_manager.db)
+        # What the agent fetched while working is the likeliest to need an
+        # update, so it leads; the closing worker's fetches count when a parent
+        # reviews its descendant's closure.
+        session_ids = [resolved_session_id]
+        if closing_session_id is not None and closing_session_id != resolved_session_id:
+            session_ids.append(closing_session_id)
+        accessed_ids = await asyncio.to_thread(_accessed_ids, variables, session_ids, task.id)
+        manager = memory_manager()
+        serialized: list[dict[str, Any]] = []
+        for memory_id in accessed_ids:
+            accessed = await manager.aget_memory(memory_id, project_id=project_id)
+            if accessed is not None:
+                serialized.append(_serialize(accessed, "accessed"))
+
         query = f"{task.title}\n\n{summary}"
         try:
-            candidates = await memory_manager().search_memories(
+            candidates = await manager.search_memories(
                 # The search service embeds the query verbatim, so the whole
                 # summary reaches the vector search with its identifiers intact.
                 # Length is not the risk dilution arguments assume: measured on
@@ -189,17 +232,12 @@ def register_memory_review_tools(
                 f"Memory search failed for task {_task_ref(task)}: {exc}",
             )
 
-        serialized = [
-            {
-                "id": candidate.id,
-                "content": candidate.content,
-                "rationale": getattr(candidate, "rationale", None),
-                "type": _enum_value(candidate.memory_type),
-                "tags": candidate.tags,
-                "similarity": getattr(candidate, "similarity", None),
-            }
+        listed = {candidate["id"] for candidate in serialized}
+        serialized.extend(
+            _serialize(candidate, "search")
             for candidate in candidates
-        ]
+            if candidate.id not in listed
+        )
         record = {
             "closure_id": _closure_id(task),
             "task_id": task.id,
@@ -208,7 +246,7 @@ def register_memory_review_tools(
             "reviewed_at": datetime.now(UTC).isoformat(),
         }
         reviews_complete, pending_reviews = await asyncio.to_thread(
-            _record_review, SessionVariableManager(session_manager.db), resolved_session_id, record
+            _record_review, variables, resolved_session_id, record
         )
         return {
             "success": True,

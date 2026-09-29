@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.persistence import MemoryConfig
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_surface import SURFACE_MIN_SCORE
 from gobby.storage.memories import MemoryType
@@ -42,6 +43,7 @@ def _registry(
     last_assistant_content: str | None = None,
 ) -> tuple[Any, MagicMock]:
     memory_manager = MagicMock()
+    memory_manager.config = MemoryConfig()
     if search_error is not None:
         memory_manager.search_memories = AsyncMock(side_effect=search_error)
     else:
@@ -194,6 +196,19 @@ async def test_turn_trigger_falls_back_to_assistant_text() -> None:
     assert silent["count"] == 0
     assert silent["memories"] == []
     silent_manager.search_memories.assert_not_awaited()
+
+
+async def test_payload_carries_reshow_after_injections() -> None:
+    registry, memory_manager = _registry(candidates=[_memory(1)])
+    memory_manager.config = MemoryConfig(index_reshow_after_injections=3)
+
+    result = await registry.call(
+        "surface_memories",
+        {"text": "Rebuilding the handoff contract", "trigger": "task", "session_id": SESSION_ID},
+    )
+
+    assert result["count"] == 1
+    assert result["reshow_after_injections"] == 3
 
 
 def test_floor_matches_ranking_fixture() -> None:

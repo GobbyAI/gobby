@@ -142,6 +142,13 @@ def staged_append_set_values(name: str) -> set[str]:
     return set(_string_list(staged.get(name)))
 
 
+def staged_session_variable(name: str) -> Any:
+    """Return this hook delivery's staged value for a session variable, or None."""
+
+    staged = peek_worker_staging().get("session_variables")
+    return staged.get(name) if isinstance(staged, dict) else None
+
+
 def stage_append_set_variables(session_id: str, name: str, values: list[str]) -> None:
     """Stage set-union session variable values until the delivery receipt acks."""
 

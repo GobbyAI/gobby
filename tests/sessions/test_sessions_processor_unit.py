@@ -551,9 +551,7 @@ class TestSessionRegistration:
         await processor._process_session("sid", str(transcript))
         assert processor._stats["sid"]["last_assistant_content"] == "second"
         assert index.session_stats is not None
-        assert (
-            processor._stats["sid"]["message_count"] == index.session_stats["message_count"] + 1
-        )
+        assert processor._stats["sid"]["message_count"] == index.session_stats["message_count"] + 1
 
     def test_register_session_rejects_replaced_append_candidate(
         self, mock_db: MagicMock, tmp_path: Path

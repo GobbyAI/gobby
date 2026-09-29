@@ -635,7 +635,7 @@ def test_grok_post_compact_runs_session_start_compact_rules(
             "suggested_skill_names": ["tdd"],
             "loaded_skills": ["brevity"],
             "loaded_skill_references": ["gobby:references/tasks/closing.md"],
-            "injected_memory_ids": ["mem-1"],
+            "surfaced_memory_ids": ["mem-1@1"],
             "_gobby_feedback_epoch_submitted": True,
             "task_context": task_context,
         },
@@ -688,7 +688,7 @@ def test_grok_post_compact_runs_session_start_compact_rules(
     assert stored.get("suggested_skill_names") in ([], None)
     assert stored.get("loaded_skills") in ([], None)
     assert stored.get("loaded_skill_references") in ([], None)
-    assert stored.get("injected_memory_ids") in ([], None)
+    assert stored.get("surfaced_memory_ids") in ([], None)
     assert stored.get("_gobby_feedback_epoch_submitted") is False
 
     delivered = manager_with_mocks._complete_response(

@@ -99,7 +99,8 @@ def register_memory_surface_tools(
                 if not query.strip():
                     return _empty(trigger)
 
-            memories = await memory_manager().search_memories(
+            manager = memory_manager()
+            memories = await manager.search_memories(
                 # The search service embeds ``embed_text`` and hands ``query``
                 # to the keyword leg; passing the same text keeps both verbatim.
                 query=query,
@@ -121,4 +122,10 @@ def register_memory_surface_tools(
             return _empty(trigger)
 
         serialized = [_serialize(memory) for memory in memories]
-        return {"trigger": trigger, "count": len(serialized), "memories": serialized}
+        return {
+            "trigger": trigger,
+            "count": len(serialized),
+            "memories": serialized,
+            # The delivery formatter owns the re-show horizon but has no config access.
+            "reshow_after_injections": manager.config.index_reshow_after_injections,
+        }

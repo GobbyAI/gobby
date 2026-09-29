@@ -166,18 +166,27 @@ class TestMemoryLifecycleSync:
 
 
 class TestResetMemoryTrackingOnStart:
-    """Reset injected_memory_ids on context loss (session_start)."""
+    """Reset the memory tracking variables on context loss (session_start)."""
 
-    def test_event_and_effect(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
+    def test_reset_rule_clears_memory_tracking_variables(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("reset-memory-tracking-on-start")
         assert row is not None
         body = RuleDefinitionBody.model_validate(row.definition_json)
         assert body.event.value == "session_start"
-        assert body.effects is not None
-        effect = body.effects[0]
-        assert effect.type == "set_variable"
-        assert effect.variable == "injected_memory_ids"
+        assignments = {
+            effect.variable: effect.value
+            for effect in body.resolved_effects
+            if effect.type == "set_variable"
+        }
+        assert assignments == {
+            "surfaced_memory_ids": [],
+            "accessed_memory_ids": [],
+            "_memory_surface_seq": 0,
+            "injected_review_lesson_ids": [],
+        }
 
     def test_has_when_condition(self, db: HubDatabase, manager: RuleDefinitionManager) -> None:
         _sync_bundled(db)
