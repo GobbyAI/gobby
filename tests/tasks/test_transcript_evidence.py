@@ -8,6 +8,9 @@ import json
 import logging
 import multiprocessing
 import os
+import signal
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
@@ -17,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import psutil
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
@@ -220,6 +224,59 @@ def _resource_tracker_pid() -> int | None:
     from multiprocessing import resource_tracker
 
     return cast(int | None, getattr(resource_tracker._resource_tracker, "_pid", None))
+
+
+_POOL_OWNER = """
+import asyncio, time
+from multiprocessing import resource_tracker
+from gobby.tasks import transcript_evidence_pool
+
+asyncio.run(transcript_evidence_pool.prewarm_transcript_evidence_pool())
+pool = transcript_evidence_pool._get_pool()
+pids = [proc.pid for proc in pool._processes.values()]
+pids.append(resource_tracker._resource_tracker._pid)
+print(" ".join(str(pid) for pid in pids), flush=True)
+time.sleep(600)
+"""
+
+
+def test_pool_processes_exit_when_the_daemon_is_killed() -> None:
+    # A SIGKILLed daemon runs no shutdown; its workers and tracker must still go.
+    owner = subprocess.Popen(
+        [sys.executable, "-c", _POOL_OWNER], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL
+    )
+    pids: list[int] = []
+    try:
+        assert owner.stdout is not None
+        pids = [int(pid) for pid in owner.stdout.readline().split()]
+        assert len(pids) == 5
+        owner.kill()
+        owner.wait(timeout=10)
+
+        assert _survivors(pids, timeout=15.0) == []
+    finally:
+        owner.kill()
+        for pid in _survivors(pids, timeout=0.0):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _survivors(pids: list[int], timeout: float) -> list[int]:
+    deadline = time.monotonic() + timeout
+    while alive := [pid for pid in pids if psutil.pid_exists(pid) and not _zombie(pid)]:
+        if time.monotonic() >= deadline:
+            return alive
+        time.sleep(0.1)
+    return []
+
+
+def _zombie(pid: int) -> bool:
+    try:
+        return bool(psutil.Process(pid).status() == psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return True
 
 
 def test_shutdown_stops_resource_tracker_for_real_pool() -> None:

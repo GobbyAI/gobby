@@ -482,24 +482,31 @@ class TestFrontDoor:
         config_path, http_port, ws_port = e2e_config
         runner = _spawn_runner(e2e_project_dir, config_path)
         child: psutil.Process | None = None
+        descendants: list[psutil.Process] = []
         try:
             wait_for_daemon_health(http_port, log_file=config_path.parent / "logs" / "daemon.log")
             child = _front_door_child(runner.pid)
+            # gdaemon plus the transcript evidence pool: none may outlive a SIGKILL.
+            descendants = psutil.Process(runner.pid).children(recursive=True)
             os.kill(runner.pid, signal.SIGKILL)
             runner.wait(timeout=5)
             front_door = child
             wait_for_condition(
-                lambda: _gone(front_door) and _ports_free(http_port, ws_port),
-                timeout=5.0,
-                description="orphaned gdaemon front door exit",
+                lambda: all(_gone(p) for p in descendants) and _ports_free(http_port, ws_port),
+                timeout=10.0,
+                description="every runner descendant exits after SIGKILL",
             )
-            # The liveness pipe, not any runner cleanup, took the child down.
+            # The liveness pipe and the pool's parent watch, not runner cleanup, did it.
             assert runner.returncode == -signal.SIGKILL
             assert _gone(front_door)
+            assert [p.pid for p in descendants if not _gone(p)] == []
             assert _ports_free(http_port, ws_port)
         finally:
             if runner.poll() is None:
                 terminate_process_tree(runner.pid)
+            for process in descendants:
+                if not _gone(process):
+                    process.kill()
             if child is not None and not _gone(child):
                 child.kill()
 
