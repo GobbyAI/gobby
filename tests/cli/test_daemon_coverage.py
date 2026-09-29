@@ -79,7 +79,7 @@ class TestServicesStart:
         assert "Compose file is missing" in result.detail
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
-    @patch("gobby.cli.daemon.subprocess.run")
+    @patch("gobby.cli.daemon_start.subprocess.run")
     def test_start_exports_persisted_qdrant_port(self, mock_run: MagicMock, tmp_path: Path) -> None:
         _write_managed_compose(tmp_path)
 
@@ -104,7 +104,7 @@ class TestServicesStart:
         assert "qdrant" in cmd
         assert mock_run.call_args.kwargs["env"]["GOBBY_QDRANT_HTTP_PORT"] == "7333"
 
-    @patch("gobby.cli.daemon.subprocess.run")
+    @patch("gobby.cli.daemon_start.subprocess.run")
     def test_compose_exists_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
         _write_managed_compose(tmp_path)
 
@@ -123,7 +123,7 @@ class TestServicesStart:
         assert "qdrant" in mock_run.call_args.args[0]
         assert mock_run.call_args.kwargs["cwd"] == str(tmp_path / "services")
 
-    @patch("gobby.cli.daemon.subprocess.run")
+    @patch("gobby.cli.daemon_start.subprocess.run")
     def test_compose_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
         _write_managed_compose(tmp_path)
 
@@ -143,7 +143,7 @@ class TestServicesStart:
         _write_managed_compose(tmp_path)
 
         # Without resolved service config there are no profiles to start.
-        with patch("gobby.cli.daemon.subprocess.run") as mock_run:
+        with patch("gobby.cli.daemon_start.subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0)
             with patch(
                 "gobby.cli.daemon.resolve_compose_runtime",
@@ -162,7 +162,7 @@ class TestServicesStop:
         assert result is False
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
-    @patch("gobby.cli.daemon.subprocess.run")
+    @patch("gobby.cli.daemon_start.subprocess.run")
     def test_stop_success(self, mock_run: MagicMock, tmp_path: Path) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
@@ -175,7 +175,7 @@ class TestServicesStop:
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
 
-    @patch("gobby.cli.daemon.subprocess.run")
+    @patch("gobby.cli.daemon_start.subprocess.run")
     def test_stop_timeout(
         self,
         mock_run: MagicMock,
@@ -192,7 +192,7 @@ class TestServicesStop:
         assert "Timed out stopping Docker services" in caplog.text
         mock_run.assert_called_once()
 
-    @patch("gobby.cli.daemon.subprocess.run")
+    @patch("gobby.cli.daemon_start.subprocess.run")
     def test_stop_exception(
         self,
         mock_run: MagicMock,

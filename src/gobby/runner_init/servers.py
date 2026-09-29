@@ -28,6 +28,7 @@ from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
+from gobby.runner_front_door import backend_bind
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -283,10 +284,11 @@ def init_servers(runner: GobbyRunner) -> None:
         ),
     )
 
+    backend = backend_bind(runner.bootstrap_config)
     runner.http_server = HTTPServer(
         services=services,
         startup_config=config,
-        port=runner.bootstrap_config.daemon_port,
+        port=backend.http_port,
         test_mode=config.test_mode,
         codex_client=codex_client,
         bootstrap_config=runner.bootstrap_config,
@@ -320,8 +322,8 @@ def init_servers(runner: GobbyRunner) -> None:
     runner.websocket_server = None
     if config.websocket.enabled:
         websocket_config = WebSocketConfig(
-            host=runner.bootstrap_config.bind_host,
-            port=runner.bootstrap_config.websocket_port,
+            host=backend.host,
+            port=backend.ws_port,
             ping_interval=config.websocket.ping_interval,
             ping_timeout=config.websocket.ping_timeout,
         )

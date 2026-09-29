@@ -321,7 +321,7 @@ def test_observability_commands_read_config_without_applying_schema() -> None:
 
 
 def test_start_preflight_tolerates_retired_config_before_runner_reconciles_it() -> None:
-    source = Path("src/gobby/cli/daemon.py").read_text(encoding="utf-8")
+    source = Path("src/gobby/cli/daemon_start.py").read_text(encoding="utf-8")
 
     accessors = _config_accessors_by_function(source)
 

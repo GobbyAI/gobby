@@ -128,7 +128,7 @@ class HTTPServer:
         self._hook_manager: HookManager | None = None
 
         if self.mcp_manager:
-            self._init_mcp_subsystems(services, port)
+            self._init_mcp_subsystems(services)
 
         from gobby.servers.app_factory import create_app
 
@@ -204,7 +204,7 @@ class HTTPServer:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
+    def _init_mcp_subsystems(self, services: ServiceContainer) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
         from gobby.mcp_proxy.manager import MCPClientManager
         from gobby.runner_init.services import AIServiceBundle, MemoryServiceBundle
@@ -423,7 +423,7 @@ class HTTPServer:
         # Create tools handler
         self._tools_handler = GobbyDaemonTools(
             mcp_manager=mcp_manager,
-            daemon_port=port,
+            daemon_port=self.bootstrap_config.daemon_port,
             websocket_port=ws_port,
             start_time=self._start_time,
             internal_manager=self._internal_manager,

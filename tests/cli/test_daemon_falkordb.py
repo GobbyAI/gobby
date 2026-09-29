@@ -83,7 +83,7 @@ def test_services_start_uses_falkordb_config_store_password(
             "gobby.storage.hub.runtime.runtime_hub_database",
             return_value=nullcontext(postgres_db),
         ),
-        patch("gobby.cli.daemon.subprocess.run") as mock_run,
+        patch("gobby.cli.daemon_start.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0)
         result = _services_start(tmp_path)

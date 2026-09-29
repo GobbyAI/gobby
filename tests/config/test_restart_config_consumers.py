@@ -95,9 +95,7 @@ def test_topology_uses_bootstrap_only() -> None:
     server_source = inspect.getsource(init_servers)
     ui_source = inspect.getsource(_app_ui)
 
-    assert "runner.bootstrap_config.daemon_port" in server_source
-    assert "runner.bootstrap_config.bind_host" in server_source
-    assert "runner.bootstrap_config.websocket_port" in server_source
+    assert "backend_bind(runner.bootstrap_config)" in server_source
     assert "runner.config.daemon_port" not in server_source
     assert "runner.config.bind_host" not in server_source
     assert "runner.config.websocket.port" not in server_source

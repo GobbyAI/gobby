@@ -24,6 +24,7 @@ from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
@@ -384,6 +385,138 @@ class TestGobbyRunnerRun:
         ]
 
 
+def _init_servers_runner(
+    config: DaemonConfig, bootstrap: BootstrapConfig, text_generation_service: object
+) -> SimpleNamespace:
+    """A runner stub carrying every attribute init_servers reads."""
+
+    class RunnerStub(SimpleNamespace):
+        pass
+
+    runner = RunnerStub()
+    runner.startup_config = config
+    runner.bootstrap_config = bootstrap
+    runner.machine_id = "machine-1"
+    runner.codex_client = None
+    runner.text_generation_service = text_generation_service
+    runner.database = object()
+    runner.db_executor = None
+    runner.worktree_delete_executor = None
+    runner.coverage_executor = None
+    runner.database_concurrency = None
+    runner.database_watchdog = None
+    runner.session_manager = None
+    runner.task_manager = object()
+    runner.span_storage = None
+    runner.managed_credential_manager = None
+    runner.memory_backup_manager = None
+    runner.memory_manager = None
+    runner.memory_dream_coordinator = None
+    runner.feedback_review_service = None
+    runner.llm_service = None
+    runner.vector_store = None
+    runner.mcp_proxy = None
+    runner.mcp_db_manager = None
+    runner.metrics_manager = None
+    runner.agent_runner = None
+    runner.message_processor = None
+    runner.task_validator = None
+    runner.worktree_storage = None
+    runner.clone_storage = None
+    runner.git_manager = None
+    runner.project_id = "project-1"
+    runner.pipeline_executor = None
+    runner.workflow_loader = None
+    runner.pipeline_execution_manager = None
+    runner.completion_registry = None
+    runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
+    runner.agent_lifecycle_monitor = None
+    runner.attention_manager = None
+    runner.detection_registry = None
+    runner.communications_manager = None
+    runner.code_indexer = None
+    runner.cron_storage = None
+    runner.cron_scheduler = None
+    runner.system_automation_loop = None
+    runner.skill_manager = None
+    runner.hub_manager = None
+    runner.config_store = None
+    runner.config_runtime = SimpleNamespace(
+        ready=False,
+        capture=static_runtime_capture(config),
+        register_revision_publisher=MagicMock(),
+    )
+    runner.prompt_manager = None
+    runner.tool_chat_service = None
+    runner._dev_mode = False
+    return runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("front_door", "expected"),
+    [
+        (True, ("127.0.0.1", 60987, 60988)),
+        (False, ("0.0.0.0", 60887, 60888)),  # nosec B104 # asserted, never bound
+    ],
+)
+async def test_backend_ports_behind_front_door(
+    mock_config: MagicMock, front_door: bool, expected: tuple[str, int, int]
+) -> None:
+    """Behind the front door the runner binds the +100 pair on loopback; off, the public pair."""
+    from gobby.ai import build_daemon_text_generation_service
+    from gobby.runner_init.servers import init_servers
+
+    bootstrap = BootstrapConfig(
+        bind_host="0.0.0.0",  # nosec B104 # the public host gdaemon would take
+        daemon_port=60887,
+        websocket_port=60888,
+        front_door=FrontDoorConfig(enabled=front_door),
+    )
+    host, http_port, ws_port = expected
+    config = DaemonConfig(websocket={"enabled": True})
+    runner = cast(
+        GobbyRunner,
+        _init_servers_runner(config, bootstrap, build_daemon_text_generation_service(config)),
+    )
+    with (
+        patch("gobby.runner_init.servers.HTTPServer") as http_server_cls,
+        patch("gobby.runner_init.servers.WebSocketServer") as websocket_server_cls,
+        patch("gobby.runner_init.servers.WebChatRuntimeManager"),
+        patch("gobby.runner_init.servers.ModelMetadataCoverageAuditor"),
+        patch("gobby.runner_init.servers.CapabilityRefreshCoordinator"),
+        patch("gobby.runner_init.servers.ProviderCapacityService.create_default"),
+        patch("gobby.runner_init.servers.LocalContextStore"),
+        patch("gobby.runner_init.servers.LocalContextService"),
+        patch("gobby.runner_init.servers.configured_local_routes", return_value=()),
+        patch("gobby.runner_init.servers.set_app_context"),
+        patch(
+            "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
+            return_value=False,
+        ),
+    ):
+        init_servers(runner)
+
+    assert http_server_cls.call_args.kwargs["port"] == http_port
+    websocket_config = websocket_server_cls.call_args.kwargs["config"]
+    assert (websocket_config.host, websocket_config.port) == (host, ws_port)
+
+    with ExitStack() as stack:
+        for active_patch in create_base_patches(mock_config=mock_config):
+            stack.enter_context(active_patch)
+        daemon = _runner_with_static_runtime()
+        daemon.bootstrap_config = bootstrap
+        daemon._shutdown_requested = True
+        uvicorn_config = stack.enter_context(patch("uvicorn.Config"))
+        server = AsyncMock()
+        server.serve = _serve_mock_until_should_exit(server)
+        stack.enter_context(patch("uvicorn.Server", return_value=server))
+        stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+        await daemon.run(ownership_resolution=FailOpenPidOwnership("test"))
+
+    assert uvicorn_config.call_args.kwargs["host"] == host
+
+
 class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
 
@@ -480,69 +613,15 @@ class TestInitSubsystems:
             ]
         )
 
-        class RunnerStub(SimpleNamespace):
-            pass
-
-        runner = RunnerStub()
-        runner.startup_config = config
-        runner.bootstrap_config = config
-        runner.machine_id = "machine-1"
-        runner.codex_client = None
         text_generation_service = build_daemon_text_generation_service(
             config,
             registry=registry,
         )
-        runner.text_generation_service = text_generation_service
-        runner.database = object()
-        runner.db_executor = None
-        runner.worktree_delete_executor = None
-        runner.coverage_executor = None
-        runner.database_concurrency = None
-        runner.database_watchdog = None
-        runner.session_manager = None
-        runner.task_manager = object()
-        runner.span_storage = None
-        runner.managed_credential_manager = None
-        runner.memory_backup_manager = None
-        runner.memory_manager = None
-        runner.memory_dream_coordinator = None
-        runner.feedback_review_service = None
-        runner.llm_service = None
-        runner.vector_store = None
-        runner.mcp_proxy = None
-        runner.mcp_db_manager = None
-        runner.metrics_manager = None
-        runner.agent_runner = None
-        runner.message_processor = None
-        runner.task_validator = None
-        runner.worktree_storage = None
-        runner.clone_storage = None
-        runner.git_manager = None
-        runner.project_id = "project-1"
-        runner.pipeline_executor = None
-        runner.workflow_loader = None
-        runner.pipeline_execution_manager = None
-        runner.completion_registry = None
-        runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
-        runner.agent_lifecycle_monitor = None
-        runner.attention_manager = None
-        runner.detection_registry = None
-        runner.communications_manager = None
-        runner.code_indexer = None
-        runner.cron_storage = None
-        runner.cron_scheduler = None
-        runner.system_automation_loop = None
-        runner.skill_manager = None
-        runner.hub_manager = None
-        runner.config_store = None
-        runner.config_runtime = SimpleNamespace(
-            ready=False,
-            capture=static_runtime_capture(config),
-            register_revision_publisher=MagicMock(),
+        runner = _init_servers_runner(
+            config,
+            BootstrapConfig(front_door=FrontDoorConfig(enabled=False)),
+            text_generation_service,
         )
-        runner.prompt_manager = None
-        runner.tool_chat_service = None
-        runner._dev_mode = False
         capability_service = MagicMock()
         coverage_auditor = MagicMock()
         capacity_service = MagicMock()
@@ -2548,10 +2627,11 @@ class TestRunGobbyFunction:
     @pytest.mark.asyncio
     async def test_run_gobby_creates_runner(self):
         """Test that run_gobby creates and runs GobbyRunner."""
-        bootstrap = SimpleNamespace(
+        bootstrap = BootstrapConfig(
             database_url="postgresql://test",
             bind_host="127.0.0.1",
             daemon_port=60887,
+            front_door=FrontDoorConfig(enabled=False),
         )
         lease = MagicMock()
         lease.try_acquire.return_value = True
@@ -3929,7 +4009,8 @@ class TestShutdownLoop:
             request_shutdown=MagicMock(),
             _shutdown_requested=False,
             config=mock_config,
-            bootstrap_config=mock_config,
+            bootstrap_config=BootstrapConfig(front_door=FrontDoorConfig(enabled=False)),
+            front_door_child=None,
             http_server=SimpleNamespace(
                 app=MagicMock(),
                 port=8765,

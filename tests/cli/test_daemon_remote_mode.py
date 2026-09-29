@@ -4,7 +4,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from gobby.cli.daemon import _do_stop, _services_start, _start_dependency_errors
+from gobby.cli.daemon import _do_stop, _services_start
+from gobby.cli.daemon_start import _start_dependency_errors
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import load_bootstrap
@@ -28,8 +29,8 @@ def test_start_skips_services_in_remote_mode(tmp_path: Path) -> None:
 
     with (
         patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.daemon.collect_dependency_report") as collect_dependencies,
-        patch("gobby.cli.daemon.required_dependency_errors", return_value=[]),
+        patch("gobby.cli.daemon_start.collect_dependency_report") as collect_dependencies,
+        patch("gobby.cli.daemon_start.required_dependency_errors", return_value=[]),
     ):
         assert _start_dependency_errors() == []
     collect_dependencies.assert_called_once_with(managed_services=False, include_srt=True)

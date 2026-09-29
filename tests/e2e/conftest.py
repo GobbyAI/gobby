@@ -376,6 +376,19 @@ def prepare_daemon_env(
         env["OPENAI_API_KEY"] = ""
         env["GEMINI_API_KEY"] = ""
 
+    # Pin native binaries before HOME moves, or ~/.gobby/bin would resolve inside
+    # the temp home and the runner could not find the gdaemon front door it
+    # spawns. GOBBY_TEST_GDAEMON=checkout selects this checkout's debug build; a
+    # GOBBY_NATIVE_BIN_DIR the test already set wins.
+    from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_dir, native_bin_name
+    from tests.fixtures.gdaemon_binary import select_test_gdaemon
+
+    checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
+    env.setdefault(
+        NATIVE_BIN_DIR_ENV,
+        str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
+    )
+
     # Override HOME so that ~/.gobby resolves to <temp>/.gobby instead of
     # the user's real home directory. This is the single most effective
     # isolation measure: it catches every expanduser() call in the daemon.
@@ -774,8 +787,20 @@ def e2e_config(
     """Create an isolated config file with unique ports."""
     _ = postgres_db  # Fixture side effect: migrated and reset isolated Postgres schema.
 
-    http_port = find_free_port()
-    ws_port = find_free_port()
+    # The gdaemon front door takes the public pair and proxies to the runner's
+    # backend pair (public + 100), so all four ports must be free and distinct.
+    ports: list[int] = []
+    while len(ports) < 2:
+        port = find_free_port()
+        if {port, port + 100} & {*ports, *(taken + 100 for taken in ports)}:
+            continue
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                probe.bind(("0.0.0.0", port + 100))
+        except OSError:
+            continue
+        ports.append(port)
+    http_port, ws_port = ports
 
     gobby_home = e2e_project_dir / ".gobby-home"
     gobby_home.mkdir(parents=True, exist_ok=True)
@@ -857,6 +882,8 @@ daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}
 files_home: {files_home}
+front_door:
+  enabled: true
 """
     bootstrap_path.write_text(bootstrap_content)
     bootstrap_path.chmod(0o600)

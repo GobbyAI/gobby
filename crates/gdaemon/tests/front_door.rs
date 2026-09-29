@@ -346,3 +346,111 @@ async fn refused_upgrade_strips_connection_listed_fields() {
     assert!(head_has(&head, "x-kept: yes"), "{head}");
     assert!(!head.to_ascii_lowercase().contains("x-private"), "{head}");
 }
+
+/// A `gdaemon serve` child and its home, killed on drop so a failed assertion
+/// leaks no process.
+#[cfg(unix)]
+struct ServeChild {
+    process: std::process::Child,
+    _home: tempfile::TempDir,
+}
+
+#[cfg(unix)]
+impl Drop for ServeChild {
+    fn drop(&mut self) {
+        let _ = self.process.kill();
+        let _ = self.process.wait();
+    }
+}
+
+/// Spawn `gdaemon serve` on a fresh public pair with the pipe's read end as stdin,
+/// and wait until both ports accept.
+#[cfg(unix)]
+fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeChild, [u16; 2]) {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    let mut ports = Vec::new();
+    while ports.len() < 2 {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let port = probe.local_addr().expect("probe addr").port();
+        // Leave room for the +100 backend pair gdaemon derives.
+        if port <= 65435 && !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    let ports = [ports[0], ports[1]];
+    let home = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        home.path().join("bootstrap.yaml"),
+        format!(
+            "bind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\n",
+            ports[0], ports[1]
+        ),
+    )
+    .expect("write bootstrap");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_gdaemon"));
+    command
+        .arg("serve")
+        .env("GOBBY_HOME", home.path())
+        .env_remove("GOBBY_PARENT_FD")
+        .stdin(Stdio::from(reader));
+    if let Some(fd) = parent_fd {
+        command.env("GOBBY_PARENT_FD", fd);
+    }
+    let mut child = ServeChild {
+        process: command.spawn().expect("spawn gdaemon serve"),
+        _home: home,
+    };
+    let deadline = Instant::now() + TIMEOUT;
+    while !ports
+        .iter()
+        .all(|port| std::net::TcpStream::connect(("127.0.0.1", *port)).is_ok())
+    {
+        assert!(
+            child.process.try_wait().expect("poll serve").is_none(),
+            "serve exited before binding"
+        );
+        assert!(Instant::now() < deadline, "serve did not bind {ports:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    (child, ports)
+}
+
+#[cfg(unix)]
+#[test]
+fn parent_fd_eof_stops_serve() {
+    use std::time::{Duration, Instant};
+
+    // Without GOBBY_PARENT_FD there is no watch: EOF on the same pipe changes nothing.
+    let (reader, writer) = std::io::pipe().expect("pipe");
+    let (mut unwatched, ports) = spawn_serve(None, reader);
+    drop(writer);
+    std::thread::sleep(Duration::from_millis(500));
+    assert!(
+        unwatched.process.try_wait().expect("poll serve").is_none(),
+        "serve without GOBBY_PARENT_FD must keep running"
+    );
+    assert!(std::net::TcpStream::connect(("127.0.0.1", ports[0])).is_ok());
+    drop(unwatched);
+
+    // With it, the owner's end closing stops serve cleanly and frees both public ports.
+    let (reader, writer) = std::io::pipe().expect("pipe");
+    let (mut watched, ports) = spawn_serve(Some("0"), reader);
+    drop(writer);
+    let deadline = Instant::now() + TIMEOUT;
+    let status = loop {
+        if let Some(status) = watched.process.try_wait().expect("poll serve") {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "serve ignored parent EOF");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success(), "serve exited with {status}");
+    for port in ports {
+        assert!(
+            std::net::TcpListener::bind(("127.0.0.1", port)).is_ok(),
+            "public port {port} still held after serve exited"
+        );
+    }
+}
