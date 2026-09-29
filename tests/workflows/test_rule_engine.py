@@ -437,6 +437,13 @@ async def test_rule_loop_timing_attributes_executor_bridge_and_mcp_call(
     assert "rule_loop_pass_resume" in breakdown
     for key in ("rule_step_after_tool", "rule_late_mcp_injections", "rule_finalize_response"):
         assert key in breakdown
+    # A fresh engine misses the rule cache, so both read sites run and split.
+    for site in ("rule_db_load_rules", "rule_db_active_rules"):
+        for part in ("queue", "work", "resume"):
+            assert f"{site}_{part}" in breakdown
+    assert breakdown["rule_engine_db_reads"] >= (
+        breakdown["rule_db_load_rules_work"] + breakdown["rule_db_active_rules_work"]
+    )
 
 
 async def _assert_evaluation(

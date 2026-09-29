@@ -48,7 +48,7 @@ from gobby.workflows.definitions import (
     RuleTriggerEvent,
 )
 from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
-from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine._offload import offload, timed_offload
 from gobby.workflows.engine.block_batching import (
     clear_block_scopes,
     close_response_batch,
@@ -292,7 +292,8 @@ class RuleEngine(
                 project_from_vars = variables.get("project")
                 if not (isinstance(project_from_vars, dict) and project_from_vars.get("path")):
                     with measure_hook_phase("rule_engine_db_reads"):
-                        variables["project"] = await offload(
+                        variables["project"] = await timed_offload(
+                            "rule_db_project_info",
                             self._resolve_project_info,
                             event,
                             project_from_vars,
@@ -336,8 +337,10 @@ class RuleEngine(
                 if is_turn_end:
                     try:
                         with measure_hook_phase("rule_engine_db_reads"):
-                            active_coordination_wait = await offload(
-                                CoordinationWaitManager(self.db).has_active_wait, session_id
+                            active_coordination_wait = await timed_offload(
+                                "rule_db_coordination_wait",
+                                CoordinationWaitManager(self.db).has_active_wait,
+                                session_id,
                             )
                     except Exception as exc:
                         logger.warning(
@@ -347,7 +350,8 @@ class RuleEngine(
                         )
                     try:
                         with measure_hook_phase("rule_engine_db_reads"):
-                            active_agent_wait = await offload(
+                            active_agent_wait = await timed_offload(
+                                "rule_db_agent_wait",
                                 CompletionSubscriberManager(self.db).has_active_agent_wait,
                                 session_id,
                             )
@@ -364,7 +368,8 @@ class RuleEngine(
                     if variables.get("task_claimed") and claimed_task_ids:
                         try:
                             with measure_hook_phase("rule_engine_db_reads"):
-                                durable_task_wait = await offload(
+                                durable_task_wait = await timed_offload(
+                                    "rule_db_durable_task_wait",
                                     all_tasks_have_durable_stop_wait,
                                     self._task_manager,
                                     claimed_task_ids,
@@ -509,7 +514,9 @@ class RuleEngine(
                 rules = self._cached_rules(rule_cache_key)
                 if rules is None:
                     with measure_hook_phase("rule_engine_db_reads"):
-                        rules = await offload(self._load_rules_into_cache, rule_cache_key)
+                        rules = await timed_offload(
+                            "rule_db_load_rules", self._load_rules_into_cache, rule_cache_key
+                        )
 
                 # 2-3. Filter by agent_scope, then audience (pure, so inline)
                 agent_type = variables.get("_agent_type")
@@ -518,7 +525,8 @@ class RuleEngine(
 
                 # 4. Filter by active rules (selector-based)
                 with measure_hook_phase("rule_engine_db_reads"):
-                    rules = await offload(
+                    rules = await timed_offload(
+                        "rule_db_active_rules",
                         self._filter_by_active_rules,
                         rules,
                         variables,
