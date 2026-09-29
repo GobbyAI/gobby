@@ -60,7 +60,7 @@ from gobby.storage.hub.protocol import (
 )
 from gobby.storage.hub.transaction_deadline import TransactionDeadline
 from gobby.telemetry.instruments import observe_histogram
-from gobby.telemetry.query_timing import record_query
+from gobby.telemetry.query_timing import record_pool_acquire, record_query
 from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
@@ -148,13 +148,15 @@ def pool_connection(
                     )
                     raise
         except BaseException:
-            observe_histogram(
-                "database_pool_acquire_wait_seconds",
-                time.monotonic() - started,
-            )
+            _observe_acquire_wait(time.monotonic() - started)
             raise
-        observe_histogram("database_pool_acquire_wait_seconds", time.monotonic() - started)
+        _observe_acquire_wait(time.monotonic() - started)
         yield conn
+
+
+def _observe_acquire_wait(wait_seconds: float) -> None:
+    observe_histogram("database_pool_acquire_wait_seconds", wait_seconds)
+    record_pool_acquire(wait_seconds)
 
 
 def _acquire_with_backoff(

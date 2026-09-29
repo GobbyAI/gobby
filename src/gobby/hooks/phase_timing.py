@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -90,7 +91,10 @@ def hook_phase_timing_scope(timings: HookPhaseTimings) -> Iterator[None]:
     """Expose one delivery's collector across hook and workflow calls."""
     token = _current_timings.set(timings)
     try:
-        with observe_queries(timings.add_query_latency):
+        with observe_queries(
+            timings.add_query_latency,
+            pool_acquire_observer=functools.partial(timings.add, "hub_pool_acquire"),
+        ):
             yield
     finally:
         _current_timings.reset(token)
