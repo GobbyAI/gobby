@@ -404,7 +404,7 @@ Targets:
 - `crates/gcore/src/postgres_pool/row.rs`
 - `crates/gcore/src/postgres_pool/tests.rs`
 
-**Granularity:** seven acceptance items, one behavior: the transaction
+**Granularity:** eight acceptance items, one behavior: the transaction
 boundary owns its checkout, commit outcome, callbacks, and locks together, and
 row mapping and identifier quoting are the seam's small value helpers that
 the same tests exercise.
@@ -424,7 +424,10 @@ error is logged. `Transaction` wraps
 `deadpool_postgres::Transaction` and offers `query`, `query_opt`,
 `query_one`, `execute` (positional `$n` parameters through `&(dyn ToSql +
 Sync)`), `acquire_lock(&dyn LockTarget)`, and `after_commit(Box<dyn FnOnce()
--> anyhow::Result<()> + Send>)`. Commit classification (Decision 6) is a pure
+-> anyhow::Result<()> + Send>)`. Callbacks stay synchronous, as Python's are:
+a callback that needs database work signals an async task (a channel send or
+`Notify`) and never blocks a runtime worker. `Pool::status()` passes through
+deadpool's synchronous `Status` (size, available) for observation. Commit classification (Decision 6) is a pure
 function `is_definite_commit_rejection(code: Option<&SqlState>, severity:
 Option<&str>) -> bool`: true when the code is none of `57014`, `55P03`,
 `40003` and either the code's class is `23` or `40` or the severity is
@@ -454,11 +457,14 @@ free functions taking `&Transaction`, returning `FromRow` types.
 
 **Acceptance:**
 
-- 2.1.1 - `Ok` commits and `Err` rolls back. With `max_size=2` and one connection held by the test, after a
-  confirmed commit callback 1 checks out a connection (proving the checkout
-  was released), callback 2 returns `Err`, and callback 3 still runs, in that
-  order; a rolled-back transaction and an `IndeterminateCommit` run none.
-  test:
+- 2.1.1 - `Ok` commits and `Err` rolls back. With `max_size=2` and one
+  connection held by the test, after a confirmed commit callback 1 reads
+  `Pool::status()` synchronously and records one available connection
+  (proving the checkout was released before callbacks), callback 2 returns
+  `Err`, and callback 3 still runs and signals a `tokio::sync::Notify` that
+  the test awaits before it checks a connection out; the order is recorded
+  1, 2, 3 and the operation's result is unchanged. A rolled-back transaction
+  and an `IndeterminateCommit` run none. test:
   `crates/gcore/src/postgres_pool/tests.rs::transaction_commits_and_runs_callbacks`.
 - 2.1.2 - `is_definite_commit_rejection` matches a table covering classes
   `23` and `40`, the exclusions `57014`, `55P03`, `40003`, a generic `ERROR`
@@ -471,11 +477,27 @@ free functions taking `&Transaction`, returning `FromRow` types.
   `IndeterminateCommit` (from `57P01` or a closed connection), and the next
   checkout has a different PID. test:
   `crates/gcore/src/postgres_pool/tests.rs::commit_outcome_is_classified`.
-- 2.1.4 - With `max_size=2` and one connection held by the test, a transaction future dropped while its `COMMIT`
-  is in flight (a closure that holds a lock another connection waits on,
-  cancelled by `tokio::time::timeout`) leaves a pool whose next checkout has a
-  different PID. test:
-  `crates/gcore/src/postgres_pool/tests.rs::cancelled_transaction_discards_connection`.
+- 2.1.4 - With `max_size=2` and one connection held by the test, a
+  transaction cancelled while its `COMMIT` is in flight discards its
+  connection. Fixture: a control connection holds session advisory lock `k`;
+  the transaction inserts into a temp table carrying an `INITIALLY DEFERRED`
+  constraint trigger whose `pg_temp` function calls
+  `pg_advisory_xact_lock(k)`, so `COMMIT` blocks in the trigger. The test
+  spawns the transaction, polls `pg_stat_activity` from the control
+  connection until the transaction's PID shows `query = 'COMMIT'` and
+  `wait_event_type = 'Lock'`, then aborts the task. The old PID leaves
+  `pg_stat_activity` within a bounded poll, the pool's size returns to 1, and
+  the next checkout has a different PID. test:
+  `crates/gcore/src/postgres_pool/tests.rs::cancelled_commit_discards_connection`.
+- 2.1.8 - A closure returning `Err` after a control connection has run
+  `pg_terminate_backend` on its PID gets its own error back (the rollback
+  error is logged), and the next checkout has a different PID; an armed
+  checkout guard dropped without disarming, on a live connection, detaches it
+  so its PID leaves `pg_stat_activity`. Cancellation while `ROLLBACK` is in
+  flight takes the same armed-guard path; no server state makes `ROLLBACK`
+  wait, so the guard-drop case is the deterministic proof of that path.
+  test:
+  `crates/gcore/src/postgres_pool/tests.rs::failed_rollback_and_armed_guard_discard`.
 - 2.1.5 - A native transaction holding a target keyed `task_lifecycle:t1`
   blocks a second connection's `pg_advisory_xact_lock(hashtext('task_lifecycle:t1'))`
   until commit; re-acquiring the identical target sends no SQL; a different
