@@ -380,7 +380,6 @@ running executions for definitions that opt in. Running executions for
 definitions without that flag are marked stale and surfaced to subscribers as
 interrupted. Neither `interrupted` nor `cancelled` is eligible for public
 `resume_pipeline`; reconcile side effects before authorizing a fresh run.
-Native Ask owns its separate recovery state machine; use its Ask operations.
 
 `cancel_pipeline(execution_id=...)` cancels the registered background task and
 attempts to terminate agents owned by the pipeline child session. It does not

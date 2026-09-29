@@ -304,9 +304,6 @@ _ALLOWED_SYNC_GIT_BOUNDARIES = {
     ("src/gobby/workflows/task_dirty_state.py", "task_dirty_paths"),
     # Daemon boundaries that run only on worker threads, each with a test proving
     # no event loop runs there.
-    # AskService.start runs AskRunStorage.start through asyncio.to_thread
-    # (tests/ask/test_storage.py).
-    ("src/gobby/ask/storage.py", "_run_git"),
     # Only navigation_requires_index asks, from rule conditions on the rule-engine
     # executor (tests/workflows/engine/test_condition_git_off_loop.py).
     ("src/gobby/hooks/code_navigation_recovery.py", "_git_ignored"),

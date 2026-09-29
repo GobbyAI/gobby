@@ -36,9 +36,7 @@ their members. `--allow-stale` is rejected.
 Read `complete`, `completeness`, `bounds`, and `warnings` before claiming
 coverage: a truncated or empty result does not prove absence. Pass an opaque
 `continuation` back with the same request to page. Errors exit 2 with one JSON
-object carrying `error` and `recovery`; follow the recovery text. MCP callers
-get the same four operations through `gobby-ask` `evidence`; see
-[ask](ask.md) for Ask runs and worker admission.
+object carrying `error` and `recovery`; follow the recovery text.
 
 Contract: [gcode evidence](../../../../../../../../docs/contracts/gcode-cli.md#deterministic-evidence).
 

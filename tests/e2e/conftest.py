@@ -48,8 +48,8 @@ _TERMINAL_E2E_BINARIES = {
     "test_terminal_client_stack.py": ("gterm", "gclient"),
 }
 
-# Measured max: 24.699s under eight concurrent workers; one idle tmux run exceeded 30s.
-ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS = 60.0
+# Startup phases can each take up to 65s before reporting their own timeout.
+ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS = 75.0
 DAEMON_HEALTH_PROBE_TIMEOUT_SECONDS = 0.5
 DAEMON_HEALTH_POLL_INTERVAL_SECONDS = 0.25
 # Preserve multiple observations even when a caller supplies a deliberately tiny deadline.
@@ -70,7 +70,9 @@ class DaemonHealthTimeoutError(AssertionError):
         timed_out: int,
         transport_errors: int,
         last_status_code: int | None,
+        process_status: str,
         log_tail: str,
+        error_log_tail: str,
     ) -> None:
         self.port = port
         self.elapsed_seconds = elapsed_seconds
@@ -79,13 +81,16 @@ class DaemonHealthTimeoutError(AssertionError):
         self.timed_out = timed_out
         self.transport_errors = transport_errors
         self.last_status_code = last_status_code
+        self.process_status = process_status
         self.log_tail = log_tail
+        self.error_log_tail = error_log_tail
         super().__init__(
             f"Isolated daemon on port {port} did not serve /api/auth/status after "
             f"{elapsed_seconds:.3f}s: attempts={attempts}, connect_refused={connect_refused}, "
             f"timed_out={timed_out}, transport_errors={transport_errors}, "
-            f"last_status_code={last_status_code}\n"
-            f"--- daemon log tail ---\n{log_tail}"
+            f"last_status_code={last_status_code}, process={process_status}\n"
+            f"--- daemon log tail ---\n{log_tail}\n"
+            f"--- daemon error log tail ---\n{error_log_tail}"
         )
 
 
@@ -310,7 +315,7 @@ class DaemonInstance:
                 f"Logs:\n{self.read_logs()}\nError output:\n{self.read_error_logs()}"
             )
         try:
-            wait_for_daemon_health(self.http_port, log_file=self.log_file)
+            wait_for_daemon_health(self.http_port, log_file=self.log_file, process=process)
         except DaemonHealthTimeoutError:
             terminate_process_tree(process.pid)
             raise
@@ -546,6 +551,7 @@ def wait_for_daemon_health(
     port: int,
     *,
     log_file: Path | None = None,
+    process: subprocess.Popen[bytes] | None = None,
     timeout: float = ISOLATED_DAEMON_HEALTH_TIMEOUT_SECONDS,
     min_attempts: int = DAEMON_HEALTH_MIN_PROBE_ATTEMPTS,
 ) -> None:
@@ -582,15 +588,29 @@ def wait_for_daemon_health(
             time.sleep(min(DAEMON_HEALTH_POLL_INTERVAL_SECONDS, remaining))
 
     elapsed_seconds = time.monotonic() - start
-    if log_file is None:
-        log_tail = "<daemon log path not provided>"
-    else:
+
+    def read_tail(path: Path | None, label: str) -> str:
+        if path is None:
+            return f"<{label} path not provided>"
         try:
-            log_tail = log_file.read_text(errors="replace")[-DAEMON_HEALTH_LOG_TAIL_CHARS:]
+            tail = path.read_text(errors="replace")[-DAEMON_HEALTH_LOG_TAIL_CHARS:]
         except OSError as exc:
-            log_tail = f"<unable to read {log_file}: {exc}>"
-        if not log_tail:
-            log_tail = f"<daemon log is empty: {log_file}>"
+            return f"<unable to read {path}: {exc}>"
+        return tail or f"<{label} is empty: {path}>"
+
+    log_tail = read_tail(log_file, "daemon log")
+    error_log_tail = read_tail(
+        log_file.with_name("daemon_error.log") if log_file is not None else None,
+        "daemon error log",
+    )
+    exit_code = process.poll() if process is not None else None
+    process_status = (
+        "unavailable"
+        if process is None
+        else "running"
+        if exit_code is None
+        else f"exited({exit_code})"
+    )
     raise DaemonHealthTimeoutError(
         port=port,
         elapsed_seconds=elapsed_seconds,
@@ -599,7 +619,9 @@ def wait_for_daemon_health(
         timed_out=timed_out,
         transport_errors=transport_errors,
         last_status_code=last_status_code,
+        process_status=process_status,
         log_tail=log_tail,
+        error_log_tail=error_log_tail,
     )
 
 
@@ -964,7 +986,7 @@ def daemon_instance(
     )
 
     try:
-        wait_for_daemon_health(http_port, log_file=log_file)
+        wait_for_daemon_health(http_port, log_file=log_file, process=process)
     except DaemonHealthTimeoutError:
         terminate_process_tree(process.pid)
         raise
@@ -1774,7 +1796,6 @@ def _production_daemon_running() -> bool:
 # Known daemon artifacts that the production daemon may create/touch
 _DAEMON_ARTIFACTS = {"gobby.pid", "ui.pid", "shutdown_intent_active.json"}
 _PRODUCTION_DAEMON_ARTIFACT_PREFIXES = (
-    "ask/",
     "cache/transcript-indexes/",
     "gcode-runtime/",
     "grants/",
