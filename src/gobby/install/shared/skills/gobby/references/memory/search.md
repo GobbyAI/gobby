@@ -17,6 +17,7 @@ inventory. `search_knowledge_graph` searches extracted entities when available.
 
 Treat hits as evidence, not authority. Compare candidates within one search;
 scores are not universal truth thresholds. `similarity` includes temporal decay,
+counted from the later of the last update and the last full fetch,
 while a positive `min_score` filters `undecayed_similarity`. Inspect diagnostics,
 ranking provenance, and collapsed duplicates. A missing score is not proof of
 irrelevance. Do not assume list results are an exhaustive export: the MCP list

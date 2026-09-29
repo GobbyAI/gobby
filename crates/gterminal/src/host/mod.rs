@@ -21,6 +21,7 @@ mod frames;
 #[cfg(all(unix, feature = "vt-engine"))]
 pub(crate) mod gate;
 mod helpers;
+pub mod image;
 mod ledger;
 mod native_ops;
 pub mod poll;
@@ -64,9 +65,11 @@ pub async fn run() -> io::Result<()> {
         .host_config
         .validate()
         .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
+    let images_dir = args.socket_dir.join(image::IMAGES_DIR);
+    let running_image = run_from_pin(&images_dir)
+        .map_err(|err| io::Error::new(err.kind(), format!("gterm image pin: {err}")))?;
     let local_token = read_local_token(&args.socket_dir);
     let host_epoch = uuid::Uuid::new_v4().to_string();
-    let version = env!("CARGO_PKG_VERSION").to_string();
     let host_pid = std::process::id();
 
     let control_path = args.socket_dir.join(CONTROL_SOCKET);
@@ -85,6 +88,11 @@ pub async fn run() -> io::Result<()> {
     // Only a host that owns both sockets may publish its pid: a second host
     // losing the busy check above must leave the live host's pidfile alone.
     write_pidfile(&args.pid_file, host_pid)?;
+    // Pruning belongs to the socket owner: a start that lost the busy check
+    // above returned before reaching here and leaves every pin in place.
+    if let Err(err) = image::prune_images(&images_dir, &running_image) {
+        tracing::warn!(error = %err, "gterm image prune failed");
+    }
 
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
     let state = HostState::new(
@@ -92,7 +100,7 @@ pub async fn run() -> io::Result<()> {
         token,
         local_token,
         host_epoch.clone(),
-        version,
+        running_image,
         host_pid,
         shutdown_tx.clone(),
     );
@@ -366,6 +374,34 @@ fn gobby_home() -> Option<PathBuf> {
         }
     }
     dirs_home().map(|home| home.join(".gobby"))
+}
+
+/// Returns the pin this host runs from. A host launched from any other path
+/// pins that binary and re-execs the pin with the same argv and environment,
+/// before any socket is touched, so promotion never replaces its bytes.
+fn run_from_pin(images_dir: &Path) -> io::Result<image::PinnedImage> {
+    use std::os::unix::process::CommandExt;
+
+    let exe = std::env::current_exe()?;
+    if let Some(pin) = image::pinned_image(images_dir, &exe)? {
+        return Ok(pin);
+    }
+    let pin = image::pin_image(images_dir, &exe)?;
+    pin.verify()?;
+    if fs::canonicalize(&exe)? == fs::canonicalize(&pin.path)? {
+        return Err(io::Error::other(format!(
+            "{} is the pin but does not verify as one",
+            pin.path.display()
+        )));
+    }
+    let mut argv = std::env::args_os();
+    let arg0 = argv
+        .next()
+        .unwrap_or_else(|| pin.path.clone().into_os_string());
+    Err(std::process::Command::new(&pin.path)
+        .arg0(arg0)
+        .args(argv)
+        .exec())
 }
 
 fn write_pidfile(path: &Path, pid: u32) -> io::Result<()> {

@@ -513,7 +513,7 @@ mod tests {
             "control".to_string(),
             "local".to_string(),
             "epoch".to_string(),
-            "version".to_string(),
+            crate::host::image::PinnedImage::for_tests(),
             1,
             shutdown,
         )

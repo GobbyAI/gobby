@@ -281,20 +281,8 @@ pub fn post_and_cleanup(
                 transport_error: None,
             }
         }
-        Ok(resp) => DeliveryReport {
-            outcome: DeliveryOutcome::Enqueued,
-            failure_kind: Some(DeliveryFailureKind::Http),
-            status_code: Some(resp.status()),
-            response_body: resp.into_string().ok(),
-            transport_error: None,
-        },
-        Err(ureq::Error::Status(code, resp)) => DeliveryReport {
-            outcome: DeliveryOutcome::Enqueued,
-            failure_kind: Some(DeliveryFailureKind::Http),
-            status_code: Some(code),
-            response_body: resp.into_string().ok(),
-            transport_error: None,
-        },
+        Ok(resp) => http_failure_report(resp.status(), resp.into_string().ok()),
+        Err(ureq::Error::Status(code, resp)) => http_failure_report(code, resp.into_string().ok()),
         Err(ureq::Error::Transport(err)) => {
             let transport_error = err.to_string();
             DeliveryReport {
@@ -305,6 +293,32 @@ pub fn post_and_cleanup(
                 transport_error: Some(transport_error),
             }
         }
+    }
+}
+
+fn http_failure_report(status_code: u16, response_body: Option<String>) -> DeliveryReport {
+    DeliveryReport {
+        outcome: DeliveryOutcome::Enqueued,
+        failure_kind: Some(classify_http_failure(status_code, response_body.as_deref())),
+        status_code: Some(status_code),
+        response_body,
+        transport_error: None,
+    }
+}
+
+/// The gdaemon front door answers `503 {"status":"unavailable",...}` while the Python
+/// backend is down or starting; that is the daemon being unreachable, not an HTTP error.
+fn classify_http_failure(status_code: u16, response_body: Option<&str>) -> DeliveryFailureKind {
+    let typed_unavailable = status_code == 503
+        && response_body
+            .and_then(|body| serde_json::from_str::<serde_json::Value>(body).ok())
+            .is_some_and(|value| {
+                value.get("status").and_then(|s| s.as_str()) == Some("unavailable")
+            });
+    if typed_unavailable {
+        DeliveryFailureKind::Connect
+    } else {
+        DeliveryFailureKind::Http
     }
 }
 
@@ -474,6 +488,37 @@ mod tests {
         // The retry body only counts on 503.
         assert!(!report_with(Some(500), Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
         assert!(!report_with(None, Some(r#"{"status":"retry"}"#)).is_retry_backpressure());
+    }
+
+    #[test]
+    fn typed_unavailable_503_classifies_as_connect() {
+        for state in ["down", "starting"] {
+            let body = format!(
+                r#"{{"status":"unavailable","backend":{{"state":"{state}","target":"127.0.0.1:60888"}}}}"#
+            );
+            assert_eq!(
+                classify_http_failure(503, Some(&body)),
+                DeliveryFailureKind::Connect
+            );
+        }
+    }
+
+    #[test]
+    fn other_http_failures_stay_http() {
+        for (status, body) in [
+            (503, Some(r#"{"status":"retry"}"#)),
+            (503, Some(r#"{"error":"unavailable"}"#)),
+            (503, Some("not json")),
+            (503, None),
+            (502, Some(r#"{"status":"unavailable"}"#)),
+            (500, Some(r#"{"status":"unavailable"}"#)),
+        ] {
+            assert_eq!(
+                classify_http_failure(status, body),
+                DeliveryFailureKind::Http,
+                "{status} {body:?}"
+            );
+        }
     }
 
     #[test]

@@ -50,12 +50,24 @@ async def offload_rule_loop(func: Callable[P, R], /, *args: P.args, **kwargs: P.
     loop = get_running_loop()
     ctx = contextvars.copy_context()
     queued_at = time.perf_counter()
+    finished_at: float | None = None
 
     def run() -> R:
-        add_hook_phase("rule_loop_executor_queue", time.perf_counter() - queued_at)
-        return func(*args, **kwargs)
+        nonlocal finished_at
+        started_at = time.perf_counter()
+        add_hook_phase("rule_loop_executor_queue", started_at - queued_at)
+        try:
+            return func(*args, **kwargs)
+        finally:
+            finished_at = time.perf_counter()
+            add_hook_phase("rule_loop_pass_work", finished_at - started_at)
 
-    return await loop.run_in_executor(_RULE_LOOP_EXECUTOR, functools.partial(ctx.run, run))
+    try:
+        return await loop.run_in_executor(_RULE_LOOP_EXECUTOR, functools.partial(ctx.run, run))
+    finally:
+        # Pass finished until this coroutine resumed: daemon-loop lag.
+        if finished_at is not None:
+            add_hook_phase("rule_loop_pass_resume", time.perf_counter() - finished_at)
 
 
 async def offload(func: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
