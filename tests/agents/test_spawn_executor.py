@@ -3759,6 +3759,107 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
     sessions.delete.assert_not_called()
 
 
+@pytest.mark.parametrize("kill_proven", [True, False])
+async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_terminal(
+    kill_proven: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    def request_for(**extra: Any) -> SpawnRequest:
+        return SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+            **extra,
+        )
+
+    first = request_for()
+    assert (await execute_spawn(first)).success is True
+    manager = _manager_of(first)
+    runtime = _runtime_of(first)
+    bound = next(iter(manager.rows.values()))
+    second = request_for(
+        terminal_manager=cast(TerminalManager, manager),
+        terminal_runtime_registry=first.terminal_runtime_registry,
+    )
+    failed = await execute_spawn(second)
+    assert failed.terminal_id is not None
+    own = manager.get(failed.terminal_id)
+    assert own is not None and own.id != bound.id
+    failed.success = False
+    failed.error = "provider boot failed"
+    if not kill_proven:
+        monkeypatch.setattr(
+            runtime, "terminate", AsyncMock(side_effect=RuntimeError("tmux server unreachable"))
+        )
+
+    # Persisting terminal B fails and is swallowed, so the run row keeps terminal A.
+    run_storage = MagicMock()
+    run_storage.db = None
+    run_storage.update_runtime.side_effect = RuntimeError("hub unavailable")
+    run_storage.get.return_value = SimpleNamespace(
+        terminal_id=bound.id, child_session_id="child-bound", pid=None
+    )
+    monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(return_value=True))
+    sessions = MagicMock()
+    handler = SimpleNamespace(cleanup_environment=AsyncMock())
+    runner = SimpleNamespace(
+        run_storage=run_storage,
+        terminal_manager=manager,
+        terminal_runtime_registry=first.terminal_runtime_registry,
+        agent_lifecycle_monitor=monitor,
+        child_session_manager=SimpleNamespace(_storage=sessions),
+    )
+    result = await finalize_executed_spawn(
+        runner=runner,
+        run_id="run",
+        spawn_result=failed,
+        spawn_request=second,
+        isolation_ctx=SimpleNamespace(worktree_id="wt", clone_id=None, branch_name="b"),
+        effective_isolation="worktree",
+        base_commit_sha=None,
+        handler=handler,
+        spawn_config=None,
+        completion_registry=None,
+        cleanup_isolation_on_failure=True,
+        task_manager=None,
+        session_manager=None,
+        parent_session_id="parent",
+        effective_provider="claude",
+        resolved_task_id=None,
+        task_seq_num=None,
+        db=None,
+        agent_body=None,
+        effective_initial_variables={},
+        reasoning=SimpleNamespace(to_dict=dict),
+    )
+
+    # This attempt's terminal is killed, and its isolation goes only on proof; the
+    # run, its bound terminal and its child session stay with the other attempt.
+    assert result["success"] is False
+    settled = manager.get(own.id)
+    assert settled is not None
+    assert manager.get(bound.id) == bound
+    if kill_proven:
+        assert runtime.killed == [own.spawn_key]
+        assert settled.state == "exited"
+        handler.cleanup_environment.assert_awaited_once_with(None)
+    else:
+        assert settled.state == "orphaned"
+        handler.cleanup_environment.assert_not_awaited()
+    run_storage.record_spawn_error.assert_not_called()
+    monitor.terminalize_cancelled_run.assert_not_awaited()
+    sessions.delete.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_attempt_started_at_survives_unrelated_updates_and_restart() -> None:
     from datetime import UTC, datetime, timedelta

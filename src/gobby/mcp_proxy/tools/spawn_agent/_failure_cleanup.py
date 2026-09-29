@@ -180,41 +180,33 @@ async def _cleanup_failed_spawn(
         except Exception as exc:
             _log_step_failure("read_run", run_id, terminal_id, exc)
     bound_terminal_id = _string_attr(run, "terminal_id")
-    if attempt_terminal_known and bound_terminal_id not in {None, terminal_id}:
-        # The run is bound to another attempt's terminal: failing, terminalizing or
-        # unbinding the run would kill that attempt, so only this call's isolation goes.
+    # A run bound to a terminal other than this attempt's belongs to that other
+    # attempt: failing, terminalizing or unbinding it would kill that attempt. This
+    # attempt still terminates its own terminal, and its isolation waits on that proof.
+    foreign_run = attempt_terminal_known and bound_terminal_id not in {None, terminal_id}
+    if foreign_run:
         logger.info(
-            "Leaving run %s to the attempt on terminal %s; this attempt owns no terminal",
+            "Leaving run %s to the attempt on terminal %s; cleaning only terminal %s",
             run_id,
             bound_terminal_id,
+            terminal_id,
         )
-        try:
-            await _cleanup_isolation_step(
-                handler,
-                spawn_config,
-                cleanup=cleanup_isolation,
-                run_id=run_id,
-                terminal_id=terminal_id,
-                terminal_manager=terminal_manager,
-                held=False,
-                settled=True,
-                prior_attempt=prior_attempt,
-            )
-        except Exception as exc:
-            _log_step_failure("isolation", run_id, terminal_id, exc)
-        return
-    if run_storage is not None:
-        try:
-            await asyncio.to_thread(run_storage.record_spawn_error, run_id, error)
-        except Exception as exc:
-            _log_step_failure("record_error", run_id, terminal_id, exc)
-    if child_session_id is None:
-        child_session_id = _string_attr(run, "child_session_id")
-    if pid is None:
-        raw_pid = getattr(run, "pid", None)
-        pid = raw_pid if isinstance(raw_pid, int) else None
-    if terminal_id is None:
-        terminal_id = _string_attr(run, "terminal_id")
+        # The run's pid and start time are the other attempt's; this attempt's
+        # process is proven through its own terminal.
+        pid = None
+    else:
+        if run_storage is not None:
+            try:
+                await asyncio.to_thread(run_storage.record_spawn_error, run_id, error)
+            except Exception as exc:
+                _log_step_failure("record_error", run_id, terminal_id, exc)
+        if child_session_id is None:
+            child_session_id = _string_attr(run, "child_session_id")
+        if pid is None:
+            raw_pid = getattr(run, "pid", None)
+            pid = raw_pid if isinstance(raw_pid, int) else None
+        if terminal_id is None:
+            terminal_id = _string_attr(run, "terminal_id")
 
     held = terminal_id is not None and in_doubt_spawns.holds(terminal_id)
     settled = False
@@ -225,7 +217,7 @@ async def _cleanup_failed_spawn(
             if isinstance(getattr(candidate, "backend", None), str):
                 terminal = candidate
         settled = await _terminate_spawn_process(
-            run_storage=run_storage if run is not None else None,
+            run_storage=run_storage if run is not None and not foreign_run else None,
             run_id=run_id,
             pid=pid,
             expected_starttime=_RUN_STARTTIMES.get(run_id),
@@ -235,11 +227,12 @@ async def _cleanup_failed_spawn(
         )
     except Exception as exc:
         _log_step_failure("terminate", run_id, terminal_id, exc)
-    try:
-        _forget_spawn_run(run_id)
-    except Exception as exc:
-        _log_step_failure("forget_run", run_id, terminal_id, exc)
-    if run_storage is not None:
+    if not foreign_run:
+        try:
+            _forget_spawn_run(run_id)
+        except Exception as exc:
+            _log_step_failure("forget_run", run_id, terminal_id, exc)
+    if run_storage is not None and not foreign_run:
         from gobby.mcp_proxy.tools.agent_cancellation import (
             terminalize_cancelled_agent_run,
         )
@@ -284,6 +277,8 @@ async def _cleanup_failed_spawn(
         )
     except Exception as exc:
         _log_step_failure("isolation", run_id, terminal_id, exc)
+    if foreign_run:
+        return
     try:
         await asyncio.to_thread(
             _delete_child_session, runner, run_storage, run_id, child_session_id
