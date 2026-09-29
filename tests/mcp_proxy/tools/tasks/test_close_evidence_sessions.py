@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -693,3 +694,84 @@ async def test_linked_implementer_test_edits_survive_a_partial_owner_ledger(
     ]
     assert set(evidence.sessions) == {IMPLEMENTER, QA}
     assert not evidence.degraded_capabilities
+
+
+def _session_link(task_id: str, created_at: str) -> dict[str, Any]:
+    return {
+        "task": SimpleNamespace(id=task_id, closed_at=None),
+        "action": "claimed",
+        "link_created_at": created_at,
+    }
+
+
+def _run_at(session_id: str, at: str, outcome: str) -> Any:
+    started = datetime.fromisoformat(at)
+    return replace(
+        _run(1, outcome=outcome),
+        session_id=session_id,
+        started_at=started,
+        completed_at=started + timedelta(seconds=5),
+    )
+
+
+@pytest.mark.asyncio
+async def test_linked_session_runs_after_it_claims_another_task_are_not_credited() -> None:
+    """#22884 found work: another task's failing validation must not gate this close."""
+    ctx = _context(
+        [
+            _link(IMPLEMENTER, "claimed", "2026-09-28T13:55:00+00:00"),
+            _link(QA, "claimed", "2026-09-28T20:00:00+00:00"),
+        ],
+        {
+            IMPLEMENTER: _session(IMPLEMENTER, "2026-09-28T13:00:00+00:00"),
+            QA: _session(QA, "2026-09-28T19:00:00+00:00"),
+        },
+    )
+    ctx.session_var_manager.get_variables.return_value = {}
+    ctx.session_task_manager.get_session_tasks.side_effect = {
+        IMPLEMENTER: [
+            _session_link("other-task", "2026-09-29T02:14:00+00:00"),
+            _session_link("task", "2026-09-28T13:55:00+00:00"),
+        ],
+        # The owner's own later claim never bounds its window.
+        QA: [
+            _session_link("owner-next", "2026-09-28T21:00:00+00:00"),
+            _session_link("task", "2026-09-28T20:00:00+00:00"),
+        ],
+    }.__getitem__
+    runs = {
+        IMPLEMENTER: (
+            _run_at(IMPLEMENTER, "2026-09-28T14:30:00+00:00", "success"),
+            _run_at(IMPLEMENTER, "2026-09-29T02:40:00+00:00", "failure"),
+        ),
+        QA: (
+            _run_at(QA, "2026-09-28T20:30:00+00:00", "success"),
+            _run_at(QA, "2026-09-28T21:30:00+00:00", "success"),
+        ),
+    }
+
+    async def record(session: Any, *args: Any, **kwargs: Any) -> TranscriptEvidence:
+        own = runs[session.id]
+        return TranscriptEvidence(validation_runs=own, command_runs=own, sessions=(session.id,))
+
+    with (
+        patch(f"{_SUPPORT}.resolve_validation_detection_config"),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_transcript_evidence", new=AsyncMock(side_effect=record)),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+        patch(f"{_SUPPORT}.merge_transcript_evidence", side_effect=lambda *sets: list(sets)),
+    ):
+        merged: Any = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start="2026-09-28T20:00:00+00:00",
+            task_edited_files=set(),
+            repo_path="/repo",
+        )
+
+    by_session = {evidence.sessions[0]: evidence for evidence in merged}
+    assert by_session[IMPLEMENTER].validation_runs == runs[IMPLEMENTER][:1]
+    assert by_session[IMPLEMENTER].command_runs == runs[IMPLEMENTER][:1]
+    assert by_session[QA].validation_runs == runs[QA]
