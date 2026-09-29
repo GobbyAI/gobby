@@ -249,6 +249,33 @@ def recorded_process_is_alive(session: object) -> bool:
         return True
 
 
+def recorded_process_exited(session: object) -> bool:
+    """Whether the session recorded a CLI process that no longer runs.
+
+    Unlike :func:`recorded_process_is_alive`, a session that recorded no
+    process identity reports False: nothing proves it exited.
+    """
+    if _normalized_parent_pid(session) is None or _recorded_create_time(session) is None:
+        return False
+    return not recorded_process_is_alive(session)
+
+
+def recorded_seat_left(
+    session: object,
+    *,
+    inspect: Callable[[object], ForegroundOwnershipInspection] = inspect_foreground_ownership,
+) -> bool:
+    """Whether the CLI process the session recorded no longer owns its terminal.
+
+    Keys typed into such a pane reach whatever runs there now. A session that
+    recorded no process identity names no seat to lose, and an uninspectable
+    seat counts as present, as it does for the liveness monitor.
+    """
+    if _normalized_parent_pid(session) is None or _recorded_create_time(session) is None:
+        return False
+    return inspect(session).state is OwnershipState.OWNERLESS
+
+
 def _process_ancestor_pids(process: _ProcessLike) -> set[int] | None:
     try:
         return {

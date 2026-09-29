@@ -1,6 +1,7 @@
 """Focused tests for session storage behavior."""
 
 import json
+import os
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import replace
@@ -831,6 +832,28 @@ class TestSessionManagerLifecycle:
         )
         assert transcript_row is not None
         assert transcript_row["transcript_processed"] is True
+
+    def test_revive_expired_terminal_session_refuses_a_departed_seat(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """A seatless hook inside the horizon cannot revive a row whose CLI left."""
+        session = session_manager.register(
+            external_id="departed-seat",
+            machine_id="20000000-0000-4000-8000-000000000001",
+            source="codex",
+            project_id=sample_project["id"],
+            transcript_path="/tmp/test.jsonl",
+            # This process with another start time: a recycled pid, so the seat left.
+            terminal_context={"parent_pid": os.getpid(), "parent_create_time": 1.0},
+        )
+        session_manager.update_status(session.id, "expired")
+
+        revived = session_manager.revive_expired_terminal_session(session.id)
+
+        assert revived is not None
+        assert revived.status == "expired"
 
     def test_revive_expired_foreground_owner_expires_newer_false_claim(
         self,

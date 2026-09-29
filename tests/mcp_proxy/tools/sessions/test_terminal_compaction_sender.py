@@ -15,6 +15,8 @@ from gobby.mcp_proxy.tools.sessions import _terminal
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMMAND_NOT_SUBMITTED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
+    _INTERRUPT_UNCONFIRMED_ERROR_CODE,
+    NO_TERMINAL_TARGET_ERROR_CODE,
     _send_terminal_compaction_command,
 )
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
@@ -363,6 +365,181 @@ async def test_unsubmitted_command_records_no_handoff_delivery(
     assert result["compacted"] is False
     assert result["error_code"] == _COMMAND_NOT_SUBMITTED_ERROR_CODE
     record.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_departed_seat_gets_no_keys_and_no_retry_guidance() -> None:
+    pane = _ComposerPane()
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(id="session-1", source="codex")
+
+    with (
+        patch(f"{_DELIVERY}.recorded_seat_left", return_value=True),
+        patch(f"{_DELIVERY}._resolve_pane_io", return_value=(pane, None)),
+    ):
+        result = await deliver_staged_compact_handoff(
+            "session-1",
+            "a" * 32,
+            "handoff-1",
+            session_manager=session_manager,
+            db=MagicMock(),
+            agent_run_manager=MagicMock(),
+        )
+
+    assert result["compacted"] is False
+    assert result["error_code"] == NO_TERMINAL_TARGET_ERROR_CODE
+    assert pane.keys == []
+    assert pane.typed == []
+
+
+@pytest.mark.asyncio
+async def test_interrupt_stops_pressing_once_the_seat_leaves() -> None:
+    pane = _ComposerPane()
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+
+    ok, _reason, _pending, detail = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="claude",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: False,
+        settle_seconds=_SETTLE,
+        seat_left=lambda: len(pane.keys) > 0,
+    )
+
+    assert ok is False
+    assert detail is not None
+    assert detail["error_code"] == NO_TERMINAL_TARGET_ERROR_CODE
+    assert pane.keys == ["escape"]
+    assert pane.typed == []
+    clear.assert_called_once()
+
+
+async def test_seat_leaving_during_the_settle_wait_gets_no_first_interrupt() -> None:
+    pane = _ComposerPane()
+    clear = MagicMock(return_value=True)
+    polls: list[None] = []
+
+    def turn_settled() -> bool:
+        polls.append(None)
+        return False
+
+    ok, _reason, _pending, detail = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=MagicMock(return_value=True),
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: False,
+        settle_seconds=_SETTLE,
+        turn_settled=turn_settled,
+        seat_left=lambda: len(polls) > 1,
+    )
+
+    assert ok is False
+    assert detail == {"error_code": NO_TERMINAL_TARGET_ERROR_CODE, "continuation_pending": False}
+    assert pane.keys == []
+    assert pane.typed == []
+    clear.assert_called_once()
+
+
+@pytest.mark.parametrize("command", ["/compact", "/clear"])
+async def test_seat_leaving_after_the_command_write_gets_no_enter(command: str) -> None:
+    # A settled turn skips the interrupt; the CLI exits during the submit gap.
+    pane = _ComposerPane()
+    clear = MagicMock(return_value=True)
+
+    ok, _reason, _pending, detail = await _send_terminal_compaction_command(
+        pane,
+        command,
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=MagicMock(return_value=True),
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: False,
+        settle_seconds=_SETTLE,
+        turn_settled=lambda: True,
+        seat_left=lambda: bool(pane.typed),
+    )
+
+    assert ok is False
+    assert detail == {"error_code": NO_TERMINAL_TARGET_ERROR_CODE, "continuation_pending": False}
+    assert pane.keys == list(composer_clear_sequence("codex"))
+    assert pane.typed == [f"{command}\n"]
+    clear.assert_called_once()
+
+
+async def test_codex_quitting_under_its_one_press_is_a_departed_seat() -> None:
+    pane = _ComposerPane()
+
+    ok, _reason, _pending, detail = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=MagicMock(return_value=True),
+        clear_continuation_pending=MagicMock(return_value=True),
+        observe_interrupt=lambda: False,
+        settle_seconds=_SETTLE,
+        turn_settled=lambda: False,
+        seat_left=lambda: "ctrl_c" in pane.keys,
+    )
+
+    assert ok is False
+    assert detail == {"error_code": NO_TERMINAL_TARGET_ERROR_CODE, "continuation_pending": False}
+    assert pane.keys == ["ctrl_c"]
+    assert pane.typed == []
+
+
+async def test_codex_gets_one_interrupt_press_when_none_is_confirmed() -> None:
+    pane = _ComposerPane()
+    clear = MagicMock(return_value=True)
+
+    ok, reason, _pending, detail = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=MagicMock(return_value=True),
+        clear_continuation_pending=clear,
+        observe_interrupt=lambda: False,
+        settle_seconds=_SETTLE,
+        turn_settled=lambda: False,
+    )
+
+    assert ok is False
+    assert reason == "CLI did not confirm interruption after 1 attempts"
+    assert detail is not None
+    assert detail["error_code"] == _INTERRUPT_UNCONFIRMED_ERROR_CODE
+    assert pane.keys == ["ctrl_c"]
+    assert pane.typed == []
+    clear.assert_called_once()
+
+
+async def test_codex_turn_ending_under_its_one_press_proceeds_to_the_command() -> None:
+    # The press lands as the turn completes: no turn_aborted is recorded, but the
+    # rollout shows the turn ended, which settles the interrupt without a second press.
+    pane = _ComposerPane()
+
+    ok, _reason, _pending, _detail = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source="codex",
+        mark_continuation_pending=MagicMock(return_value=True),
+        clear_continuation_pending=MagicMock(return_value=True),
+        observe_interrupt=lambda: False,
+        settle_seconds=_SETTLE,
+        turn_settled=lambda: "ctrl_c" in pane.keys,
+    )
+
+    assert ok is True
+    assert pane.keys.count("ctrl_c") == 1
+    assert pane.typed == ["/compact\n"]
 
 
 @pytest.mark.asyncio

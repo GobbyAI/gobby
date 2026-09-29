@@ -369,7 +369,8 @@ def test_sweep_keeps_a_claim_while_its_close_review_is_active(
     reviewed = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     settled = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     store = TaskCloseReviewStore(temp_db)
-    for task, settle in ((reviewed, False), (settled, True)):
+    # Close reviews run one at a time (#23059), so the settled one goes first.
+    for task, settle in ((settled, True), (reviewed, False)):
         row = temp_db.fetchone("SELECT updated_at FROM tasks WHERE id = %s", (task.id,))
         assert row is not None
         review, created = store.create_or_get_active(
@@ -399,6 +400,10 @@ def test_sweep_keeps_a_claim_while_its_close_review_is_active(
         assert created
         if settle:
             store.finish(review.id, status="error", result_payload={}, error="reviewer died")
+            # A review holds reviewer capacity until its run exits too (#23059).
+            temp_db.execute(
+                "UPDATE agent_runs SET status = 'error' WHERE id = %s", (review.agent_run_id,)
+            )
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
@@ -549,6 +554,7 @@ def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
         "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
         _nested_process_resolve,
     )
+    monkeypatch.setattr("gobby.terminal_ownership.psutil.Process", _NestedProcess)
     revived = manager.revive_expired_terminal_session(outer.id)
 
     assert reclaimed == 0
@@ -560,6 +566,7 @@ def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
 def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
     _local_machine_identity: None,
 ) -> None:
     """The same cascade without tmux, where the contest is settled by tty.
@@ -605,6 +612,8 @@ def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
     assert expired.status == "expired"
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+    # The outer CLI still runs under the nested one; only the foreground moved.
+    monkeypatch.setattr("gobby.terminal_ownership.psutil.Process", _NestedProcess)
     revived = manager.revive_expired_terminal_session(outer.id)
 
     assert reclaimed == 0

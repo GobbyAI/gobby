@@ -133,6 +133,27 @@ def test_terminal_context_backfill_adds_cwd_and_renames_empty_title() -> None:
     assert mock_schedule.call_args.args == (updated_session, "")
 
 
+def test_revival_judges_the_seat_recorded_from_this_hook() -> None:
+    """A resumed CLI's new process is recorded before revival checks the seat."""
+    session_manager = MagicMock()
+    session_manager.get.return_value = SimpleNamespace(
+        id="platform-session", project_id="project-1"
+    )
+    session_manager.backfill_terminal_context.return_value = (None, False)
+    session_task_manager = MagicMock()
+    session_task_manager.get_session_tasks.return_value = []
+    service = _service(session_manager, session_task_manager, MagicMock(return_value="project-1"))
+
+    service.resolve(_event({"_platform_session_id": "platform-session"}))
+
+    mutations = [
+        name
+        for name, _args, _kwargs in session_manager.mock_calls
+        if name in {"backfill_terminal_context", "revive_expired_terminal_session"}
+    ]
+    assert mutations == ["backfill_terminal_context", "revive_expired_terminal_session"]
+
+
 def test_root_cwd_platform_session_metadata_sets_project_on_event_data() -> None:
     session_manager = MagicMock()
     session_manager.get.return_value = SimpleNamespace(

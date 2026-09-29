@@ -742,13 +742,17 @@ def _variable_manager(failures: int | None) -> MagicMock:
     return manager
 
 
-async def _settle_failed_delivery(variable_manager: MagicMock) -> MagicMock:
+async def _settle_failed_delivery(
+    variable_manager: MagicMock,
+    result: dict[str, Any] | None = None,
+) -> MagicMock:
     claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
     restore = MagicMock(return_value=True)
+    delivered = result or {"compacted": False, "reason": "pane disappeared"}
     with (
         patch(
             "gobby.hooks.terminal_handoff_delivery.deliver_staged_compact_handoff",
-            new=AsyncMock(return_value={"compacted": False, "reason": "pane disappeared"}),
+            new=AsyncMock(return_value=delivered),
         ),
         patch(
             "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
@@ -783,6 +787,35 @@ async def test_first_delivery_failure_counts_and_keeps_retry_guidance() -> None:
     variable_manager.merge_variables.assert_called_once_with(
         SESSION_ID, {HANDOFF_DELIVERY_FAILURES_VARIABLE: 1}
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_seat_settles_without_counting_toward_abandonment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    variable_manager = _variable_manager(1)
+
+    restore = await _settle_failed_delivery(
+        variable_manager,
+        {
+            "compacted": False,
+            "reason": "the recorded CLI process no longer owns its terminal",
+            "error_code": "no_terminal_target",
+        },
+    )
+
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["delivery_abandoned"] is False
+    assert failure["delivery_pending"] is False
+    assert failure["error_code"] == "no_terminal_target"
+    assert "Do not call set_handoff again" in failure["retry_guidance"]
+    assert f"failed_attempt_id={ATTEMPT_ID!r}" in failure["recovery_guidance"]
+    variable_manager.merge_variables.assert_not_called()
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery failed for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        "the recorded CLI process no longer owns its terminal"
+    ]
 
 
 @pytest.mark.asyncio

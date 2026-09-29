@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import subprocess
+from collections.abc import Callable
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock
@@ -9,10 +12,13 @@ import psutil
 import pytest
 
 from gobby.terminal_ownership import (
+    ForegroundOwnershipInspection,
     OwnershipState,
     PaneOwnershipDecision,
     foreground_process_group,
     inspect_foreground_ownership,
+    recorded_process_exited,
+    recorded_seat_left,
     resolve_pane_ownership,
 )
 
@@ -371,3 +377,70 @@ def test_distinct_terminal_identities_cannot_be_resolved_together() -> None:
 
     assert decision.reason == "invalid_identity"
     assert decision.owner is None
+
+
+def _inspector(
+    *processes: _FakeProcess, foreground: int = 100
+) -> Callable[[object], ForegroundOwnershipInspection]:
+    return partial(
+        inspect_foreground_ownership,
+        process_factory=_ProcessFactory(*processes),
+        process_group_factory=lambda _pid: 100,
+        foreground_group_factory=lambda _pid: foreground,
+    )
+
+
+def test_recorded_seat_left_when_its_process_is_gone() -> None:
+    assert recorded_seat_left(_session("gone", 10), inspect=_inspector()) is True
+
+
+def test_recorded_seat_left_when_it_lost_the_foreground() -> None:
+    inspect = _inspector(_FakeProcess(10, 10.0), foreground=200)
+
+    assert recorded_seat_left(_session("backgrounded", 10), inspect=inspect) is True
+
+
+def test_recorded_seat_stays_while_it_owns_the_foreground() -> None:
+    inspect = _inspector(_FakeProcess(10, 10.0))
+
+    assert recorded_seat_left(_session("owned", 10), inspect=inspect) is False
+
+
+def test_uninspectable_seat_is_not_reported_gone() -> None:
+    session = _session("denied", 10)
+
+    def denied(pid: int) -> _FakeProcess:
+        raise psutil.AccessDenied(pid)
+
+    inspect = partial(inspect_foreground_ownership, process_factory=denied)
+
+    assert recorded_seat_left(session, inspect=inspect) is False
+
+
+@pytest.mark.parametrize(
+    "terminal_context",
+    [{"cwd": "/tmp"}, {"parent_pid": 10}],
+    ids=["no-pid", "pid-without-create-time"],
+)
+def test_session_without_a_recorded_process_identity_names_no_seat_to_lose(
+    terminal_context: dict[str, object],
+) -> None:
+    session = SimpleNamespace(id="unrecorded", terminal_context=terminal_context)
+
+    assert recorded_seat_left(session, inspect=_inspector()) is False
+    assert recorded_process_exited(session) is False
+
+
+def test_recorded_process_exited_only_when_its_recorded_start_no_longer_runs() -> None:
+    running = SimpleNamespace(
+        terminal_context={
+            "parent_pid": os.getpid(),
+            "parent_create_time": psutil.Process().create_time(),
+        }
+    )
+    recycled = SimpleNamespace(
+        terminal_context={"parent_pid": os.getpid(), "parent_create_time": 1.0}
+    )
+
+    assert recorded_process_exited(running) is False
+    assert recorded_process_exited(recycled) is True

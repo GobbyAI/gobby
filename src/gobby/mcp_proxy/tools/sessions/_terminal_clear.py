@@ -18,8 +18,12 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
     _resolve_pane_io,
     _resolve_session_for_compaction,
     _send_terminal_compaction_command,
+    _turn_settled_observer,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_compaction import composer_reader
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
+    NO_TERMINAL_TARGET_ERROR_CODE,
+    composer_reader,
+)
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,
@@ -40,7 +44,7 @@ from gobby.sessions.handoff import (
 )
 from gobby.sessions.handoff_records import HandoffPayload
 from gobby.terminal_context import parse_terminal_context_value
-from gobby.terminal_ownership import terminal_session_identity
+from gobby.terminal_ownership import recorded_seat_left, terminal_session_identity
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -488,6 +492,11 @@ async def deliver_staged_clear_session(
         return _error(error or f"Session {session_id} not found", "session_not_found")
     source = getattr(session, "source", None)
     cli_source = source if isinstance(source, str) else None
+    if recorded_seat_left(session):
+        return failed(
+            "the recorded CLI process no longer owns its terminal",
+            NO_TERMINAL_TARGET_ERROR_CODE,
+        )
     pane, error = _resolve_pane_io(
         resolved_session_id,
         session_manager,
@@ -524,7 +533,11 @@ async def deliver_staged_clear_session(
             mark_continuation_pending=lambda: True,
             clear_continuation_pending=lambda: True,
             observe_interrupt=observe_interrupt,
+            # Without it a turn that ends under the first press gets pressed again,
+            # and a second Ctrl+C on an idle Codex composer quits the CLI.
+            turn_settled=_turn_settled_observer(source, session),
             composer_read=composer_reader(db, cli_source),
+            seat_left=lambda: recorded_seat_left(session),
         )
     except Exception as exc:
         logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)
