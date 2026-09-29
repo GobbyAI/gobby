@@ -191,7 +191,10 @@ the separate feedback submission. A staging failure can be retried without
 resubmitting feedback. Compact dispatch probes the composer first: a positively read operator draft refuses
 the delivery with `error_code: "composer_occupied"` before any key is sent, and the
 retry guidance tells the agent to wait for the operator to send or clear the draft.
-A session whose recorded CLI process no longer owns its terminal gets no keys: the
+A session whose recorded CLI process no longer owns its terminal gets no keys.
+Ownership is re-read immediately before every key and text write of compact and
+`/clear` dispatch, so a CLI that exits during a settle wait, an interrupt
+observation, or the submit ladder leaves its shell untouched. The
 delivery settles with `error_code: "no_terminal_target"`, does not count toward
 abandonment, and keeps the payload recoverable through `get_handoff(failed_attempt_id)`.
 Codex receives a single interrupt press observed across the whole window, because a
