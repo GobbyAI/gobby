@@ -21,7 +21,8 @@ import signal
 import subprocess  # nosec B404 - the helper owns daemon spawns
 import tempfile
 import threading
-from collections.abc import Mapping, Sequence
+import time
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, BinaryIO, Literal, overload
 
 # Each of these forces the fork path, or bypasses executable resolution. A
@@ -92,6 +93,19 @@ def _spawn_plan(
     return chdir_argv, "/bin/sh", None
 
 
+_thread_deadline = threading.local()
+
+
+@contextlib.contextmanager
+def thread_deadline(deadline: float) -> Iterator[None]:
+    """Cap every ``run`` on this thread at an absolute ``time.monotonic()`` deadline."""
+    _thread_deadline.value = deadline
+    try:
+        yield
+    finally:
+        del _thread_deadline.value
+
+
 def _reject(options: Mapping[str, Any]) -> None:
     if rejected := _REJECTED_OPTIONS & options.keys():
         raise TypeError(f"spawn helper cannot take {sorted(rejected)}")
@@ -129,6 +143,15 @@ def run(
 ) -> subprocess.CompletedProcess[Any]:
     """``subprocess.run`` without forking the daemon; ``text`` picks str or bytes output."""
     _reject(options)
+    deadline: float | None = getattr(_thread_deadline, "value", None)
+    if deadline is not None:
+        # subprocess.run kills and reaps its child on timeout, so capping the timeout
+        # at the deadline leaves nothing running once the deadline passes.
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired([os.fspath(part) for part in argv], 0)
+        timeout = options.get("timeout")
+        options["timeout"] = remaining if timeout is None else min(timeout, remaining)
     command, executable, directory = _spawn_plan(argv, cwd, env)
     return subprocess.run(  # nosec B603 - argv form, resolved executable
         command,
