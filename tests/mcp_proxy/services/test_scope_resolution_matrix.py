@@ -18,7 +18,7 @@ from gobby.mcp_proxy.services.server_resolution import (
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import call_mcp_tool
 from gobby.storage.projects import GLOBAL_PROJECT_ID
-from gobby.utils.session_context import SeededContextTokens
+from gobby.utils.session_context import SeededContextTokens, set_request_principal
 
 pytestmark = pytest.mark.unit
 
@@ -366,10 +366,20 @@ async def test_resolve_request_scope_is_total_over_explicit_inputs() -> None:
     http_server.tool_proxy.call_tool = AsyncMock(return_value={"success": True})
     http_server._internal_manager = None
     http_server.mcp_manager = None
+
+    async def operator() -> None:
+        return None
+
+    async def seed(*_args: object, **_kwargs: object) -> SeededContextTokens:
+        # Stand in for request seeding, binding the operator as production does.
+        tokens = SeededContextTokens()
+        tokens.principal_token = set_request_principal(operator)
+        return tokens
+
     with (
         patch(
             "gobby.servers.routes.mcp.endpoints.request_context._set_context_for_request",
-            AsyncMock(return_value=SeededContextTokens()),
+            side_effect=seed,
         ),
         patch(
             "gobby.servers.routes.mcp.endpoints.request_context.resolve_request_scope",
