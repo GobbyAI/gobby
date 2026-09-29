@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # Enough transcript tail to hold the latest assistant turn's usage record.
 TAIL_OCCUPANCY_BYTES = 512 * 1024
 
+# These transcripts carry no per-line occupancy, so no tail window can yield one.
+_NO_LINE_OCCUPANCY_SOURCES = frozenset({"droid", "agy"})
+
 _OCCUPANCY_PAYLOAD_KEYS = (
     "context_used_tokens",
     "context_usage_ratio",
@@ -335,54 +338,75 @@ class ProcessorUsageMixin:
         normalized_source = normalize_context_usage_source(source)
         if self.session_manager is None or source is None or normalized_source is None:
             return
+        if source in _NO_LINE_OCCUPANCY_SOURCES:
+            return
         try:
-            lines = await asyncio.to_thread(
-                _read_complete_tail_lines, transcript_path, TAIL_OCCUPANCY_BYTES
-            )
             session = await self._run_db(self.session_manager.get, session_id)
-        except (OSError, psycopg.Error):
+        except psycopg.Error:
             logger.warning("Tail occupancy unavailable for session %s", session_id, exc_info=True)
             return
-        if session is None or not lines:
-            return
-        parser = get_parser(source, session_id=session_id, transcript_path=transcript_path)
-        try:
-            records = await asyncio.to_thread(parser.parse_lines, lines)
-        except ValueError:
-            logger.warning("Tail occupancy parse failed for session %s", session_id, exc_info=True)
+        if session is None:
             return
         session_window = self._coerce_context_window(getattr(session, "context_window", None))
         session_model = getattr(session, "model", None)
-        for msg in reversed(records):
-            if not isinstance(msg, ParsedMessage):
-                continue
-            window = self._message_context_window(msg) or session_window
-            model = msg.model if isinstance(msg.model, str) and msg.model else session_model
-            snapshot: ContextUsageSnapshot | None = None
-            if msg.context_used_tokens is not None:
-                snapshot = ContextUsageSnapshot.from_reported_occupancy(
-                    source=normalized_source,
-                    context_window=window,
-                    context_used_tokens=msg.context_used_tokens,
-                    model=model,
-                    epoch_reset=msg.context_epoch_reset,
+        # A single tool-result line can outgrow any fixed window, so widen the
+        # read until it holds a usage record or covers the whole transcript.
+        limit = TAIL_OCCUPANCY_BYTES
+        while True:
+            try:
+                lines, whole_file = await asyncio.to_thread(
+                    _read_complete_tail_lines, transcript_path, limit
                 )
-            elif (
-                msg.usage is not None
-                and self._usage_has_tokens(msg)
-                and msg.content_type != TURN_BOUNDARY_CONTENT_TYPE
-                and source != "droid"
-            ):
-                snapshot = self._snapshot_from_token_usage(
-                    source=source, context_window=window, usage=msg.usage, model=model
+                # A fresh parser per window: each re-reads an overlapping superset.
+                parser = get_parser(source, session_id=session_id, transcript_path=transcript_path)
+                records = await asyncio.to_thread(parser.parse_lines, lines)
+            except OSError:
+                logger.warning(
+                    "Tail occupancy unavailable for session %s", session_id, exc_info=True
                 )
-            if snapshot is not None and snapshot.context_used_tokens is not None:
-                await self._run_db(self.session_manager.update_context_usage, session_id, snapshot)
                 return
+            except ValueError:
+                logger.warning(
+                    "Tail occupancy parse failed for session %s", session_id, exc_info=True
+                )
+                return
+            for msg in reversed(records):
+                if not isinstance(msg, ParsedMessage):
+                    continue
+                window = self._message_context_window(msg) or session_window
+                model = msg.model if isinstance(msg.model, str) and msg.model else session_model
+                snapshot: ContextUsageSnapshot | None = None
+                if msg.context_used_tokens is not None:
+                    snapshot = ContextUsageSnapshot.from_reported_occupancy(
+                        source=normalized_source,
+                        context_window=window,
+                        context_used_tokens=msg.context_used_tokens,
+                        model=model,
+                        epoch_reset=msg.context_epoch_reset,
+                    )
+                elif (
+                    msg.usage is not None
+                    and self._usage_has_tokens(msg)
+                    and msg.content_type != TURN_BOUNDARY_CONTENT_TYPE
+                ):
+                    snapshot = self._snapshot_from_token_usage(
+                        source=source, context_window=window, usage=msg.usage, model=model
+                    )
+                if snapshot is not None and snapshot.context_used_tokens is not None:
+                    await self._run_db(
+                        self.session_manager.update_context_usage, session_id, snapshot
+                    )
+                    return
+            if whole_file:
+                return
+            limit *= 4
 
 
-def _read_complete_tail_lines(path: str, limit: int) -> list[str]:
-    """Return the complete lines within the last ``limit`` bytes of ``path``."""
+def _read_complete_tail_lines(path: str, limit: int) -> tuple[list[str], bool]:
+    """Return the complete lines within the last ``limit`` bytes of ``path``.
+
+    The flag reports whether the window reached the start of the file.
+    """
     with open(path, "rb") as handle:
         size = handle.seek(0, os.SEEK_END)
         start = max(0, size - limit)
@@ -392,4 +416,4 @@ def _read_complete_tail_lines(path: str, limit: int) -> list[str]:
     complete = data.split(b"\n")[:-1]
     if start > 0:
         complete = complete[1:]
-    return [line.decode("utf-8", errors="replace") for line in complete]
+    return [line.decode("utf-8", errors="replace") for line in complete], start == 0
