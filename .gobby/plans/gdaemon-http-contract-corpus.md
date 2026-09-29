@@ -94,6 +94,7 @@ Fixture format (`schema_version` 1): one case per JSON file under
   "schema_version": 1,
   "name": "health_ok",
   "family": "health",
+  "credential": "none",
   "request": {"method": "GET", "path": "/api/health", "query": {}, "headers": {}, "body": null},
   "response": {"status": 200, "headers": {"content-type": "application/json"}, "body": {"status": "@mask@", "hook_runtime": "@mask@"}},
   "mask": ["/response/body/status", "/response/body/hook_runtime"]
@@ -116,12 +117,28 @@ Fixture format (`schema_version` 1): one case per JSON file under
     has no Python counterpart. Python neither records nor replays it. 3.2
     adds the first such family (`front_door`).
 
-The header allowlist, applied on both sides, is `content-type`, `retry-after`,
-`x-gobby-user-id`, `x-gobby-machine-id`, and `x-gobby-key-id`. `mask` names
+The response-header allowlist, applied on both sides, is `cache-control`,
+`content-type`, `retry-after`, `x-gobby-user-id`, `x-gobby-machine-id`, and
+`x-gobby-key-id`. `mask` names
 volatile fields by RFC 6901 JSON pointer. Both harnesses replace them with
 `"@mask@"` before comparing, and the recorder applies the masks at write time
 so recordings are deterministic. The loader rejects any case whose
 `schema_version` differs from the manifest's.
+
+Credentials never reach a fixture file. A case's persisted `request` is the
+sanitized request: it carries no `Authorization` or runtime-grant header. Each
+case names its credential recipe in a `credential` field (`none`, `operator`, or
+`grant`, plus `forged_identity` headers where 3.1 lists them). A test-local
+materializer in `http_corpus.py` builds the live headers immediately before
+Python sends the request:
+- `operator` adds the bearer from `daemon_auth_headers` (`tests/e2e/conftest.py`,
+  used by `authenticated_daemon_client`);
+- `grant` adds `BoundaryHarness.grant_headers()` from the `boundary` fixture.
+
+The recorder writes the sanitized request and applies the case masks before
+writing, so replay always runs with freshly injected credentials. The Rust
+harness replays against a stub backend and needs no credential. No new
+credential abstraction is added.
 
 `mask_vector.json` is a shared vector: `{"input", "mask", "expected"}`. It
 covers the following, and 3.2 asserts the Rust helper produces the same
@@ -168,14 +185,23 @@ isolated e2e daemon, which runs behind gdaemon.
   - `POST /api/runtime/handshake/challenge` (a `_PUBLIC_PATHS` entry in
     `src/gobby/servers/middleware/auth.py`).
   - `POST /api/runtime/handshake`, completing the `boundary` harness's
+    handshake, with credential `operator`.
+  - Both handlers return `Cache-Control: no-store`
+    (`src/gobby/servers/routes/runtime_handshake.py`, `challenge` and
+    `handshake`); the allowlist records it and replay pins it.
+  - Volatile pointers: `/request/body/nonce` and `/response/body/proof` for the
+    challenge; `/request/body/machine_id`, `/request/body/project_id`,
+    `/response/body/deployment_token`, `/response/body/fencing_epoch`, and every
+    leaf of `/response/body/grant` that varies between two recordings, for the
     handshake.
-  - Mask nonces, grants, and expiries.
 - Family `auth`: every body is `{"error": <message>, "code": <code>}`, built by
   `AuthMiddleware.dispatch` in `src/gobby/servers/middleware/auth.py`. The
   codes come from `authenticate` in `src/gobby/servers/auth_service.py`.
-  - `auth_missing_auth`: a `_MODALITY_ROUTES` route
-    (`tests/e2e/test_runtime_boundary.py`, line 207) with no bearer and no grant
-    header.
+  - All three cases send `POST /api/embeddings` with body `{"input": ["hi"]}`,
+    the fixed JSON entry of `_MODALITY_ROUTES`
+    (`tests/e2e/test_runtime_boundary.py`, line 207). It needs no request id or
+    multipart normalization.
+  - `auth_missing_auth`: credential `none`, so no bearer and no grant header.
     - Code `missing_auth`: `authenticate` returns it when no bearer is accepted
       (`auth_service.py`, line 278).
     - Message `_LOGIN_GUIDANCE` (`middleware/auth.py`, lines 50-53):
@@ -186,12 +212,11 @@ isolated e2e daemon, which runs behind gdaemon.
     - It must be recorded as `missing_auth`. An anonymous request can yield
       either code, so it must never be recorded as `missing_grant`
       (`tests/servers/test_auth_service.py`, line 931).
-  - `auth_missing_grant`: the same route with the operator bearer from
-    `authenticated_daemon_client` (`tests/e2e/conftest.py`) and the grant header
-    omitted.
+  - `auth_missing_grant`: credential `operator`, so the operator bearer only
+    and no grant header.
     - Code `missing_grant` (`auth_service.py`, lines 282 and 284).
     - Message `_GRANT_REJECTION_MESSAGE`, which is "Request rejected".
-  - `auth_forged_identity`: the `boundary` harness's `grant_headers()` plus
+  - `auth_forged_identity`: credential `grant` plus the persisted headers
     `X-Gobby-Machine-Id: forged-machine` and `X-Gobby-Project-Id: forged-project`,
     as in `test_modality_identity_binding`.
     - Code `forged_identity` (`auth_service.py`, lines 300 and 302).
@@ -215,11 +240,12 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 3.1.1 - The loader rejects a case whose `schema_version` differs from the manifest's and skips `origin: gdaemon` families. test: `tests/contracts/test_http_corpus.py::test_schema_version_mismatch_rejected`.
-- 3.1.2 - The recorder writes every `origin: python` case deterministically: two recordings against one fixture produce identical bytes. test: `tests/contracts/test_http_corpus.py::test_recorder_is_deterministic`.
-- 3.1.3 - Every first-corpus case replays equal through the front-door e2e fixture. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+- 3.1.1 - On a synthetic manifest, the loader rejects a case whose `schema_version` differs from the manifest's and skips `origin: gdaemon` families. test: `tests/contracts/test_http_corpus.py::test_loader_rejects_version_and_filters_origin`.
+- 3.1.2 - The recorder writes every `origin: python` case deterministically: two recordings against one fixture produce identical bytes, and those bytes contain none of the daemon token, the encoded runtime grant, the nested grant token, or the `deployment_token`. test: `tests/contracts/test_http_corpus.py::test_recorder_is_deterministic`.
+- 3.1.3 - Every first-corpus case replays equal through the front-door e2e fixture with freshly injected credentials, including `Cache-Control: no-store` on both runtime-handshake cases. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 - 3.1.4 - The Python mask helper produces the shared vector's `expected` output. test: `tests/contracts/test_http_corpus.py::test_mask_vector_matches_expected`.
-- 3.1.5 - The manifest carries per-family `parity` and `origin`, and the README documents the format, masks, and re-record procedure. file: `tests/contracts/http/README.md`.
+- 3.1.5 - Every manifest family has a valid `parity` and `origin`, every listed case file exists, and every case's `family` is a manifest family. test: `tests/contracts/test_http_corpus.py::test_manifest_contract`.
+- 3.1.6 - The README documents the format, the `credential` recipes, the masks, and the re-record procedure. file: `tests/contracts/http/README.md`.
 
 ### 3.2 Rust replay harness and the gdaemon-authored front_door family [category: test] (depends: 3.1)
 `kind: deliverable`
@@ -242,9 +268,10 @@ Landed front door (#23043):
 - `crates/gdaemon/tests/front_door.rs` holds the client pattern:
   `send`, a hyper client, and `http_body_util::BodyExt::collect`.
 
-The harness declares `mod common;` for `refused_addr` and `TIMEOUT`, and calls
-`serve` directly with a routes map built from the manifest. `common` needs no
-edit.
+The harness declares `mod common;` for `TIMEOUT` and calls `serve` directly
+with a routes map built from the manifest. `common` needs no edit.
+`refused_addr` drops its listener before gdaemon dials, so another process can
+take the port in that gap; the harness therefore does not use it.
 
 Routing facts:
 - `crates/gdaemon/src/front_door/routes.rs::FAMILIES` is `&[&HealthFamily]`.
@@ -278,7 +305,10 @@ Harness (`crates/gdaemon/tests/http_contracts.rs`, a single file):
   allowlisted headers, and body. It then runs `serve` with
   `routes = {family: parity}`, sends the request through the front door, masks,
   and asserts equality.
-- For `origin: gdaemon` cases, the backend is `common::refused_addr()`.
+- For `origin: gdaemon` cases, a private helper binds a
+  `tokio::net::TcpSocket` on `127.0.0.1:0` without listening and holds it until
+  after the assertion, so connections to that address are refused for the whole
+  replay.
 
 The new `front_door` family:
 - `manifest.json` gains
@@ -306,7 +336,7 @@ the 3.1 pytest command to confirm the Python replay still skips the new
 
 - 3.2.1 - Every `proxy`-parity case replays equal through `gdaemon serve` against the case-driven stub. test: `crates/gdaemon/tests/http_contracts.rs::proxy_families_replay_equal`.
 - 3.2.2 - The `health` family replays equal under `native` routing and carries `x-gobby-served-by: gdaemon`. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal`.
-- 3.2.3 - The `front_door` family's typed 503 replays equal against a refused backend. test: `crates/gdaemon/tests/http_contracts.rs::front_door_backend_down_replays_equal`.
+- 3.2.3 - The `front_door` family's typed 503 replays equal against a backend address held bound and non-listening through the replay. test: `crates/gdaemon/tests/http_contracts.rs::front_door_backend_down_replays_equal`.
 - 3.2.4 - Rust masking produces the shared vector's `expected` output. test: `crates/gdaemon/tests/http_contracts.rs::mask_matches_python_vector`.
 - 3.2.5 - Every family in `FAMILIES` has at least one manifest case, and a missing one fails the suite by name. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
 
@@ -326,6 +356,12 @@ the 3.1 pytest command to confirm the Python replay still skips the new
     and asserts the served-by header.
   - Recording uses an environment switch, and the Rust helpers live in the
     harness file.
+- 2026-09-29: Enhancer pass (run f3bc0791); the PD accepted all five. E1 pins
+  `Cache-Control: no-store` on both handshake cases. E2 keeps credentials out of
+  fixtures behind a test-local materializer, with a recorded-bytes secret
+  assertion. E3 pins the 401 cases to `POST /api/embeddings`. E4 names the loader
+  and manifest tests and moves the README to 3.1.6. E5 holds the refused backend
+  address bound and non-listening through the 3.2 replay.
 
 ## V2: Verification
 `kind: verification`
