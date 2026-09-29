@@ -19,6 +19,14 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     plan = await prepare_codex_spawn(request)
     if isinstance(plan, SpawnResult):
         return plan
+    if plan.inject_persona and request.session_manager is not None and not plan.codex_prompt:
+        from gobby.workflows.state_manager import SessionVariableManager
+
+        await asyncio.to_thread(
+            SessionVariableManager(request.session_manager._storage.db).merge_variables,
+            plan.child_session_id,
+            {"_agent_context_injected": True},
+        )
     result = await _runtime_spawn(request, plan)
     if result.success and plan.codex_prompt:
         if plan.inject_persona and request.session_manager is not None:

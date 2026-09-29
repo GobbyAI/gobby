@@ -24,6 +24,7 @@ def build_cli_command(
     env_overrides: dict[str, str] | None = None,
     config_overrides: list[str] | None = None,
     codex_oss_provider: str | None = None,
+    external_sandbox_enforced: bool = False,
 ) -> tuple[list[str], dict[str, str]]:
     """
     Build the CLI command and env for any provider.
@@ -62,6 +63,8 @@ def build_cli_command(
         config_overrides: CLI configuration overrides for providers that
             support `-c key=value` flags. Currently used by Codex.
         codex_oss_provider: Optional Codex OSS local provider (lmstudio or ollama).
+        external_sandbox_enforced: Required when headless Codex auto-approval bypasses
+            Codex's own sandbox; the caller must have an enforced external sandbox.
 
     Returns:
         Tuple of (command list, env dict) for subprocess execution
@@ -142,7 +145,9 @@ def build_cli_command(
 
     elif cli == "codex":
         # Codex CLI flags
-        if resume_session_id:
+        if mode == "headless":
+            command.append("exec")
+        elif resume_session_id:
             command.append("resume")
         if codex_oss_provider:
             command.extend(["--oss", "--local-provider", codex_oss_provider])
@@ -153,7 +158,12 @@ def build_cli_command(
         if reasoning_effort and reasoning_effort != "auto" and reasoning_flag == "codex-config":
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if auto_approve:
-            command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
+            if mode == "headless":
+                if not external_sandbox_enforced:
+                    raise ValueError("Headless Codex auto-approval requires an enforced sandbox")
+                command.append("--dangerously-bypass-approvals-and-sandbox")
+            else:
+                command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
         if working_directory:
             command.extend(["-C", working_directory])
         for override in config_overrides or []:
@@ -210,6 +220,8 @@ def build_cli_command(
         command.extend(sandbox_args)
 
     if cli == "codex" and resume_session_id:
+        if mode == "headless":
+            command.append("resume")
         command.append(resume_session_id)
 
     # Prompt only in agent/headless mode (interactive mode uses stdin)

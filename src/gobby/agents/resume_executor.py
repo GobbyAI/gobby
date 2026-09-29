@@ -499,13 +499,21 @@ async def resume_agent_run(
         config_overrides.extend(
             _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
         )
+    headless_reviewer = (
+        provider == "codex"
+        and original_run.agent_name == "task-close-reviewer"
+        and launch.enforced
+        and launch.backend == "srt"
+    )
     command, _cmd_env = build_cli_command(
         cli=provider,
-        # Claude appends its prompt after the MCP flags below; Codex receives
-        # its prompt as a post-launch composer paste because a CLI-argument
-        # prompt cancels its in-flight MCP client startup
-        # (schedule_codex_prompt_delivery).
-        prompt=None if provider in {"claude", "codex"} else prompt,
+        # Claude appends its prompt after MCP flags below. Codex TUI receives
+        # a post-launch composer paste; headless exec takes a positional prompt.
+        prompt=(
+            None
+            if provider == "claude" or (provider == "codex" and not headless_reviewer)
+            else prompt
+        ),
         resume_session_id=native_session_id,
         auto_approve=(
             managed_runtime_profile.auto_approve
@@ -518,6 +526,8 @@ async def resume_agent_run(
         codex_oss_provider=codex_oss_provider,
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=config_overrides,
+        mode="headless" if headless_reviewer else "agent",
+        external_sandbox_enforced=headless_reviewer,
     )
     launch_updates: dict[str, Any] = {}
     if provider == "claude":
@@ -609,7 +619,7 @@ async def resume_agent_run(
         child_session_id=spawn_context.session_id,
         agent_run_id=run_id,
         title=f"gobby-resume-{run_id}",
-        codex_prompt=prompt if provider == "codex" else None,
+        codex_prompt=prompt if provider == "codex" and not headless_reviewer else None,
     )
     spawn_request = SpawnRequest(
         prompt=prompt,
@@ -666,7 +676,7 @@ async def resume_agent_run(
         if manager is not None:
             terminal = await asyncio.to_thread(manager.get, terminal_result.terminal_id)
 
-    if provider == "codex" and terminal is not None:
+    if provider == "codex" and not headless_reviewer and terminal is not None:
         coordinator = getattr(runner, "write_coordinator", None)
         if coordinator is not None:
             schedule_codex_prompt_delivery(
