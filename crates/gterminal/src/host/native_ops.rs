@@ -496,19 +496,29 @@ impl HostState {
         drop(inner);
         #[cfg(feature = "vt-engine")]
         if let Some(exit_watch) = exit_watch {
-            let watch_state = Arc::clone(self);
-            let watch_identity = identity.clone();
-            let watch_host_terminal_id = host_terminal_id.clone();
-            tokio::spawn(async move {
-                let Some(exit) = exit_watch.wait().await else {
-                    return;
-                };
-                watch_state
-                    .settle_leader_exit(&watch_identity, &watch_host_terminal_id, exit.exit_code)
-                    .await;
-            });
+            self.watch_leader_exit(identity, host_terminal_id, exit_watch);
         }
         response
+    }
+
+    /// Settles a committed pane when its leader exits: the watcher is the
+    /// only path that removes a committed pane (see `settle_leader_exit`).
+    #[cfg(feature = "vt-engine")]
+    pub(crate) fn watch_leader_exit(
+        self: &Arc<Self>,
+        identity: Identity,
+        host_terminal_id: String,
+        exit_watch: crate::pane::ChildExitWatch,
+    ) {
+        let state = Arc::clone(self);
+        tokio::spawn(async move {
+            let Some(exit) = exit_watch.wait().await else {
+                return;
+            };
+            state
+                .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code)
+                .await;
+        });
     }
 
     /// `grace_ms` is the request's typed field, which serde never leaves in `extra`.

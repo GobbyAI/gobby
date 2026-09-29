@@ -25,7 +25,7 @@ use super::shutdown::shutdown_pane_processes;
 use super::terminal::{GhosttyPaneTerminal, PaneTerminal};
 
 /// Result retained by the runtime's sole child waiter.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ChildExit {
     pub exit_code: Option<u32>,
     pub signal: Option<String>,
@@ -141,6 +141,15 @@ impl PaneRuntimeIo {
     fn release_after_commit(&self) -> std::io::Result<()> {
         match self {
             PaneRuntimeIo::Actor(actor) => actor.release_after_commit(),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { .. } => Ok(()),
+        }
+    }
+
+    #[cfg(unix)]
+    fn resume_restored(&self) -> std::io::Result<()> {
+        match self {
+            PaneRuntimeIo::Actor(actor) => actor.resume_restored(),
             #[cfg(test)]
             PaneRuntimeIo::TestChannel { .. } => Ok(()),
         }
@@ -576,16 +585,72 @@ impl PaneRuntime {
                 .enable_kitty_graphics()
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
         }
-        let pane_terminal = GhosttyPaneTerminal::new(terminal, response_tx.clone())?;
+        let pane_terminal = GhosttyPaneTerminal::new(terminal, response_tx)?;
         pane_terminal.apply_host_terminal_theme(host_terminal_theme);
         let _ = pane_terminal.apply_host_terminal_appearance(host_terminal_appearance);
+        let runtime = Self::on_master_fd(
+            pane_id,
+            pane_terminal,
+            (rows, cols, 0, 0),
+            master_fd,
+            child_pid_value,
+            false,
+        )?;
+        if let Some(reaper) = &runtime.reaper {
+            reaper.start();
+        }
+        Ok(runtime)
+    }
+
+    /// Stages a pane carried across a host upgrade: its actor runs quiesced on
+    /// the duplicate master, its processes survive drop, and nothing waits on
+    /// its child until [`PaneRuntime::commit_restore`].
+    #[cfg(unix)]
+    pub fn stage_restore(
+        terminal: GhosttyPaneTerminal,
+        size: (u16, u16, u32, u32),
+        master_fd: std::os::fd::OwnedFd,
+        child_pid: u32,
+        reported_cwd: Option<std::path::PathBuf>,
+    ) -> std::io::Result<Self> {
+        let mut runtime =
+            Self::on_master_fd(PaneId::alloc(), terminal, size, master_fd, child_pid, true)?;
+        runtime.preserve_processes_on_drop = true;
+        if let Ok(mut cwd) = runtime.reported_cwd.lock() {
+            *cwd = reported_cwd;
+        }
+        Ok(runtime)
+    }
+
+    /// Takes ownership of a staged pane's child: records the exit the earlier
+    /// image reaped but never delivered, or starts waiting for one.
+    #[cfg(unix)]
+    pub fn commit_restore(&mut self, exit: Option<ChildExit>) {
+        self.preserve_processes_on_drop = false;
+        if let Some(reaper) = &self.reaper {
+            match exit {
+                Some(exit) => reaper.record(exit),
+                None => reaper.start(),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn on_master_fd(
+        pane_id: PaneId,
+        pane_terminal: GhosttyPaneTerminal,
+        size: (u16, u16, u32, u32),
+        master_fd: std::os::fd::OwnedFd,
+        child_pid_value: u32,
+        initially_quiesced: bool,
+    ) -> std::io::Result<Self> {
+        let (response_tx, _response_rx) = mpsc::channel::<Bytes>(1);
         let terminal = Arc::new(PaneTerminal::new(pane_terminal));
         let kitty_keyboard_flags = Arc::new(AtomicU16::new(0));
         let render_notify = Arc::new(Notify::new());
         let child_pid = Arc::new(AtomicU32::new(child_pid_value));
         let reported_cwd = Arc::new(Mutex::new(None));
         let reaper = ChildReaper::new(child_pid_value);
-        reaper.start();
         let io = {
             let terminal = terminal.clone();
             let response_writer = response_tx.clone();
@@ -622,7 +687,7 @@ impl PaneRuntime {
             PaneRuntimeIo::Actor(PtyIoActor::spawn(PtyIoActorConfig {
                 pane_id: pane_id.raw(),
                 master_fd,
-                initially_quiesced: false,
+                initially_quiesced,
                 on_read,
                 on_reader_exit: None,
             })?)
@@ -631,7 +696,7 @@ impl PaneRuntime {
             pane_id,
             terminal,
             io,
-            current_size: Cell::new((rows, cols, 0, 0)),
+            current_size: Cell::new(size),
             child_pid,
             reported_cwd,
             child_wait_completed: Some(reaper.completed.clone()),

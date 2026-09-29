@@ -70,6 +70,43 @@ impl HostEvents {
         }
     }
 
+    /// Rebuilds the log a host upgrade carried: `cursor` is the last issued
+    /// seq and each ring event keeps the `seq` it was emitted with, so
+    /// `subscribe(since)` replays and reports gaps as the earlier image did.
+    pub fn restore(
+        epoch: String,
+        event_queue_bytes: usize,
+        cursor: u64,
+        ring: Vec<Value>,
+    ) -> std::io::Result<Self> {
+        let mut entries = VecDeque::with_capacity(ring.len());
+        let mut ring_bytes = 0;
+        let mut previous = 0;
+        for event in ring {
+            let seq = event.get("seq").and_then(Value::as_u64).unwrap_or(0);
+            if seq <= previous || seq > cursor {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("carried event seq {seq} is out of order for cursor {cursor}"),
+                ));
+            }
+            previous = seq;
+            let bytes = encoded_len(&event);
+            ring_bytes += bytes;
+            entries.push_back((seq, bytes, event));
+        }
+        Ok(Self {
+            epoch,
+            event_queue_bytes,
+            state: Arc::new(Mutex::new(EventState {
+                seq: cursor,
+                ring: entries,
+                ring_bytes,
+                subscribers: Vec::new(),
+            })),
+        })
+    }
+
     pub async fn cursor(&self) -> (String, u64) {
         let state = self.state.lock().await;
         (self.epoch.clone(), state.seq)

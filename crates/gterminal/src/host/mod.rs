@@ -20,6 +20,8 @@ mod events;
 mod frames;
 #[cfg(all(unix, feature = "vt-engine"))]
 pub(crate) mod gate;
+#[cfg(all(unix, feature = "vt-engine"))]
+pub mod handover;
 mod helpers;
 pub mod image;
 mod ledger;
