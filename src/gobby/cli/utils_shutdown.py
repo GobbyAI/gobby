@@ -13,7 +13,7 @@ import psutil
 
 from gobby.cli.utils_runtime import facade
 from gobby.shutdown_intent import shutdown_marker_details
-from gobby.utils.env import is_test_protect_enabled
+from gobby.utils.env import E2E_ISOLATED_HOME_ENV, is_test_protect_enabled
 
 
 def _report_lock_survivor(deps: Any, quiet: bool) -> None:
@@ -48,9 +48,23 @@ def stop_daemon(
     """Stop the daemon process. Returns True on success, False on failure."""
     deps = facade()
 
-    if is_test_protect_enabled():
-        deps.logger.warning("stop_daemon called during test - skipping")
-        return True
+    # Under test protection only an e2e test's own isolated home may be stopped,
+    # through its pid file: the service manager and system-wide sweeps stay off.
+    protected = is_test_protect_enabled()
+    if protected:
+        marker = os.environ.get(E2E_ISOLATED_HOME_ENV, "").strip()
+        if not marker:
+            deps.logger.warning("stop_daemon called during test - skipping")
+            return True
+        home = cast(Path, deps.get_gobby_home())
+        if Path(marker).resolve() != home.resolve():
+            if not quiet:
+                deps._stop_step(
+                    f"Refusing to stop: {E2E_ISOLATED_HOME_ENV}={marker} "
+                    f"is not the daemon home {home}",
+                    error=True,
+                )
+            return False
 
     if not quiet:
         click.echo("Stopping Gobby daemon...")
@@ -72,7 +86,7 @@ def stop_daemon(
     if pid is None:
         from gobby.cli.installers.service import get_service_status
 
-        svc = get_service_status()
+        svc = {} if protected else get_service_status()
         if svc.get("running") and svc.get("pid"):
             pid = int(svc["pid"])
         else:
@@ -120,7 +134,7 @@ def stop_daemon(
 
     from gobby.cli.installers.service import get_service_status, service_stop
 
-    svc = get_service_status()
+    svc = {} if protected else get_service_status()
     if svc.get("installed") and svc.get("running"):
         result = service_stop(
             shutdown_intent=shutdown_intent,

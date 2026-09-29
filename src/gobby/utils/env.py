@@ -8,6 +8,10 @@ ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 
 _TEST_PROTECT_DISABLED = frozenset({"", "0", "false", "no", "off"})
 
+# Names the isolated GOBBY_HOME an e2e test owns. Under test protection it lets
+# `gobby stop` signal that home's pid-file process, and nothing else.
+E2E_ISOLATED_HOME_ENV = "GOBBY_E2E_ISOLATED_HOME"
+
 
 def is_test_protect_enabled() -> bool:
     """Return whether ``GOBBY_TEST_PROTECT`` requests test protection.
