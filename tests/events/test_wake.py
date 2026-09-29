@@ -88,7 +88,7 @@ async def test_codex_idle_recovery_rechecks_composer_and_exact_row(race: str) ->
         run_db=run_db,
     )
 
-    assert result is None
+    assert result == ("composer_draft" if race == "composer_changed" else "row_changed")
     assert reads == []
     manager._pause_idle_prompt_active.assert_not_called()
 
