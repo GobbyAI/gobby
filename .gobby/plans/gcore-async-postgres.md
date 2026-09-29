@@ -228,7 +228,6 @@ Targets:
 - `crates/gcore/src/database_concurrency.rs::*` — scope-reason: add native_pool_max_size to the resolution and its vector test
 - `src/gobby/storage/concurrency.py::*` — scope-reason: add native_pool_max_size to the resolution
 - `docs/contracts/database-concurrency-v1.json::*` — scope-reason: add native_pool_max_size to every expected block and one new case
-- `tests/storage/test_database_concurrency.py::*` — scope-reason: assert the new expected field
 
 **Research context:** both resolvers compute `pool_budget` and the Python pool
 the same way (As-Is Facts). Add `native_pool_max_size: u32`/`int` to
@@ -239,8 +238,11 @@ no validation error in the resolver: a 0 share is a valid resolution. Every
 existing case gains `native_pool_max_size` in `expected`: 8 on the 97-usable
 auto cases, 0 on the 47-usable case (budget 32, pool 32) and on the explicit
 `pool_max_size: 72` case. Add one case where the share is below 8 (an explicit
-`pool_max_size: 66` on budget 72 resolves 6). Both test harnesses read every
-`expected` key they know, so each gains one assertion line.
+`pool_max_size: 66` on budget 72 resolves 6). The Python harness
+(`test_shared_database_concurrency_vectors`) already compares every
+`expected` key generically and picks the field up unchanged; the Rust
+harness's `Expected` struct and `shared_sizing_vectors_conform` gain the field
+and one assertion.
 `runner_init/storage.py` reads only the existing fields and is unchanged.
 
 **Acceptance:**
