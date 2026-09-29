@@ -1,0 +1,272 @@
+header:
+  plan_id: gcore-async-postgres
+  plan_hash: 7db4e5c10ddcea959c666b8ea8298a5bdab4cd89b95cbf3b94d322879d5cdbea
+  root_task_ref: '21557'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-29T12:25:06Z'
+  task_tree_source: db
+  task_tree_source_hash: 55b088d6f7d0355c8e8b5a8d3d178b3b8cef1d9e71869a104da0a794963e0ff4
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 2533e1c6f6675620abb9218e32c2b6098c7935d537d32c916855d327898701c8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23083'
+    validation_criteria_snippet: '1.1.1: Both resolvers report `native_pool_max_size
+      = min(8, pool_budget - pool_max_size)` and agree on every vector. test: `crates/gcore/src/database_concurren...'
+    matched_artifact_ref: crates/gcore/src/database_concurrency.rs::shared_sizing_vectors_conform
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: cdfddc43b1effe66817257424a9ccee39b0b4fe99476fde284a6888ecd224dc0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23083'
+    validation_criteria_snippet: '1.1.1: Both resolvers report `native_pool_max_size
+      = min(8, pool_budget - pool_max_size)` and agree on every vector. test: `crates/gcore/src/database_concurren...'
+    matched_artifact_ref: tests/storage/test_database_concurrency.py::test_shared_database_concurrency_vectors
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: e47ae6f31b10cd37e201f0c449583d1cbffb21bac1e08237c27e1ed3b5d11436
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23083'
+    validation_criteria_snippet: '1.1.1: Both resolvers report `native_pool_max_size
+      = min(8, pool_budget - pool_max_size)` and agree on every vector. test: `crates/gcore/src/database_concurren...'
+    matched_artifact_ref: docs/contracts/database-concurrency-v1.json
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: b398a63dbd238f579ee3bb9d941abce7f31fc4e8aaf3cf04edb22ec42aee287b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::checkout_runs_as_runtime_role
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: c141b9571814aa6653a57d58be736f441e35af034c5ef75323d9dd5541015fb3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::recycle_restores_or_discards_session_state
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: c660c0e3cc0b100a13a11e47e3373cddcc7fee4c30ab1f0f39f854cdc4c7551c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::dropped_transaction_is_rolled_back
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: d1ef1d4be8b988df4cc6eec40be548a45b67483c931470b67a1cbde05cfc6584
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::pool_bounds_server_connections
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 7b7cb9000da1db12d8158c195f961af3b40e748ebf184ca04adf77c528967cbb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::build_and_connect_failures_are_typed
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 64dcc296b2c5f8188d16ee1388e52675b7d777c0d13c36d6ee686df7299ecf79
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: no deadpool-postgres entry
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: a435710afdaf98111fdcd06e96e53ddccefbf6c371a246be0a73918a886fabbc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres.rs::connection_config_enforces_gobby_application_name
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.9
+  plan_node_hash: ec44f91a1a3a1a765a2b4810b793c865b71bbadae3ffaad2dadefb2dc2cd9fdc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::stalled_hooks_are_bounded_and_release_capacity
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.8
+  plan_node_hash: 8667bdca0a9514ec1416cac256a32b136d67a75b82f2f9afbab978ef1bd7efc7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23084'
+    validation_criteria_snippet: '1.2.1: Every checkout runs as `gobby_daemon_runtime`
+      with `TimeZone=UTC` and exactly the configured `application_name` (for example
+      `gobby-gdaemon-test-1`); a ...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/config.rs::config_sets_hub_keepalives
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 5259aa62533c7fc97a5d11dd8b610e1783e7fea9b3fe4acf633142bf9c69adca
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::transaction_commits_and_runs_callbacks
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: dbb40915030a50d31e1153ca28bb979a28249b2e532343ae0f2fb14d15cc1486
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/transaction.rs::commit_rejection_table
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 381742da33bd7b60f5f3b8dad6958d0cd89aadb2de806e37d36a773016bddf3f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::commit_outcome_is_classified
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 727a7dae1c70f66afb1fcfa83d370a9ca87d36e84255552524c796d01b399913
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::cancelled_commit_discards_connection
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.8
+  plan_node_hash: 26fd8387a18e464ef2a0e5018de050ef0ae806fed0d552a968138f4c4608c48b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::failed_rollback_and_armed_guard_discard
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: 0682058b5dd2e3d3df68761a8c6c026cbb9b046d075354632ef75c307262db2e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::lock_targets_share_python_keys_and_order
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 736f6252a8b90b1cb65c90a82f6f0e265cf74ba8d545969371e9dec62ca7183f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::identifiers_match_python_validation
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: e9edbab469c0246d65c560827643796ed837824ac5ae3261547054318c7e756b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23085'
+    validation_criteria_snippet: '2.1.1: `Ok` commits and `Err` rolls back. With `max_size=2`
+      and one connection held by the test, after a confirmed commit callback 1 reads
+      `Pool::status()` syn...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::from_row_maps_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: c555019e67acefabac16c685c705bd74a7fbbb7636e70c6bc662cc734c9ec392
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23086'
+    validation_criteria_snippet: '2.2.1: A session lock taken on a dedicated session
+      (PID recorded) becomes acquirable from a control connection within a bounded
+      poll after the session drops, a...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::dedicated_session_is_discarded
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 4e4dceac6ffaa7c375c048704d37534f0fb390672eb3c9fdfbb9dfce3e66b99b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23086'
+    validation_criteria_snippet: '2.2.1: A session lock taken on a dedicated session
+      (PID recorded) becomes acquirable from a control connection within a bounded
+      poll after the session drops, a...'
+    matched_artifact_ref: crates/gcore/src/postgres_pool/tests.rs::dedicated_session_runs_as_runtime_role
+  deferral_target: null
+  detail: ''
