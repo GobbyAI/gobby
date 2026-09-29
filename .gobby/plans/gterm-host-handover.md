@@ -1471,3 +1471,333 @@ pids, `host_epoch`, and every terminals row are unchanged; the shell pane
 shows its prior scrollback; `vim` repaints, and after quitting it the pane's
 earlier scrollback is intact; gclient and a web terminal both keep typing
 into the same panes. Do not run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Pane terminal snapshot and wrapper state encode and decode
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: A pane terminal fed styled text, cursor moves, a scrolling
+    region, a changed palette entry, bracketed paste mode, a hyperlink, tab stops,
+    and more lines than its height decodes into a terminal whose screen text, history
+    text, cursor, and active modes equal the original. test: `crates/gterminal/tests/handover_display.rs::snapshot_restores_screen_history_cursor_and_modes`.
+
+    1.1.2: Input split inside an escape sequence and inside a UTF-8 character completes
+    correctly when the rest arrives after decode. test: `crates/gterminal/tests/handover_display.rs::continuation_completes_split_sequences`.
+
+    1.1.3: A terminal on the alternate screen decodes with the alternate screen active
+    and the primary screen''s scrollback intact after the program leaves the alternate
+    screen. test: `crates/gterminal/tests/handover_display.rs::alternate_screen_keeps_primary_history`.
+
+    1.1.4: Every pane terminal is created with continuation tracking enabled, and
+    encoding a pane mid-escape succeeds. symbol: `Terminal::encode_snapshot`. test:
+    `crates/gterminal/tests/handover_display.rs::pane_terminals_track_continuation`.
+
+    1.1.5: A pane with an agent OSC title and progress, a child OSC 10/11 default-color
+    override, a kitty keyboard mode, a cursor style, its own theme, and an OSC title
+    sequence split across the encode restores all of them: the title and progress
+    read the same, the split title completes, and a later host theme update keeps
+    the child''s override. test: `crates/gterminal/tests/handover_display.rs::pane_wrapper_state_round_trips`.'
+  labels:
+  - covers:gterm-host-handover:1.1:1.1.1
+  - covers:gterm-host-handover:1.1:1.1.2
+  - covers:gterm-host-handover:1.1:1.1.3
+  - covers:gterm-host-handover:1.1:1.1.4
+  - covers:gterm-host-handover:1.1:1.1.5
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: Handover state file, frozen reaping, and transactional restore
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  - '1.4'
+  validation_criteria: '1.2.1: A state file written from a live host round-trips:
+    restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+    sizes, grants, locators, committed reservations, wrapper state, and event cursor.
+    test: `crates/gterminal/tests/host_handover.rs::state_round_trips_host_and_pane_fields`.
+
+    1.2.2: Restore adopts the carried listener fds and never unlinks, rebinds, or
+    rewrites the sockets or pidfile. test: `crates/gterminal/tests/host_handover.rs::restore_adopts_listeners_without_rebinding`.
+
+    1.2.3: A child that exits and is delivered before capture, one recorded but not
+    delivered, one that exits after the freeze and before exec, and one that exits
+    after restore each produce exactly one `terminal_exited` with the real status,
+    and output written during the window is delivered after restore. test: `crates/gterminal/tests/host_handover.rs::exit_and_output_during_window_survive`.
+
+    1.2.4: A decode error, a panic, and an injected actor-construction failure, each
+    after at least one pane is staged, exec `previous_image` once with `--resume-fallback`;
+    every child pid, queued output, real exit status, and both listener fds survive
+    into the fallback, and every pane accepts a write and returns its output after
+    the fallback commits. test: `crates/gterminal/tests/host_handover.rs::stage_failure_falls_back_with_checkpoint_intact`.
+
+    1.2.5: `--probe-resume` accepts exactly the supported format versions and leaves
+    the pinned image directory untouched. test: `crates/gterminal/tests/host_cli_args.rs::probe_resume_reports_supported_formats`.
+
+    1.2.6: A fallback Stage error and a failed fallback `execve` both exit with status
+    70, and a restore that wedges is ended by the pending alarm before the daemon''s
+    deadline. test: `crates/gterminal/tests/host_handover.rs::fallback_failure_and_wedged_restore_end_the_process`.
+
+    1.2.7: A rollback that unfreezes a pane whose child exited while frozen reaps
+    it and emits one `terminal_exited` with the real status. symbol: `PaneRuntime::unfreeze_reaping`.
+    test: `crates/gterminal/tests/host_handover.rs::rollback_reaps_exit_seen_while_frozen`.
+
+    1.2.8: After a restore commits, every pane accepts a user write and its output
+    reaches the terminal; a write sent while the actor is still quiesced is refused,
+    and one sent right after `resume_restored` is written once, in order. symbol:
+    `PtyIoActor::resume_restored`. test: `crates/gterminal/tests/host_handover.rs::restored_panes_accept_input_after_commit`.
+
+    1.2.9: After restore, a pane''s agent title survives the first ticker broadcast,
+    two panes keep their distinct themes, a child OSC 10/11 override survives a host
+    theme refresh, and a committed observer entitlement rebinds. test: `crates/gterminal/tests/host_handover.rs::restored_panes_keep_wrapper_state_and_entitlements`.'
+  labels:
+  - covers:gterm-host-handover:1.2:1.2.1
+  - covers:gterm-host-handover:1.2:1.2.2
+  - covers:gterm-host-handover:1.2:1.2.3
+  - covers:gterm-host-handover:1.2:1.2.4
+  - covers:gterm-host-handover:1.2:1.2.5
+  - covers:gterm-host-handover:1.2:1.2.6
+  - covers:gterm-host-handover:1.2:1.2.7
+  - covers:gterm-host-handover:1.2:1.2.8
+  - covers:gterm-host-handover:1.2:1.2.9
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: '`host_upgrade` verb, mutation gate, bounded capture, exec, and in-process
+    rollback'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '1.3.1: Upgrading a live host keeps the host pid, every pane''s
+    child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`, reports
+    `last_outcome: succeeded` for the daemon''s `attempt_id`, and the panes accept
+    input and produce output afterwards. test: `crates/gterminal/tests/host_handover.rs::upgrade_keeps_pids_epoch_and_panes`.
+
+    1.3.2: The verb refuses `host_busy`, `host_draining`, and `upgrade_in_progress`
+    without changing state; two simultaneous upgrades yield one attempt; a spawn,
+    reservation, or `host_shutdown` issued during the probe is caught by the recheck.
+    test: `crates/gterminal/tests/control_protocol.rs::host_upgrade_admission_is_serialized_and_rechecked`.
+
+    1.3.3: A probe that exits non-zero or times out answers `upgrade_refused`, records
+    `last_outcome: refused`, and quiesces no pane. test: `crates/gterminal/tests/host_handover.rs::probe_refusal_leaves_panes_untouched`.
+
+    1.3.4: A quiesce timeout, a late quiesce completion, a first rollback timeout
+    followed by a late acknowledgement, a snapshot encode error, a write or `fsync`
+    error, the soft cutoff passed during capture, and an `execve` failure each roll
+    back, keep serving on the same sockets, record the matching `last_outcome`, clear
+    the alarm, and reopen the gate only after every pane accepts a write and returns
+    its output. test: `crates/gterminal/tests/host_handover.rs::every_pre_exec_failure_rolls_back`.
+
+    1.3.5: `ping` reports `generation` and the `upgrade` record, with `remaining_ms`
+    defined in `probing`, and `HOST_CAPABILITIES` contains `host_upgrade`. test: `crates/gterminal/tests/control_protocol.rs::ping_reports_generation_and_attempt`.
+
+    1.3.6: A `write_batch` with a pending delayed operation makes `host_upgrade` answer
+    `host_busy`; after acceptance, control writes, frame input, and theme declarations
+    receive `host_upgrading`, and no refused input is written after restore. test:
+    `crates/gterminal/tests/control_protocol.rs::mutation_gate_blocks_and_refuses_during_upgrade`.
+
+    1.3.7: Sixteen panes at the scrollback limit upgrade inside the deadline. test:
+    `crates/gterminal/tests/host_handover.rs::many_full_panes_upgrade_within_deadline`.
+
+    1.3.8: A pane created through reserve, `spawn`, and `spawn_commit`, kept live,
+    and a second one whose creating connection has closed both upgrade successfully;
+    a pending unconsumed reservation still yields `host_busy`. test: `crates/gterminal/tests/host_handover.rs::committed_panes_are_admitted_and_pending_reservations_are_busy`.
+
+    1.3.9: A child exit recorded before the freeze whose watcher is released after
+    capture and before exec, a `list` that runs just before the write guard is taken
+    while that watcher is pending, a `list` call during the window, and a ticker tick
+    during the window neither remove a carried slot without its event, close its master,
+    nor advance the event cursor before exec; a subscriber resuming from the carried
+    cursor sees exactly one `terminal_exited`. test: `crates/gterminal/tests/host_handover.rs::background_mutators_wait_through_exec`.
+
+    1.3.10: A pane whose rollback fails twice ends the host through SIGALRM without
+    reopening the gate. test: `crates/gterminal/tests/host_handover.rs::persistent_rollback_failure_ends_the_host`.
+
+    1.3.11: After a live host has seen a losing cold start, a probe, and a same-image
+    refusal and rollback, a later upgrade whose restore fails still finds `previous_image`
+    and falls back. test: `crates/gterminal/tests/host_handover.rs::fallback_image_survives_other_starts_and_same_image_attempts`.
+
+    1.3.12: A `try_write` timeout and a recheck that finds a new pending reservation
+    or draining after the probe each return the attempt to `idle` with `last_outcome:
+    deferred`; an attempt that starts right after a refused or deferred one keeps
+    its own alarm armed (the earlier attempt''s `alarm(0)` runs before it can take
+    `upgrade_lock`); a rollback whose cleanup blocks while the write guard is held
+    is ended by the alarm; and after a recovered rollback the alarm is cleared only
+    once the write guard is released. test: `crates/gterminal/tests/host_handover.rs::pre_accept_returns_and_rollback_cleanup_are_bounded`.
+
+    1.3.13: A pane whose quiesce acknowledgement never arrives makes the attempt give
+    up on it before the soft cutoff, run no `execve`, and recover every pane (writes
+    accepted, output returned, alarm cleared) before the hard deadline. test: `crates/gterminal/tests/host_handover.rs::stalled_quiesce_recovers_within_hard_budget`.'
+  labels:
+  - covers:gterm-host-handover:1.3:1.3.1
+  - covers:gterm-host-handover:1.3:1.3.2
+  - covers:gterm-host-handover:1.3:1.3.3
+  - covers:gterm-host-handover:1.3:1.3.4
+  - covers:gterm-host-handover:1.3:1.3.5
+  - covers:gterm-host-handover:1.3:1.3.6
+  - covers:gterm-host-handover:1.3:1.3.7
+  - covers:gterm-host-handover:1.3:1.3.8
+  - covers:gterm-host-handover:1.3:1.3.9
+  - covers:gterm-host-handover:1.3:1.3.10
+  - covers:gterm-host-handover:1.3:1.3.11
+  - covers:gterm-host-handover:1.3:1.3.12
+  - covers:gterm-host-handover:1.3:1.3.13
+  tdd: true
+  source_section: '1.3'
+  implementation_domain: backend
+- title: Pinned host images and binary identity
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: '1.4.1: `pin_image` creates a 0700 image under a 0700 user-owned
+    directory whose name is its SHA-256, reuses a matching existing pin, replaces
+    a mismatched one, falls back to copy across devices, and refuses an unsafe directory.
+    test: `crates/gterminal/tests/host_image.rs::pin_image_is_content_addressed_and_private`.
+
+    1.4.2: Replacing the source path by rename after pinning leaves the pin''s bytes
+    and hash unchanged, and two promotions in a row leave both earlier pins intact
+    until pruned. test: `crates/gterminal/tests/host_image.rs::pins_survive_promotion_of_the_source`.
+
+    1.4.3: A cold-start host launched from an unpinned path re-execs from its pin
+    before binding, and `ping.binary_sha256` equals the pin''s hash. test: `crates/gterminal/tests/host_image.rs::cold_start_runs_from_pin`.
+
+    1.4.4: With a live host A, a second cold start B that loses the socket check leaves
+    A''s pin and every other pin in place, and `remove_candidate` keeps a candidate
+    equal to the running pin. The probe''s side of this is 1.2.5. test: `crates/gterminal/tests/host_image.rs::only_the_socket_owner_prunes`.'
+  labels:
+  - covers:gterm-host-handover:1.4:1.4.1
+  - covers:gterm-host-handover:1.4:1.4.2
+  - covers:gterm-host-handover:1.4:1.4.3
+  - covers:gterm-host-handover:1.4:1.4.4
+  tdd: true
+  source_section: '1.4'
+  implementation_domain: backend
+- title: Upgrade trigger and handover window in TerminalHostManager
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.3'
+  validation_criteria: '2.1.1: A stale adopted host (installed hash differs from `binary_sha256`)
+    receives exactly one `host_upgrade` with the installed path and a fresh `attempt_id`;
+    a current host receives none. test: `tests/terminals/test_host_upgrade.py::test_stale_host_gets_one_upgrade_request`.
+
+    2.1.2: During an open window failed pings and failed reconnects do not call `handle_host_death`,
+    attaches answer `host_not_ready`, no terminals row changes, and a healthy ping
+    reporting an in-progress phase keeps the window open; past the deadline with failing
+    pings the existing host-death path runs once. test: `tests/terminals/test_host_upgrade.py::test_window_holds_rows_until_terminal_outcome`.
+
+    2.1.3: `refused`, `rolled_back`, `aborted`, `fallback`, and an identity failure
+    each suppress retries for the reported candidate hash until the installed hash
+    changes; a forced restore failure yields exactly one upgrade request. test: `tests/terminals/test_host_upgrade.py::test_failed_candidates_are_not_retried`.
+
+    2.1.4: A host without the `host_upgrade` capability is never sent the verb and
+    produces one warning naming `gobby restart --terminals`. test: `tests/terminals/test_host_upgrade.py::test_pre_handover_host_is_left_alone`.
+
+    2.1.5: A successful upgrade closes the window on `succeeded` with the candidate
+    hash, and the following reconcile leaves every native row''s `host_epoch`, `locator_key`,
+    and `state` unchanged. test: `tests/terminals/test_host_upgrade.py::test_successful_upgrade_changes_no_rows`.
+
+    2.1.6: A lost acceptance reply, a daemon restart during the window, and a promotion
+    between the daemon''s hash and the host''s pin each end with the window keyed
+    to the daemon''s `attempt_id` and the host''s `candidate_sha256`. test: `tests/terminals/test_host_upgrade.py::test_window_follows_host_attempt_record`.
+
+    2.1.7: A lost acceptance reply followed by two failed reconnects while the host
+    restores calls no `handle_host_death`, and the first healthy ping reporting `succeeded`
+    for the attempt closes the window with no row change. test: `tests/terminals/test_host_upgrade.py::test_lost_ack_and_failed_reconnects_keep_rows`.
+
+    2.1.8: A request the host never ran closes the provisional window at its deadline
+    only after a fresh post-deadline `hello` and `ping` to the same host answers `idle`
+    with no outcome for the attempt; an idle ping seen before the deadline does not
+    close it, and a failed fresh check calls `handle_host_death` once. test: `tests/terminals/test_host_upgrade.py::test_unrun_request_closes_only_on_fresh_check`.
+
+    2.1.9: In-progress pings that keep reporting `remaining_ms = 0` do not extend
+    the window past its fixed deadline; a fresh post-deadline ping still reporting
+    `probing` or another non-idle phase for the attempt runs `handle_host_death` once,
+    and no later ping reopens a window for that `attempt_id`; a `deferred` outcome
+    closes the window without adding the candidate to the refused set. test: `tests/terminals/test_host_upgrade.py::test_window_deadline_is_fixed_and_deferred_is_not_refused`.'
+  labels:
+  - covers:gterm-host-handover:2.1:2.1.1
+  - covers:gterm-host-handover:2.1:2.1.2
+  - covers:gterm-host-handover:2.1:2.1.3
+  - covers:gterm-host-handover:2.1:2.1.4
+  - covers:gterm-host-handover:2.1:2.1.5
+  - covers:gterm-host-handover:2.1:2.1.6
+  - covers:gterm-host-handover:2.1:2.1.7
+  - covers:gterm-host-handover:2.1:2.1.8
+  - covers:gterm-host-handover:2.1:2.1.9
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: Web terminal relay reconnects across an upgrade
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.2.1: Host frame EOF during an upgrade window reconnects
+    the relay under the same browser `attachment_id`, replays history, continues the
+    message sequence, and emits no `terminal_attachment_finalized`; a verified fallback
+    reconnects the same way. test: `tests/servers/test_native_web_proxy.py::test_relay_reconnects_across_host_upgrade`.
+
+    2.2.2: A failed reopen, a changed epoch, or EOF with no upgrade finalizes with
+    the existing reasons. test: `tests/servers/test_native_web_proxy.py::test_relay_finalizes_when_reconnect_is_not_possible`.
+
+    2.2.3: A detach or WebSocket close at each await of the reconnect leaves no open
+    frame and no live record; two consecutive upgrades reconnect, and a later unrelated
+    EOF finalizes as `proxy_frame_eof`. test: `tests/servers/test_native_web_proxy.py::test_relay_reconnect_settles_on_cancel_and_tracks_generation`.
+
+    2.2.4: After a reconnect the holder''s remembered theme is redeclared with the
+    same binding and an observer''s is not. test: `tests/servers/test_native_web_proxy.py::test_relay_reconnect_redeclares_holder_theme_only`.'
+  labels:
+  - covers:gterm-host-handover:2.2:2.2.1
+  - covers:gterm-host-handover:2.2:2.2.2
+  - covers:gterm-host-handover:2.2:2.2.3
+  - covers:gterm-host-handover:2.2:2.2.4
+  tdd: true
+  source_section: '2.2'
+  implementation_domain: backend
+- title: gclient reconnects straight to the host
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '2.3.1: With the daemon disconnected across the host''s exec,
+    a pane whose frame source hits EOF reconnects straight to the host, keeps the
+    same terminal and epoch, never retires, and its input is accepted through the
+    carried grant. test: `crates/gclient/tests/host_upgrade_recovery.rs::pane_reconnects_to_host_without_daemon`.
+
+    2.3.2: An epoch change, `terminal_gone`, or an exhausted budget falls back to
+    the daemon re-attach, which defers on `host_not_ready` and succeeds. test: `crates/gclient/tests/host_upgrade_recovery.rs::host_local_failure_falls_back_to_daemon_attach`.
+
+    2.3.3: Repeated failed daemon reconnect attempts and a daemon generation change
+    overlapping the host restore do not cancel the host-local recovery, which succeeds;
+    closing the pane during the recovery cancels it and sends nothing to the host.
+    test: `crates/gclient/tests/host_upgrade_recovery.rs::host_local_recovery_survives_daemon_attempts`.'
+  labels:
+  - covers:gterm-host-handover:2.3:2.3.1
+  - covers:gterm-host-handover:2.3:2.3.2
+  - covers:gterm-host-handover:2.3:2.3.3
+  tdd: true
+  source_section: '2.3'
+  implementation_domain: backend
+- title: Operator documentation
+  category: docs
+  task_type: chore
+  depends_on:
+  - '2.1'
+  validation_criteria: '2.4.1: The CLI guide describes automatic gterm upgrade and
+    when `--terminals` is still needed. behavior: "gterm upgrade" in `docs/guides/cli-commands.md`.
+
+    2.4.2: The daemon lifecycle reference names the pinned image directory and the
+    one-shot fallback. behavior: "gterm-images" in `src/gobby/install/shared/skills/gobby/references/admin/daemon.md`.'
+  labels:
+  - covers:gterm-host-handover:2.4:2.4.1
+  - covers:gterm-host-handover:2.4:2.4.2
+  tdd: false
+  source_section: '2.4'
+  assigned_agent: tech-writer
+```
