@@ -72,11 +72,13 @@ class HookPhaseTimings:
         with self._lock:
             values = sorted(self._query_latencies)
         if not values:
-            return {"count": 0, "p50": 0.0, "p95": 0.0}
+            return {"count": 0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        # Below 20 queries p95 is the max; above it, one lock-blocked query hides past p95.
         return {
             "count": len(values),
             "p50": values[(len(values) - 1) // 2] * 1000,
             "p95": values[(95 * len(values) + 99) // 100 - 1] * 1000,
+            "max": values[-1] * 1000,
         }
 
 

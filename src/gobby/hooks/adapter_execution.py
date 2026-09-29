@@ -291,6 +291,11 @@ async def run_adapter_hook(
         admission_wait, queue_duration, execution_duration = durations()
         timings.add("admission_wait", admission_wait)
         timings.add("executor_queue", queue_duration)
+        # The worker's own wall time and the loop's delay in resuming this
+        # request after it finished are otherwise unattributed `response` (#23063).
+        timings.add("adapter_worker", execution_duration)
+        if finished_at is not None:
+            timings.add("adapter_resume", time.perf_counter() - finished_at)
         input_data = payload.get("input_data")
         payload_session_id = input_data.get("session_id") if isinstance(input_data, dict) else None
         logger.debug(
