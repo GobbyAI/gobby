@@ -394,18 +394,19 @@ def test_attach_over_cap_sends_omission_note_only(
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(
             comms,
-            ["attach", "gobby-telegram", "errors-new.txt"],
+            ["attach", "gobby-telegram", "/tmp/private/errors.log"],
             input="x" * (MAX_LOG_ATTACHMENT_BYTES + 1),
         )
 
     assert result.exit_code == 0
     assert "omission note sent" in result.output
+    # The note is fixed text: a path-shaped filename never reaches the channel.
     mock_client.call_http_api.assert_called_once_with(
         "/api/comms/send",
         method="POST",
         json_data={
             "channel_name": "gobby-telegram",
-            "content": "errors-new.txt omitted: over the 64 KiB attachment cap.",
+            "content": "Log attachment omitted: over the 64 KiB cap.",
         },
     )
 

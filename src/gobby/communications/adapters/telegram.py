@@ -520,7 +520,8 @@ class TelegramAdapter(BaseChannelAdapter):
             raise self._redacted_status_error(exc) from None
         result = response.json()
         if not result.get("ok"):
-            return None
+            description = str(result.get("description", "unknown Telegram API error"))
+            raise RuntimeError(f"Telegram {method} failed: {description}")
         media_id = str(result["result"]["message_id"])
         for chunk in caption_chunks[1:]:
             payload: dict[str, Any] = {

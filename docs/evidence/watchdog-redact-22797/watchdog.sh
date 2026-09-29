@@ -49,7 +49,7 @@ with_timeout() {
 # $1 is the physical new-line count. An event is one log entry (header plus its
 # traceback) that has a traceback, minus known-benign ones, or that mentions a
 # known-bad string. Events group by signature (logger.function and message with
-# UUIDs collapsed); the three most frequent print with count and time range. The
+# UUIDs and host paths collapsed); the three most frequent print with count and time range. The
 # log lines themselves travel as a redacted document (attach_errors), never in the
 # alert text. Prints nothing when there are no events.
 error_evidence() {
@@ -57,6 +57,8 @@ error_evidence() {
     BEGIN {
       h = "[0-9a-f]"; h4 = h h h h
       uuid = h4 h4 "-" h4 "-" h4 "-" h4 "-" h4 h4 h4
+      # An absolute or ~/ path after a space, quote, paren or =; \047 is a single quote.
+      path = "[ \t\047\"(=]~?/[^ \t\047\",;)]*"
       bad = "pool acquisition failed|DatabaseExecutor is shut down|HostEpochChangedError|spawn_rollback"
       benign = "search_tool_result - Failed to search stored tool result"
     }
@@ -71,6 +73,11 @@ error_evidence() {
         t = "?"; sig = orphan
       }
       while (match(sig, uuid)) sig = substr(sig, 1, RSTART - 1) "<id>" substr(sig, RSTART + RLENGTH)
+      # A host path is unreadable on a phone and may name private files: keep the
+      # delimiter before it, replace the path itself.
+      sig = " " sig
+      while (match(sig, path)) sig = substr(sig, 1, RSTART) "<path>" substr(sig, RSTART + RLENGTH)
+      sig = substr(sig, 2)
       key = substr(sig, 1, 200)
       if (!(key in count)) { order[++nsig] = key; first[key] = t }
       count[key]++; last[key] = t; events++

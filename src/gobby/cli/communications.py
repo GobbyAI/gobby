@@ -146,10 +146,11 @@ def attach_cmd(ctx: click.Context, channel_name: str, filename: str, caption: st
     content = redact_for_attachment(click.get_text_stream("stdin").read())
     if content is None:
         endpoint = "/api/comms/send"
+        # Fixed text: the caller's filename may be a host path and must not leave the machine.
         payload: dict[str, Any] = {
             "channel_name": channel_name,
-            "content": f"{filename} omitted: over the {MAX_LOG_ATTACHMENT_BYTES // 1024} KiB "
-            "attachment cap.",
+            "content": f"Log attachment omitted: over the {MAX_LOG_ATTACHMENT_BYTES // 1024} KiB "
+            "cap.",
         }
     else:
         endpoint = "/api/comms/attachment"

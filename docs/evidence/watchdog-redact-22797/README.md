@@ -6,7 +6,9 @@ decided on 2026-09-28 that such an alert attaches the log content or omits it;
 the Orchestrator ruled option A. The candidate:
 
 - Alert text: signature and counts only (`• 4x 17:21:54 <logger.function> - <message with <id>>`).
-  No exception line, session ids, traceback text, or host path.
+  No exception line, session ids, traceback text, or host path. Absolute and
+  `~/` paths in a log message become `<path>`; `--redact` alone rewrites only
+  the home directory.
   An orphan event is a bad-string line whose entry started before the window. Its
   signature is that line, cut to 200 characters. This is intentional: without it
   the alert could not name the event.
@@ -16,7 +18,8 @@ the Orchestrator ruled option A. The candidate:
   gobby-telegram errors-new.txt`. The CLI scrubs secrets and home paths. When
   the redacted content is at most 64 KiB, it sends a `text/plain` document
   (Telegram `sendDocument`). Over the cap it sends one line instead:
-  `errors-new.txt omitted: over the 64 KiB attachment cap.`
+  `Log attachment omitted: over the 64 KiB cap.` This is fixed text, so a
+  caller's filename never reaches the channel.
 - When the Telegram send fails, the macOS notification fallback runs and
   nothing is attached.
 
@@ -67,7 +70,7 @@ message is authored by an agent, and the Assistant role covers those.
 ## Hashes
 
 - Installed now (the `--redact` swap from the earlier round of this task): `7de4c8017dca62fd14a43d0340fc4416915fb5640e1b0b69e3763ff2e25f4257`
-- Candidate: `5678df684f81cac32271e514ccc8b421c727dcbdf54b14458fb499a340305f1c`
+- Candidate: `8fcb532d27c9c26ea5e9e65f4eeb5fe2fe86cdc05b438271399b29c444a0f4a2`
 
 ## Activation order
 
@@ -89,9 +92,9 @@ The fixture tests run the script under a temporary HOME, using the isolated test
 hub as its read-only database. A fake `~/.local/bin/gobby` records the alert
 and the attach call's arguments and stdin; nothing is sent. A fake `osascript`
 comes first on PATH, so the failed-send fixture raises no real notification.
-The candidate passes 23 of 23 checks. The installed script fails the 4
-new-contract checks: the exception line, the session ids, and the two
-attachment checks.
+The candidate passes 25 of 25 checks. The installed script fails the
+new-contract checks: the exception line, the session ids, the two attachment
+checks, and the two host-path checks.
 
 The Python tests cover redaction and the cap:
 

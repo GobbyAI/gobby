@@ -129,6 +129,20 @@ check "state keeps its four-field format" \
   grep -Eq '^[0-9]+ [0-9]+ [a-z,]+ [0-9]+$' "$home/.gobby/watchdog/state"
 check "quiet run attaches nothing" test ! -e "$home/attached.txt"
 
+# --- path fixture: host paths in a header never reach the alert text ---
+home=$(
+  {
+    echo "2026-09-27 17:00:01 - INFO     - old.line - baseline"
+    echo "2026-09-27 17:25:30 - ERROR    - storage.files.open - failed to open /tmp/errors.log, '/Users/someone/.gobby/x.db' (cwd=~/private/dir)"
+    tb "OSError: denied"
+  } | make_home paths 1
+)
+run "$home"
+sent="$home/sent.txt"
+check "path signature is sent" \
+  grep -q "^• 1x 17:25:30 storage.files.open - failed to open <path>, '<path>' (cwd=<path>)$" "$sent"
+check "no host path in the alert" test "$(grep -c '/tmp/\|/Users/\|~/' "$sent")" -eq 0
+
 # --- failed-send fixture: Telegram down, so no attachment follows the fallback ---
 home=$(
   {
