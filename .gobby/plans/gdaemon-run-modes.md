@@ -43,6 +43,11 @@ The plan of record's 4.4 (the first hub-node pair test) needs that node.
      `crates/gcore/src/bootstrap.rs`.
    - `gdaemon serve` reads `HubDatabaseBootstrap` through `load_enabled_bootstrap`
      (`crates/gdaemon/src/serve.rs`), and that struct has no mode.
+   - `hub` and `run_mode()` are bootstrap-only in this slice, like `front_door`.
+     `DaemonConfig`, `BootstrapConfig.to_config_dict`, and
+     `CliRuntime._overlay_bootstrap` (`src/gobby/cli/runtime.py`) stay unchanged,
+     and every consumer reads `runner.bootstrap_config` or
+     `server.bootstrap_config` directly.
 3. **`/api/health` carries `mode` from Python.**
    - `health_check` adds `"mode": bootstrap_config.run_mode()` to its payload.
    - gdaemon's native `health` family forwards to Python and only adds
@@ -62,11 +67,19 @@ The plan of record's 4.4 (the first hub-node pair test) needs that node.
    - 2.2's remaining obligation, that a node serves health with `mode: node`, is
      2.1.4 here.
 5. **Hub-only means hub-row maintenance.** A loop is hub-only when its work
-   retains, sweeps, refreshes, or schedules shared hub rows. A node's runner talks
-   to the hub database, so running that loop there would duplicate the hub's
-   work. Loops that act only on the local machine keep running in every mode:
-   processes, tmux, installed binaries, local worktrees, the local hook inbox and
-   quarantine, and this process's metrics. 2.2 pins the exact sets.
+   retains, sweeps, refreshes, or schedules shared hub rows without a machine
+   filter. A node's runner talks to the hub database, so running that loop there
+   would duplicate or sweep the hub's work. Loops that act only on the local
+   machine keep running in every mode: processes, agent runs listed for this
+   machine, tmux, installed binaries, local worktrees, and the local hook inbox
+   and quarantine. When a machine-local loop contains one unscoped shared-row
+   step, that step is gated inside its own function so both of its callers are
+   covered. 2.2 pins the exact sets.
+6. **`gobby datastores expose` promotes a machine to hub.** It is already the
+   documented hub-setup step (`docs/guides/shared-stack.md`), and it runs only on
+   a `local` bootstrap. It writes `hub: true` into its staged bootstrap, and its
+   existing rollback restores the prior bootstrap, including the prior flag.
+   `gobby install` keeps writing `hub: false`.
 
 ## Constraints
 `kind: framing`
@@ -105,6 +118,9 @@ Targets:
 - `src/gobby/config/bootstrap_io.py::inject_local_files_home`
 - `src/gobby/config/bootstrap_io.py::_merge_owner_fields`
 - `src/gobby/cli/install_setup.py::ensure_daemon_config`
+- `src/gobby/cli/datastores.py::expose_datastores`
+- `docs/guides/shared-stack.md`
+- `tests/cli/test_datastores_expose.py::*` — scope-reason: promotion to `hub: true` and rollback of the prior flag
 - `src/gobby/install/shared/config/bootstrap.yaml::*` — scope-reason: the bundled template gains the `hub: false` line and its comment
 - `src/gobby/servers/routes/admin/_health.py::*` — scope-reason: `health_check` inside `create_health_router` adds the `mode` field
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
@@ -145,6 +161,12 @@ Writers:
   comment naming the three modes.
 - `update_bootstrap_yaml` merges through `_merge_owner_fields` and needs no
   change of its own.
+- `expose_datastores` (`src/gobby/cli/datastores.py`) copies the bootstrap into
+  `candidate` and sets `services_bind_address`. It also sets
+  `candidate["hub"] = True` (Decision 6). Both failure paths call
+  `_restore_compose_state(gobby_home, previous, was_running)`, which restores
+  `previous`, so a failed exposure leaves the prior flag. The shared-stack
+  guide's hub setup states that exposure makes the machine a hub.
 
 Health: `health_check` (`src/gobby/servers/routes/admin/_health.py`, inside
 `create_health_router(server)`) builds `payload` with `status`,
@@ -173,10 +195,14 @@ Consumers unchanged:
 - `src/gobby/cli/installers/postgres.py` — no-edit-reason: it calls `ensure_daemon_config` and `inject_local_files_home` with unchanged signatures.
 - `tests/cli/test_install_coverage.py` — no-edit-reason: it patches `inject_local_files_home` by name; the signature is unchanged.
 - `tests/integration/sandbox/test_public_ghook_install.py` — no-edit-reason: it asserts install behavior that the extra `hub` line leaves intact; re-run as verification.
+- `src/gobby/cli/runtime.py` — no-edit-reason: `CliRuntime._overlay_bootstrap` overlays `datastore_mode` only; `hub` is bootstrap-only (Decision 2).
+- `src/gobby/config/app.py` — no-edit-reason: `DaemonConfig` gains no mode field; `hub` is bootstrap-only (Decision 2).
 
-Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/config/test_files_home.py tests/cli/test_install_setup.py tests/servers/test_admin_health.py -v`.
-Also the runtime config contract check that the 1.1 leaf used, and
-`uv run ruff check` and `uv run mypy` on the changed files.
+Verification planned, from the worktree root:
+- `uv run python scripts/generate_runtime_config_contract.py` regenerates the
+  carrier.
+- `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/config/test_files_home.py tests/cli/test_install_setup.py tests/cli/test_datastores_expose.py tests/servers/test_admin_health.py tests/config/test_runtime_config_contract.py tests/config/test_config_authority_audit.py -v`.
+- `uv run ruff check` and `uv run mypy` on the changed files.
 
 **Acceptance:**
 
@@ -185,6 +211,7 @@ Also the runtime config contract check that the 1.1 leaf used, and
 - 2.1.3 - `/api/health` reports the mode name. test: `tests/servers/test_admin_health.py::test_health_reports_run_mode`.
 - 2.1.4 - A `node` bootstrap serves health with `mode: node`. test: `tests/servers/test_admin_health.py::test_node_bootstrap_reports_node_mode`.
 - 2.1.5 - The config contract carrier is regenerated and the configuration guide documents the modes. file: `crates/gcore/assets/config/runtime_config_contract.json`.
+- 2.1.6 - `gobby datastores expose` writes `hub: true`, and a failed exposure restores the prior flag. test: `tests/cli/test_datastores_expose.py::test_expose_promotes_hub_and_rollback_restores_flag`.
 
 ### 2.2 Node runners skip hub-only loops (S4.2) [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -192,8 +219,18 @@ Also the runtime config contract check that the 1.1 leaf used, and
 Targets:
 - `src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`
 - `src/gobby/runner_lifecycle_subsystems.py::init_subsystems`
+- `src/gobby/runner_lifecycle_agents.py::_reconcile_task_close_reviews`
 - `tests/test_runner_lifecycle_periodic.py`
-- `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: node-mode startup assertions for the gated subsystem phases
+- `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: node-mode startup assertions for the gated phases; SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/agents/test_task_close_review_recovery.py::*` — scope-reason: node-mode skip of close-review reconciliation; the `_runner` fake gains `bootstrap_config`
+- `tests/test_runner_approval_timeout.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_bin_freshness.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_maintenance_startup.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_resource_monitor.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_skill_maintenance.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_workflow_audit_maintenance.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_bm25_startup.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_lifecycle.py::*` — scope-reason: SimpleNamespace runner fakes that reach the gated functions gain `bootstrap_config=BootstrapConfig()`
 
 **Research context:** The plan of record's 2.3 named `GobbyRunner._initialize_runtime_services` and
 `runner_init/services.py`. Those build services and start no loop. The loops start
@@ -226,9 +263,12 @@ Hub-only: skipped in `node` mode.
 - `chat-attachment-cleanup`
 - `hook-receipt-retention`
 - `approval-timeout-expiry`
+- `metric-snapshot`: it writes this process's metrics into the shared
+  `metric_snapshots` table and runs an unscoped retention delete
+  (`src/gobby/runner_maintenance/telemetry_loops.py`,
+  `src/gobby/storage/metric_snapshots.py`), so a node would sweep the hub's rows.
 
 Machine-local: started in every mode.
-- `metric-snapshot`: this process's OTel metrics.
 - `resource-monitor`: local CPU and memory.
 - `hook-inbox-drain`: the local inbox.
 - `hook-quarantine-retention`: local files; it takes no database.
@@ -238,18 +278,44 @@ Machine-local: started in every mode.
 - `tmux-window-repair`: the local tmux server.
 
 Hub-only startup phases in `init_subsystems`, skipped in `node` mode:
+- `code_index_bm25` (`_repair_code_index_bm25`): it repairs shared PostgreSQL
+  indexes. Skipping it leaves `code_index_bm25_ready` false, so the code-index
+  tasks (`_start_code_index_tasks`), which start only when it is true, are
+  skipped with it as one unit.
 - `metrics_cleanup` (`_cleanup_metrics_on_startup`)
 - `expansion_cleanup` (`_cleanup_stale_expansion_runs_on_startup`)
-- `agent_lifecycle_monitor` (`_start_agent_lifecycle_monitor`): the plan of
-  record's "agent launchers".
+- `vector_store` (`_initialize_vector_store`): it can recreate the shared
+  collection and rebuild it from hub memories.
+- `core_services` (`_start_core_services`): it starts the communications
+  manager, one poller per deployment, and `SessionLifecycleManager`
+  (`src/gobby/sessions/lifecycle.py`). That manager's expire, transcript, and
+  KG-queue loops query the whole shared database with no machine filter
+  (`_expire_stale_sessions`, `TranscriptProcessingMixin`,
+  `_process_pending_graph_memories`). D1 records the node transcript gap.
 - `cron_scheduler` (`_start_cron_scheduler`): this also covers the memory dream,
   which runs as a cron job.
-- the code-index tasks (`_start_code_index_tasks`)
 - `pipeline_recovery` (`_recover_pipelines`)
 - `system_automation_start` (`_start_system_automation_loop`)
 
+`agent_lifecycle_monitor` is machine-local and runs in every mode. The plan of
+record's "agent launchers" reading was checked against the code:
+- The monitor's check loop reads runs through
+  `list_active_for_machine(require_machine_id())`
+  (`src/gobby/agents/lifecycle_monitor.py::_get_active_terminal_runs`), and it
+  works on local panes, prompts, process memory, and orphan reaping.
+- `cleanup_stale_pending_runs` passes this machine's id.
+- Its reconciliation callback (`_reconcile_agent_lifecycle_state`) rotates
+  credentials through `principals_due_for_rotation(machine_id)` and reclassifies
+  runs by `machine_id`. The parked non-task resume lists by `machine_id`.
+- The one unscoped step is `_reconcile_task_close_reviews`
+  (`src/gobby/runner_lifecycle_agents.py`): `TaskCloseReviewStore.list_reconcilable`
+  selects every active or undelivered review. It is reached from both the
+  monitor's callback and the `completion_subscriber_recovery` startup phase, so
+  it returns 0 at its top in `node` mode and logs one INFO skip (Decision 5).
+
 Every other phase runs in every mode, including the terminal host, MCP
-connections, the WebSocket server, and the UI dev server.
+connections, agent run reconciliation, the WebSocket server, and the UI dev
+server.
 
 Mechanism:
 - Define a module constant `HUB_ONLY_PERIODIC_TASKS` (a frozenset of the task
@@ -260,31 +326,51 @@ Mechanism:
 - `standalone` and `hub` behave exactly as today.
 - The mode is read once at the top of each function.
 
-Existing callers pass mock runners, so the mode check must not require a real
-bootstrap. A mock's `run_mode()` returns a mock that is never `"node"`, so every
-existing test keeps starting every loop. #21575 is closed as `duplicate` of the
-leaf created from this section.
+- The read is `runner.bootstrap_config.run_mode()`, with no fallback. A
+  runner without a bootstrap is invalid, so the direct-call tests whose
+  `SimpleNamespace` fakes carry no `bootstrap_config` gain an explicit
+  `BootstrapConfig()` (Targets). `MagicMock` runners need no edit: their
+  `run_mode()` is never `"node"`.
+
+#21575 is closed as `duplicate` of the leaf created from this section.
 
 Consumers unchanged:
 - `src/gobby/runner_lifecycle.py` — no-edit-reason: it calls `start_periodic_tasks` and `init_subsystems` with unchanged signatures.
-- `tests/test_runner_approval_timeout.py` — no-edit-reason: it calls `start_periodic_tasks` with a mock runner whose mode is never `node`; verification only.
-- `tests/test_runner_bin_freshness.py` — no-edit-reason: same mock-runner call; verification only.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: it drives `start_periodic_tasks` and `init_subsystems` through mock runners; verification only.
-- `tests/test_runner_maintenance_startup.py` — no-edit-reason: same mock-runner call; verification only.
-- `tests/test_runner_resource_monitor.py` — no-edit-reason: same mock-runner call; verification only.
-- `tests/test_runner_skill_maintenance.py` — no-edit-reason: same mock-runner call; verification only.
-- `tests/test_runner_workflow_audit_maintenance.py` — no-edit-reason: same mock-runner call; verification only.
-- `tests/test_bm25_startup.py` — no-edit-reason: it drives `init_subsystems` with a mock runner; verification only.
-- `tests/test_runner_lifecycle_startup.py` — no-edit-reason: it drives `init_subsystems` with a mock runner; verification only.
-- `tests/test_runner_shutdown.py` — no-edit-reason: it drives `init_subsystems` with a mock runner; verification only.
+- `tests/test_runner_lifecycle_startup.py` — no-edit-reason: it monkeypatches `init_subsystems` out; verification only.
+- `tests/test_runner_shutdown.py` — no-edit-reason: it patches `_init_subsystems` out; verification only.
+- `tests/agents/test_lifecycle_monitor.py` — no-edit-reason: the monitor itself is unchanged; it only registers the callbacks; verification only.
 
-Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/test_runner_lifecycle.py tests/test_runner_maintenance_startup.py -v`.
+Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/agents/test_task_close_review_recovery.py tests/test_runner_approval_timeout.py tests/test_runner_bin_freshness.py tests/test_runner_maintenance_startup.py tests/test_runner_resource_monitor.py tests/test_runner_skill_maintenance.py tests/test_runner_workflow_audit_maintenance.py tests/test_bm25_startup.py tests/test_runner_lifecycle.py tests/test_runner_lifecycle_startup.py tests/test_runner_shutdown.py tests/agents/test_lifecycle_monitor.py -v`.
 
 **Acceptance:**
 
 - 2.2.1 - A `node` runner starts exactly the machine-local periodic tasks and logs one skip per hub-only task. test: `tests/test_runner_lifecycle_periodic.py::test_node_mode_skips_hub_only_periodic_tasks`.
-- 2.2.2 - A `node` runner skips exactly the hub-only startup phases and logs each skip. test: `tests/test_runner_lifecycle_subsystems.py::test_node_mode_skips_hub_only_phases`.
-- 2.2.3 - `standalone` and `hub` start every periodic task and phase as today. test: `tests/test_runner_lifecycle_periodic.py::test_standalone_and_hub_start_every_periodic_task`.
+- 2.2.2 - A `node` runner skips exactly the hub-only startup phases, with the code-index tasks skipped alongside `code_index_bm25`, and still starts `agent_lifecycle_monitor`; each skip is logged. test: `tests/test_runner_lifecycle_subsystems.py::test_node_mode_skips_hub_only_phases`.
+- 2.2.3 - `standalone` and `hub` start every periodic task as today. test: `tests/test_runner_lifecycle_periodic.py::test_standalone_and_hub_start_every_periodic_task`.
+- 2.2.4 - `standalone` and `hub` run every startup phase as today. test: `tests/test_runner_lifecycle_subsystems.py::test_standalone_and_hub_run_every_phase`.
+- 2.2.5 - In `node` mode `_reconcile_task_close_reviews` returns 0 without listing reviews, from both the monitor callback and startup recovery. test: `tests/agents/test_task_close_review_recovery.py::test_node_mode_skips_close_review_reconciliation`.
+
+## D1 Node-scoped transcript processing (depends: 2.2)
+`kind: deferred`
+
+`core_services` is hub-only in 2.2 because `SessionLifecycleManager` processes
+every session in the shared database with no machine filter. Transcript files
+live on the machine that ran the session, so the hub cannot read a node's
+transcripts, and in `node` mode nothing processes them. A node-scoped transcript
+processor needs a machine filter on the pending-session query and a decision on
+where the derived artifacts are written. Neither belongs to run modes.
+
+Acceptance item D1.1: a `node` runner processes the transcripts of sessions
+whose `machine_id` is its own, and no other session's.
+
+```yaml
+deferral:
+  task_ref: "TBD-node-transcript-processing"
+  reason: "Needs a machine-scoped transcript query and an artifact-ownership decision outside the run-modes slice; created at expansion per the plan-coverage contract."
+  owner: "program-director"
+  original_acceptance_items:
+    - D1.1
+```
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -300,6 +386,15 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   - The loop guard's Targets move to `start_periodic_tasks` and
     `init_subsystems`, with pinned hub-only and machine-local sets.
   - The plan of record's 2.3 is renumbered 2.2.
+- 2026-09-29: Enhancer pass (run 13930863); the PD accepted all six. E1 moves
+  `metric-snapshot` to hub-only. E2 makes `gobby datastores expose` write
+  `hub: true` (Decision 6, 2.1.6). E3 adds `code_index_bm25`, `vector_store`, and
+  `core_services` to the hub-only phases, with D1 for node transcripts. E4 keeps
+  the mode bootstrap-only. E5 moves the `SimpleNamespace`-fake tests to Targets.
+  E6 spells out the contract regeneration and worktree-root validation. On the
+  PD's required check, `agent_lifecycle_monitor` proved machine-scoped, so it
+  runs in every mode, and its one unscoped step, close-review reconciliation, is
+  gated inside `_reconcile_task_close_reviews` (2.2.5).
 
 ## V2: Verification
 `kind: verification`
@@ -309,7 +404,9 @@ After each leaf, and before the PD lands the branch:
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/config/test_files_home.py tests/cli/test_install_setup.py tests/servers/test_admin_health.py tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/test_runner_lifecycle.py -v
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
-uv run gobby plans validate .gobby/plans/gdaemon-run-modes.md -p /Users/josh/Projects/gobby
+uv run gobby plans validate .gobby/plans/gdaemon-run-modes.md -p .
 ```
+
+Run these from the worktree root.
 
 Do not run the full pytest suite.
