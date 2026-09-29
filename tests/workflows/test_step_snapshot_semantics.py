@@ -482,6 +482,7 @@ async def test_post_launch_faults_leave_no_live_process() -> None:
     runner.terminal_manager.get.return_value = terminal
     runtime = MagicMock()
     runtime.terminate = AsyncMock()
+    runtime.session_present = AsyncMock(return_value=False)
     runner.terminal_runtime_registry.resolve.return_value = runtime
     with (
         patch("os.kill") as kill,
@@ -1251,7 +1252,11 @@ async def _run_post_launch_failure_case(
                 env=_tmux_env(),
             )
 
+        async def session_present(row: SimpleNamespace) -> bool:
+            return await asyncio.to_thread(_tmux_session_exists, row.spawn_key)
+
         runtime.terminate = AsyncMock(side_effect=terminate)
+        runtime.session_present = session_present
         runner.terminal_runtime_registry.resolve.return_value = runtime
         return SimpleNamespace(
             success=True,
