@@ -106,11 +106,16 @@ The Python tests cover redaction and the cap:
 
 ## Live proof
 
-Observed on 2026-09-29, after the daemon restart (PID 99308) and the swap from
-`7de4c801` to `6cace777`:
+Observed on 2026-09-29:
 
-- A route check sent nothing: `gobby comms attach gobby-telegram x.sh < /dev/null` returned
-  400 `filename must be a bare .txt or .log name`.
+- After the restart that activated the route (daemon PID 99308), a route check
+  sent nothing: `gobby comms attach gobby-telegram x.sh < /dev/null` returned 400
+  `filename must be a bare .txt or .log name`.
+- The watchdog was then swapped by the #22977 procedure. `shasum -a 256` read
+  `7de4c801` on the installed file before the swap. After it, the installed file
+  read `6cace777` and `watchdog.sh.rollback-22797` read `7de4c801`.
+- A later daemon-only restart for #23063 left the route in place and did not
+  touch the watchdog. The alarm below ran under daemon PID 93307.
 - At 01:59:40 CT a natural `ALARM[errors]` (+97 lines) sent alert comms_messages
   `6c390203`. Its text is the counts plus
   `• 1x 01:54:42 communications.polling._poll_loop - Error polling channel 'gobby-telegram': ReadTimeout (backing off 5s)`,
