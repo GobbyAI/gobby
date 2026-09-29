@@ -1,0 +1,599 @@
+header:
+  plan_id: gterm-host-handover
+  plan_hash: 37d3712f21bc211749fd9130f6e1ced41718a246e161235cac9683e3a4a0fad8
+  root_task_ref: '23067'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-09-29T02:36:58Z'
+  task_tree_source: db
+  task_tree_source_hash: 3964f122ea5cc2dda73408245182682b6558dd96868f3ae3ff77f493283de7ea
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 2ffe0986e0f6571069759ec903d02ae488928d85e75df968f3d04479ea54222f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23070'
+    validation_criteria_snippet: '1.1.1: A pane terminal fed styled text, cursor moves,
+      a scrolling region, a changed palette entry, bracketed paste mode, a hyperlink,
+      tab stops, and more lines...'
+    matched_artifact_ref: crates/gterminal/tests/handover_display.rs::snapshot_restores_screen_history_cursor_and_modes
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: e25466d4cc65b5c9f8b5eb441bf6f0a0f1852bb83223fbd09fc5ef09ad8d8de5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23070'
+    validation_criteria_snippet: '1.1.1: A pane terminal fed styled text, cursor moves,
+      a scrolling region, a changed palette entry, bracketed paste mode, a hyperlink,
+      tab stops, and more lines...'
+    matched_artifact_ref: crates/gterminal/tests/handover_display.rs::continuation_completes_split_sequences
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: 25cdb241e5f15ca72d68f5066a16e0d5feda01ed27f1bc7599c05a2f49ffd9d3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23070'
+    validation_criteria_snippet: '1.1.1: A pane terminal fed styled text, cursor moves,
+      a scrolling region, a changed palette entry, bracketed paste mode, a hyperlink,
+      tab stops, and more lines...'
+    matched_artifact_ref: crates/gterminal/tests/handover_display.rs::alternate_screen_keeps_primary_history
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 85e0b290978802c69ec1632b7defd5ed4026daf5f02fd82b5909fdabe079b4c3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23070'
+    validation_criteria_snippet: '1.1.1: A pane terminal fed styled text, cursor moves,
+      a scrolling region, a changed palette entry, bracketed paste mode, a hyperlink,
+      tab stops, and more lines...'
+    matched_artifact_ref: Terminal::encode_snapshot
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: d87d806ff6d804193eb4562e898a0003f0921bce9ab36b6f49ab353e1301f6bd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23070'
+    validation_criteria_snippet: '1.1.1: A pane terminal fed styled text, cursor moves,
+      a scrolling region, a changed palette entry, bracketed paste mode, a hyperlink,
+      tab stops, and more lines...'
+    matched_artifact_ref: crates/gterminal/tests/handover_display.rs::pane_wrapper_state_round_trips
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: 1d2a75b7e6a5c924bda02980fe3c65e6a74e3abeccc26da98a8199427a777fc3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::state_round_trips_host_and_pane_fields
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: f651b2f1b8564af6cc1c389f14784890de254fbb85daeac7eb419fb1fd0eb595
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::restore_adopts_listeners_without_rebinding
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 98faebcffb96359e0ccbf9ad1f379df499c52b8cbf80f1296b0beb3cba54182d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::exit_and_output_during_window_survive
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 26210d4c23952f79c867fd805692a975d39393b3f9e350ac69f54b89f497424d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::stage_failure_falls_back_with_checkpoint_intact
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 2e998623da81ee7492c15cdcd75823002ffaef5c9d1abd2a3f95e1ea4a673fba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_cli_args.rs::probe_resume_reports_supported_formats
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: 75ffd64bb34987676b34ed55b40a2a4a4c8514d308a518128505039ce476fd9a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::fallback_failure_and_wedged_restore_end_the_process
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.7
+  plan_node_hash: 18cc13ef8ba51fbce872e55133ff4b75821571b9642ef26e61a579f7fb7dab6a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: PaneRuntime::unfreeze_reaping
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.8
+  plan_node_hash: f53948ca30cfd76cebfbcf5981e6cd538fea326f9fcee1963441fd02d34f7c92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: PtyIoActor::resume_restored
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.9
+  plan_node_hash: 133438eb7867e0610e682a716697dc1d54d40f1c383c033c01e7729548890d5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23071'
+    validation_criteria_snippet: '1.2.1: A state file written from a live host round-trips:
+      restore rebuilds the same epoch, generation, attempt, `next_host_id`, pane identities,
+      sizes, grants,...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::restored_panes_keep_wrapper_state_and_entitlements
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: eb6c834de7389ffb3a460758d1b223b378536f5c8beb18eb69211025caa542cd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::upgrade_keeps_pids_epoch_and_panes
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: d3bdba9734599e439f7fd5e68d4cbb501f073dac24b92fa67769d6dc6298b556
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/control_protocol.rs::host_upgrade_admission_is_serialized_and_rechecked
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 785ca004b7b9911f80e7869b68c907fff1328720932440ce0e8dce4c49520bc0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::probe_refusal_leaves_panes_untouched
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 773dae7b5a7d258ccc88dbba1b2fb69618159b26ff73f60e5737adc5b4f00680
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::every_pre_exec_failure_rolls_back
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: bd5cf3543a01ed18ca8fe1e3b31fb92b4f73d65c75fd2aa753c51143ef4341a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/control_protocol.rs::ping_reports_generation_and_attempt
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.6
+  plan_node_hash: ccd684e70c86a34b088355c040ed44e4317c15e1ffb80ec8100afb4df11f2076
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/control_protocol.rs::mutation_gate_blocks_and_refuses_during_upgrade
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.7
+  plan_node_hash: eddf3048ca74cd4f06bb89f2327396d379517b35b6f798152b7ba850fa98de13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::many_full_panes_upgrade_within_deadline
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.8
+  plan_node_hash: 7812d3e4aae36ec938833e370a233c4145c26cf2d0817ef17315eb84265b9485
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::committed_panes_are_admitted_and_pending_reservations_are_busy
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.9
+  plan_node_hash: fd5ac45f9397d3c4e8f3d28e7253fc589b89362fd743224bb491c7aaca8a9c34
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::background_mutators_wait_through_exec
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.10
+  plan_node_hash: 9196794171a698650973ce36adef308871668c68f7e26b0fc6eb2eeb5424a825
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::persistent_rollback_failure_ends_the_host
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.11
+  plan_node_hash: 8865956ff8b26794f2d19a35adb83e273ba25001d11c0e8d8927949cccf1a1a3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::fallback_image_survives_other_starts_and_same_image_attempts
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.12
+  plan_node_hash: 5151242965cee6d0dfb5a3749075d97413481d0c2ea345c4ac70bea8197857fe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::pre_accept_returns_and_rollback_cleanup_are_bounded
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.13
+  plan_node_hash: ac8a120aead62dc3ddca3d03014f56476d466188b4ed86122a4cf6b8b68f3d1c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23072'
+    validation_criteria_snippet: '1.3.1: Upgrading a live host keeps the host pid,
+      every pane''s child pid, `host_epoch`, and `host_terminal_id`s, increments `generation`,
+      reports `last_outcome:...'
+    matched_artifact_ref: crates/gterminal/tests/host_handover.rs::stalled_quiesce_recovers_within_hard_budget
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: b5e4a187ed15ef5766db21977787b5f30dd6f0a0d40c9c70d0c2aee861838297
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23073'
+    validation_criteria_snippet: '1.4.1: `pin_image` creates a 0700 image under a
+      0700 user-owned directory whose name is its SHA-256, reuses a matching existing
+      pin, replaces a mismatched one,...'
+    matched_artifact_ref: crates/gterminal/tests/host_image.rs::pin_image_is_content_addressed_and_private
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 2b6aff77227ec2f61cf9b922a4352b9eda1ce0441d4117966d04d37e5de6548d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23073'
+    validation_criteria_snippet: '1.4.1: `pin_image` creates a 0700 image under a
+      0700 user-owned directory whose name is its SHA-256, reuses a matching existing
+      pin, replaces a mismatched one,...'
+    matched_artifact_ref: crates/gterminal/tests/host_image.rs::pins_survive_promotion_of_the_source
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: dc224e1a5272c84c2573e1cbe927eabfb4fd8475cd16412742038640ba7aa6a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23073'
+    validation_criteria_snippet: '1.4.1: `pin_image` creates a 0700 image under a
+      0700 user-owned directory whose name is its SHA-256, reuses a matching existing
+      pin, replaces a mismatched one,...'
+    matched_artifact_ref: crates/gterminal/tests/host_image.rs::cold_start_runs_from_pin
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: a4e9c6512dd3fc1712d0106ff584acf95477af0b2b5fedd0fee42c215264b967
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23073'
+    validation_criteria_snippet: '1.4.1: `pin_image` creates a 0700 image under a
+      0700 user-owned directory whose name is its SHA-256, reuses a matching existing
+      pin, replaces a mismatched one,...'
+    matched_artifact_ref: crates/gterminal/tests/host_image.rs::only_the_socket_owner_prunes
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 64d1ffa1bd14df935aa7f62ca7932adafd953d90b4559b79d2092f778f97404c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_stale_host_gets_one_upgrade_request
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: 1df7cb08ade0215c4af0f3a67ecdf6a7605081fdcf4aca975648a32849d1aa8a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_window_holds_rows_until_terminal_outcome
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 94e83bbe558f8fef3c16600ff8261f74b48a4e5ed30cd703eb6e22cef919d179
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_failed_candidates_are_not_retried
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 0bc86d9b2b0167c9b5d760b35c0ddba13d970f723bc9698815fb6a36396db86e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_pre_handover_host_is_left_alone
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.5
+  plan_node_hash: acebb07afd1aeda27fcb1cdd51af382c4db24f0e03c6b65d8a04a95cc14a3983
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_successful_upgrade_changes_no_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.6
+  plan_node_hash: 020639f8145f33a2eaed28677b0d6ba769a9ef0f5f7473c0554febfd21853625
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_window_follows_host_attempt_record
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.7
+  plan_node_hash: 98678a6960692d775693f6399ab1d306fff9ab517673cbc11090d312c2f020d1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_lost_ack_and_failed_reconnects_keep_rows
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.8
+  plan_node_hash: 394a7c4fdd81a280a6809f59975e888c6bc53993adce64bd12b413ced4db04d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_unrun_request_closes_only_on_fresh_check
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.9
+  plan_node_hash: a8b58425bec7b8e83649c2a430b69e9f9fb1ecf3a7c063ea6fdb304bf3ddde98
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23074'
+    validation_criteria_snippet: '2.1.1: A stale adopted host (installed hash differs
+      from `binary_sha256`) receives exactly one `host_upgrade` with the installed
+      path and a fresh `attempt_id`;...'
+    matched_artifact_ref: tests/terminals/test_host_upgrade.py::test_window_deadline_is_fixed_and_deferred_is_not_refused
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.1
+  plan_node_hash: a1317944f4401ed8f885642d214f84e17c06d55403d05cd445c46e6696318a6d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23075'
+    validation_criteria_snippet: '2.2.1: Host frame EOF during an upgrade window reconnects
+      the relay under the same browser `attachment_id`, replays history, continues
+      the message sequence, an...'
+    matched_artifact_ref: tests/servers/test_native_web_proxy.py::test_relay_reconnects_across_host_upgrade
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.2
+  plan_node_hash: 3f9e34ccef74a995995785e7e1395e2691c9b0fc048d4dadb2fa620fa6f1a4fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23075'
+    validation_criteria_snippet: '2.2.1: Host frame EOF during an upgrade window reconnects
+      the relay under the same browser `attachment_id`, replays history, continues
+      the message sequence, an...'
+    matched_artifact_ref: tests/servers/test_native_web_proxy.py::test_relay_finalizes_when_reconnect_is_not_possible
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.3
+  plan_node_hash: 363ddb30258b9d95d1eed45da559ab07d2a80ead23b7eb111074d256b94795a4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23075'
+    validation_criteria_snippet: '2.2.1: Host frame EOF during an upgrade window reconnects
+      the relay under the same browser `attachment_id`, replays history, continues
+      the message sequence, an...'
+    matched_artifact_ref: tests/servers/test_native_web_proxy.py::test_relay_reconnect_settles_on_cancel_and_tracks_generation
+  deferral_target: null
+  detail: ''
+- section_id: '2.2'
+  item_id: 2.2.4
+  plan_node_hash: 454c849a17fe4e95d6f69f19f92866674a89d78393e4554027da9062ff49a540
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23075'
+    validation_criteria_snippet: '2.2.1: Host frame EOF during an upgrade window reconnects
+      the relay under the same browser `attachment_id`, replays history, continues
+      the message sequence, an...'
+    matched_artifact_ref: tests/servers/test_native_web_proxy.py::test_relay_reconnect_redeclares_holder_theme_only
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.1
+  plan_node_hash: 8b42e22db574f4f8ddc2687bc01056ae206afedae21437e1e1fe4cc4ddca3e9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23076'
+    validation_criteria_snippet: '2.3.1: With the daemon disconnected across the host''s
+      exec, a pane whose frame source hits EOF reconnects straight to the host, keeps
+      the same terminal and epo...'
+    matched_artifact_ref: crates/gclient/tests/host_upgrade_recovery.rs::pane_reconnects_to_host_without_daemon
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.2
+  plan_node_hash: a2b47a6c20f67241caf7396c033fd8d7d6038b2061cfecbb3fbd24ca10cc1f7b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23076'
+    validation_criteria_snippet: '2.3.1: With the daemon disconnected across the host''s
+      exec, a pane whose frame source hits EOF reconnects straight to the host, keeps
+      the same terminal and epo...'
+    matched_artifact_ref: crates/gclient/tests/host_upgrade_recovery.rs::host_local_failure_falls_back_to_daemon_attach
+  deferral_target: null
+  detail: ''
+- section_id: '2.3'
+  item_id: 2.3.3
+  plan_node_hash: 5a6de64528219c7873f448af760cb286025bbb755a2da3626a3413f1f4b20b46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23076'
+    validation_criteria_snippet: '2.3.1: With the daemon disconnected across the host''s
+      exec, a pane whose frame source hits EOF reconnects straight to the host, keeps
+      the same terminal and epo...'
+    matched_artifact_ref: crates/gclient/tests/host_upgrade_recovery.rs::host_local_recovery_survives_daemon_attempts
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.1
+  plan_node_hash: 33bbc54efbe7798870f9e8a3cd5155b9ab96b45c749040e72e42951857f71244
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23077'
+    validation_criteria_snippet: '2.4.1: The CLI guide describes automatic gterm upgrade
+      and when `--terminals` is still needed. behavior: "gterm upgrade" in `docs/guides/cli-commands.md`.
+      2.4....'
+    matched_artifact_ref: gterm upgrade
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.2
+  plan_node_hash: 2b280952e8a3885549530ca29fe28c4c22ec310899e70f4edd080e93cd8caea5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23077'
+    validation_criteria_snippet: '2.4.1: The CLI guide describes automatic gterm upgrade
+      and when `--terminals` is still needed. behavior: "gterm upgrade" in `docs/guides/cli-commands.md`.
+      2.4....'
+    matched_artifact_ref: gterm-images
+  deferral_target: null
+  detail: ''
