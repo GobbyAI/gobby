@@ -168,6 +168,10 @@ def test_claim_release_reports_executor_queue_apart_from_work(
         if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
     ]
     breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
-    for hop in ("persistence_receipt", "persistence_release_claim"):
+    # Two envelope_claim hops (claim, owner token) accumulate into one key.
+    for hop in ("envelope_claim", "persistence_receipt", "persistence_release_claim"):
         assert breakdown[f"{hop}_work"] > 0
         assert breakdown[hop] >= breakdown[f"{hop}_queue"] + breakdown[f"{hop}_work"]
+    # The worker finished, so the loop's delay in resuming the request is recorded too.
+    assert breakdown["adapter_worker"] > 0
+    assert "adapter_resume" in breakdown

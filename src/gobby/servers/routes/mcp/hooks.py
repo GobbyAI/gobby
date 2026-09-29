@@ -8,6 +8,7 @@ Extracted from base.py as part of Strangler Fig decomposition.
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import APIRouter, HTTPException, Request
@@ -276,18 +277,22 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         async def mark_processed_and_return(response: dict[str, Any]) -> Any:
             # Receipt and envelope persistence block on the database and inbox
             # files, so they stay off the HTTP loop (#22708).
-            with (
-                phase_timings.measure("persistence_broadcast"),
-                hook_phase_timing_scope(phase_timings),
-            ):
-                return await timed_to_thread(
-                    "persistence_receipt", _mark_processed_and_return, response
-                )
+            with phase_timings.measure("persistence_broadcast"):
+                return await timed_hop("persistence_receipt", _mark_processed_and_return, response)
+
+        async def timed_hop[T](
+            phase: str, function: Callable[..., T], /, *args: Any, **kwargs: Any
+        ) -> T:
+            # Route hops run outside the adapter worker's timing scope; without
+            # their own, their wall time lands unattributed in `response` (#23063).
+            with hook_phase_timing_scope(phase_timings):
+                return await timed_to_thread(phase, function, *args, **kwargs)
 
         try:
             # Parse request
             try:
-                raw_payload = await request.json()
+                with phase_timings.measure("request_body"):
+                    raw_payload = await request.json()
             except ClientDisconnect:
                 logger.debug(
                     "Hook client disconnected before request body was read",
@@ -330,7 +335,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # the generation those acks would CAS against.
             try:
                 with phase_timings.measure("persistence_broadcast"):
-                    await asyncio.to_thread(consume_pending_delivery_receipts, request.app)
+                    await timed_hop(
+                        "persistence_consume_receipts",
+                        consume_pending_delivery_receipts,
+                        request.app,
+                    )
             except Exception:
                 logger.warning(
                     "Pending delivery-receipt sweep failed; the periodic drain remains",
@@ -366,7 +375,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     source=source,
                 )
 
-            if envelope_id and not await asyncio.to_thread(claim_envelope_processing, envelope_id):
+            if envelope_id and not await timed_hop(
+                "envelope_claim", claim_envelope_processing, envelope_id
+            ):
                 stored_response = await asyncio.to_thread(envelope_terminal_response, envelope_id)
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
@@ -404,7 +415,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
 
             if envelope_id:
-                owner_token = await asyncio.to_thread(envelope_processing_owner_token, envelope_id)
+                owner_token = await timed_hop(
+                    "envelope_claim", envelope_processing_owner_token, envelope_id
+                )
                 if owner_token:
                     lease_renewal = start_envelope_lease_renewal(envelope_id, owner_token)
 
@@ -770,13 +783,12 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     if lease_renewal is not None:
                         lease_renewal.cancel()
                     if envelope_id and owner_token:
-                        with hook_phase_timing_scope(phase_timings):
-                            await timed_to_thread(
-                                "persistence_release_claim",
-                                release_envelope_processing_claim,
-                                envelope_id,
-                                owner_token=owner_token,
-                            )
+                        await timed_hop(
+                            "persistence_release_claim",
+                            release_envelope_processing_claim,
+                            envelope_id,
+                            owner_token=owner_token,
+                        )
             total_seconds = time.perf_counter() - start_time
             dominant_phase, dominant_seconds, phase_durations = observe_hook_phase_timings(
                 phase_timings,

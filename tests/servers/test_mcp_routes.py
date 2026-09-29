@@ -3514,9 +3514,16 @@ class TestHooksEndpoints:
         extra = slow_warnings[0].kwargs["extra"]
         assert extra["dominant_phase"] in extra["hook_phase_durations_seconds"]
         # The mock hook manager evaluates no rules, so there is no session or rule sub-phase;
-        # the receipt write still splits its executor queue from its work (#23063).
+        # the route's own hops still split executor queue from work, and the adapter worker
+        # and loop resume are attributed apart from the `response` residual (#23063).
         assert extra["session_id"] is None
         assert set(extra["rule_evaluation_breakdown_seconds"]) == {
+            "request_body",
+            "adapter_worker",
+            "adapter_resume",
+            "persistence_consume_receipts",
+            "persistence_consume_receipts_queue",
+            "persistence_consume_receipts_work",
             "persistence_receipt",
             "persistence_receipt_queue",
             "persistence_receipt_work",
