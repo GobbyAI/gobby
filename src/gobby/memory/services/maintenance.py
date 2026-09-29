@@ -12,8 +12,6 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from gobby.memory.embedding_text import memory_embedding_text
-from gobby.memory.vectorstore import memory_scope_filter
 from gobby.storage.memories import Memory
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
@@ -210,93 +208,6 @@ _CODE_DERIVABLE_PATTERNS: list[re.Pattern[str]] = [
 # Maximum content length for code-derivable heuristic — longer memories
 # are more likely to contain substantive context beyond code structure.
 _CODE_DERIVABLE_MAX_LEN = 200
-
-
-async def find_duplicate_memories(
-    storage: LocalMemoryManager,
-    vector_store: VectorStore,
-    embed_fn: Callable[..., Any],
-    project_id: str | None = None,
-    similarity_threshold: float = 0.95,
-    limit: int = 500,
-) -> list[dict[str, Any]]:
-    """Find near-duplicate memory pairs using vector similarity.
-
-    For each pair, determines which to keep (higher access_count, then more
-    recent updated_at) and which to delete.
-
-    Args:
-        storage: Local memory storage.
-        vector_store: VectorStore for similarity search.
-        embed_fn: Embedding function.
-        project_id: Optional project filter.
-        similarity_threshold: Minimum similarity score for duplicates.
-        limit: Maximum memories to scan.
-
-    Returns:
-        List of dicts: {keep_id, delete_id, score, delete_content_preview}.
-    """
-
-    scope = _maintenance_scope(project_id)
-    memories = storage.list_memories(scope=scope, limit=limit)
-    if not memories:
-        return []
-
-    duplicates: list[dict[str, Any]] = []
-    seen_delete_ids: set[str] = set()
-
-    for i, memory in enumerate(memories):
-        if memory.id in seen_delete_ids:
-            continue
-
-        try:
-            embedding = await embed_fn(memory_embedding_text(memory.content, memory.rationale))
-            filters = memory_scope_filter(scope)
-            results = await vector_store.search(
-                query_embedding=embedding,
-                limit=5,
-                filters=filters,
-            )
-        except Exception as e:
-            logger.warning("Duplicate scan failed for %s: %s", memory.id, e)
-            continue
-
-        for match_id, score in results:
-            if match_id == memory.id or match_id in seen_delete_ids:
-                continue
-            if score < similarity_threshold:
-                continue
-
-            # Determine which to keep
-            try:
-                match = storage.get_memory(match_id)
-            except ValueError:
-                continue
-
-            # Keep the one with higher access_count; tie-break by updated_at
-            if (memory.access_count, memory.updated_at) >= (
-                match.access_count,
-                match.updated_at,
-            ):
-                keep, delete = memory, match
-            else:
-                keep, delete = match, memory
-
-            seen_delete_ids.add(delete.id)
-            duplicates.append(
-                {
-                    "keep_id": keep.id,
-                    "delete_id": delete.id,
-                    "score": round(score, 4),
-                    "delete_content_preview": delete.content[:120],
-                }
-            )
-
-        # Yield to event loop periodically
-        if i % 10 == 9:
-            await asyncio.sleep(0)
-
-    return duplicates
 
 
 def find_code_derivable_memories(

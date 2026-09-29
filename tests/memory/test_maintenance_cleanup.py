@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.memory.services.maintenance import (
     find_code_derivable_memories,
-    find_duplicate_memories,
     find_orphaned_memories,
 )
 
@@ -86,105 +85,6 @@ class _FakeRow(dict):
 
 def _row(**kwargs) -> _FakeRow:
     return _FakeRow(**_make_db_row(**kwargs))
-
-
-# ---------------------------------------------------------------------------
-# find_duplicate_memories
-# ---------------------------------------------------------------------------
-
-
-class TestFindDuplicateMemories:
-    @pytest.mark.asyncio
-    async def test_detects_near_exact_duplicates(self) -> None:
-        mem_a = _make_memory(memory_id="a", content="hello world", access_count=5)
-        mem_b = _make_memory(memory_id="b", content="hello world!", access_count=1)
-
-        storage = MagicMock()
-        storage.list_memories.return_value = [mem_a, mem_b]
-        storage.get_memory.side_effect = lambda mid: mem_a if mid == "a" else mem_b
-
-        vector_store = MagicMock()
-        # When embedding mem_a, find mem_b as near-exact match
-        vector_store.search = AsyncMock(
-            side_effect=[
-                [("b", 0.97)],  # search for mem_a finds mem_b
-                [],  # search for mem_b (already seen)
-            ]
-        )
-        embed_fn = AsyncMock(return_value=[0.1] * 768)
-
-        result = await find_duplicate_memories(
-            storage,
-            vector_store,
-            embed_fn,
-            similarity_threshold=0.95,
-        )
-
-        assert len(result) == 1
-        assert result[0]["keep_id"] == "a"  # higher access_count
-        assert result[0]["delete_id"] == "b"
-        assert result[0]["score"] == 0.97
-
-    @pytest.mark.asyncio
-    async def test_keeps_higher_access_count(self) -> None:
-        mem_a = _make_memory(memory_id="a", content="fact 1", access_count=1)
-        mem_b = _make_memory(memory_id="b", content="fact 1 dup", access_count=10)
-
-        storage = MagicMock()
-        storage.list_memories.return_value = [mem_a, mem_b]
-        storage.get_memory.return_value = mem_b
-
-        vector_store = MagicMock()
-        vector_store.search = AsyncMock(
-            side_effect=[
-                [("b", 0.96)],
-                [],
-            ]
-        )
-        embed_fn = AsyncMock(return_value=[0.1] * 768)
-
-        result = await find_duplicate_memories(
-            storage,
-            vector_store,
-            embed_fn,
-            similarity_threshold=0.95,
-        )
-
-        assert len(result) == 1
-        assert result[0]["keep_id"] == "b"
-        assert result[0]["delete_id"] == "a"
-
-    @pytest.mark.asyncio
-    async def test_below_threshold_not_flagged(self) -> None:
-        mem = _make_memory(memory_id="a")
-        storage = MagicMock()
-        storage.list_memories.return_value = [mem]
-
-        vector_store = MagicMock()
-        vector_store.search = AsyncMock(return_value=[("other", 0.80)])
-        embed_fn = AsyncMock(return_value=[0.1] * 768)
-
-        result = await find_duplicate_memories(
-            storage,
-            vector_store,
-            embed_fn,
-            similarity_threshold=0.95,
-        )
-
-        assert len(result) == 0
-        assert vector_store.search.await_count == 1
-
-    @pytest.mark.asyncio
-    async def test_empty_store(self) -> None:
-        storage = MagicMock()
-        storage.list_memories.return_value = []
-
-        vector_store = MagicMock()
-        embed_fn = AsyncMock()
-
-        result = await find_duplicate_memories(storage, vector_store, embed_fn)
-
-        assert result == []
 
 
 # ---------------------------------------------------------------------------
