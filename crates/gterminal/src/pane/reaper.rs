@@ -41,13 +41,11 @@ impl ChildReaper {
     /// Starts the blocking waiter.
     pub(crate) fn start(self: &Arc<Self>) {
         let reaper = Arc::clone(self);
-        tokio::task::spawn_blocking(move || {
-            match reaper.wait_exited() {
-                Ok(()) => reaper.exit_seen(),
-                Err(err) => {
-                    error!(pid = reaper.pid, err = %err, "pane child wait failed");
-                    reaper.finish(None);
-                }
+        tokio::task::spawn_blocking(move || match reaper.wait_exited() {
+            Ok(()) => reaper.exit_seen(),
+            Err(err) => {
+                error!(pid = reaper.pid, err = %err, "pane child wait failed");
+                reaper.finish(None);
             }
         });
     }

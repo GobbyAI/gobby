@@ -61,10 +61,7 @@ fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
 #[tokio::test(flavor = "multi_thread")]
 async fn rollback_reaps_exit_seen_while_frozen() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let runtime = spawn_pane(
-        dir.path(),
-        "while [ ! -e go ]; do sleep 0.02; done; exit 7",
-    );
+    let runtime = spawn_pane(dir.path(), "while [ ! -e go ]; do sleep 0.02; done; exit 7");
     let pid = runtime.child_pid().expect("child pid");
     let watch = runtime.child_exit_watch().expect("exit watch");
 
@@ -72,8 +69,15 @@ async fn rollback_reaps_exit_seen_while_frozen() {
     std::fs::write(dir.path().join("go"), b"").expect("release child");
     wait_until("the frozen child to exit", || is_zombie(pid));
     std::thread::sleep(Duration::from_millis(200));
-    assert!(is_zombie(pid), "a frozen pane leaves its exited child unreaped");
-    assert_eq!(runtime.child_exit(), None, "no exit is recorded while frozen");
+    assert!(
+        is_zombie(pid),
+        "a frozen pane leaves its exited child unreaped"
+    );
+    assert_eq!(
+        runtime.child_exit(),
+        None,
+        "no exit is recorded while frozen"
+    );
 
     runtime.unfreeze_reaping();
     let exit = tokio::time::timeout(WAIT, watch.wait())

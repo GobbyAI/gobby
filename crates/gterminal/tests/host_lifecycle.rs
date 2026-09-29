@@ -472,7 +472,10 @@ fn kill_in_flight_stays_listed() {
         if !listed {
             // SAFETY: signal 0 only probes the group; it delivers nothing.
             let group_alive = unsafe { libc::kill(-(pgid as i32), 0) } == 0;
-            assert!(!group_alive, "in-flight kill listed a live group as absent: {reply}");
+            assert!(
+                !group_alive,
+                "in-flight kill listed a live group as absent: {reply}"
+            );
             break recv_json(&mut stream);
         }
         listings += 1;

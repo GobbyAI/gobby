@@ -680,8 +680,8 @@ impl PaneRuntime {
                 child_wait_completed: None,
                 child_exit: None,
                 child_exit_notify: None,
-            #[cfg(unix)]
-            reaper: None,
+                #[cfg(unix)]
+                reaper: None,
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 preserve_processes_on_drop: true,
                 render_notify: Arc::new(Notify::new()),
