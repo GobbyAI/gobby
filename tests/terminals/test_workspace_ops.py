@@ -1412,6 +1412,40 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workspace_snapshot_log_separates_worker_wait_and_execution(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
+    workspace = SimpleNamespace(id="ws-1")
+    workspaces = MagicMock()
+    workspaces.resolve_reference.return_value = SimpleNamespace(
+        tab=None, pane=None, workspace=workspace, node=machine
+    )
+    workspaces.sweep_dead_panes.return_value = SimpleNamespace(removed_panes=(), removed_tabs=())
+    workspaces.list_tabs.return_value = ()
+    workspaces.list_panes.return_value = ()
+    ops = _storage_ops(workspaces)
+
+    async def run_storage(fn: Callable[..., Any], *args: Any) -> Any:
+        return fn(*args)
+
+    ticks = iter((0.0, 0.1, 0.2, 1.2, 1.25, 1.5, 1.55, 1.6, 1.65, 1.7, 2.0, 2.1))
+    with (
+        patch("gobby.terminals.workspace_ops.time", SimpleNamespace(monotonic=ticks.__next__)),
+        patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"),
+        patch.object(ops, "_db", side_effect=run_storage),
+        patch.object(ops, "_publish_removal", return_value=None),
+    ):
+        snapshot = await ops.workspace_snapshot("operator", "ws-1")
+
+    assert snapshot.workspace.id == "ws-1"
+    workspaces.sweep_dead_panes.assert_called_once_with("ws-1")
+    workspaces.list_tabs.assert_called_once_with("ws-1")
+    workspaces.list_panes.assert_called_once_with("ws-1")
+    assert "worker_wait_ms=1000.0 worker_ms=500.0 worker_return_ms=300.0" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_snapshot_watermark_excludes_a_publish_waiting_on_the_fence() -> None:
     """A workspace publish that arrives during the sweep stays above the snapshot seq."""
     seq = 0

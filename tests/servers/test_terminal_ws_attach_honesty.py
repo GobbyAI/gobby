@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -282,6 +283,39 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     control = ws.messages_of_type("terminal_control_result")[-1]
     assert control["granted"] is False
     assert control["reason"] == "stale_attachment"
+
+
+@pytest.mark.asyncio
+async def test_slow_failed_proxy_attach_logs_transport_phase(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db, "no_runtime")
+    websocket = MockWebSocket()
+    server.clients[websocket] = {"id": "client-1", "subscriptions": {"*"}}
+    ticks = iter((0.0, 0.1, 0.2, 1.4, 1.6))
+    monkeypatch.setattr(terminal_ws, "time", SimpleNamespace(monotonic=ticks.__next__))
+
+    await _send(
+        server,
+        websocket,
+        {
+            "type": "terminal_attach",
+            "request_id": "slow-proxy-failure",
+            "terminal_id": terminal_id,
+            "frame_delivery": "proxy",
+        },
+    )
+
+    assert websocket.messages_of_type("terminal_attach_result")[-1]["code"] == "runtime_unavailable"
+    assert (
+        f"client_id=client-1 terminal_id={terminal_id} outcome=runtime_unavailable "
+        "total_ms=1600.0 row_ms=100.0 lease_ms=100.0 transport_ms=1200.0 reply_ms=200.0"
+    ) in caplog.text
 
 
 class _StartupHost:

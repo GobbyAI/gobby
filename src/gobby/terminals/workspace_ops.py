@@ -238,31 +238,34 @@ class WorkspaceOps:
                 await self._emit("workspace.created", resolved.id, workspace=resolved)
             workspace = resolved.id
         fence_start = time.monotonic()
-        storage_ms: dict[str, float] = {}
+        storage_timing: dict[str, float] = {}
         async with self._publish_fence:
             fence_acquired = time.monotonic()
-            snapshot, change = await self._db(self._snapshot_storage, workspace, node, storage_ms)
+            snapshot, change = await self._db(
+                self._snapshot_storage, workspace, node, storage_timing
+            )
             storage_done = time.monotonic()
             seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
             published = time.monotonic()
         if published - started >= SLOW_WORKSPACE_SNAPSHOT_SECONDS:
-            worker_ms = storage_ms["worker"]
+            worker_started = storage_timing["worker_started"]
+            worker_finished = storage_timing["worker_finished"]
             logger.warning(
                 "Slow workspace snapshot | workspace_id=%s total_ms=%.1f resolve_ms=%.1f "
                 "fence_wait_ms=%.1f worker_wait_ms=%.1f worker_ms=%.1f "
-                "worker_overhead_ms=%.1f target_ms=%.1f sweep_ms=%.1f "
+                "worker_return_ms=%.1f target_ms=%.1f sweep_ms=%.1f "
                 "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d",
                 snapshot.workspace.id,
                 (published - started) * 1000,
                 (fence_start - started) * 1000,
                 (fence_acquired - fence_start) * 1000,
-                (storage_done - fence_acquired) * 1000,
-                worker_ms,
-                max(0.0, (storage_done - fence_acquired) * 1000 - worker_ms),
-                storage_ms["target"],
-                storage_ms["sweep"],
-                storage_ms["tabs"],
-                storage_ms["panes"],
+                (worker_started - fence_acquired) * 1000,
+                (worker_finished - worker_started) * 1000,
+                (storage_done - worker_finished) * 1000,
+                storage_timing["target"],
+                storage_timing["sweep"],
+                storage_timing["tabs"],
+                storage_timing["panes"],
                 (published - storage_done) * 1000,
                 len(change.removed_panes),
             )
@@ -670,7 +673,7 @@ class WorkspaceOps:
             return self._workspaces.sweep_dead_panes(workspace_id)
 
     def _snapshot_storage(
-        self, reference: str, node: str | None, timing_ms: dict[str, float]
+        self, reference: str, node: str | None, timing: dict[str, float]
     ) -> tuple[WorkspaceSnapshot, LayoutChange]:
         """Sweep and read rows on one thread so the watermark matches the rows."""
         started = time.monotonic()
@@ -693,13 +696,14 @@ class WorkspaceOps:
                 tabs=tabs,
                 panes=panes,
             )
-        timing_ms.update(
-            worker=(panes_done - started) * 1000,
+        timing.update(
+            worker_started=started,
             target=(resolved - started + target_done - swept) * 1000,
             sweep=(swept - resolved) * 1000,
             tabs=(tabs_done - target_done) * 1000,
             panes=(panes_done - tabs_done) * 1000,
         )
+        timing["worker_finished"] = time.monotonic()
         return snapshot, change
 
     async def _publish_removal(

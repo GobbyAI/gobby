@@ -160,6 +160,31 @@ class TerminalWsMixin:
 
     async def _handle_terminal_attach(self, websocket: Any, data: dict[str, Any]) -> None:
         started = time.monotonic()
+
+        def log_slow(
+            outcome: str,
+            logged_terminal_id: str | None,
+            row_done: float,
+            lease_done: float,
+            transport_done: float,
+        ) -> None:
+            completed = time.monotonic()
+            if completed - started < 1.0:
+                return
+            client_id = getattr(self, "clients", {}).get(websocket, {}).get("id")
+            logger.warning(
+                "Slow terminal attach | client_id=%s terminal_id=%s outcome=%s total_ms=%.1f "
+                "row_ms=%.1f lease_ms=%.1f transport_ms=%.1f reply_ms=%.1f",
+                client_id,
+                logged_terminal_id,
+                outcome,
+                (completed - started) * 1000,
+                (row_done - started) * 1000,
+                (lease_done - row_done) * 1000,
+                (transport_done - lease_done) * 1000,
+                (completed - transport_done) * 1000,
+            )
+
         request_id = data.get("request_id")
         terminal_id = data.get("terminal_id")
         delivery = data.get("frame_delivery") or "proxy"
@@ -173,6 +198,7 @@ class TerminalWsMixin:
                     "code": "invalid_encoding",
                 },
             )
+            log_slow("invalid_encoding", None, started, started, started)
             return
         if not isinstance(terminal_id, str) or not terminal_id:
             await self._send_json(
@@ -186,6 +212,7 @@ class TerminalWsMixin:
                     "terminal_id": terminal_id,
                 },
             )
+            log_slow("terminal_gone", None, started, started, started)
             return
         manager = getattr(self, "terminal_manager", None)
         row = None if manager is None else manager.get(terminal_id)
@@ -202,6 +229,7 @@ class TerminalWsMixin:
                     "terminal_id": terminal_id,
                 },
             )
+            log_slow("terminal_gone", None, row_loaded, row_loaded, row_loaded)
             return
         if row.state in {"exited", "orphaned"} or row.backend != "native":
             code = (
@@ -224,6 +252,7 @@ class TerminalWsMixin:
                     "terminal_id": terminal_id,
                 },
             )
+            log_slow(code, row.id, row_loaded, row_loaded, row_loaded)
             return
         registry = self._leases()
         viewer: Literal["web", "gclient"] = "web" if data.get("viewer") == "web" else "gclient"
@@ -262,6 +291,7 @@ class TerminalWsMixin:
                     "reason": PROXY_ATTACH_FAILURE_REASONS[failure],
                 },
             )
+            log_slow(failure, row.id, row_loaded, lease_acquired, transport_ready)
             return
         await self._send_json(
             websocket,
@@ -290,20 +320,7 @@ class TerminalWsMixin:
             },
         )
         self._proxy().start_pump(record.attachment_id)
-        completed = time.monotonic()
-        if completed - started >= 1.0:
-            client_id = getattr(self, "clients", {}).get(websocket, {}).get("id")
-            logger.warning(
-                "Slow terminal attach | client_id=%s terminal_id=%s total_ms=%.1f "
-                "row_ms=%.1f lease_ms=%.1f transport_ms=%.1f reply_ms=%.1f",
-                client_id,
-                terminal_id,
-                (completed - started) * 1000,
-                (row_loaded - started) * 1000,
-                (lease_acquired - row_loaded) * 1000,
-                (transport_ready - lease_acquired) * 1000,
-                (completed - transport_ready) * 1000,
-            )
+        log_slow("success", row.id, row_loaded, lease_acquired, transport_ready)
 
     async def _handle_terminal_detach(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")
