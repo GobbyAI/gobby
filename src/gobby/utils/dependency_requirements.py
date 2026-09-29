@@ -9,13 +9,15 @@ import re
 import shutil
 import subprocess  # Fixed dependency version commands. # nosec B404
 import sys
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Literal
 
 from gobby.utils import spawn
+from gobby.utils.probes import ProbeBatch
 
-DependencyState = Literal["healthy", "missing", "outdated", "invalid"]
+DependencyState = Literal["healthy", "missing", "outdated", "invalid", "timed_out"]
 DependencyPayload = dict[str, str | None]
 
 PYTHON_MIN_VERSION = "3.13.0"
@@ -116,6 +118,7 @@ class DependencyReport:
     required: dict[str, DependencyStatus]
     optional: dict[str, DependencyStatus]
     services: dict[str, object]
+    timed_out: tuple[str, ...] = ()
 
     def to_payload(self) -> dict[str, object]:
         return {
@@ -237,66 +240,99 @@ def collect_dependency_report(
     *,
     managed_services: bool,
     include_srt: bool,
+    deadline: float | None = None,
 ) -> DependencyReport:
-    """Collect every shared dependency contract and service runtime version."""
-    runtime = {"python": _python_status()}
-    required: dict[str, DependencyStatus] = {}
+    """Collect every shared dependency contract and service runtime version.
+
+    Probes run concurrently. With a ``deadline`` (absolute ``time.monotonic()``),
+    a probe still running then is reported ``timed_out`` instead of awaited;
+    install and start preflight pass none, so every contract is still decided.
+    """
+    probes: dict[str, Callable[[], DependencyStatus]] = {}
     if requires_tmux():
-        required["tmux"] = _command_status(
+        probes["tmux"] = lambda: _command_status(
             name="tmux",
             executable="tmux",
             arguments=("-V",),
             minimum_version=TMUX_MIN_VERSION,
             install_action="Install tmux 3.2 or newer and retry.",
         )
-    required["git"] = _command_status(
+    probes["git"] = lambda: _command_status(
         name="Git",
         executable="git",
         arguments=("--version",),
         minimum_version=GIT_MIN_VERSION,
         install_action="Install Git 2.38.0 or newer and retry.",
     )
-    required["node"] = node_dependency_status()
+    probes["node"] = node_dependency_status
     if include_srt:
-        required["srt"] = srt_dependency_status()
-    required["impeccable"] = impeccable_dependency_status()
-
-    compose = _command_status(
+        probes["srt"] = srt_dependency_status
+    probes["impeccable"] = impeccable_dependency_status
+    probes["docker_compose"] = lambda: _command_status(
         name="Docker Compose",
         executable="docker",
         arguments=("compose", "version", "--short"),
         minimum_version=DOCKER_COMPOSE_MIN_VERSION if managed_services else None,
         install_action="Install Docker Compose 2.7.0 or newer and retry.",
     )
-    if managed_services:
-        required["docker_compose"] = compose
-
-    optional = {
-        "tailscale": _command_status(
-            name="Tailscale",
-            executable="tailscale",
-            arguments=("version",),
-            install_action="Reinstall Tailscale to restore version reporting.",
-        ),
-    }
-    docker = _command_status(
+    probes["tailscale"] = lambda: _command_status(
+        name="Tailscale",
+        executable="tailscale",
+        arguments=("version",),
+        install_action="Reinstall Tailscale to restore version reporting.",
+    )
+    probes["docker"] = lambda: _command_status(
         name="Docker Engine",
         executable="docker",
         arguments=("--version",),
         install_action="Install Docker Engine and retry.",
     )
+    batch = ProbeBatch(probes, deadline=deadline)
+    running = ProbeBatch({"docker_running": _docker_running_on_path}, deadline=deadline)
+    runtime = {"python": _python_status()}
+    results = batch.collect()
+    statuses = {
+        name: results.values[name] if name in results.values else _timed_out_status(name)
+        for name in probes
+    }
+    docker_running = running.collect()
+    required = {
+        name: statuses[name]
+        for name in ("tmux", "git", "node", "srt", "impeccable")
+        if name in statuses
+    }
+    compose = statuses["docker_compose"]
+    if managed_services:
+        required["docker_compose"] = compose
     services: dict[str, object] = {
-        "docker": docker.to_payload(),
-        "docker_running": _docker_running(docker.path),
+        "docker": statuses["docker"].to_payload(),
+        "docker_running": docker_running.values.get("docker_running", False),
         "docker_compose": compose.to_payload(),
         "managed_local_services": managed_services,
     }
     return DependencyReport(
         runtime=runtime,
         required=required,
-        optional=optional,
+        optional={"tailscale": statuses["tailscale"]},
         services=services,
+        timed_out=(*results.timed_out, *docker_running.timed_out),
     )
+
+
+def _timed_out_status(name: str) -> DependencyStatus:
+    return DependencyStatus(
+        state="timed_out",
+        installed_version=None,
+        minimum_version=None,
+        expected_version=None,
+        path=None,
+        error=f"{name} probe did not finish before the status deadline",
+    )
+
+
+def _docker_running_on_path() -> bool:
+    raw_path = shutil.which("docker")
+    return _docker_running(str(Path(raw_path).resolve()) if raw_path else None)
 
 
 def required_dependency_errors(report: DependencyReport) -> list[str]:
