@@ -1232,13 +1232,14 @@ switch_project = "ctrl+1..9"
                     // right, and Dark painted its own ground under every
                     // default cell (#22944), and the row under the menu bar
                     // dropped its rule for bare theme ground (#22986), and
-                    // the sandbox mark led the address (`? · gclient`,
-                    // #23049): 4.1.3 requires a glyph change to fail here, so
+                    // the sandbox mark led the address, open for these
+                    // records-free panes (`\u{f09c} · gclient`, #23049
+                    // option A): 4.1.3 requires a glyph change to fail here, so
                     // this digest moves only alongside a deliberate render
                     // change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "4c7dd83fdb5bf53ad8c1678fcdf4d414d6c9a2a87124690f9779692275419cbc",
+                        "4f3772e01a56a25761e464b877b93c36352c33e80e24a1b4bf2216452cf4341c",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );

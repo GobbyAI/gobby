@@ -392,14 +392,14 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     assert!(!line.contains("unknown"), "{line:?}");
 
     // #23049: the sandbox segment names the focused pane's mark in words;
-    // a pane with no launch record says unknown, never unrestricted.
+    // a pane with no SRT launch record says unrestricted (option A).
     chrome.prefs.status_right = vec!["sandbox".to_string()];
     let sandbox = render(100, 1, |frame| {
         render_status_line(frame, frame.area(), &ws, &chrome);
     });
     let line = &rect_rows(&sandbox, Rect::new(0, 0, 100, 1))[0];
     assert!(
-        line.ends_with("sandbox unknown │ prefix ctrl+b │ navigate "),
+        line.ends_with("unrestricted │ prefix ctrl+b │ navigate "),
         "{line:?}"
     );
 }

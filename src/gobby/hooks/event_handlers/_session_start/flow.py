@@ -325,7 +325,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             agent_depth_val = int(agent_depth)
         except (ValueError, TypeError):
             pass
-    sandbox_enabled_val = hook_sandbox_enabled(input_data, cli_source, terminal_context)
+    sandbox_enabled_val = hook_sandbox_enabled(input_data)
 
     session_id = None
     if handler._session_manager and session_source == "compact" and resolution.session is not None:

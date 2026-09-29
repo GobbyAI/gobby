@@ -98,10 +98,10 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
     tmux_pane.address = Some("%15".to_owned());
     // Josh's order (#23049): mark, then tmux for a tmux pane, then the address.
     let tmux = pane_corners(&ws, &chrome, &tmux_pane, true);
-    assert_eq!(tmux.address_label(), "? · tmux · %15");
+    assert_eq!(tmux.address_label(), "\u{f09c} · tmux · %15");
     tmux_pane.address = None;
     let unaddressed = pane_corners(&ws, &chrome, &tmux_pane, true);
-    assert_eq!(unaddressed.address_label(), "? · tmux");
+    assert_eq!(unaddressed.address_label(), "\u{f09c} · tmux");
 
     // No session ref: the definition alone.
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
@@ -376,11 +376,7 @@ fn title_travel_measures_each_header_window() {
 /// the text fallback widens the address corner rather than truncating it.
 #[test]
 fn sandbox_mark_leads_the_address_by_shape_not_hue() {
-    let states = [
-        SandboxState::Sandboxed,
-        SandboxState::Unrestricted,
-        SandboxState::Unknown,
-    ];
+    let states = [SandboxState::Sandboxed, SandboxState::Unrestricted];
     for nerd in [true, false] {
         let marks: Vec<_> = states.iter().map(|s| sandbox_mark(*s, nerd)).collect();
         assert_eq!(

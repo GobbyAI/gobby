@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
@@ -422,92 +422,12 @@ def _non_empty_str(value: Any) -> str | None:
     return None
 
 
-# Codex 0.157 `--sandbox` modes: the first two run model commands under Seatbelt.
-_CODEX_SANDBOX_MODES = {"read-only": True, "workspace-write": True, "danger-full-access": False}
-# `--yolo` is the hidden alias the CLI accepts for the bypass flag.
-_CODEX_BYPASS_FLAGS = frozenset({"--dangerously-bypass-approvals-and-sandbox", "--yolo"})
-# Automatic review runs in the workspace-write sandbox.
-_CODEX_WORKSPACE_WRITE_FLAGS = frozenset({"--approve-for-me", "--not-so-yolo"})
+def hook_sandbox_enabled(input_data: Mapping[str, Any]) -> bool | None:
+    """The launcher-supplied sandbox a session-start hook records, else None.
 
-
-def codex_argv_sandbox(argv: Sequence[str]) -> bool | None:
-    """Whether a Codex command line runs model commands in Codex's own sandbox.
-
-    The bypass flag wins, then `--sandbox`, then a `sandbox_mode` config override
-    or the automatic-review flag. None when the command line does not say (the
-    mode then comes from config files and profiles, which are not read here) or
-    when the overrides disagree.
-    """
-    bypass = False
-    flag_mode: str | None = None
-    overrides: set[str] = set()
-    args = iter(argv[1:])
-    for arg in args:
-        if arg == "--":
-            break
-        name, has_value, inline = arg.partition("=")
-        if arg in _CODEX_BYPASS_FLAGS:
-            bypass = True
-        elif name in ("-s", "--sandbox"):
-            flag_mode = inline if has_value else next(args, None)
-        elif name in ("-c", "--config"):
-            override = inline if has_value else next(args, None)
-            key, _, raw = (override or "").partition("=")
-            if key.strip() == "sandbox_mode":
-                overrides.add(raw.strip().strip("\"'"))
-        elif arg in _CODEX_WORKSPACE_WRITE_FLAGS:
-            overrides.add("workspace-write")
-    if bypass:
-        return False
-    if flag_mode is not None:
-        return _CODEX_SANDBOX_MODES.get(flag_mode)
-    if len(overrides) == 1:
-        return _CODEX_SANDBOX_MODES.get(overrides.pop())
-    return None
-
-
-def hook_sandbox_enabled(
-    input_data: Mapping[str, Any],
-    cli_source: str,
-    terminal_context: Mapping[str, Any] | None,
-) -> bool | None:
-    """The sandbox a session-start hook records, or None when nothing says.
-
-    A launcher's explicit value wins. A direct Codex launch states its own
-    sandbox on its command line. Claude Code's command line states only intent:
-    managed settings, including server-managed ones no local file shows,
-    outrank `--settings`, and a sandbox that fails to start falls back to
-    unsandboxed commands unless `sandbox.failIfUnavailable` is set, so its
-    effective boundary stays unknown. Its permission mode sets approvals only.
-    Other providers stay unknown.
+    Only a Gobby launcher's explicit bool counts. A pane is locked only under
+    Gobby's SRT, whose launch and run records carry that boundary; a provider's
+    own command-line sandbox never reads as locked.
     """
     raw = input_data.get("sandbox_enabled")
-    if isinstance(raw, bool):
-        return raw
-    if cli_source != "codex":
-        return None
-    argv = seat_argv(terminal_context)
-    return None if argv is None else codex_argv_sandbox(argv)
-
-
-def seat_argv(terminal_context: Mapping[str, Any] | None) -> list[str] | None:
-    """The command line of the CLI process a direct launch recorded, else None.
-
-    A Gobby-spawned run is skipped: its launch record already holds the SRT
-    boundary, and its provider flags only turn the nested sandbox off.
-    """
-    if not terminal_context or terminal_context.get("gobby_agent_run_id"):
-        return None
-    pid = terminal_context.get("parent_pid")
-    create_time = terminal_context.get("parent_create_time")
-    if isinstance(pid, bool) or not isinstance(pid, int):
-        return None
-    if isinstance(create_time, bool) or not isinstance(create_time, (int, float)):
-        return None
-    process = _recorded_process(pid, float(create_time))
-    if process is None:
-        return None
-    try:
-        return list(process.cmdline())
-    except _PSUTIL_ERRORS:
-        return None
+    return raw if isinstance(raw, bool) else None

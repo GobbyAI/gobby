@@ -480,9 +480,9 @@ fn build_prefers_run_effort_then_falls_back_to_session_effort() {
     );
 }
 
-/// #23049: a row's sandbox state comes from the launch record only. The SRT
-/// run and the session agree or the state is unknown; no record is unknown,
-/// never unrestricted.
+/// #23049 option A: a row locks only when Gobby launched it under SRT, from
+/// the run's enforced record or a managed session's launch contract. Every
+/// other row, with or without records, unlocks; there is no unknown state.
 #[test]
 fn build_resolves_sandbox_state_from_session_and_run_records() {
     let session = |id: &str, enabled: Option<bool>| SessionRow {
@@ -557,23 +557,28 @@ fn build_resolves_sandbox_state_from_session_and_run_records() {
         states,
         [
             SandboxState::Sandboxed,
-            SandboxState::Unknown,
+            SandboxState::Sandboxed,
             SandboxState::Unrestricted,
-            SandboxState::Unknown,
-            SandboxState::Unknown,
+            SandboxState::Unrestricted,
+            SandboxState::Unrestricted,
         ],
-        "enforced SRT locks, a direct launch's recorded false unlocks, and \
-         disagreeing records, no record, or a spawned run without SRT stay unknown"
+        "an enforced SRT run locks whatever its session says; a direct launch, \
+         no record, and a spawned run without SRT unlock"
     );
     assert_eq!(
-        SandboxState::resolve(None, Some(true), true),
+        SandboxState::resolve(Some(true), None, true),
         SandboxState::Sandboxed,
-        "a spawned run's enforced record alone locks"
+        "a managed session's launch contract alone locks"
     );
     assert_eq!(
-        SandboxState::resolve(Some(false), Some(false), true),
-        SandboxState::Unknown,
-        "SRT off never unlocks a spawned run: Codex keeps its own sandbox mode"
+        SandboxState::resolve(Some(true), None, false),
+        SandboxState::Unrestricted,
+        "a hand-opened seat never locks on its own session claim"
+    );
+    assert_eq!(
+        SandboxState::resolve(None, None, false),
+        SandboxState::Unrestricted,
+        "a bare shell with no records unlocks"
     );
 }
 

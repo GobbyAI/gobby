@@ -76,7 +76,7 @@
 36 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 37 |                          │                                             ││                                             │|
 37 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-38 |                          └──────────────────────────────── ? · gclient ┘└──────────────────────────────── ? · gclient ┘|
+38 |                          └────────────────────────────────  · gclient ┘└────────────────────────────────  · gclient ┘|
 38 : text/panel_bg*26 yellow/panel_bg*33 overlay0/panel_bg*13 yellow/panel_bg*1 accent/panel_bg*33 accent/panel_bg+b*13 accent/panel_bg*1
 39 | × Daemon unreachable · retrying in 3 s │ ⍾ 1 needs you                                                   prefix ctrl+b |
 39 : text/surface0*1 red/surface0*20 subtext0/surface0*21 yellow/surface0*1 subtext0/surface0*12 text/surface0*51 subtext0/surface0*13 text/surface0*1

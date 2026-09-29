@@ -408,7 +408,7 @@ def rebind_resumed_session_start(
         agent_depth = int(raw_depth) if raw_depth is not None else 0
     except (TypeError, ValueError):
         agent_depth = 0
-    sandbox_enabled = hook_sandbox_enabled(input_data, cli_source, terminal_context)
+    sandbox_enabled = hook_sandbox_enabled(input_data)
 
     rebound = handler._session_manager.rebind_resumed_terminal_session(
         session.id,

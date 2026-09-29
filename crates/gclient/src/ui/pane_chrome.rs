@@ -84,7 +84,6 @@ pub fn sandbox_mark(state: SandboxState, nerd_glyphs: bool) -> &'static str {
         (SandboxState::Unrestricted, true) => "\u{f09c}",
         (SandboxState::Sandboxed, false) => "sbx",
         (SandboxState::Unrestricted, false) => "open",
-        (SandboxState::Unknown, _) => "?",
     }
 }
 
@@ -150,8 +149,8 @@ pub fn pane_corners<W: WorkspaceView>(
         }
         (false, _) => (format!("{glyph} {identity}"), MetadataTone::Ordinary),
     };
-    // A pane with no agent row (a bare shell) has no launch record.
-    let sandbox = agent.map_or(SandboxState::Unknown, |agent| agent.sandbox);
+    // A pane with no agent row (a bare shell) has no SRT launch record.
+    let sandbox = agent.map_or(SandboxState::Unrestricted, |agent| agent.sandbox);
     // A foreign backend with no address yet names only itself.
     let (backend, address) = match (pane.backend.is_native(), pane.address.as_deref()) {
         (true, _) => (None, pane_address(ws, pane)),
