@@ -1,6 +1,8 @@
 import json
 import logging
 import subprocess
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -1155,3 +1157,60 @@ def test_regex_exceptions() -> None:
         assert deps.get_git_version() == "weirdformat"
     with patch("gobby.utils.deps._run_cmd", return_value="   "):
         assert deps.get_node_version() == "   "
+
+
+def test_collect_all_deps_reports_slow_probes_as_timed_out_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+
+    def slow() -> str:
+        release.wait(10)
+        return "late"
+
+    for name in (
+        "get_gobby_version",
+        "get_gcode_version",
+        "get_ghook_version",
+        "get_gterm_version",
+        "get_gclient_version",
+        "get_impeccable_version",
+        "get_grok_cli_version",
+        "get_codex_cli_version",
+        "get_droid_cli_version",
+        "get_qwen_cli_version",
+        "get_agy_cli_version",
+    ):
+        monkeypatch.setattr(deps, name, lambda: "1.0")
+    monkeypatch.setattr(deps, "get_claude_code_version", slow)
+    monkeypatch.setattr(deps, "get_tailscale_info", slow)
+    monkeypatch.setattr(deps, "get_coding_cli_hooks_status", lambda: {})
+    monkeypatch.setattr(deps, "get_coding_cli_hook_drift", lambda: {})
+    monkeypatch.setattr(deps, "get_git_hook_drift", lambda _db: {})
+    monkeypatch.setattr(deps, "get_configured_embedding_provider", lambda *_a, **_k: "lmstudio")
+    monkeypatch.setattr(deps, "get_ollama_info", lambda: {"running": True})
+    monkeypatch.setattr(deps, "get_lmstudio_info", lambda: {"running": False})
+    monkeypatch.setattr(
+        deps,
+        "collect_dependency_report",
+        lambda **_kwargs: DependencyReport(runtime={}, required={}, optional={}, services={}),
+    )
+    monkeypatch.setattr(deps, "STATUS_PROBE_DEADLINE_SECONDS", 0.2)
+    try:
+        started = time.monotonic()
+        res = deps.collect_all_deps(MagicMock(), managed_services=False)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert elapsed < 1.5
+    assert res["timed_out"] == ["coding_clis.claude", "integrations.tailscale"]
+    assert res["coding_clis"]["claude"] is None
+    assert res["coding_clis"]["codex"] == "1.0"
+    assert res["integrations"]["ollama"] == {"running": True}
+    assert res["integrations"]["embeddings_provider"] == "lmstudio"
+    rendered = format_status_message(running=True, pid=1, deps_info=res)
+    claude_lines = [line for line in rendered.splitlines() if "Claude Code:" in line]
+    assert claude_lines and claude_lines[0].split(":", 1)[1].strip().startswith("timed out")
+    assert "Status probes timed out: coding_clis.claude, integrations.tailscale" in rendered
+    assert "Degraded" not in rendered
