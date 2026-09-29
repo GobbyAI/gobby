@@ -123,19 +123,28 @@ the Adversary's review. None of this is plan approval.
    upgrade pins the candidate the same way and probes and execs that pin, never
    the installed path. The state file names the old host's own pin as
    `previous_image`. If `execve` itself fails, the old host rolls back in
-   process (`rollback_handoff` on every pane, close-on-exec restored) and keeps
-   serving. If the new image fails or panics during restore, it execs
-   `previous_image` once with `--resume-fallback`; a fallback that cannot
-   restore exits, and the daemon's existing host-death path recovers. After a
-   restore commits, the host removes every pinned image except its own. This
-   replaces an installer-kept `gterm.previous`, which a second promotion would
-   overwrite under a still-running older host.
+   process and keeps serving. If the new image fails or panics during restore,
+   it execs `previous_image` once with `--resume-fallback`; a fallback that
+   cannot restore exits, and the daemon's existing host-death path recovers.
+   Pinned images have exactly one deleter, the process that owns the sockets,
+   and it deletes only at two points where no attempt is in flight:
+   - a cold-start host prunes every other image only after
+     `prepare_socket_path`, bind, and the pidfile write have succeeded, so a
+     losing second start (the live host answers, `host_busy`) prunes nothing;
+   - a restored host prunes every other image at restore commit, after it no
+     longer needs `previous_image`.
+   `--probe-resume` exits before pinning and never pins or prunes. A refused or
+   rolled-back attempt removes the candidate pin only when its hash differs
+   from the running pin, so a same-image upgrade never deletes the image the
+   host runs from. This replaces an installer-kept `gterm.previous`, which a
+   second promotion would overwrite under a still-running older host.
 7. **Herdr handoff primitives: which are used.** Exec-in-place uses the
    imported `PtyIoActor` primitives `begin_handoff` (quiesce reads and drain
-   queued writes), `rollback_handoff` (undo a quiesce), the actor's
-   `initially_quiesced` start, and `nudge_child_redraw_after_handoff`
-   (post-restore repaint), through `PaneRuntimeIo` in
-   `crates/gterminal/src/pane/runtime.rs`. It does not use
+   queued writes), `rollback_handoff` (undo a quiesce and reopen user writes
+   after the actor acknowledges), the actor's `initially_quiesced` start, and
+   `nudge_child_redraw_after_handoff` (post-restore repaint), through
+   `PaneRuntimeIo` in `crates/gterminal/src/pane/runtime.rs`. Restore adds one
+   primitive, `PtyIoActor::resume_restored` (Decision 12). It does not use
    `duplicate_for_handoff`, `release_after_commit`, or
    `PaneRuntime::assume_handoff_ownership`: those need a live actor in another
    process. Restore makes its own close-on-exec duplicates with
@@ -145,54 +154,74 @@ the Adversary's review. None of this is plan approval.
    frames socket authenticates with the local token file, a user attach needs
    no daemon reservation, and the host keeps the pane's input grant across
    the exec, so gclient reattaches the same terminal and rebinds the same
-   holder with no daemon involved. It falls back to today's daemon re-attach
-   only on an epoch change, `terminal_gone`, or when its reconnect budget
-   runs out. The daemon still answers its own attaches with the transient
-   `host_not_ready` while the window is open. The web terminal relay lives in
-   the daemon and reconnects its host frame stream under the same browser
-   `attachment_id` instead of finalizing it.
+   holder with no daemon involved. That host-local recovery is tracked apart
+   from daemon reconnect attempts, so a daemon that keeps failing to reconnect
+   cannot cancel it. It falls back to today's daemon re-attach only on an
+   epoch change, `terminal_gone`, or when its reconnect budget runs out. The
+   daemon still answers its own attaches with the transient `host_not_ready`
+   while the window is open. The web terminal relay lives in the daemon and
+   reconnects its host frame stream under the same browser `attachment_id`
+   instead of finalizing it.
 9. **One host-wide mutation gate, and upgrades are serialized.** `HostState`
    owns `upgrade_lock: tokio::sync::Mutex<()>` and
    `mutation_gate: tokio::sync::RwLock<()>`.
    - `host_upgrade` takes `upgrade_lock` with `try_lock` at entry (else
      `upgrade_in_progress`) and holds it until the attempt reaches exec or
-     rollback.
-   - Mutators take the gate with `try_read`. Failure maps to
-     `host_upgrading`, so no mutator ever queues behind the upgrade. The
+     rollback has recovered.
+   - Request-driven mutators take the gate with `try_read`. Failure maps to
+     `host_upgrading`, so no request ever queues behind the upgrade. The
      upgrade is the only writer: it takes `try_write` in a bounded retry (at
      most 500 ms), then answers `host_busy` if a mutator still holds a read
-     guard. `upgrading` is set only while the write guard is held.
-   - Every admission predicate (`draining`, reservations, uncommitted
-     prepared spawns) is checked again while the write guard is held.
-   - Gated: `spawn`, `spawn_commit`, `kill`, `resize`, `write`,
-     `write_batch` (each delayed operation holds its own guard across its
-     `sleep_until`), `frame_input`, `grant_input`, `revoke_input`,
+     guard. `upgrading` is set only while the write guard is held, and the
+     write guard is held until `execve` or until rollback has recovered.
+   - Background mutators of carried state wait on the gate with
+     `read().await` instead: the exit watcher's slot removal and
+     `terminal_exited` emission, `expire_prepared` (called from the ungated
+     `list`), and each tick of the status ticker in `host/mod.rs::run`, which
+     rewrites slot titles through `broadcast_frames`. Each takes the gate
+     before the `inner` lock. With the write guard held they cannot run, so
+     slots, titles, and the event log stay frozen from quiesce through exec
+     or rollback, not only during capture. These are all the producers into
+     the shared event log (`native_ops` exits and `write.rs` input activity,
+     which is request-driven and refused).
+   - Admission separates committed panes from pending work. `host_busy` is
+     answered for an unconsumed (`!prepared`) reservation or a prepared
+     reservation whose slot is not `Committed`. A committed pane's prepared
+     reservation is carried, not refused. Both checks run at entry and again
+     under the write guard.
+   - Gated with `try_read`: `spawn`, `spawn_commit`, `kill`, `resize`,
+     `write`, `write_batch` (each delayed operation holds its own guard across
+     its `sleep_until`), `frame_input`, `grant_input`, `revoke_input`,
      `reserve_observer`, `release_observer`, `host_shutdown`, and
      `declare_terminal_theme` (it changes the carried `latest_theme`).
    - Exempt, because attachments are not carried and close at exec:
      `set_viewport`, `set_scroll`, and `bind_attachment`. Connection-close
-     cleanup is also ungated: with the write guard held there are no
-     reservations to release, and capture itself turns a `Bound` observer
-     into `Entitled`.
-   - The status ticker is paused before capture and resumed on rollback.
+     cleanup is also ungated: it removes only unconsumed reservations, which
+     the recheck under the write guard has proved absent, and capture itself
+     turns a `Bound` observer into `Entitled`.
 10. **One bounded attempt, on a clock that survives exec.** `host_upgrade`
-    fixes `deadline_monotonic_ns` = `CLOCK_MONOTONIC` now + 10 s. The value
-    stays valid across `execve` because the process is the same. The old
-    host, the restored image, and a fallback image all honor it, and the
-    daemon works only from the `remaining_ms` the host reports, never from
-    wall clocks.
+    fixes `deadline_monotonic_ns` = `CLOCK_MONOTONIC` now + 15 s when it takes
+    `upgrade_lock`, so `remaining_ms` is defined in every non-idle phase,
+    `probing` included. The probe gets at most 5 s of it. The value stays
+    valid across `execve` because the process is the same. The old host, the
+    restored image, and a fallback image all honor it, and the daemon works
+    only from the `remaining_ms` the host reports, never from wall clocks.
     - Soft bound: every phase checks the budget and rolls back when it runs
       out.
     - Hard bound: at acceptance the host sets SIGALRM to `SIG_DFL` and arms
-      `alarm()` for the whole budget, rounded up to whole seconds. The
-      pending alarm survives `execve`. In-process rollback and restore
-      commit each clear it with `alarm(0)`. A wedged capture, `fsync`,
-      restore, or fallback is therefore ended by the default SIGALRM action,
-      and the existing host-death recovery runs. Arming at acceptance, not
-      just before exec, is deliberate: a host wedged while holding the gate
-      would refuse all input forever while the daemon declared it dead.
-      Process death keeps host and daemon consistent at the same cost as any
-      host crash.
+      `alarm()` for the remaining budget, rounded up to whole seconds. The
+      pending alarm survives `execve`. It is cleared with `alarm(0)` only once
+      recovery is established: at restore commit, or after an in-process
+      rollback has confirmed every pane resumed. A wedged quiesce, capture,
+      `fsync`, rollback, restore, or fallback is therefore ended by the
+      default SIGALRM action, and the existing host-death recovery runs.
+    - A rollback that cannot resume every pane is terminal: the host raises
+      SIGALRM itself and ends exactly like a wedge. It never reopens the gate
+      over panes that refuse input.
+    - Arming at acceptance, not just before exec, is deliberate: a host wedged
+      while holding the gate would refuse all input forever while the daemon
+      declared it dead. Process death keeps host and daemon consistent at the
+      same cost as any host crash.
     - The daemon's window is the reported `remaining_ms` plus one health
       interval, so it never declares death while the host can still commit,
       roll back, or be killed by its alarm.
@@ -208,12 +237,16 @@ the Adversary's review. None of this is plan approval.
       and records `ChildExit`. Frozen, it leaves the zombie in place.
     - The handover freezes every pane under that lock before capture.
       Rollback unfreezes and reaps any exit that arrived while frozen.
-    - The exit watcher that `spawn_commit` starts
-      (`crates/gterminal/src/host/native_ops.rs`) removes the slot and emits
-      `terminal_exited`. Both happen in one critical section under the
-      `inner` lock, then the events lock. Capture takes the same two locks
-      in the same order. A pane is therefore either gone, with its event in
-      the carried replay ring, or present with its recorded `exit` carried.
+    - A `ChildExit` recorded before the freeze can still wake the exit
+      watcher `spawn_commit` starts (`crates/gterminal/src/host/native_ops.rs`)
+      at any time. The watcher takes the mutation gate with `read().await`
+      (Decision 9), then the `inner` lock, then the events lock, and removes
+      the slot and emits `terminal_exited` in that one critical section.
+      While the upgrade holds the write guard it waits, so it cannot drop a
+      carried PTY or advance the event cursor between capture and exec.
+      `expire_prepared` waits the same way. A pane is therefore either gone,
+      with its event in the carried replay ring, or present with its recorded
+      `exit` carried.
     - The restored image starts one watcher per carried slot, so exactly one
       `terminal_exited` with the real status crosses the boundary.
     - Windows hosts keep their current waiter and do not advertise
@@ -225,12 +258,13 @@ the Adversary's review. None of this is plan approval.
       - verify the state file;
       - check each carried fd with `fcntl(F_GETFD)` and `fstat`;
       - make a close-on-exec duplicate of each carried fd;
-      - decode every snapshot into a new terminal;
+      - decode every snapshot into a new terminal and restore the pane
+        wrapper state around it (1.1);
       - build every PTY actor on its duplicate master with
         `initially_quiesced`, which covers the actor's own `fcntl`, wake
         pipe, and thread creation;
       - build both listeners on duplicates;
-      - build the event log and slots.
+      - build the event log, slots, and carried reservations.
     - Nothing reads, reaps, or accepts during Stage. Staged runtimes keep
       `preserve_processes_on_drop` set, so unwinding closes only
       duplicates. The originals stay open and inheritable.
@@ -241,18 +275,28 @@ the Adversary's review. None of this is plan approval.
       - clear `preserve_processes_on_drop`;
       - close the originals;
       - start the waiters and exit watchers;
-      - resume every actor by sending its rollback command, without waiting
-        for the acknowledgement;
+      - resume every actor with `PtyIoActor::resume_restored`, a new actor
+        primitive that enqueues a `ResumeRestored` control command and then
+        reopens `user_writes.accepting`, without waiting for a reply. The
+        runner must apply `ResumeRestored` before any data command queued
+        after it, so no user write is written and no output is read before
+        the actor is `Running`, and writes accepted after the gate reopens
+        are written in order. A bare rollback command is not enough: only
+        `rollback_handoff`'s caller reopens `accepting`, and only after the
+        acknowledgement;
       - start the accept loops and ticker;
       - `alarm(0)`;
-      - delete the state file, prune pinned images, and nudge every pane.
-    - A failed send to a dead actor during Commit aborts the process, which
-      ends in host-death recovery.
-13. **The host owns the attempt record.** Ping reports
+      - delete the state file, prune pinned images (Decision 6), and nudge
+        every pane.
+    - A `resume_restored` that finds the actor gone aborts the process,
+      which ends in host-death recovery.
+13. **The host owns the attempt record; the daemon names the attempt.** The
+    daemon mints `attempt_id` and sends it with `host_upgrade`, so it can key
+    its window to the attempt before any reply arrives. Ping reports
     `upgrade: {attempt_id, phase, candidate_sha256, remaining_ms,
     last_outcome}`. Values:
-    - `phase` is one of `idle`, `probing`, `quiescing`, `capturing`, or
-      `exec`.
+    - `phase` is one of `idle`, `probing`, `quiescing`, `capturing`, `exec`,
+      or `rolling_back`.
     - `last_outcome` is `{attempt_id, outcome, candidate_sha256, reason}`,
       with `outcome` one of `succeeded`, `refused`, `aborted`,
       `rolled_back`, or `fallback`.
@@ -263,11 +307,12 @@ the Adversary's review. None of this is plan approval.
     - `candidate_sha256` is the hash of the pin the host actually probed,
       which is authoritative even when the installed file changed after the
       daemon hashed it.
-    - The daemon opens, or reopens, its window from any ping whose `phase`
-      is not `idle`. That covers a lost acceptance reply and a daemon
+    - The daemon opens a provisional window before it awaits the reply, and
+      opens or refreshes a window from any ping whose `phase` is not `idle`.
+      That covers a lost acceptance reply, a lost connection, and a daemon
       restart mid-upgrade.
-    - The daemon closes the window only on a `last_outcome` for its
-      `attempt_id`, or at its deadline.
+    - The daemon closes the window on a `last_outcome` for its
+      `attempt_id`, on a refusal reply, or at its deadline (2.1).
 ## As-Is Facts
 `kind: framing`
 
@@ -292,7 +337,13 @@ Observed on `0.5.0` at `840e3cfdc9`:
   title, size, sequence and observation fields, byte counters, observer bind,
   `input_grant` (a daemon attachment id; survives control disconnects),
   locator, and `child: Option<PreparedChild>` holding the `PaneRuntime`.
-  Reservations in `Inner` are scoped to a control connection id.
+  Reservations in `Inner` carry a control connection id. An unconsumed
+  reservation is removed when its connection closes
+  (`state.rs::on_control_disconnect` removes only `!prepared` records), but
+  `spawn` marks its reservation `prepared` and `spawn_commit` leaves it in
+  place, so every committed native pane keeps a prepared reservation record
+  until its slot is removed (`native_ops.rs`). That record backs `list`,
+  observer rebinding, and spawn idempotency.
 - `HostEvents` (`crates/gterminal/src/host/events.rs`) keeps an epoch, a
   sequence cursor, and a bounded replay ring; `subscribe(since)` reports
   `gap: true` when the cursor is no longer replayable.
@@ -391,10 +442,12 @@ Observed on `0.5.0` at `840e3cfdc9`:
 - Migration gate: the running gterm 0.1.2 host has no `host_upgrade`, and no
   zero-loss bootstrap onto an upgradable host exists. The first move onto a
   host built from this plan is `gobby restart --terminals`, which ends every
-  existing native pane. The Orchestrator presents that one-time loss to Josh
-  through the Assistant before implementation lands or any cutover, and runs
-  it only on his answer, in an announced window outside quiet hours. Every
-  later gterm upgrade is lossless.
+  existing native pane. It is an attended, operator-run step: the daemon
+  never runs it and never kills panes to reach an upgradable host (Decision 5
+  only warns). The Orchestrator presents that one-time loss to Josh through
+  the Assistant before implementation lands or any cutover, and runs it only
+  on his answer, in an announced window outside quiet hours. Every later
+  gterm upgrade is lossless.
 
 ## Failure Modes And Recovery
 `kind: framing`
@@ -402,17 +455,21 @@ Observed on `0.5.0` at `840e3cfdc9`:
 Each mode is owned by the deliverable that implements its recovery and is
 pinned by the acceptance item named in brackets.
 
-- **Host busy.** A reservation or uncommitted prepared spawn exists (checked
-  at entry and again under the write guard), or a mutator, including a
-  delayed batch write, still holds the gate after the bounded acquisition.
-  The verb answers `host_busy`; the daemon retries on its next health tick.
-  [1.3.2, 1.3.6]
+- **Host busy.** An unconsumed reservation or an uncommitted prepared spawn
+  exists (checked at entry and again under the write guard), or a mutator,
+  including a delayed batch write, still holds the gate after the bounded
+  acquisition. The verb answers `host_busy`; the daemon retries on its next
+  health tick. A committed pane's prepared reservation never makes the host
+  busy. [1.3.2, 1.3.6, 1.3.8]
 - **Host draining, or another upgrade running.** Answers `host_draining` or
   `upgrade_in_progress`; nothing changes. A spawn, reservation, or
   `host_shutdown` that arrives during the probe is caught by the recheck
   under the write guard. [1.3.2]
 - **Input or a mutating verb arrives while upgrading.** Control and frame
   callers receive `host_upgrading`; nothing is queued. [1.3.6]
+- **Background mutation during the window.** A child exit recorded before the
+  freeze, a `list` that would expire a slot, and a ticker tick all wait on
+  the gate until exec or rollback. [1.3.9]
 - **Probe refuses or times out.** Answers `upgrade_refused` with the probe's
   detail and records `last_outcome: refused`; panes are never quiesced.
   [1.3.3, 2.1.3]
@@ -421,16 +478,19 @@ pinned by the acceptance item named in brackets.
   sees the newer installed hash on a later tick. [1.4.2, 2.1.6]
 - **Quiesce fails or is late.** Any pane whose `begin_handoff` fails or times
   out aborts the attempt; `rollback_handoff` goes to every attempted pane,
-  including one whose quiesce completes late (actor commands run in order).
-  Rollback is retried once per pane; the gate reopens only after every
-  rollback settles, and a persistent failure is reported in
-  `host_upgrade_failed{reason: "rollback_failed", panes}`. [1.3.4]
+  including one whose quiesce completes late (actor commands run in order),
+  and is retried once per pane. The gate reopens and the alarm is cleared
+  only after every pane has acknowledged and accepts input. [1.3.4]
+- **Rollback cannot resume a pane.** Terminal: the host raises SIGALRM and
+  ends like a wedge; the daemon's window expires and `handle_host_death` runs
+  once. [1.3.10, 2.1.2]
 - **Capture or state write fails.** A snapshot encode error (including
   `GHOSTTY_INVALID_VALUE` for an unavailable continuation), a write, `fsync`,
   or rename error, or an `fcntl` error rolls back in process with the named
   reason. [1.3.4]
-- **`execve` fails.** Rolls back in process, removes the state file and the
-  candidate pin, and records `last_outcome: rolled_back`. [1.3.4]
+- **`execve` fails.** Rolls back in process, removes the state file and a
+  candidate pin that differs from the running pin, and records
+  `last_outcome: rolled_back`. [1.3.4, 1.4.4]
 - **Restore fails during Stage.** Execs `previous_image` once with the
   unchanged state and fds; the fallback records `last_outcome: fallback`.
   [1.2.4]
@@ -440,17 +500,21 @@ pinned by the acceptance item named in brackets.
   children receive SIGHUP; at the daemon's deadline the existing
   `handle_host_death` path orphans the rows, interrupts runs, and starts a
   fresh host. [1.2.6, 2.1.2]
+- **A second host starts, or a probe runs, beside a live host.** Neither
+  prunes a pinned image; the live host's `previous_image` survives for a
+  later fallback. [1.4.4, 1.3.11]
 - **Child exits near the boundary.** Exactly one `terminal_exited` with the
   real status, whether the exit was delivered before capture, recorded but
   not delivered, left as a zombie by the freeze, or happened after restore.
-  [1.2.3, 1.2.7]
+  [1.2.3, 1.2.7, 1.3.9]
 - **Output during the window.** Reads are paused; the kernel PTY buffer holds
   the bytes and the restored actor reads them. A child that fills the buffer
   blocks on write until restore, bounded by the deadline. [1.2.3]
 - **Daemon misses the acceptance reply, restarts, or loses its connection.**
-  The next ping reports the attempt in progress and the daemon reopens the
-  window from `remaining_ms`; a healthy ping from the old host mid-quiesce
-  keeps the window open. [2.1.2]
+  The provisional window opened before the request keeps rows steady; the
+  next ping reports the attempt by the daemon's `attempt_id` and the daemon
+  reopens the window from `remaining_ms`; a failed reconnect inside the
+  window retries instead of declaring death. [2.1.2, 2.1.6]
 - **Daemon down for the whole upgrade.** The host finishes on its own;
   gclient reconnects straight to the host; the next daemon start adopts the
   same epoch and reads `last_outcome`. [1.3.1, 2.3.1]
@@ -466,14 +530,22 @@ pinned by the acceptance item named in brackets.
 **Goal:** a running gterm host can replace its own binary while every
 committed native pane keeps its process, PTY, identity, and display state.
 
-### 1.1 Pane terminal snapshot encode and decode [category: code]
+### 1.1 Pane terminal snapshot and wrapper state encode and decode [category: code]
 `kind: deliverable`
 
 Targets:
 - `crates/gterminal/src/ghostty/terminal_api.rs::*` — scope-reason: add snapshot encode, snapshot decode into a new Terminal, and the continuation-tracking option setter
-- `crates/gterminal/src/pane/terminal_io.rs::*` — scope-reason: enable continuation tracking at pane terminal creation and build a pane terminal from a decoded snapshot with the same theme and kitty setup
-- `crates/gterminal/Cargo.toml::*` — scope-reason: register the new vt-engine test targets handover_display, host_handover, and host_image
+- `crates/gterminal/src/pane/terminal_io.rs::*` — scope-reason: enable continuation tracking at pane terminal creation, add encode_handover, and build a pane terminal from a decoded snapshot plus carried wrapper state
+- `crates/gterminal/src/pane/terminal.rs::*` — scope-reason: define the carried GhosttyPaneCore wrapper state and restore it into the core
+- `crates/gterminal/src/pane/osc.rs::*` — scope-reason: make AgentOscStateTracker, DefaultColorOscTracker, and DefaultColorEventTracker state, including an unfinished OSC sequence, exportable and restorable
+- `crates/gterminal/src/pane/kitty_keyboard.rs::*` — scope-reason: make KittyKeyboardTracker state exportable and restorable
+- `crates/gterminal/src/pane/cursor.rs::*` — scope-reason: make DecscusrTracker state exportable and restorable
+- `crates/gterminal/Cargo.toml::*` — scope-reason: register the vt-engine test target handover_display
 - `crates/gterminal/tests/handover_display.rs`
+
+**Granularity:** one leaf. The ghostty snapshot and the wrapper state around
+it restore one pane terminal; either alone leaves a pane whose title, colors,
+or keyboard mode disagree with its screen.
 
 **Research context:** Decision 3. Add `Terminal::encode_snapshot() ->
 Result<Vec<u8>, GhosttyError>` over `ghostty_snapshot_encode_alloc`, and
@@ -485,15 +557,36 @@ retention, `ghostty_snapshot_decoder_decode`), both in
 `crates/gterminal/src/ghostty/bindings/generated_08.rs`. Add a setter for
 `GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES` through `ghostty_terminal_set`.
 The pane terminal constructor in `crates/gterminal/src/pane/terminal_io.rs`
-enables tracking at 4096 bytes for every pane, before any input. The pane
-terminal gains `encode_handover() -> Result<Vec<u8>, …>` and a constructor
-`from_handover(bytes, scrollback_limit, theme, appearance)` that decodes the
-snapshot and applies the same host theme, appearance, kitty graphics, and
-PowerShell settings the ordinary constructor applies. Existing plain and ANSI
-snapshot reads are unchanged. The three new test files are added as
-`[[test]]` entries with `required-features = ["vt-engine"]` beside the
-existing host tests; this leaf registers all three so later leaves only add
-cases.
+enables tracking at 4096 bytes for every pane, before any input.
+
+The snapshot covers only the C terminal. `GhosttyPaneCore`
+(`crates/gterminal/src/pane/terminal.rs`) keeps Rust state around it that
+`terminal_io.rs::new` resets, and that the host reads: `terminal_title` and
+`osc_progress` read `agent_osc_state`, and `native_ops::broadcast_frames`
+overwrites the slot title from `runtime.osc_title`. The pane handover
+therefore carries a `PaneCoreHandover` record beside the snapshot:
+- carried: `host_terminal_theme` (the pane's own theme and appearance),
+  `initial_default_foreground`, `initial_default_background`,
+  `transient_default_color_owner_pgid`, `child_default_foreground_changed`,
+  `child_default_background_changed`, `default_color_tracker`,
+  `default_color_event_tracker`, `agent_osc_state` (title, latest title,
+  progress, and any unfinished OSC bytes), `kitty_keyboard`, and
+  `decscusr_tracker`;
+- rebuilt: `render_state`, from the decoded terminal;
+- reset: `osc_debug_tracker` (diagnostics only), `cursor_settle_state` (a
+  transient settle timer), and the Windows-only fields (Windows hosts do not
+  advertise `host_upgrade`).
+
+The pane terminal gains `encode_handover() -> Result<(Vec<u8>,
+PaneCoreHandover), …>` and a constructor `from_handover(bytes, core,
+scrollback_limit)` that decodes the snapshot, restores the carried fields,
+and applies the carried per-pane theme with the carried child color
+ownership, so a child's OSC 10/11 override is not overwritten by the host
+theme. Kitty graphics and PowerShell settings are applied as the ordinary
+constructor applies them. Existing plain and ANSI snapshot reads are
+unchanged. `handover_display` is added as a `[[test]]` entry with
+`required-features = ["vt-engine"]` beside the existing host tests; each
+later leaf registers its own test file with the file.
 
 Verification planned: `cargo test -p gobby-terminal --features vt-engine
 --test handover_display`; `cargo clippy -p gobby-terminal --features
@@ -517,17 +610,26 @@ vt-engine --all-targets -- -D warnings`.
   and encoding a pane mid-escape succeeds. symbol:
   `Terminal::encode_snapshot`. test:
   `crates/gterminal/tests/handover_display.rs::pane_terminals_track_continuation`.
+- 1.1.5 - A pane with an agent OSC title and progress, a child OSC 10/11
+  default-color override, a kitty keyboard mode, a cursor style, its own
+  theme, and an OSC title sequence split across the encode restores all of
+  them: the title and progress read the same, the split title completes, and
+  a later host theme update keeps the child's override. test:
+  `crates/gterminal/tests/handover_display.rs::pane_wrapper_state_round_trips`.
 
 ### 1.2 Handover state file, frozen reaping, and transactional restore [category: code] (depends: 1.1, 1.4)
 `kind: deliverable`
 
 Targets:
 - `crates/gterminal/src/host/handover.rs`
-- `crates/gterminal/src/host/mod.rs::*` — scope-reason: parse --resume-state, --resume-fallback, and --probe-resume, and branch run() into the Stage/Commit restore without rebinding sockets or rewriting the pidfile
+- `crates/gterminal/src/host/mod.rs::*` — scope-reason: declare the handover module, parse --resume-state, --resume-fallback, and --probe-resume, and branch run() into the Stage/Commit restore without rebinding sockets or rewriting the pidfile
 - `crates/gterminal/src/host/events.rs::*` — scope-reason: rebuild HostEvents with the carried epoch, cursor, and replay ring
-- `crates/gterminal/src/host/state.rs::*` — scope-reason: construct HostState from staged slots, counters, and the carried attempt record
+- `crates/gterminal/src/host/state.rs::*` — scope-reason: construct HostState from staged slots, carried committed reservations, counters, and the carried attempt record
+- `crates/gterminal/src/host/spawn.rs::*` — scope-reason: add a production PreparedChild constructor for a restored committed runtime with no gate writer or status reader
 - `crates/gterminal/src/host/native_ops.rs::*` — scope-reason: make the exit watcher's slot removal and terminal_exited emission one critical section and start watchers for restored slots
 - `crates/gterminal/src/pane/runtime.rs::*` — scope-reason: add the staged restore constructor on a duplicate master with a quiesced actor, carried exit, and decoded terminal; replace both child waiters with the waitid(WNOWAIT) waiter and per-pane reap lock; freeze/unfreeze and handoff wrappers
+- `crates/gterminal/src/pty/actor/unix.rs::*` — scope-reason: add the resume_restored primitive and its ResumeRestored control command, which move the actor to Running and reopen user writes together without waiting
+- `crates/gterminal/Cargo.toml::*` — scope-reason: register the vt-engine test target host_handover
 - `crates/gterminal/tests/host_handover.rs`
 - `crates/gterminal/tests/host_cli_args.rs::*` — scope-reason: cover --resume-state, --resume-fallback, and --probe-resume
 
@@ -537,7 +639,7 @@ restore, and the freeze exists only so restore can report exits exactly once.
 Splitting them leaves a restore that loses exits or a freeze with no reader.
 
 **Research context:** New module `crates/gterminal/src/host/handover.rs`
-owns the state format and restore. State file:
+owns the state format and restore, declared in `host/mod.rs`. State file:
 `<socket_dir>/gterm-handover.json`, mode 0600, written to a temporary name,
 `fsync`ed, renamed, and the directory `fsync`ed before exec; removed only at
 restore commit. JSON (serde_json is already a dependency):
@@ -561,18 +663,24 @@ restore commit. JSON (serde_json is already a dependency):
     "observation_generation": 1, "observer_generation": 1,
     "written_bytes": 0, "dropped_bytes": 0, "total_bytes": 0, "truncated": false,
     "input_grant": "att-…", "locator": {…}, "reported_cwd": "/…",
-    "kitty_keyboard_flags": 0,
+    "reservation": {"id": "…", "key": "…", "generation": 1, "terminal_id": "term-17", "identity": {…}},
     "exit": null,
-    "snapshot_b64": "…"
+    "snapshot_b64": "…",
+    "core": {…}
   }]
 }
 ```
 
 Only committed native panes still present at capture are carried; `exit` is
 the `ChildExit` (`{"exit_code", "signal"}`) recorded but not yet delivered,
-else null. Attachments, control owners, and reservations are connection-scoped
-and are not carried: every connection closes at exec. An observer bind that
-was `Bound` is carried as `Entitled`. tmux-observed slots are not native panes
+else null; `core` is the 1.1 `PaneCoreHandover`. Each committed pane's
+prepared reservation is carried without its connection id and restored as a
+prepared record owned by no live connection, so `list`, observer rebinding,
+and spawn idempotency (`fingerprint`) behave as before the upgrade.
+Attachments, control owners, and unconsumed reservations are connection-scoped
+and are not carried: every connection closes at exec, and admission (1.3)
+guarantees no unconsumed reservation exists. An observer bind that was
+`Bound` is carried as `Entitled`. tmux-observed slots are not native panes
 and are not carried; the daemon re-observes them through the existing
 reconcile path.
 
@@ -584,7 +692,24 @@ WNOHANG)` and record `ChildExit`; frozen, set `exit_pending` and return.
 `unfreeze_reaping` clears it and reaps when `exit_pending` is set. The exit
 watcher in `native_ops.rs::spawn_commit` performs slot removal and the
 `terminal_exited` emission under the `inner` lock and then the events lock,
-the order capture uses. The Windows waiter is unchanged.
+the order capture uses (1.3 adds the gate wait in front). The Windows waiter
+is unchanged.
+
+Restored slots: `TerminalSlot.child` holds a `PreparedChild`, whose
+`gate_writer` and `status_reader` are private and whose only runtime-only
+constructor is `#[cfg(test)]` (`host/spawn.rs`). Add a production
+`PreparedChild::from_restored(runtime, pid, pgid, start_time)` with both
+fields `None`, the state a committed child reaches after `spawn_commit`.
+
+Resume primitive (Decision 12): `PtyIoActor::resume_restored` in
+`crates/gterminal/src/pty/actor/unix.rs` sends
+`PtyIoControlCommand::ResumeRestored` and then sets `user_writes.accepting =
+true`, returning an error only when the control channel is closed. The
+runner handles `ResumeRestored` like a successful rollback (state
+`Running`, reads resume) and needs no reply. User writes travel on the
+separate data channel, so the runner must apply a pending `ResumeRestored`
+before any data command queued after it; the leaf enforces that order in the
+runner loop and 1.2.8 pins it.
 
 Restore (Decision 12), in `run()` with `--resume-state <path>`: skip
 `prepare_socket_path`, `bind`, `write_pidfile`, and cold-start pinning.
@@ -594,7 +719,7 @@ Stage:
 2. For every carried fd, check `fcntl(F_GETFD)` and `fstat` (socket for
    listeners, character device for masters) and take a
    `fcntl(F_DUPFD_CLOEXEC)` duplicate. The original is left untouched.
-3. Decode each snapshot (1.1 `from_handover`).
+3. Decode each snapshot and its wrapper state (1.1 `from_handover`).
 4. Build each `PaneRuntime` with the new `PaneRuntime::stage_restore`: its
    actor runs on the duplicate master with `initially_quiesced`,
    `preserve_processes_on_drop` is set, and no waiter or reader starts.
@@ -602,8 +727,9 @@ Stage:
    (`std::os::unix::net::UnixListener::from_raw_fd`, non-blocking,
    `tokio::net::UnixListener::from_std`).
 6. Rebuild `HostEvents` with the carried epoch, cursor, and ring (new
-   constructor; `subscribe(since)` keeps its gap rule), and rebuild every
-   `TerminalSlot`.
+   constructor; `subscribe(since)` keeps its gap rule), every
+   `TerminalSlot` with `PreparedChild::from_restored`, and every carried
+   reservation.
 
 A panic hook installed for Stage and any Stage error call
 `execve(previous_image, argv + ["--resume-state", path,
@@ -617,8 +743,7 @@ Commit:
 3. Start one waiter and one exit watcher per slot. A slot with a carried
    `exit` records it and its watcher emits `terminal_exited` once without
    waiting.
-4. Resume each actor by sending its rollback command without waiting for the
-   acknowledgement.
+4. Call `resume_restored` on every actor.
 5. Start the accept loops and the ticker.
 6. `alarm(0)`.
 7. Set the attempt's `last_outcome` to `succeeded`, or to `fallback` under
@@ -626,10 +751,11 @@ Commit:
 8. Delete the state file, prune pinned images (1.4), and call
    `nudge_child_redraw_after_handoff` on every pane.
 
-A failed send to a dead actor aborts the process.
+A `resume_restored` error (the actor is gone) aborts the process.
 
-`--probe-resume <n>` prints the supported format versions and exits 0 when
-`n` is supported, 3 otherwise, without touching sockets.
+`--probe-resume <n>` is parsed before cold-start pinning; it prints the
+supported format versions and exits 0 when `n` is supported, 3 otherwise,
+without pinning, pruning, or touching sockets.
 
 Verification planned: `cargo test -p gobby-terminal --features vt-engine
 --test host_handover --test host_cli_args --test host_lifecycle`.
@@ -638,7 +764,8 @@ Verification planned: `cargo test -p gobby-terminal --features vt-engine
 
 - 1.2.1 - A state file written from a live host round-trips: restore rebuilds
   the same epoch, generation, attempt, `next_host_id`, pane identities, sizes,
-  grants, locators, and event cursor. test:
+  grants, locators, committed reservations, wrapper state, and event cursor.
+  test:
   `crates/gterminal/tests/host_handover.rs::state_round_trips_host_and_pane_fields`.
 - 1.2.2 - Restore adopts the carried listener fds and never unlinks, rebinds,
   or rewrites the sockets or pidfile. test:
@@ -651,9 +778,11 @@ Verification planned: `cargo test -p gobby-terminal --features vt-engine
 - 1.2.4 - A decode error, a panic, and an injected actor-construction failure,
   each after at least one pane is staged, exec `previous_image` once with
   `--resume-fallback`; every child pid, queued output, real exit status, and
-  both listener fds survive into the fallback. test:
+  both listener fds survive into the fallback, and every pane accepts a
+  write and returns its output after the fallback commits. test:
   `crates/gterminal/tests/host_handover.rs::stage_failure_falls_back_with_checkpoint_intact`.
-- 1.2.5 - `--probe-resume` accepts exactly the supported format versions. test:
+- 1.2.5 - `--probe-resume` accepts exactly the supported format versions and
+  leaves the pinned image directory untouched. test:
   `crates/gterminal/tests/host_cli_args.rs::probe_resume_reports_supported_formats`.
 - 1.2.6 - A fallback Stage error and a failed fallback `execve` both exit with
   status 70, and a restore that wedges is ended by the pending alarm before
@@ -663,82 +792,109 @@ Verification planned: `cargo test -p gobby-terminal --features vt-engine
   reaps it and emits one `terminal_exited` with the real status. symbol:
   `PaneRuntime::unfreeze_reaping`. test:
   `crates/gterminal/tests/host_handover.rs::rollback_reaps_exit_seen_while_frozen`.
+- 1.2.8 - After a restore commits, every pane accepts a user write and its
+  output reaches the terminal; a write sent while the actor is still
+  quiesced is refused, and one sent right after `resume_restored` is written
+  once, in order. symbol: `PtyIoActor::resume_restored`. test:
+  `crates/gterminal/tests/host_handover.rs::restored_panes_accept_input_after_commit`.
+- 1.2.9 - After restore, a pane's agent title survives the first ticker
+  broadcast, two panes keep their distinct themes, a child OSC 10/11
+  override survives a host theme refresh, and a committed observer
+  entitlement rebinds. test:
+  `crates/gterminal/tests/host_handover.rs::restored_panes_keep_wrapper_state_and_entitlements`.
 
 ### 1.3 `host_upgrade` verb, mutation gate, bounded capture, exec, and in-process rollback [category: code] (depends: 1.2)
 `kind: deliverable`
 
 Targets:
-- `crates/gterminal/src/host/control.rs::*` — scope-reason: add the host_upgrade verb, host_upgrade in HOST_CAPABILITIES on Unix, the upgrade field in ping, and host_upgrading refusals for gated verbs
+- `crates/gterminal/src/host/control.rs::*` — scope-reason: add the host_upgrade verb with the daemon's attempt_id, host_upgrade in HOST_CAPABILITIES on Unix, generation and the upgrade record in ping, and host_upgrading refusals for gated verbs
 - `crates/gterminal/src/host/upgrade.rs`
-- `crates/gterminal/src/host/state.rs::*` — scope-reason: own upgrade_lock, the mutation gate, upgrading, and the attempt record; binary identity from the pin; spawn, reserve_observer, release_observer, and host_shutdown take the gate
+- `crates/gterminal/src/host/mod.rs::*` — scope-reason: declare the upgrade module, and make each status-ticker tick in run() wait on the mutation gate
+- `crates/gterminal/src/host/state.rs::*` — scope-reason: own upgrade_lock, the mutation gate, upgrading, and the attempt record; admission that separates committed reservations from pending ones; spawn, reserve_observer, release_observer, and host_shutdown take the gate
 - `crates/gterminal/src/host/write.rs::*` — scope-reason: write, write_batch with a guard per delayed operation, frame_input, grant_input, and revoke_input take the gate and refuse host_upgrading
-- `crates/gterminal/src/host/native_ops.rs::*` — scope-reason: spawn_commit, kill, and resize take the gate and refuse host_upgrading
+- `crates/gterminal/src/host/native_ops.rs::*` — scope-reason: spawn_commit, kill, and resize take the gate and refuse host_upgrading; the exit watcher and expire_prepared wait on the gate
 - `crates/gterminal/src/host/theme.rs::*` — scope-reason: declare_terminal_theme takes the gate and refuses host_upgrading
-- `crates/gterminal/src/host/poll.rs::*` — scope-reason: pause and resume the status ticker around capture
-- `crates/gterminal/tests/control_protocol.rs::*` — scope-reason: cover host_upgrade refusals, host_upgrading refusals, the upgrade ping field, and binary identity
+- `crates/gterminal/tests/control_protocol.rs::*` — scope-reason: cover host_upgrade refusals, host_upgrading refusals, and the upgrade ping field
 - `crates/gterminal/tests/host_handover.rs`
 
 **Granularity:** one leaf. The verb, the gate, and the capture/exec sequence
 are one admission contract: the verb is unsafe without the gate, and the gate
 has no user without the verb. Every acceptance item drives the same verb.
 
-**Research context:** New module `crates/gterminal/src/host/upgrade.rs` owns
-the attempt. Verb `host_upgrade` with `{"exe": <path>}`:
+**Research context:** New module `crates/gterminal/src/host/upgrade.rs`,
+declared in `host/mod.rs`, owns the attempt. Verb `host_upgrade` with
+`{"exe": <path>, "attempt_id": <daemon-minted id>}`:
 
 1. `upgrade_lock.try_lock()`, else `upgrade_in_progress`. Refuse
-   `host_draining`, and refuse `host_busy` when a reservation or an
-   uncommitted prepared spawn exists (`Inner::reservations`, `CommitState`).
-2. Mint `attempt_id`; phase `probing`. Pin the candidate (1.4
-   `pin_image(exe)`) and run `<pin> host --probe-resume 1` with a 5-second
-   timeout. A pin failure, non-zero exit, timeout, or spawn error answers
-   `{"ok": false, "error": "upgrade_refused", "detail": …}`, removes the
-   candidate pin, and records `last_outcome: refused`.
+   `host_draining`, and refuse `host_busy` when an unconsumed (`!prepared`)
+   reservation exists or a prepared reservation's slot is not `Committed`
+   (`Inner::reservations`, `CommitState`). Fix `deadline_monotonic_ns` (now +
+   15 s, Decision 10) and set phase `probing` with the daemon's
+   `attempt_id`.
+2. Pin the candidate (1.4 `pin_image(exe)`) and run `<pin> host
+   --probe-resume 1` with a timeout of 5 s or the remaining budget,
+   whichever is smaller. A pin failure, non-zero exit, timeout, or spawn
+   error answers `{"ok": false, "error": "upgrade_refused", "detail": …}`,
+   removes the candidate pin when its hash differs from the running pin, and
+   records `last_outcome: refused`.
 3. Take the gate's write guard with `try_write` in a retry of at most 500 ms,
    else `host_busy`. Holding it, recheck every predicate from step 1, set
-   `upgrading`, fix `deadline_monotonic_ns` (Decision 10), set SIGALRM to
-   `SIG_DFL` and arm `alarm()` for the budget, and answer
-   `{"ok": true, "accepted": true, "attempt_id", "candidate_sha256",
-   "remaining_ms", "generation"}` on the control connection.
-4. Phase `quiescing`. Pause the ticker. On a blocking task, give each carried
-   pane its own thread (`std::thread::scope`) that calls `freeze_reaping`
-   then `begin_handoff(remaining)`, and join all; each call is bounded by its
-   own timeout.
+   `upgrading`, set SIGALRM to `SIG_DFL` and arm `alarm()` for the remaining
+   budget, and answer `{"ok": true, "accepted": true, "attempt_id",
+   "candidate_sha256", "remaining_ms", "generation"}` on the control
+   connection.
+4. Phase `quiescing`. The status ticker, the exit watchers, and
+   `expire_prepared` now wait on the gate (Decision 9). On a blocking task,
+   give each carried pane its own thread (`std::thread::scope`) that calls
+   `freeze_reaping` then `begin_handoff(remaining)`, and join all; each call
+   is bounded by its own timeout.
 5. Phase `capturing`. Under the `inner` lock then the events lock, encode
-   every pane's snapshot (1.1), read each recorded `exit`, and build the state
-   (1.2 format) with `generation + 1`, the attempt, and `previous_image` = the
-   running pin. Check the budget, write the temporary file, `fsync`, rename,
-   and `fsync` the directory.
+   every pane's snapshot and wrapper state (1.1), read each recorded `exit`
+   and prepared reservation, and build the state (1.2 format) with
+   `generation + 1`, the attempt, and `previous_image` = the running pin.
+   Check the budget, write the temporary file, `fsync`, rename, and `fsync`
+   the directory.
 6. Phase `exec`. Clear close-on-exec (`fcntl(F_SETFD, 0)`) on each carried
    master fd and both listener fds, then `execve(<pin>, argv +
    ["--resume-state", path])` with the original argv and environment.
    `execve` does not return on success; accepted connections and other fds
    close because they are close-on-exec.
-7. Rollback, on any failure in steps 4-6: `alarm(0)`; restore close-on-exec;
-   send `rollback_handoff` to every attempted pane, one thread each,
-   retrying once, and call `unfreeze_reaping`; delete the state file and the
-   candidate pin; resume the ticker; record `last_outcome` (`aborted` with
-   `quiesce_timeout`, `deadline`, `capture_failed`, or `state_write_failed`,
-   or `rolled_back` with `exec_failed` and errno), and emit
-   `host_upgrade_failed` with the reason and any panes whose rollback failed.
-   Only after every rollback settles: clear `upgrading`, release the gate,
-   and release `upgrade_lock`.
+7. Rollback, on any failure in steps 4-6, phase `rolling_back`, with the
+   alarm still armed: restore close-on-exec; send `rollback_handoff` to every
+   attempted pane, one thread each, retrying once after a timeout (a
+   `RollbackHandoff` to an actor already `Running` acknowledges `Ok`, so a
+   late first acknowledgement is harmless); call `unfreeze_reaping`.
+   - When every pane's `rollback_handoff` returned `Ok`, each actor is
+     `Running` and accepts user writes. Then `alarm(0)`; delete the state
+     file and the candidate pin when its hash differs from the running pin;
+     record `last_outcome` (`aborted` with `quiesce_timeout`, `deadline`,
+     `capture_failed`, or `state_write_failed`, or `rolled_back` with
+     `exec_failed` and errno); emit `host_upgrade_failed` with the reason;
+     then clear `upgrading`, release the write guard, and release
+     `upgrade_lock`.
+   - When any pane's rollback failed twice, the attempt is terminal: log the
+     panes and `libc::raise(SIGALRM)`. The host ends like a wedge and never
+     reopens the gate over a pane that refuses input.
 
-Mutation gate (Decision 9): every gated verb calls `mutation_gate.try_read()`
-and answers `host_upgrading` on failure or when `upgrading` is set; the guard
-is held until the verb returns, and each delayed `write_batch` operation takes
-its own guard when scheduled and holds it across its `sleep_until`.
-`frames.rs` forwards `frame_input`'s error code through `refuse_input`, so the
-frame client sees `host_upgrading` with no change there.
+Mutation gate (Decision 9): every request-driven gated verb calls
+`mutation_gate.try_read()` and answers `host_upgrading` on failure or when
+`upgrading` is set; the guard is held until the verb returns, and each
+delayed `write_batch` operation takes its own guard when scheduled and holds
+it across its `sleep_until`. The exit watcher, `expire_prepared`, and each
+ticker tick in `host/mod.rs::run` take `mutation_gate.read().await` before the
+`inner` lock. `frames.rs` forwards `frame_input`'s error code through
+`refuse_input`, so the frame client sees `host_upgrading` with no change
+there.
 
-Binary identity: `HostState::new` records the pin the host runs from (1.4)
-as `binary_sha256` with `binary_version` (`CARGO_PKG_VERSION`). `ping_json`
-adds `binary_version`, `binary_sha256`, `generation`, and the `upgrade`
-record (Decision 13). `HOST_CAPABILITIES` becomes
-`["terminal_theme", "host_upgrade"]` on Unix; `PROTOCOL_VERSION` stays 1.
+Ping: `ping_json` adds `generation` and the `upgrade` record (Decision 13);
+`binary_version` and `binary_sha256` come from 1.4. `HOST_CAPABILITIES`
+becomes `["terminal_theme", "host_upgrade"]` on Unix; `PROTOCOL_VERSION`
+stays 1.
 
 Verification planned: `cargo test -p gobby-terminal --features vt-engine
 --test host_handover --test control_protocol`. The end-to-end test runs a
-real host from the test build, spawns `sh` panes, upgrades to the same
+real host from the test build, spawns `sh` panes through the real
+reserve, `spawn`, and `spawn_commit` control path, upgrades to the same
 binary, and checks the pids; the timing test opens 16 panes filled to the
 scrollback limit and asserts the upgrade commits inside the deadline.
 
@@ -746,8 +902,8 @@ scrollback limit and asserts the upgrade commits inside the deadline.
 
 - 1.3.1 - Upgrading a live host keeps the host pid, every pane's child pid,
   `host_epoch`, and `host_terminal_id`s, increments `generation`, reports
-  `last_outcome: succeeded` for the attempt, and the panes accept input and
-  produce output afterwards. test:
+  `last_outcome: succeeded` for the daemon's `attempt_id`, and the panes
+  accept input and produce output afterwards. test:
   `crates/gterminal/tests/host_handover.rs::upgrade_keeps_pids_epoch_and_panes`.
 - 1.3.2 - The verb refuses `host_busy`, `host_draining`, and
   `upgrade_in_progress` without changing state; two simultaneous upgrades
@@ -757,16 +913,17 @@ scrollback limit and asserts the upgrade commits inside the deadline.
 - 1.3.3 - A probe that exits non-zero or times out answers `upgrade_refused`,
   records `last_outcome: refused`, and quiesces no pane. test:
   `crates/gterminal/tests/host_handover.rs::probe_refusal_leaves_panes_untouched`.
-- 1.3.4 - A quiesce timeout, a late quiesce completion, a rollback failure, a
-  snapshot encode error, a write or `fsync` error, the deadline reached during
-  capture, and an `execve` failure each roll back, keep serving on the same
-  sockets, record the matching `last_outcome`, and reopen the gate only after
-  every rollback settles. test:
+- 1.3.4 - A quiesce timeout, a late quiesce completion, a first rollback
+  timeout followed by a late acknowledgement, a snapshot encode error, a
+  write or `fsync` error, the deadline reached during capture, and an
+  `execve` failure each roll back, keep serving on the same sockets, record
+  the matching `last_outcome`, clear the alarm, and reopen the gate only
+  after every pane accepts a write and returns its output. test:
   `crates/gterminal/tests/host_handover.rs::every_pre_exec_failure_rolls_back`.
-- 1.3.5 - `ping` reports `binary_version`, the pin's `binary_sha256`,
-  `generation`, and the `upgrade` record, and `HOST_CAPABILITIES` contains
+- 1.3.5 - `ping` reports `generation` and the `upgrade` record, with
+  `remaining_ms` defined in `probing`, and `HOST_CAPABILITIES` contains
   `host_upgrade`. test:
-  `crates/gterminal/tests/control_protocol.rs::ping_reports_binary_identity_and_attempt`.
+  `crates/gterminal/tests/control_protocol.rs::ping_reports_generation_and_attempt`.
 - 1.3.6 - A `write_batch` with a pending delayed operation makes `host_upgrade`
   answer `host_busy`; after acceptance, control writes, frame input, and theme
   declarations receive `host_upgrading`, and no refused input is written after
@@ -774,17 +931,39 @@ scrollback limit and asserts the upgrade commits inside the deadline.
   `crates/gterminal/tests/control_protocol.rs::mutation_gate_blocks_and_refuses_during_upgrade`.
 - 1.3.7 - Sixteen panes at the scrollback limit upgrade inside the deadline.
   test: `crates/gterminal/tests/host_handover.rs::many_full_panes_upgrade_within_deadline`.
+- 1.3.8 - A pane created through reserve, `spawn`, and `spawn_commit`, kept
+  live, and a second one whose creating connection has closed both upgrade
+  successfully; a pending unconsumed reservation still yields `host_busy`.
+  test:
+  `crates/gterminal/tests/host_handover.rs::committed_panes_are_admitted_and_pending_reservations_are_busy`.
+- 1.3.9 - A child exit recorded before the freeze whose watcher is released
+  after capture and before exec, a `list` call during the window, and a
+  ticker tick during the window neither remove a carried slot, close its
+  master, nor advance the event cursor before exec; a subscriber resuming
+  from the carried cursor sees exactly one `terminal_exited`. test:
+  `crates/gterminal/tests/host_handover.rs::background_mutators_wait_through_exec`.
+- 1.3.10 - A pane whose rollback fails twice ends the host through SIGALRM
+  without reopening the gate. test:
+  `crates/gterminal/tests/host_handover.rs::persistent_rollback_failure_ends_the_host`.
+- 1.3.11 - After a live host has seen a losing cold start, a probe, and a
+  same-image refusal and rollback, a later upgrade whose restore fails still
+  finds `previous_image` and falls back. test:
+  `crates/gterminal/tests/host_handover.rs::fallback_image_survives_other_starts_and_same_image_attempts`.
 
-### 1.4 Pinned host images [category: code]
+### 1.4 Pinned host images and binary identity [category: code] (depends: 1.1)
 `kind: deliverable`
 
 Targets:
 - `crates/gterminal/src/host/image.rs`
-- `crates/gterminal/src/host/mod.rs::*` — scope-reason: pin current_exe and re-exec from the pin at cold start before binding anything
+- `crates/gterminal/src/host/mod.rs::*` — scope-reason: declare the image module, pin current_exe and re-exec from the pin at cold start before binding anything, and prune only after this process owns the sockets
+- `crates/gterminal/src/host/state.rs::*` — scope-reason: record the running pin's binary_sha256 and binary_version
+- `crates/gterminal/src/host/control.rs::*` — scope-reason: report binary_version and binary_sha256 in ping
+- `crates/gterminal/Cargo.toml::*` — scope-reason: register the vt-engine test target host_image
 - `crates/gterminal/tests/host_image.rs`
 
 **Research context:** New module `crates/gterminal/src/host/image.rs`
-(Decision 6). `pin_image(src) -> PinnedImage { path, sha256 }`:
+(Decision 6), declared in `host/mod.rs`. `pin_image(src) -> PinnedImage {
+path, sha256 }`:
 - Create `<socket_dir>/gterm-images/` with mode 0700 if it is missing.
   Refuse a directory not owned by the current user or writable by others.
 - Hard-link `src` to a temporary name there (`std::fs::hard_link`). When the
@@ -800,15 +979,23 @@ Other functions:
   mismatch.
 - `is_pinned(path)` is true for a path directly under that directory whose
   name matches its content hash.
-- `prune_images(keep)` removes every other `gterm-*` entry.
+- `prune_images(keep)` removes every other `gterm-*` entry. Its only
+  callers are the two owner points in Decision 6.
+- `remove_candidate(candidate, running)` removes the candidate pin only when
+  the hashes differ.
 
-Cold start in `run()` (`crates/gterminal/src/host/mod.rs`): before
-`prepare_socket_path`, when `std::env::current_exe()` is not pinned, pin it
-and `execve` the pin with the same argv and environment. A pinned host records
-its own `PinnedImage` for `binary_sha256` (1.3) and `previous_image` (1.2),
-then calls `prune_images` with its own pin. The daemon keeps launching the
-installed path; the host pins itself. A pin failure at cold start is fatal
-with the error named, like a bind failure.
+Cold start in `run()` (`crates/gterminal/src/host/mod.rs`): `--probe-resume`
+is handled first and never pins. Before `prepare_socket_path`, when
+`std::env::current_exe()` is not pinned, pin it and `execve` the pin with the
+same argv and environment. A pinned host records its own `PinnedImage` for
+`binary_sha256` and `previous_image` (1.2). Only after `prepare_socket_path`,
+bind, and the pidfile write succeed does it call `prune_images` with its own
+pin; a start that loses to a live host exits without pruning. The daemon
+keeps launching the installed path; the host pins itself. A pin failure at
+cold start is fatal with the error named, like a bind failure.
+
+Binary identity: `HostState::new` records the pin as `binary_sha256` with
+`binary_version` (`CARGO_PKG_VERSION`), and `ping_json` reports both.
 
 Verification planned: `cargo test -p gobby-terminal --features vt-engine
 --test host_image`.
@@ -827,6 +1014,10 @@ Verification planned: `cargo test -p gobby-terminal --features vt-engine
 - 1.4.3 - A cold-start host launched from an unpinned path re-execs from its
   pin before binding, and `ping.binary_sha256` equals the pin's hash. test:
   `crates/gterminal/tests/host_image.rs::cold_start_runs_from_pin`.
+- 1.4.4 - With a live host A, a second cold start B that loses the socket
+  check, and a probe run from B's image, leave A's pin and every other pin in
+  place; `remove_candidate` keeps a candidate equal to the running pin. test:
+  `crates/gterminal/tests/host_image.rs::only_the_socket_owner_prunes`.
 
 ## P2: Daemon And Client Behavior During An Upgrade
 `kind: framing`
@@ -840,8 +1031,8 @@ terminals.
 
 Targets:
 - `src/gobby/terminals/host_upgrade.py`
-- `src/gobby/terminals/host_manager.py::*` — scope-reason: call the upgrade coordinator from adoption and the health loop, and hold host death, restart, and reconcile during an open window
-- `src/gobby/terminals/host_client.py::*` — scope-reason: add the host_upgrade request and parse binary identity, generation, and the upgrade record from ping
+- `src/gobby/terminals/host_manager.py::*` — scope-reason: call the upgrade coordinator from adoption and the health loop, and hold host death on both the failed-ping and failed-reconnect paths, restart, and reconcile during an open window
+- `src/gobby/terminals/host_client.py::*` — scope-reason: add the host_upgrade request with the daemon-minted attempt_id and parse binary identity, generation, and the upgrade record from ping
 - `src/gobby/terminals/host_control.py::*` — scope-reason: parse binary identity, generation, and the upgrade record in the handshake client's PingResult
 - `tests/terminals/test_host_upgrade.py`
 
@@ -853,8 +1044,9 @@ call sites and one window check). `HostUpgradeCoordinator`
 - the installed gterm path (the one `_spawn_host_process` launches);
 - a cache of the installed file's `sha256`, keyed by `(st_ino, st_mtime_ns)`;
 - a refused set of candidate hashes;
-- the open window: `attempt_id`, the `sha_at_start` it saw, and a
-  `time.monotonic()` deadline.
+- the open window: `attempt_id`, the `sha_at_start` it saw, a
+  `time.monotonic()` deadline, and whether the host has confirmed the
+  attempt.
 
 Trigger: after `_try_adopt` succeeds and after every healthy ping in
 `_health_loop`, call `coordinator.observe(client, ping, hello)`. Cases, in
@@ -862,28 +1054,36 @@ order:
 - The host lacks the `host_upgrade` capability: log one warning per host pid
   naming `gobby restart --terminals`, and nothing more.
 - `ping.upgrade.phase` is not `idle`: open or refresh the window for that
-  `attempt_id`, with deadline = now + `remaining_ms` + one health interval.
-  This covers a lost acceptance reply and a daemon that restarted
+  `attempt_id`, confirmed, with deadline = now + `remaining_ms` + one health
+  interval. This covers a lost acceptance reply and a daemon that restarted
   mid-upgrade.
 - A window is open: evaluate its close rules below.
 - `ping.binary_sha256` equals the installed hash, or the installed hash is in
   the refused set: do nothing.
-- Otherwise send `host_upgrade{exe}`:
-  - `host_busy` and `upgrade_in_progress` return quietly, and the next tick
-    re-observes;
-  - `upgrade_refused` adds the reported `candidate_sha256` (or the installed
-    hash when the host sent none) to the refused set;
-  - `accepted` opens the window from the reply.
+- Otherwise mint `attempt_id` (`uuid4().hex`) and open a provisional window
+  for it before sending anything, with deadline = now + the request timeout
+  + the host's 15 s budget + one health interval. That deadline bounds any
+  attempt the host could accept from this request. Then send
+  `host_upgrade{exe, attempt_id}`:
+  - `host_busy`, `upgrade_in_progress`, and `host_draining` close the window
+    quietly, and the next tick re-observes;
+  - `upgrade_refused` closes the window and adds the reported
+    `candidate_sha256` (or the installed hash when the host sent none) to the
+    refused set;
+  - `accepted` confirms the window and refreshes its deadline from
+    `remaining_ms`;
+  - a lost reply or a connection error leaves the window open.
 
 Window: while it is open, `wait_startup_settled` returns False, so
 `TerminalWsMixin._resolve_attach_locator` answers the existing transient
-`host_not_ready`. A failed ping or reconnect retries on the next tick instead
-of calling `handle_host_death`, and `reconcile` is skipped. A ping answered by
-the old host mid-quiesce shows an in-progress phase and keeps the window
-open.
+`host_not_ready`. In `_health_loop` both paths that call `handle_host_death`
+today (a failed ping from a dead pid, and a failed reconnect to a live pid)
+check the window first and retry on the next tick instead, and `reconcile`
+is skipped. A ping answered by the old host mid-quiesce shows an in-progress
+phase and keeps the window open.
 
-The window closes only when a ping reports `last_outcome.attempt_id` equal to
-the window's attempt:
+The window closes when a ping reports `last_outcome.attempt_id` equal to the
+window's attempt:
 - `succeeded` with `binary_sha256 == last_outcome.candidate_sha256`: log both
   identities and reconcile once, which changes no row because epoch and ids
   are unchanged.
@@ -892,9 +1092,11 @@ the window's attempt:
 - `fallback`, `rolled_back`, `aborted`, or `refused`: add
   `last_outcome.candidate_sha256` to the refused set and log the reason.
 
-If no such ping arrives by the deadline, fall through to the existing
-`handle_host_death`. The refused set is in memory: a daemon restart or a newly
-installed binary with a different hash tries again once.
+At the deadline without such a ping: when the latest ping was healthy and
+`idle` with no outcome for the attempt, the request never ran; close the
+window quietly and log it. Otherwise fall through to the existing
+`handle_host_death` once. The refused set is in memory: a daemon restart or a
+newly installed binary with a different hash tries again once.
 
 Terminals rows: no schema change and no row writes. `host_epoch`,
 `locator_key`, `state`, and `agent_run_id` stay as they are through a
@@ -910,13 +1112,14 @@ tests/terminals/test_host_upgrade.py tests/terminals/test_host_manager.py -q`.
 **Acceptance:**
 
 - 2.1.1 - A stale adopted host (installed hash differs from `binary_sha256`)
-  receives exactly one `host_upgrade` with the installed path; a current host
-  receives none. test:
+  receives exactly one `host_upgrade` with the installed path and a fresh
+  `attempt_id`; a current host receives none. test:
   `tests/terminals/test_host_upgrade.py::test_stale_host_gets_one_upgrade_request`.
-- 2.1.2 - During an open window failed pings do not call `handle_host_death`,
-  attaches answer `host_not_ready`, no terminals row changes, and a healthy
-  ping reporting an in-progress phase keeps the window open; past the
-  deadline the existing host-death path runs once. test:
+- 2.1.2 - During an open window failed pings and failed reconnects do not
+  call `handle_host_death`, attaches answer `host_not_ready`, no terminals
+  row changes, and a healthy ping reporting an in-progress phase keeps the
+  window open; past the deadline with failing pings the existing host-death
+  path runs once. test:
   `tests/terminals/test_host_upgrade.py::test_window_holds_rows_until_terminal_outcome`.
 - 2.1.3 - `refused`, `rolled_back`, `aborted`, `fallback`, and an identity
   failure each suppress retries for the reported candidate hash until the
@@ -932,38 +1135,70 @@ tests/terminals/test_host_upgrade.py tests/terminals/test_host_manager.py -q`.
   `tests/terminals/test_host_upgrade.py::test_successful_upgrade_changes_no_rows`.
 - 2.1.6 - A lost acceptance reply, a daemon restart during the window, and a
   promotion between the daemon's hash and the host's pin each end with the
-  window keyed to the host's `attempt_id` and `candidate_sha256`. test:
+  window keyed to the daemon's `attempt_id` and the host's
+  `candidate_sha256`. test:
   `tests/terminals/test_host_upgrade.py::test_window_follows_host_attempt_record`.
+- 2.1.7 - A lost acceptance reply followed by two failed reconnects while
+  the host restores calls no `handle_host_death`, and the first healthy ping
+  reporting `succeeded` for the attempt closes the window with no row
+  change. test:
+  `tests/terminals/test_host_upgrade.py::test_lost_ack_and_failed_reconnects_keep_rows`.
+- 2.1.8 - A request the host never ran (healthy idle pings, no outcome for
+  the attempt) closes the provisional window at its deadline without calling
+  `handle_host_death`. test:
+  `tests/terminals/test_host_upgrade.py::test_unrun_request_closes_quietly`.
 
 ### 2.2 Web terminal relay reconnects across an upgrade [category: code] (depends: 2.1)
 `kind: deliverable`
 
 Targets:
-- `src/gobby/servers/websocket/proxy_relay.py::*` — scope-reason: ProxyAttachment carries a reopen callable and the host generation at open; ProxyHub._pump reconnects on host frame EOF during or after an upgrade
-- `src/gobby/servers/websocket/terminal_ws.py::*` — scope-reason: _start_proxy_attach passes a reopen callable that re-resolves the locator and reopens the frame source
-- `tests/servers/test_native_web_proxy.py::*` — scope-reason: cover relay reconnect and finalization across a host upgrade
+- `src/gobby/servers/websocket/proxy_relay.py::*` — scope-reason: ProxyAttachment carries a reopen callable and the host generation; ProxyHub._pump reconnects on host frame EOF after an upgrade, rechecks the live record before swapping, and updates the generation
+- `src/gobby/servers/websocket/terminal_ws.py::*` — scope-reason: _start_proxy_attach passes a reopen callable that re-resolves the locator, reopens the frame source with the handed_off ownership rule, and redeclares the remembered theme when the lease allows it
+- `tests/servers/test_native_web_proxy.py::*` — scope-reason: cover relay reconnect, cancellation cleanup, consecutive upgrades, themes, fallback, and finalization
 
 **Research context:** `ProxyHub._pump`
 (`src/gobby/servers/websocket/proxy_relay.py`) turns host frame EOF
-(`FrameProtocolError`) into `finalize_attachment(…, "proxy_frame_eof")`, which
-the browser applies as a dead attachment. `TerminalWsMixin._start_proxy_attach`
+(`FrameProtocolError`) into `finalize_attachment(…, "proxy_frame_eof")`,
+which pops the record, cancels its pump, and the browser applies as a dead
+attachment. `TerminalWsMixin._start_proxy_attach`
 (`src/gobby/servers/websocket/terminal_ws.py`) opens the frame with
 `open_proxy_frame(locator)` after `_resolve_attach_locator`, then
-`start_proxy` performs `handshake` and `attach_terminal`.
+`start_proxy` performs `handshake` and `attach_terminal`; a `handed_off` flag
+and a shielded `finally` close an opened frame that was never handed to the
+hub. Theme: `_handle_terminal_set_theme` remembers the browser's theme and
+`_declare_holder_theme` declares it only for the input holder.
 
 `ProxyAttachment` gains `reopen: Callable[[], Awaitable[Any]] | None` and
-`host_generation: int | None`, both set by `_start_proxy_attach` (the reopen
+`host_generation: int | None`, both set by `_start_proxy_attach`. The reopen
 closure calls `_resolve_attach_locator(row)` and `open_proxy_frame`, then
-`handshake` and `attach_terminal`, with the existing timeouts). In `_pump`, on
-`FrameProtocolError`, when `record.reopen` is set and the host manager has an
-open upgrade window or reports a generation different from
-`record.host_generation`, wait for the window to close (bounded by its
-deadline), call `reopen`, swap `record.frame`, close the old frame, emit the
-native history exactly as the pump does at start (`_emit_native_history`),
-and continue the loop with the same `attachment_id` and message sequence. A
-reopen that fails, a changed epoch (`host_epoch_stale`), or a window that
-closed with an outcome other than `succeeded` finalizes with today's reasons. The browser sees
-a repaint, no `terminal_attachment_finalized`.
+`handshake` and `attach_terminal`, with the existing timeouts, and follows the
+same `handed_off` plus shielded `finally` rule: a frame it opened is closed on
+any failure or cancellation until the hub installs it.
+
+In `_pump`, on `FrameProtocolError`, when `record.reopen` is set and the host
+manager has an open upgrade window or reports a generation above
+`record.host_generation`:
+1. Wait for the window to close, bounded by its deadline.
+2. Reconnect only when the host answers with the same epoch and a generation
+   above `record.host_generation`. That covers `succeeded` and a verified
+   `fallback`, both of which closed the old frames. Otherwise finalize with
+   today's reasons.
+3. Call `reopen`.
+4. Recheck that `record` is still the live entry for its `attachment_id`
+   (not finalized by a detach or WebSocket close during any await). If not,
+   close the new frame and return.
+5. Swap `record.frame`, set `record.host_generation` to the host's
+   generation, and close the old frame.
+6. Redeclare the remembered theme through `_declare_holder_theme` with the
+   same binding when this attachment holds the lease; an observer declares
+   nothing.
+7. Emit the native history exactly as the pump does at start
+   (`_emit_native_history`), and continue the loop with the same
+   `attachment_id` and message sequence.
+
+A reopen that fails, a changed epoch (`host_epoch_stale`), or an EOF with no
+window and no generation change finalizes with today's reasons. The browser
+sees a repaint, no `terminal_attachment_finalized`.
 
 Verification planned: `DATABASE_URL=… GOBBY_TEST_PROTECT=1 uv run pytest
 tests/servers/test_native_web_proxy.py -q`.
@@ -972,17 +1207,27 @@ tests/servers/test_native_web_proxy.py -q`.
 
 - 2.2.1 - Host frame EOF during an upgrade window reconnects the relay under
   the same browser `attachment_id`, replays history, continues the message
-  sequence, and emits no `terminal_attachment_finalized`. test:
+  sequence, and emits no `terminal_attachment_finalized`; a verified fallback
+  reconnects the same way. test:
   `tests/servers/test_native_web_proxy.py::test_relay_reconnects_across_host_upgrade`.
 - 2.2.2 - A failed reopen, a changed epoch, or EOF with no upgrade finalizes
   with the existing reasons. test:
   `tests/servers/test_native_web_proxy.py::test_relay_finalizes_when_reconnect_is_not_possible`.
+- 2.2.3 - A detach or WebSocket close at each await of the reconnect leaves
+  no open frame and no live record; two consecutive upgrades reconnect, and
+  a later unrelated EOF finalizes as `proxy_frame_eof`. test:
+  `tests/servers/test_native_web_proxy.py::test_relay_reconnect_settles_on_cancel_and_tracks_generation`.
+- 2.2.4 - After a reconnect the holder's remembered theme is redeclared with
+  the same binding and an observer's is not. test:
+  `tests/servers/test_native_web_proxy.py::test_relay_reconnect_redeclares_holder_theme_only`.
 
 ### 2.3 gclient reconnects straight to the host [category: code]
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: retain the locator and daemon attachment id before recovery drops the source, and try a host-local reconnect before the daemon re-attach
+- `crates/gclient/src/app/live_attach.rs::*` — scope-reason: retain the locator and daemon attachment id before recovery drops the source, run a host-local reconnect before the daemon re-attach, and apply its result by pane identity and epoch instead of daemon generation
+- `crates/gclient/src/app/live_loop/host_recovery.rs`
+- `crates/gclient/src/app/live_loop.rs::*` — scope-reason: declare the host_recovery module and poll its set beside the existing recovery futures; the set and its cancellation rules live in the new module
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: rebind the same holder after a host-local reconnect through the existing BindAttachment send
 - `crates/gclient/tests/host_upgrade_recovery.rs`
 
@@ -992,22 +1237,37 @@ Targets:
 `request_direct_source` then sends `terminal_attach` through the daemon. The
 host needs no daemon for a reconnect: `Hello` authenticates with the local
 token file, a user `AttachTerminal` needs no reservation, and the host keeps
-the pane's `input_grant` across the exec (1.2).
+the pane's `input_grant` across the exec (1.2). Two consumers would cancel a
+host-local recovery today: `live_loop.rs::run_live_loop` clears every
+`RecoveryFuture` and calls `abandon_frame_recoveries` on every daemon
+reconnect result, success or failure, and `apply_frame_recovery` rejects a
+result whose daemon generation changed.
 
 Change:
 - Before anything is dropped, `begin_proxy_recovery` copies the pane's
   `AttachLocator` (`host_socket`, `frame_host_epoch`, `host_terminal_id`) and
-  its daemon `attachment_id`.
+  its daemon `attachment_id`. It keeps the pane's attachment, lease, and
+  control state; it does not call `begin_detaching` or send
+  `terminal_detach` before local success or a deliberate fallback.
 - It then reconnects through the same `UnixSocketFrameSource` direct-connect
   path `connect_direct_reply` uses, retrying with backoff from 100 ms to 1 s
-  for a fixed client budget of 30 s. That covers the host's 10 s deadline
+  for a fixed client budget of 30 s. That covers the host's 15 s deadline
   plus grace without any new frame-protocol field. Connects made during the
   exec wait in the listener backlog, because the listener fd survives the
   exec.
-- The reconnect is accepted only when the handshake's host epoch equals
-  `frame_host_epoch`. It then re-attaches the same `host_terminal_id` and
-  rebinds the same holder with `BindAttachment`, as the first direct attach
-  does (`pane.rs`).
+- The host-local recovery lives in its own set, keyed by pane id,
+  `host_terminal_id`, and `frame_host_epoch`, in the new module
+  `crates/gclient/src/app/live_loop/host_recovery.rs` (split out of
+  `crates/gclient/src/app/live_loop.rs`, which is 984 lines; the loop gains
+  only the module declaration and one select arm that polls the set). Daemon reconnect
+  results and daemon generation changes do not clear it. It is cancelled
+  only when the pane is replaced or closed, or when the host answers with a
+  different epoch.
+- Its result is applied by pane identity and epoch, not by daemon
+  generation. The reconnect is accepted only when the handshake's host epoch
+  equals `frame_host_epoch`. It then re-attaches the same `host_terminal_id`
+  and rebinds the same holder with `BindAttachment`, as the first direct
+  attach does (`pane.rs`).
 - An epoch change, `terminal_gone`, or an exhausted budget falls through to
   today's daemon path unchanged (`request_direct_source`,
   `attach_refusal_is_transient`, `defer_pane_attach`).
@@ -1030,6 +1290,11 @@ warnings`.
   to the daemon re-attach, which defers on `host_not_ready` and succeeds.
   test:
   `crates/gclient/tests/host_upgrade_recovery.rs::host_local_failure_falls_back_to_daemon_attach`.
+- 2.3.3 - Repeated failed daemon reconnect attempts and a daemon generation
+  change overlapping the host restore do not cancel the host-local recovery,
+  which succeeds; closing the pane during the recovery cancels it and sends
+  nothing to the host. test:
+  `crates/gclient/tests/host_upgrade_recovery.rs::host_local_recovery_survives_daemon_attempts`.
 
 ### 2.4 Operator documentation [category: docs] (depends: 2.1)
 `kind: deliverable`
