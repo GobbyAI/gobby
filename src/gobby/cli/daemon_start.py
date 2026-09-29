@@ -32,6 +32,7 @@ from gobby.utils.dependency_requirements import (
     unsupported_platform_error,
 )
 from gobby.utils.dev import worktree_daemon_refusal
+from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.status import format_startup_summary
 
 from .daemon import _services_start, _step, _wait_for_daemon_health
@@ -319,7 +320,8 @@ def start(ctx: click.Context, verbose: bool) -> None:
         sys.exit(1)
 
     pid_file = gobby_dir / "gobby.pid"
-    svc = get_service_status()
+    # The service manager is user-global, so test protection never drives it.
+    svc = {} if is_test_protect_enabled() else get_service_status()
     claim: PidFileClaim | None = adopt_inherited_claim(pid_file)
     reserved = False
     platform = svc.get("platform")

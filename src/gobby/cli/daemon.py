@@ -28,6 +28,7 @@ from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.utils.dependency_requirements import (
     unsupported_platform_error,
 )
+from gobby.utils.env import is_test_protect_enabled
 from gobby.utils.status import fetch_rich_status, format_status_message
 
 from ._daemon_handoffs import protect_pending_handoffs
@@ -143,6 +144,15 @@ def _read_pid_file() -> int | None:
         return None
 
 
+def _is_child_of(pid: int, parent_pid: int) -> bool:
+    """Whether `pid` is a child of `parent_pid`, as the runner's gdaemon front door is."""
+    try:
+        actual_parent: int = psutil.Process(pid).ppid()
+    except psutil.Error:
+        return False
+    return actual_parent == parent_pid
+
+
 def _get_running_daemon_pid(service_status: dict[str, Any] | None = None) -> int | None:
     """Resolve the current daemon PID from service state or the pid file."""
     status = service_status or get_service_status()
@@ -221,10 +231,11 @@ def _do_stop(
     try:
         with protect_pending_handoffs(get_cli_runtime(ctx), force=force, wait=wait, report=_step):
             shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
-            # If OS service is installed and running, delegate to it
+            # If OS service is installed and running, delegate to it. The service
+            # manager is user-global, so test protection never drives it.
             docker_stopped = False
             docker_stop_succeeded = True
-            svc = get_service_status()
+            svc = {} if is_test_protect_enabled() else get_service_status()
             if svc.get("installed") and svc.get("running"):
                 previous_pid = _get_running_daemon_pid(svc)
                 click.echo("Stopping via OS service manager...")
@@ -450,6 +461,7 @@ def status(ctx: click.Context) -> None:
         listener_pid is not None
         and listener_pid != reported_pid
         and _is_process_alive(listener_pid)
+        and not (reported_is_live and _is_child_of(listener_pid, reported_pid))
     )
     pid = listener_pid if listener_is_live else reported_pid if reported_is_live else None
 

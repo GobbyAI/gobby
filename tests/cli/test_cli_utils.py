@@ -758,6 +758,102 @@ class TestStopDaemon:
         assert not pid_file.exists()
         mock_report.assert_called_once()
 
+    def test_test_protect_without_e2e_marker_stops_nothing(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.delenv("GOBBY_E2E_ISOLATED_HOME", raising=False)
+        (temp_dir / "gobby.pid").write_text("12345")
+
+        with (
+            patch("gobby.cli.utils.get_gobby_home", return_value=temp_dir),
+            patch("os.kill") as mock_kill,
+        ):
+            assert stop_daemon(quiet=True) is True
+
+        mock_kill.assert_not_called()
+        assert (temp_dir / "gobby.pid").exists()
+
+    def test_test_protect_refuses_an_e2e_marker_for_another_home(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_E2E_ISOLATED_HOME", str(temp_dir / "other"))
+        (temp_dir / "gobby.pid").write_text("12345")
+
+        with (
+            patch("gobby.cli.utils.get_gobby_home", return_value=temp_dir),
+            patch("os.kill") as mock_kill,
+        ):
+            assert stop_daemon(quiet=True) is False
+
+        mock_kill.assert_not_called()
+        assert (temp_dir / "gobby.pid").exists()
+
+    def test_test_protect_stops_only_the_marked_homes_pid_file_process(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_E2E_ISOLATED_HOME", str(temp_dir))
+        from gobby.runner_pid_file import claim_pid_file
+
+        claim = claim_pid_file(temp_dir / "gobby.pid")
+        assert claim is not None
+        (temp_dir / "gobby.pid").write_text(str(os.getpid()))
+        alive_calls = [True, False]
+        mock_proc = MagicMock()
+        mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+
+        try:
+            with (
+                patch("gobby.cli.utils.get_gobby_home", return_value=temp_dir),
+                patch(
+                    "gobby.cli.utils._is_process_alive",
+                    side_effect=lambda _pid: alive_calls.pop(0),
+                ),
+                patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
+                patch("gobby.cli.installers.service.get_service_status") as mock_service,
+                patch("gobby.cli.utils.kill_all_gobby_daemons") as mock_sweep,
+                patch("gobby.cli.utils_shutdown._report_lock_survivor"),
+                patch("os.kill") as mock_kill,
+            ):
+                assert stop_daemon(quiet=True) is True
+        finally:
+            claim.release()
+
+        mock_kill.assert_called_once_with(os.getpid(), signal.SIGTERM)
+        mock_service.assert_not_called()
+        mock_sweep.assert_not_called()
+        assert not (temp_dir / "gobby.pid").exists()
+
+    @pytest.mark.parametrize("home_lock_held", [False, True])
+    def test_test_protect_refuses_a_pid_that_does_not_hold_the_marked_homes_lock(
+        self, temp_dir: Path, monkeypatch: pytest.MonkeyPatch, home_lock_held: bool
+    ) -> None:
+        """A mispointed pid file cannot reach a daemon of another home."""
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        monkeypatch.setenv("GOBBY_E2E_ISOLATED_HOME", str(temp_dir))
+        from gobby.runner_pid_file import claim_pid_file
+
+        claim = claim_pid_file(temp_dir / "gobby.pid") if home_lock_held else None
+        (temp_dir / "gobby.pid").write_text("12345")
+
+        try:
+            with (
+                patch("gobby.cli.utils.get_gobby_home", return_value=temp_dir),
+                patch("gobby.cli.utils._is_process_alive", return_value=True),
+                patch("gobby.cli.utils.kill_all_gobby_daemons") as mock_sweep,
+                patch("os.kill") as mock_kill,
+            ):
+                assert stop_daemon(quiet=True) is False
+        finally:
+            if claim is not None:
+                claim.release()
+
+        mock_kill.assert_not_called()
+        mock_sweep.assert_not_called()
+        assert (temp_dir / "gobby.pid").exists()
+
     def test_stale_pid_file(self, temp_dir: Path) -> None:
         """Test with stale PID file (process not running)."""
         pid_file = temp_dir / "gobby.pid"
