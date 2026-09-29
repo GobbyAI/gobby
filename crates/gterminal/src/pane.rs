@@ -4,6 +4,8 @@ mod cursor;
 mod input;
 mod kitty_keyboard;
 mod osc;
+#[cfg(unix)]
+mod reaper;
 mod runtime;
 mod shell;
 mod shutdown;

@@ -106,6 +106,10 @@ name = "host_image"
 required-features = ["vt-engine"]
 
 [[test]]
+name = "host_handover"
+required-features = ["vt-engine"]
+
+[[test]]
 name = "wire_golden"
 
 [[bin]]

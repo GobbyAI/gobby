@@ -14,6 +14,9 @@ use tracing::{debug, error, warn};
 use crate::layout::PaneId;
 use crate::pty::actor::{PtyIoActor, PtyIoActorConfig, PtyIoActorHandle, PtyReadResult};
 
+#[cfg(unix)]
+use super::reaper::ChildReaper;
+
 use super::shell::{
     apply_pane_launch_env, apply_pane_terminal_env, pane_shell_command_builder, PaneLaunchEnv,
     PaneShellConfig,
@@ -65,6 +68,8 @@ pub struct PaneRuntime {
     child_wait_completed: Option<Arc<AtomicBool>>,
     child_exit: Option<Arc<Mutex<Option<ChildExit>>>>,
     child_exit_notify: Option<Arc<Notify>>,
+    #[cfg(unix)]
+    reaper: Option<Arc<ChildReaper>>,
     kitty_keyboard_flags: Arc<AtomicU16>,
     preserve_processes_on_drop: bool,
     render_notify: Arc<Notify>,
@@ -266,6 +271,23 @@ impl PaneRuntime {
         })
     }
 
+    /// Leaves an exit that arrives from now on unreaped, so it survives an
+    /// exec for the next image's waiter.
+    #[cfg(unix)]
+    pub fn freeze_reaping(&self) {
+        if let Some(reaper) = &self.reaper {
+            reaper.freeze();
+        }
+    }
+
+    /// Reopens reaping and reaps an exit that arrived while frozen.
+    #[cfg(unix)]
+    pub fn unfreeze_reaping(&self) {
+        if let Some(reaper) = &self.reaper {
+            reaper.unfreeze();
+        }
+    }
+
     pub fn shutdown(mut self) {
         self.io.shutdown();
         shutdown_pane_processes(
@@ -414,9 +436,33 @@ impl PaneRuntime {
 
         let child_pid = Arc::new(AtomicU32::new(0));
         let reported_cwd = Arc::new(Mutex::new(None));
+        #[cfg(unix)]
+        let reaper = {
+            let pid = spawned
+                .child
+                .process_id()
+                .ok_or_else(|| std::io::Error::other("pane child has no pid"))?;
+            child_pid.store(pid, Ordering::Release);
+            debug!(pane = pane_id.raw(), pid, "spawned pane PTY");
+            // The reaper owns the wait; the dropped handle neither waits nor kills.
+            drop(spawned.child);
+            let reaper = ChildReaper::new(pid);
+            reaper.start();
+            reaper
+        };
+        #[cfg(unix)]
+        let (child_wait_completed, child_exit, child_exit_notify) = (
+            reaper.completed.clone(),
+            reaper.result.clone(),
+            reaper.notify.clone(),
+        );
+        #[cfg(windows)]
         let child_wait_completed = Arc::new(AtomicBool::new(false));
+        #[cfg(windows)]
         let child_exit = Arc::new(Mutex::new(None));
+        #[cfg(windows)]
         let child_exit_notify = Arc::new(Notify::new());
+        #[cfg(windows)]
         {
             let child_pid = child_pid.clone();
             let child_wait_completed = child_wait_completed.clone();
@@ -501,6 +547,8 @@ impl PaneRuntime {
             child_wait_completed: Some(child_wait_completed),
             child_exit: Some(child_exit),
             child_exit_notify: Some(child_exit_notify),
+            #[cfg(unix)]
+            reaper: Some(reaper),
             kitty_keyboard_flags,
             preserve_processes_on_drop: false,
             render_notify,
@@ -536,57 +584,8 @@ impl PaneRuntime {
         let render_notify = Arc::new(Notify::new());
         let child_pid = Arc::new(AtomicU32::new(child_pid_value));
         let reported_cwd = Arc::new(Mutex::new(None));
-        let child_wait_completed = Arc::new(AtomicBool::new(false));
-        let child_exit = Arc::new(Mutex::new(None));
-        let child_exit_notify = Arc::new(Notify::new());
-        {
-            let child_wait_completed = child_wait_completed.clone();
-            let child_exit = child_exit.clone();
-            let child_exit_notify = child_exit_notify.clone();
-            let pid = child_pid_value as i32;
-            tokio::task::spawn_blocking(move || {
-                let mut status = 0;
-                loop {
-                    let waited = unsafe { libc::waitpid(pid, &mut status, 0) };
-                    if waited == pid {
-                        let result = if libc::WIFEXITED(status) {
-                            Some(ChildExit {
-                                exit_code: Some(libc::WEXITSTATUS(status) as u32),
-                                signal: None,
-                            })
-                        } else if libc::WIFSIGNALED(status) {
-                            let signal = libc::WTERMSIG(status);
-                            let name = unsafe { libc::strsignal(signal) };
-                            let signal = if name.is_null() {
-                                format!("Signal {signal}")
-                            } else {
-                                unsafe { std::ffi::CStr::from_ptr(name) }
-                                    .to_string_lossy()
-                                    .into_owned()
-                            };
-                            Some(ChildExit {
-                                exit_code: None,
-                                signal: Some(signal),
-                            })
-                        } else {
-                            None
-                        };
-                        if let (Some(result), Ok(mut retained)) = (result, child_exit.lock()) {
-                            *retained = Some(result);
-                        }
-                        break;
-                    }
-                    let err = std::io::Error::last_os_error();
-                    if err.kind() == std::io::ErrorKind::Interrupted {
-                        continue;
-                    }
-                    error!(pane = pane_id.raw(), err = %err, "pane child wait failed");
-                    break;
-                }
-                child_wait_completed.store(true, Ordering::Release);
-                child_exit_notify.notify_waiters();
-            });
-        }
+        let reaper = ChildReaper::new(child_pid_value);
+        reaper.start();
         let io = {
             let terminal = terminal.clone();
             let response_writer = response_tx.clone();
@@ -635,9 +634,10 @@ impl PaneRuntime {
             current_size: Cell::new((rows, cols, 0, 0)),
             child_pid,
             reported_cwd,
-            child_wait_completed: Some(child_wait_completed),
-            child_exit: Some(child_exit),
-            child_exit_notify: Some(child_exit_notify),
+            child_wait_completed: Some(reaper.completed.clone()),
+            child_exit: Some(reaper.result.clone()),
+            child_exit_notify: Some(reaper.notify.clone()),
+            reaper: Some(reaper),
             kitty_keyboard_flags,
             preserve_processes_on_drop: false,
             render_notify,
@@ -680,6 +680,8 @@ impl PaneRuntime {
                 child_wait_completed: None,
                 child_exit: None,
                 child_exit_notify: None,
+            #[cfg(unix)]
+            reaper: None,
                 kitty_keyboard_flags: Arc::new(AtomicU16::new(0)),
                 preserve_processes_on_drop: true,
                 render_notify: Arc::new(Notify::new()),

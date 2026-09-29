@@ -451,7 +451,9 @@ fn kill_in_flight_stays_listed() {
         }),
     );
     // Every listing answered before the kill ack, across the whole grace
-    // window, must still see the live group.
+    // window, must still see the live group. The kill removes the slot once
+    // it has proven the group gone and acks after, so a listing between the
+    // two may miss the slot, but only for a dead group.
     let started = Instant::now();
     let mut listings = 0;
     let killed = loop {
@@ -467,7 +469,12 @@ fn kill_in_flight_stays_listed() {
             .expect("terminal rows")
             .iter()
             .any(|row| row["host_terminal_id"] == host_terminal_id);
-        assert!(listed, "in-flight kill listed as absent: {reply}");
+        if !listed {
+            // SAFETY: signal 0 only probes the group; it delivers nothing.
+            let group_alive = unsafe { libc::kill(-(pgid as i32), 0) } == 0;
+            assert!(!group_alive, "in-flight kill listed a live group as absent: {reply}");
+            break recv_json(&mut stream);
+        }
         listings += 1;
     };
     assert_eq!(killed["killed"], true, "{killed}");
