@@ -77,6 +77,33 @@ def test_sandbox_record_refuses_violation_files_outside_gobby_runtime(
     assert record["violations"] == []
 
 
+def test_managed_execution_log_is_counted_but_other_run_assets_are_refused(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "gobby-home"
+    run_root = home / "runtime" / "managed-executions" / "run-1"
+    log = run_root / "logs" / "violations.jsonl"
+    asset = run_root / "assets" / "grant.json"
+    log.parent.mkdir(parents=True)
+    asset.parent.mkdir(parents=True)
+    log.write_text('{"line":"deny network-outbound raw.githubusercontent.com:443"}\n')
+    asset.write_text('{"secret":"must not be exposed"}\n')
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+
+    metadata = {"sandbox": {"backend": "srt", "violation_path": str(log)}}
+    detail = sandbox_record(metadata, include_events=False)
+    listed = sandbox_list_record(metadata["sandbox"], active=True)
+    assert detail is not None and detail["violation_count"] == 1
+    assert listed is not None and listed["violation_count"] == 1
+
+    metadata["sandbox"]["violation_path"] = str(asset)
+    detail = sandbox_record(metadata, include_events=True)
+    assert detail is not None
+    assert detail["violation_count"] == 0
+    assert detail["violations"] == []
+
+
 def test_sandbox_record_skips_corrupt_utf8_violation_lines(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

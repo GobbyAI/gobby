@@ -10,9 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
-from gobby.paths import get_gobby_home
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
-from gobby.storage.agents._sandbox_records import _trusted_path, sandbox_record
+from gobby.storage.agents._sandbox_records import sandbox_record, trusted_live_violation_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import (
     REVIEWER_RUN_ENDED_SUCCESS_ERROR,
@@ -40,7 +39,7 @@ def _review_sandbox_denials(run: AgentRun | None) -> dict[str, Any] | None:
     retained_path = sandbox.get("retained_violation_path")
     raw_sandbox = (run.resume_metadata_json or {}).get("sandbox")
     live_path = (
-        _trusted_path(raw_sandbox.get("violation_path"), get_gobby_home() / "run" / "sandbox")
+        trusted_live_violation_path(raw_sandbox.get("violation_path"))
         if isinstance(raw_sandbox, dict)
         else None
     )
@@ -139,8 +138,10 @@ def terminal_review_delivery(
         breakdown = ", ".join(
             f"{operation} {count}" for operation, count in sandbox_denials["operations"].items()
         )
+        count = sandbox_denials["violation_count"]
+        noun = "operation" if count == 1 else "operations"
         message += (
-            f" SRT denied {sandbox_denials['violation_count']} operations ({breakdown})."
+            f" SRT denied {count} {noun} ({breakdown})."
             f" Inspect get_agent_result({run_id}) for retained diagnostics."
         )
     return payload, message
