@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -158,6 +159,7 @@ class TerminalWsMixin:
         await websocket.send(json_dumps(payload))
 
     async def _handle_terminal_attach(self, websocket: Any, data: dict[str, Any]) -> None:
+        started = time.monotonic()
         request_id = data.get("request_id")
         terminal_id = data.get("terminal_id")
         delivery = data.get("frame_delivery") or "proxy"
@@ -187,6 +189,7 @@ class TerminalWsMixin:
             return
         manager = getattr(self, "terminal_manager", None)
         row = None if manager is None else manager.get(terminal_id)
+        row_loaded = time.monotonic()
         if row is None:
             await self._send_json(
                 websocket,
@@ -232,6 +235,7 @@ class TerminalWsMixin:
             backend=str(row.backend),
             terminal=row,
         )
+        lease_acquired = time.monotonic()
         locator: AttachLocator | None = None
         if str(delivery) == "direct":
             locator, failure = await self._resolve_attach_locator(row)
@@ -243,6 +247,7 @@ class TerminalWsMixin:
                 failure = _log_proxy_attach_failure(row.id, "locator_invalid")
         else:
             failure = await self._start_proxy_attach(websocket, row, record, encoding)
+        transport_ready = time.monotonic()
         if failure is not None:
             await registry.finalize(record.attachment_id, failure)
             await self._send_json(
@@ -285,6 +290,20 @@ class TerminalWsMixin:
             },
         )
         self._proxy().start_pump(record.attachment_id)
+        completed = time.monotonic()
+        if completed - started >= 1.0:
+            client_id = getattr(self, "clients", {}).get(websocket, {}).get("id")
+            logger.warning(
+                "Slow terminal attach | client_id=%s terminal_id=%s total_ms=%.1f "
+                "row_ms=%.1f lease_ms=%.1f transport_ms=%.1f reply_ms=%.1f",
+                client_id,
+                terminal_id,
+                (completed - started) * 1000,
+                (row_loaded - started) * 1000,
+                (lease_acquired - row_loaded) * 1000,
+                (transport_ready - lease_acquired) * 1000,
+                (completed - transport_ready) * 1000,
+            )
 
     async def _handle_terminal_detach(self, websocket: Any, data: dict[str, Any]) -> None:
         attachment_id = data.get("attachment_id")
@@ -326,6 +345,7 @@ class TerminalWsMixin:
         that project plus terminals that belong to no project, which live
         under the global project. Without one the whole machine is listed.
         """
+        started = time.monotonic()
         request_id = data.get("request_id")
         try:
             cursor_created_at, cursor_id = parse_list_cursor(data.get("cursor"))
@@ -373,9 +393,12 @@ class TerminalWsMixin:
             cursor_id=cursor_id,
             limit=limit,
         )
+        listed = time.monotonic()
         shell_pids = {row.id: pid for row in items if (pid := shell_pid(row)) is not None}
         native_commands = await asyncio.to_thread(foreground_commands, shell_pids)
+        commands_read = time.monotonic()
         native_cwds = await asyncio.to_thread(shell_cwds, shell_pids)
+        cwds_read = time.monotonic()
         serialized = []
         for row in items:
             item = inventory_item(row, lease_holder=self._leases().holder_info(row.id))
@@ -402,7 +425,23 @@ class TerminalWsMixin:
                 },
             )
             return
+        encoded = time.monotonic()
         await self._send_json(websocket, payload)
+        sent = time.monotonic()
+        if sent - started >= 1.0:
+            client_id = getattr(self, "clients", {}).get(websocket, {}).get("id")
+            logger.warning(
+                "Slow terminal list | client_id=%s count=%d total_ms=%.1f "
+                "page_ms=%.1f commands_ms=%.1f cwds_ms=%.1f encode_ms=%.1f send_ms=%.1f",
+                client_id,
+                len(items),
+                (sent - started) * 1000,
+                (listed - started) * 1000,
+                (commands_read - listed) * 1000,
+                (cwds_read - commands_read) * 1000,
+                (encoded - cwds_read) * 1000,
+                (sent - encoded) * 1000,
+            )
 
     def _relayed_host_capabilities(self, backend: str) -> list[str]:
         host_capabilities = getattr(self.terminal_host_manager, "capabilities", ())
