@@ -430,28 +430,19 @@ def get_lmstudio_info() -> dict[str, Any] | None:
     """Get LM Studio status."""
     if not shutil.which("lms"):
         return None
-    output = _run_cmd(["lms", "server", "status"])
-    # lms writes status to stderr, but _run_cmd captures stdout
-    # Check if running based on output or fallback
+    # lms prints its status on stderr, so read both streams from one spawn.
     running = False
-    if output:
-        normalized_output = output.lower()
-        running = "running" in normalized_output and "not running" not in normalized_output
-    else:
-        # Try with stderr too
-        try:
-            result = spawn.run(  # nosec B603
-                ["lms", "server", "status"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            combined = (result.stdout + result.stderr).lower()
-            running = (
-                result.returncode == 0 and "running" in combined and "not running" not in combined
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            logger.debug("Failed to determine LM Studio server status", exc_info=True)
+    try:
+        result = spawn.run(  # nosec B603
+            ["lms", "server", "status"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        combined = (result.stdout + result.stderr).lower()
+        running = result.returncode == 0 and "running" in combined and "not running" not in combined
+    except (subprocess.TimeoutExpired, OSError):
+        logger.debug("Failed to determine LM Studio server status", exc_info=True)
     return {"running": running}
 
 

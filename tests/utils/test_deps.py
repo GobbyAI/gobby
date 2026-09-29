@@ -616,29 +616,19 @@ def test_ollama_info_exception() -> None:
 def test_lmstudio_info() -> None:
     with patch("shutil.which", return_value=False):
         assert deps.get_lmstudio_info() is None
-    with (
-        patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value="Server is running"),
-    ):
+    with patch("shutil.which", return_value=True), patch("gobby.utils.spawn.run") as mock_run:
+        # lms reports on stderr with empty stdout; one spawn must read it.
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="", stderr="The server is running on port 1234."
+        )
         assert deps.get_lmstudio_info() == {"running": True}
-    with (
-        patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value="The server is not running"),
-    ):
+        assert mock_run.call_count == 1
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="", stderr="The server is NOT RUNNING"
+        )
         assert deps.get_lmstudio_info() == {"running": False}
-    with (
-        patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value=None),
-    ):
-        with patch("gobby.utils.spawn.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="server RUNNING")
-            assert deps.get_lmstudio_info() == {"running": True}
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="",
-                stderr="The server is NOT RUNNING",
-            )
-            assert deps.get_lmstudio_info() == {"running": False}
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="server running")
+        assert deps.get_lmstudio_info() == {"running": False}
 
 
 @pytest.mark.parametrize(
@@ -652,7 +642,6 @@ def test_lmstudio_info_expected_exception(
     with (
         caplog.at_level(logging.DEBUG, logger="gobby.utils.deps"),
         patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value=None),
         patch("gobby.utils.spawn.run", side_effect=error),
     ):
         assert deps.get_lmstudio_info() == {"running": False}
@@ -663,7 +652,6 @@ def test_lmstudio_info_expected_exception(
 def test_lmstudio_info_unexpected_exception_propagates() -> None:
     with (
         patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value=None),
         patch("gobby.utils.spawn.run", side_effect=RuntimeError("programming error")),
         pytest.raises(RuntimeError, match="programming error"),
     ):
