@@ -143,10 +143,12 @@ notifies the session; do not poll or repeat `close_task` while the review is
 active. After successful closure, call `gobby-memory:review_task_memories` with
 the task and the same summary.
 
-Close reviews persist across daemon restarts. Each project promotes them FIFO up
-to `gobby-tasks.validation.close_review_max_concurrency_per_project` active
-reviewers (three by default), and the execution deadline starts only when a
-queued review is promoted. The public
+Close reviews persist across daemon restarts. A project admits one active close
+review at a time. If another task's review is active, `close_task` returns
+`close_review_busy` without queuing a reviewer; retry after that review finishes.
+Preview also reports this busy condition, while real close enforces it atomically.
+Any previously queued reviews promote one at a time, and the execution deadline
+starts only when a queued review is promoted. The public
 `gobby-tasks.validation.close_review_validator_timeout_seconds` setting controls
 that reviewer deadline (1200 seconds by default). Review fingerprints include
 structured task, net-patch, test-body, deterministic gate-fact, and review-policy

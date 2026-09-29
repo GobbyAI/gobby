@@ -17,6 +17,7 @@ from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.task_close_reviews import (
     QueuedAgentRunSpec,
     TaskCloseReview,
+    TaskCloseReviewBusyError,
     TaskCloseReviewErrorClass,
     TaskCloseReviewStaleTaskError,
     TaskCloseReviewStore,
@@ -48,6 +49,44 @@ def active_review_response(ctx: RegistryContext, task_id: str) -> dict[str, Any]
         return None
     review = TaskCloseReviewStore(ctx.task_manager.db).get_active_for_task(resolved_id)
     return pending_review_response(review) if review is not None else None
+
+
+def project_busy_review_response(
+    ctx: RegistryContext, evaluation: CloseEvaluation
+) -> dict[str, Any] | None:
+    """Expose another task's active reviewer during an advisory preview."""
+    task = evaluation.task
+    if task is None:
+        return None
+    review = TaskCloseReviewStore(ctx.task_manager.db).get_active_for_project(str(task.project_id))
+    if review is None or (review.task_id == task.id and review.active):
+        return None
+    return busy_review_response(task.id, review, preview=True)
+
+
+def busy_review_response(
+    task_id: str, active_review: TaskCloseReview, *, preview: bool
+) -> dict[str, Any]:
+    """Tell the caller to retry without reserving a deferred reviewer run."""
+    message = (
+        f"A task-close reviewer for {active_review.task_ref} is already active in this project. "
+        "Wait for it to finish, then retry close_task. No review was queued for this task."
+    )
+    return {
+        "success": False,
+        "preview": preview,
+        "can_close": False,
+        "closed": False,
+        "task_id": task_id,
+        "error": "close_review_busy",
+        "error_class": "retryable_capacity",
+        "message": message,
+        "blocking_reasons": [message],
+        "required_actions": ["Wait for the active project close review, then retry close_task."],
+        "active_review_id": active_review.id,
+        "active_task_ref": active_review.task_ref,
+        "active_review_status": active_review.status,
+    }
 
 
 def supersede_close_retry_wait(ctx: RegistryContext, task_id: str) -> None:
@@ -199,6 +238,8 @@ async def launch_close_review(
         evaluation.action = "Retry close_task; the existing evaluation will not be reused."
         evaluation.extra["stale_state"] = True
         return evaluation.response(preview=bool(close_arguments.get("preview")))
+    except TaskCloseReviewBusyError as exc:
+        return busy_review_response(task.id, exc.active_review, preview=False)
     if not created:
         return pending_review_response(review)
 
@@ -436,16 +477,11 @@ async def promote_close_reviews(
     store = TaskCloseReviewStore(ctx.task_manager.db)
     project_ids = [project_id] if project_id is not None else store.list_queued_project_ids()
     promoted_ids: list[str] = []
-    max_concurrency = (
-        ctx.validation_config.close_review_max_concurrency_per_project
-        if ctx.validation_config is not None
-        else 3
-    )
     for queued_project_id in project_ids:
         while True:
             claimed = store.claim_queued(
                 project_id=queued_project_id,
-                max_concurrency=max_concurrency,
+                max_concurrency=1,
             )
             if not claimed:
                 break
@@ -816,6 +852,7 @@ def _response_detail(arguments: Mapping[str, Any]) -> str:
 
 __all__ = [
     "active_review_response",
+    "project_busy_review_response",
     "launch_close_review",
     "pending_review_response",
     "submit_close_review",

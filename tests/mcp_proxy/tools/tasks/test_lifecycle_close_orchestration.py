@@ -48,6 +48,7 @@ from gobby.storage.task_close_reviews import (
     REVIEWER_RUN_ENDED_SUCCESS_ERROR,
     QueuedAgentRunSpec,
     TaskCloseReview,
+    TaskCloseReviewBusyError,
     TaskCloseReviewStatus,
     TaskCloseReviewStore,
 )
@@ -66,6 +67,84 @@ _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response re
 _OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
 _SUBMIT_DEADLINE_SECONDS = 10.0
 _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
+
+
+@pytest.mark.asyncio
+async def test_other_task_busy_response_never_launches_a_reviewer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = replace(_review(status="running", run_id=_FIRST_REVIEW_RUN_ID), task_id="other")
+    store = _Store(active)
+    registry = SimpleNamespace(call=AsyncMock())
+    _patch_store(monkeypatch, store)
+
+    def busy_create(**_kwargs: Any) -> tuple[TaskCloseReview, bool]:
+        raise TaskCloseReviewBusyError(active)
+
+    monkeypatch.setattr(store, "create_or_get_active", busy_create)
+    evaluation = _evaluation()
+
+    result = await launch_close_review(
+        _ctx(registry=registry),
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    assert result["error"] == "close_review_busy"
+    assert result["error_class"] == "retryable_capacity"
+    assert result["required_actions"] == [
+        "Wait for the active project close review, then retry close_task."
+    ]
+    assert result["active_review_id"] == active.id
+    assert result["closed"] is False
+    registry.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_another_task_busy_without_directing_real_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = replace(_review(status="running", run_id=_FIRST_REVIEW_RUN_ID), task_id="other")
+    store = _Store(active)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    evaluation.message = "Deterministic gates passed; a real close requires independent review."
+    evaluation.action = "Call close_task with preview=false to queue the close reviewer."
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx())
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert result["preview"] is True
+    assert result["error"] == "close_review_busy"
+    assert result["required_actions"] == [
+        "Wait for the active project close review, then retry close_task."
+    ]
+    assert result["active_task_ref"] == active.task_ref
+    assert store.created_arguments is None
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminal = _review(status="invalid", run_id=_FIRST_REVIEW_RUN_ID)
+    store = _Store(terminal)
+    monkeypatch.setattr(store, "get_active_for_project", lambda _project_id: terminal)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx())
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert result["preview"] is True
+    assert result["error"] == "close_review_busy"
+    assert result["active_review_status"] == "invalid"
+    assert store.created_arguments is None
 
 
 @pytest.mark.asyncio
@@ -802,6 +881,7 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
     assert terminal.result_payload["validation_status"] == "invalid"
     # The wake payload references the rejection; it does not re-carry the verdict.
     assert "verdict" not in terminal.result_payload
+    assert LocalAgentRunManager(temp_db).fail(first_review.agent_run_id, "review ended")
 
     registry = _successful_registry()
     evaluation.extra.update(
@@ -1425,6 +1505,8 @@ async def test_late_submission_yields_to_newer_active_review(
         )
         is not None
     )
+    assert old_review.agent_run_id is not None
+    assert LocalAgentRunManager(temp_db).fail(old_review.agent_run_id, "run ended")
     newer, created = store.create_or_get_active(
         **{
             **_persisted_review_intent(task, caller_session_id=caller.id),
@@ -1610,6 +1692,9 @@ class _Store:
     def count_unjudged_attempts(self, _task_id: str) -> int:
         return self.unjudged_attempts
 
+    def get_active_for_project(self, _project_id: str) -> TaskCloseReview | None:
+        return self.review if self.review.active else None
+
     def get_delivered_rejected_verdict(
         self,
         *,
@@ -1646,7 +1731,7 @@ class _Store:
 
     def claim_queued(self, *, project_id: str, max_concurrency: int) -> list[TaskCloseReview]:
         assert project_id == "project"
-        assert max_concurrency > 0
+        assert max_concurrency == 1
         extra = self.extra_queued
         self.extra_queued = []
         if self.review.status != "queued" or self.queue_claimed:
@@ -1845,7 +1930,7 @@ def _promote_persisted(
     task: Task,
     review: TaskCloseReview,
 ) -> TaskCloseReview:
-    promoted = store.claim_queued(project_id=str(task.project_id), max_concurrency=3)
+    promoted = store.claim_queued(project_id=str(task.project_id), max_concurrency=1)
     match = next((item for item in promoted if item.id == review.id), None)
     assert match is not None
     return match

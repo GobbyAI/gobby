@@ -220,6 +220,31 @@ def test_sandbox_record_counts_retained_log_after_the_run_root_is_reaped(
     assert record["retained_settings_path"] == str(retained_settings)
 
 
+def test_sandbox_record_uses_frozen_count_during_retention_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    missing_live_log = home / "runtime" / "managed-executions" / "run" / "logs" / "violations.jsonl"
+
+    record = sandbox_record(
+        {
+            "sandbox": {
+                "backend": "srt",
+                "enforced": True,
+                "violation_path": str(missing_live_log),
+                "violation_count": 101,
+            }
+        },
+        include_events=False,
+    )
+
+    assert record is not None
+    assert record["violation_count"] == 101
+    assert "retained_violation_path" not in record
+
+
 def test_sandbox_record_prefers_the_live_log_while_the_run_root_survives(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

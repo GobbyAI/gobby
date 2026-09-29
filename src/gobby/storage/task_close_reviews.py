@@ -11,7 +11,7 @@ from typing import Any, Literal, cast
 
 from psycopg.errors import UniqueViolation
 
-from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS
+from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS, TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
@@ -148,6 +148,14 @@ class TaskCloseReview:
         return self.status in TERMINAL_TASK_CLOSE_REVIEW_STATUSES
 
 
+class TaskCloseReviewBusyError(RuntimeError):
+    """Another task owns this project's close-review admission slot."""
+
+    def __init__(self, active_review: TaskCloseReview) -> None:
+        self.active_review = active_review
+        super().__init__(f"Close reviewer active for {active_review.task_ref}")
+
+
 class TaskCloseReviewStore:
     """Transactional CRUD for ``task_close_reviews``."""
 
@@ -225,6 +233,40 @@ class TaskCloseReviewStore:
         now = datetime.now(UTC)
         active = list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)
         with self.db.transaction() as conn:
+            project_row = conn.execute(
+                "SELECT project_id FROM tasks WHERE id = %s", (task_id,)
+            ).fetchone()
+            if project_row is not None:
+                project_id = project_row["project_id"]
+                # Serialize admissions with queue promotion on the project row.
+                conn.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+                admitted = conn.execute(
+                    f"""
+                    SELECT {_QUALIFIED_COLUMNS}
+                    FROM task_close_reviews AS r
+                    JOIN tasks AS t ON t.id = r.task_id
+                    LEFT JOIN agent_runs AS a ON a.id = r.agent_run_id
+                    WHERE t.project_id = %s
+                      AND (
+                          r.status = ANY(%s)
+                          OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                      )
+                    ORDER BY (r.task_id = %s) DESC, r.created_at, r.id
+                    LIMIT 1
+                    """,  # nosec B608 - static column fragment
+                    (
+                        project_id,
+                        active,
+                        list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                        list(TERMINAL_AGENT_RUN_STATUSES),
+                        task_id,
+                    ),
+                ).fetchone()
+                if admitted is not None and (
+                    str(admitted["task_id"]) != task_id
+                    or admitted["status"] in TERMINAL_TASK_CLOSE_REVIEW_STATUSES
+                ):
+                    raise TaskCloseReviewBusyError(_review_from_row(admitted))
             row = conn.execute(
                 f"""
                 WITH launch_task AS (
@@ -368,10 +410,19 @@ class TaskCloseReviewStore:
                 SELECT COUNT(*) AS count
                 FROM task_close_reviews r
                 JOIN tasks t ON t.id = r.task_id
+                LEFT JOIN agent_runs a ON a.id = r.agent_run_id
                 WHERE t.project_id = %s
-                  AND r.status = ANY(%s)
+                  AND (
+                      r.status = ANY(%s)
+                      OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                  )
                 """,
-                (project_id, ["launching", "running", "finalizing"]),
+                (
+                    project_id,
+                    ["launching", "running", "finalizing"],
+                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_AGENT_RUN_STATUSES),
+                ),
             ).fetchone()
             active_count = int(active["count"]) if isinstance(active, Mapping) else 0
             slots = max_concurrency - active_count
@@ -442,6 +493,32 @@ class TaskCloseReviewStore:
             "task_id = %s AND status = ANY(%s)",
             (task_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
         )
+
+    def get_active_for_project(self, project_id: str) -> TaskCloseReview | None:
+        """Report the current admission owner for an advisory preview."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                f"""
+                SELECT {_QUALIFIED_COLUMNS}
+                FROM task_close_reviews AS r
+                JOIN tasks AS t ON t.id = r.task_id
+                LEFT JOIN agent_runs AS a ON a.id = r.agent_run_id
+                WHERE t.project_id = %s
+                  AND (
+                      r.status = ANY(%s)
+                      OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                  )
+                ORDER BY r.created_at, r.id
+                LIMIT 1
+                """,  # nosec B608 - static column fragment
+                (
+                    project_id,
+                    list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_AGENT_RUN_STATUSES),
+                ),
+            ).fetchone()
+        return _review_from_row(row) if row is not None else None
 
     def get_delivered_rejected_verdict(
         self,
@@ -852,6 +929,7 @@ __all__ = [
     "TERMINAL_TASK_CLOSE_REVIEW_STATUSES",
     "ActiveTaskCloseReviewStatus",
     "TaskCloseReview",
+    "TaskCloseReviewBusyError",
     "TaskCloseReviewStatus",
     "TaskCloseReviewStore",
     "TerminalTaskCloseReviewStatus",
