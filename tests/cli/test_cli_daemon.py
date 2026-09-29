@@ -1872,6 +1872,65 @@ class TestStatusCommand:
         )
         mock_psutil_process.assert_called_once_with(listener_pid)
 
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
+    @patch("gobby.cli.daemon.probe_daemon_lock")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch(
+        "gobby.cli.daemon.fetch_rich_status",
+        return_value=RichStatusProbe(api_data={"process": {}}, health_confirmed=True),
+    )
+    @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon._is_process_alive", return_value=True)
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    def test_status_accepts_the_runners_front_door_child_on_the_http_port(
+        self,
+        mock_load_config: MagicMock,
+        mock_is_process_alive: MagicMock,
+        mock_psutil_process: MagicMock,
+        mock_fetch_status: MagicMock,
+        mock_get_gobby_home: MagicMock,
+        mock_probe: MagicMock,
+        mock_collect_deps: MagicMock,
+        mock_check_mismatches: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        temp_dir: Path,
+        mock_port_listener_pid: MagicMock,
+    ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        runner_pid = 90236
+        front_door_pid = 90245
+        mock_probe.return_value = SingletonProbe(
+            state=ProbeState.DAEMON, pid=runner_pid, role="daemon"
+        )
+        mock_load_config.return_value = mock_daemon_config
+        mock_port_listener_pid.return_value = front_door_pid
+        mock_psutil_process.return_value.ppid.return_value = runner_pid
+        mock_psutil_process.return_value.create_time.return_value = 2800.0
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            gobby_dir = temp_dir / ".gobby"
+            gobby_dir.mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "gobby.pid").write_text(str(runner_pid))
+            mock_get_gobby_home.return_value = gobby_dir
+
+            with (
+                patch("gobby.cli.daemon.time.time", return_value=10000.0),
+                patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()),
+            ):
+                result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert f"Running (PID: {runner_pid})" in result.output
+        assert "PID mismatch" not in result.output
+        assert mock_psutil_process.call_args_list[-1].args == (runner_pid,)
+
     @patch("gobby.cli.daemon._is_process_alive", return_value=False)
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
@@ -2631,9 +2690,11 @@ def test_stop_rejects_force_combined_with_wait(mock_stop_daemon: MagicMock) -> N
 
 @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
 @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+@patch("gobby.cli.daemon.restart_start_refusal", return_value=None)
 @patch("gobby.cli.daemon.setup_logging")
 def test_restart_refuses_while_a_protected_run_is_active(
     _setup_logging: MagicMock,
+    _start_refusal: MagicMock,
     mock_stop_daemon: MagicMock,
     _service_status: MagicMock,
     _no_protected_runs: MagicMock,

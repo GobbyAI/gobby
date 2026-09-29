@@ -143,6 +143,15 @@ def _read_pid_file() -> int | None:
         return None
 
 
+def _is_child_of(pid: int, parent_pid: int) -> bool:
+    """Whether `pid` is a child of `parent_pid`, as the runner's gdaemon front door is."""
+    try:
+        actual_parent: int = psutil.Process(pid).ppid()
+    except psutil.Error:
+        return False
+    return actual_parent == parent_pid
+
+
 def _get_running_daemon_pid(service_status: dict[str, Any] | None = None) -> int | None:
     """Resolve the current daemon PID from service state or the pid file."""
     status = service_status or get_service_status()
@@ -450,6 +459,7 @@ def status(ctx: click.Context) -> None:
         listener_pid is not None
         and listener_pid != reported_pid
         and _is_process_alive(listener_pid)
+        and not (reported_is_live and _is_child_of(listener_pid, reported_pid))
     )
     pid = listener_pid if listener_is_live else reported_pid if reported_is_live else None
 
