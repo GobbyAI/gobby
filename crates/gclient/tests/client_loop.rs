@@ -3,7 +3,7 @@
 mod mock_daemon;
 
 use std::collections::VecDeque;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -25,6 +25,7 @@ use gobby_client::daemon::{
     LayoutNode, LiveDaemon, Page, ProjectRow, RosterEntry, RunRow, ScriptedDaemon, SessionRow,
     SourceStatus, SpawnOutcome, SpawnRequest, SubscribeSnapshot, TerminalRow, WorkspaceOp,
     WorktreeRow, WsMessage, WsReply, BROADCAST_CAPACITY, CONTROL_REQUEST_DEADLINE,
+    REQUEST_DEADLINE,
 };
 use gobby_client::frame_source::{
     AttachLocator, FrameDelivery, FrameError, PaneFrameSource, ScriptedFrameSource, Transport,
@@ -9337,6 +9338,275 @@ async fn a_named_session_event_refetches_only_its_project() {
         (3, 3),
         "and the second"
     );
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
+/// Loop turns a frozen-clock wait gives the loop and the mock to finish their
+/// socket I/O before it concludes nothing more is coming.
+const SETTLE_TURNS: usize = 2_000;
+
+/// A `TestBackend` that counts the frames it draws. With no panes and no
+/// input the live loop draws only on its render tick, so a count that rises
+/// after a clock advance shows a tick ran after that advance.
+struct CountingBackend {
+    inner: TestBackend,
+    draws: Arc<AtomicUsize>,
+}
+
+impl ratatui::backend::Backend for CountingBackend {
+    type Error = <TestBackend as ratatui::backend::Backend>::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+    where
+        I: Iterator<Item = (u16, u16, &'a ratatui::buffer::Cell)>,
+    {
+        self.inner.draw(content)?;
+        self.draws.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        self.inner.hide_cursor()
+    }
+
+    fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        self.inner.show_cursor()
+    }
+
+    fn get_cursor_position(&mut self) -> Result<ratatui::layout::Position, Self::Error> {
+        self.inner.get_cursor_position()
+    }
+
+    fn set_cursor_position<P: Into<ratatui::layout::Position>>(
+        &mut self,
+        position: P,
+    ) -> Result<(), Self::Error> {
+        self.inner.set_cursor_position(position)
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.inner.clear()
+    }
+
+    fn clear_region(&mut self, clear_type: ratatui::backend::ClearType) -> Result<(), Self::Error> {
+        self.inner.clear_region(clear_type)
+    }
+
+    fn size(&self) -> Result<ratatui::layout::Size, Self::Error> {
+        self.inner.size()
+    }
+
+    fn window_size(&mut self) -> Result<ratatui::backend::WindowSize, Self::Error> {
+        self.inner.window_size()
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        self.inner.flush()
+    }
+}
+
+/// Drives `future` while keeping this task runnable. A paused runtime that
+/// parks jumps its clock to the next timer, so waiting idle on the mock's
+/// socket would move time the test never advanced.
+async fn keep_runnable<F: std::future::Future>(future: F) -> F::Output {
+    tokio::select! {
+        output = future => output,
+        _ = async {
+            loop {
+                tokio::task::yield_now().await;
+            }
+        } => unreachable!("the spin never ends"),
+    }
+}
+
+/// Yields until `condition` holds, never moving a paused clock.
+async fn spin_until(mut condition: impl FnMut() -> bool, what: &str) {
+    for _ in 0..SETTLE_TURNS * 100 {
+        if condition() {
+            return;
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("{what}");
+}
+
+/// Gives the loop and the mock `SETTLE_TURNS` turns on a frozen clock.
+async fn settle() {
+    for _ in 0..SETTLE_TURNS {
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Advances a paused clock one render tick at a time, settling after each,
+/// until `condition` holds; returns the time advanced.
+async fn tick_until(mut condition: impl FnMut() -> bool, max_ticks: u64, what: &str) -> Duration {
+    let mut advanced = Duration::ZERO;
+    for _ in 0..max_ticks {
+        tokio::time::advance(RENDER_TICK).await;
+        advanced += RENDER_TICK;
+        for _ in 0..SETTLE_TURNS {
+            if condition() {
+                return advanced;
+            }
+            tokio::task::yield_now().await;
+        }
+    }
+    panic!("{what}");
+}
+
+/// The live loop keeps one sidebar refetch in flight: while an agent-runs read
+/// is still waiting on the daemon, another session event queues its refresh
+/// instead of issuing a second read, and releasing the held read lets exactly
+/// one follow-up read through.
+///
+/// The clock is paused for the whole held interval and moves only by the
+/// test's own advances, which total under the 5 s request deadline, so the
+/// held read cannot time out into a legitimate retry. An attention-epoch
+/// marker sent behind the second session event makes the loop read the
+/// roster inline; that read proves the session event was applied. The loop
+/// then renders a tick after the session retry window (at most 2 s from the
+/// first start) has opened, so only the single refetch slot can be holding
+/// the queued refresh back.
+#[tokio::test]
+async fn an_agent_runs_read_in_flight_holds_the_next_refetch() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let runs = || {
+        mock.requests()
+            .into_iter()
+            .filter(|request| {
+                request.method == "GET" && request.target.starts_with("/api/agents/runs?")
+            })
+            .count()
+    };
+    let before = runs();
+    let release = mock.enqueue_held(
+        "GET",
+        "/api/agents/runs?",
+        500,
+        json!({"detail": "agent runs unavailable"}),
+    );
+    let roster_reads = || {
+        mock.requests()
+            .into_iter()
+            .filter(|request| request.method == "GET" && request.target == "/api/attention/roster")
+            .count()
+    };
+    let session_event = json!({
+        "type": "session_event",
+        "event": "session_updated",
+        "project_id": "project-1",
+        "session_id": "session-a",
+    });
+    // The mock's roster is epoch `attention-1`; a new epoch is re-read inline.
+    let attention_marker = json!({
+        "type": "agent_event",
+        "event": "attention_changed",
+        "epoch": "attention-2",
+        "seq": 1,
+    });
+    let draws = Arc::new(AtomicUsize::new(0));
+    let drawn = || draws.load(Ordering::SeqCst);
+    let ticker_ticks = 2 * gobby_client::ui::sidebar_rows::TICKER_STEP;
+
+    let mut chrome = Chrome::dark();
+    let mut terminal = Terminal::new(CountingBackend {
+        inner: TestBackend::new(96, 30),
+        draws: Arc::clone(&draws),
+    })
+    .expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        tokio::time::pause();
+        let held_since = Instant::now();
+        keep_runnable(send_daemon_event(&mock, &daemon, session_event.clone())).await;
+        let mut advanced = tick_until(
+            || runs() == before + 1,
+            32,
+            "the first agent-runs read starts",
+        )
+        .await;
+        // Recorded after the held read arrived: the job's own roster read ran
+        // before it, so the next roster read is the marker's.
+        let roster_before = roster_reads();
+        keep_runnable(send_daemon_event(&mock, &daemon, session_event.clone())).await;
+        keep_runnable(send_daemon_event(&mock, &daemon, attention_marker)).await;
+        spin_until(
+            || roster_reads() == roster_before + 1,
+            "the loop applies the second session event and the marker behind it",
+        )
+        .await;
+        tokio::time::advance(Duration::from_millis(2_100)).await;
+        advanced += Duration::from_millis(2_100);
+        let before_tick = drawn();
+        advanced += tick_until(
+            || drawn() > before_tick,
+            ticker_ticks,
+            "a render tick runs after the retry window opens",
+        )
+        .await;
+        settle().await;
+        assert_eq!(
+            runs(),
+            before + 1,
+            "no second agent-runs read while the first is in flight"
+        );
+        assert_eq!(
+            held_since.elapsed(),
+            advanced,
+            "only the test moved the clock"
+        );
+        assert!(
+            advanced < REQUEST_DEADLINE,
+            "the held read is released before its deadline: {advanced:?}"
+        );
+
+        release.notify_one();
+        tick_until(
+            || runs() == before + 2,
+            32,
+            "the queued refresh reads agent runs",
+        )
+        .await;
+        let before_tick = drawn();
+        tick_until(
+            || drawn() > before_tick,
+            ticker_ticks,
+            "a render tick runs after the follow-up read",
+        )
+        .await;
+        settle().await;
+        assert_eq!(runs(), before + 2, "exactly one read follows the held one");
+        tokio::time::resume();
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("single-flight live loop");
 
     daemon
         .close(Instant::now() + Duration::from_secs(1))
