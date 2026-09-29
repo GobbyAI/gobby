@@ -445,6 +445,9 @@ the 3.1 pytest command to confirm the Python replay still skips the new
   residual is accepted: the nested deployment `fencing_epoch` and the Postgres
   `role_name` are masked by pointer, only the enumerated volatile fields
   change, and `tasks_list` names `E2E_PROJECT_ID` in its query.
+- 2026-09-29: Consensus with the Adversary (gobby#14579) at 9c519b3. HC-01 to
+  HC-04 and the normalization residual are resolved, with no open design
+  objection. The Adversary derives and applies M1 from these bytes.
 
 ## V2: Verification
 `kind: verification`

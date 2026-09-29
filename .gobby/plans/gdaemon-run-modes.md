@@ -182,6 +182,10 @@ Writers:
   `previous`, so a failed exposure leaves the prior flag. The shared-stack
   guide's hub setup states that exposure makes the machine a hub.
 
+Scope boundary (Decision 7): 2.1.4 proves the health contract on an
+`HTTPServer` built with a `node` bootstrap. It does not start a node daemon
+beside an active hub. Startup and `ActiveDaemonLease` are untouched here.
+
 Health: `health_check` (`src/gobby/servers/routes/admin/_health.py`, inside
 `create_health_router(server)`) builds `payload` with `status`,
 `degraded_services`, `hook_runtime`, and `install_dir`. Add
@@ -250,6 +254,18 @@ Targets:
 - `tests/test_runner_workflow_audit_maintenance.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_bm25_startup.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_runner_lifecycle.py::*` — scope-reason: SimpleNamespace runner fakes that reach the gated functions gain `bootstrap_config=BootstrapConfig()`; terminal-completion recovery with local and foreign runs
+
+**Granularity:** eight acceptance items, one outcome: a `node` runner starts
+no shared-row maintenance, and every other mode behaves as today. Every gate
+reads the same `run_mode()` and is proven by the same focused test run. Split
+leaves would each close with a node that still sweeps or writes shared rows
+through a launch site that is not yet gated, so no split leaf is independently
+safe to ship. Items 2.2.1 to 2.2.8 stay as separate checks inside this one leaf.
+
+Scope boundary (Decision 7): this leaf gates loops and launch sites on runner
+functions. It does not make a node operational beside an active hub. Startup
+and `ActiveDaemonLease` are untouched, and the operational node belongs to the
+plan of record's 5.1 and 4.4.
 
 **Research context:** The plan of record's 2.3 named `GobbyRunner._initialize_runtime_services` and
 `runner_init/services.py`. Those mostly build services; their two shared-row
@@ -463,6 +479,9 @@ deferral:
   (2.2.8). RM-03: Decision 7 records the preparatory scope and names the plan
   of record's 5.1 and 4.4 as owners of the operational node. RM-04: each leaf
   runs its own focused commands, and V2 runs once both leaves land.
+- 2026-09-29: Adversary recheck at 9c519b3. RM-01 to RM-04 resolved. 2.2 gains
+  a Granularity decision that keeps its eight items in one leaf, and 2.1 and 2.2
+  each carry the Decision 7 scope boundary in their Research context.
 
 ## V2: Verification
 `kind: verification`
