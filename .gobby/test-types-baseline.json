@@ -2301,16 +2301,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/test_auto_heal_dispatch.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 15,
-      "message": "Function is missing a type annotation for one or more arguments",
-      "occurrences": 1,
-      "path": "tests/hooks/test_auto_heal_dispatch.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/test_broadcaster.py::::mypy:arg-type",
       "issue_code": "mypy:arg-type",
       "line": 1197,

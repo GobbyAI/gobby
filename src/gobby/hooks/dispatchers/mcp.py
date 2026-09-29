@@ -20,6 +20,7 @@ from gobby.hooks.effect_deadline import (
 )
 from gobby.hooks.events import HookEvent
 from gobby.hooks.mcp_result import mcp_call_succeeded
+from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.skills.formatting import skill_fetch_directive
@@ -441,13 +442,14 @@ def dispatch_mcp_calls(
                 logger.error("dispatch_mcp_calls[%s]: aggregate blocking deadline exceeded", label)
                 result = None
             else:
-                result = run_coro_blocking(
-                    _call(server, tool, arguments),
-                    loop,
-                    logger,
-                    label=label,
-                    timeout_seconds=timeout_seconds,
-                )
+                with measure_hook_phase(f"hook_mcp_dispatch:{server}:{tool}"):
+                    result = run_coro_blocking(
+                        _call(server, tool, arguments),
+                        loop,
+                        logger,
+                        label=label,
+                        timeout_seconds=timeout_seconds,
+                    )
             success = mcp_call_succeeded(result)
             dispatch_results.append(
                 {
@@ -520,12 +522,13 @@ def dispatch_mcp_calls(
                 coro.close()
                 logger.error("dispatch_mcp_calls[%s]: aggregate blocking deadline exceeded", label)
             else:
-                run_coro_blocking(
-                    coro,
-                    loop,
-                    logger,
-                    label=label,
-                    timeout_seconds=timeout_seconds,
-                )
+                with measure_hook_phase(f"hook_mcp_dispatch:{server}:{tool}"):
+                    run_coro_blocking(
+                        coro,
+                        loop,
+                        logger,
+                        label=label,
+                        timeout_seconds=timeout_seconds,
+                    )
 
     return dispatch_results

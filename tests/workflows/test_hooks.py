@@ -24,6 +24,7 @@ import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
@@ -2088,7 +2089,9 @@ class TestHookBlockingWorkOffload:
             metadata={"_platform_session_id": SESSION_ID},
         )
 
+        timings = HookPhaseTimings()
         with (
+            hook_phase_timing_scope(timings),
             patch.object(handler, "_resolve_project_path", side_effect=resolve_project),
             patch.object(handler, "_run_observers", side_effect=run_observers),
             patch.object(daemon_git, "status", side_effect=git_status),
@@ -2096,6 +2099,12 @@ class TestHookBlockingWorkOffload:
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"
+        breakdown = timings.breakdown()
+        assert {
+            "rule_persist_variables",
+            "rule_persist_variables_queue",
+            "rule_persist_variables_work",
+        } <= set(breakdown)
         assert set(collaborator_threads) == {
             "get_variables",
             "merge_variables",
