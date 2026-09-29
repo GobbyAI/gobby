@@ -215,7 +215,9 @@ the Adversary's review. None of this is plan approval.
       `SIG_DFL` and arms `alarm()` for the budget, rounded up to whole
       seconds, so a live host can never report a non-idle phase past its
       deadline, `probing` included. Every return to `idle` before
-      acceptance clears it as its last step. The
+      acceptance records its outcome, then clears the alarm while it still
+      holds `upgrade_lock`, and releases `upgrade_lock` last, so a next
+      attempt can never arm an alarm that this one then cancels. The
       pending alarm survives `execve`. It is cleared with `alarm(0)` only once
       recovery is established and the attempt leaves its critical section:
       at restore commit, or, after an in-process rollback, immediately after
@@ -855,20 +857,23 @@ declared in `host/mod.rs`, owns the attempt. Verb `host_upgrade` with
    (`Inner::reservations`, `CommitState`). Fix `deadline_monotonic_ns` (now +
    15 s, Decision 10), set SIGALRM to `SIG_DFL`, arm `alarm()` for the
    budget, and set phase `probing` with the daemon's `attempt_id`. Every
-   later return to `idle` before acceptance (steps 2 and 3) clears the alarm
-   as its last step.
+   later return to `idle` before acceptance (steps 2 and 3) does its
+   cleanup, records its outcome, calls `alarm(0)` while `upgrade_lock` is
+   still held, and releases `upgrade_lock` last.
 2. Pin the candidate (1.4 `pin_image(exe)`) and run `<pin> host
    --probe-resume 1` with a timeout of 5 s or the time left before the soft
    cutoff, whichever is smaller. A pin failure, non-zero exit, timeout, or spawn
    error answers `{"ok": false, "error": "upgrade_refused", "detail": …}`,
-   removes the candidate pin when its hash differs from the running pin, and
-   records `last_outcome: refused`.
+   removes the candidate pin when its hash differs from the running pin,
+   records `last_outcome: refused`, calls `alarm(0)`, and then releases
+   `upgrade_lock`.
 3. Take the gate's write guard with `try_write` in a retry of at most 500 ms,
    else `host_busy`. Holding it, recheck every predicate from step 1. A
    `try_write` timeout or a failed recheck answers `host_busy` or
    `host_draining`, returns the phase to `idle`, records `last_outcome:
    deferred` with that reason, removes the candidate pin when its hash
-   differs from the running pin, and releases `upgrade_lock`: every return
+   differs from the running pin, calls `alarm(0)`, and then releases
+   `upgrade_lock`: every return
    after phase `probing` is set leaves a terminal record, so no leftover
    in-progress record can reopen a daemon window. Otherwise set
    `upgrading`, and answer `{"ok": true, "accepted": true, "attempt_id",
@@ -991,7 +996,10 @@ scrollback limit and asserts the upgrade commits inside the deadline.
   `crates/gterminal/tests/host_handover.rs::fallback_image_survives_other_starts_and_same_image_attempts`.
 - 1.3.12 - A `try_write` timeout and a recheck that finds a new pending
   reservation or draining after the probe each return the attempt to `idle`
-  with `last_outcome: deferred`; a rollback whose cleanup blocks while the
+  with `last_outcome: deferred`; an attempt that starts right after a
+  refused or deferred one keeps its own alarm armed (the earlier attempt's
+  `alarm(0)` runs before it can take `upgrade_lock`); a rollback whose
+  cleanup blocks while the
   write guard is held is ended by the alarm; and after a recovered rollback
   the alarm is cleared only once the write guard is released. test:
   `crates/gterminal/tests/host_handover.rs::pre_accept_returns_and_rollback_cleanup_are_bounded`.
