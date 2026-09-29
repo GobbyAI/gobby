@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.communications.adapters.slack import SlackAdapter
-from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.models import ChannelConfig, ChannelNotFoundError, CommsMessage
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
@@ -195,14 +195,34 @@ def test_send_message_reports_adapter_failure(
 
 
 def test_send_message_unknown_channel(client: TestClient, comms_manager: MagicMock) -> None:
-    comms_manager.send_message = AsyncMock(
-        side_effect=ValueError("Channel 'missing' not found or not active")
-    )
+    comms_manager.send_message = AsyncMock(side_effect=ChannelNotFoundError("missing"))
 
     response = client.post("/api/comms/send", json={"channel_name": "missing", "content": "hello"})
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Channel 'missing' not found or not active"}
+
+
+def test_send_message_invalid_caller_input_is_400(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
+    detail = "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)"
+    comms_manager.send_message = AsyncMock(side_effect=ValueError(detail))
+
+    response = client.post(
+        "/api/comms/send",
+        json={
+            "channel_name": "telegram",
+            "content": "Pick one",
+            "metadata": {
+                "inline_keyboard": [[{"text": "A", "value": "a"}]],
+                "callback_ttl_seconds": 86400,
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": detail}
 
 
 def test_list_channels(client: TestClient, comms_manager: MagicMock) -> None:

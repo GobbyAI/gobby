@@ -57,7 +57,8 @@ def create_communications_registry(
             "Send a message to a communication channel. session_id defaults to the calling "
             "session when available. For Telegram clarification or approval "
             "prompts, pass inline_keyboard as rows of {text, value} buttons with a session_id; "
-            "the selected value returns to that session. For Telegram text messages, "
+            "the selected value returns to that session. callback_ttl_seconds sets how long "
+            "those buttons stay answerable and must be 1-3600. For Telegram text messages, "
             "link_preview_options overrides the channel's preview defaults."
         )
     )
@@ -113,6 +114,9 @@ def create_communications_registry(
                 metadata=metadata,
             )
             return {"success": msg.status == "sent", "message_id": msg.id, "error": msg.error}
+        except ValueError as e:
+            # Invalid caller input goes back to the caller; it is not a daemon fault.
+            return {"success": False, "error": str(e)}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
