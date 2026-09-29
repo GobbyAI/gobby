@@ -86,6 +86,9 @@ pub(crate) struct TerminalSlot {
     /// Set while a kill proves its group gone. The slot stays listed so an
     /// in-flight kill never reads as absence; commit and reapers leave it alone.
     pub(crate) killing: bool,
+    /// Set once a kill failed to prove its group gone. From then on the
+    /// slot's death is its group's death, not its leader's exit.
+    pub(crate) kill_unproven: bool,
     #[cfg(feature = "vt-engine")]
     pub(crate) child: Option<PreparedChild>,
     #[cfg(feature = "vt-engine")]
@@ -404,6 +407,7 @@ impl HostState {
                 },
                 commit_deadline: Some(Instant::now() + Duration::from_millis(deadline_ms)),
                 killing: false,
+                kill_unproven: false,
                 child: Some(child),
                 written_bytes: 0,
                 dropped_bytes: 0,
@@ -701,6 +705,7 @@ pub(crate) async fn insert_native_slot(
         observer_bind: ObserverBind::None,
         commit_deadline: None,
         killing: false,
+        kill_unproven: false,
         #[cfg(feature = "vt-engine")]
         child: None,
         #[cfg(feature = "vt-engine")]

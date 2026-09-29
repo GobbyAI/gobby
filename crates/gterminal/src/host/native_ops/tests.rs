@@ -86,6 +86,66 @@ async fn unproven_kill_stays_listed_and_refuses_overlap() {
         "unproven kill dropped the slot"
     );
     assert_eq!(slot_killing(&state, "ht-unprovable").await, Some(false));
+    let inner = state.inner.lock().await;
+    let identity = &inner.by_host_id["ht-unprovable"];
+    assert!(
+        inner.terminals[identity].kill_unproven,
+        "unproven kill left no mark for a later leader exit"
+    );
+}
+
+#[tokio::test]
+async fn leader_exit_after_unproven_kill_waits_for_its_group() {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: as root, process group 1 probes as signallable");
+        return;
+    }
+    let (shutdown, _) = watch::channel(false);
+    let state = HostState::new(
+        HostConfig::default(),
+        "control".to_string(),
+        "local".to_string(),
+        "epoch".to_string(),
+        "version".to_string(),
+        1,
+        shutdown,
+    );
+    insert_native_slot(&state, "ht-lingering", 24, 80).await;
+    let identity = {
+        let mut inner = state.inner.lock().await;
+        let identity = inner.by_host_id["ht-lingering"].clone();
+        let slot = inner.terminals.get_mut(&identity).expect("slot");
+        // A kill that could not prove the group gone, whose group still
+        // answers probes (EPERM reads as alive).
+        slot.kill_unproven = true;
+        slot.pgid = 1;
+        identity
+    };
+
+    assert!(
+        !state.settle_leader_exit(&identity, "ht-lingering").await,
+        "leader exit settled a live group after an unproven kill"
+    );
+    assert!(
+        listed(&state, "ht-lingering").await,
+        "slot of a live group dropped"
+    );
+
+    let mut reaped = std::process::Command::new("true")
+        .spawn()
+        .expect("spawn true");
+    let dead_pgid = i32::try_from(reaped.id()).expect("pid fits pgid");
+    reaped.wait().expect("reap true");
+    {
+        let mut inner = state.inner.lock().await;
+        inner.terminals.get_mut(&identity).expect("slot").pgid = dead_pgid;
+    }
+    assert!(
+        state.settle_leader_exit(&identity, "ht-lingering").await,
+        "a dead group's exit was withheld"
+    );
+    assert!(!listed(&state, "ht-lingering").await, "dead slot kept");
 }
 
 #[test]

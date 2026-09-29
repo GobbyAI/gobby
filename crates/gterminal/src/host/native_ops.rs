@@ -248,6 +248,13 @@ fn native_slot_alive(slot: &TerminalSlot) -> bool {
             .is_some_and(|child| child.runtime.child_exit().is_none())
 }
 
+/// Whether a slot's leader exit must not retire it: an in-flight kill owns
+/// it, or an unproven kill left its group alive past the leader.
+#[cfg(any(feature = "vt-engine", test))]
+fn holds_live_group(slot: &TerminalSlot) -> bool {
+    slot.killing || (slot.kill_unproven && group_alive(slot.pgid))
+}
+
 #[cfg(not(feature = "vt-engine"))]
 fn native_slot_alive(_slot: &TerminalSlot) -> bool {
     false
@@ -493,21 +500,11 @@ impl HostState {
                 let Some(exit) = exit_watch.wait().await else {
                     return;
                 };
+                if !watch_state
+                    .settle_leader_exit(&watch_identity, &watch_host_terminal_id)
+                    .await
                 {
-                    let mut inner = watch_state.inner.lock().await;
-                    let same_slot = inner
-                        .terminals
-                        .get(&watch_identity)
-                        .filter(|slot| slot.host_terminal_id == watch_host_terminal_id);
-                    // A leader dying under an in-flight kill proves nothing
-                    // about its group: the kill's proof settles the slot, so
-                    // an exit event here would settle the row too early.
-                    if same_slot.is_some_and(|slot| slot.killing) {
-                        return;
-                    }
-                    if same_slot.is_some() {
-                        remove_terminal_slot(&mut inner, &watch_identity, None);
-                    }
+                    return;
                 }
                 watch_state
                     .events
@@ -565,6 +562,7 @@ impl HostState {
                 tracing::warn!(pgid, %host_terminal_id, "kill left the process group alive");
                 if let Some(slot) = inner.terminals.get_mut(&identity) {
                     slot.killing = false;
+                    slot.kill_unproven = true;
                 }
             }
             proven
@@ -662,6 +660,26 @@ impl HostState {
         })
     }
 
+    /// Retire a committed slot whose leader exited, returning whether its
+    /// `terminal_exited` may be emitted. A slot that still holds a live group
+    /// stays listed and silent: that event would settle a live row.
+    #[cfg(any(feature = "vt-engine", test))]
+    async fn settle_leader_exit(&self, identity: &Identity, host_terminal_id: &str) -> bool {
+        let mut inner = self.inner.lock().await;
+        let Some(slot) = inner
+            .terminals
+            .get(identity)
+            .filter(|slot| slot.host_terminal_id == host_terminal_id)
+        else {
+            return true;
+        };
+        if holds_live_group(slot) {
+            return false;
+        }
+        remove_terminal_slot(&mut inner, identity, None);
+        true
+    }
+
     pub async fn expire_prepared(&self) {
         let mut inner = self.inner.lock().await;
         let now = Instant::now();
@@ -683,7 +701,7 @@ impl HostState {
             .terminals
             .iter()
             .filter(|(_, slot)| {
-                !slot.killing
+                !holds_live_group(slot)
                     && slot.commit_state == CommitState::Committed
                     && slot
                         .child
