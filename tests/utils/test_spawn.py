@@ -84,8 +84,11 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
-    "cli/daemon.py::_launch_direct_runner": (
+    "cli/daemon_start.py::_launch_direct_runner": (
         "own session and pass_fds for the runner claim; `gobby start` only"
+    ),
+    "runner_front_door.py::FrontDoorChild._popen": (
+        "own session and pass_fds for the gdaemon liveness pipe; once per start or respawn"
     ),
     "cli/install_setup_impeccable.py::_detect_node": (
         "`gobby install` only; the daemon calls just inspect_impeccable_installation"
