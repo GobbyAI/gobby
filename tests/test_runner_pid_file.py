@@ -644,7 +644,9 @@ class TestStartStopBarriers:
                 patch("gobby.cli.daemon_start._start_dependency_errors", return_value=[]),
                 patch("gobby.cli.daemon_start._services_start", services),
                 patch("gobby.cli.runtime.get_cli_runtime", runtime),
-                patch("gobby.cli.daemon_start.get_service_status", return_value={"installed": False}),
+                patch(
+                    "gobby.cli.daemon_start.get_service_status", return_value={"installed": False}
+                ),
             ):
                 result = _cli_runtime().invoke(start, [])
         finally:
