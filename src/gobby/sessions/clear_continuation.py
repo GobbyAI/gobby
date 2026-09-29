@@ -133,6 +133,14 @@ def mark_clear_command_sent(db: HubDatabase, session_id: str, *, attempt_id: str
             ).fetchone()
             variables = _load_variables(_row_variables(row))
             marker = _marker_from_variables(variables)
+            if (
+                isinstance(marker, dict)
+                and marker.get("attempt_id") == attempt_id
+                and marker.get("consumed_by")
+            ):
+                # The successor's SessionStart(clear) can bind before the send
+                # confirms; that binding already proves this /clear was delivered.
+                return True
             if not _unconsumed_attempt(marker, attempt_id):
                 return False
             marker["command_sent_at"] = _format_timestamp(datetime.now(UTC))
