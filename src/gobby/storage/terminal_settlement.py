@@ -38,11 +38,26 @@ ALLOWED_EDGES: frozenset[tuple[str, str]] = frozenset(
     {
         ("pending", "live"),
         ("pending", "exited"),
+        ("pending", "orphaned"),
         ("live", "exited"),
         ("live", "orphaned"),
         ("orphaned", "exited"),
     }
 )
+
+
+@dataclass(frozen=True)
+class OrphanIdentity:
+    """The physical identity a ``pending`` row gains when its kill is unproven.
+
+    ``locator`` must already be the normalized native locator for a native row.
+    ``host_epoch`` and ``process`` are native-only and stay ``None`` for tmux.
+    """
+
+    locator: Mapping[str, object]
+    locator_key: str
+    host_epoch: str | None = None
+    process: Mapping[str, object] | None = None
 
 
 class IllegalTerminalTransitionError(RuntimeError):
@@ -336,6 +351,59 @@ class TerminalSettlementMixin:
             ),
         )
         return _terminal(row)
+
+    def mark_kill_failed(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        identity: OrphanIdentity | None = None,
+    ) -> Terminal | None:
+        """CAS a row whose kill was not proven to ``orphaned`` for the captured attempt.
+
+        ``live`` already carries its identity. ``pending`` becomes ``orphaned``
+        only with ``identity``, written in the same statement because the schema
+        forbids a ``pending`` row with identity and an ``orphaned`` row without
+        it. A ``pending`` row without ``identity`` stays ``pending``, holding its
+        seat for a strict reaper or reconcile, and the call returns ``None``.
+        """
+        attempt = """
+            AND attempt_generation = %s
+            AND attempt_started_at = %s
+        """
+        attempt_params = (attempt_generation, attempt_started_at)
+        orphaned = self._cas(
+            terminal_id,
+            expected="live",
+            new_state="orphaned",
+            predicate_sql=attempt,
+            predicate_params=attempt_params,
+        )
+        if orphaned is not None or identity is None:
+            return orphaned
+        extra = """
+            , locator = %s
+            , locator_key = %s
+            , host_epoch = %s
+        """
+        extra_params: tuple[object, ...] = (
+            Jsonb(dict(identity.locator)),
+            identity.locator_key,
+            identity.host_epoch,
+        )
+        if identity.process is not None:
+            extra += ", process = (COALESCE(process, '{}'::jsonb) - %s::text[]) || %s"
+            extra_params += (list(HOST_PROCESS_KEYS), Jsonb(dict(identity.process)))
+        return self._cas(
+            terminal_id,
+            expected="pending",
+            new_state="orphaned",
+            extra=extra,
+            extra_params=extra_params,
+            predicate_sql=attempt,
+            predicate_params=attempt_params,
+        )
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None:
         """CAS live to orphaned after native host-epoch or host-crash loss."""

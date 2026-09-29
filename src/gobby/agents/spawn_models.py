@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import KW_ONLY, dataclass, field
+from datetime import datetime
 from subprocess import SubprocessError
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -165,6 +166,9 @@ class SpawnResult:
     terminal_id: str | None = None
     locator: AttachLocator | None = None
     retryable_infrastructure: bool = False
+    # A failed retry's pre-bump attempt pair (None for a create); failure cleanup
+    # uses it to recognize a rolled-back bump.
+    prior_attempt: tuple[int, datetime] | None = None
 
 
 def is_infrastructure_spawn_error(error: BaseException) -> bool:

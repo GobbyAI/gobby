@@ -11,7 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from gobby.storage.terminal_settlement import HOST_PROCESS_KEYS
+from gobby.storage.terminal_settlement import HOST_PROCESS_KEYS, OrphanIdentity
 from gobby.storage.terminals import (
     UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES,
     UNRESOLVED_WRITE_MAX_ENTRIES,
@@ -356,6 +356,38 @@ class MemoryTerminalStore:
             if key not in HOST_PROCESS_KEYS
         }
         current.process = {**kept, **(process or {})}
+        return current
+
+    def mark_kill_failed(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        identity: OrphanIdentity | None = None,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        if current.state == "pending" and identity is not None:
+            current.locator = dict(identity.locator)
+            current.locator_key = identity.locator_key
+            current.host_epoch = identity.host_epoch
+            if identity.process is not None:
+                kept = {
+                    key: value
+                    for key, value in (current.process or {}).items()
+                    if key not in HOST_PROCESS_KEYS
+                }
+                current.process = {**kept, **identity.process}
+        elif current.state != "live":
+            return None
+        current.state = "orphaned"
+        current.updated_at = datetime.now(UTC)
         return current
 
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:

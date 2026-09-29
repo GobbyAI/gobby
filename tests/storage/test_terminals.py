@@ -19,6 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminal_settlement import OrphanIdentity
 from gobby.storage.terminals import (
     ALLOWED_EDGES,
     TERMINAL_STATES,
@@ -616,6 +617,15 @@ def _apply_allowed_edge(
         return
     if (from_state, to_state) == ("pending", "exited"):
         assert manager.fail_pending(row.id)
+        return
+    if (from_state, to_state) == ("pending", "orphaned"):
+        locator = _tmux_locator(pane_id=f"%{uuid.uuid4().hex[:6]}")
+        assert manager.mark_kill_failed(
+            row.id,
+            attempt_generation=row.attempt_generation,
+            attempt_started_at=row.attempt_started_at,
+            identity=OrphanIdentity(locator=locator, locator_key=_tmux_key(locator)),
+        )
         return
     if (from_state, to_state) == ("live", "exited"):
         assert manager.mark_exited(row.id)

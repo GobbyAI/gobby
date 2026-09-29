@@ -52,6 +52,7 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
     runtime.is_live = AsyncMock(return_value=True)
     runtime.snapshot_full = AsyncMock(side_effect=capture)
     runtime.terminate = AsyncMock()
+    runtime.session_present = AsyncMock(return_value=False)
     terminal_runtime_registry = Mock()
     terminal_runtime_registry.resolve.return_value = runtime
     terminal_manager = Mock()
