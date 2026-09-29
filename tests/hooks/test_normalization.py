@@ -2943,6 +2943,12 @@ def test_arithmetic_expansion_is_not_a_redirect(command: str) -> None:
         ("(printf hi > note.md)", "note.md"),
         ("echo `cat a > out.txt`", "out.txt"),
         ("[[ -n $x ]] && printf hi > out.txt", "out.txt"),
+        ('echo "$(cat a > out.txt)"', "out.txt"),
+        ('echo "pre $(cat a > out.txt) post"', "out.txt"),
+        ('x="$(cat a >> log.txt)" && echo $x', "log.txt"),
+        ('echo "`cat a > out.txt`"', "out.txt"),
+        ('echo "$(echo "$(cat a > out.txt)")"', "out.txt"),
+        ("echo \"$(cat <<'EOF' > out.txt\ndon't (x)\nEOF\n)\"", "out.txt"),
     ],
 )
 def test_single_bracket_and_command_substitution_redirects_still_write(
@@ -2986,6 +2992,8 @@ def test_input_redirect_source_is_not_a_write_target(tmp_path: Path) -> None:
         "(( x = $(printf x > src/out.txt) ))",
         "echo $(( $(printf x > src/out.txt) + 1 ))",
         "[[ `printf x > src/out.txt` == y ]]",
+        '[[ "$(printf x > src/out.txt)" == x ]]',
+        '[[ "`printf x > src/out.txt`" == y ]]',
     ],
 )
 def test_command_substitution_inside_compound_word_keeps_repository_write(
@@ -3013,6 +3021,12 @@ def test_command_substitution_inside_compound_word_keeps_repository_write(
         "[[ $(wc -l < a.txt) > 0 ]] && echo big",
         "(( $(date +%s) >= 5 )) || echo early",
         "[[ `cat n` < 3 && $(id -u) > 0 ]]",
+        '[[ "$(id -u)" > 0 ]]',
+        'echo "a > b"',
+        'echo "$(( 2 > 1 ))"',
+        "echo '$(cat a > out.txt)'",
+        'echo "\\$(cat a > out.txt)"',
+        "git commit -m \"$(cat <<'EOF'\nfix: a > b, don't (x)\nEOF\n)\"",
     ],
 )
 def test_compound_comparison_around_command_substitution_is_not_a_redirect(

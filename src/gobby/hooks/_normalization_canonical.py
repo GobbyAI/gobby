@@ -9,6 +9,14 @@ from gobby.hooks._inline_interpreter_classifier import (
     _classify_interpreter_source,
     _InlineProgramClassification,
 )
+from gobby.hooks._normalization_bindings import (
+    _literal_assignment_bindings,
+    _loop_binding_variable_is_stable,
+    _loop_header_words_are_literal,
+    _plain_loop_binding_reference,
+    _shell_loop_binding_disqualifications,
+    _shell_segment_preserves_loop_binding,
+)
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _find_has_mutation_predicate,
@@ -45,18 +53,12 @@ from gobby.hooks._normalization_shell import (
     _has_perl_inplace_option,
     _has_sed_inplace_option,
     _input_redirection_paths,
-    _literal_assignment_bindings,
     _literal_cd_target,
     _looks_file_like,
     _looks_path_target,
-    _loop_binding_variable_is_stable,
-    _loop_header_words_are_literal,
-    _plain_loop_binding_reference,
     _rebase_navigation_shell_paths,
     _rebase_shell_paths,
-    _shell_loop_binding_disqualifications,
     _shell_positional_args,
-    _shell_segment_preserves_loop_binding,
     _strip_shell_wrappers,
     extract_redirection_paths,
     has_mutating_output_redirection,

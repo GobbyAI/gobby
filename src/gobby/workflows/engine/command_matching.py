@@ -40,6 +40,7 @@ from gobby.hooks._normalization_shell import (
     HeredocBody,
     ShellToken,
     _strip_shell_wrappers,
+    _substitution_end,
     is_fd_duplication_token,
     is_shell_input_redirection_token,
     is_shell_output_redirection_token,
@@ -49,7 +50,6 @@ from gobby.hooks.code_navigation import shell_command_name
 from gobby.hooks.provider_launch_guard import (
     _SHELLS,
     _prepare,
-    _substitution_end,
     _unwrap,
 )
 
@@ -161,9 +161,14 @@ def _subjects(command: str, depth: int) -> list[str]:
     segments = _split_segments(scan.tokens)
     if not segments:
         return [command]
-    raw = [
-        command[scan.spans[segment.first][0] : scan.spans[segment.last][1]] for segment in segments
-    ]
+    # A quoted substitution's redirects follow its word with spans inside it,
+    # so a segment's text runs from its earliest start to its latest end.
+    raw: list[str] = []
+    for segment in segments:
+        segment_spans = scan.spans[segment.first : segment.last + 1]
+        raw.append(
+            command[min(start for start, _ in segment_spans) : max(end for _, end in segment_spans)]
+        )
     subjects = [
         text
         if _runs_substitution_output(scan.tokens[segment.first : segment.last + 1])

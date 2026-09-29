@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 
+from gobby.hooks._normalization_bindings import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 from gobby.hooks._normalization_canonical import (
     _classify_shell_segment_without_redirection,
     _merge_shell_segment_metadata,
     _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
-from gobby.hooks._normalization_shell import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 
 pytestmark = pytest.mark.unit
 
