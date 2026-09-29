@@ -3466,7 +3466,7 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
     retried = await execute_spawn(retry)
     assert retried.success is False
     assert retried.error == "retry_terminal_not_pending"
-    assert retried.terminal_id == row.id
+    assert retried.terminal_id is None
     assert len(manager.rows) == 1
 
 
@@ -3664,6 +3664,92 @@ async def test_retry_generation_fences_the_reaper() -> None:
     failed = await execute_spawn(stale)
     assert failed.success is False
     assert failed.error == "retry_terminal_not_pending"
+
+
+@pytest.mark.asyncio
+async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+    )
+    first = await execute_spawn(request)
+    assert first.success is True
+    manager = _manager_of(request)
+    runtime = _runtime_of(request)
+    live = next(iter(manager.rows.values()))
+    assert live.state == "live"
+    stale = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run-stale",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        retry_terminal_id=live.id,
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+        terminal_manager=cast(TerminalManager, manager),
+        terminal_runtime_registry=request.terminal_runtime_registry,
+    )
+    refused = await execute_spawn(stale)
+    assert refused.error == "retry_terminal_not_pending"
+
+    run_storage = MagicMock()
+    run_storage.db = None
+    run_storage.get.return_value = None
+    runner = SimpleNamespace(
+        run_storage=run_storage,
+        terminal_manager=manager,
+        terminal_runtime_registry=request.terminal_runtime_registry,
+        agent_lifecycle_monitor=None,
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+        new_callable=AsyncMock,
+    ):
+        result = await finalize_executed_spawn(
+            runner=runner,
+            run_id="run-stale",
+            spawn_result=refused,
+            spawn_request=stale,
+            isolation_ctx=SimpleNamespace(worktree_id=None, clone_id=None, branch_name=None),
+            effective_isolation="none",
+            base_commit_sha=None,
+            handler=None,
+            spawn_config=None,
+            completion_registry=None,
+            cleanup_isolation_on_failure=False,
+            task_manager=None,
+            session_manager=None,
+            parent_session_id="parent",
+            effective_provider="claude",
+            resolved_task_id=None,
+            task_seq_num=None,
+            db=None,
+            agent_body=None,
+            effective_initial_variables={},
+            reasoning=SimpleNamespace(to_dict=dict),
+        )
+
+    # The refused retry never controlled the row: cleanup neither binds nor kills it.
+    assert result["success"] is False
+    assert runtime.killed == []
+    assert manager.get(live.id) == live
+    assert run_storage.update_runtime.call_args.kwargs["terminal_id"] is None
 
 
 @pytest.mark.asyncio

@@ -6,6 +6,7 @@ import asyncio
 import logging
 import signal
 from collections.abc import Awaitable, Callable, Coroutine
+from contextlib import nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime
 from types import SimpleNamespace
@@ -255,15 +256,16 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
         terminalize_arguments.update(kwargs)
         return True
 
-    async def cleanup_isolation(*_args: Any, **_kwargs: Any) -> None:
-        events.append("cleanup-isolation")
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            events.append("cleanup-isolation")
 
     def delete_child(*_args: Any, **_kwargs: Any) -> None:
         events.append("delete-child")
 
     run_storage = RunStorage()
     runner = SimpleNamespace(run_storage=run_storage, agent_lifecycle_monitor=None)
-    handler = SimpleNamespace()
+    handler = Handler()
     completion_registry = object()
     task_manager = object()
     with (
@@ -271,7 +273,6 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             terminalize,
         ),
-        patch.object(_failure_cleanup, "cleanup_created_isolation", cleanup_isolation),
         patch.object(_failure_cleanup, "_delete_child_session", delete_child),
     ):
         await _failure_cleanup.cleanup_failed_spawn(
@@ -647,15 +648,21 @@ class _RecordingRuntimeRegistry:
         return self.runtime
 
 
+_ATTEMPT: dict[str, Any] = {
+    "attempt_generation": 3,
+    "attempt_started_at": datetime(2026, 9, 29, 12, 0),
+}
+
+
 class _RecordingTerminalManager:
     def __init__(self) -> None:
-        self.transitions: list[tuple[str, str]] = []
+        self.transitions: list[tuple[str, str, dict[str, Any]]] = []
 
-    def fail_pending(self, terminal_id: str) -> None:
-        self.transitions.append(("fail_pending", terminal_id))
+    def fail_pending_attempt(self, terminal_id: str, **attempt: Any) -> None:
+        self.transitions.append(("fail_pending_attempt", terminal_id, attempt))
 
-    def mark_exited(self, terminal_id: str) -> None:
-        self.transitions.append(("mark_exited", terminal_id))
+    def mark_exited_attempt(self, terminal_id: str, **attempt: Any) -> None:
+        self.transitions.append(("mark_exited_attempt", terminal_id, attempt))
 
 
 @pytest.mark.asyncio
@@ -668,6 +675,7 @@ async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
         backend="tmux",
         state="pending",
         spawn_key="gobby-rollback",
+        **_ATTEMPT,
     )
     runtime = MagicMock()
     runtime.is_live = AsyncMock(return_value=True)
@@ -700,7 +708,7 @@ async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
     assert run.capture_id is not None
     assert "provider refused the lease" in (run.result or "")
     assert run.status == "pending"
-    terminal_manager.fail_pending.assert_called_once_with(terminal.id)
+    terminal_manager.fail_pending_attempt.assert_called_once_with(terminal.id, **_ATTEMPT)
 
 
 @pytest.mark.asyncio
@@ -710,6 +718,7 @@ async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None
         backend="native",
         state="live",
         spawn_key="native-orphan",
+        **_ATTEMPT,
     )
     runtime = _RecordingTerminalRuntime()
     runtime_registry = _RecordingRuntimeRegistry(runtime)
@@ -726,17 +735,18 @@ async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None
 
     assert runtime_registry.resolved_backends == ["native"]
     assert runtime.terminations == [(terminal, 0.2)]
-    assert terminal_manager.transitions == [("mark_exited", terminal.id)]
+    assert terminal_manager.transitions == [("mark_exited_attempt", terminal.id, _ATTEMPT)]
 
 
 @pytest.mark.asyncio
 async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
-    for state, transition in (("pending", "fail_pending"), ("live", "mark_exited")):
+    for state, transition in (("pending", "fail_pending_attempt"), ("live", "mark_exited_attempt")):
         terminal = SimpleNamespace(
             id=f"terminal-{state}",
             backend="native",
             state=state,
             spawn_key=f"spawn-{state}",
+            **_ATTEMPT,
         )
         runtime = _RecordingTerminalRuntime()
         runtime_registry = _RecordingRuntimeRegistry(runtime)
@@ -753,7 +763,7 @@ async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
 
         assert runtime_registry.resolved_backends == ["native"]
         assert runtime.terminations == [(terminal, 0.2)]
-        assert terminal_manager.transitions == [(transition, terminal.id)]
+        assert terminal_manager.transitions == [(transition, terminal.id, _ATTEMPT)]
 
 
 _SECRET = "sk-synthetic-secret-marker"
@@ -1008,13 +1018,22 @@ async def test_cleanup_steps_are_independent(
     def runtime_state(*_args: Any, **_kwargs: Any) -> None:
         step("runtime_state")
 
-    async def isolation(*_args: Any, **_kwargs: Any) -> None:
-        step("isolation")
+    # The isolation handler and the session storage fail inside the real helpers.
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            step("isolation")
 
-    def delete_child(*_args: Any, **_kwargs: Any) -> None:
-        step("delete_child_session")
+    class Sessions:
+        def delete(self, _child_session_id: str) -> None:
+            step("delete_child_session")
 
-    runner = SimpleNamespace(run_storage=Runs(db=object()), agent_lifecycle_monitor=None)
+    connection = SimpleNamespace(execute=lambda *_args: None)
+    db = SimpleNamespace(transaction=lambda: nullcontext(connection))
+    runner = SimpleNamespace(
+        run_storage=Runs(db=db),
+        agent_lifecycle_monitor=None,
+        child_session_manager=SimpleNamespace(_storage=Sessions()),
+    )
     caplog.set_level(logging.WARNING, logger=_failure_cleanup.__name__)
     with (
         patch.object(_failure_cleanup, "_terminate_spawn_process", terminate),
@@ -1024,14 +1043,12 @@ async def test_cleanup_steps_are_independent(
             terminalize,
         ),
         patch("gobby.agents.runtime_cleanup.cleanup_agent_runtime_state", runtime_state),
-        patch.object(_failure_cleanup, "cleanup_created_isolation", isolation),
-        patch.object(_failure_cleanup, "_delete_child_session", delete_child),
     ):
         await _failure_cleanup.cleanup_failed_spawn(
             runner,
             "run-7",
             "spawn failed",
-            SimpleNamespace(),
+            Handler(),
             SimpleNamespace(),
             completion_registry=None,
             cleanup_isolation=True,
@@ -1065,10 +1082,11 @@ async def test_cleanup_survives_cancellation() -> None:
         await terminalize_go.wait()
         return True
 
-    async def isolation(*_args: Any, **_kwargs: Any) -> None:
-        ran.append("isolation")
-        isolation_entered.set()
-        await isolation_go.wait()
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            ran.append("isolation")
+            isolation_entered.set()
+            await isolation_go.wait()
 
     def delete_child(*_args: Any, **_kwargs: Any) -> None:
         ran.append("delete_child_session")
@@ -1081,7 +1099,7 @@ async def test_cleanup_survives_cancellation() -> None:
             SimpleNamespace(run_storage=runs, agent_lifecycle_monitor=None),
             "run-1",
             "spawn failed",
-            SimpleNamespace(),
+            Handler(),
             SimpleNamespace(),
             completion_registry=None,
             cleanup_isolation=True,
@@ -1094,7 +1112,6 @@ async def test_cleanup_survives_cancellation() -> None:
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             terminalize,
         ),
-        patch.object(_failure_cleanup, "cleanup_created_isolation", isolation),
         patch.object(_failure_cleanup, "_delete_child_session", delete_child),
     ):
         caller = asyncio.create_task(cleanup())

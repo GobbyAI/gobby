@@ -279,7 +279,11 @@ async def _cleanup_isolation_step(
         return
 
     async def remove() -> None:
-        await cleanup_created_isolation(handler, spawn_config, cleanup=True)
+        # Logged here with its context: the in-doubt owner may run this removal later.
+        try:
+            await handler.cleanup_environment(spawn_config)
+        except Exception as exc:
+            _log_step_failure("isolation", run_id, terminal_id, exc)
 
     if held and terminal_id is not None:
         # The in-doubt owner runs the removal once after a proven settlement.
@@ -391,21 +395,15 @@ def _delete_child_session(
     session_storage = getattr(getattr(runner, "child_session_manager", None), "_storage", None)
     if session_storage is None:
         return
-    try:
-        db = getattr(run_storage, "db", None) or getattr(session_storage, "db", None)
-        if db is not None:
-            with db.transaction() as conn:
-                conn.execute(
-                    "UPDATE agent_runs SET child_session_id = NULL WHERE id = %s",
-                    (run_id,),
-                )
-        session_storage.delete(child_session_id)
-    except Exception as exc:
-        logger.warning(
-            "Failed to delete failed spawn child session %s: %s",
-            child_session_id,
-            type(exc).__name__,
-        )
+    # Failures reach the delete_child_session step, which logs them with context.
+    db = getattr(run_storage, "db", None) or getattr(session_storage, "db", None)
+    if db is not None:
+        with db.transaction() as conn:
+            conn.execute(
+                "UPDATE agent_runs SET child_session_id = NULL WHERE id = %s",
+                (run_id,),
+            )
+    session_storage.delete(child_session_id)
 
 
 async def _terminate_spawn_process(
@@ -502,10 +500,15 @@ async def _kill_spawn_terminal(
             attempt_started_at=terminal.attempt_started_at,
         )
         return False
+    # Settle only the attempt that was killed; a newer attempt keeps the row.
+    attempt = {
+        "attempt_generation": terminal.attempt_generation,
+        "attempt_started_at": terminal.attempt_started_at,
+    }
     if terminal.state == "pending":
-        await asyncio.to_thread(terminal_manager.fail_pending, terminal.id)
+        await asyncio.to_thread(terminal_manager.fail_pending_attempt, terminal.id, **attempt)
     elif terminal.state in {"live", "orphaned"}:
-        await asyncio.to_thread(terminal_manager.mark_exited, terminal.id)
+        await asyncio.to_thread(terminal_manager.mark_exited_attempt, terminal.id, **attempt)
     return True
 
 
