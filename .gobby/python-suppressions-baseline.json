@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 195,
+  "site_count": 194,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -571,16 +571,6 @@
         "N802"
       ],
       "statement": "def do_POST ( self ) -> None :"
-    },
-    {
-      "fingerprint": "bb40af065b49e8f65a0ada40b12cf6f650fb4c155298d5b90b77b288302790c3",
-      "path": "tests/e2e/test_build_dispatcher_autonomy.py",
-      "symbol": "MiniBuildHarness.assert_clean_final_state",
-      "directive": "noqa",
-      "codes": [
-        "SLF001"
-      ],
-      "statement": "await wait_for_async_condition ( lambda : not self . loop . _project_tasks , timeout = 2.0 , description = \"scheduled dispatcher tasks drained\" , )"
     },
     {
       "fingerprint": "2cc2bff1e987c33fb412a28eae4a5846cd7c7e621e34a897a70c40f7b33f30fc",
