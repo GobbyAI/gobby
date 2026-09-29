@@ -19,6 +19,8 @@ function makeMemory(overrides: Partial<GobbyMemory> = {}): GobbyMemory {
     importance: 0.5,
     access_count: 0,
     last_accessed_at: null,
+    surfaced_count: 0,
+    last_surfaced_at: null,
     tags: [],
     deleted_at: "2026-06-14T00:00:00Z",
     dream_action: "review",
@@ -53,5 +55,24 @@ describe("MemoryDetailPanel", () => {
 
     await waitFor(() => expect(onRestore).toHaveBeenCalledTimes(1));
     expect(labelsSeenByRestore[0]).toContain("Restoring");
+  });
+
+  it("renders the surfaced count beside accesses", () => {
+    render(
+      <MemoryDetailPanel
+        memory={makeMemory({ access_count: 2, surfaced_count: 17 })}
+        onSave={vi.fn(async () => true)}
+        onConfirmLeaveChange={vi.fn()}
+        onRestore={vi.fn()}
+        purgeGraceDays={{ review: 90, delete: 30 }}
+      />,
+    );
+
+    const surfaced = screen.getByText("Surfaced");
+    expect(surfaced.tagName).toBe("DT");
+    expect(surfaced.nextElementSibling?.textContent).toBe("17");
+    expect(screen.getByText("Accesses").nextElementSibling?.textContent).toBe(
+      "2",
+    );
   });
 });

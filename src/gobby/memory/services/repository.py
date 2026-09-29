@@ -64,6 +64,8 @@ class MemoryRepository:
             created_by_agent=record.created_by_agent,
             access_count=record.access_count,
             last_accessed_at=record.last_accessed_at,
+            surfaced_count=record.surfaced_count,
+            last_surfaced_at=record.last_surfaced_at,
             tags=record.tags or [],
             deleted_at=record.deleted_at,
             dream_action=cast(Literal["review", "delete"] | None, record.dream_action),

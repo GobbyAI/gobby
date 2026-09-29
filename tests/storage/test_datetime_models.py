@@ -107,6 +107,8 @@ def test_memory_from_row_normalizes_access_timestamps() -> None:
             "source_session_id": None,
             "access_count": 1,
             "last_accessed_at": "2026-01-01T02:00:00",
+            "surfaced_count": 4,
+            "last_surfaced_at": "2026-01-01T03:00:00",
             "tags": '["datetime"]',
             "deleted_at": None,
             "dream_action": None,
@@ -117,3 +119,5 @@ def test_memory_from_row_normalizes_access_timestamps() -> None:
     assert memory.created_at == datetime(2026, 1, 1, 0, 0, tzinfo=UTC)
     assert memory.last_accessed_at == datetime(2026, 1, 1, 2, 0, tzinfo=UTC)
     assert memory.to_dict()["last_accessed_at"] == "2026-01-01T02:00:00+00:00"
+    assert memory.last_surfaced_at == datetime(2026, 1, 1, 3, 0, tzinfo=UTC)
+    assert memory.to_dict()["last_surfaced_at"] == "2026-01-01T03:00:00+00:00"

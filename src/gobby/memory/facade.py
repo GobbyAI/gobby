@@ -16,6 +16,7 @@ from gobby.memory.services.search import DEFAULT_SEARCH_LIMIT, SearchService
 from gobby.memory.write_result import MemoryWriteOutcome
 from gobby.storage.memories import ALL_MEMORIES, Memory, MemoryScope, Visibility
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
 _PURGE_SECONDARY_BATCH_SIZE = 64
@@ -213,8 +214,9 @@ class MemoryManagerFacadeMethods:
             include_global=include_global,
         )
 
-    async def _update_access_stats(self, memories: list[Memory]) -> None:
-        await self._search_service.update_access_stats(memories)
+    async def record_memory_access(self, memory_id: str) -> None:
+        """Count one direct fetch of a memory as an access."""
+        await self.run_db(self.storage.update_access_stats, memory_id, utc_now())
 
     async def _search_graph_for_memories(
         self,

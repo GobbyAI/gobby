@@ -227,6 +227,8 @@ export function MemoryDetailPanel({
           </dd>
           <dt className="text-muted-foreground">Accesses</dt>
           <dd className="text-foreground">{memory.access_count}</dd>
+          <dt className="text-muted-foreground">Surfaced</dt>
+          <dd className="text-foreground">{memory.surfaced_count}</dd>
           {hidden && (
             <>
               <dt className="text-muted-foreground">Flagged</dt>

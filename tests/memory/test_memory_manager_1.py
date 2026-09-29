@@ -461,9 +461,9 @@ class TestAccessStats:
 
     @pytest.mark.asyncio
     async def test_update_access_stats_empty_list(self, memory_manager: MemoryManager) -> None:
-        """Test _update_access_stats handles empty list."""
+        """Test search-service access stats handle empty list."""
         with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
-            result = await memory_manager._update_access_stats([])
+            result = await memory_manager._search_service.update_access_stats([])
 
         assert result is None
         assert update_access_stats.call_count == 0
@@ -472,20 +472,20 @@ class TestAccessStats:
     async def test_update_access_stats_invalid_timestamp(
         self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
-        """Test _update_access_stats handles invalid timestamps gracefully."""
+        """Test search-service access stats handle invalid timestamps gracefully."""
         manager = MemoryManager(db=db, config=memory_config)
 
         memory = MagicMock(spec=Memory)
         memory.id = "mm-test"
         memory.last_accessed_at = "invalid-timestamp"
 
-        assert await manager._update_access_stats([memory]) is None
+        assert await manager._search_service.update_access_stats([memory]) is None
 
     @pytest.mark.asyncio
     async def test_update_access_stats_no_timezone(
         self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
-        """Test _update_access_stats handles timestamps without timezone."""
+        """Test search-service access stats handle timestamps without timezone."""
         manager = MemoryManager(db=db, config=memory_config)
 
         real_memory = manager.storage.create_memory(
@@ -496,10 +496,29 @@ class TestAccessStats:
         memory.id = real_memory.id
         memory.last_accessed_at = "2024-01-01T00:00:00"
 
-        await manager._update_access_stats([memory])
+        await manager._search_service.update_access_stats([memory])
 
         updated = manager.get_memory(real_memory.id)
         assert updated.access_count >= 1
+
+
+@pytest.mark.asyncio
+async def test_record_memory_access(memory_manager: MemoryManager) -> None:
+    memory = await memory_manager.create_memory(content="Fetched memory")
+
+    await memory_manager.record_memory_access(memory.id)
+    once = memory_manager.get_memory(memory.id)
+    assert once is not None
+    assert once.access_count == 1
+    assert once.last_accessed_at is not None
+
+    await memory_manager.record_memory_access(memory.id)
+    twice = memory_manager.get_memory(memory.id)
+    assert twice is not None
+    assert twice.access_count == 2
+    assert twice.last_accessed_at is not None
+    assert twice.surfaced_count == 0
+    assert not hasattr(memory_manager, "_update_access_stats")
 
 
 # =============================================================================
@@ -755,7 +774,7 @@ class TestEdgeCases:
     async def test_update_access_stats_exception_handling(
         self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
-        """Test _update_access_stats handles storage exceptions."""
+        """Test search-service access stats handle storage exceptions."""
         manager = MemoryManager(db=db, config=memory_config)
 
         memory = MagicMock(spec=Memory)
@@ -765,7 +784,7 @@ class TestEdgeCases:
         with patch.object(manager.storage, "update_access_stats") as mock_update:
             mock_update.side_effect = Exception("Database error")
 
-            assert await manager._update_access_stats([memory]) is None
+            assert await manager._search_service.update_access_stats([memory]) is None
             assert mock_update.call_count == 1
 
 
