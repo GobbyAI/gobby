@@ -185,6 +185,7 @@ def show_memory(ctx: click.Context, memory_ref: str, project_ref: str | None = N
     click.echo(f"Updated: {memory.updated_at}")
     click.echo(f"Source: {memory.source_type}")
     click.echo(f"Access Count: {memory.access_count}")
+    click.echo(f"Surfaced: {memory.surfaced_count}")
     if memory.tags:
         click.echo(f"Tags: {', '.join(memory.tags)}")
     click.echo(f"Content:\n{memory.content}")

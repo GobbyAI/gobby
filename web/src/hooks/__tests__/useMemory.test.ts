@@ -22,6 +22,8 @@ const SAMPLE_MEMORIES = [
     importance: 0.8,
     access_count: 3,
     last_accessed_at: "2026-03-01T12:00:00Z",
+    surfaced_count: 11,
+    last_surfaced_at: "2026-03-01T13:00:00Z",
     tags: ["typescript", "types"],
   },
   {
@@ -83,6 +85,19 @@ describe("useMemory", () => {
 
     expect(result.current.memories[0].tags).toEqual(["typescript", "types"]);
     expect(result.current.memories[1].tags).toEqual(["testing", "vitest"]);
+  });
+
+  it("normalizes surfaced stats with missing fields as zero and null", async () => {
+    const { result } = renderHook(() => useMemory());
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(result.current.memories[0].surfaced_count).toBe(11);
+    expect(result.current.memories[0].last_surfaced_at).toBe(
+      "2026-03-01T13:00:00Z",
+    );
+    expect(result.current.memories[1].surfaced_count).toBe(0);
+    expect(result.current.memories[1].last_surfaced_at).toBeNull();
   });
 
   it("fetches stats on mount", async () => {

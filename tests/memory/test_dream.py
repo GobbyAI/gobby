@@ -51,6 +51,7 @@ from gobby.memory.dream.planner import (
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import MemoryDreamService
 from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.storage_journal import _MEMORY_COLUMNS
 from gobby.memory.dream.storage_runs import (
     INTERRUPTED_CANCELLED_ERROR,
     INTERRUPTED_RESTART_ERROR,
@@ -1599,6 +1600,7 @@ class _Cursor:
 
 _MEMORY_TIMESTAMPTZ_COLUMNS = (
     "last_accessed_at",
+    "last_surfaced_at",
     "created_at",
     "updated_at",
     "deleted_at",
@@ -1718,25 +1720,7 @@ class _FakeDreamDB:
         elif normalized.startswith("DELETE FROM memories"):
             self.memories.pop(str(params[0]), None)
         elif normalized.startswith("INSERT INTO memories"):
-            columns = (
-                "id",
-                "project_id",
-                "is_global",
-                "memory_type",
-                "content",
-                "source_type",
-                "source_session_id",
-                "access_count",
-                "last_accessed_at",
-                "tags",
-                "graph_processed",
-                "created_at",
-                "updated_at",
-                "deleted_at",
-                "dream_action",
-                "last_dreamed_at",
-            )
-            row = dict(zip(columns, params, strict=True))
+            row = dict(zip(_MEMORY_COLUMNS, params, strict=True))
             # Postgres casts text params bound to TIMESTAMPTZ columns, so a
             # restored row reads back with datetime values; mirror that here.
             for column in _MEMORY_TIMESTAMPTZ_COLUMNS:
@@ -1875,6 +1859,38 @@ def test_restore_memory_row_rejects_incomplete_snapshot() -> None:
 
     with pytest.raises(ValueError, match="missing columns: updated_at"):
         store.restore_memory_row(row)
+
+
+def test_journal_round_trip_keeps_surfaced_stats() -> None:
+    db = _FakeDreamDB()
+    store = _dream_store(db)
+    accessed_at = datetime(2025, 2, 1, tzinfo=UTC)
+    surfaced_at = datetime(2025, 3, 1, tzinfo=UTC)
+    row = dict(
+        _row("memory-1", "content"),
+        access_count=2,
+        last_accessed_at=accessed_at,
+        surfaced_count=9,
+        last_surfaced_at=surfaced_at,
+    )
+
+    candidate = memory_to_candidate(SimpleNamespace(**row), datetime(2025, 4, 1, tzinfo=UTC))
+    assert (candidate.access_count, candidate.surfaced_count) == (2, 9)
+    prompt = candidate.to_prompt_dict()
+    assert prompt["surfaced_count"] == 9
+    assert prompt["last_surfaced_at"] == surfaced_at.isoformat()
+
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+    snapshot_id = store.insert_snapshot(
+        run_id=run_id, memory_id="memory-1", action="delete", before_data=row
+    )
+    store.complete_snapshot(snapshot_id, after_data=row)
+    before = store.list_snapshots(run_id)[0]["before_data"]
+    store.restore_memory_row(before)
+
+    restored = db.memories["memory-1"]
+    assert (restored["access_count"], restored["last_accessed_at"]) == (2, accessed_at)
+    assert (restored["surfaced_count"], restored["last_surfaced_at"]) == (9, surfaced_at)
 
 
 def test_snapshots_serialize_datetime_rows_to_iso_strings() -> None:
@@ -3567,6 +3583,9 @@ class _FencedConn:
             return _FencedCursor()
         if normalized.startswith("SELECT pg_advisory_xact_lock"):
             return _FencedCursor(row={"pg_advisory_xact_lock_shared": None})
+        if normalized.startswith("INSERT INTO memories"):
+            self.db.execute(sql, params)
+            return _FencedCursor()
         if normalized.startswith("INSERT INTO embedding_projection_changes"):
             events = self.db.projection_changes
             events.append(

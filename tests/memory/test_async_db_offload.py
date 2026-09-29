@@ -67,7 +67,7 @@ async def test_recall_access_stats_do_not_block_event_loop(memory_manager: Memor
         side_effect=_blocking_call(storage.update_access_stats, started, release),
     ):
         await _assert_event_loop_progresses(
-            memory_manager._update_access_stats([memory]), started, release
+            memory_manager.record_memory_access(memory.id), started, release
         )
 
 

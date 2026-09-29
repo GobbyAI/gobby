@@ -45,6 +45,8 @@ function normalizeMemory(record: Record<string, unknown>): GobbyMemory {
     importance: normalizeImportance(record.importance),
     access_count: normalizeCount(record.access_count),
     last_accessed_at: normalizeNullableString(record.last_accessed_at),
+    surfaced_count: normalizeCount(record.surfaced_count),
+    last_surfaced_at: normalizeNullableString(record.last_surfaced_at),
     tags: normalizeTags(record.tags),
     deleted_at: normalizeNullableString(record.deleted_at),
     dream_action: normalizeNullableString(record.dream_action),
@@ -82,6 +84,8 @@ export interface GobbyMemory {
   importance: number;
   access_count: number;
   last_accessed_at: string | null;
+  surfaced_count: number;
+  last_surfaced_at: string | null;
   tags: string[] | null;
   // Dream GC soft-delete fields (#17165). Set once the nightly dream sweep
   // flags a memory; null for active rows and pre-migration snapshots.
