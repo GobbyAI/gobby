@@ -9347,10 +9347,11 @@ async fn a_named_session_event_refetches_only_its_project() {
 
 /// The live loop keeps one sidebar refetch in flight: while an agent-runs read
 /// is still waiting on the daemon, another session event queues its refresh
-/// instead of issuing a second read, and that refresh goes out once the first
-/// read answers. The second event lands after the session retry window (at
-/// most 2 s from the first start) and before the 5 s request deadline, so
-/// only the loop's single refetch slot can be holding it back.
+/// instead of issuing a second read. The held read then fails, and the retry
+/// it re-queues is the only read that follows. The second event lands after
+/// the session retry window (at most 2 s from the first start) and before the
+/// 5 s request deadline, so only the loop's single refetch slot can be holding
+/// it back.
 #[tokio::test]
 async fn an_agent_runs_read_in_flight_holds_the_next_refetch() {
     let mock = MockDaemon::start("local-token").await;
@@ -9377,8 +9378,8 @@ async fn an_agent_runs_read_in_flight_holds_the_next_refetch() {
     let release = mock.enqueue_held(
         "GET",
         "/api/agents/runs?",
-        200,
-        json!({"status": "success", "runs": [], "count": 0}),
+        500,
+        json!({"detail": "agent runs unavailable"}),
     );
     let session_event = json!({
         "type": "session_event",
@@ -9410,6 +9411,16 @@ async fn an_agent_runs_read_in_flight_holds_the_next_refetch() {
         assert_eq!(runs(), before + 1);
         release.notify_one();
         wait_until(|| runs() == before + 2).await;
+        let third_read = timeout(Duration::from_millis(500), async {
+            while runs() == before + 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            third_read.is_err(),
+            "the failed read is retried once, not alongside another read"
+        );
         drop(input_tx);
     };
     let mut switch = TerminalGuard::recording().0;
