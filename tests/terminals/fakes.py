@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
+from gobby.storage.terminal_settlement import HOST_PROCESS_KEYS
 from gobby.storage.terminals import (
     UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES,
     UNRESOLVED_WRITE_MAX_ENTRIES,
@@ -349,7 +350,12 @@ class MemoryTerminalStore:
         current.locator = dict(locator)
         current.locator_key = locator_key
         current.host_epoch = host_epoch
-        current.process = {**(current.process or {}), **(process or {})}
+        kept = {
+            key: value
+            for key, value in (current.process or {}).items()
+            if key not in HOST_PROCESS_KEYS
+        }
+        current.process = {**kept, **(process or {})}
         return current
 
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:

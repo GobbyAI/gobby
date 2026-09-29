@@ -84,8 +84,9 @@ def _usable_process_group(process: Mapping[str, Any]) -> bool:
 async def _await_group_exit(terminal: Terminal, grace_seconds: float) -> None:
     """Prove a killed terminal's recorded group died before its row may settle.
 
-    gterm acks a kill once SIGTERM is sent and SIGKILL is only scheduled, so a
-    group that ignores SIGTERM outlives the ack when the host dies in grace.
+    gterm 0.1.3 acks a kill only after its group is gone, but an older host
+    acks once SIGTERM is sent, so a group that ignores SIGTERM can outlive
+    that ack. The daemon checks the recorded group itself either way.
     """
     process = terminal.process
     if process is None or not _usable_process_group(process):

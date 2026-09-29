@@ -403,7 +403,11 @@ impl HostState {
             },
         };
         let mut inner = self.inner.lock().await;
-        let Some(slot) = inner.terminals.get_mut(&identity) else {
+        let Some(slot) = inner
+            .terminals
+            .get_mut(&identity)
+            .filter(|slot| !slot.killing)
+        else {
             return err("not_found");
         };
         if slot.commit_state == CommitState::Committed {
@@ -424,6 +428,15 @@ impl HostState {
             None => CommitResult::Committed,
         };
         let mut inner = self.inner.lock().await;
+        // A kill that began while the commit waited owns the slot: its
+        // death is neither an exec nor a commit failure to reap here.
+        if inner
+            .terminals
+            .get(&identity)
+            .is_some_and(|slot| slot.killing)
+        {
+            return err("not_found");
+        }
         #[cfg(feature = "vt-engine")]
         match outcome {
             CommitResult::Committed => {}
@@ -482,10 +495,10 @@ impl HostState {
                 };
                 {
                     let mut inner = watch_state.inner.lock().await;
-                    let still_same_slot = inner
-                        .terminals
-                        .get(&watch_identity)
-                        .is_some_and(|slot| slot.host_terminal_id == watch_host_terminal_id);
+                    let still_same_slot =
+                        inner.terminals.get(&watch_identity).is_some_and(|slot| {
+                            slot.host_terminal_id == watch_host_terminal_id && !slot.killing
+                        });
                     if still_same_slot {
                         remove_terminal_slot(&mut inner, &watch_identity, None);
                     }
@@ -511,46 +524,44 @@ impl HostState {
     ) -> Value {
         let host_terminal_id = s(extra, "host_terminal_id");
         let grace_ms = grace_ms.unwrap_or(100);
-        // Take the slot out of inventory before signalling, so a commit waiting
-        // on it reports not_found instead of reading the death as an exec.
-        let (identity, slot) = {
+        // Mark the slot in flight and keep it listed: a listing taken during
+        // the grace window must not read a live group as absent. Commits and
+        // reapers leave a marked slot to this kill.
+        let (identity, pgid) = {
             let mut inner = self.inner.lock().await;
             let Some(identity) = inner.by_host_id.get(&host_terminal_id).cloned() else {
                 return json!({"ok": true, "killed": false});
             };
-            if inner
-                .terminals
-                .get(&identity)
-                .is_some_and(|slot| slot.locator.is_some())
-            {
-                return err("not_native");
-            }
-            let Some(slot) = inner.terminals.remove(&identity) else {
+            let Some(slot) = inner.terminals.get_mut(&identity) else {
                 return json!({"ok": true, "killed": false});
             };
-            inner.by_host_id.remove(&host_terminal_id);
-            (identity, slot)
+            if slot.locator.is_some() {
+                return err("not_native");
+            }
+            if slot.killing {
+                return err("kill_in_progress");
+            }
+            slot.killing = true;
+            (identity, slot.pgid)
         };
         // Ack only once the group is proven gone, so a host that dies
         // mid-kill never acked a live child. The proof runs in its own task:
-        // a dropped connection cancels this request, and the removed slot
-        // must still be finalized or restored.
+        // a dropped connection cancels this request, and the marked slot
+        // must still be removed or released.
         let state = Arc::clone(self);
         let grace = Duration::from_millis(grace_ms);
         let proof = tokio::spawn(async move {
-            let proven = terminate_group(slot.pgid, grace).await;
+            let proven = terminate_group(pgid, grace).await;
             let mut inner = state.inner.lock().await;
-            if !proven {
-                tracing::warn!(pgid = slot.pgid, %host_terminal_id, "kill left the process group alive");
-                if !inner.terminals.contains_key(&identity) {
-                    inner.by_host_id.insert(host_terminal_id, identity.clone());
-                    inner.terminals.insert(identity, slot);
+            if proven {
+                remove_terminal_slot(&mut inner, &identity, None);
+            } else {
+                tracing::warn!(pgid, %host_terminal_id, "kill left the process group alive");
+                if let Some(slot) = inner.terminals.get_mut(&identity) {
+                    slot.killing = false;
                 }
-                return false;
             }
-            inner.reservations.remove(&slot.reservation_id);
-            remove_slot_attachments(&mut inner, &slot);
-            true
+            proven
         });
         match proof.await {
             Ok(true) => json!({"ok": true, "killed": true}),
@@ -652,7 +663,8 @@ impl HostState {
             .terminals
             .iter()
             .filter(|(_, slot)| {
-                slot.commit_state == CommitState::Prepared
+                !slot.killing
+                    && slot.commit_state == CommitState::Prepared
                     && slot.commit_deadline.is_some_and(|deadline| deadline <= now)
             })
             .map(|(identity, _)| identity.clone())
@@ -665,7 +677,8 @@ impl HostState {
             .terminals
             .iter()
             .filter(|(_, slot)| {
-                slot.commit_state == CommitState::Committed
+                !slot.killing
+                    && slot.commit_state == CommitState::Committed
                     && slot
                         .child
                         .as_ref()

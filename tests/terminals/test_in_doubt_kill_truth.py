@@ -11,6 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.storage.hub.protocol import HubDatabase
@@ -423,6 +424,24 @@ def test_record_orphan_identity_cas(
     assert recorded.process is not None
     assert recorded.process["pgid"] == 8181
     assert recorded.process["host_terminal_id"] == "ht-recovered"
+
+    # A later host that lists no pgid must not inherit the earlier host's
+    # group, while spawn metadata such as the shell survives.
+    temp_db.execute(
+        "UPDATE terminals SET process = process || %s WHERE id = %s",
+        (Jsonb({"shell": "zsh"}), orphaned.id),
+    )
+    rerecorded = manager.record_orphan_identity(
+        orphaned.id,
+        attempt_generation=orphaned.attempt_generation,
+        attempt_started_at=orphaned.attempt_started_at,
+        locator={"host_terminal_id": "ht-next"},
+        locator_key=native_locator_key("epoch-next", "ht-next"),
+        host_epoch="epoch-next",
+        process={"host_terminal_id": "ht-next"},
+    )
+    assert rerecorded is not None
+    assert rerecorded.process == {"host_terminal_id": "ht-next", "shell": "zsh"}
 
     pending = manager.create_pending(
         terminal_id=str(uuid.uuid4()),

@@ -22,6 +22,8 @@ from gobby.utils.datetime import utc_now
 UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES = 256
 UNRESOLVED_WRITE_MAX_ENTRIES = 32
 UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
+# Process keys owned by the host that listed the terminal, replaced as a set.
+HOST_PROCESS_KEYS = ("host_terminal_id", "pgid", "start_time")
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
@@ -305,6 +307,8 @@ class TerminalSettlementMixin:
 
         ``locator`` must already be the normalized native locator. The captured
         attempt pair guards against a row that moved on since it was reread.
+        The prior host's process keys are dropped first, so a listing without a
+        pgid cannot inherit a stale group as kill proof.
         """
         row = self.db.fetchone(
             """
@@ -312,7 +316,7 @@ class TerminalSettlementMixin:
             SET locator = %s,
                 locator_key = %s,
                 host_epoch = %s,
-                process = COALESCE(process, '{}'::jsonb) || %s,
+                process = (COALESCE(process, '{}'::jsonb) - %s::text[]) || %s,
                 updated_at = now()
             WHERE id = %s
               AND state = 'orphaned'
@@ -324,6 +328,7 @@ class TerminalSettlementMixin:
                 Jsonb(dict(locator)),
                 locator_key,
                 host_epoch,
+                list(HOST_PROCESS_KEYS),
                 Jsonb(dict(process or {})),
                 str(UUID(terminal_id)),
                 attempt_generation,

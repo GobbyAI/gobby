@@ -354,7 +354,19 @@ async def reconcile_host_inventory(
                     )
             continue
         if durable.state == "live" and durable.host_epoch == host_epoch:
-            await _settle_offloop(partial(terminal_manager.mark_exited, durable.id))
+            # Absence settles only a dead group: a kill in flight holds the
+            # lock, and a host may drop a slot before its group is gone.
+            async with terminal_manager.settle_lock(durable.id):
+                current = await asyncio.to_thread(terminal_manager.get, durable.id)
+                if (
+                    current is not None
+                    and current.state == "live"
+                    and current.host_epoch == host_epoch
+                    and current.attempt_generation == durable.attempt_generation
+                    and current.attempt_started_at == durable.attempt_started_at
+                    and not recorded_process_group_is_alive(current.process)
+                ):
+                    await _settle_offloop(partial(terminal_manager.mark_exited, durable.id))
             continue
         if durable.state == "live" and durable.host_epoch != host_epoch:
             await _settle_offloop(

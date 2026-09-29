@@ -424,6 +424,61 @@ fn kill_acks_only_after_group_exit() {
 }
 
 #[test]
+fn kill_in_flight_stays_listed() {
+    let (_dir, mut host, mut stream) = test_host("control-token-kill-listed");
+    let (terminal_id, spawn_key, host_terminal_id, pgid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "kill-listed",
+        &["sh", "-c", "trap '' TERM; exec sleep 30"],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    wait_until("TERM-ignoring sleep leader", || {
+        process_name(pgid).as_deref() == Some("sleep")
+    });
+    let grace = Duration::from_millis(600);
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": grace.as_millis() as u64,
+        }),
+    );
+    // Every listing answered before the kill ack, across the whole grace
+    // window, must still see the live group.
+    let started = Instant::now();
+    let mut listings = 0;
+    let killed = loop {
+        send_json(&mut stream, &json!({"method": "list"}));
+        let reply = recv_json(&mut stream);
+        if reply.get("terminals").is_none() {
+            // The kill ack overtook this list; drain the list reply.
+            recv_json(&mut stream);
+            break reply;
+        }
+        let listed = reply["terminals"]
+            .as_array()
+            .expect("terminal rows")
+            .iter()
+            .any(|row| row["host_terminal_id"] == host_terminal_id);
+        assert!(listed, "in-flight kill listed as absent: {reply}");
+        listings += 1;
+    };
+    assert_eq!(killed["killed"], true, "{killed}");
+    assert!(
+        started.elapsed() >= grace,
+        "kill acked inside the grace window"
+    );
+    assert!(listings > 0, "no listing landed inside the grace window");
+    assert_no_terminals(&mut stream);
+}
+
+#[test]
 fn preexec_signal_settles_as_exit_and_injected_faults_never_commit() {
     let (_dir, mut host, mut stream) = test_host("control-token-preexec-faults");
     let (terminal_id, spawn_key, _, _) = prepare_terminal(

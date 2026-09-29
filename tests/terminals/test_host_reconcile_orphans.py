@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any
 from unittest.mock import patch
 
 import pytest
+from psycopg.types.json import Jsonb
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
@@ -57,6 +60,22 @@ class _ChangingManager(TerminalManager):
         if change is not None:
             change()
         return super().get(terminal_id)
+
+
+class _LockWatchingManager(TerminalManager):
+    """Signals when a caller starts waiting on a watched terminal's settle lock."""
+
+    def __init__(self, db: HubDatabase) -> None:
+        super().__init__(db)
+        self.requested: dict[str, asyncio.Event] = {}
+
+    @asynccontextmanager
+    async def settle_lock(self, terminal_id: str) -> AsyncIterator[None]:
+        event = self.requested.get(terminal_id)
+        if event is not None:
+            event.set()
+        async with super().settle_lock(terminal_id):
+            yield
 
 
 @pytest.fixture
@@ -280,3 +299,76 @@ async def test_reconcile_settles_current_epoch_orphan_on_host_absence(
         row = manager.get(kept.id)
         assert row is not None
         assert row.state == "orphaned"
+
+
+def _current_epoch_live(manager: TerminalManager, project_id: str, pgid: int) -> Terminal:
+    tid = str(uuid.uuid4())
+    pending = manager.create_pending(
+        terminal_id=tid,
+        project_id=project_id,
+        backend="native",
+        ownership="gobby",
+        spawn_key=tid,
+        machine_id=require_machine_id(),
+    )
+    host_id = f"ht-live-{tid[:8]}"
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": host_id},
+        locator_key=native_locator_key(CURRENT_EPOCH, host_id),
+        host_epoch=CURRENT_EPOCH,
+    )
+    assert live is not None
+    manager.db.execute(
+        "UPDATE terminals SET process = %s WHERE id = %s",
+        (Jsonb({"host_terminal_id": host_id, "pgid": pgid, "start_time": 1.0}), live.id),
+    )
+    return live
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+@pytest.mark.asyncio
+async def test_reconcile_exits_absent_live_row_only_once_its_group_is_dead(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _LockWatchingManager(temp_db)
+    project_id = sample_project["id"]
+    alive = _current_epoch_live(manager, project_id, pgid=7001)
+    dead = _current_epoch_live(manager, project_id, pgid=7002)
+    locked = _current_epoch_live(manager, project_id, pgid=7003)
+    # An old host drops a slot while its kill is still proving the group
+    # gone, so absence alone must not settle a group that is still alive.
+    monkeypatch.setattr(
+        "gobby.terminals.host_reconcile.recorded_process_group_is_alive",
+        lambda process: process is not None and process.get("pgid") == 7001,
+    )
+
+    async def record_kill(host_terminal_id: str) -> None:
+        raise AssertionError(f"reconcile killed {host_terminal_id}")
+
+    async with manager.settle_lock(locked.id):
+        requested = manager.requested[locked.id] = asyncio.Event()
+        reconcile = asyncio.create_task(
+            reconcile_host_inventory(
+                terminal_manager=manager,
+                machine_id=require_machine_id(),
+                host_epoch=CURRENT_EPOCH,
+                host_rows=[],
+                spawn_in_doubt_seconds=30.0,
+                run_manager=None,
+                kill=record_kill,
+            )
+        )
+        # Reconcile must queue behind the kill's lock instead of settling.
+        await asyncio.wait_for(requested.wait(), timeout=10)
+        waiting = manager.get(locked.id)
+        assert waiting is not None
+        assert waiting.state == "live", "reconcile settled a row an in-flight kill holds"
+    await reconcile
+
+    states = {
+        row.id: row.state for row in (manager.get(t.id) for t in (alive, dead, locked)) if row
+    }
+    assert states == {alive.id: "live", dead.id: "exited", locked.id: "exited"}

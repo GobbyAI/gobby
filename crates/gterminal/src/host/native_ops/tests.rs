@@ -1,6 +1,92 @@
 use super::{kill_group, snapshot_mode, truncate_snapshot, KillGroupError};
+use crate::host::config::HostConfig;
+use crate::host::state::{insert_native_slot, HostState};
 use crate::protocol::SnapshotMode;
 use serde_json::{json, Map, Value};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::watch;
+
+fn object(value: Value) -> Map<String, Value> {
+    value.as_object().cloned().expect("json object")
+}
+
+async fn slot_killing(state: &HostState, host_terminal_id: &str) -> Option<bool> {
+    let inner = state.inner.lock().await;
+    let identity = inner.by_host_id.get(host_terminal_id)?;
+    inner.terminals.get(identity).map(|slot| slot.killing)
+}
+
+async fn listed(state: &HostState, host_terminal_id: &str) -> bool {
+    let listing = state.list_json().await;
+    listing["terminals"]
+        .as_array()
+        .expect("terminal rows")
+        .iter()
+        .any(|row| row["host_terminal_id"] == host_terminal_id)
+}
+
+#[tokio::test]
+async fn unproven_kill_stays_listed_and_refuses_overlap() {
+    // SAFETY: geteuid has no preconditions.
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: as root, signalling process group 1 would reach init");
+        return;
+    }
+    let (shutdown, _) = watch::channel(false);
+    let state = HostState::new(
+        HostConfig::default(),
+        "control".to_string(),
+        "local".to_string(),
+        "epoch".to_string(),
+        "version".to_string(),
+        1,
+        shutdown,
+    );
+    insert_native_slot(&state, "ht-unprovable", 24, 80).await;
+    {
+        let mut inner = state.inner.lock().await;
+        let identity = inner.by_host_id["ht-unprovable"].clone();
+        // A group this user may not signal answers every probe with EPERM,
+        // so its death can never be proven.
+        inner.terminals.get_mut(&identity).expect("slot").pgid = 1;
+    }
+    let target = object(json!({"host_terminal_id": "ht-unprovable"}));
+    let first = tokio::spawn({
+        let state = Arc::clone(&state);
+        let target = target.clone();
+        async move { state.kill(&target, Some(0)).await }
+    });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while slot_killing(&state, "ht-unprovable").await != Some(true) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("kill marks the slot in flight");
+
+    assert!(
+        listed(&state, "ht-unprovable").await,
+        "in-flight kill read as absence"
+    );
+    let overlapping = state.kill(&target, Some(0)).await;
+    assert_eq!(overlapping["error"], "kill_in_progress", "{overlapping}");
+    let commit = state
+        .spawn_commit(&object(json!({
+            "terminal_id": "term-ht-unprovable",
+            "spawn_key": "spawn-ht-unprovable",
+        })))
+        .await;
+    assert_eq!(commit["error"], "not_found", "{commit}");
+
+    let outcome = first.await.expect("kill task");
+    assert_eq!(outcome["error"], "kill_unproven", "{outcome}");
+    assert!(
+        listed(&state, "ht-unprovable").await,
+        "unproven kill dropped the slot"
+    );
+    assert_eq!(slot_killing(&state, "ht-unprovable").await, Some(false));
+}
 
 #[test]
 fn kill_group_refuses_non_positive_pgid() {

@@ -83,6 +83,9 @@ pub(crate) struct TerminalSlot {
     pub(crate) reserve_generation: u64,
     pub(crate) observer_bind: ObserverBind,
     pub(crate) commit_deadline: Option<Instant>,
+    /// Set while a kill proves its group gone. The slot stays listed so an
+    /// in-flight kill never reads as absence; commit and reapers leave it alone.
+    pub(crate) killing: bool,
     #[cfg(feature = "vt-engine")]
     pub(crate) child: Option<PreparedChild>,
     #[cfg(feature = "vt-engine")]
@@ -400,6 +403,7 @@ impl HostState {
                     generation,
                 },
                 commit_deadline: Some(Instant::now() + Duration::from_millis(deadline_ms)),
+                killing: false,
                 child: Some(child),
                 written_bytes: 0,
                 dropped_bytes: 0,
@@ -696,6 +700,7 @@ pub(crate) async fn insert_native_slot(
         reserve_generation: 0,
         observer_bind: ObserverBind::None,
         commit_deadline: None,
+        killing: false,
         #[cfg(feature = "vt-engine")]
         child: None,
         #[cfg(feature = "vt-engine")]
