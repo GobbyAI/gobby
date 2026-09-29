@@ -3003,5 +3003,23 @@ def test_command_substitution_inside_compound_word_keeps_repository_write(
     normalize_tool_fields(data)
 
     assert data["canonical_tool_kind"] == "write"
-    assert "src/out.txt" in data["canonical_write_file_paths"]
+    assert data["canonical_write_file_paths"] == ["src/out.txt"]
     assert data["canonical_repo_mutation"] is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "[[ $(wc -l < a.txt) > 0 ]] && echo big",
+        "(( $(date +%s) >= 5 )) || echo early",
+        "[[ `cat n` < 3 && $(id -u) > 0 ]]",
+    ],
+)
+def test_compound_comparison_around_command_substitution_is_not_a_redirect(
+    command: str,
+) -> None:
+    data = _normalized_bash(command)
+
+    assert data["canonical_tool_kind"] == "execute"
+    assert "canonical_write_file_paths" not in data
+    assert not data.get("canonical_repo_mutation")

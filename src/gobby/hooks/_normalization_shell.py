@@ -142,6 +142,7 @@ def scan_shell_command(command: str) -> ShellScan:
     pending_heredocs: list[_PendingHeredoc] = []
     heredoc_operator: str | None = None
     logical_continuation = False
+    comparison_operators: set[int] = set()
 
     def begin(index: int) -> None:
         nonlocal token_start
@@ -229,12 +230,23 @@ def scan_shell_command(command: str) -> ShellScan:
 
         # Arithmetic ``((``/``$((`` and a ``[[`` test are one word, so their
         # ``<``, ``>``, ``&&`` and ``||`` stay comparisons, never operators.
+        # A compound holding a command substitution is scanned normally, so the
+        # substitution's redirects stay writes; only its own comparisons are masked.
+        if index in comparison_operators:
+            begin(index)
+            quoted = True
+            current.append(char)
+            index += 1
+            continue
         compound_end = _compound_word_end(command, index, word_start=not current and not quoted)
         if compound_end is not None:
-            begin(index)
-            current.append(command[index:compound_end])
-            index = compound_end
-            continue
+            if _COMMAND_SUBSTITUTION.search(command, index + 1, compound_end):
+                comparison_operators |= _compound_comparison_operators(command, index, compound_end)
+            else:
+                begin(index)
+                current.append(command[index:compound_end])
+                index = compound_end
+                continue
 
         # Bash ends a word at an unquoted ``)`` or closing backtick; a redirect
         # target inside ``$(...)``, ``( ... )`` or `` `...` `` must not keep it.
@@ -279,22 +291,53 @@ def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | N
 
     ``$((`` may open anywhere in a word; ``((`` and ``[[ `` only at a word start.
     Returns None when nothing opens here or the construct never closes, so the
-    caller falls back to ordinary word scanning. A span holding a command
-    substitution also returns None: its commands run, and ordinary scanning keeps
-    their redirects as writes.
+    caller falls back to ordinary word scanning.
     """
-    end: int | None = None
     if command.startswith("$((", index):
-        end = _balanced_parens_end(command, index + 1)
-    elif not word_start:
+        return _balanced_parens_end(command, index + 1)
+    if not word_start:
         return None
-    elif command.startswith("((", index):
-        end = _balanced_parens_end(command, index)
-    elif command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
-        end = _double_bracket_end(command, index + 2)
-    if end is None or _COMMAND_SUBSTITUTION.search(command, index + 1, end):
-        return None
-    return end
+    if command.startswith("((", index):
+        return _balanced_parens_end(command, index)
+    if command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
+        return _double_bracket_end(command, index + 2)
+    return None
+
+
+def _compound_comparison_operators(command: str, start: int, end: int) -> set[int]:
+    """Indexes of ``<``, ``>``, ``&`` and ``|`` in a compound word outside quotes
+    and command substitutions: the compound's own comparisons, never redirects.
+    """
+    positions: set[int] = set()
+    quote = ""
+    depth = 0
+    in_backtick = False
+    position = start
+    while position < end:
+        char = command[position]
+        if char == "\\" and quote != "'":
+            position += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "`":
+            in_backtick = not in_backtick
+        elif depth or in_backtick:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+        elif command.startswith("$(", position) and not command.startswith("$((", position):
+            depth = 1
+            position += 2
+            continue
+        elif char in "<>&|":
+            positions.add(position)
+        position += 1
+    return positions
 
 
 def _balanced_parens_end(command: str, index: int) -> int | None:
