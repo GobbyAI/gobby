@@ -124,12 +124,15 @@ async def cleanup_failed_spawn(
     terminal_id: str | None = None,
     prior_attempt: tuple[int, datetime] | None = None,
     cleanup_once: SpawnCleanupOnce | None = None,
+    attempt_terminal_known: bool = False,
 ) -> None:
     """Clean a failed spawn once; every step runs independently and nothing raises.
 
     ``cleanup_once`` is the attempt's owner. Without one, this call is its own
     attempt. ``prior_attempt`` is the failed result's pre-bump pair, which lets a
-    late isolation step recognize a rolled-back bump.
+    late isolation step recognize a rolled-back bump. ``attempt_terminal_known``
+    says ``terminal_id`` is everything the attempt owns (``None``: no terminal),
+    so a run bound to another terminal belongs to another attempt and is left alone.
     """
     once = cleanup_once or SpawnCleanupOnce()
     await once.run(
@@ -147,6 +150,7 @@ async def cleanup_failed_spawn(
             pid=pid,
             terminal_id=terminal_id,
             prior_attempt=prior_attempt,
+            attempt_terminal_known=attempt_terminal_known,
         )
     )
 
@@ -165,19 +169,45 @@ async def _cleanup_failed_spawn(
     pid: int | None,
     terminal_id: str | None,
     prior_attempt: tuple[int, datetime] | None,
+    attempt_terminal_known: bool,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
     terminal_manager = getattr(runner, "terminal_manager", None)
     run = None
     if run_storage is not None:
         try:
-            await asyncio.to_thread(run_storage.record_spawn_error, run_id, error)
-        except Exception as exc:
-            _log_step_failure("record_error", run_id, terminal_id, exc)
-        try:
             run = await asyncio.to_thread(run_storage.get, run_id)
         except Exception as exc:
             _log_step_failure("read_run", run_id, terminal_id, exc)
+    bound_terminal_id = _string_attr(run, "terminal_id")
+    if attempt_terminal_known and bound_terminal_id not in {None, terminal_id}:
+        # The run is bound to another attempt's terminal: failing, terminalizing or
+        # unbinding the run would kill that attempt, so only this call's isolation goes.
+        logger.info(
+            "Leaving run %s to the attempt on terminal %s; this attempt owns no terminal",
+            run_id,
+            bound_terminal_id,
+        )
+        try:
+            await _cleanup_isolation_step(
+                handler,
+                spawn_config,
+                cleanup=cleanup_isolation,
+                run_id=run_id,
+                terminal_id=terminal_id,
+                terminal_manager=terminal_manager,
+                held=False,
+                settled=True,
+                prior_attempt=prior_attempt,
+            )
+        except Exception as exc:
+            _log_step_failure("isolation", run_id, terminal_id, exc)
+        return
+    if run_storage is not None:
+        try:
+            await asyncio.to_thread(run_storage.record_spawn_error, run_id, error)
+        except Exception as exc:
+            _log_step_failure("record_error", run_id, terminal_id, exc)
     if child_session_id is None:
         child_session_id = _string_attr(run, "child_session_id")
     if pid is None:

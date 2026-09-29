@@ -233,6 +233,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         terminal_id=None,
         prior_attempt=None,
         cleanup_once=None,
+        attempt_terminal_known=True,
     )
 
 
@@ -975,8 +976,8 @@ async def test_held_terminal_defers_isolation_to_owner() -> None:
 
 
 _CLEANUP_PHASES = (
-    "record_error",
     "read_run",
+    "record_error",
     "terminate",
     "forget_run",
     "terminalize_run",

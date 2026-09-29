@@ -351,6 +351,7 @@ async def finalize_executed_spawn(
             terminal_id=terminal_id,
             prior_attempt=spawn_result.prior_attempt,
             cleanup_once=cleanup_once,
+            attempt_terminal_known=True,
         )
 
     if not spawn_result.success:

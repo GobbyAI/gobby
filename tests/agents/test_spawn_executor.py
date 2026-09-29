@@ -3694,7 +3694,7 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
         cwd="/path",
         provider="claude",
         session_id="sess",
-        run_id="run-stale",
+        run_id="run",
         parent_session_id="parent",
         project_id="proj",
         session_manager=MagicMock(),
@@ -3708,48 +3708,55 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt() -> None:
     refused = await execute_spawn(stale)
     assert refused.error == "retry_terminal_not_pending"
 
+    # The retried run is already bound to the live attempt, and update_runtime skips
+    # a None terminal_id, so the run row keeps pointing at the live terminal.
     run_storage = MagicMock()
     run_storage.db = None
-    run_storage.get.return_value = None
+    run_storage.get.return_value = SimpleNamespace(
+        terminal_id=live.id, child_session_id="child-live", pid=None
+    )
+    monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(return_value=True))
+    sessions = MagicMock()
     runner = SimpleNamespace(
         run_storage=run_storage,
         terminal_manager=manager,
         terminal_runtime_registry=request.terminal_runtime_registry,
-        agent_lifecycle_monitor=None,
+        agent_lifecycle_monitor=monitor,
+        child_session_manager=SimpleNamespace(_storage=sessions),
     )
-    with patch(
-        "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
-        new_callable=AsyncMock,
-    ):
-        result = await finalize_executed_spawn(
-            runner=runner,
-            run_id="run-stale",
-            spawn_result=refused,
-            spawn_request=stale,
-            isolation_ctx=SimpleNamespace(worktree_id=None, clone_id=None, branch_name=None),
-            effective_isolation="none",
-            base_commit_sha=None,
-            handler=None,
-            spawn_config=None,
-            completion_registry=None,
-            cleanup_isolation_on_failure=False,
-            task_manager=None,
-            session_manager=None,
-            parent_session_id="parent",
-            effective_provider="claude",
-            resolved_task_id=None,
-            task_seq_num=None,
-            db=None,
-            agent_body=None,
-            effective_initial_variables={},
-            reasoning=SimpleNamespace(to_dict=dict),
-        )
+    result = await finalize_executed_spawn(
+        runner=runner,
+        run_id="run",
+        spawn_result=refused,
+        spawn_request=stale,
+        isolation_ctx=SimpleNamespace(worktree_id=None, clone_id=None, branch_name=None),
+        effective_isolation="none",
+        base_commit_sha=None,
+        handler=None,
+        spawn_config=None,
+        completion_registry=None,
+        cleanup_isolation_on_failure=False,
+        task_manager=None,
+        session_manager=None,
+        parent_session_id="parent",
+        effective_provider="claude",
+        resolved_task_id=None,
+        task_seq_num=None,
+        db=None,
+        agent_body=None,
+        effective_initial_variables={},
+        reasoning=SimpleNamespace(to_dict=dict),
+    )
 
-    # The refused retry never controlled the row: cleanup neither binds nor kills it.
+    # The refused retry owns nothing: cleanup leaves the live attempt's terminal,
+    # run and child session alone, including through run terminalization.
     assert result["success"] is False
     assert runtime.killed == []
     assert manager.get(live.id) == live
     assert run_storage.update_runtime.call_args.kwargs["terminal_id"] is None
+    run_storage.record_spawn_error.assert_not_called()
+    monitor.terminalize_cancelled_run.assert_not_awaited()
+    sessions.delete.assert_not_called()
 
 
 @pytest.mark.asyncio
