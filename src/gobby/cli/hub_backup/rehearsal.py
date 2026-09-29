@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 
 from gobby.cli.hub_backup._integrity import refuse_symlink_traversal
 from gobby.cli.installers.docker_guard import ensure_docker_allowed
+from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT, backend_ports
 from gobby.paths import get_gobby_home
 from gobby.runner_pid_file import held_singleton_claim
 from gobby.storage.maintenance_epoch import (
@@ -36,7 +37,16 @@ _MOUNTS = {
     "qdrant": "/qdrant/storage",
     "falkordb": "/var/lib/falkordb/data",
 }
-_SHARED_PORTS = {5432, 6333, 6334, 6379, 16379, *range(60887, 60893), *range(60990, 61000)}
+_SHARED_PORTS = {
+    5432,
+    6333,
+    6334,
+    6379,
+    16379,
+    *range(60887, 60893),
+    *backend_ports(DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT),
+    *range(60990, 61000),
+}
 _LOOPBACK = {"127.0.0.1", "::1"}
 
 

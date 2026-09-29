@@ -82,7 +82,7 @@ class TestDaemonDockerFlag:
     """Tests for managed service lifecycle flags and helpers."""
 
     def test_start_does_not_have_docker_flag(self) -> None:
-        from gobby.cli.daemon import start
+        from gobby.cli.daemon_start import start
 
         param_names = [p.name for p in start.params]
         assert "docker_flag" not in param_names
@@ -115,7 +115,7 @@ class TestDaemonDockerFlag:
         )
 
         with (
-            patch("gobby.cli.daemon.subprocess.run") as mock_run,
+            patch("gobby.cli.daemon_start.subprocess.run") as mock_run,
             patch("shutil.which", return_value="/usr/bin/docker"),
             patch("gobby.cli.datastores.apply_hub_schema_contract"),
             patch(
@@ -137,7 +137,7 @@ class TestDaemonDockerFlag:
         from gobby.cli.daemon import _services_start
 
         with patch("shutil.which", return_value=None):
-            with patch("gobby.cli.daemon.subprocess.run") as mock_run:
+            with patch("gobby.cli.daemon_start.subprocess.run") as mock_run:
                 result = _services_start(tmp_path)
 
         assert result.outcome == "failed"
@@ -165,7 +165,7 @@ class TestDaemonDockerFlag:
                 "gobby.cli.daemon.resolve_compose_runtime",
                 side_effect=ComposeEnvironmentError("db"),
             ),
-            patch("gobby.cli.daemon.subprocess.run") as mock_run,
+            patch("gobby.cli.daemon_start.subprocess.run") as mock_run,
         ):
             result = _services_start(tmp_path)
 
@@ -181,7 +181,7 @@ class TestDaemonDockerFlag:
 
         with (
             patch("shutil.which", return_value="/usr/bin/docker"),
-            patch("gobby.cli.daemon.subprocess.run") as mock_run,
+            patch("gobby.cli.daemon_start.subprocess.run") as mock_run,
             patch(
                 "gobby.cli.daemon.resolve_compose_runtime",
                 return_value=ComposeRuntime(environment={"PATH": "test"}, profiles=()),
@@ -209,7 +209,7 @@ class TestDaemonDockerFlag:
         from gobby.cli.daemon import _services_stop
 
         with patch("shutil.which", return_value=None):
-            with patch("gobby.cli.daemon.subprocess.run") as mock_run:
+            with patch("gobby.cli.daemon_start.subprocess.run") as mock_run:
                 _services_stop(tmp_path)
 
         assert caplog.records == []

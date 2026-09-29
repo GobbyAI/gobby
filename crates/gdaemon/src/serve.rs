@@ -51,8 +51,74 @@ pub fn run() -> Result<()> {
             bind(host, bootstrap.daemon_port, backend_http).await?,
             bind(host, bootstrap.websocket_port, backend_ws).await?,
         ];
-        serve(listeners, &bootstrap.front_door.routes, shutdown_signal()).await
+        let parent_gone = watch_parent_fd()?;
+        let shutdown = async move {
+            match parent_gone {
+                Some(gone) => tokio::select! {
+                    () = shutdown_signal() => {}
+                    _ = gone => {}
+                },
+                None => shutdown_signal().await,
+            }
+        };
+        serve(listeners, &bootstrap.front_door.routes, shutdown).await
     })
+}
+
+/// The runner that owns this `serve` passes the read end of a liveness pipe in
+/// `GOBBY_PARENT_FD`; the receiver resolves on EOF, meaning the runner is gone by
+/// any cause, SIGKILL included. Without the variable there is no watch. The read
+/// runs on a detached thread, not the blocking pool, so a runtime drop never
+/// waits on it.
+fn watch_parent_fd() -> Result<Option<tokio::sync::oneshot::Receiver<()>>> {
+    let Some(value) = std::env::var_os(PARENT_FD_ENV) else {
+        return Ok(None);
+    };
+    let mut pipe = inherited_pipe(&value)?;
+    let (gone, watch) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("parent-fd-watch".to_owned())
+        .spawn(move || {
+            use std::io::{ErrorKind, Read};
+            let mut buf = [0u8; 64];
+            loop {
+                match pipe.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(_) => {}
+                    Err(err) if err.kind() == ErrorKind::Interrupted => {}
+                    Err(_) => break,
+                }
+            }
+            let _ = gone.send(());
+        })
+        .context("failed to start the parent pipe watch")?;
+    Ok(Some(watch))
+}
+
+const PARENT_FD_ENV: &str = "GOBBY_PARENT_FD";
+
+#[cfg(unix)]
+fn inherited_pipe(value: &std::ffi::OsStr) -> Result<std::fs::File> {
+    use std::os::fd::FromRawFd;
+    let fd: std::os::fd::RawFd = value
+        .to_str()
+        .and_then(|v| v.parse().ok())
+        .with_context(|| format!("{PARENT_FD_ENV} must be a file descriptor number"))?;
+    // SAFETY: the owning runner passes exactly this descriptor to the child and
+    // nothing else in gdaemon opens or closes it.
+    Ok(unsafe { std::fs::File::from_raw_fd(fd) })
+}
+
+#[cfg(windows)]
+fn inherited_pipe(value: &std::ffi::OsStr) -> Result<std::fs::File> {
+    use std::os::windows::io::{FromRawHandle, RawHandle};
+    let handle: usize = value
+        .to_str()
+        .and_then(|v| v.parse().ok())
+        .with_context(|| format!("{PARENT_FD_ENV} must be a handle value"))?;
+    // SAFETY: the owning runner makes exactly this handle inheritable for the
+    // child and nothing else in gdaemon opens or closes it.
+    Ok(unsafe { std::fs::File::from_raw_handle(handle as RawHandle) })
 }
 
 /// Read bootstrap (a missing file means defaults, as in Python) and refuse to serve
@@ -77,13 +143,28 @@ pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
 }
 
 async fn bind(host: &str, port: u16, backend_port: u16) -> Result<PublicListener> {
-    let listener = TcpListener::bind((host, port))
+    let listener = TcpListener::bind(bind_addr(host, port).await?)
         .await
         .with_context(|| format!("failed to bind {host}:{port}"))?;
     Ok(PublicListener {
         listener,
         backend: SocketAddr::from(([127, 0, 0, 1], backend_port)),
     })
+}
+
+/// The address `host` binds, chosen as the Python daemon's uvicorn chooses it: an
+/// IPv6 literal binds IPv6 and anything else binds IPv4, so `localhost` is
+/// `127.0.0.1` even where the resolver lists `::1` first.
+async fn bind_addr(host: &str, port: u16) -> Result<SocketAddr> {
+    let ipv6 = host.contains(':');
+    tokio::net::lookup_host((host, port))
+        .await
+        .with_context(|| format!("failed to resolve bind host {host}"))?
+        .find(|addr| addr.is_ipv6() == ipv6)
+        .with_context(|| {
+            let family = if ipv6 { "IPv6" } else { "IPv4" };
+            format!("bind host {host} has no {family} address")
+        })
 }
 
 /// Serve every listener until `shutdown` resolves.
@@ -161,6 +242,16 @@ mod tests {
             error.to_string().starts_with("front_door_disabled:"),
             "{error}"
         );
+    }
+
+    #[tokio::test]
+    async fn bind_host_family_matches_the_python_backend() -> Result<()> {
+        let localhost = bind_addr("localhost", 60887).await?;
+        let ipv6 = bind_addr("::1", 60887).await?;
+
+        assert_eq!(localhost, SocketAddr::from(([127, 0, 0, 1], 60887)));
+        assert!(ipv6.is_ipv6());
+        Ok(())
     }
 
     #[test]

@@ -11,7 +11,7 @@ from typing import cast
 import pytest
 
 from gobby import runner as runner_module
-from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
 from gobby.daemon_lease_control import LeaseLoss, LeaseLossReason
 from gobby.runner_pid_file import PidOwnershipResolution
 from gobby.shutdown_intent import ShutdownIntent
@@ -49,6 +49,7 @@ async def test_standby_never_constructs_full_runner(monkeypatch: pytest.MonkeyPa
     bootstrap = BootstrapConfig(
         database_url="postgresql://test.invalid/gobby_test",
         daemon_port=60991,
+        front_door=FrontDoorConfig(enabled=False),
     )
 
     monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
@@ -95,7 +96,10 @@ async def test_active_constructs_runner_only_after_verify_and_acquire(
     events: list[str] = []
     lease = FakeLease(True, events)
     ownership = FakeOwnership()
-    bootstrap = BootstrapConfig(database_url="postgresql://test.invalid/gobby_test")
+    bootstrap = BootstrapConfig(
+        database_url="postgresql://test.invalid/gobby_test",
+        front_door=FrontDoorConfig(enabled=False),
+    )
 
     monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
     monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-a")
@@ -149,7 +153,10 @@ async def test_lease_loss_records_typed_shutdown_source_before_request(
     recorded: dict[str, object] = {}
     lease = FakeLease(True, events)
     ownership = FakeOwnership()
-    bootstrap = BootstrapConfig(database_url="postgresql://test.invalid/gobby_test")
+    bootstrap = BootstrapConfig(
+        database_url="postgresql://test.invalid/gobby_test",
+        front_door=FrontDoorConfig(enabled=False),
+    )
     shutdown_requested = asyncio.Event()
 
     monkeypatch.setattr("gobby.config.bootstrap.load_bootstrap", lambda *_a, **_kw: bootstrap)
