@@ -18,6 +18,7 @@ T = TypeVar("T")
 
 BOOTSTRAP_POOL_SIZE = 2
 MIN_POOL_SIZE = 32
+NATIVE_POOL_MAX_SIZE = 8
 MIN_EXECUTOR_WORKERS = 8
 MIN_SUPPORTED_CPUS = 8
 
@@ -48,6 +49,7 @@ class DatabaseConcurrencyResolution:
     usable_connections: int
     pool_budget: int
     pool_max_size: int
+    native_pool_max_size: int
     executor_max_workers: int
     coverage_max_concurrency: int
     direct_connection_reserve: int
@@ -92,6 +94,7 @@ def resolve_database_concurrency(
             f"database_concurrency.pool_max_size={pool} exceeds the single-daemon budget "
             f"of {pool_budget} from {usable} usable PostgreSQL connections"
         )
+    native_pool_max_size = min(NATIVE_POOL_MAX_SIZE, pool_budget - pool)
 
     coverage = _configured_or_auto(
         config.coverage_max_concurrency,
@@ -129,6 +132,7 @@ def resolve_database_concurrency(
         usable_connections=usable,
         pool_budget=pool_budget,
         pool_max_size=pool,
+        native_pool_max_size=native_pool_max_size,
         executor_max_workers=workers,
         coverage_max_concurrency=coverage,
         direct_connection_reserve=direct_reserve,
