@@ -589,6 +589,17 @@ a skipped DB test is not close evidence.
   a pure commit classifier, lock identity, PID-based lifecycle tests, hub
   keepalives, a numeric share error, and this changelog; plus the `gobby`
   application-name prefix note.
+- 2026-09-28: Adversary review (gobby#14579) by `send_message` dialogue,
+  consensus on 018bdf1 with no outstanding findings. PG-01: checkout
+  acquisition bounded across both hooks by one `acquire_timeout`. PG-02:
+  minimum-size pool fixtures. PG-03: deterministic COMMIT cancellation and a
+  test-only rollback gate. PG-04: synchronous callbacks observed through
+  `Pool::status`. PG-05: `application_name` restored and verified on recycle.
+  PG-06: per-leaf verification, with `gobby-hooks` and `gobby-code` kept off
+  the pool dependency. Also corrected: the Python vector harness needs no
+  edit, V2 runs after all four leaves, and the `*_test` hub requirement is
+  this plan's own fixture rule (9503109, e4da34d, 954661c, a71bcbd, 9807c2c,
+  018bdf1).
 
 ## V2: Verification
 `kind: verification`
