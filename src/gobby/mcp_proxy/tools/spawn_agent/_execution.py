@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
+    SpawnCleanupOnce,
     cleanup_failed_spawn,
     start_run_or_cleanup,
 )
@@ -108,6 +109,7 @@ async def finalize_executed_spawn(
     agent_body: Any,
     effective_initial_variables: Any,
     reasoning: Any,
+    cleanup_once: SpawnCleanupOnce | None = None,
 ) -> dict[str, Any]:
     """Persist runtime, verify liveness, start the run, auto-claim, and build the response."""
     failure_identity = {
@@ -155,6 +157,8 @@ async def finalize_executed_spawn(
                 child_session_id=spawn_result.child_session_id,
                 pid=spawn_result.pid,
                 terminal_id=terminal_id,
+                cleanup_once=cleanup_once,
+                attempt_terminal_known=True,
             )
             return {
                 "success": False,
@@ -174,6 +178,7 @@ async def finalize_executed_spawn(
             child_session_id=spawn_result.child_session_id,
             pid=spawn_result.pid,
             terminal_id=terminal_id,
+            cleanup_once=cleanup_once,
         )
         if start_error is not None:
             return {**start_error, **failure_identity}
@@ -293,7 +298,12 @@ async def finalize_executed_spawn(
                         )
             except Exception as e:
                 error = f"Failed to auto-claim task {resolved_task_id}: {e}"
-                logger.warning(error)
+                logger.warning(
+                    "Failed to auto-claim task %s for run %s: %s",
+                    resolved_task_id,
+                    run_id,
+                    type(e).__name__,
+                )
                 await cleanup_failed_spawn(
                     runner,
                     run_id,
@@ -306,6 +316,8 @@ async def finalize_executed_spawn(
                     child_session_id=spawn_result.child_session_id,
                     pid=spawn_result.pid,
                     terminal_id=terminal_id,
+                    cleanup_once=cleanup_once,
+                    attempt_terminal_known=True,
                 )
                 return {
                     "success": False,
@@ -339,6 +351,9 @@ async def finalize_executed_spawn(
             child_session_id=spawn_result.child_session_id,
             pid=spawn_result.pid,
             terminal_id=terminal_id,
+            prior_attempt=spawn_result.prior_attempt,
+            cleanup_once=cleanup_once,
+            attempt_terminal_known=True,
         )
 
     if not spawn_result.success:

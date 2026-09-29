@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import uuid
 from collections.abc import Callable
@@ -46,9 +47,9 @@ from gobby.workflows.definitions import AgentDefinitionBody
 from ._code_index import code_index_preflight_mode
 from ._execution import finalize_executed_spawn
 from ._failure_cleanup import (
+    SpawnCleanupOnce,
     cleanup_created_isolation,
     cleanup_failed_spawn,
-    remember_spawn_pid,
 )
 from ._provider_resolution import (
     concrete_provider,
@@ -68,6 +69,7 @@ from ._spawn_guards import (
     reserve_agent_slot,
     resolve_spawn_task_context,
 )
+from ._spawn_phase import SpawnPhase
 from ._step_state import persist_initial_step_instance_if_resolved
 from ._worktree_reuse import prepare_reused_worktree
 
@@ -553,7 +555,7 @@ async def spawn_agent_impl(
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=reserved_run_id
             )
             return {"success": False, "error": config_error}
     code_index_mode = code_index_preflight_mode(
@@ -600,7 +602,9 @@ async def spawn_agent_impl(
 
     async def cleanup_unattached_spawn() -> None:
         await run_thread_to_completion(task_spawn_lease.release_unattached)
-        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
+        await cleanup_created_isolation(
+            handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=run_id
+        )
 
     lease_response = await admit_task_spawn(
         task_spawn_lease,
@@ -614,6 +618,8 @@ async def spawn_agent_impl(
     if lease_response is not None:
         return lease_response
 
+    cleanup_once = SpawnCleanupOnce()
+
     async def rollback_cancelled_spawn(error: str, child_session_id: str | None = None) -> None:
         await run_thread_to_completion(task_spawn_lease.release_unattached)
         await cleanup_failed_spawn(
@@ -626,6 +632,7 @@ async def spawn_agent_impl(
             cleanup_isolation=cleanup_isolation_on_failure,
             task_manager=task_manager,
             child_session_id=child_session_id,
+            cleanup_once=cleanup_once,
         )
 
     async with reserve_agent_slot(
@@ -692,7 +699,7 @@ async def spawn_agent_impl(
         except Exception as exc:
             await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=run_id
             )
             return {
                 "success": False,
@@ -725,6 +732,7 @@ async def spawn_agent_impl(
                     cleanup_isolation=cleanup_isolation_on_failure,
                     task_manager=task_manager,
                     child_session_id=prepared_spawn.session_id,
+                    cleanup_once=cleanup_once,
                 )
                 return {
                     "success": False,
@@ -753,6 +761,7 @@ async def spawn_agent_impl(
                         cleanup_isolation=cleanup_isolation_on_failure,
                         task_manager=task_manager,
                         child_session_id=prepared_spawn.session_id,
+                        cleanup_once=cleanup_once,
                     )
                     return {
                         "success": False,
@@ -785,72 +794,45 @@ async def spawn_agent_impl(
                 droid_mode=droid_mode,
             )
 
-            async def _spawn_failure(error: str, *, infrastructure: bool = False) -> dict[str, Any]:
-                if infrastructure:
-                    await asyncio.to_thread(
-                        runner.run_storage.merge_resume_metadata,
-                        run_id,
-                        {"spawn_retryable_infrastructure": True},
-                    )
-                await cleanup_failed_spawn(
-                    runner,
-                    run_id,
-                    error,
-                    handler,
-                    spawn_config,
+            spawn_phase = SpawnPhase(
+                runner=runner,
+                run_id=run_id,
+                spawn_request=spawn_request,
+                execute=execute_spawn,
+                finalize=functools.partial(
+                    finalize_executed_spawn,
+                    runner=runner,
+                    run_id=run_id,
+                    spawn_request=spawn_request,
+                    isolation_ctx=isolation_ctx,
+                    effective_isolation=effective_isolation,
+                    base_commit_sha=base_commit_sha,
+                    handler=handler,
+                    spawn_config=spawn_config,
                     completion_registry=completion_registry,
-                    cleanup_isolation=cleanup_isolation_on_failure,
+                    cleanup_isolation_on_failure=cleanup_isolation_on_failure,
                     task_manager=task_manager,
-                    child_session_id=prepared_spawn.session_id,
-                )
-                return {
-                    "success": False,
-                    "error": error,
-                    **spawn_identity,
-                    "reasoning": reasoning.to_dict(),
-                }
-
-            async def _execute_spawn_phase() -> dict[str, Any]:
-                try:
-                    spawn_result = await execute_spawn(spawn_request)
-                    await asyncio.to_thread(remember_spawn_pid, spawn_result.pid, run_id=run_id)
-                    return await finalize_executed_spawn(
-                        runner=runner,
-                        run_id=run_id,
-                        spawn_result=spawn_result,
-                        spawn_request=spawn_request,
-                        isolation_ctx=isolation_ctx,
-                        effective_isolation=effective_isolation,
-                        base_commit_sha=base_commit_sha,
-                        handler=handler,
-                        spawn_config=spawn_config,
-                        completion_registry=completion_registry,
-                        cleanup_isolation_on_failure=cleanup_isolation_on_failure,
-                        task_manager=task_manager,
-                        session_manager=session_manager,
-                        parent_session_id=parent_session_id,
-                        effective_provider=effective_provider,
-                        resolved_task_id=resolved_task_id,
-                        task_seq_num=task_seq_num,
-                        db=db,
-                        agent_body=agent_body,
-                        effective_initial_variables=effective_initial_variables,
-                        reasoning=reasoning,
-                    )
-                except asyncio.CancelledError:
-                    await _spawn_failure("Agent spawn cancelled")
-                    raise
-                except Exception as exc:
-                    return await _spawn_failure(str(exc), infrastructure=isinstance(exc, OSError))
-
-            async def _run_spawn_phase() -> None:
-                result = await _execute_spawn_phase()
-                if not result.get("success"):
-                    logger.warning(
-                        "Background agent boot failed for run %s: %s",
-                        run_id,
-                        result.get("error", "unknown error"),
-                    )
+                    session_manager=session_manager,
+                    parent_session_id=parent_session_id,
+                    effective_provider=effective_provider,
+                    resolved_task_id=resolved_task_id,
+                    task_seq_num=task_seq_num,
+                    db=db,
+                    agent_body=agent_body,
+                    effective_initial_variables=effective_initial_variables,
+                    reasoning=reasoning,
+                    cleanup_once=cleanup_once,
+                ),
+                handler=handler,
+                spawn_config=spawn_config,
+                completion_registry=completion_registry,
+                cleanup_isolation=cleanup_isolation_on_failure,
+                task_manager=task_manager,
+                child_session_id=prepared_spawn.session_id,
+                spawn_identity=spawn_identity,
+                reasoning=reasoning,
+                cleanup_once=cleanup_once,
+            )
 
             if notify_parent_on_completion and completion_registry and parent_session_id:
                 try:
@@ -872,13 +854,13 @@ async def spawn_agent_impl(
                 schedule_background_task(
                     _spawn_background_tasks,
                     run_id,
-                    _run_spawn_phase,
+                    spawn_phase.run,
                     name=f"gobby-agent-spawn-{run_id}",
                     logger=logger,
                     description="Agent spawn background task",
                 )
             except RuntimeError as exc:
-                return await _spawn_failure(str(exc))
+                return await spawn_phase.fail(str(exc))
 
             return {
                 "success": True,

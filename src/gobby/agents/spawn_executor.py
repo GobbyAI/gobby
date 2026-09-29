@@ -321,6 +321,8 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 status="failed",
                 error="retry_terminal_missing",
             )
+        # A refused retry never controlled the row, so it reports no terminal:
+        # failure cleanup and the run row must not claim another attempt's terminal.
         if existing.state != "pending":
             return SpawnResult(
                 success=False,
@@ -328,7 +330,6 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 child_session_id=plan.child_session_id,
                 status="failed",
                 error="retry_terminal_not_pending",
-                terminal_id=existing.id,
             )
         bumped = await asyncio.to_thread(
             manager.retry_attempt_unsettled,
@@ -342,7 +343,6 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 child_session_id=plan.child_session_id,
                 status="failed",
                 error="retry_generation_cas_failed",
-                terminal_id=existing.id,
             )
         terminal_id = existing.id
         spawn_key = existing.spawn_key or derive_spawn_key(backend, terminal_id)

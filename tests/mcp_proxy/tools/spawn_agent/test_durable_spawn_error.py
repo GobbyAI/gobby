@@ -1,5 +1,6 @@
 """Originating launch errors survive capture failure and either cancellation path."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -47,11 +48,14 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
         backend="native",
         state="pending",
         spawn_key="isolated-spawn-test",
+        attempt_generation=0,
+        attempt_started_at=datetime(2026, 9, 29, tzinfo=UTC),
     )
     runtime = Mock()
     runtime.is_live = AsyncMock(return_value=True)
     runtime.snapshot_full = AsyncMock(side_effect=capture)
     runtime.terminate = AsyncMock()
+    runtime.session_present = AsyncMock(return_value=False)
     terminal_runtime_registry = Mock()
     terminal_runtime_registry.resolve.return_value = runtime
     terminal_manager = Mock()
@@ -85,6 +89,10 @@ async def test_originating_error_is_durable_before_capture_and_terminalization(
     assert recorded is not None and recorded.status == "cancelled"
     assert recorded.error == origin
     runtime.terminate.assert_awaited()
-    terminal_manager.fail_pending.assert_called_once_with(terminal.id)
+    terminal_manager.fail_pending_attempt.assert_called_once_with(
+        terminal.id,
+        attempt_generation=terminal.attempt_generation,
+        attempt_started_at=terminal.attempt_started_at,
+    )
     if monitor is not None:
         monitor.terminalize_cancelled_run.assert_awaited_once()
