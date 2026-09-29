@@ -9345,6 +9345,93 @@ async fn a_named_session_event_refetches_only_its_project() {
     mock.shutdown().await;
 }
 
+/// The live loop keeps one sidebar refetch in flight: while an agent-runs read
+/// is still waiting on the daemon, another session event queues its refresh
+/// instead of issuing a second read, and that refresh goes out once the first
+/// read answers. The second event lands after the session retry window (at
+/// most 2 s from the first start) and before the 5 s request deadline, so
+/// only the loop's single refetch slot can be holding it back.
+#[tokio::test]
+async fn an_agent_runs_read_in_flight_holds_the_next_refetch() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.enqueue("GET", "/api/projects", 200, sidebar_project_row());
+    let daemon = LiveDaemon::connect(mock.url(), "local-token")
+        .await
+        .expect("connect live daemon");
+    mock.wait_for_websocket().await;
+    let mut workspace = Workspace::live(daemon.clone());
+    workspace.select_project("project-1");
+    workspace
+        .reconcile_subscribe_first()
+        .await
+        .expect("subscribe-first reconcile");
+    let runs = || {
+        mock.requests()
+            .into_iter()
+            .filter(|request| {
+                request.method == "GET" && request.target.starts_with("/api/agents/runs?")
+            })
+            .count()
+    };
+    let before = runs();
+    let release = mock.enqueue_held(
+        "GET",
+        "/api/agents/runs?",
+        200,
+        json!({"status": "success", "runs": [], "count": 0}),
+    );
+    let session_event = json!({
+        "type": "session_event",
+        "event": "session_updated",
+        "project_id": "project-1",
+        "session_id": "session-a",
+    });
+
+    let mut chrome = Chrome::dark();
+    let mut terminal = Terminal::new(TestBackend::new(96, 30)).expect("test terminal");
+    let (input_tx, input_rx) = mpsc::channel(8);
+    let driver = async {
+        send_daemon_event(&mock, &daemon, session_event.clone()).await;
+        wait_until(|| runs() == before + 1).await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_millis(2_200)).await;
+        tokio::time::resume();
+        send_daemon_event(&mock, &daemon, session_event.clone()).await;
+        let second_read = timeout(Duration::from_millis(500), async {
+            while runs() == before + 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        assert!(
+            second_read.is_err(),
+            "no second agent-runs read while the first is in flight"
+        );
+        assert_eq!(runs(), before + 1);
+        release.notify_one();
+        wait_until(|| runs() == before + 2).await;
+        drop(input_tx);
+    };
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("single-flight live loop");
+
+    daemon
+        .close(Instant::now() + Duration::from_secs(1))
+        .await
+        .expect("close live daemon");
+    mock.shutdown().await;
+}
+
 /// The git refresh is a job: nothing starts before the interval, a run
 /// that fails reports its error and is not retried before the next
 /// interval, and a run that succeeds changes the sidebar only when applied.
