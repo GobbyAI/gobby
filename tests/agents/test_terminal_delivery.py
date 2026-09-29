@@ -1001,9 +1001,13 @@ async def test_foreign_loop_delivery_wakes_on_owner_loop_through_held_bound_lock
     release_first_dispatch = asyncio.Event()
 
     async def dispatch_stub(
-        session_id: str, *, session: object | None = None, priority: str = "normal"
+        session_id: str,
+        *,
+        priority: str = "normal",
+        bypass_debounce: bool = False,
+        prompt: str = "",
     ) -> dict[str, object]:
-        del session, priority
+        del priority, bypass_debounce, prompt
         dispatch_loops.append(asyncio.get_running_loop())
         if len(dispatch_loops) == 1:
             first_dispatch_started.set()
