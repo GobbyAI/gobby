@@ -495,6 +495,8 @@ async def test_probe_is_strict_and_reaper_honors_claims() -> None:
         cleanup_handler=MagicMock(),
         run_db=AsyncMock(),
         terminal_manager=store,
+        # The strict listing of a reachable host that lists neither row.
+        runtime_registry=runtime_registry(NativeTerminalRuntime(_HostClient())),
         spawn_in_doubt_seconds=30.0,
     )
 
@@ -507,3 +509,63 @@ async def test_probe_is_strict_and_reaper_honors_claims() -> None:
     assert reaped == 1
     assert free.state == "exited"
     assert held.state == "pending"
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["host-listed", "host-miss"])
+async def test_stale_native_kill_needs_dead_recorded_group(
+    monkeypatch: pytest.MonkeyPatch, listed: bool
+) -> None:
+    # A stale-epoch kill proves nothing while the recorded group is alive,
+    # whether the current host listed the row or the recorded group was reaped.
+    reaps = _ReapRecorder(monkeypatch, group_alive=True)
+    row = _stale_native_row()
+    row.process = {"pgid": 8383, "start_time": 5.0}
+    client = _HostClient()
+    if listed:
+        client.list_rows = [_host_row(row, "ht-listed")]
+    runtime = NativeTerminalRuntime(client)
+
+    with pytest.raises(TerminalKillUnprovenError):
+        await runtime.terminate(row, 0.05)
+
+    assert client.kills == (["ht-listed"] if listed else [])
+    assert reaps.alive_checks >= 1
+
+
+def _deny_signals(pgid: int, sig: int) -> None:
+    raise PermissionError(pgid, sig)
+
+
+def _no_such_group(pgid: int, sig: int) -> None:
+    raise ProcessLookupError(pgid, sig)
+
+
+@pytest.mark.parametrize("group", ["permission-denied", "dead"])
+async def test_reaper_needs_dead_group_for_hostless_pending_row(
+    monkeypatch: pytest.MonkeyPatch, group: str
+) -> None:
+    signal = _deny_signals if group == "permission-denied" else _no_such_group
+    monkeypatch.setattr("gobby.terminals.host_reap.os.killpg", signal)
+    monkeypatch.setattr("gobby.terminals.host_reap.os.kill", signal)
+    row = _stale_native_row(state="pending")
+    row.process = {"pgid": 9191}
+    row.attempt_started_at = datetime.now(UTC) - timedelta(seconds=120)
+    reconciliation = LifecycleReconciliation(
+        agent_run_manager=MagicMock(),
+        db=MagicMock(),
+        cleanup_handler=MagicMock(),
+        run_db=AsyncMock(),
+        terminal_manager=MemoryTerminalStore(row),
+        # A reachable host that lists nothing: only the recorded group is left.
+        runtime_registry=runtime_registry(NativeTerminalRuntime(_HostClient())),
+        spawn_in_doubt_seconds=30.0,
+    )
+
+    reaped = await reconciliation.reap_stale_pending()
+
+    if group == "permission-denied":
+        assert reaped == 0
+        assert row.state == "pending"
+    else:
+        assert reaped == 1
+        assert row.state == "exited"

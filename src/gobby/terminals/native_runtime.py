@@ -789,9 +789,10 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
         connect_error: Exception | None,
     ) -> None:
         # A row without the current epoch (stale, missing, or pending) returns
-        # only on proof: a kill through the host id the current host lists, a
-        # strict listing without it (#22530: reap the recorded process), or a
-        # usable recorded process group verified dead. Anything else raises.
+        # only on proof: a kill through the host id the current host lists, or
+        # a strict listing without it (#22530: reap the recorded process), each
+        # followed by a usable recorded group verified dead; or, with the host
+        # unreachable, that group verified dead. Anything else raises.
         if connect_error is not None:
             await self._reap_proven_dead(terminal, grace_seconds, connect_error)
             return
@@ -808,6 +809,7 @@ class NativeTerminalRuntime(NativeHostProbeMixin):
             await asyncio.to_thread(
                 reap_recorded_process, terminal.process, grace_seconds=grace_seconds
             )
+        await _await_group_exit(terminal, grace_seconds)
 
     async def _reap_proven_dead(
         self, terminal: Terminal, grace_seconds: float, host_error: Exception

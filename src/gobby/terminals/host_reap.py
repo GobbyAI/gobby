@@ -36,6 +36,19 @@ def reap_recorded_process(
     _kill_group(pgid_raw, signal.SIGKILL)
 
 
+def reap_recorded_group_proven_dead(
+    process: Mapping[str, Any] | None, *, grace_seconds: float
+) -> bool:
+    """Reap a recorded group and report whether none of it is left alive.
+
+    A missing, invalid or recycled pgid leaves nothing to reap and reports true;
+    a group the daemon may not signal counts as alive.
+    """
+    if process is not None:
+        reap_recorded_process(process, grace_seconds=grace_seconds)
+    return not recorded_process_group_is_alive(process)
+
+
 def recorded_process_group_is_alive(process: Mapping[str, Any] | None) -> bool:
     """Return whether the process group still belongs to the recorded host process."""
     if process is None:
