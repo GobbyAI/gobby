@@ -65,30 +65,17 @@ pub async fn run() -> io::Result<()> {
     init_tracing(&args.log_file);
     crate::platform::watch_terminal_resize_signal();
 
-    let token = fs::read_to_string(&args.token_file)
-        .map_err(|err| io::Error::new(err.kind(), format!("control token: {err}")))?
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "control token file is empty",
-        ));
-    }
-
-    let host_config = args
-        .host_config
-        .validate()
-        .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
-    let images_dir = args.socket_dir.join(image::IMAGES_DIR);
-    let local_token = read_local_token(&args.socket_dir);
-    let host_pid = std::process::id();
-    let control_path = args.socket_dir.join(CONTROL_SOCKET);
-    let frames_path = args.socket_dir.join(FRAMES_SOCKET);
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-
-    let (state, control_listener, frames_listener, running_image, pending) = match &args.resume {
-        #[cfg(not(all(unix, feature = "vt-engine")))]
+    // A restore runs from the pin the earlier image exec'd and adopts its
+    // sockets and pidfile as they are. From here to Commit, an error or a
+    // panic ends in the fallback.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    let restoring = args.resume.as_ref().map(|resume| {
+        let (carried, fallback) = handover::fallback::begin(&resume.state, resume.fallback);
+        let panic_guard = fallback.arm();
+        (resume, carried, fallback, panic_guard)
+    });
+    #[cfg(not(all(unix, feature = "vt-engine")))]
+    let restoring: Option<std::convert::Infallible> = match &args.resume {
         Some(Resume { state, fallback }) => {
             return Err(io::Error::new(
                 io::ErrorKind::Unsupported,
@@ -99,17 +86,44 @@ pub async fn run() -> io::Result<()> {
                 ),
             ))
         }
+        None => None,
+    };
+
+    let setup = (|| {
+        let token = fs::read_to_string(&args.token_file)
+            .map_err(|err| io::Error::new(err.kind(), format!("control token: {err}")))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "control token file is empty",
+            ));
+        }
+        let host_config = args
+            .host_config
+            .validate()
+            .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
+        Ok((token, host_config))
+    })();
+    #[cfg(all(unix, feature = "vt-engine"))]
+    let setup = match (setup, &restoring) {
+        (Err(err), Some((_, _, fallback, _))) => fallback.fail(&err),
+        (setup, _) => setup,
+    };
+    let (token, host_config) = setup?;
+    let images_dir = args.socket_dir.join(image::IMAGES_DIR);
+    let local_token = read_local_token(&args.socket_dir);
+    let host_pid = std::process::id();
+    let control_path = args.socket_dir.join(CONTROL_SOCKET);
+    let frames_path = args.socket_dir.join(FRAMES_SOCKET);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
+
+    let (state, control_listener, frames_listener, running_image, pending) = match restoring {
+        #[cfg(not(all(unix, feature = "vt-engine")))]
+        Some(never) => match never {},
         #[cfg(all(unix, feature = "vt-engine"))]
-        Some(resume) => {
-            use handover::fallback::Fallback;
-            // A restore runs from the pin the earlier image exec'd and adopts
-            // its sockets and pidfile as they are. From here to Commit, an
-            // error or a panic ends in the fallback.
-            let carried = handover::read_state(&resume.state).unwrap_or_else(|err| {
-                Fallback::unreadable(&resume.state, resume.fallback).fail(&err)
-            });
-            let fallback = Fallback::new(&carried, &resume.state, resume.fallback);
-            let panic_guard = fallback.arm();
+        Some((resume, carried, fallback, panic_guard)) => {
             let staged = (|| {
                 let exe = std::env::current_exe()?;
                 let running_image = image::pinned_image(&images_dir, &exe)?.ok_or_else(|| {
@@ -298,6 +312,24 @@ struct Resume {
     fallback: bool,
 }
 
+impl Resume {
+    /// The resume flags in an argv that does not otherwise parse.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    fn scan(argv: impl IntoIterator<Item = String>) -> Option<Self> {
+        let mut state = None;
+        let mut fallback = false;
+        let mut args = argv.into_iter();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--resume-state" => state = args.next().map(PathBuf::from),
+                "--resume-fallback" => fallback = true,
+                _ => {}
+            }
+        }
+        state.map(|state| Self { state, fallback })
+    }
+}
+
 impl HostArgs {
     /// Parse `gterm host` argv, or print usage and exit (0 for help, 2 for a
     /// bad argument) before anything touches the socket dir (#22425).
@@ -323,6 +355,13 @@ impl HostArgs {
             }
             Err(ArgError::Invalid(message)) => {
                 eprintln!("gterm host: {message}");
+                // An argv this image rejects may still carry a restore: the
+                // earlier image, which wrote that argv, takes it back.
+                #[cfg(all(unix, feature = "vt-engine"))]
+                if let Some(resume) = Resume::scan(std::env::args().skip(2)) {
+                    let (_, fallback) = handover::fallback::begin(&resume.state, resume.fallback);
+                    fallback.fail(&io::Error::new(io::ErrorKind::InvalidInput, message));
+                }
                 eprint!("{HOST_USAGE}");
                 std::process::exit(2);
             }

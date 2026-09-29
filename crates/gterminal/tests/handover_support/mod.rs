@@ -96,6 +96,9 @@ pub struct HelperSpec {
     pub previous_image: Option<PathBuf>,
     /// Seconds of the upgrade alarm the helper arms before exec.
     pub alarm_secs: Option<u32>,
+    /// Arguments only the helper's own exec of the pin receives; the state
+    /// file's argv, which a fallback runs with, leaves them out.
+    pub primary_args: Vec<String>,
 }
 
 impl HelperSpec {
@@ -113,6 +116,7 @@ impl HelperSpec {
             env: Vec::new(),
             previous_image: None,
             alarm_secs: None,
+            primary_args: Vec::new(),
         }
     }
 }
@@ -488,6 +492,7 @@ async fn capture_and_exec(spec: HelperSpec) -> std::io::Error {
     Command::new(&pin.path)
         .arg0("gterm")
         .args(&argv[1..])
+        .args(&spec.primary_args)
         .arg("--resume-state")
         .arg(&state_path)
         .exec()

@@ -623,16 +623,8 @@ fn stage_failure_falls_back_with_checkpoint_intact() {
         let host = restore(&spec);
         let mut control = host.control();
 
-        let mut restored = Vec::new();
-        wait_until(&format!("{kind}: the fallback commits"), || {
-            restored = restored_lines(dir.path());
-            !restored.is_empty()
-        });
-        assert_eq!(
-            restored.len(),
-            1,
-            "{kind}: one restore commits: {restored:?}"
-        );
+        let restored = committed_restores(dir.path(), kind);
+        assert_eq!(restored.len(), 1, "{kind}: one restore: {restored:?}");
         assert!(
             restored[0].contains("Fallback"),
             "{kind}: the fallback image committed: {restored:?}"
@@ -670,24 +662,63 @@ fn stage_failure_falls_back_with_checkpoint_intact() {
             text = snapshot_text(&mut control, "ht-d");
             text.contains("window-output")
         });
-        for (seq, id) in (1..).zip(["ht-a", "ht-b", "ht-d"]) {
-            let line = format!("{id}-after-{kind}");
-            let written = rpc(
-                &mut control,
-                "write",
-                json!({
-                    "operation_seq": seq,
-                    "host_terminal_id": id,
-                    "kind": "text",
-                    "encoding": "utf8-b64",
-                    "data": base64::engine::general_purpose::STANDARD.encode(format!("{line}\n")),
-                }),
-            );
-            assert_eq!(written["ok"], true, "{kind}: {written}");
-            wait_until(&format!("{kind}: {id} echoes"), || {
-                snapshot_text(&mut control, id).contains(&line)
-            });
-        }
+        assert_writes_echo(&mut control, kind, &["ht-a", "ht-b", "ht-d"]);
+    }
+}
+
+/// Waits for a restore to commit and returns every committed restore line.
+fn committed_restores(socket_dir: &Path, label: &str) -> Vec<String> {
+    let mut restored = Vec::new();
+    wait_until(&format!("{label}: a restore commits"), || {
+        restored = restored_lines(socket_dir);
+        !restored.is_empty()
+    });
+    restored
+}
+
+/// Writes a line to each pane and waits for it to echo.
+fn assert_writes_echo(control: &mut UnixStream, label: &str, ids: &[&str]) {
+    for (seq, id) in (1..).zip(ids) {
+        let line = format!("{id}-after-{label}");
+        let written = rpc(
+            control,
+            "write",
+            json!({
+                "operation_seq": seq,
+                "host_terminal_id": id,
+                "kind": "text",
+                "encoding": "utf8-b64",
+                "data": base64::engine::general_purpose::STANDARD.encode(format!("{line}\n")),
+            }),
+        );
+        assert_eq!(written["ok"], true, "{label}: {written}");
+        wait_until(&format!("{label}: {id} echoes"), || {
+            snapshot_text(control, id).contains(&line)
+        });
+    }
+}
+
+/// A new image that rejects the carried argv or config, before it can stage,
+/// still falls back to the earlier image with every pane live.
+#[test]
+fn setup_failure_in_new_image_falls_back() {
+    let cases: [(&str, &[&str]); 2] = [
+        ("unknown-flag", &["--bogus"]),
+        ("invalid-config", &["--max-attachments-total", "0"]),
+    ];
+    for (label, args) in cases {
+        let dir = temp_socket_dir();
+        let mut spec = HelperSpec::new(dir.path(), vec![echo_pane("ht-a"), echo_pane("ht-b")]);
+        spec.primary_args = args.iter().map(|arg| arg.to_string()).collect();
+        let host = restore(&spec);
+
+        let restored = committed_restores(dir.path(), label);
+        assert_eq!(restored.len(), 1, "{label}: one restore: {restored:?}");
+        assert!(
+            restored[0].contains("Fallback"),
+            "{label}: the earlier image committed: {restored:?}"
+        );
+        assert_writes_echo(&mut host.control(), label, &["ht-a", "ht-b"]);
     }
 }
 
@@ -720,6 +751,23 @@ fn fallback_failure_and_wedged_restore_end_the_process() {
         status.and_then(|status| status.code()),
         Some(70),
         "a failed fallback exec: {}",
+        host.diagnostics()
+    );
+
+    // The named earlier image is not the one the attempt recorded: it must
+    // not run.
+    let dir = temp_socket_dir();
+    let impostor = dir.path().join("impostor-gterm");
+    std::fs::copy("/bin/sh", &impostor).expect("copy sh");
+    let mut spec = HelperSpec::new(dir.path(), panes());
+    spec.env = fault("GTERM_RESTORE_FAULT", "decode").to_vec();
+    spec.previous_image = Some(impostor);
+    let mut host = launch(&spec);
+    let status = host.wait_exit(WAIT);
+    assert_eq!(
+        status.and_then(|status| status.code()),
+        Some(70),
+        "an unverified fallback image: {}",
         host.diagnostics()
     );
 
