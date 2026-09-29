@@ -166,6 +166,7 @@ async def launch_close_review(
         validation_commands=(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
+        close_receipts=_launch_receipts(evaluation),
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
         close_review_min_severity=validation_config.close_review_min_severity,
     )
@@ -330,6 +331,7 @@ async def _launch_promoted_review(
         validation_commands=(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
+        close_receipts=_launch_receipts(evaluation),
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
         close_review_min_severity=validation_config.close_review_min_severity,
     )
@@ -841,6 +843,13 @@ def _optional_string(arguments: Mapping[str, Any], key: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"Persisted close argument {key!r} is invalid")
     return value
+
+
+def _launch_receipts(evaluation: CloseEvaluation) -> list[Mapping[str, object]] | None:
+    receipts = evaluation.extra.get("close_receipts")
+    if not isinstance(receipts, list):
+        return None
+    return [receipt for receipt in receipts if isinstance(receipt, Mapping)] or None
 
 
 def _response_detail(arguments: Mapping[str, Any]) -> str:

@@ -51,6 +51,7 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
             "escalate_task",
             "link_commit",
             "link_task_to_session",
+            "record_close_receipt",
             "release_task_paths",
             "remove_dependency",
             "remove_label",

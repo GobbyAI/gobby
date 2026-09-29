@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from gobby.storage.tasks._models import TaskNotFoundError
+from gobby.tasks.close_receipts import CLOSE_RECEIPT_AUTHOR_TYPE
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -72,6 +73,11 @@ def register_task_comment_routes(
     @router.post("/{task_id}/comments")
     async def create_comment(task_id: str, request_data: TaskCommentCreateRequest) -> Any:
         """Add a comment to a task."""
+        if request_data.author_type == CLOSE_RECEIPT_AUTHOR_TYPE:
+            raise HTTPException(
+                status_code=403,
+                detail="Close receipts are recorded only through record_close_receipt",
+            )
         try:
             task = resolve_task(task_id)
             resolved_id = task.id
@@ -119,10 +125,16 @@ def register_task_comment_routes(
         try:
             task = resolve_task(task_id)
             cursor = server.task_manager.db.execute(
-                "DELETE FROM task_comments WHERE id = %s AND task_id = %s",
-                (comment_id, task.id),
+                "DELETE FROM task_comments WHERE id = %s AND task_id = %s "
+                "AND author_type IS DISTINCT FROM %s",
+                (comment_id, task.id, CLOSE_RECEIPT_AUTHOR_TYPE),
             )
             if cursor.rowcount == 0:
+                if server.task_manager.db.fetchone(
+                    "SELECT 1 FROM task_comments WHERE id = %s AND task_id = %s",
+                    (comment_id, task.id),
+                ):
+                    raise HTTPException(status_code=403, detail="Close receipts cannot be deleted")
                 raise HTTPException(status_code=404, detail="Comment not found")
             return {"deleted": True}
         except TaskNotFoundError as e:

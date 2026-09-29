@@ -224,6 +224,40 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
 
 
 @pytest.mark.asyncio
+async def test_launch_prompt_carries_close_receipts(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(candidates=["codex/gpt-5.6-terra"]),
+    )
+    _patch_store(monkeypatch, store)
+    receipt = {
+        "kind": "activation",
+        "commit_sha": "f" * 40,
+        "matches_linked_commit": True,
+        "author_session": "#14737",
+        "author_role": "task_creator",
+        "facts": {"daemon_pid": 26253, "binary_sha256": "c" * 64},
+    }
+    evaluation = _evaluation()
+    evaluation.extra["close_receipts"] = [receipt, "not-a-receipt"]
+
+    await launch_close_review(
+        ctx,
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    prompt = registry.call.call_args.args[1]["prompt"]
+    rendered = prompt.split("close_receipts=", 1)[1].split(". close_receipts are", 1)[0]
+    assert json.loads(rendered) == [receipt]
+
+
+@pytest.mark.asyncio
 async def test_immediate_launch_evaluates_the_admitted_review_once(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
