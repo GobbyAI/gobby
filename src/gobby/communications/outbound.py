@@ -9,7 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
+from gobby.communications.models import (
+    ChannelConfig,
+    ChannelNotFoundError,
+    CommsAttachment,
+    CommsMessage,
+)
 from gobby.communications.telegram_callbacks import bounded_callback_ttl
 
 if TYPE_CHECKING:
@@ -86,7 +91,7 @@ class OutboundCommunications:
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
 
@@ -159,7 +164,7 @@ class OutboundCommunications:
 
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
         size_bytes = file_path.stat().st_size
@@ -235,7 +240,7 @@ class OutboundCommunications:
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
         message = CommsMessage(

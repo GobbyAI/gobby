@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from gobby.communications.models import ChannelNotFoundError
 from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -110,8 +111,10 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
                 session_id=request.session_id,
                 metadata=request.metadata,
             )
-        except ValueError as e:
+        except ChannelNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         if message.status != "sent":
             raise HTTPException(
