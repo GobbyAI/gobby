@@ -371,6 +371,15 @@ running Python node runner. `run_gobby` takes `ActiveDaemonLease` for every boot
 so that runner stands by until 5.1 exempts `node` from the lease. A runnable node
 therefore needs the lease exemption before 4.4's pair test. P4 slice planning orders
 the exemption first or drops that assertion from 4.4.
+- A 4.4 edge to 5.1 would form a cycle, because P5 depends on P4.
+- Lane 7's recommendation: drop the maintenance clause and the `2.3` dependency from
+  4.4. Launch the pair-test node as a bare `gdaemon serve` with the node bootstrap
+  (`watch_parent_fd` needs no Python parent). Add a 5.2 acceptance item stating that a
+  `node` gdaemon never spawns or supervises a Python backend.
+- Hazard to settle before 5.2: `gobby start` on a node bootstrap parks Python in
+  standby, and a manual lease promote or recover there could make the node an active
+  daemon on the hub database. Either document the command as unsupported until 5.2,
+  or refuse promotion when `run_mode()` is `node`.
 
 ## P4: API keys and node registration (S1.4, #21555) (depends: P1)
 `kind: framing`
