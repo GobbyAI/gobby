@@ -18,8 +18,10 @@ here.
 
 Strongest supported cause: a daemon-wide event-loop stall (not worker saturation, not
 the rule engine). The precise blocker is **not** identified from existing logs; that is
-the explicit measurement limit (no debug-level `Hook adapter timing` / `Hook executed`
-lines are emitted at the running log level, so there is no per-hook baseline).
+the explicit measurement limit. Existing logs carry no per-hook timing rows (no
+debug-level `Hook adapter timing` / `Hook executed` lines at the running log level), and
+the `hook_phase_duration_seconds` histogram is aggregate-only, so no *identifying*
+per-stall baseline exists — only the aggregate normal baseline used below.
 
 ## Samples — natural no-fanout cluster 2026-09-28 20:23:49 (CDT)
 
@@ -40,7 +42,36 @@ Arithmetic (sample 1): total 5.42299 − (admission_wait 0.0000106 + executor_qu
 persistence_broadcast 0.14327) = 4.31849 = reported `response`. The `response` value *is*
 the uncovered residual, computed at `src/gobby/hooks/phase_timing.py:51-57`.
 
-## Comparable normal samples
+## Comparable normal sample (fast baseline)
+
+No natural *fast* sample is logged: the running log level emits no per-hook timing rows,
+so every `errors.log` record is a ≥5 s warning. To obtain a genuine normal sample, the
+existing natural hook entry point was invoked directly — a real `ghook --gobby-owned`
+dispatch (the same client the CLI hooks use) against `POST /api/hooks/execute`, one hook,
+`source=droid` / `hook_type=PostToolUse`, no forced fanout, **no new instrumentation**.
+Exact phase timings were read from the pre-existing `hook_phase_duration_seconds`
+histogram on the daemon's existing `GET /api/admin/metrics` (Prometheus) endpoint;
+`count=1` on every phase confirms the sample is exactly this one hook.
+
+| phase | seconds |
+|-------|---------|
+| admission_wait | 0.0000348 |
+| executor_queue | 0.0000417 |
+| session_resolution | 0.021047 |
+| rule_evaluation | 0.038664 |
+| handler_body | 0.105129 |
+| persistence_broadcast | 0.016216 |
+| response (residual) | 0.016345 |
+
+Timing window 2026-09-29T02:13:06Z → 02:13:07Z (2026-09-28 21:13:06 CDT); the hook
+returned `{"continue": true}`. Σ(measured phases) = 0.181134 s, so total =
+0.181134 + 0.016345 = **0.197 s**, and the residual `response` is 0.016 s — 8% of total,
+below the dominant `handler_body` phase (0.105 s), and ~260× smaller than the 20:23:49
+residual (4.318 s). Same arithmetic as the stalled cluster, but a normal hook has a
+*small* residual: every phase is metered and accounted for. That is the baseline the
+20:23:49 residual lacks.
+
+## Other slow clusters (comparison shapes, not normal)
 
 Same 2026-09-28 timeline, `errors.log`:
 
@@ -111,10 +142,13 @@ wall time", not "response assembly is slow". The metered phases account for < 0.
 
 Existing logs cannot name the blocker. The running level emits neither the
 `Hook adapter timing` debug row (`adapter_execution.py:296-308`) nor the
-`Hook executed` debug row, so the only per-hook records are the ≥5 s warnings. A natural
-stall would need a one-shot out-of-process sample (e.g. `py-spy dump --pid <daemon>`) at
-the instant of a stall; none occurred during this single evidence pass, and no
-instrumentation was added. Per task constraints, the pass stops here.
+`Hook executed` debug row, so the only per-hook log records are the ≥5 s warnings. The
+`hook_phase_duration_seconds` histogram supplies an *aggregate* baseline — enough to
+prove a normal hook leaves a small residual (see the fast sample above) — but it is not
+per-hook-labeled or timestamped, so it cannot attribute the *stalled* second itself. A
+natural stall would need a one-shot out-of-process sample (e.g. `py-spy dump --pid
+<daemon>`) at the instant of a stall; none occurred during this single evidence pass, and
+no daemon instrumentation was added. Per task constraints, the pass stops here.
 
 ## Handoff
 
