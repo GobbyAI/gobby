@@ -190,8 +190,11 @@ async def refresh_server_if_due(
                 refreshed = await provider.refresh_persisted_token(transport=transport)
             except MCPAuthorizationRequired:
                 raise
-            except Exception:
-                logger.warning("OAuth keep-alive refresh failed for %s", config.name)
+            except Exception as exc:
+                # Class name only: the message can carry token-endpoint URLs or response text.
+                logger.warning(
+                    "OAuth keep-alive refresh failed for %s: %s", config.name, type(exc).__name__
+                )
                 return False
     await storage.load()
     current = storage.state.tokens.access_token if storage.state.tokens is not None else None
