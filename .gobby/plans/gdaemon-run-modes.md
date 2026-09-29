@@ -482,6 +482,9 @@ deferral:
 - 2026-09-29: Adversary recheck at 9c519b3. RM-01 to RM-04 resolved. 2.2 gains
   a Granularity decision that keeps its eight items in one leaf, and 2.1 and 2.2
   each carry the Decision 7 scope boundary in their Research context.
+- 2026-09-29: Consensus with the Adversary (gobby#14579) at 3e29899. RM-01 to
+  RM-04, the Granularity decision, and the scope boundary are resolved, with no
+  open design objection. The Adversary derives and applies M1 from these bytes.
 
 ## V2: Verification
 `kind: verification`
