@@ -29,7 +29,9 @@ from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
 
-HOOK_ADAPTER_MAX_WORKERS: Final = 8
+# Each worker blocks for the whole rule pass (including the bridged memory recall),
+# so this matches the 16-thread rule-loop pool it waits on; 8 queued fanout wakes (#23063).
+HOOK_ADAPTER_MAX_WORKERS: Final = 16
 _HOOK_ADAPTER_EXECUTOR = ThreadPoolExecutor(
     max_workers=HOOK_ADAPTER_MAX_WORKERS,
     thread_name_prefix="gobby-hook-adapter",

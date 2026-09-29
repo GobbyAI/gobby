@@ -3945,6 +3945,50 @@ class TestHooksEndpoints:
         assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
 
     @pytest.mark.asyncio
+    async def test_adapter_executor_runs_sixteen_sessions_concurrently(self) -> None:
+        from gobby.hooks.adapter_execution import run_adapter_hook
+        from gobby.hooks.phase_timing import HookPhaseTimings
+        from gobby.servers.routes.mcp import hooks as hook_routes
+
+        worker_limit = hook_routes.HOOK_ADAPTER_MAX_WORKERS
+        # Every session's worker parks until all sixteen are inside the adapter at once.
+        all_admitted = threading.Barrier(worker_limit, timeout=2)
+        release_late = threading.Event()
+
+        def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, Any]:
+            if payload["seq"] < worker_limit:
+                all_admitted.wait()
+            else:
+                assert release_late.wait(timeout=5)
+            return {"continue": True, "seq": payload["seq"]}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = handle_native
+        timings = [HookPhaseTimings() for _ in range(worker_limit + 1)]
+        hooks = [
+            asyncio.create_task(
+                run_adapter_hook(
+                    adapter,
+                    {"_platform_session_id": f"session-{seq}", "seq": seq},
+                    MagicMock(),
+                    timeout_seconds=5.0,
+                    phase_timings=timings[seq],
+                )
+            )
+            for seq in range(worker_limit + 1)
+        ]
+        try:
+            first_wave = await asyncio.wait_for(asyncio.gather(*hooks[:worker_limit]), 3.0)
+        finally:
+            release_late.set()
+        late = await hooks[worker_limit]
+
+        assert worker_limit == 16
+        assert [result["seq"] for result in first_wave] == list(range(worker_limit))
+        assert late == {"continue": True, "seq": worker_limit}
+        assert timings[worker_limit].snapshot()["executor_queue"] > 0
+
+    @pytest.mark.asyncio
     async def test_adapter_executor_propagates_phase_collector_to_worker(self) -> None:
         from gobby.hooks.adapter_execution import run_adapter_hook
         from gobby.hooks.phase_timing import HookPhaseTimings, measure_hook_phase
