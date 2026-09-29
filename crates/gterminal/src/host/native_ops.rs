@@ -495,11 +495,17 @@ impl HostState {
                 };
                 {
                     let mut inner = watch_state.inner.lock().await;
-                    let still_same_slot =
-                        inner.terminals.get(&watch_identity).is_some_and(|slot| {
-                            slot.host_terminal_id == watch_host_terminal_id && !slot.killing
-                        });
-                    if still_same_slot {
+                    let same_slot = inner
+                        .terminals
+                        .get(&watch_identity)
+                        .filter(|slot| slot.host_terminal_id == watch_host_terminal_id);
+                    // A leader dying under an in-flight kill proves nothing
+                    // about its group: the kill's proof settles the slot, so
+                    // an exit event here would settle the row too early.
+                    if same_slot.is_some_and(|slot| slot.killing) {
+                        return;
+                    }
+                    if same_slot.is_some() {
                         remove_terminal_slot(&mut inner, &watch_identity, None);
                     }
                 }
