@@ -55,7 +55,11 @@ and wires the pool into `gdaemon`'s service container.
    semantics (`deadpool` `managed/pool.rs`): a failing `pre_recycle` or
    `post_recycle` hook discards that object and `get()` continues to the next
    idle object or creates a new one; a failing `post_create` hook makes
-   `get()` return `PoolError::PostCreateHook`. Rejected: `bb8`
+   `get()` return `PoolError::PostCreateHook`. Deadpool's `Timeouts` do not
+   enclose hook execution: `try_recycle` and `try_create` await the hooks
+   outside `apply_timeout` (`deadpool` 0.13.1 `src/managed/pool.rs:172-236`),
+   and a recycle timeout is swallowed into discard-and-continue, so the layer
+   owns one acquisition deadline around the whole `get()` (1.2). Rejected: `bb8`
    (the same shape with no Postgres-specific manager) and a hand-rolled
    semaphore pool (reimplements recycle and timeouts for no gain).
 3. **Feature `postgres-pool` implies `postgres`.** PD-approved (2026-09-28).
@@ -262,7 +266,7 @@ Targets:
 - `crates/gcore/src/postgres_pool/tests.rs`
 - `Cargo.lock`
 
-**Granularity:** eight acceptance items and seven Targets, one behavior:
+**Granularity:** nine acceptance items and seven Targets, one behavior:
 the pool is untestable apart from its role hooks, bounds, and error mapping,
 and the dependency checks (1.2.6, 1.2.8) and sync-path check (1.2.7) guard
 the same feature wiring.
@@ -284,9 +288,11 @@ prefer/require unverified, verify-ca, verify-full) over
 `postgres_openssl::MakeTlsConnector` built from `tls_connector_builder`.
 `mod.rs` exposes:
 
-- `PoolSettings { max_size, application_name, wait_timeout, create_timeout,
-  recycle_timeout }` and `Pool::build(database_url, settings)`; the builder
-  calls `.runtime(Runtime::Tokio1)` and sets all three `Timeouts`; `max_size`
+- `PoolSettings { max_size, application_name, acquire_timeout }` and
+  `Pool::build(database_url, settings)`; the builder calls
+  `.runtime(Runtime::Tokio1)` and leaves deadpool's `Timeouts` unset, because
+  the acquisition deadline below is the only bound that encloses the hooks
+  and deadpool's internal discard-and-continue loop; `max_size`
   below 2 returns `PoolError::NativeShareTooSmall { actual, minimum: 2 }` with
   generic display text (Decision 5); an `application_name` without the
   `gobby-gdaemon` prefix returns `PoolError::InvalidApplicationName`.
@@ -296,19 +302,33 @@ prefer/require unverified, verify-ca, verify-full) over
   current_setting('TimeZone')` through `simple_query` (autocommit); anything
   other than `gobby_daemon_runtime` and `UTC`, or an error, fails the hook.
   `RecyclingMethod::Fast` (Decision 2).
-- `Pool::get()` is one bounded deadpool `get()` with no retry loop of its
-  own: deadpool already discards a failed recycled object and moves on, and
-  the Python retry covers only a pool-wait timeout that native callers have
-  no measured need to repeat. Mapping from `deadpool::managed::PoolError`:
-  `Timeout(Wait)` to `PoolError::WaitTimeout`; `Timeout(Create)` and
-  `Backend` to `PoolError::Unavailable`; `Timeout(Recycle)` to
-  `PoolError::Unavailable`; `PostCreateHook` to
+- `Pool::get()` is `tokio::time::timeout(acquire_timeout, inner.get())`
+  with no retry loop of its own: deadpool already discards a failed recycled
+  object and moves on, and the Python retry covers only a pool-wait timeout
+  that native callers have no measured need to repeat. The deadline encloses
+  the slot wait, connect (itself bounded by the 5 s connect timeout), every
+  hook statement, and every internal discard-and-continue pass; expiry
+  returns `PoolError::AcquireTimeout`. Expiry, or a caller dropping the
+  `get()` future, drops deadpool's in-flight creation or recycle guard, which
+  releases the slot, and drops that client, which closes its connection, so a
+  stalled hook neither holds capacity nor returns a half-configured
+  connection to the idle set. Mapping from `deadpool::managed::PoolError`:
+  `Backend` to `PoolError::Unavailable`; `PostCreateHook` to
   `PoolError::RuntimeRoleUnavailable` (that hook exists only to establish the
-  role and session invariants); `Closed` to `PoolError::Closed`;
-  `NoRuntimeSpecified` is unreachable because the builder sets the runtime
-  and maps to `PoolError::Closed` if it ever occurs. `Unavailable` and
+  role and session invariants); `Closed` to `PoolError::Closed`; `Timeout(_)`
+  and `NoRuntimeSpecified` are unreachable with `Timeouts` unset and the
+  runtime set, and map to `PoolError::AcquireTimeout` and `PoolError::Closed`
+  if they ever occur. `Unavailable` and
   `RuntimeRoleUnavailable` carry a host, port, and database label built the
   way `postgres.rs::endpoint_label` builds it, and no secret.
+- Test probe: a `#[cfg(test)]` `hook_stall: Arc<AtomicBool>` per hook in the
+  pool's hook state makes that hook run `SELECT pg_sleep(30)` before its
+  statements while set, so a stalled hook is reproducible without a
+  production seam.
+- Lifecycle fixtures build through the public builder with `max_size=2` and
+  hold one connection checked out for the whole test, so the one free slot
+  behaves as a single-connection pool; reuse and discard are proven by
+  `pg_backend_pid()`.
 - A connection dropped with an open transaction: `tokio_postgres::Transaction`
   queues `ROLLBACK` on drop, and the next recycle's verify query runs after
   it, so the connection returns clean or is discarded.
@@ -323,18 +343,19 @@ applied first).
   and exactly the configured `application_name` (for example
   `gobby-gdaemon-test-1`); a name without the prefix is refused. test:
   `crates/gcore/src/postgres_pool/tests.rs::checkout_runs_as_runtime_role`.
-- 1.2.2 - With `max_size=1`, a borrower that runs `RESET ROLE` hands back a
+- 1.2.2 - With `max_size=2` and one connection held by the test, a borrower that runs `RESET ROLE` hands back a
   connection the next checkout discards (a different `pg_backend_pid()`); a
   borrower that runs `SET TIME ZONE 'America/Chicago'` hands back a
   connection the next checkout reuses (same PID) in `UTC`. test:
   `crates/gcore/src/postgres_pool/tests.rs::recycle_restores_or_discards_session_state`.
-- 1.2.3 - With `max_size=1`, a connection dropped mid-transaction is reused by
+- 1.2.3 - With `max_size=2` and one connection held by the test, a connection dropped mid-transaction is reused by
   the next checkout (same `pg_backend_pid()`), which sees no open transaction
   and none of the dropped writes. test:
   `crates/gcore/src/postgres_pool/tests.rs::dropped_transaction_is_rolled_back`.
 - 1.2.4 - A pool of N under K > N concurrent checkouts never exceeds N server
-  connections with its application name, and a waiter past `wait_timeout`
-  gets `PoolError` without opening a connection. test:
+  connections with its application name, and a waiter past
+  `acquire_timeout` gets `AcquireTimeout` without opening a connection.
+  test:
   `crates/gcore/src/postgres_pool/tests.rs::pool_bounds_server_connections`.
 - 1.2.5 - A share of 1 returns `NativeShareTooSmall { actual: 1, minimum: 2
   }`; an unreachable endpoint returns `Unavailable` whose display text omits
@@ -346,6 +367,13 @@ applied first).
   `cargo tree -p gobby-hooks` output recorded in the close summary.
 - 1.2.7 - The sync path still forces `gobby-cli`. test:
   `crates/gcore/src/postgres.rs::connection_config_enforces_gobby_application_name`.
+- 1.2.9 - With `max_size=2`, one connection held, and `acquire_timeout` of
+  1 s: a stalled `post_create` returns `AcquireTimeout` within 2 s, the
+  pool's size returns to 1, and after clearing the stall the next checkout
+  succeeds as `gobby_daemon_runtime` in `UTC`; a stalled `post_recycle` does
+  the same and the next checkout has a different `pg_backend_pid()` than the
+  stalled connection. test:
+  `crates/gcore/src/postgres_pool/tests.rs::stalled_hooks_are_bounded_and_release_capacity`.
 - 1.2.8 - `Cargo.lock` holds one `tokio-postgres` at 0.7.18 or later and
   `deadpool-postgres` at 0.14.2 or later; the pool config sets keepalives
   1/30 s/10 s/3. test:
@@ -426,7 +454,7 @@ free functions taking `&Transaction`, returning `FromRow` types.
 
 **Acceptance:**
 
-- 2.1.1 - `Ok` commits and `Err` rolls back. With `max_size=1`, after a
+- 2.1.1 - `Ok` commits and `Err` rolls back. With `max_size=2` and one connection held by the test, after a
   confirmed commit callback 1 checks out a connection (proving the checkout
   was released), callback 2 returns `Err`, and callback 3 still runs, in that
   order; a rolled-back transaction and an `IndeterminateCommit` run none.
@@ -443,7 +471,7 @@ free functions taking `&Transaction`, returning `FromRow` types.
   `IndeterminateCommit` (from `57P01` or a closed connection), and the next
   checkout has a different PID. test:
   `crates/gcore/src/postgres_pool/tests.rs::commit_outcome_is_classified`.
-- 2.1.4 - With `max_size=1`, a transaction future dropped while its `COMMIT`
+- 2.1.4 - With `max_size=2` and one connection held by the test, a transaction future dropped while its `COMMIT`
   is in flight (a closure that holds a lock another connection waits on,
   cancelled by `tokio::time::timeout`) leaves a pool whose next checkout has a
   different PID. test:
