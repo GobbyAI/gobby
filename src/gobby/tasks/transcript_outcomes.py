@@ -223,7 +223,8 @@ def extract_output(result: Any) -> tuple[str | None, bool]:
             result = {
                 **result,
                 "raw_json": {
-                    key: value for key, value in raw_json.items() if key != "toolUseResult"
+                    **raw_json,
+                    "toolUseResult": transport.replace(content, "", 1),
                 },
             }
     parts: list[str] = []

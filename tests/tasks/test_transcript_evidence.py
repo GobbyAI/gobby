@@ -79,7 +79,7 @@ def test_validation_output_uses_normalized_tool_result_once() -> None:
             "tool_result": {"content": pytest_output, "is_error": True},
             "raw_json": {
                 "message": {"content": [{"type": "tool_result", "content": pytest_output}]},
-                "toolUseResult": pytest_output + "\nexit 1",
+                "toolUseResult": pytest_output + "\nE   ValueError: suffix-only failure",
             },
         }
     )
@@ -87,6 +87,19 @@ def test_validation_output_uses_normalized_tool_result_once() -> None:
     assert output is not None
     assert output.startswith(pytest_output)
     assert output.count(pytest_output) == 1
+    assert "E   ValueError: suffix-only failure" in output
+    assert truncated is False
+
+
+def test_validation_output_keeps_failure_detail_after_shared_prefix() -> None:
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": "short summary"},
+            "raw_json": {"toolUseResult": "short summary\nE   ValueError: missing"},
+        }
+    )
+
+    assert output == "short summary\nE   ValueError: missing"
     assert truncated is False
 
 
