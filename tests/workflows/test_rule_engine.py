@@ -435,6 +435,8 @@ async def test_rule_loop_timing_attributes_executor_bridge_and_mcp_call(
     assert breakdown["rule_mcp_call:gobby-test:slow"] >= breakdown["rule_loop_bridge_work"]
     assert breakdown["rule_loop_pass_work"] >= breakdown["rule_mcp_call:gobby-test:slow"]
     assert "rule_loop_pass_resume" in breakdown
+    for key in ("rule_step_after_tool", "rule_late_mcp_injections", "rule_finalize_response"):
+        assert key in breakdown
 
 
 async def _assert_evaluation(
