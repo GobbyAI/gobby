@@ -3,6 +3,9 @@
 use axum::body::Body;
 use axum::http::header::CONNECTION;
 use axum::http::{HeaderMap, HeaderName, Request, Response, Uri, Version};
+use bytes::Bytes;
+use http_body_util::BodyExt;
+use hyper::body::Frame;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -31,7 +34,8 @@ pub fn client() -> ProxyClient {
 pub async fn forward(state: &FrontDoorState, request: Request<Body>) -> Response<Body> {
     let target = state.target;
     let (mut parts, body) = request.into_parts();
-    strip_hop_by_hop(&mut parts.headers);
+    let removed = strip_hop_by_hop(&mut parts.headers);
+    let body = strip_trailers(body, removed);
     let path_and_query = parts
         .uri
         .path_and_query()
@@ -50,8 +54,8 @@ pub async fn forward(state: &FrontDoorState, request: Request<Body>) -> Response
     match state.client.request(Request::from_parts(parts, body)).await {
         Ok(response) => {
             let (mut parts, body) = response.into_parts();
-            strip_hop_by_hop(&mut parts.headers);
-            Response::from_parts(parts, Body::new(body))
+            let removed = strip_hop_by_hop(&mut parts.headers);
+            Response::from_parts(parts, strip_trailers(body, removed))
         }
         Err(error) if error.is_connect() => unavailable(target, state.backend_state),
         Err(error) => bad_gateway(target, error),
@@ -59,20 +63,37 @@ pub async fn forward(state: &FrontDoorState, request: Request<Body>) -> Response
 }
 
 /// Remove the fields named by `Connection` and the fixed hop-by-hop set.
-pub fn strip_hop_by_hop(headers: &mut HeaderMap) {
-    let listed: Vec<HeaderName> = headers
+pub fn strip_hop_by_hop(headers: &mut HeaderMap) -> Vec<HeaderName> {
+    let mut removed: Vec<HeaderName> = headers
         .get_all(CONNECTION)
         .iter()
         .filter_map(|value| value.to_str().ok())
         .flat_map(|value| value.split(','))
         .filter_map(|token| HeaderName::from_bytes(token.trim().as_bytes()).ok())
         .collect();
-    for name in listed {
+    removed.extend(HOP_BY_HOP.map(HeaderName::from_static));
+    for name in &removed {
         headers.remove(name);
     }
-    for name in HOP_BY_HOP {
-        headers.remove(name);
-    }
+    removed
+}
+
+/// RFC 9110 section 7.6.1 applies to trailer fields too: drop the `removed` names
+/// from trailer frames as they stream past.
+fn strip_trailers<B>(body: B, removed: Vec<HeaderName>) -> Body
+where
+    B: hyper::body::Body<Data = Bytes> + Send + 'static,
+    B::Error: Into<axum::BoxError>,
+{
+    Body::new(body.map_frame(move |frame| match frame.into_trailers() {
+        Ok(mut trailers) => {
+            for name in &removed {
+                trailers.remove(name);
+            }
+            Frame::trailers(trailers)
+        }
+        Err(frame) => frame,
+    }))
 }
 
 #[cfg(test)]

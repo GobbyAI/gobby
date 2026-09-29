@@ -18,7 +18,7 @@ use hyper::server::conn::http1 as server_http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 
@@ -239,4 +239,76 @@ async fn refused_backend_returns_typed_503() {
             "backend": {"state": "down", "target": backend.to_string()},
         })
     );
+}
+
+/// Read one chunked HTTP/1.1 message, head through the trailer section.
+async fn read_chunked_message(stream: &mut TcpStream) -> String {
+    let mut buffer = Vec::new();
+    loop {
+        let text = String::from_utf8_lossy(&buffer);
+        if let Some(last_chunk) = text.find("\r\n0\r\n")
+            && text[last_chunk + 3..].contains("\r\n\r\n")
+        {
+            return text.into_owned();
+        }
+        let mut chunk = [0_u8; 1024];
+        let read = stream.read(&mut chunk).await.expect("read message");
+        assert_ne!(read, 0, "closed mid-message: {text}");
+        buffer.extend_from_slice(&chunk[..read]);
+    }
+}
+
+/// The trailer section: everything after the last-chunk line.
+fn trailer_section(message: &str) -> String {
+    let last_chunk = message.find("\r\n0\r\n").expect("last chunk");
+    message[last_chunk + 5..].to_ascii_lowercase()
+}
+
+#[tokio::test]
+async fn connection_listed_trailers_are_stripped_both_ways() {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind backend");
+    let backend = listener.local_addr().expect("backend addr");
+    let (seen_tx, seen_rx) = oneshot::channel::<String>();
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let request = read_chunked_message(&mut stream).await;
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\nconnection: x-private\r\n\
+                  trailer: x-private, x-kept\r\n\r\n5\r\nhello\r\n0\r\n\
+                  x-private: secret\r\nx-kept: yes\r\n\r\n",
+            )
+            .await
+            .expect("write response");
+        let _ = seen_tx.send(request);
+    });
+    let front_door = start_front_door(backend).await;
+
+    let mut client = TcpStream::connect(front_door)
+        .await
+        .expect("connect front door");
+    client
+        .write_all(
+            b"POST /api/upload HTTP/1.1\r\nhost: localhost\r\ntransfer-encoding: chunked\r\n\
+              connection: x-private\r\nte: trailers\r\ntrailer: x-private, x-kept\r\n\r\n\
+              5\r\nhello\r\n0\r\nx-private: secret\r\nx-kept: yes\r\n\r\n",
+        )
+        .await
+        .expect("write request");
+    let response = tokio::time::timeout(TIMEOUT, read_chunked_message(&mut client))
+        .await
+        .expect("response timed out");
+    let request = tokio::time::timeout(TIMEOUT, seen_rx)
+        .await
+        .expect("backend capture timed out")
+        .expect("backend capture");
+
+    let request_trailers = trailer_section(&request);
+    assert!(request_trailers.contains("x-kept: yes"), "{request}");
+    assert!(!request_trailers.contains("x-private"), "{request}");
+    let response_trailers = trailer_section(&response);
+    assert!(response_trailers.contains("x-kept: yes"), "{response}");
+    assert!(!response_trailers.contains("x-private"), "{response}");
 }
