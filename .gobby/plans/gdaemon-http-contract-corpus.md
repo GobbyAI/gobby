@@ -125,20 +125,47 @@ volatile fields by RFC 6901 JSON pointer. Both harnesses replace them with
 so recordings are deterministic. The loader rejects any case whose
 `schema_version` differs from the manifest's.
 
-Credentials never reach a fixture file. A case's persisted `request` is the
-sanitized request: it carries no `Authorization` or runtime-grant header. Each
-case names its credential recipe in a `credential` field (`none`, `operator`, or
-`grant`, plus `forged_identity` headers where 3.1 lists them). A test-local
-materializer in `http_corpus.py` builds the live headers immediately before
-Python sends the request:
-- `operator` adds the bearer from `daemon_auth_headers` (`tests/e2e/conftest.py`,
-  used by `authenticated_daemon_client`);
-- `grant` adds `BoundaryHarness.grant_headers()` from the `boundary` fixture.
+Request reconstruction: a persisted case is an executable recipe, and replay
+always starts from the committed file.
+- `request` stores the exact method, path, query, and body that Python sends,
+  with no `Authorization` or runtime-grant header. Every request value in the
+  first corpus is a fixed non-secret constant, so no `mask` pointer enters
+  `request`.
+- `credential` names the header recipe that a test-local materializer in
+  `http_corpus.py` adds immediately before Python sends:
+  - `none` adds nothing;
+  - `operator` adds `daemon_auth_headers(daemon_instance.gobby_home)`, an
+    ordinary helper in `tests/e2e/conftest.py`;
+  - `grant` adds `BoundaryHarness.grant_headers()` from the `boundary` fixture.
+- Credentials per case:
+  - `none`: `health_ok`, `runtime_handshake_challenge`, and `auth_missing_auth`.
+  - `operator`: `config_schema`, `config_values`, `tasks_list`,
+    `runtime_handshake`, and `auth_missing_grant`.
+  - `grant`: `auth_forged_identity`.
+- Normalization (secret redaction, then masks) applies only to the copy the
+  recorder writes and the copy replay compares. The request that is sent is
+  never normalized.
 
-The recorder writes the sanitized request and applies the case masks before
-writing, so replay always runs with freshly injected credentials. The Rust
-harness replays against a stub backend and needs no credential. No new
+The Rust harness replays against a stub backend and needs no credential. No new
 credential abstraction is added.
+
+Secret redaction is mandatory. It runs before masking on every body the
+recorder writes or replay compares, independent of `mask` and of whether a value
+varies:
+- Any object key named `dsn`, `password`, `api_key`, `token`,
+  `deployment_token`, `payload_checksum`, `signature`, or `proof`, at any depth,
+  has its value replaced with `"@secret@"`.
+- That set covers the grant's capability credentials (`PostgresDirect.dsn`,
+  `FalkorDirect.password`, and `QdrantDirect.api_key` in
+  `src/gobby/runtime_grants/schema.py`), `GrantDeployment.token`, the grant's
+  `payload_checksum` and `signature`, the top-level `deployment_token`, and the
+  challenge `proof`.
+- Every other grant field keeps its shape and value. The grant's time and
+  generation fields (`issued_at`, `expires_at`, `valid_until`,
+  `credential_generation`) and the top-level `fencing_epoch` are masked by
+  pointer.
+- The Rust harness applies the same key set, and `mask_vector.json` gains a
+  redaction case.
 
 `mask_vector.json` is a shared vector: `{"input", "mask", "expected"}`. It
 covers the following, and 3.2 asserts the Rust helper produces the same
@@ -153,14 +180,28 @@ Modules:
   `record_cases(client, cases, out_dir)` helpers. It uses the stdlib only
   (`json` plus a small pointer walker).
 - `tests/contracts/test_http_corpus.py`:
-  - reaches the e2e fixtures the way `tests/mcp_proxy/test_annotate_mcp.py`
-    does. It imports `tests.e2e.conftest` and rebinds `daemon_instance`,
-    `e2e_config`, and `e2e_project_dir`. It rebinds `boundary` from
-    `tests.e2e.test_runtime_boundary` (`boundary`, line 869, which yields
-    `BoundaryHarness`).
-  - replays every `origin: python` case against the same fixture and asserts
-    equality after masking. It is parametrized by case name. The fixture is
-    consumed and not modified.
+  - binds every fixture it needs explicitly. `tests/contracts` is a sibling of
+    `tests/e2e`, and importing a conftest module does not register its
+    fixtures.
+    - `daemon_instance`, `e2e_config`, and `e2e_project_dir` are rebound from
+      `tests.e2e.conftest`, as `tests/mcp_proxy/test_annotate_mcp.py` does.
+    - `boundary` is rebound from `tests.e2e.test_runtime_boundary` (line 869).
+      It yields `BoundaryHarness` and needs only `daemon_instance` and
+      `e2e_project_dir`.
+    - A module-local `e2e_pre_daemon_setup(postgres_db, postgres_schema)`
+      replaces the no-op in `tests/e2e/conftest.py` (line 920). It performs the
+      identity and capability part of the boundary module's setup: the two
+      schema GRANTs to `gobby_gcode_capability`, the test user insert with the
+      `tests/fixtures/postgres.py` constants, and
+      `_seed_identity_rows(postgres_db, E2E_MACHINE_ID, TEST_USER_ID)`. It sets
+      no code-index or generation config and starts no summary LLM server. The
+      boundary module's own `e2e_pre_daemon_setup` is never bound.
+    - `postgres_db`, `postgres_schema`, and `postgres_database_url` come from
+      `tests/fixtures/postgres.py`, as for every test.
+  - replays every `origin: python` case from its committed file against the
+    fixture and asserts equality after normalization. It is parametrized by case
+    name and never replays an in-run recording. The fixture is consumed and not
+    modified.
   - records when `GOBBY_RECORD_HTTP_CONTRACTS=1`: `test_record_http_contracts`
     is skipped unless that variable is set, and otherwise rewrites the case
     files in place. An environment switch avoids a `pytest_addoption` hook,
@@ -183,17 +224,23 @@ isolated e2e daemon, which runs behind gdaemon.
 - `runtime_handshake_challenge` and `runtime_handshake`: family
   `runtime_handshake`.
   - `POST /api/runtime/handshake/challenge` (a `_PUBLIC_PATHS` entry in
-    `src/gobby/servers/middleware/auth.py`).
-  - `POST /api/runtime/handshake`, completing the `boundary` harness's
-    handshake, with credential `operator`.
+    `src/gobby/servers/middleware/auth.py`) with body
+    `{"nonce": "AAAAAAAAAAAAAAAAAAAAAA"}`, a fixed 16-byte base64url nonce within
+    `_CHALLENGE_NONCE_MAX_CHARS`. `challenge` rejects any `Authorization`
+    (`credential_before_proof`), so the credential is `none`.
+  - `POST /api/runtime/handshake` with credential `operator` and body
+    `{"machine_id": E2E_MACHINE_ID, "project_id": E2E_PROJECT_ID,
+    "session_id": "21000000-0000-4000-8000-00000000c0de"}`. The two ids are the
+    constants `_handshake_grant` sends (`tests/e2e/test_runtime_boundary.py`);
+    `HandshakeService.issue_for_operator` requires the admitted machine and
+    project.
   - Both handlers return `Cache-Control: no-store`
     (`src/gobby/servers/routes/runtime_handshake.py`, `challenge` and
     `handshake`); the allowlist records it and replay pins it.
-  - Volatile pointers: `/request/body/nonce` and `/response/body/proof` for the
-    challenge; `/request/body/machine_id`, `/request/body/project_id`,
-    `/response/body/deployment_token`, `/response/body/fencing_epoch`, and every
-    leaf of `/response/body/grant` that varies between two recordings, for the
-    handshake.
+  - Redaction covers `proof`, `deployment_token`, and the grant secrets. The
+    handshake masks `/response/body/fencing_epoch` and the grant's
+    `issued_at`, `expires_at`, and each capability's `valid_until` and
+    `credential_generation`.
 - Family `auth`: every body is `{"error": <message>, "code": <code>}`, built by
   `AuthMiddleware.dispatch` in `src/gobby/servers/middleware/auth.py`. The
   codes come from `authenticate` in `src/gobby/servers/auth_service.py`.
@@ -242,10 +289,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 - 3.1.1 - On a synthetic manifest, the loader rejects a case whose `schema_version` differs from the manifest's and skips `origin: gdaemon` families. test: `tests/contracts/test_http_corpus.py::test_loader_rejects_version_and_filters_origin`.
 - 3.1.2 - The recorder writes every `origin: python` case deterministically: two recordings against one fixture produce identical bytes, and those bytes contain none of the daemon token, the encoded runtime grant, the nested grant token, or the `deployment_token`. test: `tests/contracts/test_http_corpus.py::test_recorder_is_deterministic`.
-- 3.1.3 - Every first-corpus case replays equal through the front-door e2e fixture with freshly injected credentials, including `Cache-Control: no-store` on both runtime-handshake cases. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+- 3.1.3 - Every first-corpus case replays equal from its committed file through the front-door e2e fixture with freshly injected credentials, including `Cache-Control: no-store` on both runtime-handshake cases, and the module collects and runs under the focused standalone command. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
 - 3.1.4 - The Python mask helper produces the shared vector's `expected` output. test: `tests/contracts/test_http_corpus.py::test_mask_vector_matches_expected`.
 - 3.1.5 - Every manifest family has a valid `parity` and `origin`, every listed case file exists, and every case's `family` is a manifest family. test: `tests/contracts/test_http_corpus.py::test_manifest_contract`.
-- 3.1.6 - The README documents the format, the `credential` recipes, the masks, and the re-record procedure. file: `tests/contracts/http/README.md`.
+- 3.1.6 - The README documents the format, the `credential` recipes, the redaction key set, the masks, and the re-record procedure. file: `tests/contracts/http/README.md`.
+- 3.1.7 - A synthetic grant whose `dsn`, `password`, `api_key`, deployment `token`, `payload_checksum`, and `signature` are identical in two recordings writes none of them, and every non-secret grant field keeps its shape. test: `tests/contracts/test_http_corpus.py::test_secret_redaction_is_unconditional`.
 
 ### 3.2 Rust replay harness and the gdaemon-authored front_door family [category: test] (depends: 3.1)
 `kind: deliverable`
@@ -301,11 +349,14 @@ Harness (`crates/gdaemon/tests/http_contracts.rs`, a single file):
   `serde_json::Value::pointer_mut`, so there is no new dependency, and behave
   exactly like `tests/contracts/http_corpus.py`.
 - For each `origin: python` case, it starts a case-driven hyper stub backend on
-  `127.0.0.1:0` that answers the recorded request with the recorded status,
-  allowlisted headers, and body. It then runs `serve` with
-  `routes = {family: parity}`, sends the request through the front door, masks,
-  and asserts equality.
-- For `origin: gdaemon` cases, a private helper binds a
+  `127.0.0.1:0` that records the request it receives and answers with the
+  recorded status, allowlisted headers, and body. It then runs `serve` with
+  `routes = {family: parity}`, sends the request through the front door,
+  normalizes, and asserts equality. It also asserts that the stub received the
+  case's method, path, query, body, and allowlisted request headers, so
+  response equality cannot pass after request corruption.
+- For `origin: gdaemon` cases, `routes` is empty, so the path takes the
+  proxy fallback, and a private helper binds a
   `tokio::net::TcpSocket` on `127.0.0.1:0` without listening and holds it until
   after the assertion, so connections to that address are refused for the whole
   replay.
@@ -322,11 +373,18 @@ The new `front_door` family:
   every proxied path, so the completeness precheck below does not consider this
   family.
 
-Completeness precheck, run before replay: every name in `FAMILIES` appears in
-the manifest with at least one case, and the test fails naming any missing
-family. Bootstrap route names outside `FAMILIES` are not checked. This keeps the
-gate closed when a Stage 2 leaf adds a native handler without recording its
-family.
+Parity precheck, run before replay: a private function over the manifest and
+`FAMILIES` returns every violation by name, and the suite fails on any.
+- Every name in `FAMILIES` has at least one manifest case.
+- Every name in `FAMILIES` has manifest parity `native`, so adding a native
+  handler without flipping its family fails.
+- `routes::unimplemented_families(FAMILIES, routes)`, applied to the manifest's
+  parity map, is empty, so native parity on a family gdaemon lacks fails.
+  `RouteTable::new` would otherwise proxy it silently. The one exemption is
+  `front_door`, the synthetic `origin: gdaemon` family.
+
+This keeps the Stage 2 gate closed on a forgotten parity flip or a missing
+recording.
 
 Verification planned: `cargo test -p gobby-daemon --test http_contracts`, then
 the 3.1 pytest command to confirm the Python replay still skips the new
@@ -334,11 +392,12 @@ the 3.1 pytest command to confirm the Python replay still skips the new
 
 **Acceptance:**
 
-- 3.2.1 - Every `proxy`-parity case replays equal through `gdaemon serve` against the case-driven stub. test: `crates/gdaemon/tests/http_contracts.rs::proxy_families_replay_equal`.
+- 3.2.1 - Every `proxy`-parity case replays equal through `gdaemon serve` against the case-driven stub, and the stub received the case's request unchanged. test: `crates/gdaemon/tests/http_contracts.rs::proxy_families_replay_equal`.
 - 3.2.2 - The `health` family replays equal under `native` routing and carries `x-gobby-served-by: gdaemon`. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal`.
 - 3.2.3 - The `front_door` family's typed 503 replays equal against a backend address held bound and non-listening through the replay. test: `crates/gdaemon/tests/http_contracts.rs::front_door_backend_down_replays_equal`.
 - 3.2.4 - Rust masking produces the shared vector's `expected` output. test: `crates/gdaemon/tests/http_contracts.rs::mask_matches_python_vector`.
-- 3.2.5 - Every family in `FAMILIES` has at least one manifest case, and a missing one fails the suite by name. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+- 3.2.5 - Every family in `FAMILIES` has at least one manifest case with `native` parity, and no other family except `front_door` has `native` parity. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+- 3.2.6 - On synthetic manifests, the precheck names a registered family with no case, a registered family with `proxy` parity, and an unregistered family with `native` parity. test: `crates/gdaemon/tests/http_contracts.rs::precheck_rejects_missing_or_mismatched_parity`.
 
 ## V1: Plan Changelog
 `kind: framing`
@@ -362,6 +421,14 @@ the 3.1 pytest command to confirm the Python replay still skips the new
   assertion. E3 pins the 401 cases to `POST /api/embeddings`. E4 names the loader
   and manifest tests and moves the README to 3.1.6. E5 holds the refused backend
   address bound and non-listening through the 3.2 replay.
+- 2026-09-29: Adversary review (gobby#14579) at 02f0274, blocking findings
+  HC-01 to HC-04 accepted. HC-01: cases are executable recipes with fixed
+  non-secret request constants and a credential per case; normalization touches
+  only the written and compared copies. HC-02: the test module binds its full
+  fixture set, including a module-local identity setup. HC-03: key-based secret
+  redaction runs regardless of volatility (3.1.7). HC-04: the precheck requires
+  native parity for registered families, rejects it elsewhere (3.2.6), and the
+  stub asserts the received request.
 
 ## V2: Verification
 `kind: verification`
