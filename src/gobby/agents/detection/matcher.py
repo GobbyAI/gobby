@@ -34,7 +34,13 @@ IssueCode = Literal["invalid_pattern", "pattern_timeout"]
 _COMPOSER_RULE_RE = re.compile(r"^\s*[─━]{8,}(?:[^\n]*[─━])?\s*$")
 _CODEX_PROMPT_RE = re.compile(r"^\s*›(?:[ \t].*)?$")
 _CODEX_MODEL_RE = re.compile(r"^\s{2,}\S.* · .*$")
-_CODEX_FOOTER_RE = re.compile(r"^\s*← for agents · \? for shortcuts\s*$")
+# Codex drops the agents hint and appends a warnings indicator when it has any, so
+# both are optional. A footer this does not recognise leaves no region, which reads
+# ``unknown`` and strands a stale-active seat (#23102).
+_CODEX_FOOTER_RE = re.compile(
+    r"^\s*(?:← for agents · )?\? for shortcuts"
+    r"(?:\s{2,}⚠️? \d+ warnings? · f2 to view)?\s*$"
+)
 
 # The rules a manifest needs before any composer probe of it can mean anything.
 _COMPOSER_RULE_IDS = frozenset({"composer_draft", "composer_empty"})
