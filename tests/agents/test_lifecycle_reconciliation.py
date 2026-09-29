@@ -12,7 +12,12 @@ import pytest
 
 from gobby.agents.lifecycle_reconciliation import LifecycleReconciliation
 from gobby.storage.terminals import TerminalManager
-from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -66,7 +71,7 @@ async def test_pending_terminal_reaped_after_failed_spawn() -> None:
         agent_run_manager=MagicMock(),
         db=MagicMock(),
         terminal_manager=cast(TerminalManager, store),
-        runtime_registry=MagicMock(),
+        runtime_registry=runtime_registry(runtime),
         cleanup_handler=cleanup,
         run_db=lambda fn, *args, **kwargs: fn(*args, **kwargs),
         spawn_in_doubt_seconds=150.0,

@@ -23,9 +23,13 @@ class InDoubtRegistry:
         self._lock = threading.Lock()
         self._held: dict[str, list[DeferredStep]] = {}
 
-    def claim(self, terminal_id: str) -> None:
+    def claim(self, terminal_id: str) -> bool:
+        """Take the id for one owner; false, with nothing changed, when it is held."""
         with self._lock:
-            self._held.setdefault(terminal_id, [])
+            if terminal_id in self._held:
+                return False
+            self._held[terminal_id] = []
+            return True
 
     def holds(self, terminal_id: str) -> bool:
         with self._lock:

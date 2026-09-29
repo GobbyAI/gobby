@@ -7,8 +7,9 @@ import logging
 import shutil
 import time
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from datetime import datetime
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from gobby.agents.spawn_executor_codex import _spawn_codex_terminal
@@ -21,7 +22,10 @@ from gobby.agents.spawn_executor_providers import (
     prepare_grok_spawn,
     prepare_qwen_spawn,
 )
-from gobby.agents.spawn_executor_runtime import _promote_prepared, _runtime_spawn
+
+# Explicit re-exports: the facade stays the patch and import target for both.
+from gobby.agents.spawn_executor_runtime import _promote_prepared as _promote_prepared
+from gobby.agents.spawn_executor_runtime import _runtime_spawn as _runtime_spawn
 from gobby.agents.spawn_executor_support import (
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
     _CODEX_PREAPPROVED_GOBBY_TOOLS,
@@ -38,6 +42,7 @@ from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
 from gobby.terminals.host_client import HostUnavailableError
+from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.native_runtime import HostEpochMismatch, classify_native_spawn_failure
 from gobby.terminals.runtime import (
     PreparedSpawn as RuntimePreparedSpawn,
@@ -48,6 +53,7 @@ from gobby.terminals.runtime import (
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
+    from gobby.agents.spawn_in_doubt_owner import OwnerStage
     from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
@@ -72,7 +78,6 @@ _COMPAT_PRIVATE_EXPORTS = (
     _prepare_managed_code_index,
     _apply_extra_env,
     _record_resume_launch_details,
-    _promote_prepared,
 )
 
 
@@ -313,7 +318,7 @@ def _tmux_duplicate_session_error(exc: BaseException) -> bool:
 
 
 async def _cleanup_timed_out_prepare(
-    prepare_task: asyncio.Task[RuntimePreparedSpawn],
+    prepare_task: asyncio.Future[Any],
     *,
     manager: TerminalManager,
     runtime: TerminalRuntime,
@@ -364,17 +369,53 @@ async def _cleanup_timed_out_prepare(
 
 
 def _schedule_timeout_cleanup(
-    prepare_task: asyncio.Task[RuntimePreparedSpawn],
+    prepare_task: asyncio.Future[Any] | None,
     *,
     manager: TerminalManager,
     runtime: TerminalRuntime,
     backend: str,
     terminal_id: str,
     spawn_key: str,
-    attempt_generation: int,
-    attempt_started_at: datetime,
+    attempt_generation: int | None,
+    attempt_started_at: datetime | None,
+    in_doubt_owner: bool = False,
+    stage: OwnerStage = "prepare",
+    prepared: RuntimePreparedSpawn | None = None,
+    prior_attempt: tuple[int, datetime] | None = None,
 ) -> None:
-    def schedule(completed: asyncio.Task[RuntimePreparedSpawn]) -> None:
+    """Hand a spawn's unresolved work to its late cleanup.
+
+    Unplaced spawns settle the prepare from a done-callback. A placed spawn hands
+    its held in-doubt claim to one owner task, created here synchronously and
+    retained until it settles, together with the live task for ``stage``.
+    """
+    if in_doubt_owner:
+        from gobby.agents.spawn_in_doubt_owner import InDoubtAttempt, run_in_doubt_owner
+
+        pair = (
+            None
+            if attempt_generation is None or attempt_started_at is None
+            else (attempt_generation, attempt_started_at)
+        )
+        attempt = InDoubtAttempt(
+            manager=manager,
+            runtime=runtime,
+            backend=backend,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            pair=pair,
+            prior_attempt=prior_attempt,
+            prepared=prepared,
+        )
+        owner = asyncio.create_task(run_in_doubt_owner(attempt, stage, prepare_task))
+        _TIMEOUT_CLEANUP_TASKS.add(owner)
+        owner.add_done_callback(_finish_timeout_cleanup)
+        return
+    if prepare_task is None or attempt_generation is None or attempt_started_at is None:
+        raise ValueError("unplaced timeout cleanup needs the prepare task and its attempt")
+    generation, started_at = attempt_generation, attempt_started_at
+
+    def schedule(completed: asyncio.Future[Any]) -> None:
         task = asyncio.create_task(
             _cleanup_timed_out_prepare(
                 completed,
@@ -383,8 +424,8 @@ def _schedule_timeout_cleanup(
                 backend=backend,
                 terminal_id=terminal_id,
                 spawn_key=spawn_key,
-                attempt_generation=attempt_generation,
-                attempt_started_at=attempt_started_at,
+                attempt_generation=generation,
+                attempt_started_at=started_at,
             )
         )
         _TIMEOUT_CLEANUP_TASKS.add(task)
@@ -465,6 +506,27 @@ async def kill_spawn_key(
     return None
 
 
+async def _stale_pending_absent(runtime: TerminalRuntime, row: Terminal) -> bool:
+    """Kill a stale pending row's session, then prove it gone; raises when unanswerable."""
+    from gobby.agents.capture import backend_session_present
+
+    spawn_key = row.spawn_key or row.id
+    if row.backend == "native":
+        host_terminal_id = (row.process or {}).get("host_terminal_id")
+        if isinstance(host_terminal_id, str) and host_terminal_id:
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=row,
+                host_terminal_id=host_terminal_id,
+                host_epoch=row.host_epoch,
+            )
+        find = getattr(runtime, "find_host_terminal", None)
+        return callable(find) and await find(row.id, spawn_key) is None
+    await kill_spawn_key(runtime, spawn_key, pending=row)
+    return not await backend_session_present(runtime, replace(row, session_name=spawn_key))
+
+
 async def reap_stale_pending_terminals(
     manager: TerminalManager,
     runtime_registry: TerminalRuntimeRegistry,
@@ -472,39 +534,30 @@ async def reap_stale_pending_terminals(
     in_doubt_seconds: float,
     now: datetime | None = None,
 ) -> list[str]:
-    """Reap pending rows older than the in-doubt deadline with no backend resource.
+    """Reap pending rows older than the in-doubt deadline once their absence is proven.
 
-    `now` is accepted so tests can name the observed clock; selection uses
-    attempt_started_at via TerminalManager.list_stale_pending.
+    A held id belongs to its in-doubt owner. Any other row settles only on proof:
+    a tmux session gone after the kill, or a native row missing from the strict
+    host listing. A present session, a listed row or a raised probe leaves the
+    row pending for the next pass. `now` is accepted so tests can name the
+    observed clock; selection uses attempt_started_at via list_stale_pending.
     """
     del now
     reaped: list[str] = []
     for row in manager.list_stale_pending(in_doubt_seconds):
-        runtime = runtime_registry.resolve(row.backend)
-        if row.backend == "native":
-            process = row.process or {}
-            host_terminal_id = process.get("host_terminal_id")
-            if not isinstance(host_terminal_id, str) or not host_terminal_id:
-                result = manager.fail_pending_attempt(
-                    row.id,
-                    attempt_generation=row.attempt_generation,
-                    attempt_started_at=row.attempt_started_at,
-                )
-                if result is not None:
-                    reaped.append(row.id)
-                continue
-            try:
-                await kill_spawn_key(
-                    runtime,
-                    row.spawn_key or row.id,
-                    pending=row,
-                    host_terminal_id=host_terminal_id,
-                    host_epoch=row.host_epoch,
-                )
-            except HostUnavailableError:
-                continue
-        elif row.spawn_key:
-            await kill_spawn_key(runtime, row.spawn_key, pending=row)
+        if in_doubt_spawns.holds(row.id):
+            continue
+        try:
+            absent = await _stale_pending_absent(runtime_registry.resolve(row.backend), row)
+        except Exception as exc:
+            logger.warning(
+                "Stale pending terminal %s kept: absence unproven (%s)",
+                row.id,
+                type(exc).__name__,
+            )
+            continue
+        if not absent:
+            continue
         result = manager.fail_pending_attempt(
             row.id,
             attempt_generation=row.attempt_generation,

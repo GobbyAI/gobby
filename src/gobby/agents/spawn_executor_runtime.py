@@ -10,7 +10,7 @@ from uuid import UUID
 from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult, is_infrastructure_spawn_error
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
-from gobby.storage.terminals import TerminalManager, mint_terminal_id
+from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals import UnregisteredBackendError
 from gobby.terminals.native_runtime import classify_native_spawn_failure
 from gobby.terminals.runtime import (
@@ -29,14 +29,10 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
     """Sole pending-row owner: wrap, create/retry, prepare_spawn, promote_to_live."""
     from gobby.agents.spawn_executor import (
         _persist_spawn_workspace,
-        _schedule_timeout_cleanup,
-        _settle_native_spawn_failure,
-        _tmux_duplicate_session_error,
-        derive_spawn_key,
-        kill_spawn_key,
         resolve_terminal_services,
         wrap_provider_command,
     )
+    from gobby.agents.spawn_placed import _placed_runtime_spawn
 
     await asyncio.to_thread(_persist_spawn_workspace, request, plan.child_session_id)
     command = wrap_provider_command(plan.launch, plan.command)
@@ -60,6 +56,7 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             error="cancelled",
         )
 
+    existing: Terminal | None = None
     if request.retry_terminal_id:
         existing = await asyncio.to_thread(manager.get, request.retry_terminal_id)
         if existing is None:
@@ -80,6 +77,52 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 status="failed",
                 error="retry_terminal_not_pending",
             )
+
+    if request.placement_binder is not None:
+        return await _placed_runtime_spawn(
+            request,
+            plan,
+            binder=request.placement_binder,
+            manager=manager,
+            runtime=runtime,
+            backend=backend,
+            command=command,
+            existing=existing,
+        )
+    result = await _unplaced_runtime_spawn(
+        request,
+        plan,
+        manager=manager,
+        runtime=runtime,
+        backend=backend,
+        command=command,
+        existing=existing,
+    )
+    if existing is not None and not result.success:
+        # Failure cleanup recognizes a rolled-back bump by the pre-bump pair.
+        result.prior_attempt = (existing.attempt_generation, existing.attempt_started_at)
+    return result
+
+
+async def _unplaced_runtime_spawn(
+    request: SpawnRequest,
+    plan: ProviderSpawnPlan,
+    *,
+    manager: TerminalManager,
+    runtime: TerminalRuntime,
+    backend: str,
+    command: list[str],
+    existing: Terminal | None,
+) -> SpawnResult:
+    from gobby.agents.spawn_executor import (
+        _schedule_timeout_cleanup,
+        _settle_native_spawn_failure,
+        _tmux_duplicate_session_error,
+        derive_spawn_key,
+        kill_spawn_key,
+    )
+
+    if existing is not None:
         bumped = await asyncio.to_thread(
             manager.retry_attempt_unsettled,
             existing.id,
@@ -297,7 +340,13 @@ async def _promote_prepared(
     reservation_id: str | None = None,
     attempt_generation: int,
     attempt_started_at: datetime,
+    defer_failure: bool = False,
 ) -> SpawnResult:
+    """Persist, observe, commit and promote a prepared spawn.
+
+    With ``defer_failure`` every failure leaves the row as found and returns or
+    re-raises, so the in-doubt owner decides the kill and the settlement.
+    """
     from gobby.agents.spawn_executor import (
         _same_live_identity,
         _settle_native_spawn_failure,
@@ -329,15 +378,16 @@ async def _promote_prepared(
             else:
                 prepared.acknowledge_observer()
         except Exception as exc:
-            pending = await asyncio.to_thread(manager.get, terminal_id)
-            await kill_spawn_key(
-                runtime,
-                spawn_key,
-                pending=pending,
-                host_terminal_id=prepared.host_terminal_id,
-                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
-            )
-            await asyncio.to_thread(manager.fail_pending, terminal_id)
+            if not defer_failure:
+                pending = await asyncio.to_thread(manager.get, terminal_id)
+                await kill_spawn_key(
+                    runtime,
+                    spawn_key,
+                    pending=pending,
+                    host_terminal_id=prepared.host_terminal_id,
+                    host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+                )
+                await asyncio.to_thread(manager.fail_pending, terminal_id)
             code, detail, _settlement = classify_native_spawn_failure(exc)
             return SpawnResult(
                 success=False,
@@ -351,7 +401,7 @@ async def _promote_prepared(
     try:
         handle = await runtime.commit_spawn(prepared)
     except asyncio.CancelledError as exc:
-        if backend == "native":
+        if backend == "native" and not defer_failure:
             await _settle_native_spawn_failure(
                 manager=manager,
                 runtime=runtime,
@@ -363,7 +413,9 @@ async def _promote_prepared(
             )
         raise
     except CommitSpawnRefusedError as exc:
-        if backend == "native":
+        if defer_failure:
+            code, detail = _deferred_failure_code(backend, exc)
+        elif backend == "native":
             code, detail = await _settle_native_spawn_failure(
                 manager=manager,
                 runtime=runtime,
@@ -388,15 +440,18 @@ async def _promote_prepared(
     except Exception as exc:
         if backend != "native":
             raise
-        code, detail = await _settle_native_spawn_failure(
-            manager=manager,
-            runtime=runtime,
-            terminal_id=terminal_id,
-            spawn_key=spawn_key,
-            exc=exc,
-            host_terminal_id=prepared.host_terminal_id,
-            host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
-        )
+        if defer_failure:
+            code, detail = _deferred_failure_code(backend, exc)
+        else:
+            code, detail = await _settle_native_spawn_failure(
+                manager=manager,
+                runtime=runtime,
+                terminal_id=terminal_id,
+                spawn_key=spawn_key,
+                exc=exc,
+                host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+            )
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -421,13 +476,14 @@ async def _promote_prepared(
         if _same_live_identity(current, backend, locator_key):
             promoted = current
         else:
-            await kill_spawn_key(
-                runtime,
-                spawn_key,
-                pending=current,
-                host_terminal_id=prepared.host_terminal_id,
-                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
-            )
+            if not defer_failure:
+                await kill_spawn_key(
+                    runtime,
+                    spawn_key,
+                    pending=current,
+                    host_terminal_id=prepared.host_terminal_id,
+                    host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+                )
             return SpawnResult(
                 success=False,
                 run_id=plan.agent_run_id,
@@ -467,3 +523,11 @@ async def _promote_prepared(
         locator=handle.locator,
         message=f"{plan.auth_cli} agent spawned with session {plan.child_session_id}",
     )
+
+
+def _deferred_failure_code(backend: str, exc: BaseException) -> tuple[str, str | None]:
+    """The failure code a settling path would report, computed without settling."""
+    if backend == "native":
+        code, detail, _settlement = classify_native_spawn_failure(exc)
+        return code, detail
+    return str(exc), None

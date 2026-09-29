@@ -17,6 +17,11 @@ class NativeHostProbeMixin:
 
         async def _bind_frames(self, locator: AttachLocator, reservation_id: str) -> None: ...
 
+    @property
+    def host_epoch(self) -> str:
+        """The connected host's epoch; empty before the client has connected."""
+        return str(getattr(self._client, "host_epoch", "") or "")
+
     async def find_host_terminal(self, terminal_id: str, spawn_key: str) -> str | None:
         """Strict probe: the host id listed for ``(terminal_id, spawn_key)``, or None.
 

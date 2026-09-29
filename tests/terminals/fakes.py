@@ -578,6 +578,8 @@ class FakeRuntime:
     terminate_host_hold: asyncio.Event | None = None
     terminate_host_started: asyncio.Event = field(default_factory=asyncio.Event)
     terminate_started: asyncio.Event = field(default_factory=asyncio.Event)
+    # Raised, in order, by the strict host listing before it answers.
+    find_host_failures: list[BaseException] = field(default_factory=list)
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         self.create_calls += 1
@@ -748,6 +750,14 @@ class FakeRuntime:
             return HostEpochMismatch(host_epoch, self.host_epoch)
         self.killed_host_ids.append(host_terminal_id)
         return None
+
+    async def find_host_terminal(self, terminal_id: str, spawn_key: str) -> str | None:
+        """Strict listing: the host id while the spawn key runs, raising on a failure."""
+        if self.find_host_failures:
+            raise self.find_host_failures.pop(0)
+        if terminal_id in self.killed_ids or spawn_key not in self.live_keys:
+            return None
+        return "ht-1"
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         return AttachLocator(backend=self.backend, frame_host_epoch="epoch")

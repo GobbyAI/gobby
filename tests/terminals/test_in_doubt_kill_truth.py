@@ -495,6 +495,8 @@ async def test_probe_is_strict_and_reaper_honors_claims() -> None:
         cleanup_handler=MagicMock(),
         run_db=AsyncMock(),
         terminal_manager=store,
+        # The strict listing of a reachable host that lists neither row.
+        runtime_registry=runtime_registry(NativeTerminalRuntime(_HostClient())),
         spawn_in_doubt_seconds=30.0,
     )
 
