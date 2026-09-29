@@ -20,8 +20,9 @@ from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
 
-# A bare name: no separators and no leading dot, so it can never address a host path.
-_ATTACHMENT_FILENAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}")
+# A bare .txt/.log name: no separators and no leading dot, so it can never address a
+# host path, and the document can only arrive as text.
+_ATTACHMENT_FILENAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,59}\.(txt|log)")
 
 
 def create_communications_router(server: HTTPServer) -> APIRouter:
@@ -144,7 +145,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         if not comms_manager:
             raise HTTPException(status_code=503, detail="Communications manager not available")
         if not _ATTACHMENT_FILENAME.fullmatch(request.filename):
-            raise HTTPException(status_code=400, detail="filename must be a bare name")
+            raise HTTPException(status_code=400, detail="filename must be a bare .txt or .log name")
         data = request.content.encode("utf-8")
         if len(data) > MAX_LOG_ATTACHMENT_BYTES:
             raise HTTPException(

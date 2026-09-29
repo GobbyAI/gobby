@@ -550,7 +550,10 @@ def test_send_attachment_writes_content_to_temp_document(
     }
 
 
-@pytest.mark.parametrize("filename", ["../etc/passwd", "a/b.txt", ".hidden", "", "x" * 65])
+@pytest.mark.parametrize(
+    "filename",
+    ["../etc/passwd", "a/b.txt", ".hidden.txt", "", "x" * 61 + ".txt", "payload.sh", "notes"],
+)
 def test_send_attachment_rejects_non_bare_filename(
     client: TestClient, comms_manager: MagicMock, filename: str
 ) -> None:

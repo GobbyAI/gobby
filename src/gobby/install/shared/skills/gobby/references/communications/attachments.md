@@ -23,7 +23,7 @@ To send text as a document without a file, operators use
 authenticated `POST /api/comms/attachment` endpoint. Both are content-fed and
 read no host path. The CLI scrubs secrets and home paths first. When the
 redacted content exceeds 64 KiB, the CLI sends a one-line omission note instead
-of the document. The route takes a bare filename and at most 64 KiB, and always
+of the document. The route takes a bare `.txt` or `.log` filename and at most 64 KiB, and always
 sends the content as `text/plain`.
 
 Telegram uses photo, voice, or document delivery according to the media.

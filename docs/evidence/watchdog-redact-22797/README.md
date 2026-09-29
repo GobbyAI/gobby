@@ -7,6 +7,9 @@ the Orchestrator ruled option A. The candidate:
 
 - Alert text: signature and counts only (`• 4x 17:21:54 <logger.function> - <message with <id>>`).
   No exception line, session ids, traceback text, or host path.
+  An orphan event is a bad-string line whose entry started before the window. Its
+  signature is that line, cut to 200 characters. This is intentional: without it
+  the alert could not name the event.
   It is still sent with `gobby comms send --redact`.
 - Attachment: after the alert reaches Telegram, the exact new errors.log window
   is piped to `gobby comms attach --caption "errors.log new lines, redacted"
@@ -19,8 +22,7 @@ the Orchestrator ruled option A. The candidate:
 
 | File | Content |
 | --- | --- |
-| `watchdog.sh` | The candidate script |
-| `watchdog.diff` | Diff from the installed script to the candidate |
+| `watchdog.sh` | The candidate script; `diff -u ~/.gobby/watchdog/watchdog.sh watchdog.sh` shows the change |
 | `test_watchdog.sh` | Fixture tests; usage `bash test_watchdog.sh <path-to-watchdog.sh>` |
 
 ## Delivery surface
@@ -28,7 +30,8 @@ the Orchestrator ruled option A. The candidate:
 `POST /api/comms/attachment` takes `{channel_name, filename, content, caption}`.
 
 - The content is caller-supplied text. The daemon reads no caller path.
-- The filename must be a bare name (`[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}`).
+- The filename must be a bare `.txt` or `.log` name (`[A-Za-z0-9_-][A-Za-z0-9._-]{0,59}\.(txt|log)`),
+  so the document can only arrive as text.
 - The content must be at most 64 KiB in UTF-8 bytes; over that, the route returns 413.
 - The content type is forced to `text/plain`, so a caller cannot reach `sendPhoto` or `sendVoice`.
 - The daemon writes the content to a private temporary directory, calls

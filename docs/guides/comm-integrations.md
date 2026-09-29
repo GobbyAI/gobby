@@ -106,7 +106,8 @@ and `502` when the adapter reports a delivery failure.
 `POST /api/comms/attachment` accepts `channel_name`, `filename`, `content`, and
 an optional `caption`:
 
-- `filename` is a bare name of up to 64 characters with no separator or leading dot.
+- `filename` is a bare `.txt` or `.log` name of up to 64 characters with no
+  separator or leading dot.
 - `content` is at most 64 KiB of UTF-8 text. It is sent as a `text/plain`
   document through a private temporary file, so the daemon reads no caller path.
 - Status codes match `/send`, plus `413` for oversized content.
