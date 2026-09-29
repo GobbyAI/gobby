@@ -495,18 +495,23 @@ free functions taking `&Transaction`, returning `FromRow` types.
   `pg_advisory_xact_lock(k)`, so `COMMIT` blocks in the trigger. The test
   spawns the transaction, polls `pg_stat_activity` from the control
   connection until the transaction's PID shows `query = 'COMMIT'` and
-  `wait_event_type = 'Lock'`, then aborts the task. The old PID leaves
-  `pg_stat_activity` within a bounded poll, the pool's size returns to 1, and
-  the next checkout has a different PID. test:
+  `wait_event_type = 'Lock'`, then aborts and awaits the task. The pool's
+  size returns to 1 within a bounded poll and no callback runs. Only then does
+  the control connection release `k` (PostgreSQL need not notice a vanished
+  client during a blocked query; `client_connection_check_interval` defaults
+  to 0), after which the unobserved COMMIT may settle either way and the old
+  PID leaves `pg_stat_activity` within a bounded poll; the next checkout has
+  a different PID. The guarantee is client and pool disposal, not instant
+  server termination. test:
   `crates/gcore/src/postgres_pool/tests.rs::cancelled_commit_discards_connection`.
 - 2.1.8 - A closure returning `Err` after a control connection has run
   `pg_terminate_backend` on its PID gets its own error back (the rollback
-  error is logged), and the next checkout has a different PID; an armed
-  checkout guard dropped without disarming, on a live connection, detaches it
-  so its PID leaves `pg_stat_activity`. Cancellation while `ROLLBACK` is in
-  flight takes the same armed-guard path; no server state makes `ROLLBACK`
-  wait, so the guard-drop case is the deterministic proof of that path.
-  test:
+  error is logged), runs no callbacks, and the next checkout has a different
+  PID. Cancellation while `ROLLBACK` is in flight: a `#[cfg(test)]` one-shot
+  gate in the seam suspends after the guard is armed and before `ROLLBACK`
+  is awaited; the test cancels the real `Pool::transaction` future at that
+  gate, and the connection is discarded (next checkout has a different PID,
+  pool size restored) with no callbacks run. test:
   `crates/gcore/src/postgres_pool/tests.rs::failed_rollback_and_armed_guard_discard`.
 - 2.1.5 - A native transaction holding a target keyed `task_lifecycle:t1`
   blocks a second connection's `pg_advisory_xact_lock(hashtext('task_lifecycle:t1'))`
