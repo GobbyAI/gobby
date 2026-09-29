@@ -208,6 +208,25 @@ def extract_output(result: Any) -> tuple[str | None, bool]:
     """Extract bounded command output needed to classify validation failures."""
     if isinstance(result, dict) and "outcome_provenance" in result:
         result = {key: value for key, value in result.items() if key != "outcome_provenance"}
+    # Claude's transport copy can duplicate the result and exhaust the output limit.
+    if isinstance(result, dict) and isinstance(result.get("raw_json"), dict):
+        raw_json = result["raw_json"]
+        tool_result = result.get("tool_result")
+        content = tool_result.get("content") if isinstance(tool_result, dict) else None
+        transport = raw_json.get("toolUseResult")
+        if (
+            content
+            and isinstance(content, str)
+            and isinstance(transport, str)
+            and content in transport
+        ):
+            result = {
+                **result,
+                "raw_json": {
+                    **raw_json,
+                    "toolUseResult": transport.replace(content, "", 1),
+                },
+            }
     parts: list[str] = []
     seen: set[str] = set()
     for value in _walk_values(result):

@@ -74,6 +74,53 @@ def test_validation_output_is_bounded_with_failure_edges_preserved() -> None:
     assert len(output) <= 16_000
 
 
+def test_validation_output_uses_normalized_tool_result_once() -> None:
+    pytest_output = (
+        "E   KeyError: 'missing'\n" + ("captured log\n" * 700) + "FAILED test.py::test_missing"
+    )
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": pytest_output, "is_error": True},
+            "raw_json": {
+                "message": {"content": [{"type": "tool_result", "content": pytest_output}]},
+                "toolUseResult": pytest_output + "\nE   ValueError: suffix-only failure",
+            },
+        }
+    )
+
+    assert output is not None
+    assert output.startswith(pytest_output)
+    assert output.count(pytest_output) == 1
+    assert "E   ValueError: suffix-only failure" in output
+    assert truncated is False
+
+
+def test_validation_output_keeps_failure_detail_after_shared_prefix() -> None:
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": "short summary"},
+            "raw_json": {"toolUseResult": "short summary\nE   ValueError: missing"},
+        }
+    )
+
+    assert output == "short summary\nE   ValueError: missing"
+    assert truncated is False
+
+
+@pytest.mark.parametrize("normalized", ["short summary", ""])
+def test_validation_output_keeps_unique_transport_result(normalized: str) -> None:
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": normalized},
+            "raw_json": {"toolUseResult": "failure detail absent from summary"},
+        }
+    )
+
+    assert output is not None
+    assert "failure detail absent from summary" in output
+    assert truncated is False
+
+
 def _raise_missing_transcript() -> None:
     raise TranscriptEvidenceUnavailable(
         "No transcript was found", source="codex", attempted_paths=("/missing/session.jsonl",)
