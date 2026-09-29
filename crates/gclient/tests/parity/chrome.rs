@@ -1231,12 +1231,14 @@ switch_project = "ctrl+1..9"
                     // glyph-led title top left and the address alone bottom
                     // right, and Dark painted its own ground under every
                     // default cell (#22944), and the row under the menu bar
-                    // dropped its rule for bare theme ground (#22986):
-                    // 4.1.3 requires a glyph change to fail here, so this
-                    // digest moves only alongside a deliberate render change.
+                    // dropped its rule for bare theme ground (#22986), and
+                    // the sandbox mark led the address (`? · gclient`,
+                    // #23049): 4.1.3 requires a glyph change to fail here, so
+                    // this digest moves only alongside a deliberate render
+                    // change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "15ccd0e8c8687591bf249da11dcf4dae9085c26e31abec811d965f09f9a5f445",
+                        "4c7dd83fdb5bf53ad8c1678fcdf4d414d6c9a2a87124690f9779692275419cbc",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );

@@ -72,6 +72,9 @@ pub struct SessionRow {
     pub reasoning_effort: Option<String>,
     /// The session that spawned this one, for a child session of an agent run.
     pub parent_session_id: Option<String>,
+    /// Whether an OS sandbox wraps the session's process; absent when the
+    /// daemon has no evidence either way.
+    pub sandbox_enabled: Option<bool>,
 }
 
 impl SessionRow {
@@ -127,6 +130,14 @@ pub struct RunRow {
     pub child_session_id: Option<String>,
     pub effective_reasoning_effort: Option<String>,
     pub requested_reasoning_effort: Option<String>,
+    /// The launch sandbox record; `enforced` says whether it wrapped the run.
+    pub sandbox: Option<RunSandbox>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RunSandbox {
+    pub enforced: Option<bool>,
 }
 
 impl RunRow {

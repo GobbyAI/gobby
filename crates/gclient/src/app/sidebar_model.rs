@@ -114,6 +114,43 @@ pub struct AgentEntry {
     pub state: RowState,
     pub attention: Option<Attention>,
     pub last_activity_at: Option<String>,
+    /// Whether an OS sandbox wraps the agent's process.
+    pub sandbox: SandboxState,
+}
+
+/// The execution boundary around a pane's process, as the daemon recorded it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SandboxState {
+    Sandboxed,
+    Unrestricted,
+    /// No record, or records that disagree: never read as unrestricted.
+    #[default]
+    Unknown,
+}
+
+impl SandboxState {
+    /// Joins the session's recorded boundary with the run's launch record.
+    /// Either one alone decides; two that disagree are unknown. A spawned
+    /// run's records say only whether SRT wrapped it, so there `false` proves
+    /// nothing: the provider's own sandbox may still hold. Only a direct
+    /// launch's recorded command line reads as unrestricted.
+    pub fn resolve(session: Option<bool>, run: Option<bool>, spawned: bool) -> Self {
+        match (session, run) {
+            (Some(a), Some(b)) if a != b => Self::Unknown,
+            (Some(true), _) | (None, Some(true)) => Self::Sandboxed,
+            (Some(false), _) | (None, Some(false)) if !spawned => Self::Unrestricted,
+            _ => Self::Unknown,
+        }
+    }
+
+    /// The word the state stands for, for help text and the text glyphs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sandboxed => "sandboxed",
+            Self::Unrestricted => "unrestricted",
+            Self::Unknown => "sandbox unknown",
+        }
+    }
 }
 
 impl AgentEntry {
@@ -295,6 +332,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .or_else(|| run.and_then(|(_, run)| run.machine_id.clone()))
                 .filter(|machine| !machine.is_empty())
                 .unwrap_or_else(|| inputs.local_machine.to_string());
+            let managed = entry.run_id.is_some() || entry.entry_id.starts_with("run:");
             Some(AgentEntry {
                 entry_id: entry.entry_id.clone(),
                 project_id: project_id.to_string(),
@@ -328,13 +366,18 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     }),
                 context_percent: entry.context_percent,
                 tokens_used: entry.tokens_used,
-                managed: entry.run_id.is_some() || entry.entry_id.starts_with("run:"),
+                managed,
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),
                 state: agent_state(entry, pane),
                 attention: entry.attention.clone(),
                 last_activity_at: entry.last_activity_at.clone(),
+                sandbox: SandboxState::resolve(
+                    session.and_then(|(_, session)| session.sandbox_enabled),
+                    run.and_then(|(_, run)| run.sandbox.as_ref()?.enforced),
+                    managed,
+                ),
             })
         })
         .collect()
