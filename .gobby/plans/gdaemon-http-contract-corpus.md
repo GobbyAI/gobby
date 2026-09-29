@@ -160,10 +160,17 @@ varies:
   `src/gobby/runtime_grants/schema.py`), `GrantDeployment.token`, the grant's
   `payload_checksum` and `signature`, the top-level `deployment_token`, and the
   challenge `proof`.
-- Every other grant field keeps its shape and value. The grant's time and
-  generation fields (`issued_at`, `expires_at`, `valid_until`,
-  `credential_generation`) and the top-level `fencing_epoch` are masked by
-  pointer.
+- The grant's volatile non-secret fields are masked by pointer, keeping the
+  key and replacing only the value. They are the time and generation fields
+  (`issued_at`, `expires_at`, each capability's `valid_until` and
+  `credential_generation`), the top-level `fencing_epoch`, the nested
+  `/response/body/grant/deployment/fencing_epoch` (`GrantDeployment`), and
+  `/response/body/grant/capabilities/postgres/role_name`, which the database
+  derives from the deployment token, machine, project, and generation, so it
+  changes across fresh fixture homes.
+- Every grant field outside those two sets keeps its shape and value. The gate
+  is replay of the committed file against a fresh fixture, where every
+  volatile value differs from the recording.
 - The Rust harness applies the same key set, and `mask_vector.json` gains a
   redaction case.
 
@@ -219,8 +226,11 @@ isolated e2e daemon, which runs behind gdaemon.
 - `config_schema` and `config_values`: `GET /api/config/schema` and
   `GET /api/config/values` (`src/gobby/servers/routes/configuration_values.py`),
   family `config`. Mask ports, paths, and generated identifiers.
-- `tasks_list`: `GET /api/tasks` for the fixture project, family `tasks`. The
-  fixture project has no tasks, so the recorded body is the empty listing.
+- `tasks_list`: `GET /api/tasks?project_id=00000000-0000-0000-0000-000000000e2e`
+  (`E2E_PROJECT_ID`) with credential `operator`, family `tasks`. The query
+  names the project, so `list_tasks` never falls back to ambient project
+  resolution. That project has no tasks, so the recorded body is the empty
+  listing.
 - `runtime_handshake_challenge` and `runtime_handshake`: family
   `runtime_handshake`.
   - `POST /api/runtime/handshake/challenge` (a `_PUBLIC_PATHS` entry in
@@ -238,7 +248,9 @@ isolated e2e daemon, which runs behind gdaemon.
     (`src/gobby/servers/routes/runtime_handshake.py`, `challenge` and
     `handshake`); the allowlist records it and replay pins it.
   - Redaction covers `proof`, `deployment_token`, and the grant secrets. The
-    handshake masks `/response/body/fencing_epoch` and the grant's
+    handshake masks `/response/body/fencing_epoch`,
+    `/response/body/grant/deployment/fencing_epoch`,
+    `/response/body/grant/capabilities/postgres/role_name`, and the grant's
     `issued_at`, `expires_at`, and each capability's `valid_until` and
     `credential_generation`.
 - Family `auth`: every body is `{"error": <message>, "code": <code>}`, built by
@@ -429,6 +441,10 @@ the 3.1 pytest command to confirm the Python replay still skips the new
   redaction runs regardless of volatility (3.1.7). HC-04: the precheck requires
   native parity for registered families, rejects it elsewhere (3.2.6), and the
   stub asserts the received request.
+- 2026-09-29: Adversary recheck at dbc53f7. HC-02 to HC-04 resolved. The HC-01
+  residual is accepted: the nested deployment `fencing_epoch` and the Postgres
+  `role_name` are masked by pointer, only the enumerated volatile fields
+  change, and `tasks_list` names `E2E_PROJECT_ID` in its query.
 
 ## V2: Verification
 `kind: verification`

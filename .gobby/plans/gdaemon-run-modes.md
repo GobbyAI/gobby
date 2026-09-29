@@ -22,7 +22,8 @@ When the slice closes:
 - `/api/health` reports it.
 - A node runner starts none of the hub-only maintenance.
 
-The plan of record's 4.4 (the first hub-node pair test) needs that node.
+The slice is preparatory (Decision 7). It does not yet produce a hub and a node
+that are both operational at once.
 
 ## Decision Record
 `kind: framing`
@@ -74,12 +75,25 @@ The plan of record's 4.4 (the first hub-node pair test) needs that node.
    machine, tmux, installed binaries, local worktrees, and the local hook inbox
    and quarantine. When a machine-local loop contains one unscoped shared-row
    step, that step is gated inside its own function so both of its callers are
-   covered. 2.2 pins the exact sets.
+   covered. Per-run rows that carry a `machine_id` are recovered by the owning
+   machine in every mode. 2.2 pins the exact sets.
 6. **`gobby datastores expose` promotes a machine to hub.** It is already the
    documented hub-setup step (`docs/guides/shared-stack.md`), and it runs only on
    a `local` bootstrap. It writes `hub: true` into its staged bootstrap, and its
    existing rollback restores the prior bootstrap, including the prior flag.
    `gobby install` keeps writing `hub: false`.
+7. **This slice is preparatory.** A running node is out of its scope.
+   - `run_gobby` (`src/gobby/runner.py`) takes `ActiveDaemonLease` for every
+     bootstrap before it builds the runner. A second daemon on the shared
+     database therefore serves standby only (`docs/guides/shared-stack.md`).
+   - This slice leaves startup and the lease untouched. 2.1.4 proves the health
+     contract on an `HTTPServer` with a `node` bootstrap. 2.2 proves the loop
+     gates on runner functions.
+   - The plan of record owns the operational node. Its 5.1 moves the lease into
+     gdaemon, where a `node` never leases, and lists `run_gobby` in its Targets.
+     Its 4.4 adds the native node channel and relay and the first hub-node pair
+     test. That keeps the thin native node, and no Python node daemon is added
+     here.
 
 ## Constraints
 `kind: framing`
@@ -220,7 +234,12 @@ Targets:
 - `src/gobby/runner_lifecycle_periodic.py::start_periodic_tasks`
 - `src/gobby/runner_lifecycle_subsystems.py::init_subsystems`
 - `src/gobby/runner_lifecycle_agents.py::_reconcile_task_close_reviews`
+- `src/gobby/runner_lifecycle_agents.py::_cleanup_terminal_agent_completion_subscribers`
+- `src/gobby/runner_init/services.py::_schedule_scoped_tool_backfill`
+- `src/gobby/runner_init/services.py::_request_memory_projection_repair`
 - `tests/test_runner_lifecycle_periodic.py`
+- `tests/runner_init/test_services_mcp_stack.py::*` — scope-reason: node-mode skip of the scoped tool backfill, and unchanged scheduling in the other modes
+- `tests/ai/test_ai_runner_lease_lifecycle.py::*` — scope-reason: node-mode skip of projection repair after a lease re-ack and after a rebuild; SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_runner_lifecycle_subsystems.py::*` — scope-reason: node-mode startup assertions for the gated phases; SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/agents/test_task_close_review_recovery.py::*` — scope-reason: node-mode skip of close-review reconciliation; the `_runner` fake gains `bootstrap_config`
 - `tests/test_runner_approval_timeout.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
@@ -230,11 +249,12 @@ Targets:
 - `tests/test_runner_skill_maintenance.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_runner_workflow_audit_maintenance.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
 - `tests/test_bm25_startup.py::*` — scope-reason: SimpleNamespace runner fakes gain `bootstrap_config=BootstrapConfig()`
-- `tests/test_runner_lifecycle.py::*` — scope-reason: SimpleNamespace runner fakes that reach the gated functions gain `bootstrap_config=BootstrapConfig()`
+- `tests/test_runner_lifecycle.py::*` — scope-reason: SimpleNamespace runner fakes that reach the gated functions gain `bootstrap_config=BootstrapConfig()`; terminal-completion recovery with local and foreign runs
 
 **Research context:** The plan of record's 2.3 named `GobbyRunner._initialize_runtime_services` and
-`runner_init/services.py`. Those build services and start no loop. The loops start
-in two places:
+`runner_init/services.py`. Those mostly build services; their two shared-row
+launch sites are listed after the startup phases below. The loops start in two
+places:
 
 - `start_periodic_tasks(runner, *, tracker, **loops)`
   (`src/gobby/runner_lifecycle_periodic.py`) creates each periodic task with
@@ -313,6 +333,40 @@ record's "agent launchers" reading was checked against the code:
   monitor's callback and the `completion_subscriber_recovery` startup phase, so
   it returns 0 at its top in `node` mode and logs one INFO skip (Decision 5).
 
+Terminal-completion recovery is scoped to this machine in every mode.
+`completion_subscriber_recovery` also calls
+`_cleanup_terminal_agent_completion_subscribers`
+(`src/gobby/runner_lifecycle_agents.py`). It lists every completion id
+(`CompletionSubscriberManager.list_completion_ids`), loads each run with no
+machine check, wakes the subscribers, removes the acknowledged rows, and marks
+close-review delivery. `wake` persists the message before routing it, and
+`wake_result_is_delivered` accepts `ism_persisted`, so nothing downstream
+filters a wrong-machine delivery.
+- The function skips a run whose `machine_id` differs from
+  `require_machine_id()`, before it reads the subscribers. `AgentRun.machine_id`
+  is required (`src/gobby/storage/agents/_models.py`).
+- The rule holds in every mode, since each machine runs this phase for its own
+  runs. In `standalone` every run carries this machine's id, so its behavior is
+  unchanged.
+- A foreign run's subscriber rows stay until its owning machine recovers them.
+
+Service-construction launch sites in `src/gobby/runner_init/services.py` that
+write shared rows, gated in `node` mode at the top of each function with one
+INFO skip line:
+- `_schedule_scoped_tool_backfill` is called from `init_stateful_services`. It
+  calls `schedule_scoped_embedding_backfill`, which starts
+  `maybe_backfill_scoped_tool_embeddings` (`src/gobby/runner_init/mcp_stack.py`).
+  That embeds `GLOBAL_PROJECT_ID` tools into the shared store and writes the
+  shared config version marker. In `node` mode it schedules nothing.
+- `_request_memory_projection_repair` runs
+  `memory_manager.reconcile_stores(dry_run=False)` against the shared stores. The
+  embedding lease calls it after a same-generation re-ack
+  (`request_projection_repair`, `src/gobby/runner_init/embedding_lease.py`), and
+  `_request_memory_services_rebuild` calls it after a healthy rebuild. The
+  guard in the repair function covers both callers after startup. In `node`
+  mode the rebuild still re-prepares the node's own `memory_services`, and only
+  the shared reconcile is skipped.
+
 Every other phase runs in every mode, including the terminal host, MCP
 connections, agent run reconciliation, the WebSocket server, and the UI dev
 server.
@@ -339,8 +393,12 @@ Consumers unchanged:
 - `tests/test_runner_lifecycle_startup.py` — no-edit-reason: it monkeypatches `init_subsystems` out; verification only.
 - `tests/test_runner_shutdown.py` — no-edit-reason: it patches `_init_subsystems` out; verification only.
 - `tests/agents/test_lifecycle_monitor.py` — no-edit-reason: the monitor itself is unchanged; it only registers the callbacks; verification only.
+- `src/gobby/runner_init/embedding_lease.py` — no-edit-reason: it invokes `request_projection_repair` unchanged; the guard lives in the callee.
+- `src/gobby/runner_init/mcp_stack.py` — no-edit-reason: `schedule_scoped_embedding_backfill` is reached only through the gated `_schedule_scoped_tool_backfill` on the daemon path.
+- `src/gobby/servers/routes/memory.py` — no-edit-reason: its reconcile endpoint runs only on an explicit operator request and is not maintenance.
+- `tests/storage/definitions/test_revisions.py` — no-edit-reason: it monkeypatches `_schedule_scoped_tool_backfill` out; verification only.
 
-Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/agents/test_task_close_review_recovery.py tests/test_runner_approval_timeout.py tests/test_runner_bin_freshness.py tests/test_runner_maintenance_startup.py tests/test_runner_resource_monitor.py tests/test_runner_skill_maintenance.py tests/test_runner_workflow_audit_maintenance.py tests/test_bm25_startup.py tests/test_runner_lifecycle.py tests/test_runner_lifecycle_startup.py tests/test_runner_shutdown.py tests/agents/test_lifecycle_monitor.py -v`.
+Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/agents/test_task_close_review_recovery.py tests/runner_init/test_services_mcp_stack.py tests/ai/test_ai_runner_lease_lifecycle.py tests/storage/definitions/test_revisions.py tests/test_runner_approval_timeout.py tests/test_runner_bin_freshness.py tests/test_runner_maintenance_startup.py tests/test_runner_resource_monitor.py tests/test_runner_skill_maintenance.py tests/test_runner_workflow_audit_maintenance.py tests/test_bm25_startup.py tests/test_runner_lifecycle.py tests/test_runner_lifecycle_startup.py tests/test_runner_shutdown.py tests/agents/test_lifecycle_monitor.py -v`.
 
 **Acceptance:**
 
@@ -349,6 +407,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 2.2.3 - `standalone` and `hub` start every periodic task as today. test: `tests/test_runner_lifecycle_periodic.py::test_standalone_and_hub_start_every_periodic_task`.
 - 2.2.4 - `standalone` and `hub` run every startup phase as today. test: `tests/test_runner_lifecycle_subsystems.py::test_standalone_and_hub_run_every_phase`.
 - 2.2.5 - In `node` mode `_reconcile_task_close_reviews` returns 0 without listing reviews, from both the monitor callback and startup recovery. test: `tests/agents/test_task_close_review_recovery.py::test_node_mode_skips_close_review_reconciliation`.
+- 2.2.6 - In `node` mode `_schedule_scoped_tool_backfill` starts no backfill and writes no config marker, and `standalone` and `hub` schedule it as today. test: `tests/runner_init/test_services_mcp_stack.py::test_node_mode_skips_scoped_tool_backfill`.
+- 2.2.7 - In `node` mode neither a lease re-ack nor a healthy rebuild calls `reconcile_stores`, and the rebuild still re-prepares `memory_services`; `hub` repairs as today. test: `tests/ai/test_ai_runner_lease_lifecycle.py::test_node_mode_skips_projection_repair`.
+- 2.2.8 - Terminal-completion recovery wakes and removes subscribers only for runs owned by this machine; a foreign terminal run's subscribers get no wake, no row removal, and no close-review mark. test: `tests/test_runner_lifecycle.py::test_terminal_completion_recovery_skips_foreign_machine_runs`.
 
 ## D1 Node-scoped transcript processing (depends: 2.2)
 `kind: deferred`
@@ -395,14 +456,23 @@ deferral:
   PD's required check, `agent_lifecycle_monitor` proved machine-scoped, so it
   runs in every mode, and its one unscoped step, close-review reconciliation, is
   gated inside `_reconcile_task_close_reviews` (2.2.5).
+- 2026-09-29: Adversary review (gobby#14579) at 02f0274, blocking findings
+  RM-01 to RM-04 accepted. RM-01: the scoped tool backfill and memory projection
+  repair are gated in `node` mode inside their own functions (2.2.6, 2.2.7).
+  RM-02: terminal-completion recovery skips runs owned by another machine
+  (2.2.8). RM-03: Decision 7 records the preparatory scope and names the plan
+  of record's 5.1 and 4.4 as owners of the operational node. RM-04: each leaf
+  runs its own focused commands, and V2 runs once both leaves land.
 
 ## V2: Verification
 `kind: verification`
 
-After each leaf, and before the PD lands the branch:
+After each leaf, run that leaf's own "Verification planned" commands. Run the
+combined commands below once both leaves have landed, and again before the PD
+lands the branch:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/config/test_files_home.py tests/cli/test_install_setup.py tests/servers/test_admin_health.py tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/test_runner_lifecycle.py -v
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/config/test_files_home.py tests/cli/test_install_setup.py tests/cli/test_datastores_expose.py tests/servers/test_admin_health.py tests/config/test_runtime_config_contract.py tests/config/test_config_authority_audit.py tests/test_runner_lifecycle_periodic.py tests/test_runner_lifecycle_subsystems.py tests/agents/test_task_close_review_recovery.py tests/runner_init/test_services_mcp_stack.py tests/ai/test_ai_runner_lease_lifecycle.py tests/test_runner_lifecycle.py -v
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
 uv run gobby plans validate .gobby/plans/gdaemon-run-modes.md -p .
 ```
