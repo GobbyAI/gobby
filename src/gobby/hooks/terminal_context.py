@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import time
@@ -474,51 +473,21 @@ def hook_sandbox_enabled(
 ) -> bool | None:
     """The sandbox a session-start hook records, or None when nothing says.
 
-    A launcher's explicit value wins. A direct Codex or Claude Code launch
-    states its own sandbox on its command line. Claude Code's permission mode
-    sets approvals and says nothing about its OS sandbox; other providers stay
-    unknown.
+    A launcher's explicit value wins. A direct Codex launch states its own
+    sandbox on its command line. Claude Code's command line states only intent:
+    managed settings, including server-managed ones no local file shows,
+    outrank `--settings`, and a sandbox that fails to start falls back to
+    unsandboxed commands unless `sandbox.failIfUnavailable` is set, so its
+    effective boundary stays unknown. Its permission mode sets approvals only.
+    Other providers stay unknown.
     """
     raw = input_data.get("sandbox_enabled")
     if isinstance(raw, bool):
         return raw
-    parse = _ARGV_SANDBOX.get(cli_source)
-    if parse is None:
+    if cli_source != "codex":
         return None
     argv = seat_argv(terminal_context)
-    return None if argv is None else parse(argv)
-
-
-def claude_argv_sandbox(argv: Sequence[str]) -> bool | None:
-    """Claude Code's OS sandbox as its command line states it, else None.
-
-    Only inline `--settings` JSON with `sandbox.enabled: true` proves it: the
-    Seatbelt sandbox then wraps Bash commands. A settings file, settings in
-    config, or `enabled: false` stay unknown, since managed policy outranks the
-    flag and config files are not read. `--dangerously-skip-permissions` sets
-    approvals only.
-    """
-    settings: str | None = None
-    for index, arg in enumerate(argv):
-        if arg == "--settings" and index + 1 < len(argv):
-            settings = argv[index + 1]
-        elif arg.startswith("--settings="):
-            settings = arg.removeprefix("--settings=")
-    if settings is None or not settings.lstrip().startswith("{"):
-        return None
-    try:
-        parsed = json.loads(settings)
-    except ValueError:
-        return None
-    sandbox = parsed.get("sandbox") if isinstance(parsed, dict) else None
-    enabled = sandbox.get("enabled") if isinstance(sandbox, dict) else None
-    return True if enabled is True else None
-
-
-_ARGV_SANDBOX: dict[str, Callable[[Sequence[str]], bool | None]] = {
-    "codex": codex_argv_sandbox,
-    "claude": claude_argv_sandbox,
-}
+    return None if argv is None else codex_argv_sandbox(argv)
 
 
 def seat_argv(terminal_context: Mapping[str, Any] | None) -> list[str] | None:

@@ -11,7 +11,6 @@ import psutil
 import pytest
 
 from gobby.hooks.terminal_context import (
-    claude_argv_sandbox,
     clear_codex_seat_index,
     codex_argv_sandbox,
     enrich_terminal_context_with_cwd,
@@ -637,40 +636,29 @@ def test_seat_argv_leaves_spawned_runs_to_their_launch_record() -> None:
     process_cls.assert_not_called()
 
 
-# #23049: Claude Code's `sandbox.enabled` setting runs Bash under its Seatbelt
-# sandbox. Inline `--settings` JSON on the command line proves it; managed
-# policy outranks the flag, so `enabled: false` cannot prove the sandbox absent,
-# and a settings file or config is not read. Permission bypass is approvals only.
+# #23049: Claude Code's command line states sandbox intent, never the effective
+# boundary. Managed settings (including server-managed ones no local file shows)
+# outrank `--settings`, so a managed `sandbox.enabled: false` overrides an inline
+# true; and a sandbox that fails to start runs commands unsandboxed unless
+# `failIfUnavailable` is set. Neither outcome is observable from the hook, so a
+# direct Claude seat stays unknown whatever it asked for.
 @pytest.mark.parametrize(
-    ("argv", "expected"),
+    "argv",
     [
-        (["claude", "--settings", '{"sandbox":{"enabled":true}}'], True),
-        (["node", "/opt/claude/cli.js", '--settings={"sandbox":{"enabled":true}}'], True),
-        (
-            [
-                "claude",
-                "--settings",
-                '{"sandbox":{"enabled":true}}',
-                "--settings",
-                '{"sandbox":{"enabled":false}}',
-            ],
-            None,
-        ),
-        (["claude", "--settings", '{"sandbox":{"enabled":false}}'], None),
-        (["claude", "--settings", '{"sandbox":{"enabled":"true"}}'], None),
-        (["claude", "--settings", '{"permissions":{}}'], None),
-        (["claude", "--settings", "/tmp/settings.json"], None),
-        (["claude", "--settings", "{not json"], None),
-        (["claude", "--settings", "[1]"], None),
-        (["claude", "--settings"], None),
-        (["claude", "--dangerously-skip-permissions"], None),
-        (["claude"], None),
+        # Intent only: a managed policy may override it.
+        ["claude", "--settings", '{"sandbox":{"enabled":true}}'],
+        # failIfUnavailable settles startup, but managed policy still outranks it.
+        ["claude", "--settings", '{"sandbox":{"enabled":true,"failIfUnavailable":true}}'],
+        ["claude", "--settings", '{"sandbox":{"enabled":false}}'],
+        ["claude", "--settings", "/tmp/settings.json"],
+        ["claude", "--dangerously-skip-permissions"],
+        ["claude"],
     ],
 )
-def test_claude_argv_sandbox_follows_claude_code_settings(
-    argv: list[str], expected: bool | None
-) -> None:
-    assert claude_argv_sandbox(argv) is expected
+def test_direct_claude_sandbox_stays_unknown_whatever_it_requests(argv: list[str]) -> None:
+    context = {"parent_pid": 4321, "parent_create_time": 100.0}
+    with patch("gobby.hooks.terminal_context.psutil.Process", return_value=_seat_process(argv)):
+        assert hook_sandbox_enabled({}, "claude", context) is None
 
 
 def test_hook_sandbox_enabled_prefers_the_launcher_then_codex_argv() -> None:
@@ -687,7 +675,4 @@ def test_hook_sandbox_enabled_prefers_the_launcher_then_codex_argv() -> None:
         )
         # Providers with no sandbox parser stay unknown.
         assert hook_sandbox_enabled({}, "gemini", context) is None
-    claude = _seat_process(["claude", "--settings", '{"sandbox":{"enabled":true}}'])
-    with patch("gobby.hooks.terminal_context.psutil.Process", return_value=claude):
-        assert hook_sandbox_enabled({}, "claude", context) is True
     assert hook_sandbox_enabled({"sandbox_enabled": "yes"}, "claude", None) is None

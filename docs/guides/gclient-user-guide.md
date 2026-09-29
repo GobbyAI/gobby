@@ -227,9 +227,9 @@ since the provider's own sandbox may still hold. A Codex session
 you start yourself is read from its `--sandbox` mode (`read-only` and
 `workspace-write` lock, `danger-full-access` and
 `--dangerously-bypass-approvals-and-sandbox` unlock). A Claude Code session
-you start yourself locks when inline `--settings` JSON turns on
-`sandbox.enabled`, and otherwise shows `?`: managed policy can outrank the
-flag, settings files are not read, and the permission mode sets approvals
+you start yourself shows `?`: its `--settings` only request a sandbox, since
+managed settings can override them and a sandbox that fails to start falls
+back to running commands unsandboxed, and its permission mode sets approvals
 only. The marks come from Nerd Font symbols,
 which Ghostty's default font includes; set `nerd_glyphs = false` under `[ui]`
 in `~/.gobby/client/prefs.toml` to draw `sbx`, `open`, and `?` instead. Add
