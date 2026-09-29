@@ -108,7 +108,7 @@ Because `response` is a residual, a slow-hook warning naming it means "some unme
 wall time", not "response assembly is slow". In each cluster sample the metered phases
 account for `total − response` — 1.105 s of 5.423 s (sample 1), 0.925 s of 5.606 s
 (sample 2), 2.011 s of 5.363 s (sample 3) — and the matching residual (4.318 s, 4.681 s,
-3.352 s) is the unmetered loop time outside the phase meters. That unmetered share is
+3.352 s) is the unmetered wall time outside the phase meters. That unmetered share is
 62–84% of each hook, far more than the metered phases explain.
 
 ## Corroborating loop evidence (same file, same window)
