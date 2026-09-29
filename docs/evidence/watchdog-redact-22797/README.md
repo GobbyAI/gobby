@@ -1,15 +1,48 @@
-# Watchdog alerts through `gobby comms send --redact` (#22797)
+# Watchdog alerts carry the cited log as a redacted document (#22797)
 
 The machine-local watchdog (`~/.gobby/watchdog/watchdog.sh`, launchd
-`com.gobby.watchdog`) quotes errors.log lines in its Telegram alert since #22977.
-This change sends that alert with `gobby comms send --redact`. Secrets, URL
-credentials, and the home-directory path are scrubbed before the text leaves the
-machine, and the message is cut to Telegram's 4,096-character limit.
+`com.gobby.watchdog`) raises `ALARM[errors]` from new errors.log lines. Josh
+decided on 2026-09-28 that such an alert attaches the log content or omits it;
+the Orchestrator ruled option A. The candidate:
+
+- Alert text: signature and counts only (`• 4x 17:21:54 <logger.function> - <message with <id>>`).
+  No exception line, session ids, traceback text, or host path.
+  It is still sent with `gobby comms send --redact`.
+- Attachment: after the alert reaches Telegram, the exact new errors.log window
+  is piped to `gobby comms attach --caption "errors.log new lines, redacted"
+  gobby-telegram errors-new.txt`. The CLI scrubs secrets and home paths. When
+  the redacted content is at most 64 KiB, it sends a `text/plain` document
+  (Telegram `sendDocument`). Over the cap it sends one line instead:
+  `errors-new.txt omitted: over the 64 KiB attachment cap.`
+- When the Telegram send fails, the macOS notification fallback runs and
+  nothing is attached.
 
 | File | Content |
 | --- | --- |
-| `watchdog.diff` | One-line diff from the installed script to the candidate |
-| `test_watchdog.sh` | #22977 fixture tests plus a check that the alert passes `--redact gobby-telegram`; usage `bash test_watchdog.sh <path-to-watchdog.sh>` |
+| `watchdog.sh` | The candidate script |
+| `watchdog.diff` | Diff from the installed script to the candidate |
+| `test_watchdog.sh` | Fixture tests; usage `bash test_watchdog.sh <path-to-watchdog.sh>` |
+
+## Delivery surface
+
+`POST /api/comms/attachment` takes `{channel_name, filename, content, caption}`.
+
+- The content is caller-supplied text. The daemon reads no caller path.
+- The filename must be a bare name (`[A-Za-z0-9_-][A-Za-z0-9._-]{0,63}`).
+- The content must be at most 64 KiB in UTF-8 bytes; over that, the route returns 413.
+- The content type is forced to `text/plain`, so a caller cannot reach `sendPhoto` or `sendVoice`.
+- The daemon writes the content to a private temporary directory, calls
+  `CommunicationsManager.send_attachment`, and removes the directory.
+- Errors follow `/api/comms/send`: 404 for an unknown channel, 400 for invalid
+  input, and 502 for a failed delivery.
+
+The existing MCP `send_attachment` was not reused. It accepts only a file inside
+the checkout or a registered worktree. To use it, the launchd job would have to
+write log content into the source tree, run from the checkout so it resolves a
+project, clean the file up afterwards, and still get redaction from somewhere.
+That is more mechanism, and it puts log content inside the repository. The route
+adds no reach: a caller could already send the same text through
+`/api/comms/send`.
 
 ## Producer inventory
 
@@ -18,7 +51,8 @@ alerts. On 0.5.0 after ba7caac10a (#22855), these are the Telegram producers:
 
 | Producer | Cites a log path | Treatment |
 | --- | --- | --- |
-| Watchdog monitor alarm (`ALARM[errors]`, `ALARM[load]`) | Yes | Quotes the new errors.log lines and sends through `--redact` (this change) |
+| Watchdog monitor alarm (`ALARM[errors]`) | Yes | Signature and counts in the text; the redacted window attached, or omitted over 64 KiB (this change) |
+| Watchdog `ALARM[load]`, `[runs]`, `[cargo]`, `[vector]`, `[db]` | No | Counts only; nothing attached |
 | Assistant session messages | Sometimes | `.gobby/roles/assistant.md` requires quoting the cited lines, redacted and short |
 | Session lifecycle notifications | Removed | ba7caac10a deleted `session_notifications.py`, `session_events.py`, and the router |
 | Cron failure alerts | Removed | ba7caac10a deleted the cron-to-comms bridge (`tests/test_runner_cron_communications.py`); `src/gobby/scheduler` has no comms send |
@@ -27,31 +61,43 @@ alerts. On 0.5.0 after ba7caac10a (#22855), these are the Telegram producers:
 The only built-in producer that cites a log is the watchdog. Every other
 message is authored by an agent, and the Assistant role covers those.
 
-## Live proof
-
-comms_messages `dedc3eb8`, 2026-09-28T18:57:29Z, status `sent`, 543 characters.
-It is a natural watchdog alarm and quotes `errors.log: 10151 lines (+650)` with
-the alarm signature inline. No secrets.
-
 ## Hashes
 
-- Installed before the change (#22977): `5ea725b64e39997567457cad6748337c5e9d1fae084a8c9746c0e2815cc41e39`
-- Candidate: `7de4c8017dca62fd14a43d0340fc4416915fb5640e1b0b69e3763ff2e25f4257`
+- Installed now (the `--redact` swap from the earlier round of this task): `7de4c8017dca62fd14a43d0340fc4416915fb5640e1b0b69e3763ff2e25f4257`
+- Candidate: `5678df684f81cac32271e514ccc8b421c727dcbdf54b14458fb499a340305f1c`
 
 ## Activation order
 
-The `gobby` CLI is an editable install of the main checkout. The watchdog must
-be swapped only after the `--redact` option has landed there. Before that, an
-unknown option makes the Telegram send fail, and the watchdog falls back to a
-macOS notification. The swap follows the #22977 procedure: verify the installed
-hash, keep a rollback copy, stage the candidate with mode 700, move it into
-place atomically, then verify the hash and run `bash -n`.
+The `gobby` CLI is an editable install of the main checkout. Swap the watchdog
+only after `gobby comms attach` has landed there and the daemon has restarted
+with `/api/comms/attachment`. Before that, the attach step fails, the failure
+is logged to `watchdog.log`, and the text alert is unaffected. The swap follows
+the #22977 procedure:
+
+1. Verify the installed hash.
+2. Keep a rollback copy.
+3. Stage this `watchdog.sh` with mode 700.
+4. Move it into place atomically.
+5. Verify the hash and run `bash -n`.
 
 ## Test isolation
 
-The fixture tests run the script under a temporary HOME. A fake
-`~/.local/bin/gobby` records its arguments and the alert instead of sending
-anything. Redaction itself is covered by the Python tests in
-`tests/communications/test_redaction.py`, `tests/communications/test_communications_cli.py`,
-and `tests/utils/test_terminal_output.py`. The candidate passes 17 of 17 checks.
-The installed script fails only the `--redact` check.
+The fixture tests run the script under a temporary HOME, using the isolated test
+hub as its read-only database. A fake `~/.local/bin/gobby` records the alert
+and the attach call's arguments and stdin; nothing is sent. A fake `osascript`
+comes first on PATH, so the failed-send fixture raises no real notification.
+The candidate passes 23 of 23 checks. The installed script fails the 4
+new-contract checks: the exception line, the session ids, and the two
+attachment checks.
+
+The Python tests cover redaction and the cap:
+
+- `tests/communications/test_redaction.py`: the 64 KiB byte cap, UTF-8 counting, redaction without truncation.
+- `tests/communications/test_communications_cli.py`: `comms attach` redaction, the over-cap omission note, failure exit.
+- `tests/servers/routes/test_servers_routes_communications.py`: the temporary document and `text/plain`, bare filenames, 413, 404, 502.
+
+## Live proof
+
+This is pending: it needs a natural `ALARM[errors]` after activation that shows
+the document, or the omission line, on Telegram. The earlier inline receipt
+(comms_messages `dedc3eb8`) predates this decision and does not count.

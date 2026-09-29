@@ -9,7 +9,7 @@ from click.testing import CliRunner
 
 from gobby.cli.communications import comms
 from gobby.communications.adapters.telegram_formatting import TELEGRAM_MAX_MESSAGE_LENGTH
-from gobby.communications.redaction import TRUNCATION_MARKER
+from gobby.communications.redaction import MAX_LOG_ATTACHMENT_BYTES, TRUNCATION_MARKER
 
 pytestmark = pytest.mark.unit
 
@@ -357,3 +357,66 @@ def test_channels_remove_connection_failure(runner: CliRunner, mock_client: Magi
 
     assert result.exit_code == 1
     assert "Daemon connection failed" in result.output
+
+
+# --- comms attach ---
+
+
+def test_attach_posts_redacted_stdin_as_document(runner: CliRunner, mock_client: MagicMock) -> None:
+    mock_client.call_http_api.return_value = _mock_response(status_code=200)
+    log = "2026-09-28 ERROR boom token=abcdefghijklmnopqrstuv\n"
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(
+            comms,
+            ["attach", "--caption", "errors.log new lines", "gobby-telegram", "errors-new.txt"],
+            input=log,
+        )
+
+    assert result.exit_code == 0
+    mock_client.call_http_api.assert_called_once_with(
+        "/api/comms/attachment",
+        method="POST",
+        json_data={
+            "channel_name": "gobby-telegram",
+            "filename": "errors-new.txt",
+            "content": "2026-09-28 ERROR boom token=<redacted>\n",
+            "caption": "errors.log new lines",
+        },
+    )
+
+
+def test_attach_over_cap_sends_omission_note_only(
+    runner: CliRunner, mock_client: MagicMock
+) -> None:
+    mock_client.call_http_api.return_value = _mock_response(status_code=200)
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(
+            comms,
+            ["attach", "gobby-telegram", "errors-new.txt"],
+            input="x" * (MAX_LOG_ATTACHMENT_BYTES + 1),
+        )
+
+    assert result.exit_code == 0
+    assert "omission note sent" in result.output
+    mock_client.call_http_api.assert_called_once_with(
+        "/api/comms/send",
+        method="POST",
+        json_data={
+            "channel_name": "gobby-telegram",
+            "content": "errors-new.txt omitted: over the 64 KiB attachment cap.",
+        },
+    )
+
+
+def test_attach_failure_exits_nonzero(runner: CliRunner, mock_client: MagicMock) -> None:
+    mock_client.call_http_api.return_value = _mock_response(
+        status_code=400, text='{"detail":"filename must be a bare name"}'
+    )
+
+    with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
+        result = runner.invoke(comms, ["attach", "gobby-telegram", "../x"], input="boom\n")
+
+    assert result.exit_code == 1
+    assert "filename must be a bare name" in result.output
