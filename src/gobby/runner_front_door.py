@@ -276,7 +276,9 @@ class FrontDoorChild:
             backoff = min(backoff * 2, RESPAWN_MAX_BACKOFF_SECONDS)
             try:
                 await asyncio.to_thread(self.start)
-            except FrontDoorStartupError as exc:
+            except (FrontDoorStartupError, OSError) as exc:
+                # OSError covers a transient os.pipe or Popen failure (EAGAIN, EMFILE);
+                # the monitor is the only respawner, so it must outlive both.
                 logger.error("gdaemon front door respawn failed: %s", exc)
                 continue
             serving_since = time.monotonic()

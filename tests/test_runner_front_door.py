@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import logging
 import os
 import signal
 import socket
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -355,6 +357,35 @@ async def test_child_reuse_failure_and_respawn(
     finally:
         failing.stop()
     assert backoffs()[:5] == [0.05, 0.1, 0.2, 0.2, 0.2]
+
+
+@pytest.mark.asyncio
+async def test_respawn_survives_a_transient_spawn_error(
+    fake_gdaemon: FakeGdaemon, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    child = fake_gdaemon.child()
+    await asyncio.to_thread(child.start)
+    child.arm_respawn()
+    popen = child._popen
+    failures = [OSError(errno.EAGAIN, "Resource temporarily unavailable")]
+
+    def flaky_popen() -> tuple[subprocess.Popen[bytes], int]:
+        if failures:
+            raise failures.pop()
+        return popen()
+
+    monkeypatch.setattr(child, "_popen", flaky_popen)
+    crashed_pid = child.pid
+    assert crashed_pid is not None
+    try:
+        os.kill(crashed_pid, signal.SIGKILL)
+        # The first respawn hits EAGAIN; the monitor must live to make the second.
+        await _eventually(lambda: child.pid not in (None, crashed_pid))
+        await _eventually(fake_gdaemon.serving)
+        assert failures == []
+        assert not _monitor_task().done()
+    finally:
+        child.stop()
 
 
 @pytest.mark.asyncio

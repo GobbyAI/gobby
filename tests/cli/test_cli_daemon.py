@@ -23,6 +23,7 @@ from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.cli import cli
 from gobby.cli.daemon_start import _reconcile_ui_exposure, _start_dependency_errors
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
+from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 from gobby.utils.status import RichStatusProbe
 
@@ -887,6 +888,8 @@ class TestStartCommand:
 
             assert result.exit_code == 1
             assert "Port" in result.output and "still in use" in result.output
+            # The direct path waits as long as the front door child would for reuse.
+            assert mock_wait_port.call_args.kwargs["timeout"] == PORT_REUSE_WAIT_SECONDS
 
     @patch("gobby.cli.daemon_start.wait_for_port_available")
     @patch("gobby.cli.daemon_start.is_port_available")
@@ -929,6 +932,7 @@ class TestStartCommand:
 
             assert result.exit_code == 1
             assert "Port" in result.output and "still in use" in result.output
+            assert mock_wait_port.call_args.kwargs["timeout"] == PORT_REUSE_WAIT_SECONDS
 
     @patch("gobby.cli.daemon.httpx.get")
     @patch("gobby.cli.daemon_start.subprocess.Popen")

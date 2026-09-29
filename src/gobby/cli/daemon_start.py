@@ -23,6 +23,7 @@ from gobby.cli.daemon_singleton import (
 )
 from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
+from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
 from gobby.runner_pid_file import probe_daemon_lock
 from gobby.ui_exposure import UiExposeError, reconcile_ui_exposure
 from gobby.utils.dependency_requirements import (
@@ -191,12 +192,12 @@ def _launch_direct_runner(
     bind_host = config.bind_host
 
     if not is_port_available(http_port, host=bind_host):
-        if not wait_for_port_available(http_port, host=bind_host, timeout=5.0):
+        if not wait_for_port_available(http_port, host=bind_host, timeout=PORT_REUSE_WAIT_SECONDS):
             _step(f"Port {http_port} still in use", error=True)
             sys.exit(1)
 
     if not is_port_available(ws_port, host=bind_host):
-        if not wait_for_port_available(ws_port, host=bind_host, timeout=5.0):
+        if not wait_for_port_available(ws_port, host=bind_host, timeout=PORT_REUSE_WAIT_SECONDS):
             _step(f"Port {ws_port} still in use", error=True)
             sys.exit(1)
 
