@@ -60,13 +60,14 @@ alerts. On 0.5.0 after ba7caac10a (#22855), these are the Telegram producers:
 | --- | --- | --- |
 | Watchdog monitor alarm (`ALARM[errors]`) | Yes | Signature and counts in the text; the redacted window attached, or omitted over 64 KiB (this change) |
 | Watchdog `ALARM[load]`, `[runs]`, `[cargo]`, `[vector]`, `[db]` | No | Counts only; nothing attached |
-| Assistant session messages | Sometimes | `.gobby/roles/assistant.md` requires quoting the cited lines, redacted and short |
+| Assistant session messages | Sometimes | `.gobby/roles/assistant.md` requires sending the cited lines through `gobby comms attach`: a redacted document, or the omission note over 64 KiB. The message text carries no log lines or path |
 | Session lifecycle notifications | Removed | ba7caac10a deleted `session_notifications.py`, `session_events.py`, and the router |
 | Cron failure alerts | Removed | ba7caac10a deleted the cron-to-comms bridge (`tests/test_runner_cron_communications.py`); `src/gobby/scheduler` has no comms send |
 | In-daemon replies (`responder.py`, `telegram_actions.py`, `telegram_fallback.py`) | No | Fixed text or agent replies; no log path |
 
 The only built-in producer that cites a log is the watchdog. Every other
-message is authored by an agent, and the Assistant role covers those.
+message is authored by an agent. The Assistant role routes those through the
+same `gobby comms attach` surface.
 
 ## Hashes
 
@@ -105,6 +106,25 @@ The Python tests cover redaction and the cap:
 
 ## Live proof
 
-This is pending: it needs a natural `ALARM[errors]` after activation that shows
-the document, or the omission line, on Telegram. The earlier inline receipt
-(comms_messages `dedc3eb8`) predates this decision and does not count.
+Observed on 2026-09-29:
+
+- After the restart that activated the route (daemon PID 99308), a route check
+  sent nothing: `gobby comms attach gobby-telegram x.sh < /dev/null` returned 400
+  `filename must be a bare .txt or .log name`.
+- The watchdog was then swapped by the #22977 procedure. `shasum -a 256` read
+  `7de4c801` on the installed file before the swap. After it, the installed file
+  read `6cace777` and `watchdog.sh.rollback-22797` read `7de4c801`.
+- A later daemon-only restart for #23063 left the route in place and did not
+  touch the watchdog. The alarm below ran under daemon PID 93307.
+- At 01:59:40 CT a natural `ALARM[errors]` (+97 lines) sent alert comms_messages
+  `6c390203`. Its text is the counts plus
+  `• 1x 01:54:42 communications.polling._poll_loop - Error polling channel 'gobby-telegram': ReadTimeout (backing off 5s)`,
+  with no traceback, path, or id.
+- It then sent a redacted document, comms_messages `5127611f`, caption
+  `errors.log new lines, redacted`. The window was under 64 KiB, so no omission
+  note was needed.
+- `watchdog.log` shows `Message sent to gobby-telegram` followed by
+  `errors-new.txt attached to gobby-telegram`.
+
+The earlier inline receipt (comms_messages `dedc3eb8`) predates this decision and
+is superseded.
