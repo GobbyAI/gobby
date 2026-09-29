@@ -211,8 +211,11 @@ the Adversary's review. None of this is plan approval.
       reserve that covers two 1 s rollback acknowledgements and cleanup. A
       recoverable timeout is always the soft cutoff; reaching the hard
       deadline is always termination.
-    - Hard bound: at acceptance the host sets SIGALRM to `SIG_DFL` and arms
-      `alarm()` for the remaining budget, rounded up to whole seconds. The
+    - Hard bound: when it takes `upgrade_lock` the host sets SIGALRM to
+      `SIG_DFL` and arms `alarm()` for the budget, rounded up to whole
+      seconds, so a live host can never report a non-idle phase past its
+      deadline, `probing` included. Every return to `idle` before
+      acceptance clears it as its last step. The
       pending alarm survives `execve`. It is cleared with `alarm(0)` only once
       recovery is established and the attempt leaves its critical section:
       at restore commit, or, after an in-process rollback, immediately after
@@ -223,7 +226,7 @@ the Adversary's review. None of this is plan approval.
     - A rollback that cannot resume every pane is terminal: the host raises
       SIGALRM itself and ends exactly like a wedge. It never reopens the gate
       over panes that refuse input.
-    - Arming at acceptance, not just before exec, is deliberate: a host wedged
+    - Arming when the attempt begins, not just before exec, is deliberate: a host wedged
       while holding the gate would refuse all input forever while the daemon
       declared it dead. Process death keeps host and daemon consistent at the
       same cost as any host crash.
@@ -515,7 +518,7 @@ pinned by the acceptance item named in brackets.
   [1.2.4]
 - **Fallback fails, restore wedges, or the pre-exec phase wedges.** A
   fallback Stage error or failed fallback exec exits 70; a wedge is ended by
-  the alarm armed at acceptance. The kernel closes the masters and the
+  the alarm armed when the attempt began. The kernel closes the masters and the
   children receive SIGHUP; at the daemon's deadline the existing
   `handle_host_death` path orphans the rows, interrupts runs, and starts a
   fresh host. [1.2.6, 2.1.2]
@@ -850,8 +853,10 @@ declared in `host/mod.rs`, owns the attempt. Verb `host_upgrade` with
    `host_draining`, and refuse `host_busy` when an unconsumed (`!prepared`)
    reservation exists or a prepared reservation's slot is not `Committed`
    (`Inner::reservations`, `CommitState`). Fix `deadline_monotonic_ns` (now +
-   15 s, Decision 10) and set phase `probing` with the daemon's
-   `attempt_id`.
+   15 s, Decision 10), set SIGALRM to `SIG_DFL`, arm `alarm()` for the
+   budget, and set phase `probing` with the daemon's `attempt_id`. Every
+   later return to `idle` before acceptance (steps 2 and 3) clears the alarm
+   as its last step.
 2. Pin the candidate (1.4 `pin_image(exe)`) and run `<pin> host
    --probe-resume 1` with a timeout of 5 s or the time left before the soft
    cutoff, whichever is smaller. A pin failure, non-zero exit, timeout, or spawn
@@ -866,22 +871,28 @@ declared in `host/mod.rs`, owns the attempt. Verb `host_upgrade` with
    differs from the running pin, and releases `upgrade_lock`: every return
    after phase `probing` is set leaves a terminal record, so no leftover
    in-progress record can reopen a daemon window. Otherwise set
-   `upgrading`, set SIGALRM to `SIG_DFL` and arm `alarm()` for the remaining
-   budget, and answer `{"ok": true, "accepted": true, "attempt_id",
+   `upgrading`, and answer `{"ok": true, "accepted": true, "attempt_id",
    "candidate_sha256", "remaining_ms", "generation"}` on the control
    connection.
 4. Phase `quiescing`. The status ticker, the exit watchers, and
    `expire_prepared` now wait on the gate (Decision 9). On a blocking task,
    give each carried pane its own thread (`std::thread::scope`) that calls
-   `freeze_reaping` then `begin_handoff(remaining)`, and join all; each call
-   is bounded by its own timeout.
+   `freeze_reaping` then `begin_handoff(quiesce_budget)`, and join all.
+   `quiesce_budget` is the time left until the soft cutoff minus 1 s,
+   because `begin_handoff` itself calls `rollback_handoff` (up to 1 s) when
+   its wait times out (`pty/actor/unix.rs`). A pane whose budget is zero or
+   less is not quiesced and the attempt rolls back. The worst case therefore
+   finishes the quiesce, including its internal rollback, by the soft
+   cutoff, leaving the 3 s reserve for step 7 (two 1 s acknowledgements and
+   cleanup).
 5. Phase `capturing`. Under the `inner` lock then the events lock, encode
    every pane's snapshot and wrapper state (1.1), read each recorded `exit`
    and prepared reservation, and build the state (1.2 format) with
    `generation + 1`, the attempt, and `previous_image` = the running pin.
    Check the soft cutoff, write the temporary file, `fsync`, rename, and
    `fsync` the directory, and check the soft cutoff again before exec.
-6. Phase `exec`. Clear close-on-exec (`fcntl(F_SETFD, 0)`) on each carried
+6. Phase `exec`. If the soft cutoff has passed, roll back instead: no
+   `execve` runs after it. Otherwise clear close-on-exec (`fcntl(F_SETFD, 0)`) on each carried
    master fd and both listener fds, then `execve(<pin>, argv +
    ["--resume-state", path])` with the original argv and environment.
    `execve` does not return on success; accepted connections and other fds
@@ -984,6 +995,11 @@ scrollback limit and asserts the upgrade commits inside the deadline.
   write guard is held is ended by the alarm; and after a recovered rollback
   the alarm is cleared only once the write guard is released. test:
   `crates/gterminal/tests/host_handover.rs::pre_accept_returns_and_rollback_cleanup_are_bounded`.
+- 1.3.13 - A pane whose quiesce acknowledgement never arrives makes the
+  attempt give up on it before the soft cutoff, run no `execve`, and recover
+  every pane (writes accepted, output returned, alarm cleared) before the
+  hard deadline. test:
+  `crates/gterminal/tests/host_handover.rs::stalled_quiesce_recovers_within_hard_budget`.
 
 ### 1.4 Pinned host images and binary identity [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -1110,7 +1126,7 @@ order:
   attempt the host could accept from this request. Then send
   `host_upgrade{exe, attempt_id}`:
   - `host_busy`, `upgrade_in_progress`, and `host_draining` close the window
-    quietly, and the next tick re-observes;
+    quietly, and the next tick re-observes with a fresh `attempt_id`;
   - `upgrade_refused` closes the window and adds the reported
     `candidate_sha256` (or the installed hash when the host sent none) to the
     refused set;
@@ -1146,7 +1162,14 @@ outcome closes the window by the rules above. A fresh ping that is `idle`
 with no outcome for the attempt means the request never ran; close the
 window quietly and log it. A failed fresh check falls through to the
 existing `handle_host_death` once, and once the window is closed every later
-failed ping takes the ordinary host-death path. The refused set is in memory: a daemon restart or a
+failed ping takes the ordinary host-death path. A fresh ping that still
+reports a non-idle phase for the attempt past the deadline is a failed check:
+the host armed its alarm when the attempt began (Decision 10), so a
+conforming host cannot answer that way, and the daemon treats it exactly
+like a failed check and runs `handle_host_death` once. The coordinator
+records every attempt whose window closed, by any path, as finished and
+never opens a window for a finished `attempt_id` again, whatever a later
+ping reports. The refused set is in memory: a daemon restart or a
 newly installed binary with a different hash tries again once.
 
 Terminals rows: no schema change and no row writes. `host_epoch`,
@@ -1201,8 +1224,11 @@ tests/terminals/test_host_upgrade.py tests/terminals/test_host_manager.py -q`.
   `handle_host_death` once. test:
   `tests/terminals/test_host_upgrade.py::test_unrun_request_closes_only_on_fresh_check`.
 - 2.1.9 - In-progress pings that keep reporting `remaining_ms = 0` do not
-  extend the window past its fixed deadline, and a `deferred` outcome closes
-  the window without adding the candidate to the refused set. test:
+  extend the window past its fixed deadline; a fresh post-deadline ping
+  still reporting `probing` or another non-idle phase for the attempt runs
+  `handle_host_death` once, and no later ping reopens a window for that
+  `attempt_id`; a `deferred` outcome closes the window without adding the
+  candidate to the refused set. test:
   `tests/terminals/test_host_upgrade.py::test_window_deadline_is_fixed_and_deferred_is_not_refused`.
 
 ### 2.2 Web terminal relay reconnects across an upgrade [category: code] (depends: 2.1)
