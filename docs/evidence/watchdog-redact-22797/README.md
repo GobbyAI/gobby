@@ -7,8 +7,9 @@ the Orchestrator ruled option A. The candidate:
 
 - Alert text: signature and counts only (`• 4x 17:21:54 <logger.function> - <message with <id>>`).
   No exception line, session ids, traceback text, or host path. Absolute and
-  `~/` paths in a log message become `<path>`; `--redact` alone rewrites only
-  the home directory.
+  `~/` paths in a log message become `<path>`. That covers a path after a space,
+  a quote, a bracket, `=`, `:` or `,`, including `cwd:/x` and `file:///x`.
+  `--redact` alone rewrites only the home directory.
   An orphan event is a bad-string line whose entry started before the window. Its
   signature is that line, cut to 200 characters. This is intentional: without it
   the alert could not name the event.
@@ -70,7 +71,7 @@ message is authored by an agent, and the Assistant role covers those.
 ## Hashes
 
 - Installed now (the `--redact` swap from the earlier round of this task): `7de4c8017dca62fd14a43d0340fc4416915fb5640e1b0b69e3763ff2e25f4257`
-- Candidate: `8fcb532d27c9c26ea5e9e65f4eeb5fe2fe86cdc05b438271399b29c444a0f4a2`
+- Candidate: `6cace777c5d74263c3f91aa74bfa6f905f6e9250f9070c179b9d5a6d923ccd19`
 
 ## Activation order
 

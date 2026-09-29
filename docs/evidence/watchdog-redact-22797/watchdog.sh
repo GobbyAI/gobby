@@ -57,8 +57,9 @@ error_evidence() {
     BEGIN {
       h = "[0-9a-f]"; h4 = h h h h
       uuid = h4 h4 "-" h4 "-" h4 "-" h4 "-" h4 h4 h4
-      # An absolute or ~/ path after a space, quote, paren or =; \047 is a single quote.
-      path = "[ \t\047\"(=]~?/[^ \t\047\",;)]*"
+      # An absolute or ~/ path after a space, quote, bracket, =, : or , (so cwd:/x and
+      # file:///x are caught); \047 is a single quote.
+      path = "[ \t\047\"([{<=:,]~?/[^ \t\047\",;)\\]}>]*"
       bad = "pool acquisition failed|DatabaseExecutor is shut down|HostEpochChangedError|spawn_rollback"
       benign = "search_tool_result - Failed to search stored tool result"
     }

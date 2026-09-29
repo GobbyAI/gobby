@@ -133,15 +133,15 @@ check "quiet run attaches nothing" test ! -e "$home/attached.txt"
 home=$(
   {
     echo "2026-09-27 17:00:01 - INFO     - old.line - baseline"
-    echo "2026-09-27 17:25:30 - ERROR    - storage.files.open - failed to open /tmp/errors.log, '/Users/someone/.gobby/x.db' (cwd=~/private/dir)"
+    echo "2026-09-27 17:25:30 - ERROR    - storage.files.open - failed to open /tmp/errors.log, '/Users/someone/.gobby/x.db' (cwd=~/private/dir) cwd:/tmp/a url=file:///var/b [/opt/c]"
     tb "OSError: denied"
   } | make_home paths 1
 )
 run "$home"
 sent="$home/sent.txt"
 check "path signature is sent" \
-  grep -q "^• 1x 17:25:30 storage.files.open - failed to open <path>, '<path>' (cwd=<path>)$" "$sent"
-check "no host path in the alert" test "$(grep -c '/tmp/\|/Users/\|~/' "$sent")" -eq 0
+  grep -Fqx "• 1x 17:25:30 storage.files.open - failed to open <path>, '<path>' (cwd=<path>) cwd:<path> url=file:<path> [<path>]" "$sent"
+check "no host path in the alert" test "$(grep -c '/tmp/\|/Users/\|/var/\|/opt/\|~/' "$sent")" -eq 0
 
 # --- failed-send fixture: Telegram down, so no attachment follows the fallback ---
 home=$(
