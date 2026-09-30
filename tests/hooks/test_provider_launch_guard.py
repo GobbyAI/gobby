@@ -232,6 +232,12 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "bash -c $'claude -p \\'hi\\''",
         "echo $'it\\'s'; claude -p hi",
         "bash -c -- 'claude -p hi'",
+        # bash decodes C escapes inside `$'...'`, so each spells a separator or name.
+        "bash -c $'echo hi\\nclaude -p hi'",
+        "bash -c $'echo hi\\x0aclaude -p hi'",
+        "bash -c $'echo hi\\012claude -p hi'",
+        "bash -c $'echo hi\\cJclaude -p hi'",
+        "bash -c $'\\x63laude -p hi'",
     ],
 )
 def test_execution_contexts(command: str) -> None:

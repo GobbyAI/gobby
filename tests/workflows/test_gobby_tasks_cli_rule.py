@@ -182,8 +182,18 @@ def test_blocks_command_after_ansi_c_escaped_quote(
     assert RuleEngine(db)._should_block(effect, event) is True
 
 
-def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect) -> None:
-    event = _shell_event("Bash", "echo $'it\\'s " + _MUTATION + "'")
+@pytest.mark.parametrize(
+    "command",
+    [
+        "echo $'it\\'s " + _MUTATION + "'",
+        # A decoded newline inside an echo argument is still data.
+        "echo $'a\\n" + _MUTATION + "'",
+        # bash stops at the unterminated quote the decoded script opens; nothing runs.
+        "bash -c $'echo it\\'s; " + _MUTATION + "'",
+    ],
+)
+def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect, command: str) -> None:
+    event = _shell_event("Bash", command)
 
     assert RuleEngine(db)._should_block(effect, event) is False
 
@@ -210,6 +220,14 @@ def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect) -> None:
         "sh -c -- '" + _MUTATION + "'",
         "uv run --with pyyaml " + _MUTATION,
         "uv run --project . --frozen " + _MUTATION,
+        # bash decodes C escapes inside `$'...'`, so each spells a separator or name.
+        "bash -c $'echo hi\\n" + _MUTATION + "'",
+        "bash -c $'true;\\t" + _MUTATION + "'",
+        "bash -c $'echo hi\\x0a" + _MUTATION + "'",
+        "bash -c $'echo hi\\012" + _MUTATION + "'",
+        "bash -c $'echo hi\\cJ" + _MUTATION + "'",
+        "bash -c $'echo hi\\u000a" + _MUTATION + "'",
+        "bash -c $'\\x67" + _MUTATION[1:] + "'",
     ],
 )
 def test_blocks_wrapped_mutating_script(

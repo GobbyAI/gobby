@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.hooks._ansi_c import decode_ansi_c_escape
 from gobby.hooks._normalization_paths import _append_unique_path
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -138,6 +139,7 @@ def scan_shell_command(command: str) -> ShellScan:
     quoted = False
     in_single_quote = False
     ansi_c = False
+    ansi_c_cut = False
     in_double_quote = False
     escaped = False
     token_start: int | None = None
@@ -187,17 +189,17 @@ def scan_shell_command(command: str) -> ShellScan:
         char = command[index]
 
         if in_single_quote:
-            if ansi_c and char == "\\" and command[index + 1 : index + 2] in {"'", "\\"}:
-                current.append(command[index + 1])
-                index += 2
-                continue
             if ansi_c and char == "\\" and index + 1 < len(command):
-                current.append(command[index : index + 2])
-                index += 2
+                decoded, index = decode_ansi_c_escape(command, index)
+                # A decoded NUL ends bash's C string: the rest of the quote is lost.
+                ansi_c_cut = ansi_c_cut or decoded == "\0"
+                if not ansi_c_cut:
+                    current.append(decoded)
                 continue
             if char == "'":
                 in_single_quote = False
-            else:
+                ansi_c_cut = False
+            elif not ansi_c_cut:
                 current.append(char)
             index += 1
             continue
@@ -243,7 +245,7 @@ def scan_shell_command(command: str) -> ShellScan:
             continue
 
         if char == "'" or command.startswith("$'", index):
-            # ANSI-C `$'...'` lets a backslash escape the next character.
+            # ANSI-C `$'...'` decodes C escapes (gobby.hooks._ansi_c).
             begin(index)
             quoted = True
             in_single_quote = True

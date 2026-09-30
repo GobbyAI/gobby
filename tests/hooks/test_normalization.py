@@ -2083,6 +2083,19 @@ class TestHeredocTokenization:
         assert shell_token_values(scan.tokens) == ["echo", "it's", ";", "x", "a\\"]
         assert [token.quoted for token in scan.tokens] == [False, True, False, False, True]
 
+    def test_scan_decodes_ansi_c_escapes(self) -> None:
+        # bash decodes C escapes inside `$'...'`; the decoded word is what runs.
+        scan = scan_shell_command("x $'a\\nb\\tc\\x41\\101\\u00e9\\cJ\\e\\q' $'\\x4g'")
+
+        assert shell_token_values(scan.tokens) == ["x", "a\nb\tcAAé\n\x1b\\q", "\x04g"]
+
+    def test_scan_follows_bash_ansi_c_limits(self) -> None:
+        # Octal stops after three digits, a bare `\x` or `\8` stays literal, and a
+        # decoded NUL ends the quoted text the way bash's C string does.
+        scan = scan_shell_command("x $'\\0101' $'\\x\\8' $'ab\\0cd\\'ef'g $'\\ca\\cß'")
+
+        assert shell_token_values(scan.tokens) == ["x", "\b1", "\\x\\8", "abg", "\x01\x1f"]
+
     def test_scan_records_an_unterminated_body_as_live_input(self) -> None:
         command = "cat <<EOF > out.txt\nstill > body\nnever closed"
 
