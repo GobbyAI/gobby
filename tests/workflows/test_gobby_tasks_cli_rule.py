@@ -85,3 +85,48 @@ def test_allows_read_only_task_cli_commands(
     event = _shell_event(tool_name, command)
 
     assert RuleEngine(db)._should_block(effect, event) is False
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A quoted heredoc body is stdin data, not an invocation (#23134): the
+        # phrase can sit at the start of a line inside a serialized string.
+        "RTK_DISABLED=1 uv run python - <<'PY'\nDOC = \"\"\"\ngobby tasks close\n\"\"\"\nPY",
+        # A serialized evidence/documentation payload is data, not an invocation.
+        "RTK_DISABLED=1 uv run python - <<'PY'\nPAYLOAD = '{\"content\": \"gobby tasks close\", \"task\": \"#1\"}'\nPY",
+        # A quoted echo argument is prose.
+        'echo "gobby tasks close 42"',
+    ],
+)
+def test_allows_quoted_heredoc_and_string_data(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str
+) -> None:
+    event = _shell_event(tool_name, command)
+
+    assert RuleEngine(db)._should_block(effect, event) is False
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        # An unquoted interpreter heredoc body executes: keep blocking.
+        "uv run python - <<PY\ngobby tasks close 1\nPY",
+        # A quoted heredoc piped to a shell executes: keep blocking.
+        "bash -s <<EOF\ngobby tasks close 1\nEOF",
+        # Command substitution inside double quotes still executes.
+        'echo "$(gobby tasks close 42)"',
+        # Known fail-closed residual: a backtick inside double quotes keeps the
+        # span visible (it may execute), so this quoted documentation line still
+        # blocks. Narrower than the reported false positive; kept fail-closed.
+        "RTK_DISABLED=1 uv run python - <<'PY'\nDOC = \"use `gobby tasks close` here\"\nPY",
+    ],
+)
+def test_blocks_executed_heredoc_and_substitution(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str
+) -> None:
+    event = _shell_event(tool_name, command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
