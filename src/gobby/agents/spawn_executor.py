@@ -580,6 +580,7 @@ async def _reap_claimed_row(
 ) -> bool:
     from gobby.agents.spawn_in_doubt_owner import release_claim
 
+    settled = False
     try:
         row = manager.get(listed.id)
         pair = (listed.attempt_generation, listed.attempt_started_at)
@@ -603,6 +604,9 @@ async def _reap_claimed_row(
             attempt_generation=row.attempt_generation,
             attempt_started_at=row.attempt_started_at,
         )
-        return result is not None
+        settled = result is not None
+        return settled
     finally:
-        await release_claim(listed.id, run_deferred=True)
+        # Deferred compensation (isolation removal) runs only after a proven settle;
+        # an unproven exit keeps the row pending, so its process may still use it.
+        await release_claim(listed.id, run_deferred=settled)
