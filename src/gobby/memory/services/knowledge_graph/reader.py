@@ -391,8 +391,15 @@ class KnowledgeGraphReader:
         limit: int,
         project_id: str | None,
         include_global: bool,
+        rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] | None = None,
     ) -> tuple[list[str], dict[str, dict[str, float | None]], dict[str, float]]:
-        """Return admitted entity keys, their admitting-edge components, and path scores."""
+        """Return admitted entity keys, their admitting-edge components, and path scores.
+
+        ``rows_cache`` is an optional request-scoped memo of raw hop-query rows,
+        keyed by the frontier that produced them. A backfill re-runs this from the
+        same seeds, so the first round's rows serve every later round without
+        re-issuing the (limit-independent) neighbor query.
+        """
         related_keys: list[str] = []
         components_by_key: dict[str, dict[str, float | None]] = {}
         admission_score_by_key: dict[str, float] = {}
@@ -410,25 +417,37 @@ class KnowledgeGraphReader:
             hop_components: dict[str, dict[str, float | None]] = {}
             if not frontier:
                 break
-            rows = await self._falkor.query(
-                "UNWIND $source_keys AS source_key "
-                "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity) "
-                "WHERE ((start.project_id = $project_id AND start.is_global = false) "
-                "OR ($include_global AND start.is_global = true)) "
-                "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
-                "OR ($include_global AND neighbor.is_global = true)) "
-                "AND NOT (type(r) IN $excluded_relationship_types) "
-                "RETURN source_key AS source_key, "
-                "neighbor.entity_key AS related_entity_key, "
-                "coalesce(r.weight, 1.0) AS edge_weight, r.weight AS raw_weight, "
-                "r.support AS edge_support, r.updated_at AS updated_at",
-                {
-                    "source_keys": [source_key for source_key, _score in frontier],
-                    "project_id": project_id,
-                    "include_global": include_global,
-                    "excluded_relationship_types": list(_STRUCTURAL_RELATIONSHIP_TYPES),
-                },
+            cache_key = (
+                "related-hop",
+                tuple(source_key for source_key, _score in frontier),
+                project_id,
+                include_global,
             )
+            cached_rows = rows_cache.get(cache_key) if rows_cache is not None else None
+            if cached_rows is not None:
+                rows = cached_rows
+            else:
+                rows = await self._falkor.query(
+                    "UNWIND $source_keys AS source_key "
+                    "MATCH (start:_Entity {entity_key: source_key})-[r]-(neighbor:_Entity) "
+                    "WHERE ((start.project_id = $project_id AND start.is_global = false) "
+                    "OR ($include_global AND start.is_global = true)) "
+                    "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
+                    "OR ($include_global AND neighbor.is_global = true)) "
+                    "AND NOT (type(r) IN $excluded_relationship_types) "
+                    "RETURN source_key AS source_key, "
+                    "neighbor.entity_key AS related_entity_key, "
+                    "coalesce(r.weight, 1.0) AS edge_weight, r.weight AS raw_weight, "
+                    "r.support AS edge_support, r.updated_at AS updated_at",
+                    {
+                        "source_keys": [source_key for source_key, _score in frontier],
+                        "project_id": project_id,
+                        "include_global": include_global,
+                        "excluded_relationship_types": list(_STRUCTURAL_RELATIONSHIP_TYPES),
+                    },
+                )
+                if rows_cache is not None:
+                    rows_cache[cache_key] = rows
             rows_by_source: dict[str, list[dict[str, Any]]] = {}
             for row in rows:
                 source_key = row.get("source_key")
@@ -577,8 +596,14 @@ class KnowledgeGraphReader:
         project_id: str | None = None,
         include_global: bool = True,
         timeout_seconds: float | None = None,
+        rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] | None = None,
     ) -> RelatedMemoryTraversal:
-        """Traverse from entities through relationships to find related memory IDs."""
+        """Traverse from entities through relationships to find related memory IDs.
+
+        ``rows_cache`` is an optional request-scoped memo (see
+        :meth:`_find_related_entity_keys`) so repeated backfill rounds reuse the
+        invariant neighbor-hop rows.
+        """
         if not entity_keys or limit <= 0:
             return RelatedMemoryTraversal()
         if self._related_traversal_is_disabled():
@@ -601,6 +626,7 @@ class KnowledgeGraphReader:
                     limit,
                     project_id,
                     include_global,
+                    rows_cache=rows_cache,
                 )
                 cluster_entity_keys = await self._find_cluster_entity_keys(
                     seed_keys,

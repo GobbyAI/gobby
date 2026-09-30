@@ -357,6 +357,8 @@ class SearchService:
         min_score: float = 0.5,
         project_id: str | None = None,
         include_global: bool = True,
+        *,
+        rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] | None = None,
     ) -> GraphScoredResult:
         return await search_graph_scored(
             kg_service=self._require_kg_service(),
@@ -368,6 +370,7 @@ class SearchService:
             min_score=min_score,
             project_id=project_id,
             include_global=include_global,
+            rows_cache=rows_cache,
         )
 
     async def _search_graph_for_memories(

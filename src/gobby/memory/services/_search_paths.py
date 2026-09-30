@@ -208,6 +208,8 @@ class SearchPathHost(Protocol):
         min_score: float = 0.5,
         project_id: str | None = None,
         include_global: bool = True,
+        *,
+        rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] | None = None,
     ) -> GraphScoredResult: ...
 
     async def _keyword_ranked(
@@ -273,6 +275,9 @@ async def search_with_graph(
     """Run vector, graph, and keyword search, then materialize active memories."""
     vector_store = service._require_vector_store()
     rescore_memo = _RescoreMemo()
+    # Request-scoped memo so backfill rounds reuse the seed-derived, limit-
+    # independent graph expansion instead of re-issuing it per round (#22910).
+    graph_rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
 
     async def _collect(candidate_limit: int) -> _Candidates:
         qdrant_coro = vector_store.search(
@@ -287,6 +292,7 @@ async def search_with_graph(
             min_score=graph_min_score,
             project_id=project_id,
             include_global=include_global,
+            rows_cache=graph_rows_cache,
         )
         keyword_coro = service._keyword_ranked(
             query,

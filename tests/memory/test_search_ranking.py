@@ -1285,3 +1285,88 @@ async def test_search_returns_uncollapsed_when_store_cannot_serve_vectors() -> N
 
     assert [mem.id for mem in results] == ["a", "b"]
     assert all(mem.collapsed_duplicates is None for mem in results)
+
+
+class _CacheThreadingKg:
+    """KG service stand-in that records the rows_cache threaded into each call."""
+
+    def __init__(self) -> None:
+        self.caches: list[Any] = []
+
+    async def search_entities_by_vector(self, **_kwargs: Any) -> list[dict[str, Any]]:
+        return [{"entity_key": "seed", "name": "seed", "score": 0.9, "memory_ids": []}]
+
+    async def find_related_memory_ids(self, **kwargs: Any) -> Any:
+        from gobby.memory.services.knowledge_graph.reader import RelatedMemoryTraversal
+
+        self.caches.append(kwargs.get("rows_cache"))
+        return RelatedMemoryTraversal()
+
+
+@pytest.mark.asyncio
+async def test_search_backfill_threads_one_expansion_cache_across_rounds() -> None:
+    """F4 (#22910): backfill threads one request-scoped expansion cache.
+
+    The vector window hides the active rows until the pool doubles, so two
+    backfill rounds run. Both rounds must receive the same memo so the real
+    reader reuses the invariant hop rows instead of re-issuing them, and the
+    materialized result identity and order stay unchanged.
+    """
+    hidden = [f"h{index}" for index in range(6)]
+    active = ["a1", "a2", "a3"]
+    vector_store = _CountingVectorStore(
+        [(mid, 0.95 - index * 0.01) for index, mid in enumerate(hidden + active)]
+    )
+    kg = _CacheThreadingKg()
+    service = _service(
+        [],
+        vector_store=vector_store,
+        storage=_FilteringStorage(active),
+        falkordb_graph_search=True,
+    )
+    service.kg_service = cast(Any, kg)
+
+    results = await service.search("query", limit=3)
+
+    assert vector_store.calls == [6, 12]
+    assert len(kg.caches) == 2
+    assert kg.caches[0] is not None
+    assert kg.caches[0] is kg.caches[1]
+    assert [memory.id for memory in results] == ["a1", "a2", "a3"]
+
+
+def test_undecay_round_trips_equal_raw_cosines_to_one_score() -> None:
+    """#22910 found work: undecay must not leak division noise into the order.
+
+    Two candidates with the same raw cosine but very different ages recover
+    undecayed scores that differ only by floating-point round-trip error. That
+    value is both the floor's input and the primary ordering key, so the noise
+    let a genuine tie invert on wall-clock and could jitter a floor decision. The
+    recovered score must be identical for an exact tie.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from gobby.memory.scoring import temporal_decay, undecay
+
+    now = datetime.now(UTC)
+    half_life = 30.0
+    raw = 0.9
+    scores = []
+    for age in (timedelta(days=1), timedelta(days=90)):
+        decay = temporal_decay(now - age, half_life)
+        scores.append(undecay(raw * decay, decay))
+
+    assert scores[0] == scores[1]
+
+
+def test_order_results_keeps_earlier_hit_on_equal_undecayed_scores() -> None:
+    """#22910 found work: an exact undecayed tie must keep input order."""
+    from gobby.memory.services._search_ranking import HitScores, order_results
+
+    hits = ["first", "second"]
+    scores = {
+        "first": HitScores(1.08, 0.977, 0.5),
+        "second": HitScores(1.08, 0.125, 0.5),
+    }
+
+    assert order_results(hits, lambda hit: scores[hit]) == ["first", "second"]

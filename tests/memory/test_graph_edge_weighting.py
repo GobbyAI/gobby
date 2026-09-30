@@ -747,3 +747,44 @@ def test_edge_timestamp_to_iso_handles_epoch_ms_string_and_none() -> None:
     assert _edge_timestamp_to_iso("2026-01-01T00:00:00+00:00") == "2026-01-01T00:00:00+00:00"
     assert _edge_timestamp_to_iso(None) is None
     assert _edge_timestamp_to_iso(object()) is None
+
+
+async def test_related_expansion_reuses_cached_neighbor_rows() -> None:
+    """F4 (#22910): a shared rows cache serves the invariant hop query once.
+
+    Backfill re-runs the graph leg from the same entity seeds every round. The
+    single-hop neighbor query is limit-independent (only the Python admission
+    cap varies), so a request-scoped cache must serve later rounds without
+    re-issuing it while returning identical keys.
+    """
+
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" in cypher:
+            return [
+                {
+                    "source_key": "seed",
+                    "related_entity_key": "neighbor-a",
+                    "edge_weight": 0.8,
+                    "updated_at": None,
+                },
+                {
+                    "source_key": "seed",
+                    "related_entity_key": "neighbor-b",
+                    "edge_weight": 0.6,
+                    "updated_at": None,
+                },
+            ]
+        if "RETURN DISTINCT m.memory_id" in cypher:
+            return [{"memory_id": "memory-1", "updated_at": 1}]
+        return []
+
+    falkor = RecordingFalkor(respond)
+    reader = _reader(falkor)
+    cache: dict[Any, Any] = {}
+
+    first = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5, rows_cache=cache)
+    second = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5, rows_cache=cache)
+
+    assert first.memory_ids == second.memory_ids == ["memory-1"]
+    # The invariant neighbor hop runs once for the request, not once per round.
+    assert len(falkor.find("related_entity_key")) == 1
