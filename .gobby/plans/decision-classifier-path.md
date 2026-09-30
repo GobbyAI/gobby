@@ -1789,3 +1789,6 @@ with a typed reason. Do not run the full pytest suite.
   never reaches the shared cooldown (3.3.2). MCP_PIPELINE_RESULT: failures
   carry an `error` string, and 3.3.6 pins the unchanged fail-closed
   `execute_mcp_step` contract. The superseded M1 was retired for re-derivation.
+- 2026-09-30: Renewed consensus with Plan Adversary gobby#14579 on 96a59d1,
+  with both MCP findings resolved and every earlier service, consumer,
+  evaluation, and deployment obligation retained.
