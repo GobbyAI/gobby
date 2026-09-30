@@ -1599,9 +1599,10 @@ the full pytest suite.
   validation_criteria: '2.1.1: Shadow records are written `0600` under a `0700` directory,
     capped and rotated, and a write failure never raises. test: `tests/ai/test_decisions_shadow.py::test_shadow_record_permissions_cap_and_failure`.
 
-    2.1.2: The harness splits deterministically by id and computes accuracy, Brier,
-    ECE, selective accuracy, and order-flip rate on a synthetic set with known answers.
-    test: `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
+    2.1.2: The harness splits deterministically by `content_hash` and computes accuracy,
+    Brier, ECE, selective accuracy, and order-flip rate on a synthetic set with known
+    answers. Two records with identical content and different ids land in the same
+    split, while cohort selection still orders by `sha256(id)`. test: `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
 
     2.1.3: The report names the configured model, the one evaluated backend identity
     and response model, the dataset hash, both splits, and the consumer bar. test:
@@ -1650,7 +1651,10 @@ the full pytest suite.
     test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 
     3.1.2: Shadow mode returns today''s result unchanged and writes one shadow record.
-    test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
+    An incumbent that succeeds after `timeout_seconds` still returns its own result.
+    A stalled classifier is cancelled and awaited when the incumbent returns and is
+    recorded unavailable. Caller cancellation propagates with no pending task. test:
+    `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
 
     3.1.3: Enforce mode ranks by probability, drops candidates below `min_probability`,
     and can return none. An unavailable classifier invokes the LLM rerank; semantic
