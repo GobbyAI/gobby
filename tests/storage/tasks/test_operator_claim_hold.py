@@ -248,16 +248,33 @@ def test_generic_set_variable_cannot_clear_a_hold(
 
 @pytest.mark.usefixtures("_local_machine_identity")
 @pytest.mark.parametrize("attestation", ["actor_session_id", "reason"])
+@pytest.mark.parametrize(
+    "replacement",
+    [None, "7", "{}", '""'],
+    ids=["missing", "number", "object", "empty"],
+)
 def test_a_hold_without_its_attestation_shields_nothing(
-    temp_db: HubDatabase, sample_project: dict[str, Any], attestation: str
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    attestation: str,
+    replacement: str | None,
 ) -> None:
     session_id = str(uuid.uuid4())
     _make_session(temp_db, sample_project, session_id, "expired")
     _hold(temp_db, session_id)
-    temp_db.execute(
-        "UPDATE session_variables SET variables = variables #- %s::text[] WHERE session_id = %s",
-        ([OPERATOR_CLAIM_HOLD_VARIABLE, attestation], session_id),
-    )
+    path = [OPERATOR_CLAIM_HOLD_VARIABLE, attestation]
+    if replacement is None:
+        temp_db.execute(
+            "UPDATE session_variables SET variables = variables #- %s::text[]"
+            " WHERE session_id = %s",
+            (path, session_id),
+        )
+    else:
+        temp_db.execute(
+            "UPDATE session_variables SET variables = jsonb_set(variables, %s::text[], %s::jsonb)"
+            " WHERE session_id = %s",
+            (path, replacement, session_id),
+        )
     task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
 
     python_shields = is_operator_claim_held(read_session_variables(temp_db, session_id))

@@ -34,9 +34,13 @@ VALID_STAMP_SQL = """sv.variables -> %s ->> 'created_at' ~ %s
            AND sv.variables -> %s ->> 'created_at' >= %s
            AND sv.variables -> %s ->> 'created_at' <= %s"""
 
+# The attestation keys must be nonempty JSON strings, matching the Python
+# shield: ->> alone would also accept a number or an object.
 LIVE_OPERATOR_CLAIM_HOLD_SQL = f"""jsonb_typeof(sv.variables -> %s) = 'object'
-           AND COALESCE(sv.variables -> %s ->> 'actor_session_id', '') <> ''
-           AND COALESCE(sv.variables -> %s ->> 'reason', '') <> ''
+           AND jsonb_typeof(sv.variables -> %s -> 'actor_session_id') = 'string'
+           AND sv.variables -> %s ->> 'actor_session_id' <> ''
+           AND jsonb_typeof(sv.variables -> %s -> 'reason') = 'string'
+           AND sv.variables -> %s ->> 'reason' <> ''
            AND {VALID_STAMP_SQL}"""
 
 
@@ -58,7 +62,7 @@ def valid_stamp_params(variable: str, now: datetime) -> list[Any]:
 def live_operator_claim_hold_params(now: datetime) -> list[Any]:
     """Parameters for LIVE_OPERATOR_CLAIM_HOLD_SQL, in placeholder order."""
     key = OPERATOR_CLAIM_HOLD_VARIABLE
-    return [key, key, key, *valid_stamp_params(key, now)]
+    return [key, key, key, key, key, *valid_stamp_params(key, now)]
 
 
 def record_operator_claim_hold(
