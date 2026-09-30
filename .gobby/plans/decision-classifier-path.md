@@ -1419,3 +1419,291 @@ the full pytest suite.
   live capture required before any consumer leaves `shadow` (Decision 7,
   Activation Gate item 4); Decision 14 stands as the PD's explicit
   assumption for whole-plan approval.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: '`ai.decisions` config and the `decide` capability binding'
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '1.1.1: With `allow_remote` false, a non-loopback `api_base`
+    fails validation with the message naming `allow_remote`, and `localhost`, `127.0.0.1`,
+    and `[::1]` pass. With `allow_remote` true, a hosted `https` `api_base` passes
+    and one startup WARNING names its host. test: `tests/config/test_decisions_config.py::test_api_base_must_be_loopback`.
+
+    1.1.2: `model` is required with `api_base`, `enforce` requires `evaluated_model`
+    and `evaluated_backend`, `accept_below < accept_above`, every threshold outside
+    [0,1] is rejected, and an empty `AIConfig` loads with every consumer `off`. test:
+    `tests/config/test_decisions_config.py::test_decisions_config_invariants`.
+
+    1.1.3: The five `code_index.community_label.decisions_*` keys no longer exist
+    on the model. symbol: `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`.
+    test: `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
+
+    1.1.4: `decide` reports unavailable with its reason when unconfigured and available
+    with the model and `adapter_style` `local` when configured, and it appears in
+    the registry status snapshot. test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
+
+    1.1.5: `api_base` row: defaults to `None`, and the capability is unavailable while
+    it is unset. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.6: `api_key` row: defaults to `None`, a `$secret:` reference loads resolved,
+    and the value is never logged. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.7: `model` row: defaults to `None`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.8: `timeout_seconds` row: defaults to `2.0` and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.9: `max_input_tokens` row: defaults to `8192`, rejects `255`, and rejects
+    a value at or above `backend_max_state_tokens`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.10: `backend_max_state_tokens` row: defaults to `65536` and rejects `0`. test:
+    `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.11: `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`. test:
+    `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.12: `community_label` row: defaults to `mode` `off`, `min_confidence` `0.5`,
+    and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce` without
+    both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
+
+    1.1.13: `tool_rerank` row: defaults to `mode` `off`, `min_probability` `0.5`,
+    and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce` without
+    both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
+
+    1.1.14: `found_work` row: defaults to `mode` `off`, `accept_below` `0.1`, `accept_above`
+    `0.9`, and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce`
+    without both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
+
+    1.1.15: `allow_remote` row: defaults to `False`, and only `True` admits a non-loopback
+    `api_base`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+
+    1.1.16: `identity_contract` row: defaults to `None`, accepts `model_card`, and
+    accepts `response_version` only with `allow_remote` true. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.'
+  labels:
+  - covers:decision-classifier-path:1.1:1.1.1
+  - covers:decision-classifier-path:1.1:1.1.2
+  - covers:decision-classifier-path:1.1:1.1.3
+  - covers:decision-classifier-path:1.1:1.1.4
+  - covers:decision-classifier-path:1.1:1.1.5
+  - covers:decision-classifier-path:1.1:1.1.6
+  - covers:decision-classifier-path:1.1:1.1.7
+  - covers:decision-classifier-path:1.1:1.1.8
+  - covers:decision-classifier-path:1.1:1.1.9
+  - covers:decision-classifier-path:1.1:1.1.10
+  - covers:decision-classifier-path:1.1:1.1.11
+  - covers:decision-classifier-path:1.1:1.1.12
+  - covers:decision-classifier-path:1.1:1.1.13
+  - covers:decision-classifier-path:1.1:1.1.14
+  - covers:decision-classifier-path:1.1:1.1.15
+  - covers:decision-classifier-path:1.1:1.1.16
+  tdd: true
+  source_section: '1.1'
+  implementation_domain: backend
+- title: '`DecisionService` with Choice, request ceiling, and cooldown'
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.1'
+  validation_criteria: "1.2.1: `choose` posts `{model, state, questions}` to `{api_base}/v1/systemone`,\
+    \ parses the documented-schema fixture, and raises `parse` for these responses:\
+    \ an empty or non-string model, a missing or extra answer key, a wrong answer\
+    \ type, a choice outside the offered options or below the maximum probability,\
+    \ mismatched probability keys, probabilities summing outside `1 \xB1 1e-3`, and\
+    \ any non-finite or out-of-range value. A tied maximum is accepted, and a resolved\
+    \ model name such as `jev-1.13.0` for a `jev-latest` request is accepted and returned\
+    \ as `response_model`. The request carries `type` and `instructions` on every\
+    \ question. test: `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_documented_wire`.\n\
+    1.2.2: With an ample budget, call counts are exact per status: 3xx, 401, 403,\
+    \ 404, and 422 make one call each; 429, 529, 500, and transport errors make three.\
+    \ With a budget shorter than the backoff sequence, the call ends at the budget\
+    \ with fewer attempts and raises `timeout`. `retry_async` without a predicate\
+    \ keeps its current behavior. test: `tests/ai/test_decisions_service.py::test_retry_only_on_transient_status`.\n\
+    1.2.7: The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a redirect.\
+    \ test: `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.\n\
+    1.2.8: A rotated secret, a changed timeout, ceiling, `allow_remote`, `identity_contract`\
+    \ (including `None` to `response_version` or `model_card` on an otherwise identical\
+    \ config), or `backend_max_state_tokens` yields a new service, while identical\
+    \ config shares one cooldown. test: `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.\n\
+    1.2.9: `backend_identity` is established on every call: two consecutive calls\
+    \ on one cached service against a server whose card changes between them (a restart\
+    \ onto another checkpoint) return different identities. A changed run path, dtype,\
+    \ temperature, or configured `backend_max_state_tokens` changes it under the same\
+    \ alias; a changed statistic does not. A failed, slow, or incomplete card yields\
+    \ `None` without failing the decision or opening the cooldown, and a failed decision\
+    \ leaves no pending card task. test: `tests/ai/test_decisions_service.py::test_backend_identity_from_model_card`.\n\
+    1.2.10: Under `response_version`, a `jev-latest` request answered as `jev-1.13.0`\
+    \ yields identity `response:jev-1.13.0` with no card request, a later answer as\
+    \ `jev-1.14.0` yields a different identity, and with the contract unset the identity\
+    \ is `None`. test: `tests/ai/test_decisions_service.py::test_backend_identity_from_response_version`.\n\
+    1.2.3: A request over `max_input_tokens` raises `oversize` without sending, for\
+    \ path-heavy state and for low characters-per-token state. A response with `usage.input_tokens`\
+    \ at `backend_max_state_tokens - 1` or above, or with no `usage.input_tokens`,\
+    \ raises `truncated` without opening the cooldown; one token below passes. test:\
+    \ `tests/ai/test_decisions_service.py::test_oversize_request_never_dials`.\n1.2.4:\
+    \ Table-driven: transport error, exhausted 529, 401, `parse`, and a full-budget\
+    \ `timeout` each open the cooldown; `unconfigured`, `oversize`, a caller-budget\
+    \ `timeout`, and caller cancellation do not, and cancellation propagates. Inside\
+    \ the cooldown, calls raise `cooldown` without dialing, and the first call after\
+    \ it dials again. test: `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.\n\
+    1.2.5: Log records carry no state or option text. test: `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.\n\
+    1.2.6: The pinned contract record holds the documented TypeSafe Choice and Noul\
+    \ schemas and the Kev `0fe8fc97c2bc` reference facts: model names, state and branch\
+    \ limits, truncation, `usage`, and the `/v1/models` card fields. behavior: \"\
+    /v1/systemone\" in `docs/evidence/decisions/systemone-wire.md`."
+  labels:
+  - covers:decision-classifier-path:1.2:1.2.1
+  - covers:decision-classifier-path:1.2:1.2.2
+  - covers:decision-classifier-path:1.2:1.2.7
+  - covers:decision-classifier-path:1.2:1.2.8
+  - covers:decision-classifier-path:1.2:1.2.9
+  - covers:decision-classifier-path:1.2:1.2.10
+  - covers:decision-classifier-path:1.2:1.2.3
+  - covers:decision-classifier-path:1.2:1.2.4
+  - covers:decision-classifier-path:1.2:1.2.5
+  - covers:decision-classifier-path:1.2:1.2.6
+  tdd: true
+  source_section: '1.2'
+  implementation_domain: backend
+- title: Shadow capture and the reproducible evaluation harness
+  category: code
+  task_type: feature
+  depends_on:
+  - '1.2'
+  validation_criteria: '2.1.1: Shadow records are written `0600` under a `0700` directory,
+    capped and rotated, and a write failure never raises. test: `tests/ai/test_decisions_shadow.py::test_shadow_record_permissions_cap_and_failure`.
+
+    2.1.2: The harness splits deterministically by id and computes accuracy, Brier,
+    ECE, selective accuracy, and order-flip rate on a synthetic set with known answers.
+    test: `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
+
+    2.1.3: The report names the configured model, the one evaluated backend identity
+    and response model, the dataset hash, both splits, and the consumer bar. test:
+    `tests/scripts/test_decisions_eval.py::test_report_identifies_run`.
+
+    2.1.4: Synthetic passing and failing datasets for `tool_rerank` and `found_work`
+    produce the expected metric values and gate verdicts. `PASS` requires ECE at most
+    0.10, order-flip rate at most 10%, p95 latency at most 1 s against the configured
+    backend, at least 20 records per gold class per split, and the consumer inequality
+    (deployed Recall@k at least the incumbent''s; cascade false-clear rate at most
+    the incumbent''s with escalation at most 50%). Each failing set breaches one constant
+    and yields `FAIL` naming it. Thresholds come from the development split only.
+    test: `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
+
+    2.1.5: Known-answer edge cases: an incumbent `null` verdict counts as an alert,
+    an unavailable classifier escalates, a cohort where the classifier beats the incumbent
+    on available records but the deployed list trails it overall yields `FAIL`, the
+    found-work pair and `min_probability` selections match hand-computed values, a
+    record whose `k` exceeds its returned list length still scores Recall@k against
+    `k`, short support or a zero denominator yields `FAIL` with `insufficient support`,
+    and a replay whose backend identity or response model switches midway, or whose
+    answers carry no identity, yields `FAIL` with `mixed or unverified backend`. test:
+    `tests/scripts/test_decisions_eval.py::test_metric_edge_cases_fail_closed`.
+
+    2.1.6: On a synthetic skewed mix with a 5% disagreement rate, the gate metrics
+    equal the cohort''s actual rates; audit records are excluded, and duplicate content
+    lands in one split. test: `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.'
+  labels:
+  - covers:decision-classifier-path:2.1:2.1.1
+  - covers:decision-classifier-path:2.1:2.1.2
+  - covers:decision-classifier-path:2.1:2.1.3
+  - covers:decision-classifier-path:2.1:2.1.4
+  - covers:decision-classifier-path:2.1:2.1.5
+  - covers:decision-classifier-path:2.1:2.1.6
+  tdd: true
+  source_section: '2.1'
+  implementation_domain: backend
+- title: MCP tool reranking through Noul
+  category: code
+  task_type: feature
+  depends_on:
+  - '2.1'
+  validation_criteria: '3.1.1: `noul` posts per-proposition questions, parses the
+    documented-schema Noul fixture, and returns probabilities by key under the same
+    ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/systemone-wire.md`.
+    test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
+
+    3.1.2: Shadow mode returns today''s result unchanged and writes one shadow record.
+    test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
+
+    3.1.3: Enforce mode ranks by probability, drops candidates below `min_probability`,
+    and can return none. An unavailable classifier invokes the LLM rerank; semantic
+    order is returned only when both the classifier and the LLM fail. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_enforce_ranks_rejects_and_falls_back`.
+
+    3.1.4: Enforce mode with a mismatched `evaluated_model`, a mismatched `evaluated_backend`,
+    or no backend identity behaves as shadow. A `mode` or `min_probability` change
+    reaches the next call through the same cached service. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
+
+    3.1.5: One rerank is bounded and complete: - more than `top_k` passing candidates
+    return exactly `top_k`; - equal probabilities keep semantic order; - a failed
+    second batch makes the whole result unavailable, so enforce falls back to the
+    LLM rerank; - two batches with different backend identities, with different response
+    models, or with one known and one unknown identity make the whole result unavailable,
+    so enforce falls back to the LLM rerank and shadow records the classifier as unavailable;
+    - an oversized singleton yields `oversize` without truncation; - a shadow classifier
+    exception leaves the incumbent''s result and failure semantics intact, with no
+    task pending after return. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_rerank_batches_are_bounded_and_complete`.'
+  labels:
+  - covers:decision-classifier-path:3.1:3.1.1
+  - covers:decision-classifier-path:3.1:3.1.2
+  - covers:decision-classifier-path:3.1:3.1.3
+  - covers:decision-classifier-path:3.1:3.1.4
+  - covers:decision-classifier-path:3.1:3.1.5
+  tdd: true
+  source_section: '3.1'
+  implementation_domain: backend
+- title: Found-work confirmation cascade
+  category: code
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: `found_work_gate.py` delegates confirmation to `found_work_confirm.confirm_shirk`,
+    ends below its starting line count, and keeps its existing found-work tests passing.
+    symbol: `src/gobby/workflows/found_work_confirm.py::confirm_shirk`.
+
+    3.2.2: In enforce mode a probability at or above `accept_above` confirms and one
+    at or below `accept_below` clears, both without an LLM call; the band between
+    escalates to the LLM. test: `tests/workflows/test_found_work_confirm.py::test_cascade_accepts_confident_and_escalates_uncertain`.
+
+    3.2.3: An unavailable classifier escalates to the LLM path and never returns `False`
+    by itself. The escalated call''s timeout is the configured cap minus the classifier''s
+    elapsed time, and an exhausted budget returns `None`. test: `tests/workflows/test_found_work_confirm.py::test_outage_never_clears_a_finding`.
+
+    3.2.4: Shadow mode returns the LLM verdict and writes one shadow record. An unexpected
+    classifier exception leaves the LLM verdict intact. test: `tests/workflows/test_found_work_confirm.py::test_shadow_returns_llm_verdict`.
+
+    3.2.5: Budget and admission: - a configured 1 s cap bounds the whole confirmation
+    in shadow and enforce; - `off` makes no classifier call and returns today''s result;
+    - `validation.enabled` false or a missing service returns `None` with no classifier
+    call; - caller cancellation propagates and leaves no pending task; - a mismatched
+    `evaluated_model` or `evaluated_backend` behaves as shadow; - a `mode` or threshold
+    change reaches the next call through the same cached service. test: `tests/workflows/test_found_work_confirm.py::test_budget_admission_and_cancellation`.'
+  labels:
+  - covers:decision-classifier-path:3.2:3.2.1
+  - covers:decision-classifier-path:3.2:3.2.2
+  - covers:decision-classifier-path:3.2:3.2.3
+  - covers:decision-classifier-path:3.2:3.2.4
+  - covers:decision-classifier-path:3.2:3.2.5
+  tdd: true
+  source_section: '3.2'
+  implementation_domain: backend
+- title: Decision capability guide rows
+  category: docs
+  task_type: chore
+  depends_on:
+  - '3.2'
+  validation_criteria: '4.1.1: The configuration guide documents `ai.decisions` with
+    the loopback default, the `allow_remote` opt-in, and the wire contract. behavior:
+    "allow_remote" in `docs/guides/configuration.md`.
+
+    4.1.2: The features guide lists both consumers with their modes and fallbacks.
+    behavior: "found_work" in `docs/guides/llm-features.md`.'
+  labels:
+  - covers:decision-classifier-path:4.1:4.1.1
+  - covers:decision-classifier-path:4.1:4.1.2
+  tdd: false
+  source_section: '4.1'
+  assigned_agent: tech-writer
+```
