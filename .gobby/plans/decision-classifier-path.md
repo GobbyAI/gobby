@@ -162,8 +162,8 @@ The plan also sets:
      propagates unchanged.
    - `get_decision_service(config)` keeps one cached service, identified by a
      fingerprint of every service-affecting field: `api_base`, `model`, a hash
-     of the resolved `api_key`, `allow_remote`, `timeout_seconds`,
-     `max_input_tokens`, `backend_max_state_tokens`, and
+     of the resolved `api_key`, `allow_remote`, `identity_contract`,
+     `timeout_seconds`, `max_input_tokens`, `backend_max_state_tokens`, and
      `failure_cooldown_seconds`. It is replaced whenever the fingerprint
      changes.
      - The cache exists only to share cooldown state.
@@ -173,11 +173,12 @@ The plan also sets:
        nothing.
 10. **Per-consumer policy, typed.** `DecisionsConfig` carries one typed field
     per consumer rather than a free map:
-    - `community_label`: `mode`, `min_confidence` (default `0.5`), and
-      `evaluated_model`.
-    - `tool_rerank`: `mode`, `min_probability`, and `evaluated_model`.
-    - `found_work`: `mode`, `accept_below`, `accept_above`, and
-      `evaluated_model`.
+    - `community_label`: `mode`, `min_confidence` (default `0.5`),
+      `evaluated_model`, and `evaluated_backend`.
+    - `tool_rerank`: `mode`, `min_probability`, `evaluated_model`, and
+      `evaluated_backend`.
+    - `found_work`: `mode`, `accept_below`, `accept_above`,
+      `evaluated_model`, and `evaluated_backend`.
 
     `mode` is `off`, `shadow` or `enforce`, and defaults to `off`.
 
@@ -261,7 +262,8 @@ The plan also sets:
     only when:
     - expected calibration error is at most 0.10;
     - the option-order or candidate-order flip rate is at most 10%;
-    - p95 latency is at most 1 s against the local backend;
+    - p95 latency is at most 1 s against the configured backend, local or
+      remote;
     - its consumer bar is met:
       - tool rerank: Recall@k no lower than the LLM rerank, with reject-all
         accuracy reported;
@@ -690,7 +692,8 @@ Targets:
 - `docs/evidence/decisions/systemone-wire.md`
 
 **Granularity:** Ten acceptance items, one outcome: a `choose` call that
-either returns validated answers from an identified backend or raises a typed
+either returns validated answers with their backend identity metadata, which
+is `None` when identity is unverified, or raises a typed
 `DecisionsUnavailable`.
 - Transport limits (1.2.2, 1.2.7), the size ceiling and truncation guard
   (1.2.3), the shared cooldown and its service identity (1.2.4, 1.2.8),
@@ -711,6 +714,12 @@ by question key, and a missing key was a hard failure. Keep those shapes,
 with one addition: the TypeSafe API (`https://docs.typesafe.ai/api.md`) and
 Kev's README both require `instructions` on every question, so
 `ChoiceQuestion` gains it.
+
+`get_decision_service(config)` fingerprints every service-affecting field
+(Decision 9): `api_base`, `model`, a sha256 of the resolved `api_key`,
+`allow_remote`, `identity_contract`, `timeout_seconds`, `max_input_tokens`,
+`backend_max_state_tokens`, and `failure_cooldown_seconds`. Consumer fields
+are excluded, so a policy-only reload keeps the cached service.
 
 The documented API is the contract, and the wire shape is pinned from it
 before any code, with no live server:
@@ -846,7 +855,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.7 - The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a
   redirect. test:
   `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.
-- 1.2.8 - A rotated secret, a changed timeout, ceiling, `allow_remote`, or
+- 1.2.8 - A rotated secret, a changed timeout, ceiling, `allow_remote`,
+  `identity_contract` (including `None` to `response_version` or
+  `model_card` on an otherwise identical config), or
   `backend_max_state_tokens` yields a new service, while identical config
   shares one cooldown. test:
   `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.
@@ -959,6 +970,16 @@ runs against `ai.decisions` loaded from the daemon config:
    repeated example never lands in both splits.
 2. Replay every record with its original order and with options, or candidate
    order in the state, reversed.
+   - Every available replayed answer must carry the same non-null
+     `backend_identity` and the same `response_model`. Answers that span
+     identities or response models, or any available answer with no
+     identity, make the verdict `FAIL` with the reason `mixed or unverified
+     backend`.
+   - The report records that one identity and response model as the run's
+     evaluated backend, the value an operator copies into
+     `evaluated_backend`.
+   - Shadow provenance in the dataset may name other backends. Only the
+     replayed predictions decide the gate.
 3. Compute accuracy, Brier score, ECE (10 equal-width bins on confidence for
    Choice, or on probability for Noul), and selective accuracy and coverage at
    thresholds from 0.50 to 0.95 in steps of 0.05.
@@ -1014,6 +1035,19 @@ runs against `ai.decisions` loaded from the daemon config:
    makes the verdict `FAIL` with the reason `insufficient support`. The PD
    then requests a further random cohort.
 
+   Gate constants (Decision 12), each measured on the holdout:
+   - ECE at most 0.10;
+   - order-flip rate at most 10%;
+   - p95 latency at most 1 s against the configured backend, local or
+     remote;
+   - at least 20 records per gold class in each split;
+   - `tool_rerank`: deployed Recall@k at least the incumbent's;
+   - `found_work`: cascade false-clear rate at most the incumbent's, and
+     escalation rate at most 50%.
+
+   The verdict is `PASS` only when every constant holds. Any breached or
+   undefined constant makes it `FAIL`, naming that constant.
+
    Community labels are outside the harness. Their promotion evidence is
    #22604's Q1.6 report, which that task owns, cited by path in the consumer's
    promotion evidence.
@@ -1037,20 +1071,28 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   Brier, ECE, selective accuracy, and order-flip rate on a synthetic set with
   known answers. test:
   `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
-- 2.1.3 - The report names the model, the dataset hash, both splits, and the
+- 2.1.3 - The report names the configured model, the one evaluated backend
+  identity and response model, the dataset hash, both splits, and the
   consumer bar. test:
   `tests/scripts/test_decisions_eval.py::test_report_identifies_run`.
 - 2.1.4 - Synthetic passing and failing datasets for `tool_rerank` and
-  `found_work` produce the expected metric values and gate verdicts. Thresholds
-  come from the development split only. test:
+  `found_work` produce the expected metric values and gate verdicts. `PASS`
+  requires ECE at most 0.10, order-flip rate at most 10%, p95 latency at most
+  1 s against the configured backend, at least 20 records per gold class per
+  split, and the consumer inequality (deployed Recall@k at least the
+  incumbent's; cascade false-clear rate at most the incumbent's with
+  escalation at most 50%). Each failing set breaches one constant and yields
+  `FAIL` naming it. Thresholds come from the development split only. test:
   `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
 - 2.1.5 - Known-answer edge cases: an incumbent `null` verdict counts as an
   alert, an unavailable classifier escalates, a cohort where the classifier
   beats the incumbent on available records but the deployed list trails it
   overall yields `FAIL`, the found-work pair and `min_probability` selections
   match hand-computed values, a record whose `k` exceeds its
-  returned list length still scores Recall@k against `k`, and short support or
-  a zero denominator yields `FAIL` with `insufficient support`. test:
+  returned list length still scores Recall@k against `k`, short support or
+  a zero denominator yields `FAIL` with `insufficient support`, and a replay
+  whose backend identity or response model switches midway, or whose answers
+  carry no identity, yields `FAIL` with `mixed or unverified backend`. test:
   `tests/scripts/test_decisions_eval.py::test_metric_edge_cases_fail_closed`.
 - 2.1.6 - On a synthetic skewed mix with a 5% disagreement rate, the gate
   metrics equal the cohort's actual rates; audit records are excluded, and
@@ -1131,7 +1173,8 @@ By `tool_rerank.mode`:
   outlives the request. A wrapper converts every classifier `Exception` into
   an unavailable result. A shadow record pairs its probabilities with the LLM
   rerank order.
-- `enforce`, with a matching `evaluated_model`: candidates at or above
+- `enforce`, with a matching `evaluated_model` and `evaluated_backend`
+  (Decision 10): candidates at or above
   `min_probability` come back in probability order (`search_mode="decide"`),
   and an empty result is a valid reject-all. On `DecisionsUnavailable`, the
   consumer runs the existing LLM rerank over the semantic candidates it
@@ -1220,7 +1263,8 @@ By `found_work.mode`:
 - `shadow`: today's LLM path decides. The classifier runs alongside it under
   `asyncio.gather` within the same budget, and a shadow record pairs the
   probability with the LLM verdict.
-- `enforce`, with a matching `evaluated_model`:
+- `enforce`, with a matching `evaluated_model` and `evaluated_backend`
+  (Decision 10):
   - a probability at or above `accept_above` returns `True`;
   - a probability at or below `accept_below` returns `False`;
   - anything between escalates to today's LLM path;
