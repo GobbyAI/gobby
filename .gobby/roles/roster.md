@@ -19,6 +19,8 @@
 | code-reviewer.md | gobby#14641 |
 | code-reviewer.md | gobby#14680 |
 | code-reviewer.md | gobby#14681 |
+| code-reviewer.md | gobby#14944 |
+| code-reviewer.md | gobby#14945 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14860 |
