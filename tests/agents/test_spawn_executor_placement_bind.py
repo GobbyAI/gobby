@@ -27,6 +27,7 @@ from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
     _cleanup_isolation_step,
     _terminate_spawn_process,
 )
+from gobby.storage.terminal_settlement import OrphanIdentity
 from gobby.storage.terminals import Terminal, TerminalManager, mint_terminal_id
 from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.in_doubt import in_doubt_spawns
@@ -1252,6 +1253,40 @@ def test_read_back_with_another_pair_is_not_confirmation() -> None:
 
     assert spawn_in_doubt_owner._confirmed(attempt, exited, "exited", None) is True
     assert spawn_in_doubt_owner._confirmed(attempt, bumped, "exited", None) is False
+
+
+def test_orphan_read_back_needs_the_complete_prepared_identity() -> None:
+    row = MemoryTerminalStore().create_pending("t", "proj", "native", "gobby", "gobby-t")
+    attempt = spawn_in_doubt_owner.InDoubtAttempt(
+        manager=cast(TerminalManager, MemoryTerminalStore()),
+        runtime=cast(TerminalRuntime, FakeRuntime()),
+        backend="native",
+        terminal_id=row.id,
+        spawn_key="gobby-t",
+        pair=(row.attempt_generation, row.attempt_started_at),
+    )
+    identity = OrphanIdentity(
+        locator={"host_terminal_id": "ht-1"},
+        locator_key="key-1",
+        host_epoch="epoch-1",
+        process={"host_terminal_id": "ht-1", "pgid": 4242, "start_time": 5.0},
+    )
+    kept = replace(
+        row,
+        state="orphaned",
+        locator={"host_terminal_id": "ht-1"},
+        locator_key="key-1",
+        host_epoch="epoch-1",
+        process={"cwd": "/work", "host_terminal_id": "ht-1", "pgid": 4242, "start_time": 5.0},
+    )
+    other_locator = replace(kept, locator={"host_terminal_id": "ht-2"})
+    no_process = replace(kept, process={"cwd": "/work"})
+    other_group = replace(kept, process={**(kept.process or {}), "pgid": 9191})
+
+    assert spawn_in_doubt_owner._confirmed(attempt, kept, "orphan", identity) is True
+    assert spawn_in_doubt_owner._confirmed(attempt, other_locator, "orphan", identity) is False
+    assert spawn_in_doubt_owner._confirmed(attempt, no_process, "orphan", identity) is False
+    assert spawn_in_doubt_owner._confirmed(attempt, other_group, "orphan", identity) is False
 
 
 CANCEL_POINTS = ["drain", "first-settlement", "backoff", "retry-write"]

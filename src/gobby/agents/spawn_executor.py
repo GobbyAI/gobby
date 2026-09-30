@@ -59,6 +59,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _TIMEOUT_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
+# Stale-pending reaps that own an in-doubt claim until their kill settles.
+_REAP_TASKS: set[asyncio.Task[bool]] = set()
 _SLOW_SPAWN_THRESHOLD_MS = 1_000.0
 
 __all__ = [
@@ -542,17 +544,49 @@ async def reap_stale_pending_terminals(
 ) -> list[str]:
     """Reap pending rows older than the in-doubt deadline once their absence is proven.
 
-    A held id belongs to its in-doubt owner. Any other row settles only on proof:
-    a tmux session gone after the kill, or a native row missing from the strict
-    host listing. A present session, a listed row or a raised probe leaves the
-    row pending for the next pass. `now` is accepted so tests can name the
-    observed clock; selection uses attempt_started_at via list_stale_pending.
+    The reaper claims each id for its whole kill and proof, so a held id belongs
+    to its in-doubt owner and a placed retry cannot claim one mid-reap. After the
+    claim the row is read again and reaped only while it is still the listed
+    pending attempt. It settles only on proof: a tmux session gone after the
+    kill, or a native row missing from the strict host listing with its recorded
+    group dead. A present session, a listed row or a raised probe leaves the row
+    pending for the next pass. `now` is accepted so tests can name the observed
+    clock; selection uses attempt_started_at via list_stale_pending.
     """
     del now
     reaped: list[str] = []
-    for row in manager.list_stale_pending(in_doubt_seconds):
-        if in_doubt_spawns.holds(row.id):
-            continue
+    for listed in manager.list_stale_pending(in_doubt_seconds):
+        if await _reap_stale_row(manager, runtime_registry, listed):
+            reaped.append(listed.id)
+    return reaped
+
+
+async def _reap_stale_row(
+    manager: TerminalManager, runtime_registry: TerminalRuntimeRegistry, listed: Terminal
+) -> bool:
+    if not in_doubt_spawns.claim(listed.id):
+        return False
+    # The claim moves to a retained settlement task that releases it only after
+    # its kill, proof and settlement finish: cancelling the caller (monitor stop)
+    # leaves that work, and the claim, with the task until it settles.
+    task = asyncio.create_task(_reap_claimed_row(manager, runtime_registry, listed))
+    _REAP_TASKS.add(task)
+    task.add_done_callback(_REAP_TASKS.discard)
+    return await asyncio.shield(task)
+
+
+async def _reap_claimed_row(
+    manager: TerminalManager, runtime_registry: TerminalRuntimeRegistry, listed: Terminal
+) -> bool:
+    from gobby.agents.spawn_in_doubt_owner import release_claim
+
+    try:
+        row = manager.get(listed.id)
+        pair = (listed.attempt_generation, listed.attempt_started_at)
+        if row is None or row.state != "pending":
+            return False
+        if (row.attempt_generation, row.attempt_started_at) != pair:
+            return False
         try:
             absent = await _stale_pending_absent(runtime_registry.resolve(row.backend), row)
         except Exception as exc:
@@ -561,14 +595,14 @@ async def reap_stale_pending_terminals(
                 row.id,
                 type(exc).__name__,
             )
-            continue
+            return False
         if not absent:
-            continue
+            return False
         result = manager.fail_pending_attempt(
             row.id,
             attempt_generation=row.attempt_generation,
             attempt_started_at=row.attempt_started_at,
         )
-        if result is not None:
-            reaped.append(row.id)
-    return reaped
+        return result is not None
+    finally:
+        await release_claim(listed.id, run_deferred=True)
