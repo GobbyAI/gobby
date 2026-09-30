@@ -62,6 +62,30 @@ def _review_step() -> dict[str, Any]:
     return next(step for step in steps if step["name"] == "review")
 
 
+def test_reviewer_startup_defers_native_preflight_until_required_loads_complete() -> None:
+    """The launch and loaded skill must agree on the MCP-only startup phase."""
+    definition = _agent_definition()
+    prompt = str(definition["prompts"]["agent"])
+    startup, separator, review = prompt.partition("After startup:")
+    assert separator, "Reviewer launch needs an explicit startup boundary before review commands"
+    assert "load_skills" in startup
+    assert "Step transition: load_skills -> review" in startup
+    requirements = definition["step_workflow"]["variables"]["required_skills"]
+    positions = [startup.index(requirement) for requirement in requirements]
+    assert positions == sorted(positions)
+    assert "one outer tool result" in startup
+    assert "Do not batch" in startup
+    assert "ocr delegate" not in startup
+    assert "ocr delegate" in review
+
+    skill_path = AGENT_PATH.parents[2] / "skills" / "code-review" / "SKILL.md"
+    skill = skill_path.read_text()
+    preflight = skill[skill.index("## Preflight") : skill.index("## Delegate Workflow")]
+    instruction = "Defer this preflight until every required load is complete"
+    assert instruction in preflight
+    assert preflight.index(instruction) < preflight.index("ocr --version")
+
+
 def test_review_step_allows_only_required_readers_and_terminal_tools() -> None:
     """Regression for #22566: close validators need audited read access."""
     review = _review_step()
