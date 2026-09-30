@@ -1289,3 +1289,225 @@ Validate the absolute artifact path: from a task worktree, a relative path
 under `-p` resolves to the main checkout's copy. After the PD-owned restart,
 `gobby pipelines list --tag runbook` lists the bundled `planning-council`.
 Do not run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Pipeline tags from YAML and a tag filter
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '5.1.1: A project pipeline YAML with `tags: [runbook]` imports
+    with `runbook` in the row''s tags, and a re-import with changed tags updates them.
+    test: `tests/workflows/test_imports.py::test_pipeline_yaml_tags_persist_on_import`.
+
+    5.1.2: A bundled pipeline YAML with tags syncs with `gobby` plus those tags. test:
+    `tests/workflows/test_workflows_sync.py::test_bundled_pipeline_tags_merge_with_gobby`.
+
+    5.1.3: `list_pipelines(tag="runbook")` returns only tagged pipelines in scope,
+    and a project YAML declaring `gobby` is rejected. test: `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::test_list_pipelines_filters_by_tag`.
+
+    5.1.4: `gobby pipelines list --tag runbook` prints only tagged pipelines. test:
+    `tests/cli/test_cli_pipelines.py::test_list_filters_by_tag`.'
+  labels:
+  - covers:deploy-runbook:5.1:5.1.1
+  - covers:deploy-runbook:5.1:5.1.2
+  - covers:deploy-runbook:5.1:5.1.3
+  - covers:deploy-runbook:5.1:5.1.4
+  tdd: true
+  source_section: '5.1'
+  implementation_domain: backend
+- title: Seat field in run listings
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '6.1.1: A run whose resume metadata carries a placement lists
+    `seat: {workspace, title}` in `list_running_agents` and `list_agent_runs`, and
+    an unplaced run lists `seat: null`. test: `tests/mcp_proxy/tools/test_agents_run_payload.py::test_seat_from_placement_metadata`.
+
+    6.1.2: `agents_query_tools.py` ends the leaf under 1,000 lines and the existing
+    payload fields are unchanged. symbol: `src/gobby/mcp_proxy/tools/agents_run_payload.py::_list_run_payload`.
+    test: `tests/mcp_proxy/tools/test_agents_run_payload.py::test_payload_fields_unchanged`.'
+  labels:
+  - covers:deploy-runbook:6.1:6.1.1
+  - covers:deploy-runbook:6.1:6.1.2
+  tdd: true
+  source_section: '6.1'
+  implementation_domain: backend
+- title: Runbook seat guard tool
+  category: code
+  task_type: feature
+  depends_on:
+  - '6.1'
+  validation_criteria: '6.2.1: A seat held by a run in any active status (queued,
+    pending or running) refuses with that run id, and an ended run''s seat passes.
+    test: `tests/agents/test_runbook_seats.py::test_live_run_seat_refuses`.
+
+    6.2.2: A roster row whose session is in any `LIVE_SESSION_STATUSES` member (active,
+    paused, interrupted, awaiting_input, awaiting_approval, awaiting_handoff) refuses
+    with the session ref; an ended session passes; an unresolvable ref, a missing
+    roster, a malformed roster and a missing role file each refuse. A role file with
+    two rows, one session ended and one live, refuses with the live ref whichever
+    row comes first. test: `tests/agents/test_runbook_seats.py::test_roster_seats_and_stale_refs`.
+
+    6.2.3: Two executions of one runbook that both reach the guard both see a live
+    sibling, and at most one passes. test: `tests/agents/test_runbook_seats.py::test_concurrent_executions_admit_at_most_one`.
+
+    6.2.4: A storage error, a truncated run query and a caller that is not a pipeline
+    child session each refuse. test: `tests/agents/test_runbook_seats.py::test_uncertain_lookup_fails_closed`.
+
+    6.2.5: Fewer free slots than requested seats refuses before any launch. test:
+    `tests/agents/test_runbook_seats.py::test_capacity_shortfall_refuses`.
+
+    6.2.6: An empty, duplicate, unknown or whitespace-padded seat name, and two seats
+    with one canonical key, each refuse before any seat lookup. test: `tests/agents/test_runbook_seats.py::test_requested_seats_validated`.'
+  labels:
+  - covers:deploy-runbook:6.2:6.2.1
+  - covers:deploy-runbook:6.2:6.2.2
+  - covers:deploy-runbook:6.2:6.2.3
+  - covers:deploy-runbook:6.2:6.2.4
+  - covers:deploy-runbook:6.2:6.2.5
+  - covers:deploy-runbook:6.2:6.2.6
+  tdd: true
+  source_section: '6.2'
+  implementation_domain: backend
+- title: Pipeline resume runs the launch-time definition
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '7.1.1: A pipeline launched through `run_pipeline` stores its
+    definition snapshot, and a definition changed after launch leaves the resumed
+    step graph unchanged. test: `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_resume_uses_launch_snapshot`.
+
+    7.1.2: A missing or malformed snapshot fails the execution on startup recovery,
+    is refused by `resume_pipeline` with its steps unchanged, and runs no step. test:
+    `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_missing_snapshot_fails_closed`.'
+  labels:
+  - covers:deploy-runbook:7.1:7.1.1
+  - covers:deploy-runbook:7.1:7.1.2
+  tdd: true
+  source_section: '7.1'
+  implementation_domain: backend
+- title: Pipeline spawns reconcile by step invocation id
+  category: code
+  task_type: feature
+  depends_on:
+  - '7.1'
+  validation_criteria: '7.2.1: A step''s `invocation_id` is the same before and after
+    a restart, two steps of one execution get different ids, and a step whose id is
+    `invocation_id` does not override the reserved name. test: `tests/workflows/test_pipeline_invocation_id.py::test_invocation_id_is_stable_per_step`.
+
+    7.2.2: A placed spawn from a pipeline child whose `reserved_run_id` names a started
+    run returns that run with `adopted: true` and makes no placement, reserver or
+    launch call, whether the seat is still live or ended, moved or was renamed. test:
+    `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_started_run_is_adopted`.
+
+    7.2.3: Two steps that spawn the same seat in sequence create two runs, and neither
+    adopts the other. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_distinct_steps_do_not_share_runs`.
+
+    7.2.4: A run with the id that was prepared and never started, or failed before
+    start, refuses `seat_launch_unsettled` and launches nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_unstarted_run_refuses`.
+
+    7.2.5: A non-pipeline caller that names a real pipeline child as `parent_session_id`
+    keeps the reviewer-internal refusal and reaches no lookup. A pipeline caller refuses
+    `invocation_unauthorized` when its declared parent is another session, its execution
+    is missing, not running or in another project, or the id is not one of its steps''
+    invocation ids. A run with the id under another execution or another project refuses
+    `invocation_conflict`. A replacement child with the same external id adopts. The
+    queued task-close reviewer spawn is unchanged. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_invocation_authority`.'
+  labels:
+  - covers:deploy-runbook:7.2:7.2.1
+  - covers:deploy-runbook:7.2:7.2.2
+  - covers:deploy-runbook:7.2:7.2.3
+  - covers:deploy-runbook:7.2:7.2.4
+  - covers:deploy-runbook:7.2:7.2.5
+  tdd: true
+  source_section: '7.2'
+  implementation_domain: backend
+- title: Cron pipeline launch requires a cron session
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '7.3.1: A cron `pipeline` job parents the pipeline child to
+    the cron session, and each spawn the pipeline makes carries that child as parent
+    and the job''s project. test: `tests/scheduler/test_cron_runbook_chain.py::test_cron_chain_identity`.
+
+    7.3.2: A failed cron session create, and a missing session manager, fail the cron
+    run with a typed error and create no execution. test: `tests/scheduler/test_cron_runbook_chain.py::test_cron_session_failure_refuses`.'
+  labels:
+  - covers:deploy-runbook:7.3:7.3.1
+  - covers:deploy-runbook:7.3:7.3.2
+  tdd: true
+  source_section: '7.3'
+  implementation_domain: backend
+- title: Bundled planning council runbook
+  category: code
+  task_type: feature
+  depends_on:
+  - '5.1'
+  - '6.2'
+  - '7.1'
+  - '7.2'
+  validation_criteria: '8.1.1: Bundled sync installs the runbook with the `gobby`
+    and `runbook` tags, and it validates as a `PipelineDefinition`. file: `src/gobby/install/shared/workflows/pipelines/planning-council.yaml`.
+    test: `tests/workflows/test_runbook_pipeline.py::test_runbook_syncs_bundled_and_tagged`.
+
+    8.1.2: MCP and HTTP launches parent both seats to the pipeline child session,
+    whose parent is the caller or the system session, and resolve the project. test:
+    `tests/workflows/test_runbook_pipeline.py::test_entrypoint_parent_chain`.
+
+    8.1.3: A restart between the writer''s spawn and its completed write re-runs the
+    writer step on the reused pipeline child, and the second spawn carries the same
+    parent and the same `reserved_run_id`. A restart after the writer completed keeps
+    its `run_id`, skips the guard and launches only the adversary. test: `tests/workflows/test_runbook_pipeline.py::test_restart_reruns_on_same_child`.
+
+    8.1.4: A partial deploy keeps the launched seat''s output. A fresh run with `seats:
+    "adversary"` passes the guard and launches only the adversary, and a run that
+    asks for the writer while its run is active is refused. `gobby pipelines run -i
+    seats=adversary` hands the executor that string unchanged. test: `tests/workflows/test_runbook_pipeline.py::test_partial_deploy_relaunches_missing_seat`.
+    test: `tests/cli/test_cli_pipelines.py::test_run_passes_seats_input_as_string`.
+
+    8.1.5: `resume_pipeline` on a failed runbook execution refuses with the typed
+    error and changes no step or output, including after the current definition lost
+    its `runbook` tag, changed or was deleted. test: `tests/workflows/test_runbook_pipeline.py::test_failed_runbook_resume_refused`.
+
+    8.1.6: `gobby pipelines runs show --json` includes each seat step''s `run_id`
+    for a completed and for a failed runbook execution. test: `tests/cli/test_cli_pipelines.py::test_runs_show_includes_step_outputs`.'
+  labels:
+  - covers:deploy-runbook:8.1:8.1.1
+  - covers:deploy-runbook:8.1:8.1.2
+  - covers:deploy-runbook:8.1:8.1.3
+  - covers:deploy-runbook:8.1:8.1.4
+  - covers:deploy-runbook:8.1:8.1.5
+  - covers:deploy-runbook:8.1:8.1.6
+  tdd: true
+  source_section: '8.1'
+  implementation_domain: backend
+- title: Runbook guide and pipeline reference
+  category: docs
+  task_type: chore
+  depends_on:
+  - '7.3'
+  - '8.1'
+  validation_criteria: '9.1.1: The pipelines guide documents runbooks, their guard,
+    entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
+
+    9.1.2: The skill reference names `check_runbook_seats`, the `seats` input, `runs
+    show --json` and `kill_agent` by recorded run id. file: `src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md`.
+
+    9.1.3: The recovery reference explains the post-restart `seat_launch_unsettled`,
+    `invocation_conflict` and `seat_live` failures. behavior: "seat_launch_unsettled"
+    in `src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md`.
+
+    9.1.4: The runbooks reference is a registered pipelines topic that the catalog
+    lists and `get_skill_file` loads. test: `tests/skills/test_reference_library.py::test_pipelines_runbooks_topic_is_registered`.'
+  labels:
+  - covers:deploy-runbook:9.1:9.1.1
+  - covers:deploy-runbook:9.1:9.1.2
+  - covers:deploy-runbook:9.1:9.1.3
+  - covers:deploy-runbook:9.1:9.1.4
+  tdd: false
+  source_section: '9.1'
+  assigned_agent: tech-writer
+```
