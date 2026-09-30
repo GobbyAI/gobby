@@ -270,6 +270,41 @@ async def test_broadcast_event_interrupt_is_normalized_and_default_enabled(
     assert "unknown hook type" not in caplog.text.lower()
 
 
+@pytest.mark.parametrize(
+    "tool_input", ['{"file_path": "/tmp/example.py"}', {"file_path": "/tmp/example.py"}]
+)
+async def test_broadcast_event_normalizes_json_string_tool_input(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    tool_input: object,
+) -> None:
+    """A JSON-string tool_input broadcasts instead of dropping the before_tool event."""
+    from datetime import UTC, datetime
+
+    from gobby.hooks.normalization import normalize_tool_fields
+
+    data: dict[str, Any] = {
+        "external_id": "test-session",
+        "tool_name": "Read",
+        "tool_input": tool_input,
+    }
+    normalize_tool_fields(data)
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    payload = mock_websocket_server.broadcast.call_args.args[0]
+    assert payload["event_type"] == "pre-tool-use"
+    assert payload["data"]["tool_input"] == {"file_path": "/tmp/example.py"}
+
+
 @pytest.mark.asyncio
 async def test_broadcast_event_session_start_source_new_alias(
     mock_websocket_server: MagicMock,

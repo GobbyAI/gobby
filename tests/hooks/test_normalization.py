@@ -697,6 +697,35 @@ class TestFieldAliases:
         normalize_tool_fields(data)
         assert data["tool_input"] == {"from_params": True}
 
+    def test_tool_input_json_object_string_is_parsed(self) -> None:
+        """A JSON-object tool_input string becomes a dict before canonical metadata."""
+        data: dict[str, Any] = {"tool_input": '{"file_path": "/tmp/example.py"}'}
+        normalize_tool_fields(data)
+        assert data["tool_input"] == {"file_path": "/tmp/example.py"}
+        assert data["_raw_tool_input"] == {"file_path": "/tmp/example.py"}
+
+    def test_tool_input_json_object_string_extracts_command(self) -> None:
+        """Parsed tool_input feeds command extraction instead of being skipped."""
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": '{"command": "ls -la"}'}
+        normalize_tool_fields(data)
+        assert data["tool_input"]["command"] == "ls -la"
+
+    def test_tool_input_invalid_json_string_is_preserved(self) -> None:
+        data: dict[str, Any] = {"tool_input": "not json"}
+        normalize_tool_fields(data)
+        assert data["tool_input"] == "not json"
+
+    def test_tool_input_json_non_object_string_is_preserved(self) -> None:
+        data: dict[str, Any] = {"tool_input": "[1, 2, 3]"}
+        normalize_tool_fields(data)
+        assert data["tool_input"] == "[1, 2, 3]"
+
+    def test_tool_input_object_keeps_raw_and_aliases(self) -> None:
+        data: dict[str, Any] = {"tool_input": {"cmd": "ls"}}
+        normalize_tool_fields(data)
+        assert data["tool_input"] == {"cmd": "ls", "command": "ls"}
+        assert data["_raw_tool_input"] == {"cmd": "ls"}
+
 
 class TestMcpContextFlattening:
     """Tests for mcp_context {} → mcp_server / mcp_tool (Qwen MCP)."""

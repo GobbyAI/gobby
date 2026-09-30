@@ -77,6 +77,19 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     if "args" in data and "tool_input" not in data:
         data["tool_input"] = data["args"]
 
+    # tool_input as a JSON string -> parsed object. Some providers JSON-encode
+    # the tool input; leave anything that is not a JSON object untouched so
+    # provider-specific pre-processing and _raw_tool_input are preserved.
+    incoming_tool_input = data.get("tool_input")
+    if isinstance(incoming_tool_input, str):
+        try:
+            parsed_tool_input = _json.loads(incoming_tool_input)
+        except (ValueError, TypeError):
+            pass
+        else:
+            if isinstance(parsed_tool_input, dict):
+                data["tool_input"] = parsed_tool_input
+
     # Normalize tool_input internal fields (e.g., path -> file_path)
     tool_input = data.get("tool_input")
     tool_name = data.get("tool_name")
