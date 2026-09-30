@@ -50,7 +50,12 @@ CONTESTED_EXPIRY_CAUSES: frozenset[str] = frozenset(get_args(ContestedExpiryCaus
 # same field widths, always six fractional digits, always +00:00, which makes
 # lexicographic order chronological order. A stamp in any other shape -- a local
 # offset, a bare date, more or less precision -- is read as no marker by both.
-CONTESTED_EXPIRY_STAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00$"
+# Field ranges are bounded here and the SQL side adds pg_input_is_valid, so a
+# calendar-invalid stamp (second 99, Feb 30) also reads as no marker on both.
+CONTESTED_EXPIRY_STAMP_PATTERN = (
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])"
+    r"T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{6}\+00:00$"
+)
 
 _STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S.%f+00:00"
 _STAMP_RE = re.compile(CONTESTED_EXPIRY_STAMP_PATTERN)

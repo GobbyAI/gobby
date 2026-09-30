@@ -264,6 +264,18 @@ class SessionVariableManager:
 
         return self._mutate_variables(session_id, mutate)
 
+    def release_task_claim(self, session_id: str, task_id: str) -> bool:
+        """Release one claim under the variable lock, preserving edit attribution."""
+        from gobby.workflows.task_claim_state import release_claimed_task
+
+        def release(variables: dict[str, Any]) -> tuple[bool, bool]:
+            updates = release_claimed_task(variables, task_id)
+            changed = any(variables.get(key) != value for key, value in updates.items())
+            variables.update(updates)
+            return changed, changed
+
+        return self._mutate_variables(session_id, release)
+
     def merge_existing_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         """Atomically merge updates without creating a missing session row."""
         if not updates:

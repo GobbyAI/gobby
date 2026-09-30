@@ -174,15 +174,22 @@ def acknowledge_receipt(
     return _row_to_receipt(row)
 
 
-def release_receipt(db: HubDatabase, *, receipt_id: str) -> HookReceipt | None:
-    """CAS prepared to released for transport loss."""
+def release_receipt(
+    db: HubDatabase, *, receipt_id: str, delivery_generation: int
+) -> HookReceipt | None:
+    """CAS prepared to released for transport loss of one delivery generation.
+
+    A late failure of an older delivery must not release the receipt after a
+    later hook carried it forward, so the generation is part of the CAS.
+    """
 
     now = utc_now()
     with db.transaction() as conn:
         row = conn.execute(
             "UPDATE hook_receipt_effects SET state = 'released', transition_at = %s "
-            "WHERE receipt_id = %s AND state = 'prepared' RETURNING " + _RECEIPT_COLUMNS,
-            (now, receipt_id),
+            "WHERE receipt_id = %s AND delivery_generation = %s AND state = 'prepared' "
+            "RETURNING " + _RECEIPT_COLUMNS,
+            (now, receipt_id, delivery_generation),
         ).fetchone()
     return _row_to_receipt(row) if row is not None else None
 

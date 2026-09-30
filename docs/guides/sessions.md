@@ -240,6 +240,8 @@ calls.
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Set `stop_reason="completed"`; installed workflows determine its effect. This does not end an agent run or close a task. |
 | `capture_baseline_dirty_files` | Store the current dirty-file baseline for edit detection. |
+| `hold_session_claims` | Root terminal operators: keep a same-machine seat's task claims through a directed pause until proven resume, release, or the revival horizon (returned as `expires_at`). |
+| `release_session_claims_hold` | Root terminal operators: release that hold so the seat's claims return to the ordinary sweep schedule. Only the session that placed a live hold may renew or release it (`claim_hold_held_by_other`). |
 | `restore_session_transcript` | Restore one transcript from archive. |
 | `get_transcript_status` | Check archive availability and transcript file stats. |
 | `send_keys` | Send authorized terminal input through the managed runtime or tmux. |
