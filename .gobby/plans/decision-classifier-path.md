@@ -213,14 +213,21 @@ The plan also sets:
         requested name and so gives no version signal.
       - unset (the default): no identity, so every consumer stays in
         `shadow`, fail closed.
-    - Residual gap: Kev reports the run path as submitted, unresolved, and
-      the card carries no server source version. A checkpoint swapped in
-      place at the same path with an identical card, or a server code upgrade
-      that changes its state limit, is undetectable at runtime. The operator
-      rule is that a new checkpoint gets a new run path, and a new checkpoint
-      or server version gets a new live capture (Activation Gate item 4) and
-      evaluation before any consumer returns to `enforce`. The plan claims
-      detection only for what the card and config report.
+    - Residual gap: under `model_card`, the card fetch and the decision
+      request are separate requests. A per-call card detects an observed
+      change but never proves which checkpoint answered: card A can succeed
+      while a restarted server answers the decision, or its retry, from
+      checkpoint B. Kev also reports the run path as submitted, unresolved,
+      with no server source version, so a swap in place at the same path
+      with an identical card, or a server upgrade that changes its state
+      limit, is invisible. Under `response_version` the identity comes from
+      the answering response itself.
+    - Deployment owner rule, for every backend: before any checkpoint or
+      server replacement, the owner moves every consumer out of `enforce`
+      and lets in-flight decisions drain. After it, a new live capture
+      (Activation Gate item 4) and a new evaluation precede any return to
+      `enforce`, and a new checkpoint gets a new run path. The plan claims
+      detection only for what the card, the response, and the config report.
     - Consumers read `mode` and thresholds from the resolver's current config
       on every call. The service fingerprint excludes consumer fields, so a
       policy-only reload takes effect on the next call without rebuilding the
@@ -421,14 +428,28 @@ when every one of these holds:
 3. `GET /api/llm/status` reports `decide` available with that model.
 4. The PD has verified a live capture against that server, committed as
    `docs/evidence/decisions/systemone-live-<date>.md`:
-   - the server's source commit;
-   - its `/v1/models` card and the Decision 10 backend identity;
+   - the Decision 10 backend identity under the configured
+     `identity_contract`;
    - one Choice and one Noul round trip that the service parses;
    - the measured characters-per-token ratio on a path-heavy request;
    - the server's actual state limit, which must equal
-     `backend_max_state_tokens`, and confirmation from its source that
-     `usage.input_tokens` counts every encoded state token. If either is
-     unknown or mismatched, this item does not hold.
+     `backend_max_state_tokens`, and evidence that `usage.input_tokens`
+     counts every encoded state token, by contract:
+     - `model_card` (a server Josh runs): the server's source commit, its
+       `/v1/models` card, and the limit and usage semantics read from that
+       source;
+     - `response_version` (hosted): `ai.decisions.model` set to the
+       versioned ID, such as `jev-1.13.0`, and every captured response
+       reporting that ID; TypeSafe's documented state limit, error codes,
+       and `usage.input_tokens` semantics, cited by URL and retrieval date;
+       and two live checks: a request estimated just under
+       `backend_max_state_tokens` answers with a `usage.input_tokens`
+       consistent with the measured ratio, and a request over it returns a
+       documented error or a usage the Decision 8 guard classifies as
+       `truncated`.
+
+     If the limit or the usage semantics are undocumented, unknown, or
+     mismatched, this item does not hold.
 
    No consumer leaves `shadow` before this item holds. Gobby does not start,
    stop, or install the server.
@@ -1090,6 +1111,14 @@ complete result or none:
   any batch fails, the rest are cancelled and awaited, and the whole
   classifier result is unavailable. A partial set never becomes a ranking or a
   reject-all.
+- Probabilities combine only from one model: every batch must return the
+  same non-null `backend_identity` and the same `response_model`. Differing
+  identities or response models, or a known identity beside an unknown one,
+  make the whole classifier result unavailable. Enforce then falls back to
+  the LLM rerank, and shadow
+  records the classifier as unavailable. This is a consumer outcome and never
+  opens the service cooldown. When every batch returns no identity, Decision
+  10 applies and enforce runs as shadow.
 - Ranking sorts by descending probability, with ties broken by semantic
   order, and returns at most `top_k`, the same slice today's successful LLM
   rerank takes.
@@ -1143,6 +1172,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   - equal probabilities keep semantic order;
   - a failed second batch makes the whole result unavailable, so enforce falls
     back to the LLM rerank;
+  - two batches with different backend identities, with different response
+    models, or with one known and one unknown identity make the whole result
+    unavailable, so enforce falls back to the LLM rerank
+    and shadow records the classifier as unavailable;
   - an oversized singleton yields `oversize` without truncation;
   - a shadow classifier exception leaves the incumbent's result and failure
     semantics intact, with no task pending after return.
