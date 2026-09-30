@@ -18,6 +18,7 @@ from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
     get_claimed_session_id,
     is_task_actively_claimed,
+    is_task_claimed_by_session,
 )
 from gobby.workflows.claimed_task_extra_skills import refresh_claimed_task_extra_skills
 from gobby.workflows.found_work_gate import (
@@ -247,23 +248,27 @@ def detect_task_claim(
         logger.debug("Skipping task claim state update - no valid UUID for %s", inner_tool_name)
         return
 
+    # The successful output may arrive after another caller transferred the claim.
+    # Carry its identity to persistence so a later transfer is fenced there too.
+    event.metadata["_observed_claim_task_id"] = task_id
+    if not task_manager:
+        return
+
+    from gobby.storage.tasks import TaskNotFoundError
+    from gobby.workflows.task_claim_state import add_claimed_task, release_claimed_task
+
+    try:
+        task_obj = task_manager.get_task(task_id, project_id=project_id)
+    except (TaskNotFoundError, ValueError, KeyError):
+        task_obj = None
+    if task_obj is None or task_obj.claimed_by_session_id != session_id:
+        variables.update(release_claimed_task(variables, task_id))
+        refresh_claimed_task_extra_skills(variables, task_manager)
+        logger.debug("Session %s: ignored lost claim result for %s", session_id, task_id)
+        return
+
     arm_found_work_gate(variables, occurred_at=event.timestamp)
-
-    from gobby.workflows.task_claim_state import add_claimed_task
-
-    ref = task_id
-    if task_manager:
-        try:
-            task_obj = task_manager.get_task(task_id, project_id=project_id)
-            if task_obj and task_obj.seq_num:
-                ref = f"#{task_obj.seq_num}"
-        except Exception as e:
-            logger.debug(
-                "Failed to resolve task ref for %s: %s",
-                task_id,
-                e,
-                exc_info=True,
-            )
+    ref = f"#{task_obj.seq_num}" if task_obj.seq_num else task_id
     merge = add_claimed_task(variables, task_id, ref)
     variables.update(merge)
     refresh_claimed_task_extra_skills(variables, task_manager)
@@ -331,7 +336,7 @@ def reconcile_claimed_tasks(
                     raise
                 task = None
 
-            if not is_task_actively_claimed(task, session_id):
+            if not is_task_claimed_by_session(task, session_id):
                 if _preserve_lineage_claim(
                     task,
                     task_uuid,

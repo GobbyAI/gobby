@@ -245,18 +245,32 @@ class SessionVariableManager:
         """Set a single session variable (atomic read-modify-write)."""
         self.merge_variables(session_id, {name: value})
 
-    def merge_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
+    def merge_variables(
+        self,
+        session_id: str,
+        updates: dict[str, Any],
+        *,
+        observed_claim_task_id: str | None = None,
+        reconcile_claims: bool = False,
+    ) -> bool:
         """Atomically merge variable updates into session variables.
 
         A PostgreSQL transaction-scoped advisory lock serializes the read-modify-write,
         preventing concurrent evaluations from clobbering each other.
         Creates the row if it doesn't exist.
+        Claim observations and reconciliation snapshots additionally retain
+        ordered task-row locks while deriving and writing canonical claim state.
 
         Returns:
             True always (creates row if needed).
         """
         if not updates:
             return True
+
+        if reconcile_claims or observed_claim_task_id is not None:
+            from gobby.workflows.task_claim_projection import merge_claimed_task_projection
+
+            return merge_claimed_task_projection(self, session_id, updates, observed_claim_task_id)
 
         def mutate(variables: dict[str, Any]) -> tuple[bool, bool]:
             variables.update(updates)

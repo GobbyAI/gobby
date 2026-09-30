@@ -287,6 +287,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         Must run BEFORE rule evaluation so conditions have current data.
         """
+        event.metadata.pop("_observed_claim_task_id", None)
         from .observer_context_usage import (
             detect_context_compact_guidance,
             detect_mid_turn_context_compact_guidance,
@@ -868,6 +869,9 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             self._session_var_manager.merge_variables,
                             session_id,
                             changed,
+                            observed_claim_task_id=event.metadata.get("_observed_claim_task_id"),
+                            reconcile_claims=event.event_type == HookEventType.SESSION_START
+                            or _is_turn_end_event(event.event_type),
                         )
 
                 return response
