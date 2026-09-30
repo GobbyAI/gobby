@@ -158,7 +158,7 @@ async def dispatch_mailbox_wakes(
     if len(messages) != len(session_ids):
         raise RuntimeError("Committed mailbox messages do not match resolved recipients")
     started = time.monotonic()
-    logger.info("Mailbox wake dispatch started: recipients=%d", len(session_ids))
+    logger.debug("Mailbox wake dispatch started: recipients=%d", len(session_ids))
     try:
         outcomes = await _wake_many(
             dispatcher,

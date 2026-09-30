@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -133,3 +134,30 @@ def test_valid_fallback_prepares_and_redelivers_on_the_same_session(
     assert acknowledged is not None
     assert acknowledged.session_id == SESSION_ID
     assert caplog.records == []
+
+
+def test_redelivered_receipt_logs_at_debug_only(
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#22866: routine receipt redelivery stays off INFO."""
+    first = attach_delivery_receipt(
+        {"continue": True}, db=temp_db, envelope_id=ENVELOPE_ID, session_id=SESSION_ID
+    )
+    receipt = first[DELIVERY_RECEIPT_FIELD]
+    release_receipt(
+        temp_db,
+        receipt_id=receipt["receipt_id"],
+        delivery_generation=receipt["delivery_generation"],
+    )
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.hooks.receipt_redelivery"):
+        attach_delivery_receipt(
+            {"continue": True},
+            db=temp_db,
+            envelope_id=f"{ENVELOPE_ID}-next",
+            session_id=SESSION_ID,
+        )
+
+    redelivered = [r for r in caplog.records if "Re-delivering" in r.getMessage()]
+    assert [r.levelno for r in redelivered] == [logging.DEBUG]

@@ -25,6 +25,7 @@ HOOK_PHASES: Final = (
     "response",
 )
 SLOW_HOOK_THRESHOLD_SECONDS: Final = 5.0
+SLOW_HOOK_LOG_WINDOW_SECONDS: Final = 60.0
 
 
 @dataclass
@@ -168,3 +169,63 @@ def observe_hook_phase_timings(
         )
     dominant_phase, dominant_seconds = max(durations.items(), key=lambda item: item[1])
     return dominant_phase, dominant_seconds, durations
+
+
+@dataclass(frozen=True)
+class SlowHookWindowSummary:
+    """Every slow hook in one sampling window, including suppressed WARNING lines."""
+
+    count: int
+    suppressed: int
+    max_seconds: float
+    window_seconds: float
+    by_phase: dict[str, int]
+
+
+@dataclass(frozen=True)
+class SlowHookLogDecision:
+    log_full: bool
+    summary: SlowHookWindowSummary | None
+
+
+@dataclass
+class SlowHookLogSampler:
+    """Bound slow-hook WARNING volume without losing the count (#22866).
+
+    Observe every hook. Within a window, only the first slow hook per dominant
+    phase gets its full WARNING; the window's summary, returned by the first
+    observation after it closes, still counts every slow hook.
+    """
+
+    window_seconds: float = SLOW_HOOK_LOG_WINDOW_SECONDS
+    _window_start: float | None = None
+    _by_phase: dict[str, int] = field(default_factory=dict)
+    _suppressed: int = 0
+    _max_seconds: float = 0.0
+
+    def observe(
+        self, *, total_seconds: float, dominant_phase: str, now: float
+    ) -> SlowHookLogDecision:
+        summary = None
+        if self._window_start is not None and now - self._window_start >= self.window_seconds:
+            summary = SlowHookWindowSummary(
+                count=sum(self._by_phase.values()),
+                suppressed=self._suppressed,
+                max_seconds=self._max_seconds,
+                window_seconds=self.window_seconds,
+                by_phase=dict(self._by_phase),
+            )
+            self._window_start = None
+            self._by_phase = {}
+            self._suppressed = 0
+            self._max_seconds = 0.0
+        if total_seconds < SLOW_HOOK_THRESHOLD_SECONDS:
+            return SlowHookLogDecision(log_full=False, summary=summary)
+        if self._window_start is None:
+            self._window_start = now
+        log_full = dominant_phase not in self._by_phase
+        self._by_phase[dominant_phase] = self._by_phase.get(dominant_phase, 0) + 1
+        self._max_seconds = max(self._max_seconds, total_seconds)
+        if not log_full:
+            self._suppressed += 1
+        return SlowHookLogDecision(log_full=log_full, summary=summary)

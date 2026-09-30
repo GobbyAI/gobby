@@ -16,7 +16,7 @@ from croniter import croniter
 
 from gobby.storage.cron_constants import MIN_CRON_INTERVAL_SECONDS
 from gobby.storage.cron_models import CronJob
-from gobby.storage.cron_runs import CronRunStorageMixin
+from gobby.storage.cron_runs import CronRunStorageMixin, is_cron_job_id
 from gobby.storage.cron_schedule import compute_next_run
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import parse_stored_datetime, resolve_local_timezone, utc_now
@@ -201,6 +201,8 @@ class CronJobStorage(CronRunStorageMixin):
 
     def get_job(self, job_id: str) -> CronJob | None:
         """Get a cron job by ID."""
+        if not is_cron_job_id(job_id):
+            return None
         row = self.db.fetchone("SELECT * FROM cron_jobs WHERE id = %s", (job_id,))
         return CronJob.from_row(row) if row else None
 
@@ -403,7 +405,7 @@ class CronJobStorage(CronRunStorageMixin):
     def _update_job(
         self, job_id: str, fields: dict[str, Any], *, require_non_shell: bool
     ) -> CronJob | None:
-        if not fields:
+        if not fields or not is_cron_job_id(job_id):
             return self.get_job(job_id)
 
         invalid_fields = set(fields.keys()) - self._VALID_UPDATE_FIELDS
@@ -661,6 +663,8 @@ class CronJobStorage(CronRunStorageMixin):
 
     def delete_job(self, job_id: str) -> bool:
         """Delete a cron job and its runs."""
+        if not is_cron_job_id(job_id):
+            return False
         job = self.get_job(job_id)
         if job is not None and job.is_system:
             raise SystemRowProtected(
@@ -777,6 +781,8 @@ class CronJobStorage(CronRunStorageMixin):
 
     def toggle_job(self, job_id: str) -> CronJob | None:
         """Toggle a cron job's enabled state."""
+        if not is_cron_job_id(job_id):
+            return None
         from dataclasses import replace
 
         with self.db.transaction() as conn:

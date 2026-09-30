@@ -43,8 +43,8 @@ from gobby.hooks.envelope_dedupe import (
 from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.phase_timing import (
-    SLOW_HOOK_THRESHOLD_SECONDS,
     HookPhaseTimings,
+    SlowHookLogSampler,
     hook_phase_timing_scope,
     observe_hook_phase_timings,
     timed_to_thread,
@@ -170,6 +170,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         Configured APIRouter with hooks endpoints
     """
     router = APIRouter(prefix="/api/hooks", tags=["hooks"])
+    slow_hook_sampler = SlowHookLogSampler()
 
     @router.post("/execute")
     async def execute_hook(request: Request) -> Any:
@@ -798,7 +799,23 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 hook_type=hook_type,
                 source=source,
             )
-            if total_seconds >= SLOW_HOOK_THRESHOLD_SECONDS:
+            sampled = slow_hook_sampler.observe(
+                total_seconds=total_seconds,
+                dominant_phase=dominant_phase,
+                now=time.monotonic(),
+            )
+            if sampled.summary is not None:
+                summary = sampled.summary
+                logger.warning(
+                    "Slow hook summary: count=%d suppressed=%d max_seconds=%.1f "
+                    "window_seconds=%.0f by_phase=%s",
+                    summary.count,
+                    summary.suppressed,
+                    summary.max_seconds,
+                    summary.window_seconds,
+                    summary.by_phase,
+                )
+            if sampled.log_full:
                 logger.warning(
                     "Slow hook execution dominated by %s",
                     dominant_phase,

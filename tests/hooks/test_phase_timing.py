@@ -7,6 +7,8 @@ import pytest
 from gobby.hooks.phase_timing import (
     HOOK_PHASES,
     HookPhaseTimings,
+    SlowHookLogSampler,
+    SlowHookWindowSummary,
     hook_phase_timing_scope,
     measure_hook_phase,
     observe_hook_phase_timings,
@@ -103,3 +105,66 @@ def test_observe_exports_all_phases_and_finds_dominant_phase() -> None:
         )
         in observe.call_args_list
     )
+
+
+def test_slow_hook_sampler_logs_one_full_line_per_phase_per_window() -> None:
+    sampler = SlowHookLogSampler(window_seconds=60.0)
+
+    decisions = [
+        sampler.observe(total_seconds=6.0, dominant_phase="admission_wait", now=0.0),
+        sampler.observe(total_seconds=9.0, dominant_phase="admission_wait", now=10.0),
+        sampler.observe(total_seconds=7.0, dominant_phase="rule_evaluation", now=20.0),
+        sampler.observe(total_seconds=8.0, dominant_phase="admission_wait", now=30.0),
+    ]
+
+    assert [decision.log_full for decision in decisions] == [True, False, True, False]
+    assert [decision.summary for decision in decisions] == [None] * 4
+
+
+def test_slow_hook_sampler_summarizes_every_slow_hook_when_the_window_closes() -> None:
+    sampler = SlowHookLogSampler(window_seconds=60.0)
+    for now, seconds, phase in [
+        (0.0, 6.0, "admission_wait"),
+        (10.0, 9.5, "admission_wait"),
+        (20.0, 7.0, "rule_evaluation"),
+    ]:
+        sampler.observe(total_seconds=seconds, dominant_phase=phase, now=now)
+
+    # A fast hook after the window closes flushes the summary without counting.
+    closing = sampler.observe(total_seconds=0.1, dominant_phase="response", now=61.0)
+    after = sampler.observe(total_seconds=0.1, dominant_phase="response", now=200.0)
+
+    assert closing.log_full is False
+    assert closing.summary == SlowHookWindowSummary(
+        count=3,
+        suppressed=1,
+        max_seconds=9.5,
+        window_seconds=60.0,
+        by_phase={"admission_wait": 2, "rule_evaluation": 1},
+    )
+    assert after.summary is None
+
+
+def test_slow_hook_sampler_opens_a_fresh_window_on_the_closing_slow_hook() -> None:
+    sampler = SlowHookLogSampler(window_seconds=60.0)
+    sampler.observe(total_seconds=6.0, dominant_phase="admission_wait", now=0.0)
+
+    rollover = sampler.observe(total_seconds=12.0, dominant_phase="admission_wait", now=75.0)
+    closing = sampler.observe(total_seconds=0.1, dominant_phase="response", now=140.0)
+
+    assert rollover.log_full is True
+    assert rollover.summary is not None
+    assert rollover.summary.count == 1
+    assert closing.summary is not None
+    assert (closing.summary.count, closing.summary.max_seconds) == (1, 12.0)
+
+
+def test_slow_hook_sampler_ignores_fast_hooks() -> None:
+    sampler = SlowHookLogSampler(window_seconds=60.0)
+
+    decisions = [
+        sampler.observe(total_seconds=4.9, dominant_phase="rule_evaluation", now=float(now))
+        for now in (0, 30, 90, 200)
+    ]
+
+    assert all(not d.log_full and d.summary is None for d in decisions)

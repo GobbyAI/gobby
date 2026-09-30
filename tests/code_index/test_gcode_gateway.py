@@ -1016,3 +1016,27 @@ async def test_gateway_classifies_checkout_mismatch_as_project_not_found(
     assert exc_info.value.project_path == str(tmp_path)
     assert exc_info.value.returncode == 2
     assert "gobby projects rebind" in exc_info.value.stderr
+
+
+async def test_maintenance_prune_keeps_success_totals_off_daemon_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """Prune totals stay on the result for the JSONL maintenance log, not runtime.log."""
+    totals = (
+        b"Stale project reconciliation: scanned=0, active=0, deleted=0\n"
+        b"Content GC: 1 version(s), 0 symbol(s) deleted\n"
+    )
+    processes = [
+        FakeProcess(stdout=PRUNE_BUDGET_VERSION_STDOUT),
+        FakeProcess(stderr=totals),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    result = await gateway.prune_project_for_maintenance(tmp_path, retention_days=30)
+
+    assert result.success
+    assert result.stderr == totals.decode()
+    assert capsys.readouterr().err == ""

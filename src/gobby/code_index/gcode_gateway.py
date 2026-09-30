@@ -700,7 +700,9 @@ class GcodeGateway:
         ]
         if max_seconds is not None:
             command.extend(["--max-seconds", str(max_seconds)])
-        return await self._run_command_result(command, timeout=timeout, env=env)
+        # Callers record the totals in the JSONL maintenance log; forwarding them
+        # would also leak raw lines into runtime.log.
+        return await self._capture_command_result(command, timeout=timeout, env=env)
 
     async def invalidate_project_by_id(
         self,
@@ -851,6 +853,19 @@ class GcodeGateway:
         timeout: float | None = None,
         env: Mapping[str, str] | None = None,
     ) -> GcodeCommandResult:
+        result = await self._capture_command_result(command, timeout=timeout, env=env)
+        if result.returncode == 0:
+            forward_subprocess_stderr(result.stderr)
+        return result
+
+    async def _capture_command_result(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> GcodeCommandResult:
+        """Run gcode and keep its output on the result without forwarding stderr."""
         proc: spawn.SessionProcess | None = None
         communication: asyncio.Task[tuple[bytes, bytes]] | None = None
         started = datetime.now(UTC)
@@ -901,8 +916,6 @@ class GcodeGateway:
                 stderr_text,
                 stdout=stdout.decode(errors="replace").strip(),
             )
-        if returncode == 0:
-            forward_subprocess_stderr(stderr)
         completed_at = datetime.now(UTC).isoformat()
         return GcodeCommandResult(
             command=tuple(command),

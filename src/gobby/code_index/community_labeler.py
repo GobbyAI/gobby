@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
@@ -109,7 +110,7 @@ class CommunityLabeler:
             ):
                 attempted.append((project_id, community.community_id, community.member_signature))
             outcomes[community.community_id] = outcome
-            logger.info(
+            logger.debug(
                 "code_index.community_label.outcome",
                 extra={
                     "project_id": project_id,
@@ -120,6 +121,14 @@ class CommunityLabeler:
             )
         if attempted:
             await run_db(storage.mark_community_labels_attempted, attempted)
+        if outcomes:
+            logger.info(
+                "code_index.community_label.batch",
+                extra={
+                    "project_id": project_id,
+                    "outcomes": dict(Counter(outcome.value for outcome in outcomes.values())),
+                },
+            )
         return outcomes
 
     async def _generate_one(

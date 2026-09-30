@@ -1613,3 +1613,41 @@ def test_consume_delivery_receipt_duplicate_ack_marks_nothing_else(tmp_path: Pat
 
     assert not is_envelope_processed(envelope["original_envelope_id"], processed_dir=processed_dir)
     assert is_envelope_processed("env-dup-ack", processed_dir=processed_dir)
+
+
+def test_receipt_read_by_six_consumers_is_acknowledged_and_logged_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#22866: a receipt that six consumers race for yields at most one line."""
+    from gobby.hooks.inbox import consume_pending_delivery_receipts
+
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    ack = inbox_dir / "n-0000000000001-ack1.json"
+    ack.write_text(json.dumps(_delivery_receipt_envelope()), encoding="utf-8")
+    app = FastAPI()
+    app.state.database = object()
+    app.state.hook_manager = MagicMock()
+    readers = threading.Barrier(6, timeout=5)
+    read_text = Path.read_text
+
+    def read_then_wait(path: Path, *args: Any, **kwargs: Any) -> str:
+        text = read_text(path, *args, **kwargs)
+        if path == ack:
+            readers.wait()
+        return text
+
+    with (
+        patch.object(Path, "read_text", read_then_wait),
+        # Every acknowledgement finds the receipt already stale.
+        patch("gobby.storage.hook_receipts.acknowledge_receipt", return_value=None) as acknowledge,
+        caplog.at_level(logging.DEBUG, logger="gobby.hooks.inbox"),
+        ThreadPoolExecutor(max_workers=6) as pool,
+    ):
+        sweeps = [pool.submit(consume_pending_delivery_receipts, app, inbox_dir) for _ in range(6)]
+        consumed = [sweep.result() for sweep in sweeps]
+
+    stale = [r for r in caplog.records if "stale or unknown" in r.getMessage()]
+    assert acknowledge.call_count == 1
+    assert sum(consumed) == 1
+    assert [r.levelno for r in stale] == [logging.DEBUG]

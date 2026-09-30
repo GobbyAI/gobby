@@ -265,7 +265,7 @@ async def test_rejections_stamp_attempt_only(code_storage: CodeIndexStorage) -> 
     assert _queued_ids(code_storage, cooloff_seconds=0) == [3, 4]
 
 
-async def test_every_outcome_emits_one_log_event(
+async def test_every_outcome_logs_at_debug_under_one_info_batch_summary(
     code_storage: CodeIndexStorage,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -294,7 +294,7 @@ async def test_every_outcome_emits_one_log_event(
         }
     )
 
-    with caplog.at_level(logging.INFO, logger="gobby.code_index.community_labeler"):
+    with caplog.at_level(logging.DEBUG, logger="gobby.code_index.community_labeler"):
         await labeler.label_batch(PROJECT_ID, communities, storage=code_storage, run_db=_run_db)
 
     events = [
@@ -302,6 +302,22 @@ async def test_every_outcome_emits_one_log_event(
         for record in caplog.records
         if record.getMessage() == "code_index.community_label.outcome"
     ]
+    # #22866: per-community outcomes are DEBUG; the batch gets one INFO summary.
+    assert {event.levelno for event in events} == {logging.DEBUG}
+    info = [
+        record
+        for record in caplog.records
+        if record.name == "gobby.code_index.community_labeler" and record.levelno >= logging.INFO
+    ]
+    assert [record.getMessage() for record in info] == ["code_index.community_label.batch"]
+    assert info[0].__dict__["project_id"] == PROJECT_ID
+    assert info[0].__dict__["outcomes"] == {
+        "generation_failed": 1,
+        "sanitation_rejected": 1,
+        "schema_rejected": 1,
+        "written_deterministic": 1,
+        "written_model": 1,
+    }
     assert sorted(
         (event.__dict__["community_id"], event.__dict__["outcome"]) for event in events
     ) == [
