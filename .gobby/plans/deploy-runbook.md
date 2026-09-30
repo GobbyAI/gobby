@@ -86,7 +86,7 @@ removal needs no Targets.
    before provider exec. Two steps that spawn the same seat get distinct
    ids, and a pane move or rename changes nothing. A re-run step whose run
    already exists never reaches placement: `spawn_agent` reconciles it
-   first. A run that started with a bound terminal is adopted and keeps its
+   first. A run that started is adopted and keeps its
    original `run_id`, whether it is still live, ended, moved or renamed. A
    run that never started refuses with `seat_launch_unsettled`, and nothing
    launches. Recovery re-registers `pipeline-<execution id>` and normally
@@ -273,12 +273,10 @@ Finalization, run by the coordinator after approval:
    to it. Parentage alone does not satisfy the check.
 3. Register deploy-runbook against #22691 once the Merge Manager releases the
    shared index.
-4. Give the 7.2 leaf a `blocked-by` edge on #23012, whose placement
-   preflight its placed test runs through.
-5. Create the D1 task with `blocked-by` edges on #23012, #23015, #23016,
+4. Create the D1 task with `blocked-by` edges on #23012, #23015, #23016,
    #23019 and this plan's 7.2 and 8.1 leaves, keeping its hold label and
    provenance.
-6. Verify the consolidated coverage and dependency closure in the database.
+5. Verify the consolidated coverage and dependency closure in the database.
    Then archive the superseded placed-agent-launch narrative and registry
    row. Old leaf pointers resolve through the archived path or the immutable
    commit `3acd5c126c`.
@@ -546,7 +544,7 @@ runs before placement preflight, isolation and launch:
   preflight and `seat_live`, and the new run is created with that id.
 - A run with that id whose parent session's external id differs from the
   caller parent's external id: refuse `invocation_conflict`.
-- A run with that id that has `started_at` and `terminal_id` set: return
+- A run with that id that has `started_at` set: return
   `success: True`, `adopted: True`, its `run_id` and `status`, and the
   `workspace`, `tab_ref` and `pane_ref` of the workspace pane bound to its
   `terminal_id`, else `null`. Nothing is reserved, isolated or launched.
@@ -555,12 +553,14 @@ runs before placement preflight, isolation and launch:
   Nothing launches, and the operator stops or settles that run before a
   relaunch.
 
-The executor confirms that `started_at` and `terminal_id` are both written
-only after the launch reaches a bound, started terminal
-(`_failure_cleanup.py::start_run_or_cleanup`). An adopted seat whose pane is
-gone leaves `pane_ref` null, so a following split step fails `not_found`.
-Finalization adds a `blocked-by` edge on #23012, so the placed test runs
-through the real preflight with the original seat still held.
+`started_at` is the launch witness: `start_run_or_cleanup`
+(`_failure_cleanup.py:368`) runs after the provider process and its
+terminal exist (`_execution.py:170`) and sets `status = 'running'` with
+`started_at` (`storage/agents/_lifecycle.py:328`). A prepared or rolled-back
+run never gets it. An adopted seat whose pane is gone leaves `pane_ref`
+null, so a following split step fails `not_found`. The tests use a mock
+reserver and launcher, so this leaf closes without #23012. The live proof
+through the real preflight with the original seat still held is D1's 8.1.9.
 
 Split: `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` is 784 lines and
 `src/gobby/workflows/pipeline_executor.py` is 866, so the reconciliation
@@ -580,9 +580,8 @@ Consumers unchanged:
   `tests/workflows/test_pipeline_invocation_id.py::test_invocation_id_is_stable_per_step`.
 - 7.2.2 - A placed spawn from a pipeline child whose `reserved_run_id` names
   a started run returns that run with `adopted: true` and makes no
-  placement, reserver or launch call. This holds while the original seat is
-  still held through the real preflight, and after the seat ended, moved or
-  was renamed. test:
+  placement, reserver or launch call, whether the seat is still live or
+  ended, moved or was renamed. test:
   `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_started_run_is_adopted`.
 - 7.2.3 - Two steps that spawn the same seat in sequence create two runs,
   and neither adopts the other. test:
@@ -1232,8 +1231,9 @@ Do not run the full pytest suite.
 - 2026-09-30: Adversary round on f713f1e. ADOPTION_ORDER, ORIGINAL_STEP and
   PREPARED_NOT_READY: seat adoption by placement is replaced by per-step
   invocation ids passed as `reserved_run_id` (Decision 8, 7.2). A re-run step
-  reconciles before placement, adopts only a started run with a bound
-  terminal, and refuses an unstarted one. FAILED_RESUME_TAG: failed resume
+  reconciles before placement, adopts only a run with `started_at`, and
+  refuses an unstarted one. 7.2 no longer needs #23015, and closes on stubs;
+  D1 8.1.9 owns the real-preflight proof. FAILED_RESUME_TAG: failed resume
   reads the launch snapshot before any claim or reset (7.1, 8.1.5). 9.1
   registers the runbooks topic in the catalog and overview. 6.2.2 covers
   every live session status.
