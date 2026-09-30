@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import threading
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
@@ -47,6 +47,10 @@ def _make_server() -> tuple[MagicMock, MagicMock]:
 
     server = MagicMock()
     server.session_manager = session_manager
+    # The REST request seam seeds a principal resolver that awaits
+    # ``server.run_db``, so this double must be awaitable.
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    server.auth_service.request_principal = Mock(return_value=None)
     server.tool_proxy = ToolProxyService(
         mcp_manager=mcp_manager,
         internal_manager=internal_manager,
