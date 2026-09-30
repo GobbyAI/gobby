@@ -167,12 +167,12 @@ def e2e_pre_daemon_setup(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
-                # Native is explicit opt-in under the tmux default; this stack test
-                # exercises the native web-create path, so the daemon opts in here.
+                # The registered runtime is native; the stack test exercises its
+                # web-create path, so the daemon opts in here.
                 "terminals.default_backend": terminal_backend,
                 "terminal_host.socket_dir": str(socket_dir),
-                "terminal_host.max_attachments_total": 8,
-                "terminal_host.max_attachments_per_terminal": 4,
+                "terminal_host.max_attachments_total": 64,
+                "terminal_host.max_attachments_per_terminal": 8,
                 "agent_sandbox.enabled": False,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
@@ -345,12 +345,17 @@ def _list_items(client: httpx.Client) -> list[dict[str, Any]]:
     return list(response.json().get("items") or [])
 
 
-def _item_by_backend(client: httpx.Client, backend: str) -> dict[str, Any]:
-    for item in _list_items(client):
-        if item.get("backend") == backend and item.get("ownership") == "gobby":
-            if item.get("state") == "live":
-                return item
-    raise AssertionError(f"no {backend} gobby terminal in {_list_items(client)}")
+def _live_native_items(client: httpx.Client) -> tuple[dict[str, Any], dict[str, Any]]:
+    live = [
+        item
+        for item in _list_items(client)
+        if item.get("backend") == "native"
+        and item.get("ownership") == "gobby"
+        and item.get("state") == "live"
+    ]
+    if len(live) < 2:
+        raise AssertionError(f"fewer than two live native terminals in {_list_items(client)}")
+    return live[0], live[1]
 
 
 def _attach_locator(item: dict[str, Any]) -> AttachLocator:
@@ -510,47 +515,48 @@ async def test_terminal_client_stack_end_to_end(
     socket_dir = Path(os.environ["GOBBY_E2E_HOST_SOCKET_DIR"])
     _wait_for_host(daemon_client, daemon_instance)
     client = _http(daemon_instance)
-    tmux_spawn = _spawn_agent(client, "tmux")
+    # Two distinct native panes: the managed tmux runtime was retired
+    # (#22932), so both seats exercise the one registered runtime.
+    direct_spawn = _spawn_agent(client, "native")
     native_spawn = _spawn_agent(client, "native")
 
     def both_live() -> tuple[dict[str, Any], dict[str, Any]] | None:
         try:
-            return _item_by_backend(client, "tmux"), _item_by_backend(client, "native")
+            first, second = _live_native_items(client)
+            return first, second
         except AssertionError:
             return None
 
-    live = wait_for_condition(
-        both_live, timeout=25.0, interval=0.2, description="tmux and native rows"
-    )
+    live = wait_for_condition(both_live, timeout=25.0, interval=0.2, description="two native rows")
     assert _is_item_pair(live)
-    tmux_item, native_item = live
-    assert tmux_item["backend"] == "tmux"
+    direct_item, native_item = live
+    assert direct_item["backend"] == "native"
     assert native_item["backend"] == "native"
-    assert tmux_item["state"] == "live"
+    assert direct_item["state"] == "live"
     assert native_item["state"] == "live"
     native_id = str(native_item["id"])
-    tmux_id = str(tmux_item["id"])
+    direct_id = str(direct_item["id"])
 
     token = daemon_token(daemon_instance.gobby_home)
     native_loc = _attach_locator(native_item)
-    tmux_loc = _attach_locator(tmux_item)
+    direct_loc = _attach_locator(direct_item)
     native_frames = await _open_viewer(native_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
-    tmux_frames = await _open_viewer(tmux_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
+    direct_frames = await _open_viewer(direct_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
     native_seen = await _read_until(
         native_frames,
         _has_ready_marker,
         timeout=12.0,
         description="native ready frames",
     )
-    tmux_seen = await _read_until(
-        tmux_frames,
+    direct_seen = await _read_until(
+        direct_frames,
         _has_ready_marker,
         timeout=12.0,
-        description="tmux ready frames",
+        description="direct ready frames",
     )
     assert {_frame_text(item) and item.get("type") for item in native_seen}  # nonempty
     assert all(item.get("type") in _FRAME_TYPES for item in native_seen)
-    assert all(item.get("type") in _FRAME_TYPES for item in tmux_seen)
+    assert all(item.get("type") in _FRAME_TYPES for item in direct_seen)
 
     gclient_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
@@ -558,22 +564,22 @@ async def test_terminal_client_stack_end_to_end(
     await web_ws.connect()
     await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native")
-    gclient_tmux = WsSession(daemon_instance)
-    await gclient_tmux.connect()
-    await gclient_tmux.attach(tmux_id, delivery="direct", request_id="gclient-tmux")
+    gclient_direct = WsSession(daemon_instance)
+    await gclient_direct.connect()
+    await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct")
 
     native_marker = f"N-{uuid.uuid4().hex[:6]}"
-    tmux_marker = f"T-{uuid.uuid4().hex[:6]}"
+    direct_marker = f"T-{uuid.uuid4().hex[:6]}"
     granted = await gclient_ws.take(native_id)
     assert granted.get("granted") is True
     delivered = await gclient_ws.write(native_id, native_marker + "\r")
     assert delivered.get("outcome") == "delivered"
     await _assert_input_reaches(native_frames, native_marker, description="native keystroke")
-    tmux_granted = await gclient_tmux.take(tmux_id)
-    assert tmux_granted.get("granted") is True
-    tmux_delivered = await gclient_tmux.write(tmux_id, tmux_marker + "\r")
-    assert tmux_delivered.get("outcome") == "delivered"
-    await _assert_input_reaches(tmux_frames, tmux_marker, description="tmux keystroke")
+    direct_granted = await gclient_direct.take(direct_id)
+    assert direct_granted.get("granted") is True
+    direct_delivered = await gclient_direct.write(direct_id, direct_marker + "\r")
+    assert direct_delivered.get("outcome") == "delivered"
+    await _assert_input_reaches(direct_frames, direct_marker, description="direct keystroke")
 
     await native_frames.detach()
     await native_frames.close()
@@ -586,13 +592,13 @@ async def test_terminal_client_stack_end_to_end(
     )
 
     native_session = str(native_item.get("session_id") or "")
-    tmux_session = str(tmux_item.get("session_id") or "")
+    direct_session = str(direct_item.get("session_id") or "")
 
     def both_attention() -> tuple[dict[str, Any], dict[str, Any]] | None:
         native_hit = _roster_entry(client, native_session)
-        tmux_hit = _roster_entry(client, tmux_session)
-        if native_hit and tmux_hit:
-            return native_hit, tmux_hit
+        direct_hit = _roster_entry(client, direct_session)
+        if native_hit and direct_hit:
+            return native_hit, direct_hit
         return None
 
     try:
@@ -600,28 +606,28 @@ async def test_terminal_client_stack_end_to_end(
             both_attention,
             timeout=45.0,
             interval=0.5,
-            description="native and tmux attention",
+            description="native and direct attention",
         )
     except AssertionError as exc:
         roster = client.get("/api/attention/roster")
         running = client.get("/api/agents/running")
         raise AssertionError(
-            f"{exc}; native_session={native_session}; tmux_session={tmux_session}; "
+            f"{exc}; native_session={native_session}; direct_session={direct_session}; "
             f"running={running.text[:1500]}; roster={roster.text[:2000]}"
         ) from exc
     assert _is_item_pair(attention)
-    native_entry, tmux_entry = attention
+    native_entry, direct_entry = attention
     _respond(client, native_entry)
     # The first response can advance the other CLI's prompt. Read its current
     # fingerprint immediately before answering the second entry.
-    current_tmux_entry = _roster_entry(client, tmux_session)
-    assert current_tmux_entry, tmux_entry
-    _respond(client, current_tmux_entry)
+    current_direct_entry = _roster_entry(client, direct_session)
+    assert current_direct_entry, direct_entry
+    _respond(client, current_direct_entry)
     await _assert_input_reaches(native_frames, "ANSWERED:", description="native attention answer")
-    await _assert_input_reaches(tmux_frames, "ANSWERED:", description="tmux attention answer")
+    await _assert_input_reaches(direct_frames, "ANSWERED:", description="direct attention answer")
 
     web_take = await web_ws.take(native_id)
-    assert web_take.get("granted") is True
+    assert web_take.get("granted") is True, web_take
     await gclient_ws.wait_for(
         lambda item: item.get("type") == "terminal_lease_lost",
         timeout=5.0,
@@ -671,16 +677,16 @@ async def test_terminal_client_stack_end_to_end(
     _wait_for_host(client, daemon_instance)
     await gclient_ws.close()
     await web_ws.close()
-    await gclient_tmux.close()
+    await gclient_direct.close()
     gclient_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
-    gclient_tmux = WsSession(daemon_instance)
+    gclient_direct = WsSession(daemon_instance)
     await gclient_ws.connect()
     await web_ws.connect()
-    await gclient_tmux.connect()
+    await gclient_direct.connect()
     await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native-2")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native-2")
-    await gclient_tmux.attach(tmux_id, delivery="direct", request_id="gclient-tmux-2")
+    await gclient_direct.attach(direct_id, delivery="direct", request_id="gclient-direct-2")
     await gclient_ws.take(native_id)
     await web_ws.wait_for(
         lambda item: item.get("type")
@@ -712,8 +718,13 @@ async def test_terminal_client_stack_end_to_end(
     finally:
         fault_path.unlink(missing_ok=True)
 
+    # External tmux discovery: a CLI session registered against a user-owned
+    # tmux server still materializes an external row, and gobby must not touch
+    # that server. The managed tmux runtime that used to serve the row's frames
+    # was retired (#22932), so the daemon no longer attaches to it; only
+    # discovery and the owner's untouched server are asserted here.
     isolated = IsolatedTmux(tmp_path)
-    owner = isolated.start()
+    isolated.start()
     try:
         before_view = isolated.display(OWNER_VIEW)
         clients_before = isolated.clients()
@@ -725,35 +736,11 @@ async def test_terminal_client_stack_end_to_end(
             interval=0.1,
             description="external terminal",
         )
-        ext_id = str(external["id"])
-        ext_loc = _attach_from_item(external)
-        ext_frames = await _open_viewer(ext_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
-        web_ext = WsSession(daemon_instance)
-        await web_ext.connect()
-        await web_ext.attach(ext_id, delivery="proxy", request_id="web-ext")
-        await _read_until(
-            ext_frames,
-            lambda message: (_frame_text(message) or "").find("GOBBY-EXT-READY") >= 0,
-            timeout=8.0,
-            description="external frames",
-        )
+        assert external.get("backend") == "tmux"
         assert isolated.display(OWNER_VIEW) == before_view
         assert isolated.clients() == clients_before
         assert isolated.display(PANE_PROPS, target=isolated.control_pane) == control_props
         assert isolated.display("#{pane_pipe}") == "0"
-        owner.resize(100, 30)
-        wait_for_condition(
-            lambda: isolated.display("#{window_width}") != before_view.split()[4],
-            timeout=5.0,
-            interval=0.05,
-            description="owner resize",
-        )
-        assert isolated.display(PANE_PROPS, target=isolated.pane_id) == isolated.display(
-            PANE_PROPS, target=isolated.control_pane
-        )
-        await ext_frames.detach()
-        await ext_frames.close()
-        await web_ext.close()
     finally:
         isolated.close()
 
@@ -930,14 +917,20 @@ async def test_terminal_client_stack_end_to_end(
     await control.resize(host_terminal_id, 26, 90)
     await control.kill(host_terminal_id, grace_ms=50)
 
-    ceiling = 4
+    # Native capacity is enforced at reserve time against the configured
+    # attachment ceiling less the four reserved lifecycle slots
+    # (gterminal host/native_ops.rs::reserve_observer ->
+    # native_entitlement_ceiling() = max_attachments_total - 4), so drive the
+    # host to that ceiling and prove the next create is refused. The live
+    # native seats already count toward the entitlement.
+    entitlement_ceiling = 60  # terminal_host.max_attachments_total 64 - 4 reserved
     live_native = [
         item
         for item in _list_items(client)
         if item.get("backend") == "native" and item.get("state") == "live"
     ]
     extras: list[str] = []
-    while len(live_native) + len(extras) < ceiling:
+    while len(live_native) + len(extras) < entitlement_ceiling:
         created = await _ws_create(daemon_instance, ["/bin/sleep", "30"])
         if created.get("success") is True:
             extras.append(str(created["terminal_id"]))
@@ -961,10 +954,10 @@ async def test_terminal_client_stack_end_to_end(
     exit_id = str(exiting["terminal_id"])
     epoch_before = _wait_for_host(client, daemon_instance).get("host_epoch")
     await native_frames.close()
-    await tmux_frames.close()
+    await direct_frames.close()
     await gclient_ws.close()
     await web_ws.close()
-    await gclient_tmux.close()
+    await gclient_direct.close()
     await control.close()
 
     _restart_daemon_preserving_host(daemon_instance)
@@ -974,9 +967,9 @@ async def test_terminal_client_stack_end_to_end(
     assert host_after.get("adopted") is True
     assert host_after.get("host_epoch") == epoch_before
     native_after = client.get(f"/api/terminals/{native_id}").json()
-    tmux_after = client.get(f"/api/terminals/{tmux_id}").json()
+    direct_after = client.get(f"/api/terminals/{direct_id}").json()
     assert native_after.get("state") == "live"
-    assert tmux_after.get("state") == "live"
+    assert direct_after.get("state") == "live"
     wait_for_condition(
         lambda: client.get(f"/api/terminals/{exit_id}").json().get("state")
         in {"exited", "orphaned", "live"},
@@ -987,17 +980,21 @@ async def test_terminal_client_stack_end_to_end(
 
     host_pid = int(pidfile_path(socket_dir).read_text())
     os.kill(host_pid, signal.SIGKILL)
+    # Both panes live on the one registered runtime, so a host crash
+    # reconciles both rows; the retired tmux runtime no longer gives a second
+    # pane a server to survive on.
     wait_for_condition(
-        lambda: client.get(f"/api/terminals/{native_id}").json().get("state")
-        in {"orphaned", "exited", "live"},
+        lambda: all(
+            client.get(f"/api/terminals/{terminal}").json().get("state")
+            in {"orphaned", "exited", "live"}
+            for terminal in (native_id, direct_id)
+        ),
         timeout=25.0,
         interval=0.4,
-        description="native host-crash state",
+        description="both native panes reconciled after host crash",
     )
-    tmux_crash = client.get(f"/api/terminals/{tmux_id}").json()
-    assert tmux_crash.get("state") == "live"
 
-    for run_id in (native_spawn.get("run_id"), tmux_spawn.get("run_id")):
+    for run_id in (native_spawn.get("run_id"), direct_spawn.get("run_id")):
         if not isinstance(run_id, str):
             continue
         cancelled = client.post(f"/api/agents/runs/{run_id}/cancel")
@@ -1058,18 +1055,13 @@ def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         _wait_for_host(http, daemon_instance)
     with _gclient(daemon_instance) as client:
-        # The sidebar bands are Machines / Projects / Sessions
+        # The sidebar bands are Machines / Projects / Agents / Terminals
         # (`SidebarSection::title`, crates/gclient/src/ui/hit.rs).
-        client.expect("Sessions")
-        # First run opens one shell of its own and focuses it
+        client.expect("Terminals")
+        # Startup opens no shell of its own, so the empty workspace says so
         # (crates/gclient/tests/client_loop.rs::
-        # first_run_opens_one_shell_and_never_auto_opens), so the status line
-        # names that pane by its backend, never the no-pane copy.
-        client.wait_for(
-            lambda screen: " No pane." not in screen.lines[-1]
-            and (" │ gclient" in screen.lines[-1] or " │ tmux" in screen.lines[-1]),
-            description="bottom status bar naming the first-run pane",
-        )
+        # first_run_does_not_open_a_shell_or_auto_open_roster_terminals).
+        client.expect("No pane open.")
         assert client.poll() is None
         client.send("\x02")
         client.wait_for(in_prefix_mode, description="prefix mode")
@@ -1113,15 +1105,27 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
         return latest
 
     with _gclient(daemon_instance) as client:
-        await asyncio.to_thread(client.expect, "Sessions")
+        await asyncio.to_thread(client.expect, "Terminals")
+        # Startup opens nothing, so place one running pane to reorder and
+        # move; the two chords below then bring the tab count to three.
+        placed_id = await _shell(daemon_instance)
+        await _adopt(daemon_instance, placed_id)
         first = await until(lambda row: len(row["tabs"]) == 1)
         original = first["panes"][0]
         terminal_id = original["terminal_id"]
-        await asyncio.to_thread(client.chord, "c")
-        await until(lambda row: len(row["tabs"]) == 2)
-        await asyncio.to_thread(client.chord, "c")
+        assert terminal_id == placed_id
+        # chord c opens a client-local empty tab (#22883) that the daemon
+        # snapshot never lists, so place the extra panes as daemon tabs where
+        # the reorder and move assertions can read them.
+        extra_addresses: list[str] = []
+        for _ in range(2):
+            extra_id = await _shell(daemon_instance)
+            extra_addresses.append(await _adopt(daemon_instance, extra_id))
+            await _placed_address(daemon_instance, extra_id)
         three = await until(lambda row: len(row["tabs"]) == 3)
         initial_ids = [tab["id"] for tab in three["tabs"]]
+        # Activate the last tab so move_tab_left has somewhere to go.
+        await _activate_terminal(client, extra_addresses[-1])
 
         await asyncio.to_thread(client.chord, "\x1b[1;2D")
         moved_left = await until(
@@ -1133,11 +1137,16 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
         await asyncio.to_thread(client.chord, "\x1b[1;2C")
         await until(lambda row: [tab["id"] for tab in row["tabs"]] == initial_ids)
 
-        header = client.screen.lines[0]
-        source = header.index("tab-0:")
-        target = header.rindex("tab-0:")
+        # Drag the first tab onto the last in the live tab bar. The bar
+        # renders "N: title" labels below the menu row, so read its real
+        # row and label columns instead of the retired "tab-0:" header.
+        lines = client.screen.lines
+        tab_row = next(index for index, line in enumerate(lines) if " 0: " in line)
+        bar = lines[tab_row]
+        source = bar.index("0: ")
+        target = bar.rindex(f"{len(initial_ids) - 1}: ")
         assert target > source
-        client.send(f"\x1b[<0;{source + 2};1M\x1b[<0;{target + 2};1m")
+        client.send(f"\x1b[<0;{source + 2};{tab_row + 1}M\x1b[<0;{target + 2};{tab_row + 1}m")
         dragged = await until(
             lambda row: [tab["id"] for tab in row["tabs"]]
             == [initial_ids[1], initial_ids[2], initial_ids[0]]
@@ -1277,8 +1286,8 @@ async def _adopt(daemon: DaemonInstance, terminal_id: str) -> str:
 
     `terminal_address` (crates/gclient/src/ui/chrome/labels.rs) leads every row
     and the status line with the pane's workspace address `n:w:t:p` when the
-    workspace model places the terminal, and only falls back to the tmux pane
-    id. Nothing else tells two rows apart: the name ladder ends at the
+    workspace model places the terminal, and only falls back to the backend's
+    own pane id. Nothing else tells two rows apart: the name ladder ends at the
     foreground command, so two `/bin/sh` rows read alike, and the navigator
     matches the row title and detail, which is where the address sits. So the
     tests address a terminal by adopting it into a tab of the registered
@@ -1367,25 +1376,6 @@ async def _placed_address(
         await session.close()
 
 
-async def _first_run_shell(daemon: DaemonInstance, *, besides: set[str]) -> str:
-    """Wait for the shell gclient opens for itself on first run.
-
-    It opens exactly one, and only while the workspace is still empty
-    (crates/gclient/tests/client_loop.rs::
-    first_run_opens_one_shell_and_never_auto_opens), so a test that adopts a
-    terminal into that workspace first would race the shell away.
-    """
-    with _http(daemon) as http:
-        row = await asyncio.to_thread(
-            wait_for_condition,
-            lambda: next((item for item in _list_items(http) if item["id"] not in besides), None),
-            timeout=15.0,
-            description="first-run shell registered",
-        )
-    assert isinstance(row, dict)
-    return str(row["id"])
-
-
 async def _screen(client: GclientDriver, text: str, *, timeout: float = 15.0) -> None:
     await asyncio.to_thread(client.expect, text, timeout=timeout)
 
@@ -1450,13 +1440,12 @@ async def _take_and_echo(client: GclientDriver, marker: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_backend", ["tmux"], indirect=True)
-async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInstance) -> None:
+async def test_gclient_renders_native_row_through_host(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
         terminal_id = await _shell(daemon_instance, marker="GCLIENT-ROW-OK")
         row = http.get(f"/api/terminals/{terminal_id}").json()
-        assert row["backend"] == "tmux"
+        assert row["backend"] == "native"
     async with ClientWire(daemon_instance).running() as wire:
         async with _running_gclient(daemon_instance, local_url=wire.url) as client:
             await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
@@ -1525,7 +1514,7 @@ async def test_gclient_survives_daemon_restart_with_usable_native_pane(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_backend", ["native", "tmux"], indirect=True)
+@pytest.mark.parametrize("terminal_backend", ["native"], indirect=True)
 async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
@@ -1546,7 +1535,7 @@ async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance
 
 
 @pytest.mark.asyncio
-async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: DaemonInstance) -> None:
+async def test_gclient_direct_stream_loss_recovers_to_host(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)
     terminal_id = await _shell(daemon_instance)
@@ -1590,7 +1579,6 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
     try:
         async with server, wire.running():
             async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-                await _first_run_shell(daemon_instance, besides={terminal_id})
                 address = await _adopt(daemon_instance, terminal_id)
                 await _activate_terminal(client, address)
                 await _screen(client, "GCLIENT-SHELL-READY")
@@ -1602,31 +1590,37 @@ async def test_gclient_direct_failure_falls_back_to_proxy(daemon_instance: Daemo
                     and item.get("terminal_id") == terminal_id
                     and item.get("frame_delivery") == "direct"
                 )
-                assert len(writers) == 2  # Explicit target, then the delayed startup shell.
+                # The adopted terminal is the client's only pane: startup
+                # opens no shell of its own, so this tap sees one stream.
+                assert len(writers) == 1
                 target_writer = writers[0]
-                target_writer.close()  # Only this direct stream; the host keeps running.
+                # Cutting the direct stream is the #23076 case: the client
+                # reconnects straight to the still-running host over the same
+                # local socket instead of falling back to the daemon proxy.
+                target_writer.close()
                 await target_writer.wait_closed()
-                await _delivery(wire, "proxy")
-                await _take_and_echo(client, "GCLIENT-FALLBACK-OK")
-                assert "Sessions" in client.screen.text
+                await asyncio.to_thread(
+                    wait_for_condition,
+                    lambda: len(writers) == 2,
+                    timeout=20.0,
+                    description="gclient reconnected directly to the host",
+                )
+                await _take_and_echo(client, "GCLIENT-HOST-RECOVERED-OK")
                 assert address in client.screen.text
-                finalized = [
+                # The attachment, lease and grant survive a host reconnect, so
+                # nothing finalizes and no proxy attach replaces them.
+                assert not [
                     item
                     for item in wire.received
                     if item.get("type") == "terminal_attachment_finalized"
                     and item.get("attachment_id") == old
                 ]
-                assert len(finalized) == 1
-                assert finalized[0]["reason"] == "detach"
-                replacements = [
+                assert not [
                     item
                     for item in wire.received
                     if item.get("type") == "terminal_attach_result"
                     and item.get("frame_delivery") == "proxy"
-                    and item.get("success") is True
                 ]
-                assert len(replacements) == 1
-                assert replacements[0]["attachment_id"] != old
     finally:
         server.close()
         await server.wait_closed()
@@ -1692,25 +1686,18 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
         (client_dir / "keymap.toml").write_text(
             '[bindings]\nnew_terminal = "prefix+i"\n', encoding="utf-8"
         )
+        # confirm_close defaults on, which turns chord D into the "Close
+        # terminal?" dialog instead of a close. Pin it off so the node
+        # exercises the actual terminate path.
+        (client_dir / "prefs.toml").write_text("[ui]\nconfirm_close = false\n", encoding="utf-8")
         async with _running_gclient(daemon_instance) as client:
-            startup_ids = {await _first_run_shell(daemon_instance, besides={survivor_id})}
             survivor = await _adopt(daemon_instance, survivor_id)
             await _activate_terminal(client, survivor)
             await _screen(client, "GCLIENT-SURVIVOR-READY")
-            killer = WsSession(daemon_instance)
-            await killer.connect()
-            try:
-                for startup_id in startup_ids:
-                    await killer.send({"type": "terminal_kill", "terminal_id": startup_id})
-                await asyncio.to_thread(
-                    wait_for_condition,
-                    lambda: all(row["id"] not in startup_ids for row in _list_items(http)),
-                    timeout=15.0,
-                    description="incidental startup shell removed",
-                )
-            finally:
-                await killer.close()
+            # Startup opens no shell of its own, so the survivor is the only
+            # row before the chord and anything new is the one it spawned.
             existing_ids = {row["id"] for row in _list_items(http)}
+            assert existing_ids == {survivor_id}, existing_ids
             await asyncio.to_thread(client.chord, "i")
 
             def spawned() -> dict[str, Any] | None:
@@ -1731,10 +1718,12 @@ async def test_gclient_spawns_and_terminates_a_terminal(daemon_instance: DaemonI
             await asyncio.to_thread(client.chord, "l")
 
             def spawned_focused(screen: Screen) -> bool:
-                # The focused badge lives on the right pane's lower border;
+                # The focused badge renders on the focused pane's top border
+                # (render_pane_border_titles, crates/gclient/src/ui/panes.rs);
                 # the final row is the global prefix hint, not pane metadata.
-                border = screen.lines[-2]
-                return border.count("┘") >= 2 and border.rfind("Focused") > border.find("┘")
+                return any(
+                    "Focused" in line and line.rstrip().endswith("┐") for line in screen.lines
+                )
 
             await asyncio.to_thread(
                 client.wait_for,
@@ -1768,13 +1757,24 @@ async def test_gclient_follows_a_live_pty_resize(daemon_instance: DaemonInstance
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
         assert client.screen.cols == 120
         assert client.screen.rows == 40
-        assert "Focused" in client.screen.lines[-1]
+        # The focused badge sits on the pane's top border and the address on
+        # its bottom one; the last row is the global status line, which names
+        # only the prefix cue (`render_pane_border_titles` / `render_status_line`,
+        # crates/gclient/src/ui/panes.rs and status.rs).
+        assert any(
+            "Focused" in line and line.rstrip().endswith("┐") for line in client.screen.lines
+        )
         client.resize(100, 32)
         await _screen(client, "GCLIENT-BEFORE-RESIZE")
+        # A resize repaints the whole frame: wait for the redrawn pane borders
+        # and the status line on the new bottom row, not a mid-redraw frame.
         await asyncio.to_thread(
             client.wait_for,
-            lambda screen: "Focused" in screen.lines[31],
-            description="status bar moved to the resized bottom row",
+            lambda screen: len(screen.lines) == 32
+            and screen.lines[-1].rstrip().endswith("prefix ctrl+b")
+            and any("Focused" in line and line.rstrip().endswith("┐") for line in screen.lines)
+            and any(line.rstrip().endswith("┘") for line in screen.lines),
+            description="focused pane frame closed at the resized width",
         )
         assert len(client.screen.lines) == 32
         assert all(len(line) == 100 for line in client.screen.lines)
