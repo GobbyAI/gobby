@@ -1,52 +1,79 @@
 # Task-close reviewer and spawn overhead against standing seats
 
-Task: #23114. Researcher gobby#14550, 2026-09-29.
+Task: #23114 (reviewer and spawn overhead). Researcher gobby#14550, 2026-09-29;
+evidence-scope correction by Reviewer 4 gobby#14681, 2026-09-30.
 
 Question: roughly 20 standing interactive seats run at once, yet task-close reviews are
 held to one slot per project. Does a reviewer cost enough to justify that, or is the
 single slot policy?
 
 This is a read-only study. It spawned no workers and ran no load tests. Every number
-below comes from the live hub database, `~/.gobby/logs/daemon.log{,.1}`, the reviewer's
-Codex rollout, or its SRT violation log. Each finding is marked VERIFIED (read from
-those sources) or INFERRED (reasoned from them).
+below was reported from the live hub database, `~/.gobby/logs/daemon.log{,.1}`, the
+reviewer's Codex rollout, or its SRT violation log. VERIFIED identifies the original
+source observation; INFERRED identifies interpretation. The correction preserves
+those values without a new fleet capture. Missing retained receipts and measurement
+boundaries are identified as UNKNOWN below.
 
 ## Answer
 
-The single close slot is coordination policy. Measured cost does not force it.
+The single close slot is explicit coordination policy (§6). The retained
+measurements do not establish whether whole-hook latency or host load requires it.
 
-- A reviewer is one more agent process. Its launch costs about 3 s of daemon time.
-  After that, its per-call hook, proxy and DB cost is the same as or lower than a
-  standing seat's.
-- Over 2026-09-29 00:30 to 2026-09-30 00:30 UTC, the DB pool had no waiter.
-  Per-bucket `rule_eval` p95 stayed at or below 10 ms, with up to 26 active sessions
-  and up to 5 reviewer sessions in a 10-minute bucket (§5).
-- In the 16 h after serialization, the one slot was busy 12.9% of the window (§6).
+- A reviewer is one more agent process. This natural run's daemon spawn phases
+  took about 3 s. Its observed proxy-call percentiles were lower than the other
+  sessions' (§4), with different tool mixes. Relative whole-hook and per-call DB
+  cost were not measured.
+- Over 2026-09-29 00:30 to 2026-09-30 00:30 UTC, retained DB pool gauges showed no
+  waiter. Per-bucket blocked-rule `rule_eval` p95 stayed at or below 10 ms, with
+  up to 26 active sessions and up to 5 reviewer sessions in a 10-minute bucket.
+  Allowed-rule and whole-hook latency are absent from this population (§5).
+- The original report gives 12.9% recorded slot occupancy in the 16 h after
+  serialization. Its runtime query receipts are not retained, and the §3 and §6
+  population/runtime definitions cannot be independently confirmed (§6).
 
-The measurements do not show reviewer load limiting close throughput. After
+The sampled proxy and pool observations show no reviewer-specific bottleneck;
+whole-hook saturation and safe reviewer capacity remain unknown. After
 serialization, reviews fell from 6.31 to 2.13 per hour. Fleet activity also fell 41%
 over the same windows. How much of the drop is the admission process and how much is
 lower activity is unmeasured (§6).
 
-Least mechanism justified by these measurements: restore a per-project reviewer cap
-above 1, admitted under Josh's 5-minute load-below-24 rule. Lane2 already owns the
-#23059 policy change; this study supplies evidence for it and duplicates none of it.
+Least mechanism justified by these measurements: retain consistent seat counting
+and record admission waits before attributing the throughput drop. Lane2 owns
+#23059 (close-review admission policy) and can evaluate a cap above 1 under PD
+sequencing and Josh's 5-minute load-below-24 rule. This study does not establish a
+safe cap or justify changing admission from blocked-rule percentiles alone.
 
 ## Sources and versions
 
 | Item | Value |
 | --- | --- |
 | Checkout | `0.5.0` at `cd5749ca41`. Serialization landed in `ef4668dc77` (2026-09-29 08:34 UTC). |
-| Reviewer run | `5b9be15f-4437-4e1b-8ee8-914ec8d2228f` for #23107. Codex CLI 0.159.0, model `gpt-6.1-sol`, effort xhigh, SRT sandbox, tmux. Child session `bbfe4275` (gobby#14886). Parent: PD session `1fdb7576`. |
+| Reviewer run | `5b9be15f-4437-4e1b-8ee8-914ec8d2228f` for #23107 (natural close-review task). Codex CLI 0.159.0, model `gpt-6.1-sol`, effort xhigh, SRT sandbox, tmux. Child session `bbfe4275` (gobby#14886). Parent: PD session `1fdb7576`. |
 | Standing seats in that window | 10 `claude-opus-5-5` (Claude Code), 7 `gpt-6.1-sol`, 2 `deepseek/deepseek-v4.1-flash`, 1 `gpt-5.6-terra`, 1 `gpt-6-luna` (Codex). Total 21. |
 | Other spawned runs in that window | 2 `gpt-6.1-sol` and 1 `gpt-5.6-sol` (Codex). The reviewer is one of them. |
-| Latency source | `metrics_events` rows: `tool_call` is proxy MCP call latency; `rule_eval` is rule-engine hook latency. Snapshots come from `metric_snapshots`. |
+| Latency source | `metrics_events` rows: `tool_call` is proxy MCP call latency; `rule_eval` is blocked-rule effect-path latency, excluding rule-level condition/context setup. It is not whole-hook latency. Snapshots come from `metric_snapshots`. |
 | Launch source | `Spawn phase timings` log lines from `agents/spawn_executor.execute_spawn`. 1,551 spawns, from 2026-09-13 16:57 local time (the start of `daemon.log.1`) to 2026-09-29 19:30 local time (2026-09-30 00:30 UTC). |
 | Observation boundaries | All windows are fixed and half-open, in UTC. §5 covers [2026-09-29 00:30, 2026-09-30 00:30). §6 compares [2026-09-28 16:34:06, 2026-09-29 08:34:06) with [2026-09-29 08:34:06, 2026-09-30 00:34:06), 16 h each on either side of `ef4668dc77`. §3's post-serialization table uses the §6 "after" window. The 7-day figures cover [2026-09-23 00:30, 2026-09-30 00:30). |
 
 Model mix is a confound. Most reviewers before 2026-09-29 were `gpt-5.6-terra`. The
 natural run studied here is `gpt-6.1-sol`. §3 gives the per-model medians as descriptive
 figures only.
+
+At the cited checkout `cd5749ca417d7c2987542172d30b48f653379614`,
+`src/gobby/workflows/engine/evaluation.py:593-678,770-782` starts each rule timer
+after rule-level condition/context setup and writes `metrics_events.rule_eval`
+only when a rule blocks, including blocking lookahead. The timer measures that
+rule's effect path, not the full rule loop, hook prelude, hook-entry queue wait or
+transport. `src/gobby/telemetry/rule_allow_audit.py:206-228` records matched allow
+outcomes in process metrics and the separate allow audit, not this PostgreSQL
+history (memory `44831b84-a775-5cbe-bbdf-b0ce731bf5f9`). Neither allow-audit timings
+nor full-hook phase timings were included in this study.
+
+The recovered checkpoint retains the report and its described query boundaries,
+but no underlying cohort/runtime query receipt. Those descriptions are retained
+methodology statements, not fresh verification. In particular, the §3 after-window
+model medians and §6 after-window overall median do not establish their population
+or runtime definitions. No distinct boundary is assumed to explain the summaries.
 
 ## 1. Launch cost (VERIFIED)
 
@@ -75,9 +102,9 @@ The daemon spawn phases in ms:
 SRT verify plus preflight is 2.18 s, or 78% of this launch. Across all 1,551 retained
 spawns, the total is p50 5.7 s and p90 15.4 s. `verify_srt_installation` is p50 1.45 s
 and p90 5.7 s; `_preflight_srt` is p50 1.3 s and p90 3.3 s. That confirms the #22729
-premise: SRT verification repeats on every spawn and is the largest launch component.
-Caching it saves about 2-7 s per spawn. That is under 2% of this reviewer's wall time,
-so it matters for spawn-heavy fanout and does not explain close throughput.
+SRT verification premise: verification repeats on every spawn and is the largest
+launch component. The estimated caching opportunity is about 2-7 s per spawn, under
+2% of this reviewer's wall time. Its effect on close throughput was not measured.
 
 ## 2. SRT denials (VERIFIED, impact INFERRED)
 
@@ -106,14 +133,16 @@ The count of 102 is a capture ceiling (VERIFIED):
   ends 4-11 s after launch, including 5-minute Claude runs and this 8-minute reviewer.
 
 As a result, denials during review work are unobservable. The first 100 are
-start-up probes and add no measurable launch cost; the run succeeded with a valid
-verdict. Any denials after them are unknown until the runner tracks `totalCount`.
+start-up probes; no denial-attributed launch cost was measured. The run succeeded
+with a valid verdict. Any denials after them are unknown until the runner tracks `totalCount`.
 The two `network-outbound` denials have no recorded target.
 
-## 3. Where reviewer wall time goes (VERIFIED)
+## 3. Where reviewer wall time goes (retained observations; cohort comparison UNKNOWN)
 
 The rollout covers 470.5 s of Codex session time. Its 42 tool cells took 79.9 s of
-tool wall time; the remaining ~390 s (83%) is model inference and generation.
+tool wall time; the remaining ~390 s (83%) is time outside those tool cells. The
+original report attributed it to model inference and generation; no retained phase
+receipt separates that work from other waiting time.
 
 Tool time breakdown:
 
@@ -139,12 +168,19 @@ These medians describe what happened and are not a model comparison. The
 `gpt-6.1-sol` sample is 4 runs, and the two models reviewed different task mixes and
 diff sizes. Any conclusion about model speed needs a like-for-like sample.
 
-The table is project-scoped to gobby and uses completed reviews created in the fixed
-§6 "after" window. Runtime is `agent_runs.completed_at - agent_runs.started_at`;
-tool-call means use those same runs (terra 976/29, sol 197/4, sonnet 22/1), rounded
-to whole calls. All-project figures and the 7-day mean are separate cohorts.
+The original report describes this table as project-scoped to gobby, using completed
+reviews created in the fixed §6 "after" window, with runtime
+`agent_runs.completed_at - agent_runs.started_at` and tool-call means from those
+same runs (terra 976/29, sol 197/4, sonnet 22/1), rounded to whole calls. It describes
+all-project figures and the 7-day mean as separate cohorts. The query receipts are
+not retained. This table totals 34 runs, also the §6 after count; §6 reports an
+overall p50 of 189 s and this table a 29-run terra p50 of 200 s. Per-model and pooled
+medians can differ, so those values alone do not prove an inconsistency. The exact
+shared population/runtime definition is UNKNOWN without the query receipts. Keep
+these historical figures as reported; use neither summary as a verified comparison
+across sections.
 
-## 4. Per-call cost: reviewer against standing seats (VERIFIED)
+## 4. Proxy-call latency: reviewer against other sessions (VERIFIED observation)
 
 In the reviewer's own window (23:50:00 to 23:58:10), from `tool_call` metrics:
 
@@ -153,11 +189,13 @@ In the reviewer's own window (23:50:00 to 23:58:10), from `tool_call` metrics:
 | Reviewer | 39 | 15 ms | 487 ms | 1 |
 | All other sessions | 128 | 50 ms | 2,243 ms | 15 |
 
-The reviewer's maximum was the 59.8 s search in §3. Excluding it, the reviewer's calls
-are cheaper than the seats' calls, because they are mostly short `get_task_diff` and
-skill reads.
+The reviewer's maximum was the 59.8 s search in §3. Its observed proxy-call
+percentiles are lower than the other sessions', and its calls are mostly short
+`get_task_diff` and skill reads. This is a descriptive comparison of different tool
+mixes, not a matched per-call resource-cost comparison. It does not measure relative
+whole-hook latency, DB work or marginal reviewer load.
 
-## 5. Concurrency against hook and DB latency (VERIFIED)
+## 5. Activity against blocked-rule/proxy latency and DB gauges (VERIFIED observations)
 
 Window: [2026-09-29 00:30, 2026-09-30 00:30) UTC, containing 144 possible intervals
 of 10 minutes. The tables summarize the 130 intervals with a `tool_call` or
@@ -168,12 +206,14 @@ whose run is `task-close-reviewer`. Workers are all other spawned runs. The same
 counts every population, across every project. Per-bucket statistics are computed from
 the raw events in the bucket.
 
-The retained `buckets_fixed.sql` / `buckets_fixed.txt` output is authoritative for
-the table values. Its join to sessions excludes the window's two `skill_invoke`
-events, whose session ids are null. An explicit `tool_call` / `rule_eval` filter
-in `buckets_fixed2.sql` reproduces the same 130 session/call/latency rows. The
-original snapshot-derived CPU, pool and executor columns are retained because the
-earliest snapshots have since expired; they are not recomputed from partial data.
+The original report cites `buckets_fixed.sql` / `buckets_fixed.txt` as authority for
+the table values. It states that their session join excludes the window's two
+`skill_invoke` events with null session ids, and that an explicit `tool_call` /
+`rule_eval` filter in `buckets_fixed2.sql` reproduces the same 130 session/call/latency
+rows. These query receipts are not available in the recovered checkpoint; no query
+was rerun for this correction. Original snapshot-derived CPU, pool and executor
+columns are preserved because the earliest snapshots have since expired; they are
+not recomputed from partial data.
 
 How to read the table:
 
@@ -183,6 +223,9 @@ How to read the table:
 - "CPU %" is the median of the bucket means of `daemon_cpu_percent`.
 - "Pool waiting" and "executor queue age" are maxima of `metric_snapshots` gauges.
 - A dash means no `rule_eval` events fell in those buckets.
+- Every `rule_eval` percentile below covers blocked rules only, with the timer
+  exclusions described under Sources and versions. Allowed-rule and whole-hook
+  latency are unmeasured.
 
 None of these values is a pooled percentile over all the events in a row.
 
@@ -209,28 +252,31 @@ Standing seats per bucket: median 13, maximum 23. Maximum total active sessions:
 
 Findings:
 
-- The hook path did not saturate. Across the 111 buckets with `rule_eval` events, the
-  bucket p95 ranged 0-10.0 ms (median 2.3 ms, 90th percentile 4.2 ms). The single
-  10.0 ms bucket had 10-14 active sessions and no reviewer.
-- #22729 measured `rule_eval` p95 at 197.6 ms with 15 active sessions on 2026-09-22.
-  No bucket in this window comes near it. INFERRED: the stability work since then
-  moved the knee. This is not a controlled comparison, and #22729 may have computed
-  its percentile differently.
-- The DB pool never had a waiter. The executor queue age peaked at 0.22 s.
+- Across the 111 buckets with blocked-rule `rule_eval` events, the bucket p95 ranged
+  0-10.0 ms (median 2.3 ms, 90th percentile 4.2 ms). The single 10.0 ms bucket had
+  10-14 active sessions and no reviewer. These values do not establish absence of
+  whole-hook or allowed-path saturation.
+- #22729 (SRT verification and hook-latency evidence) reported `rule_eval` p95 at
+  197.6 ms with 15 active sessions on 2026-09-22. No bucket here approaches that
+  reported value. Whether stability work changed a saturation threshold is UNKNOWN:
+  this is not a controlled comparison, the percentile definitions may differ, and
+  neither figure establishes whole-hook latency.
+- Retained DB pool gauges showed no waiter. The observed executor queue age peaked
+  at 0.22 s. Sampled gauges do not measure every DB operation or hook phase.
 - Daemon CPU grows with active sessions (8% to 38% median), and the median bucket
   `tool_call` p50 rises from 23 ms to 42 ms between 5-9 and 25-29 active sessions.
-  The 0-4 row is higher (99 ms) on only 8 buckets. This is the only measurable trend,
-  and it is not specific to reviewers.
-- Bucket `tool_call` p95 is dominated by long-running tools such as spawns and
-  searches, so it tracks the tool mix more than daemon pressure.
+  The 0-4 row is higher (99 ms) on only 8 buckets. This observed trend is not specific
+  to reviewers and does not isolate their marginal cost.
+- Long-running tools such as spawns and searches can dominate bucket `tool_call`
+  p95. Tool mix and daemon pressure are not separated by this comparison.
 
 Counting caveat: reviewers that run one after another can share a 10-minute bucket, and
 the metrics cover every project. The 4-5 reviewer buckets therefore do not mean 4-5
 concurrent reviewers in this project.
 
-## 6. Admission policy (VERIFIED)
+## 6. Admission policy (source VERIFIED; retained runtime comparison UNKNOWN)
 
-`ef4668dc77` (#23059) did the following:
+`ef4668dc77` (#23059 close-review admission policy) did the following:
 
 - Removed `close_review_max_concurrency_per_project` (default 3) from
   `src/gobby/config/tasks.py`.
@@ -256,58 +302,75 @@ Close reviews in project gobby, in two equal 16 h windows either side of the cha
 | Reviews per 1,000 `tool_call` events | 6.3 | 3.6 |
 
 The "after" window closes at 00:34:06, after the last review it contains had finished,
-so no review is censored. Reviewer-seconds per window-second is capacity-neutral. Before
-the change the cap was 3, and 0.359 means about 36% of one slot's worth of time. After
-the change it is the busy fraction of the single slot.
+according to the original report, which states that no review is censored and that
+runtime is clipped to each window for the reviewer-seconds row. Under that stated
+definition, 0.359 is about 36% of one slot's worth of time before the change; 0.129
+is the busy fraction of the single slot after it. These values are preserved, but
+the missing query receipts and unconfirmed §3/§6 population/runtime definitions
+prevent a newly verified capacity or runtime comparison. The 202 s / 189 s p50 row
+must not be used to claim a measured runtime improvement.
 
 - Queue wait is now zero because contention no longer reaches the queue. A second
   caller is rejected with `close_review_busy`, or waits for Lane Manager release, before
   any row exists. That wait is not persisted.
 - Under the old default of 3, peak overlap in the 7-day window was 3 reviews.
-- The single slot was idle 87.1% of the "after" window.
+- The original report's occupancy figure implies 87.1% idle time in the "after"
+  window, subject to the runtime-evidence limitation above.
 - Fleet activity fell 41% (by `tool_call` events) between the windows, and the review
   rate fell 66%. Normalized per 1,000 `tool_call` events, reviews fell 43%.
 - INFERRED: part of the drop tracks lower activity. The remainder is consistent with
   the admission process (Lane Manager release plus busy rejection), but release waits
-  are not persisted, so that attribution is not measured. Slot capacity was not
-  binding: the slot was idle most of the window.
+  are not persisted, so that attribution is not measured. Reported average occupancy
+  does not establish whether the slot bound bursts of simultaneous close requests.
 
 ## 7. Hypothesis ledger
 
 | Hypothesis | Verdict |
 | --- | --- |
-| Reviewers cost more per call than standing seats. | Rejected. §4. |
-| Reviewer concurrency saturates hooks or the DB. | Rejected for the §5 window. Bucket `rule_eval` p95 stayed at or below 10 ms and the pool had no waiter, up to 26 active sessions. §5. |
+| Reviewers cost more per call than standing seats. | Unknown as a resource-cost comparison. This run's proxy-call percentiles were lower with a different tool mix; whole-hook and per-call DB costs were not compared. §4. |
+| Reviewer concurrency saturates hooks or the DB. | Unknown for whole hooks and allowed paths. Blocked-rule bucket p95 stayed at or below 10 ms, and sampled pool gauges showed no waiter, up to 26 active sessions per bucket. These observations do not establish simultaneous reviewer capacity or exclude saturation outside the measured population. §5. |
 | #22729: SRT verification dominates launch. | Supported: 78% of this launch. Across the fleet, the per-spawn sum of SRT verification and preflight has p50 3.103486 s (3.1 s rounded). It is a small share of reviewer wall time. |
-| #22629: all-seat counting must include reviewers. | Supported as an accounting rule. Reviewers were exempt from the per-project cap. §5 shows reviewers add a load increment comparable to a seat, so count them like seats, with no separate penalty. |
-| The single slot is justified by measured load. | Unsupported. §5 and §6. |
+| #22629 (all-seat concurrency counting): all-seat counting must include reviewers. | Supported as an accounting rule: reviewers are agent processes and should be counted consistently. §5 does not isolate their marginal load or establish an equal cost per seat. A separate reviewer penalty is not supported by these measurements. |
+| The single slot is justified by measured load. | Unsupported by the retained observations; whether host or whole-hook load requires it remains unknown. §5 and §6. |
 | Reviewer model choice drives close latency. | Unsupported by this data. The medians differ (613 s against 200 s), but the task mixes are unequal and the `gpt-6.1-sol` sample is 4 runs. §3. |
 | SRT denials slow reviews. | Unknown. The log captures only the first 100 main-run denials, all of them start-up probes. §2. |
 
 ## 8. Recommendation
 
-1. Restore a per-project reviewer cap above 1, admitted when the 5-minute load average
-   is below 24. Count reviewers in the all-seat total the same way standing seats are
-   counted. Persist Lane Manager release waits so the admission process's share of the
-   throughput drop (§6) can be measured before that step is changed. Lane2 owns the cap
-   under #23059.
-2. #22729 SRT verification caching stays worthwhile for spawn-heavy fanout. It does not
-   change close throughput.
+1. Count reviewers in the all-seat total consistently and persist Lane Manager
+   release waits to measure the admission process's share of the throughput drop
+   (§6). Lane2 owns #23059 (close-review admission policy), including evaluation of
+   a cap above 1 under PD sequencing and Josh's 5-minute load-below-24 rule. This
+   study supplies bounded proxy/pool observations, not a safe cap: historical host
+   load and allowed/full-hook latency are unmeasured, and runtime cohorts remain
+   unconfirmed. No policy change is performed here.
+2. #22729 (SRT verification caching) stays worthwhile for spawn-heavy fanout. Its
+   measured launch share is small in this natural review; an effect on close
+   throughput is not established.
 3. Reviewer model speed: no recommendation. §3 records the per-model medians without
    comparing them.
 
 ## 9. Found work
 
-1. SRT violation capture stops after 100 main-run records (§2). Filed as #23118 and
-   delegated to L5 #14768 alongside #22729.
+1. SRT violation capture stops after 100 main-run records (§2). Filed as #23118
+   (SRT capture) and delegated to L5 #14768 alongside #22729 (SRT verification).
 2. `gobby-sessions:search_session_messages`
    (`src/gobby/mcp_proxy/tools/sessions/_messages.py:101-190`) scans rendered
    transcript windows linearly. In the 7-day window: 56 calls, p50 14.4 s, p90 200 s,
    max 1,397 s. A miss reads every window of every candidate session. Filed as #23117
-   (bounded transcript search) and delegated to L2 #14828 after #23113.
+   (bounded transcript search) and delegated to L2 #14828 after #23113
+   (preceding L2 stability work).
 
 ## 10. Unknowns
 
+- Allowed-rule and full-hook latency were not measured. Block-only per-rule
+  `metrics_events.rule_eval` percentiles cannot exclude slow allowed effects,
+  rule-level setup, hook prelude, hook-entry queue wait or transport (§5).
+- Cohort/runtime query receipts are not retained. The §3 model table and §6 overall
+  after-window p50 do not confirm a shared population/timer; no difference is assumed.
+  The occupancy and runtime figures remain historical reported values (§3, §6).
+- The proxy-call comparison uses different tool mixes. Relative per-call DB work,
+  whole-hook cost and marginal reviewer load remain unmeasured (§4).
 - Host load average is not retained. `metric_snapshots` holds daemon CPU and pool
   gauges only. Josh's load-below-24 rule cannot be checked against history.
 - How long lanes wait for Lane Manager release is not persisted, so the real admission
