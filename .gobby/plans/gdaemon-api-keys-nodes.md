@@ -122,9 +122,16 @@ below so the planning pass that opens them starts from decisions, not questions.
   CRC32, SHA-256 at rest.
 - **No backward compatibility.** 0.5.0 has not shipped. A bootstrap with the new
   fields absent parses with them absent.
-- **Running daemon.** No executable leaf needs a coordinated restart. 4.2's
-  startup adoption mints the local key on the next start the PD performs; D1 is
-  the flag day and carries its own restart.
+- **Running daemon.** Source validation and live activation are separate
+  steps. Each leaf validates in its worktree against isolated test daemons and
+  the test hub, and never restarts the running daemon. Live activation belongs
+  to the PD and uses the existing release process with no new mechanism:
+  - a patch bump of each changed crate;
+  - `Cargo.lock` and pin updates;
+  - coherent promotion through `promote_workspace_binary_set`;
+  - an announced restart in a quiet window.
+  4.2's migration and startup adoption take effect on that restart, where the
+  local key is minted. D1 is the flag day and carries its own restart.
 - **Test isolation.** pytest runs use
   `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1`
   and never the full suite. Every command runs from the worktree root.
@@ -657,8 +664,10 @@ Targets:
 
 **Research context:**
 
-The routes and the bootstrap fields (`api_key`, `api_key_id`, `hub_cert`, writer
-`update_bootstrap_yaml`) are 4.2's; this leaf consumes them unchanged. The
+The routes and the bootstrap fields (`api_key`, `api_key_id`, `hub_cert`) are
+4.2's. So are the writers `publish_bootstrap_yaml_locked` and
+`exclusive_file_lock` (`src/gobby/utils/durable_file.py`). This leaf consumes
+all of them unchanged. The
 commands live in the new `src/gobby/cli/auth_login.py` and register under the
 existing `auth` group in `src/gobby/cli/auth.py`; `gobby auth token` stays until
 D1 removes it.
@@ -701,33 +710,48 @@ Enrollment commits only after the hub mints:
    A 2xx is validated in full before any publication: the body is a JSON
    object; `key` passes 4.2's `api_key_format.parse`; `key_id`, `user_id`,
    and `machine_id` are UUID strings; `machine_id` equals the requested
-   `require_machine_id()`; and `hint` equals `api_key_format.hint(key)`. On
-   any failure, nothing is published and no key or response body is printed.
-   When `key_id` is a valid UUID, the new key is revoked through the step-3
-   password-session cleanup and the id is reported; otherwise the error says
-   an unidentified key may exist and names `gobby auth key list` (D1) or the
-   hub UI for cleanup.
-2. Publish: read the prior `hub.pem` bytes into memory (if any), move the
-   staged PEM over `hub.pem` with `durable_replace_text` (HTTPS only), then
-   write `api_key`, `api_key_id`, and `hub_cert` (the `hub.pem` path, or
-   absent for HTTP) through `update_bootstrap_yaml`.
-3. On any publication exception, decide by the actual publication point.
-   `durable_replace` renames before its directory fsync and readback, so an
-   exception does not prove a file is unchanged. Re-read bootstrap:
+   `require_machine_id()`; `hint` equals `api_key_format.hint(key)`; and
+   `key_id` differs from the prior bootstrap's `api_key_id`. On any failure,
+   nothing is published, nothing is revoked, and no key or response body is
+   printed. A malformed response does not prove which key it names: a
+   UUID-shaped `key_id` could name the prior enrollment or another of the
+   user's keys. So the error says an unverified key may have been minted,
+   prints the reported `key_id` only when it is a UUID and labels it
+   unverified, and names `gobby auth key list` (D1) or the hub UI for cleanup.
+2. Publish as one transaction under `exclusive_file_lock(bootstrap_path)`, the
+   sidecar lock that `update_bootstrap_yaml` and 4.2's adoption take. Login is
+   the only writer of `hub.pem`, so this lock also serializes `hub.pem`.
+   Holding the lock:
+   1. Read the prior `hub.pem` bytes into memory (if any).
+   2. Move the staged PEM over `hub.pem` with `durable_replace_text` (HTTPS
+      only).
+   3. `read_bootstrap_yaml`, set `api_key`, `api_key_id`, and `hub_cert` (the
+      `hub.pem` path, or absent for HTTP), and publish with 4.2's
+      `publish_bootstrap_yaml_locked`, which does not re-take the lock.
+   Minting in step 1 happens before the lock is taken.
+3. On any publication exception, decide by the actual publication point,
+   still holding the lock. `durable_replace` renames before its directory
+   fsync and readback, so an exception does not prove a file is unchanged.
+   Re-read bootstrap:
    - It names the new `api_key_id`: the enrollment is committed (the PEM was
      published first). Keep the new key, print the durability error, and exit
      non-zero so the operator re-runs verification.
    - It does not: restore the prior `hub.pem` bytes with
-     `durable_replace_text` (or remove `hub.pem` if there was none), then
-     revoke only the key minted in step 1 by logging in with the same email
-     and password through `POST /api/auth/login` for a browser session and
-     `DELETE /api/auth/keys/{new id}` with it (the new API key cannot
-     authenticate until D1). Exit non-zero.
-   - The re-read, the PEM restore, or the revoke fails: do not revoke
-     anything further; print the new key id, which files may have changed, and
-     the error, and exit non-zero.
-   The prior enrollment's key is never revoked here, and bootstrap never names
-   a revoked key.
+     `durable_replace_text` (or remove `hub.pem` if there was none).
+   - The re-read or the PEM restore fails: revoke nothing; print the new key
+     id, which files may have changed, and the error, and exit non-zero.
+   Then release the lock. Only when the lock-held decision found the new key
+   uncommitted and the restore succeeded, revoke the key minted in step 1 by
+   logging in with the same email and password through
+   `POST /api/auth/login` for a browser session and
+   `DELETE /api/auth/keys/{new id}` with it (the new API key cannot
+   authenticate until D1). Exit non-zero. A failed revoke prints the new key
+   id and the error.
+   Because the snapshot, publication, re-read, and restore share one lock
+   hold, a concurrent login never restores over another enrollment's
+   published PEM: a login that waits sees the winner's files as its prior
+   state. Only a validated response's `key_id` is ever revoked, and never the
+   prior enrollment's key. Bootstrap never names a revoked key.
 A successful re-login keeps the prior key live on the hub; revoking it is D1's
 verified rotate sequence.
 
@@ -746,7 +770,8 @@ Verification planned:
 
 - 4.5.1 - `gobby auth login` pins by fingerprint against a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch, and writes bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
 - 4.5.7 - Against a `files`-mode hub whose certificate's SANs exclude the dialed host, login fails the handshake before sending the password and leaves the prior enrollment byte-identical. test: `tests/e2e/test_auth_login.py::test_login_refuses_host_outside_sans`.
-- 4.5.8 - A 2xx with malformed JSON, a missing field, a key failing `parse`, a mismatched hint, or a `machine_id` other than the requested one publishes nothing, prints no secret, and revokes the new key when its id is a valid UUID; a valid response still enrolls. test: `tests/cli/test_auth_login.py::test_login_validates_enrollment_response`.
+- 4.5.8 - A 2xx with malformed JSON, a missing field, a key failing `parse`, a mismatched hint, a `machine_id` other than the requested one, or a `key_id` equal to the prior enrollment's `api_key_id` publishes nothing, prints no secret, and sends no revoke request; the prior key stays live and the prior bootstrap and `hub.pem` stay byte-identical; a valid response still enrolls. test: `tests/cli/test_auth_login.py::test_login_validates_enrollment_response`.
+- 4.5.9 - Two synchronized logins A and B run while A's bootstrap publication is failed before rename: B's bootstrap, `api_key_id`, and matching `hub.pem` survive whichever order the lock grants, A restores nothing over B's files, and only A's new key is revoked. test: `tests/cli/test_auth_login.py::test_concurrent_enrollments_keep_winner`.
 - 4.5.2 - Login refuses a `datastore_mode: local` bootstrap and a `--hub` that differs from `hub_daemon_url`, before any network call and with bootstrap byte-identical. test: `tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch`.
 - 4.5.3 - Login refuses an `http://` non-loopback hub without `--insecure` and `--fingerprint` with any `http://` hub, and enrolls over plain HTTP to a loopback hub and to a non-loopback hub with `--insecure`, fetching no certificate and writing no `hub_cert`. test: `tests/cli/test_auth_login.py::test_login_http_branches`.
 - 4.5.5 - A declined confirmation, a fingerprint mismatch, a rejected password, a network failure, and a certificate probe against a listener that accepts and never answers each exit non-zero before any bootstrap or `hub.pem` change, the first two and the stalled probe without sending the password. test: `tests/cli/test_auth_login.py::test_login_failures_preserve_prior_enrollment`.
@@ -1037,6 +1062,19 @@ deferral:
   (4.6, 4.1, 4.2, 4.5) carrying 42 acceptance items, and D1 to D5 deferred.
   This entry makes no narrative change. The Adversary applies M1 next, before
   PD review and Josh's approval.
+- 2026-09-29: PD exact-tip review of M1 fe64e4b bounced it with two findings,
+  both accepted by the Adversary and the Writer. The M1 below is stale until
+  the Adversary regenerates it.
+  - PD-P4-01: 4.5 publication runs as one transaction under the bootstrap
+    sidecar lock, through 4.2's `publish_bootstrap_yaml_locked`. The lock
+    covers the prior-PEM snapshot, PEM and bootstrap publication, the
+    publication-point re-read, and the restore decision. Minting precedes the
+    lock, and the new-key revoke follows its release (4.5.9).
+  - PD-P4-02: a malformed 2xx revokes nothing, because a UUID-shaped `key_id`
+    does not prove it names the new key. A `key_id` equal to the prior
+    enrollment's is invalid (4.5.8).
+  - Constraints separate isolated source validation from PD-owned live
+    activation through the existing release process.
 
 ## V2: Verification
 `kind: verification`
