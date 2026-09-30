@@ -127,10 +127,24 @@ async fn pane_reconnects_to_host_without_daemon() {
         })
         .await;
         settle().await;
-        // The carried grant still types into the host, on the new stream.
+        // The recovery has applied by now. The carried grant still types into
+        // the host on the new stream: the first host write binds the restored
+        // attachment, then delivers the payload.
         send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
-        host.expect_input(1).await;
-        let seen = host.drain();
+        let seen = host
+            .wait_for("the carried key", |messages| {
+                messages
+                    .iter()
+                    .any(|message| matches!(message, ClientMessage::Input { .. }))
+            })
+            .await;
+        assert!(
+            seen.iter().any(|message| matches!(
+                message,
+                ClientMessage::Input { data } if data == b"x"
+            )),
+            "the carried grant delivers the input payload: {seen:?}"
+        );
         assert!(
             seen.iter()
                 .any(|message| matches!(message, ClientMessage::BindAttachment { .. })),
@@ -346,6 +360,158 @@ async fn host_local_budget_falls_back_to_daemon_attach() {
     mock.shutdown().await;
 }
 
+#[tokio::test]
+async fn same_epoch_attach_refusal_falls_back_to_daemon() {
+    // The host answers the reconnect on the same epoch but refuses the attach
+    // (its named terminal is gone) and leaves the socket open. The refusal
+    // must route to the daemon fallback, never a false restore (#23076, R4 F1).
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.refuse_next_proxy_attach("host_not_ready", "host not ready");
+    let terminal_id = "terminal-attach-refusal";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    let attachment_before = workspace.pane(pane_id).attachment_id().to_string();
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // Same epoch: only the attach itself is refused, and the socket stays
+        // open, so nothing but the reply tells the client it failed.
+        host.refuse_next_attach();
+        host.disconnect();
+        // The refusal falls straight through to the daemon path: detach, then
+        // an attach whose first reply defers on `host_not_ready`.
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        tokio::time::pause();
+        for _ in 0..64 {
+            if websocket_requests(&mock, "terminal_attach").len() >= 3 {
+                break;
+            }
+            tokio::time::advance(Duration::from_secs(8)).await;
+            for _ in 0..256 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_attach", 3).await;
+        settle().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("attach-refusal fallback loop");
+
+    assert_eq!(
+        workspace.pane_for_terminal(terminal_id),
+        Some(pane_id),
+        "the pane survives the refusal"
+    );
+    assert!(
+        !websocket_requests(&mock, "terminal_detach").is_empty(),
+        "the refused host attach was released before a daemon attach"
+    );
+    assert_ne!(
+        workspace.pane(pane_id).attachment_id(),
+        attachment_before,
+        "the fallback attached through the daemon"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+#[tokio::test]
+async fn stalled_handshake_falls_back_within_the_budget() {
+    // The host accepts the connect but never answers the handshake — a host
+    // still mid-exec. The absolute budget must end the recovery and reach the
+    // daemon fallback; a stalled handshake is never a restore (#23076, R4 F2).
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-stalled-handshake";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    // Hold future accepts so the connect lands in the backlog and the
+    // handshake never answers, exactly like a host mid-exec.
+    let _gate = host.hold_accepts();
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        host.disconnect();
+        tokio::time::pause();
+        for _ in 0..64 {
+            if !websocket_requests(&mock, "terminal_detach").is_empty() {
+                break;
+            }
+            tokio::time::advance(Duration::from_secs(1)).await;
+            for _ in 0..256 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        settle().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("stalled-handshake fallback loop");
+
+    assert_eq!(
+        workspace.pane_for_terminal(terminal_id),
+        Some(pane_id),
+        "the pane survives the stalled handshake"
+    );
+    assert_eq!(
+        workspace.pane(pane_id).transport(),
+        Some(Transport::Proxy),
+        "a stalled handshake reaches the daemon fallback within the budget"
+    );
+    assert_eq!(
+        host.attaches(),
+        1,
+        "the stalled handshake was never accepted as a host restore"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
 /// 2.3.3: repeated failed daemon reconnect attempts and a daemon generation
 /// change overlapping the host restore do not cancel the host-local recovery,
 /// which succeeds.
@@ -490,6 +656,88 @@ async fn closing_the_pane_during_recovery_sends_nothing_to_the_host() {
         host.attaches(),
         1,
         "closing the pane during recovery asked the host for nothing"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+/// 2.3: a host attach keeps the same terminal and epoch. A host that answers
+/// on the same epoch but names a different terminal has not restored this
+/// pane, so the pane must fall back to the daemon rather than adopt it.
+#[tokio::test]
+async fn attached_reply_for_a_different_host_terminal_falls_back_to_daemon() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    mock.refuse_next_proxy_attach("host_not_ready", "host not ready");
+    let terminal_id = "terminal-wrong-id";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    let attachment_before = workspace.pane(pane_id).attachment_id().to_string();
+
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        // Same epoch, but the reconnect's attach is answered as a different
+        // terminal. Only the reply tells the pane it was not restored.
+        host.answer_next_attach_with_terminal_id("terminal-somewhere-else");
+        host.disconnect();
+        // The mismatch falls straight through to the daemon path: detach, then
+        // an attach whose first reply defers on `host_not_ready`.
+        wait_for_websocket_requests(&mock, "terminal_detach", 1).await;
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        tokio::time::pause();
+        for _ in 0..64 {
+            if websocket_requests(&mock, "terminal_attach").len() >= 3 {
+                break;
+            }
+            tokio::time::advance(Duration::from_secs(8)).await;
+            for _ in 0..256 {
+                tokio::task::yield_now().await;
+            }
+        }
+        tokio::time::resume();
+        wait_for_websocket_requests(&mock, "terminal_attach", 3).await;
+        settle().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("different-terminal fallback loop");
+
+    assert_eq!(
+        workspace.pane_for_terminal(terminal_id),
+        Some(pane_id),
+        "the pane survives the mismatched attach"
+    );
+    assert!(
+        !websocket_requests(&mock, "terminal_detach").is_empty(),
+        "the mismatched host attach was released before a daemon attach"
+    );
+    assert!(
+        websocket_requests(&mock, "terminal_attach").len() >= 3,
+        "the daemon fallback ran its attach ladder after the mismatch"
+    );
+    assert_ne!(
+        workspace.pane(pane_id).attachment_id(),
+        attachment_before,
+        "the mismatched host attach was not adopted as the restore"
     );
     host.shutdown().await;
     mock.shutdown().await;

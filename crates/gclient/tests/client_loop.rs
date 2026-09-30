@@ -2603,6 +2603,15 @@ async fn live_resize_propagates_geometry_by_policy() {
             let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
                 .await
                 .expect("direct attach");
+            write_message_async(
+                &mut host,
+                &ServerMessage::Attached {
+                    created: false,
+                    host_terminal_id: "term-controlled".into(),
+                },
+            )
+            .await
+            .expect("direct attached");
             while let Ok(message) = read_message_async(&mut host, MAX_FRAME_SIZE).await {
                 if direct_tx.send(message).is_err() {
                     break;
@@ -4125,6 +4134,15 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("direct attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "terminal-loss".into(),
+            },
+        )
+        .await
+        .expect("direct attached");
         while let Some(frame) = frame_rx.recv().await {
             write_message_async(&mut host, &frame)
                 .await

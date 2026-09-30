@@ -198,32 +198,46 @@ impl Workspace<LiveDaemon> {
                 // attempt waits a beat: a pane closed in the same event batch
                 // is then removed and the socket is never opened at all, which
                 // a later check could not undo (#23076).
+                //
+                // One absolute deadline bounds the backoff wait and the whole
+                // handshake together: a connect begun near the limit is cut
+                // there, and a success arriving after it is rejected rather
+                // than overrunning the canonical budget (#23076, R4 F2).
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    break HostRecoveryOutcome::Failed;
+                }
                 tokio::select! {
                     biased;
                     _ = future_cancel.cancelled() => {
                         break HostRecoveryOutcome::Cancelled;
                     }
-                    _ = tokio::time::sleep(delay) => {}
+                    _ = tokio::time::sleep(delay.min(remaining)) => {}
                 }
-                let attempt = connect_host(gobby_home.as_deref(), &locator, cols, rows);
+                let attempt = tokio::time::timeout(
+                    deadline.saturating_duration_since(Instant::now()),
+                    connect_host(gobby_home.as_deref(), &locator, cols, rows),
+                );
                 tokio::select! {
                     biased;
                     _ = future_cancel.cancelled() => {
                         break HostRecoveryOutcome::Cancelled;
                     }
                     connected = attempt => match connected {
-                        Ok(source) => break HostRecoveryOutcome::Restored(source),
+                        Ok(Ok(source)) if Instant::now() < deadline => {
+                            break HostRecoveryOutcome::Restored(source)
+                        }
+                        // A connect that landed at or past the deadline, or a
+                        // handshake the deadline cut off, is not a restore.
+                        Ok(Ok(_)) | Err(_) => break HostRecoveryOutcome::Failed,
                         // A definite failure has no recovery: the host moved
                         // to another image, refused, or spoke a protocol the
                         // client cannot continue on. Retrying only delays the
                         // daemon fallback the user ends up needing.
-                        Err(error) if !host_connect_is_transient(&error) => {
+                        Ok(Err(error)) if !host_connect_is_transient(&error) => {
                             break HostRecoveryOutcome::Failed;
                         }
-                        Err(_) if Instant::now() >= deadline => {
-                            break HostRecoveryOutcome::Failed;
-                        }
-                        Err(_) => {}
+                        Ok(Err(_)) => {}
                     },
                 }
                 delay = (delay * 2).min(HOST_RECOVERY_RETRY_MAX);

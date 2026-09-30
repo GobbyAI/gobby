@@ -693,6 +693,23 @@ pub fn run() -> anyhow::Result<()> {
     if let Err(error) = crate::logging::init() {
         eprintln!("failed to initialize gclient logging: {error}");
     }
+    // Past the `--version`/`--help` short-circuits and logging init, the
+    // runtime path leaves one durable exit reason in `gclient.log` even though
+    // the terminal's alternate screen hides stderr (#23076).
+    let home = gobby_core::gobby_home().ok();
+    let result = run_runtime(args);
+    if let Some(home) = &home {
+        match &result {
+            Ok(()) => crate::logging::record_exit(home, "reason=normal"),
+            Err(err) => crate::logging::record_exit(home, &format!("reason=error: {err}")),
+        }
+    }
+    result
+}
+
+/// The runtime path after logging init: resolve the probe environment, attach,
+/// and hand off to the terminal loop.
+fn run_runtime(args: CliArgs) -> anyhow::Result<()> {
     let env = resolve_probe_env(&args)?;
     let health = HttpHealthClient::new();
     let (ready, mut guard) = start_session(args, env, &health, CrosstermBackend)?;

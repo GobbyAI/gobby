@@ -47,6 +47,14 @@ pub struct DirectHost {
     /// Server messages injected onto every live connection.
     pub to_client: broadcast::Sender<ServerMessage>,
     disconnect: broadcast::Sender<()>,
+    /// While set, the next attach is answered with `ServerMessage::Error`
+    /// instead of `Attached`, with the socket left open, so a caller can prove
+    /// a definitive refusal is not mistaken for a restored stream (#23076).
+    refuse_attach: Arc<watch::Sender<bool>>,
+    /// While set, the next successful attach answers `Attached` naming this
+    /// terminal instead of the one the client asked for, as a host that
+    /// resolved the request to a different terminal does (#23076).
+    relocate_attach: Arc<Mutex<Option<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -64,14 +72,22 @@ impl DirectHost {
         let connections = Arc::new(AtomicUsize::new(0));
         let (to_client, _) = broadcast::channel(64);
         let (disconnect, _) = broadcast::channel(8);
+        let (refuse_attach, _) = watch::channel(false);
+        let refuse_attach = Arc::new(refuse_attach);
+        let relocate_attach: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let shared = Arc::new(HostShared {
+            seen: Arc::clone(&seen),
+            attaches: Arc::clone(&attaches),
+            refuse_attach: Arc::clone(&refuse_attach),
+            relocate_attach: Arc::clone(&relocate_attach),
+        });
         let task = tokio::spawn({
             let host_epoch = Arc::clone(&host_epoch);
             let accept_gate = Arc::clone(&accept_gate);
-            let seen = Arc::clone(&seen);
-            let attaches = Arc::clone(&attaches);
             let connections = Arc::clone(&connections);
             let to_client = to_client.clone();
             let disconnect = disconnect.clone();
+            let shared = Arc::clone(&shared);
             async move {
                 loop {
                     let Ok((stream, _)) = listener.accept().await else {
@@ -94,8 +110,7 @@ impl DirectHost {
                     tokio::spawn(serve(
                         stream,
                         epoch,
-                        Arc::clone(&seen),
-                        Arc::clone(&attaches),
+                        Arc::clone(&shared),
                         to_client.subscribe(),
                         disconnect.subscribe(),
                     ));
@@ -112,6 +127,8 @@ impl DirectHost {
             connections,
             to_client,
             disconnect,
+            refuse_attach: refuse_attach.clone(),
+            relocate_attach: relocate_attach.clone(),
             task,
         }
     }
@@ -150,6 +167,19 @@ impl DirectHost {
     /// Move the host's advertised epoch, as a new host image does.
     pub fn set_host_epoch(&self, epoch: &str) {
         *self.host_epoch.lock().expect("host epoch") = epoch.to_string();
+    }
+
+    /// Answer exactly the next attach with a `terminal_gone` refusal, leaving
+    /// the socket open, as a host whose named terminal disappeared does.
+    pub fn refuse_next_attach(&self) {
+        self.refuse_attach.send_replace(true);
+    }
+
+    /// Answer exactly the next successful attach with `Attached` naming
+    /// `host_terminal_id` rather than the terminal the client asked for, as a
+    /// host that resolved the pane to a different terminal does (#23076).
+    pub fn answer_next_attach_with_terminal_id(&self, host_terminal_id: &str) {
+        *self.relocate_attach.lock().expect("relocate attach") = Some(host_terminal_id.to_string());
     }
 
     /// The roster `attach` block that tells gclient this terminal has a host
@@ -294,14 +324,24 @@ pub async fn live_workspace_on_direct_host(
     (workspace, home)
 }
 
+struct HostShared {
+    seen: Arc<Mutex<Vec<ClientMessage>>>,
+    attaches: Arc<AtomicUsize>,
+    refuse_attach: Arc<watch::Sender<bool>>,
+    relocate_attach: Arc<Mutex<Option<String>>>,
+}
+
 async fn serve(
     mut stream: UnixStream,
     epoch: String,
-    seen: Arc<Mutex<Vec<ClientMessage>>>,
-    attaches: Arc<AtomicUsize>,
+    shared: Arc<HostShared>,
     mut to_client: broadcast::Receiver<ServerMessage>,
     mut disconnect: broadcast::Receiver<()>,
 ) {
+    let seen = &shared.seen;
+    let attaches = &shared.attaches;
+    let refuse_attach = &shared.refuse_attach;
+    let relocate_attach = &shared.relocate_attach;
     let _: ClientMessage = match read_message_async(&mut stream, MAX_FRAME_SIZE).await {
         Ok(message) => message,
         Err(_) => return,
@@ -312,13 +352,57 @@ async fn serve(
     {
         return;
     }
-    if read_message_async::<_, ClientMessage>(&mut stream, MAX_FRAME_SIZE)
-        .await
-        .is_err()
+    let attach: ClientMessage = match read_message_async(&mut stream, MAX_FRAME_SIZE).await {
+        Ok(message) => message,
+        Err(_) => return,
+    };
+    let host_terminal_id = match &attach {
+        ClientMessage::AttachTerminal {
+            host_terminal_id, ..
+        } => host_terminal_id.clone(),
+        _ => String::new(),
+    };
+    seen.lock().expect("host messages").push(attach);
+    // A host that has no such terminal, or is at capacity, refuses the attach
+    // while keeping the socket open. The client must not treat that as a
+    // restored stream (#23076).
+    if *refuse_attach.borrow() {
+        refuse_attach.send_replace(false);
+        let _ = write_message_async(
+            &mut stream,
+            &ServerMessage::Error {
+                code: "terminal_gone".into(),
+                message: None,
+            },
+        )
+        .await;
+        // Keep the socket open, as the real host does for a refusal: prove the
+        // client falls back on the reply, not on an end of stream.
+        loop {
+            match read_message_async::<_, ClientMessage>(&mut stream, MAX_FRAME_SIZE).await {
+                Ok(_) => {}
+                Err(_) => return,
+            }
+        }
+    }
+    attaches.fetch_add(1, Ordering::SeqCst);
+    let answered_terminal_id = relocate_attach
+        .lock()
+        .expect("relocate attach")
+        .take()
+        .unwrap_or(host_terminal_id);
+    if write_message_async(
+        &mut stream,
+        &ServerMessage::Attached {
+            created: false,
+            host_terminal_id: answered_terminal_id,
+        },
+    )
+    .await
+    .is_err()
     {
         return;
     }
-    attaches.fetch_add(1, Ordering::SeqCst);
     loop {
         tokio::select! {
             message = read_message_async(&mut stream, MAX_FRAME_SIZE) => {

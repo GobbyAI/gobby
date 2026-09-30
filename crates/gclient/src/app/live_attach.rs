@@ -198,7 +198,8 @@ impl Workspace<LiveDaemon> {
             | FrameError::Cancelled
             | FrameError::Io(_)
             | FrameError::Protocol(_)
-            | FrameError::Daemon(_) => self.begin_proxy_recovery(pane_id),
+            | FrameError::Daemon(_)
+            | FrameError::AttachRefused { .. } => self.begin_proxy_recovery(pane_id),
             // A refused control request never reaches a frame source; nothing
             // to recover. A full host-input queue is the same: the stream is
             // healthy and one keystroke was dropped, which `send_host_input`

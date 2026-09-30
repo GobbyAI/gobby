@@ -3,6 +3,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -11,6 +12,56 @@ use tracing_subscriber::fmt::MakeWriter;
 
 const LOG_FILE_NAME: &str = "gclient.log";
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
+
+/// Path of the log file below an explicit Gobby home directory.
+pub fn log_path_for(gobby_home: &Path) -> PathBuf {
+    gobby_home.join("logs").join(LOG_FILE_NAME)
+}
+
+/// Append one attribution line to the log file, outside the tracing pipeline.
+///
+/// A panic hook and the process-exit path must be able to record their reason
+/// even when the formatting subscriber cannot — including when the panic came
+/// from inside tracing itself — so this writes to the log file directly
+/// instead of going through `tracing` (#23076).
+pub fn record(gobby_home: &Path, kind: &str, detail: &str) {
+    let path = log_path_for(gobby_home);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) else {
+        return;
+    };
+    let _ = writeln!(file, "{kind}: {detail}");
+}
+
+/// Route panics to the log file before the default hook prints to stderr, and
+/// chain to the previous hook so the terminal still shows them (#23076).
+///
+/// Idempotent: a second call is a no-op, so the client can install it from
+/// `main` and tests can install it without stacking hooks.
+pub fn install_panic_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if let Ok(home) = gobby_core::gobby_home() {
+                record(&home, "panicked", &info.to_string());
+            }
+            previous(info);
+        }));
+    });
+}
+
+/// Record the process exit reason exactly once, so a client that stops without
+/// a panic still leaves why it stopped in the log (#23076).
+pub fn record_exit(gobby_home: &Path, status: &str) {
+    static ATTRIBUTED: AtomicBool = AtomicBool::new(false);
+    if ATTRIBUTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    record(gobby_home, "exiting", status);
+}
 
 type DayClock = Arc<dyn Fn() -> u64 + Send + Sync>;
 
