@@ -1143,8 +1143,8 @@ fn committed_panes_are_admitted_and_pending_reservations_are_busy() {
 /// Plan gterm-host-handover 1.3.9.
 #[test]
 fn background_mutators_wait_through_exec() {
-    // Holds the early pane's watcher in this image past the write guard.
-    let mut host = live_host(&[("GTERM_TEST_EXIT_WATCHER_HOLD", "early:4000")]);
+    // Holds the early pane's watcher in this image until the write guard.
+    let mut host = live_host(&[("GTERM_TEST_EXIT_WATCHER_HOLD", "early")]);
     let dir = host.socket_dir().to_path_buf();
     let mut ctl = connect_control(&dir, UPGRADE_TOKEN);
     let survivor = echo_panes(&mut host, &mut ctl, 1).remove(0);
@@ -1173,7 +1173,6 @@ fn background_mutators_wait_through_exec() {
     wait_until("the early child ends", || {
         !process_exists(early.pgid) || is_zombie(early.pgid as u32)
     });
-    let early_exit = Instant::now();
     assert!(
         pane_rows(&mut ctl)
             .iter()
@@ -1194,10 +1193,6 @@ fn background_mutators_wait_through_exec() {
         json!({"hold_accepted_ms": 1500}),
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
-    assert!(
-        early_exit.elapsed() < Duration::from_secs(3),
-        "precondition: the write guard came inside the early watcher's hold"
-    );
     std::fs::write(dir.join("exit-go"), b"").expect("release the exiting pane");
     wait_until("the exiting child ends", || {
         !process_exists(exiting.pgid) || is_zombie(exiting.pgid as u32)
@@ -1471,6 +1466,19 @@ fn every_pre_exec_failure_rolls_back() {
         RollbackCase {
             label: "soft-cutoff-in-capture",
             fault: |_| json!({"soft_deadline_in_capture": true}),
+            outcome: "aborted",
+            reason: "soft_deadline",
+            errno: None,
+            stalled_writer: false,
+            block_state_file: false,
+            exiting_pane: false,
+            tamper_pin: false,
+        },
+        RollbackCase {
+            // Every async check passes; the masked exec job reaches the soft
+            // cutoff after entering `exec`, so only the commit gate refuses.
+            label: "soft-cutoff-at-exec",
+            fault: |_| json!({"soft_deadline_in_exec": true}),
             outcome: "aborted",
             reason: "soft_deadline",
             errno: None,

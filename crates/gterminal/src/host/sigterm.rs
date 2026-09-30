@@ -86,11 +86,19 @@ pub(crate) async fn blocked<T: Send + 'static>(
 }
 
 /// Step 6: clears close-on-exec on every carried descriptor and execs the
-/// pin with the running environment. Returns the errno only when `execve`
-/// fails, with close-on-exec restored. `libc::execv` rather than
-/// `CommandExt::exec`, which resets SIGPIPE first and would leave it changed
-/// in a host that keeps running after a failure.
-pub(crate) fn exec(program: &Path, argv: &[String], state_path: &Path, fds: &[RawFd]) -> i32 {
+/// pin with the running environment. `commit` runs after every allocation,
+/// just before the first descriptor changes; when it refuses, nothing changes
+/// and this returns `None`. Returns the errno only when `execve` fails, with
+/// close-on-exec restored. `libc::execv` rather than `CommandExt::exec`, which
+/// resets SIGPIPE first and would leave it changed in a host that keeps
+/// running after a failure.
+pub(crate) fn exec(
+    program: &Path,
+    argv: &[String],
+    state_path: &Path,
+    fds: &[RawFd],
+    commit: impl FnOnce() -> bool,
+) -> Option<i32> {
     let arg = |bytes: &[u8]| CString::new(bytes).ok();
     let program_c = arg(program.as_os_str().as_bytes());
     let args: Option<Vec<CString>> = argv
@@ -102,7 +110,7 @@ pub(crate) fn exec(program: &Path, argv: &[String], state_path: &Path, fds: &[Ra
         ])
         .collect();
     let (Some(program_c), Some(args)) = (program_c, args) else {
-        return libc::EINVAL;
+        return Some(libc::EINVAL);
     };
     let mut pointers: Vec<*const libc::c_char> = args.iter().map(|value| value.as_ptr()).collect();
     pointers.push(std::ptr::null());
@@ -118,6 +126,9 @@ pub(crate) fn exec(program: &Path, argv: &[String], state_path: &Path, fds: &[Ra
             };
         }
     };
+    if !commit() {
+        return None;
+    }
     set_cloexec(false);
     // SAFETY: both arrays are NUL-terminated and outlive the call, which
     // returns only on failure.
@@ -126,5 +137,5 @@ pub(crate) fn exec(program: &Path, argv: &[String], state_path: &Path, fds: &[Ra
         .raw_os_error()
         .unwrap_or(libc::EIO);
     set_cloexec(true);
-    errno
+    Some(errno)
 }

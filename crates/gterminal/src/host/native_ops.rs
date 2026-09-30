@@ -524,14 +524,14 @@ impl HostState {
     ) {
         let state = Arc::clone(self);
         #[cfg(unix)]
-        let hold = exit_watcher_hold(self.generation, &identity.terminal_id);
+        let hold = exit_watcher_holds(self.generation, &identity.terminal_id);
         tokio::spawn(async move {
             let Some(exit) = exit_watch.wait().await else {
                 return;
             };
             #[cfg(unix)]
-            if !hold.is_zero() {
-                tokio::time::sleep(hold).await;
+            if hold {
+                until_write_owned(&state.mutation_gate).await;
             }
             state
                 .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code)
@@ -883,27 +883,30 @@ impl HostState {
     }
 }
 
-/// Test-only (plan gterm-host-handover 1.3.9): under `GTERM_TEST_HELPER=1`,
-/// `GTERM_TEST_EXIT_WATCHER_HOLD=<terminal_id>:<ms>` holds that pane's exit
-/// watcher between the exit and the gate, at most 5 s, so an upgrade can take
-/// the write guard while it is pending. Only a cold-start image holds: the
-/// restored one inherits the environment.
+/// Bounds a held exit watcher when no upgrade takes the write guard.
 #[cfg(all(unix, feature = "vt-engine"))]
-fn exit_watcher_hold(generation: u64, terminal_id: &str) -> Duration {
+const EXIT_WATCHER_HOLD_CAP: Duration = Duration::from_secs(20);
+
+/// Test-only (plan gterm-host-handover 1.3.9): under `GTERM_TEST_HELPER=1`,
+/// `GTERM_TEST_EXIT_WATCHER_HOLD=<terminal_id>` holds that pane's exit
+/// watcher between the exit and the gate until an upgrade owns the write
+/// guard, so the exit settles only after it. Only a cold-start image holds:
+/// the restored one inherits the environment.
+#[cfg(all(unix, feature = "vt-engine"))]
+fn exit_watcher_holds(generation: u64, terminal_id: &str) -> bool {
     let helper = std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1");
-    std::env::var("GTERM_TEST_EXIT_WATCHER_HOLD")
-        .ok()
-        .filter(|_| helper && generation == 0)
-        .and_then(|hold| {
-            let (pane, ms) = hold.split_once(':')?;
-            if pane != terminal_id {
-                return None;
-            }
-            ms.parse().ok()
-        })
-        .map_or(Duration::ZERO, |ms| {
-            Duration::from_millis(ms).min(Duration::from_secs(5))
-        })
+    helper
+        && generation == 0
+        && std::env::var("GTERM_TEST_EXIT_WATCHER_HOLD").is_ok_and(|pane| pane == terminal_id)
+}
+
+/// Returns once a writer owns `gate`, or after `EXIT_WATCHER_HOLD_CAP`.
+#[cfg(all(unix, feature = "vt-engine"))]
+async fn until_write_owned(gate: &tokio::sync::RwLock<()>) {
+    let give_up = Instant::now() + EXIT_WATCHER_HOLD_CAP;
+    while gate.try_read().is_ok() && Instant::now() < give_up {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 #[cfg(test)]

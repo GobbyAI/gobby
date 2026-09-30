@@ -202,6 +202,12 @@ fn remaining(deadline_ns: u64) -> Duration {
     Duration::from_nanos(deadline_ns.saturating_sub(monotonic_now_ns()))
 }
 
+/// Time left before the soft cutoff, which keeps `ROLLBACK_RESERVE` for a
+/// rollback; exec must not start once it reaches zero.
+fn until_soft_cutoff(deadline_ns: u64) -> Duration {
+    remaining(deadline_ns).saturating_sub(ROLLBACK_RESERVE)
+}
+
 /// Admission (Decision 9): a host that is not draining, holds no unconsumed
 /// reservation, and whose every prepared reservation names a committed pane.
 async fn admission(state: &HostState) -> Result<(), UpgradeReason> {
@@ -248,6 +254,7 @@ struct Faults {
     quiesce_ack: Option<(String, AckFault)>,
     encode_error: Option<String>,
     soft_deadline_in_capture: bool,
+    soft_deadline_in_exec: bool,
     exec_error: bool,
     rollback_fail: Option<String>,
     stall_cleanup: bool,
@@ -295,6 +302,7 @@ impl Faults {
             quiesce_ack,
             encode_error: pane("encode_error"),
             soft_deadline_in_capture: flag("soft_deadline_in_capture"),
+            soft_deadline_in_exec: flag("soft_deadline_in_exec"),
             exec_error: flag("exec_error"),
             rollback_fail: pane("rollback_fail"),
             stall_cleanup: flag("stall_cleanup"),
@@ -391,15 +399,11 @@ impl Attempt {
             .expect("upgrade context installed")
     }
 
-    fn until_soft_cutoff(&self) -> Duration {
-        remaining(self.deadline_ns).saturating_sub(ROLLBACK_RESERVE)
-    }
-
     /// Why the attempt must stop short of exec now, if it must.
     fn cutoff(&self) -> Option<UpgradeReason> {
         if self.state.draining.load(Ordering::SeqCst) {
             Some(UpgradeReason::HostDraining)
-        } else if self.until_soft_cutoff().is_zero() {
+        } else if until_soft_cutoff(self.deadline_ns).is_zero() {
             Some(UpgradeReason::SoftDeadline)
         } else {
             None
@@ -516,7 +520,7 @@ impl Attempt {
         self.state
             .attempts
             .update(|live| live.candidate_sha256 = Some(pin.sha256.clone()));
-        let limit = PROBE_LIMIT.min(self.until_soft_cutoff());
+        let limit = PROBE_LIMIT.min(until_soft_cutoff(self.deadline_ns));
         let version = if self.faults.refuse_probe {
             0
         } else {
@@ -575,7 +579,7 @@ impl Attempt {
         self.phase(Phase::Quiescing);
         tokio::time::sleep(self.faults.hold_accepted).await;
         window.panes = Arc::new(self.freeze().await);
-        let budget = self.until_soft_cutoff().saturating_sub(HANDOFF_ROLLBACK);
+        let budget = until_soft_cutoff(self.deadline_ns).saturating_sub(HANDOFF_ROLLBACK);
         if budget.is_zero() {
             return UpgradeOutcome::Aborted(UpgradeReason::QuiesceTimeout);
         }
@@ -662,21 +666,32 @@ impl Attempt {
         let argv = context.argv.clone();
         let state = Arc::clone(&self.state);
         let hold = self.faults.hold_in_exec;
+        let soft_deadline_in_exec = self.faults.soft_deadline_in_exec;
+        let deadline_ns = self.deadline_ns;
         let exec = move || {
             // A SIGTERM before the mask set `draining`; one after it stays
             // pending into the new image.
             if state.draining.load(Ordering::SeqCst) {
-                return None;
+                return Err(UpgradeReason::HostDraining);
             }
             state.attempts.update(|live| live.phase = Phase::Exec);
             std::thread::sleep(hold);
-            Some(sigterm::exec(&program, &argv, &path, &fds))
+            if soft_deadline_in_exec {
+                std::thread::sleep(until_soft_cutoff(deadline_ns));
+            }
+            // Every await and queue is behind us: the soft cutoff is checked
+            // last, at the commit.
+            sigterm::exec(&program, &argv, &path, &fds, || {
+                !until_soft_cutoff(deadline_ns).is_zero()
+            })
+            .ok_or(UpgradeReason::SoftDeadline)
         };
-        match sigterm::blocked(exec).await.flatten() {
-            Some(errno) => {
+        match sigterm::blocked(exec).await {
+            Some(Ok(errno)) => {
                 warn!(attempt_id = %self.attempt_id, errno, "candidate exec failed");
                 UpgradeOutcome::RolledBack { errno }
             }
+            Some(Err(reason)) => UpgradeOutcome::Aborted(reason),
             None => UpgradeOutcome::Aborted(UpgradeReason::HostDraining),
         }
     }
@@ -817,7 +832,7 @@ fn capture(
         .ok_or(UpgradeReason::CaptureFailed)?;
     let inner = state.inner.blocking_lock();
     if spec.soft_deadline_in_capture {
-        std::thread::sleep(remaining(spec.deadline_ns).saturating_sub(ROLLBACK_RESERVE));
+        std::thread::sleep(until_soft_cutoff(spec.deadline_ns));
     }
     let mut slots: Vec<_> = inner
         .terminals
