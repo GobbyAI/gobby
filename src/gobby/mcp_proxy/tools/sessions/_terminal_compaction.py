@@ -13,7 +13,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.agents.idle_detector import IdleDetector
 from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     DEFAULT_SNAPSHOT_LINES,
@@ -23,6 +23,7 @@ from gobby.terminals.pane_io import (
     PaneIO,
     SendResult,
     clear_composer,
+    composer_gate_for_write,
     log_pane_failure,
     send_pane_key,
     submit_text,
@@ -84,6 +85,7 @@ _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
+_COMPOSER_UNKNOWN_ERROR_CODE = "composer_unknown"
 _INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
 # The session's recorded CLI process no longer owns its pane, so no key may be sent.
 NO_TERMINAL_TARGET_ERROR_CODE = "no_terminal_target"
@@ -532,20 +534,27 @@ async def _send_terminal_compaction_command_locked(
     if seat_left is not None:
         pane = _SeatGuardedPane(pane, seat_left)
     try:
-        if composer_read is not None:
-            read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-            if read.state == "draft":
-                logger.info(
-                    "Refusing %s for session %s: composer holds an operator draft",
-                    command,
-                    session_id,
-                )
-                return (
-                    False,
-                    "composer holds an operator draft",
-                    False,
-                    {"error_code": _COMPOSER_OCCUPIED_ERROR_CODE, "continuation_pending": False},
-                )
+        writable, refuse_reason, composer_state = await composer_gate_for_write(
+            pane, cli_source, composer_read, action=command
+        )
+        if not writable:
+            logger.info(
+                "Refusing %s for session %s: %s",
+                command,
+                session_id,
+                refuse_reason,
+            )
+            error_code = (
+                _COMPOSER_OCCUPIED_ERROR_CODE
+                if composer_state == "draft"
+                else _COMPOSER_UNKNOWN_ERROR_CODE
+            )
+            return (
+                False,
+                refuse_reason,
+                False,
+                {"error_code": error_code, "continuation_pending": False},
+            )
         interrupt_key = _compact_interrupt_key(cli_source)
         interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
         rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds

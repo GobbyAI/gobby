@@ -119,6 +119,94 @@ async def test_real_wake_and_compaction_writers_do_not_interleave(
     assert set(phases) == {"wake", "compact"}
 
 
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+@pytest.mark.parametrize("command", ["/compact", "/clear"])
+async def test_wake_and_handoff_writes_never_concatenate_across_providers(
+    monkeypatch: pytest.MonkeyPatch,
+    cli_source: str,
+    command: str,
+) -> None:
+    """Criterion 6: a wake and a staged command never merge into one composer line.
+
+    The wake text and the command text must each appear as their own contiguous
+    write, and neither may be appended to the other -- the exact failure behind
+    "Unknown command: /compactMessage" on a staged handoff.
+    """
+    from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
+        _send_terminal_compaction_command,
+    )
+
+    store, runtime, coordinator, terminal_id = _arbitrated()
+    terminal = store.get(terminal_id)
+    assert terminal is not None
+    pane = RuntimePaneIO(runtime, terminal)
+
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration.wake_write_services", lambda: (store, coordinator)
+    )
+    monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)
+    monkeypatch.setattr("gobby.terminals.write_coordinator.asyncio.sleep", _no_sleep)
+
+    first_write_seen = asyncio.Event()
+    release = asyncio.Event()
+    runtime.gate = lambda: first_write_seen.set()
+    runtime.hold = release
+
+    wake_text = "Message from Gobby daemon: New activity available."
+
+    async def wake_writer() -> None:
+        _PHASE.set("wake")
+        await _send_tmux_session_wake(
+            "gobby-agent-arbitration",
+            wake_text,
+            submit=True,
+            clear_before_submit=True,
+            cli_source=cli_source,
+        )
+
+    async def command_writer() -> None:
+        _PHASE.set("command")
+        await _send_terminal_compaction_command(
+            pane,
+            command,
+            "session-arbitration",
+            cli_source=cli_source,
+            mark_continuation_pending=_true,
+            clear_continuation_pending=_true,
+            settle_seconds=0.0,
+        )
+
+    # Race both orderings: the command waits on the held lock while the wake is
+    # mid-sequence, and vice versa, because either writer may take it first.
+    for first, second in ((wake_writer, command_writer), (command_writer, wake_writer)):
+        runtime.write_log.clear()
+        first_write_seen.clear()
+        release.clear()
+        runtime.hold = release
+        started = asyncio.create_task(first())
+        await asyncio.wait_for(first_write_seen.wait(), timeout=5)
+        racing = asyncio.create_task(second())
+        for _ in range(10):
+            await asyncio.sleep(0)
+        release.set()
+        await asyncio.wait_for(asyncio.gather(started, racing), timeout=5)
+
+    texts = [
+        payload
+        for kind, payload in runtime.write_log
+        if kind == "text" and isinstance(payload, str)
+    ]
+    # Each writer's own text is a standalone write; the wake text never carries
+    # the command and the command never carries the wake text.
+    assert wake_text in texts
+    assert any(payload.rstrip("\n").endswith(command) for payload in texts)
+    for payload in texts:
+        if wake_text in payload:
+            assert payload.strip() == wake_text
+        if command in payload:
+            assert payload.startswith(command)
+
+
 async def test_compaction_holds_the_lock_across_its_whole_ladder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

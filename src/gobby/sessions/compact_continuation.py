@@ -32,6 +32,7 @@ from gobby.terminals.pane_io import (
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
     clear_composer,
+    composer_gate_for_write,
     submit_text,
 )
 
@@ -570,7 +571,22 @@ async def _type_handoff_compact_continuation(
         await asyncio.sleep(delay_seconds)
     try:
         # An operator draft in the composer would be submitted with the pull
-        # prompt, so empty the box first (blind: the prompt reads fine regardless).
+        # prompt, so require a positively empty composer before typing anything.
+        # The clear below only drains what this path may safely replace.
+        writable, refuse_reason, _state = await composer_gate_for_write(
+            pane,
+            cli_source,
+            composer_read,
+            action="the set_handoff continuation",
+            refuse_unknown=False,
+        )
+        if not writable:
+            logger.warning(
+                "Skipping set_handoff continuation for %s: %s",
+                session_id,
+                refuse_reason,
+            )
+            return False
         ok, reason = await clear_composer(pane, cli_source)
         if not ok:
             logger.warning(

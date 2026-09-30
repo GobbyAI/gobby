@@ -273,10 +273,7 @@ class WakeDispatcher:
             result = await self._dispatch_live_wake_unlocked(
                 session_id, priority=priority, bypass_debounce=bypass_debounce, prompt=prompt
             )
-            if result.get("skipped") == "session_active":
-                self._schedule_deferred_refresh(session_id, priority=priority)
-            elif result.get("skipped") in RETRYABLE_WAKE_SKIPS:
-                self._schedule_composer_retry(session_id, priority=priority)
+            self._schedule_wake_followup(session_id, result, priority=priority)
             return normalize_live_wake_result(result)
 
     async def dispatch_live_wakes(
@@ -291,11 +288,29 @@ class WakeDispatcher:
 
         results = await dispatch_live_wakes(self, session_ids, priority=priority)
         for session_id, result in zip(session_ids, results, strict=True):
-            if result.get("skipped") == "session_active":
-                self._schedule_deferred_refresh(session_id, priority=priority)
-            elif result.get("skipped") in RETRYABLE_WAKE_SKIPS:
-                self._schedule_composer_retry(session_id, priority=priority)
+            self._schedule_wake_followup(session_id, result, priority=priority)
         return [normalize_live_wake_result(result) for result in results]
+
+    def _schedule_wake_followup(
+        self,
+        session_id: str,
+        result: dict[str, Any],
+        *,
+        priority: str,
+    ) -> None:
+        """Keep a durable wake moving after it was withheld instead of delivered.
+
+        Every path that withholds a wake owes the message a next attempt: an
+        active row is refreshed for a later dispatch, and a composer that was not
+        confirmed empty is retried with backoff. A deferred refresh that ends in
+        one of those skips is itself such a path, so it calls back here rather
+        than dropping the withheld message after its single retry.
+        """
+        skipped = result.get("skipped")
+        if skipped == "session_active":
+            self._schedule_deferred_refresh(session_id, priority=priority)
+        elif skipped in RETRYABLE_WAKE_SKIPS:
+            self._schedule_composer_retry(session_id, priority=priority)
 
     def _schedule_deferred_refresh(self, session_id: str, *, priority: str) -> None:
         """Refresh stale active state after returning the durable wake outcome."""
@@ -435,6 +450,9 @@ class WakeDispatcher:
             return
         finished = time.monotonic()
         skipped = result.get("skipped")
+        # The refresh may have unpaused the row only to find a composer that was
+        # not confirmed empty: the withheld message still owes a retry.
+        self._schedule_wake_followup(session_id, result, priority=priority)
         # A debounced skip is routine; session_active stays at INFO because it is
         # the only trace of a session stranded as active (#22887).
         logger.log(
@@ -676,6 +694,11 @@ class WakeDispatcher:
         could not read. Priority remains on the durable notification; it never
         authorizes typing over a draft. No debounce record is written, so the
         next wake probes again.
+
+        A live turn fingerprint blocks even on an ``empty`` composer: the row was
+        reconciled idle earlier, so a turn that started since then would be
+        steered or cancelled by this write, and an earlier empty snapshot alone
+        cannot authorize a later overlapping write.
         """
         if self._activity_probe is None:
             return None
@@ -687,6 +710,13 @@ class WakeDispatcher:
                 "durable message waits for a positive empty read",
                 session_id,
                 exc_info=True,
+            )
+            return composer_unconfirmed_result(session_id, method=method)
+        if activity.turn_in_flight_fingerprint is not None:
+            logger.warning(
+                "wake for session %s deferred: a provider turn is in flight, so "
+                "the durable message waits rather than steering it",
+                session_id,
             )
             return composer_unconfirmed_result(session_id, method=method)
         state = activity.composer.state
@@ -730,17 +760,18 @@ class WakeDispatcher:
         from gobby.terminals.runtime import AutomaticWriteDeclined, IndeterminateWrite
 
         terminal_id = str(terminal.id)
-        current, state_failure = await self._preflight_live_side_effect(
-            session_id, priority=priority
-        )
-        if state_failure is not None:
-            return state_failure
-        if current is not None:
-            session = current
-        # Hold the shared composer lock across the probe and the write so the
-        # empty snapshot that authorizes typing cannot be overtaken by a handoff
-        # staging text in the gap between them.
+        # Hold the shared composer lock across the lifecycle preflight, the probe
+        # and the write: the empty snapshot that authorizes typing cannot be
+        # overtaken by a handoff staging text in the gap between them, and a row
+        # that turned active while this wake waited for the lock is not steered.
         async with composer_action_lock(terminal_id):
+            current, state_failure = await self._preflight_live_side_effect(
+                session_id, priority=priority
+            )
+            if state_failure is not None:
+                return state_failure
+            if current is not None:
+                session = current
             blocked = await self._composer_blocks_wake(
                 session_id, session, terminal, method="terminal"
             )

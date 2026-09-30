@@ -949,10 +949,41 @@ class _StickyComposerTmux(_FakeTmux):
         if lines != COMPOSER_PROBE_LINES:
             return await super().snapshot_lines(pane_id, lines, mode=mode)
         self.composer_modes.append(mode)
+        # The composer cannot hold our prompt before this path types it, so the
+        # pre-write gate probe reads empty; the held-prompt states below only
+        # appear after the write.
+        typed = any(
+            text == f"{self.prompt}\n" for _pane, text, literal in self.sent_keys if literal
+        )
         released = (
             self.releases_after_enters is not None and self.enters >= self.releases_after_enters
         )
-        return _claude_frame("❯\xa0" if released else f"❯ {self.prompt}")
+        held = typed and not released
+        return _claude_frame(f"❯ {self.prompt}" if held else "❯\xa0")
+
+
+class _ForeignDraftTmux(_FakeTmux):
+    """Composer that reads empty until our prompt is written, then shows other text.
+
+    Models the operator's own draft (or a CLI rewrite) appearing after the write:
+    the post-Enter verify must treat a draft that is not our prompt as proof that
+    our prompt left the composer.
+    """
+
+    def __init__(self, composer_text: str) -> None:
+        super().__init__()
+        self._foreign = composer_text
+
+    async def snapshot_lines(
+        self, pane_id: str, lines: int = 5, *, mode: SnapshotMode = "text"
+    ) -> str | None:
+        if lines != COMPOSER_PROBE_LINES:
+            return await super().snapshot_lines(pane_id, lines, mode=mode)
+        self.composer_modes.append(mode)
+        wrote = any(
+            text == f"{_PULL_PROMPT}\n" for _pane, text, literal in self.sent_keys if literal
+        )
+        return self._foreign if wrote else _claude_frame("❯\xa0")
 
 
 async def _send_pull_prompt(
@@ -1015,7 +1046,9 @@ class TestPullPromptFallback:
         assert await _send_pull_prompt(tmux) is True
         assert tmux.enters == 1
         assert tmux.typed == [f"{_PULL_PROMPT}\n"]
-        assert tmux.composer_modes == ["ansi"]
+        # Every composer probe -- the pre-write gate and the post-Enter verify --
+        # must use styling; faint suggestions are only distinguishable in ANSI.
+        assert set(tmux.composer_modes) == {"ansi"}
 
     @pytest.mark.asyncio
     async def test_a_paste_that_kept_its_newline_is_submitted_by_the_enter(self) -> None:
@@ -1037,8 +1070,7 @@ class TestPullPromptFallback:
         self, composer_text: str
     ) -> None:
         """A foreign draft is a positive read that our prompt went in: no retype."""
-        tmux = _FakeTmux()
-        tmux.composer_text = composer_text
+        tmux = _ForeignDraftTmux(composer_text)
 
         assert await _send_pull_prompt(tmux) is True
         assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]

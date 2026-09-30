@@ -23,6 +23,7 @@ from gobby.mcp_proxy.tools.sessions._terminal_clear import CLEAR_COMMAND
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMPACTION_REJECTION_ERROR_CODE,
     _COMPOSER_OCCUPIED_ERROR_CODE,
+    _COMPOSER_UNKNOWN_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
     _INTERRUPT_UNCONFIRMED_ERROR_CODE,
     _OBSERVED_INTERRUPT_SETTLE_SECONDS,
@@ -733,14 +734,40 @@ async def test_compaction_refuses_occupied_composer_before_interrupt() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("state", ["empty", "unknown"])
-async def test_non_draft_reads_after_enter_compact(state: ComposerState) -> None:
-    """An empty composer after the Enter proves the command went in. A frame nobody
-    can read is not a failure either: the write and the Enter were delivered, and
-    retyping into a composer that may have taken them would compact twice."""
+async def test_empty_composer_after_enter_compacts() -> None:
+    """An empty composer authorizes the compact command and it submits once."""
     pane = _GrokPane()
     mark = MagicMock(return_value=True)
-    ok, _reason, _pending, _detail = await _send_terminal_compaction_command(
+    ok, reason, _pending, detail = await _send_terminal_compaction_command(
+        pane,
+        _COMMAND,
+        "session-grok",
+        cli_source="grok",
+        mark_continuation_pending=mark,
+        clear_continuation_pending=MagicMock(return_value=True),
+        settle_seconds=_SETTLE,
+        composer_read=lambda _text: ComposerRead("empty"),
+    )
+    assert ok is True
+    assert reason is None
+    assert detail is None
+    assert pane.typed == [f"{_COMMAND}\n"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["draft", "unknown"])
+async def test_compaction_refuses_any_non_empty_composer_before_interrupt(
+    state: ComposerState,
+) -> None:
+    """Only a positively empty composer authorizes the compact command.
+
+    Josh's 2026-09-29 policy (memory 720f1129) supersedes the old blind-drain
+    fallback: an occupied or unreadable frame retains the message durably and
+    retries rather than risking a write into the operator's draft.
+    """
+    pane = _GrokPane()
+    mark = MagicMock(return_value=True)
+    ok, reason, _pending, detail = await _send_terminal_compaction_command(
         pane,
         _COMMAND,
         "session-grok",
@@ -750,5 +777,17 @@ async def test_non_draft_reads_after_enter_compact(state: ComposerState) -> None
         settle_seconds=_SETTLE,
         composer_read=lambda _text: ComposerRead(state),
     )
-    assert ok is True
-    assert pane.typed == [f"{_COMMAND}\n"]
+    assert ok is False
+    assert pane.typed == []
+    mark.assert_not_called()
+    expected = (
+        "composer holds an operator draft"
+        if state == "draft"
+        else f"composer could not be confirmed empty before {_COMMAND}"
+    )
+    assert reason == expected
+    if state == "unknown":
+        assert detail == {
+            "error_code": _COMPOSER_UNKNOWN_ERROR_CODE,
+            "continuation_pending": False,
+        }
