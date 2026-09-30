@@ -13,7 +13,7 @@
 | rust-migration.md | gobby#14920 |
 | lane-7-front-door.md | gobby#14682 |
 | lane-8-communications.md | gobby#14683 |
-| lane-9-memory.md | gobby#14899 |
+| lane-9-memory.md | gobby#14948 |
 | lane-10-openrouter.md | gobby#14747 |
 | lane-manager.md | gobby#14930 |
 | code-reviewer.md | gobby#14641 |
@@ -23,7 +23,7 @@
 | code-reviewer.md | gobby#14945 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
-| archivist.md | gobby#14860 |
+| archivist.md | gobby#14949 |
 | monitor.md | gobby#14573 |
 | plan-writer.md | gobby#14578 |
 | plan-adversary.md | gobby#14579 |
