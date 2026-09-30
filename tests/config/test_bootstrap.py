@@ -6,6 +6,7 @@ from unittest.mock import patch
 import pytest
 import yaml
 
+from gobby.cli.install_setup import ensure_daemon_config
 from gobby.config.bootstrap import (
     BootstrapConfig,
     BootstrapConfigError,
@@ -14,7 +15,6 @@ from gobby.config.bootstrap import (
     load_bootstrap,
 )
 from gobby.config.bootstrap_io import _merge_owner_fields, inject_local_files_home
-from gobby.cli.install_setup import ensure_daemon_config
 
 
 def _write_bootstrap(path: Path, content: str) -> None:
@@ -313,5 +313,7 @@ def test_writers_emit_hub_flag(tmp_path: Path) -> None:
     inject_local_files_home(injected, files_home)
     assert yaml.safe_load(injected.read_text(encoding="utf-8"))["hub"] is False
 
-    merged = _merge_owner_fields({"datastore_mode": "local", "hub": True}, {"datastore_mode": "remote"})
+    merged = _merge_owner_fields(
+        {"datastore_mode": "local", "hub": True}, {"datastore_mode": "remote"}
+    )
     assert "hub" not in merged
