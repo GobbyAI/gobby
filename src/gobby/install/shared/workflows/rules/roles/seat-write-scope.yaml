@@ -1,0 +1,35 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+# Writes with no resolvable target path fail closed: both helpers return False
+# for an empty path set.
+rules:
+  assistant-write-scope:
+    description: "The Assistant writes only under docs/ and .gobby/roles/"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      'assistant' in [variables.get('_agent_type'), variables.get('_persona_name')]
+      and event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_within(event.data, tool_input, ['docs/', '.gobby/roles/'])
+    effects:
+      - type: block
+        reason: >-
+          The Assistant writes only under `docs/` and `.gobby/roles/`. Name the
+          target with a literal path inside them.
+
+  archivist-write-scope:
+    description: "The Archivist writes only the dated desktop digest"
+    event: before_tool
+    enabled: true
+    priority: 15
+    when: >
+      'archivist' in [variables.get('_agent_type'), variables.get('_persona_name')]
+      and event.data.get('canonical_tool_kind') == 'write'
+      and not write_paths_match(event.data, tool_input,
+        '/Users/josh/Desktop/gobby-digest-\\d{4}-\\d{2}-\\d{2}\\.md')
+    effects:
+      - type: block
+        reason: >-
+          The Archivist writes only the dated desktop digest
+          `/Users/josh/Desktop/gobby-digest-YYYY-MM-DD.md`. Name it with a literal path.

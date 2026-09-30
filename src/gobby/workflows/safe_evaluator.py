@@ -571,10 +571,10 @@ def build_condition_helpers(
         task_type_in,
         tdd_gate_open,
         touches_claude_memory_path,
-        touches_docker_policy_path,
         touches_ui_design_path,
         wrapped_validation_command,
     )
+    from .condition_helpers_paths import PATH_CONDITION_HELPERS
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -651,8 +651,8 @@ def build_condition_helpers(
                 task_commit_project_path_allowlist_violation
             ),
             "touches_claude_memory_path": touches_claude_memory_path,
-            "touches_docker_policy_path": touches_docker_policy_path,
             "touches_ui_design_path": touches_ui_design_path,
+            **PATH_CONDITION_HELPERS,
         }
     )
 

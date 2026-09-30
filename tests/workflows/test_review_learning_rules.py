@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.receipt_effects import worker_staging_scope
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
@@ -259,8 +260,11 @@ class TestReviewLearningRule:
             }
         )
 
-        first = await engine.evaluate(event, session_id=EXTERNAL_SESSION_ID, variables={})
-        second = await engine.evaluate(event, session_id=EXTERNAL_SESSION_ID, variables={})
+        # Lesson dedup stages ids on the delivery's staging buffer from an
+        # offloaded thread; production always binds that buffer per delivery.
+        with worker_staging_scope():
+            first = await engine.evaluate(event, session_id=EXTERNAL_SESSION_ID, variables={})
+            second = await engine.evaluate(event, session_id=EXTERNAL_SESSION_ID, variables={})
 
         assert first.context is not None
         assert second.context is None
@@ -340,8 +344,9 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
         }
 
     engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
-    first = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
-    second = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
+    with worker_staging_scope():
+        first = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
+        second = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
 
     assert first.context is not None
     assert "<review-guidance>" in first.context
