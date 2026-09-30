@@ -350,8 +350,8 @@ class HookManager(HookManagerDispatchMixin):
         response = self._handle_after_daemon_ready(event)
         if isinstance(response, HookResponse):
             return response
-        # Loop setup and teardown plus the handler_body and response completion
-        # it contains, so the difference is the private loop's own cost.
+        # Inclusive elapsed time: loop setup and teardown, the awaited handler
+        # (handler_body), and response completion on a to_thread hop (#23063).
         with measure_hook_phase("async_handler_run"):
             return asyncio.run(response)
 
