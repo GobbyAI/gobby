@@ -190,6 +190,13 @@ class TaskValidationConfig(FeatureDefaultConfig):
             "Criterion gaps always block regardless of this setting."
         ),
     )
+    close_review_max_concurrency_per_project: int = Field(
+        default=3,
+        description=(
+            "Maximum active close reviewers per project. Other tasks' reviews count against "
+            "it at admission and promotion; a task never runs two reviews at once."
+        ),
+    )
     # Escalation settings
     escalation_enabled: bool = Field(
         default=True,
@@ -217,6 +224,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
         "max_iterations",
         "close_validation_escalation_threshold",
         "close_review_prompt_max_chars",
+        "close_review_max_concurrency_per_project",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

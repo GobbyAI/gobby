@@ -54,14 +54,22 @@ def active_review_response(ctx: RegistryContext, task_id: str) -> dict[str, Any]
 def project_busy_review_response(
     ctx: RegistryContext, evaluation: CloseEvaluation
 ) -> dict[str, Any] | None:
-    """Expose another task's active reviewer during an advisory preview."""
+    """Expose the reviewer that admission would refuse beside during an advisory preview."""
     task = evaluation.task
     if task is None:
         return None
-    review = TaskCloseReviewStore(ctx.task_manager.db).get_active_for_project(str(task.project_id))
-    if review is None or (review.task_id == task.id and review.active):
-        return None
-    return busy_review_response(task.id, review, preview=True)
+    review = TaskCloseReviewStore(ctx.task_manager.db).get_admission_blocker(
+        str(task.project_id),
+        task_id=task.id,
+        max_concurrency=project_review_capacity(ctx),
+    )
+    return None if review is None else busy_review_response(task.id, review, preview=True)
+
+
+def project_review_capacity(ctx: RegistryContext) -> int:
+    """Return the configured number of close reviewers a project may run at once."""
+    config = ctx.validation_config or TaskValidationConfig()
+    return config.close_review_max_concurrency_per_project
 
 
 def busy_review_response(
@@ -229,6 +237,7 @@ async def launch_close_review(
                     else None
                 ),
             ),
+            max_concurrency=project_review_capacity(ctx),
         )
     except TaskCloseReviewStaleTaskError:
         evaluation.error = "stale_task_state"
@@ -483,7 +492,7 @@ async def promote_close_reviews(
         while True:
             claimed = store.claim_queued(
                 project_id=queued_project_id,
-                max_concurrency=1,
+                max_concurrency=project_review_capacity(ctx),
             )
             if not claimed:
                 break

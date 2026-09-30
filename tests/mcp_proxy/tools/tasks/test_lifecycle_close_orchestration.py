@@ -113,10 +113,11 @@ async def test_preview_reports_another_task_busy_without_directing_real_close(
     evaluation.action = "Call close_task with preview=false to queue the close reviewer."
     monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
     registry = InternalToolRegistry("tasks")
-    close_tool.register_close_task(registry, _ctx())
+    close_tool.register_close_task(registry, _ctx(validation_config=_capacity(1)))
 
     result = await registry.call("close_task", {"task_id": "task", "preview": True})
 
+    assert store.admission_checks == [("task", 1)]
     assert result["preview"] is True
     assert result["error"] == "close_review_busy"
     assert result["required_actions"] == [
@@ -132,7 +133,11 @@ async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
 ) -> None:
     terminal = _review(status="invalid", run_id=_FIRST_REVIEW_RUN_ID)
     store = _Store(terminal)
-    monkeypatch.setattr(store, "get_active_for_project", lambda _project_id: terminal)
+    monkeypatch.setattr(
+        store,
+        "get_admission_blocker",
+        lambda _project_id, *, task_id, max_concurrency: terminal,
+    )
     _patch_store(monkeypatch, store)
     evaluation = _evaluation()
     monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
@@ -145,6 +150,54 @@ async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
     assert result["error"] == "close_review_busy"
     assert result["active_review_status"] == "invalid"
     assert store.created_arguments is None
+
+
+@pytest.mark.asyncio
+async def test_preview_admits_beside_another_task_review_below_configured_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = replace(_review(status="running", run_id=_FIRST_REVIEW_RUN_ID), task_id="other")
+    store = _Store(active)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx(validation_config=_capacity(2)))
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert store.admission_checks == [("task", 2)]
+    assert result["error"] == "close_review_required"
+    assert "active_task_ref" not in result
+
+
+@pytest.mark.asyncio
+async def test_launch_passes_configured_capacity_to_admission_and_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+
+    result = await launch_close_review(
+        _ctx(registry=registry, validation_config=_capacity(4)),
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    assert result["reviewer_run_id"] == _FIRST_REVIEW_RUN_ID
+    assert store.capacities[:2] == [4, 4]
+
+
+def _capacity(max_concurrency: int) -> TaskValidationConfig:
+    return TaskValidationConfig(
+        candidates=["codex/gpt-5.6-terra"],
+        close_review_max_concurrency_per_project=max_concurrency,
+    )
 
 
 @pytest.mark.asyncio
@@ -1722,12 +1775,20 @@ class _Store:
         self.extra_queued: list[TaskCloseReview] = []
         self.reusable_rejection = reusable_rejection
         self.reuse_lookup: tuple[str, str] | None = None
+        self.capacities: list[int] = []
+        self.admission_checks: list[tuple[str, int]] = []
 
     def count_unjudged_attempts(self, _task_id: str) -> int:
         return self.unjudged_attempts
 
-    def get_active_for_project(self, _project_id: str) -> TaskCloseReview | None:
-        return self.review if self.review.active else None
+    def get_admission_blocker(
+        self, _project_id: str, *, task_id: str, max_concurrency: int
+    ) -> TaskCloseReview | None:
+        # The fake holds one review, so another task's live review fills one slot.
+        self.admission_checks.append((task_id, max_concurrency))
+        review = self.review
+        blocks = review.task_id != task_id and review.active and max_concurrency <= 1
+        return review if blocks else None
 
     def get_delivered_rejected_verdict(
         self,
@@ -1745,6 +1806,7 @@ class _Store:
         return self.reusable_rejection
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
+        self.capacities.append(kwargs["max_concurrency"])
         self.created_arguments = dict(kwargs["close_arguments"])
         self.expected_task_updated_at = kwargs["expected_task_updated_at"]
         if self.created:
@@ -1765,7 +1827,7 @@ class _Store:
 
     def claim_queued(self, *, project_id: str, max_concurrency: int) -> list[TaskCloseReview]:
         assert project_id == "project"
-        assert max_concurrency == 1
+        self.capacities.append(max_concurrency)
         extra = self.extra_queued
         self.extra_queued = []
         if self.review.status != "queued" or self.queue_claimed:
