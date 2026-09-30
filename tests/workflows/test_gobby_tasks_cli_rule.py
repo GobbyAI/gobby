@@ -93,9 +93,9 @@ def test_allows_read_only_task_cli_commands(
     [
         # A quoted heredoc body is stdin data, not an invocation (#23134): the
         # phrase can sit at the start of a line inside a serialized string.
-        "RTK_DISABLED=1 uv run python - <<'PY'\nDOC = \"\"\"\ngobby tasks close\n\"\"\"\nPY",
+        'RTK_DISABLED=1 uv run python - <<\'PY\'\nDOC = """\ngobby tasks close\n"""\nPY',
         # A serialized evidence/documentation payload is data, not an invocation.
-        "RTK_DISABLED=1 uv run python - <<'PY'\nPAYLOAD = '{\"content\": \"gobby tasks close\", \"task\": \"#1\"}'\nPY",
+        'RTK_DISABLED=1 uv run python - <<\'PY\'\nPAYLOAD = \'{"content": "gobby tasks close", "task": "#1"}\'\nPY',
         # A quoted echo argument is prose.
         'echo "gobby tasks close 42"',
     ],
@@ -128,5 +128,89 @@ def test_blocks_executed_heredoc_and_substitution(
     db: HubDatabase, effect: RuleEffect, tool_name: str, command: str
 ) -> None:
     event = _shell_event(tool_name, command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
+
+
+# Assembled by concatenation so this test module is never itself an invocation
+# the guard would match in command position.
+_MUTATION = "gobby " + "tasks close 1"
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        # A `#` comment ends at the newline, so the next line is a real
+        # invocation. A comment-unaware masked pass reads the apostrophe as an
+        # unterminated single-quote span and blanks that invocation (#23134).
+        "# don't\n" + _MUTATION,
+        "echo hi # it's\n" + _MUTATION,
+        "bash <<'EOF'\n# don't\n" + _MUTATION + "\nEOF",
+        "bash <<'EOF'\necho hi  # can't\n" + _MUTATION + "\nEOF",
+        "zsh <<'EOF'\n# won't\n" + _MUTATION + "\nEOF",
+    ],
+)
+def test_blocks_command_after_apostrophe_comment(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str
+) -> None:
+    event = _shell_event(tool_name, command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        'bash -c "' + _MUTATION + '"',
+        "bash -c '" + _MUTATION + "'",
+        "sh -c 'cd /x && " + _MUTATION + "'",
+        'eval "' + _MUTATION + '"',
+        "eval '" + _MUTATION + "'",
+        "echo 1 | xargs -I{} " + _MUTATION,
+        "timeout 5 " + _MUTATION,
+        "watch -n1 '" + _MUTATION + "'",
+        "ssh host '" + _MUTATION + "'",
+    ],
+)
+def test_blocks_wrapped_mutating_script(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str
+) -> None:
+    event = _shell_event(tool_name, command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # An apostrophe comment no longer blinds the masker; the data payload
+        # stays data.
+        "uv run python - <<'PY'\n# it's\nDOC = \"\"\"\n" + _MUTATION + '\n"""\nPY',
+        "uv run python - <<'PY'\n# don't\nPAYLOAD = '{\"content\": \"" + _MUTATION + "\"}'\nPY",
+    ],
+)
+def test_allows_apostrophe_comment_before_data_payload(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    event = _shell_event("Bash", command)
+
+    assert RuleEngine(db)._should_block(effect, event) is False
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Wrapper scripts nest; every level must resolve, not just the first.
+        "bash -c \"bash -c '" + _MUTATION + "'\"",
+        "eval \"bash -c '" + _MUTATION + "'\"",
+        "sh -c \"eval '" + _MUTATION + "'\"",
+    ],
+)
+def test_blocks_nested_wrapped_mutating_script(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    event = _shell_event("Bash", command)
 
     assert RuleEngine(db)._should_block(effect, event) is True

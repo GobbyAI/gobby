@@ -82,8 +82,96 @@ def mask_quoted_spans(command: str) -> str:
     spaces, which also removes newline segment boundaries inside string data
     (the way a multi-line commit message tripped command-position anchors,
     #20887).
+
+    An unquoted ``#`` starts a comment through the newline; a quote inside it is
+    prose, not the start of a string (#23134). Without this, an apostrophe in a
+    comment reads as an unterminated single-quoted span and blanks the real
+    invocation on the following line.
     """
     return _blank_quoted_chars(command, chars=None)
+
+
+# Wrapper scripts nest (``bash -c "bash -c '…'"``); resolve them to a bounded
+# depth, matching the substitution-recursion guard used by the shell scanner.
+_WRAPPER_DEPTH = 8
+# Value-taking options for wrapper tools whose executed command follows them.
+_WATCH_VALUE_OPTIONS = frozenset(
+    {"-n", "-d", "-p", "-i", "--interval", "--precise", "--differences"}
+)
+_SSH_VALUE_OPTIONS = frozenset(
+    {
+        "-p",
+        "-l",
+        "-i",
+        "-o",
+        "-F",
+        "-c",
+        "-m",
+        "-b",
+        "-e",
+        "-D",
+        "-L",
+        "-R",
+        "-W",
+        "-J",
+        "-S",
+        "-w",
+        "-B",
+        "-I",
+        "-Q",
+    }
+)
+
+
+def _after_options(words: list[str], value_options: frozenset[str]) -> list[str]:
+    """Drop leading options (and a known value option's operand)."""
+    index = 0
+    while index < len(words) and words[index].startswith("-"):
+        index += 2 if words[index] in value_options else 1
+    return words[index:]
+
+
+def _wrapper_scripts(subject: str) -> list[str]:
+    """Return the command strings a segment's literal wrappers would execute.
+
+    Only arguments that are code count: a shell ``-c`` string, ``eval``'s
+    arguments, ``xargs``/``timeout``/``watch``/``ssh`` targets and any other
+    prefix ``_unwrap`` strips. A data argument to an ordinary command
+    (``git commit -m``) is not a wrapper and yields nothing.
+    """
+    try:
+        scan = scan_shell_command(subject)
+    except ValueError:
+        return []
+    scripts: list[str] = []
+    for stage in _pipeline_stages(scan.tokens):
+        words = _stage_words(stage)
+        if not words:
+            continue
+        unwrapped = _unwrap(words)
+        if not unwrapped:
+            continue
+        name = shell_command_name(unwrapped[0])
+        if name in _SHELLS:
+            for index, arg in enumerate(unwrapped[1:], 1):
+                if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
+                    if index + 1 < len(unwrapped):
+                        scripts.append(unwrapped[index + 1])
+                    break
+            continue
+        if name == "watch":
+            rest = _after_options(unwrapped[1:], _WATCH_VALUE_OPTIONS)
+            if rest:
+                scripts.append(rest[0])
+            continue
+        if name == "ssh":
+            rest = _after_options(unwrapped[1:], _SSH_VALUE_OPTIONS)
+            if len(rest) > 1:
+                scripts.append(rest[1])
+            continue
+        if unwrapped != words:
+            scripts.append(" ".join(unwrapped))
+    return scripts
 
 
 def command_patterns_match(
@@ -101,10 +189,21 @@ def command_patterns_match(
         return True
     subjects = executable_command_subjects(command)
     exemption_text = "\n".join(subjects)
-    if mask_quoted:
-        pattern_subjects = [mask_quoted_spans(subject) for subject in subjects]
-    else:
-        pattern_subjects = [_mask_quoted_command_boundaries(subject) for subject in subjects]
+    mask_one = mask_quoted_spans if mask_quoted else _mask_quoted_command_boundaries
+    pattern_subjects: list[str] = []
+    pending: list[tuple[str, int]] = [(subject, 0) for subject in subjects]
+    while pending:
+        text, depth = pending.pop()
+        pattern_subjects.append(mask_one(text))
+        if depth >= _WRAPPER_DEPTH:
+            continue
+        # A literal execution wrapper (``bash -c``, ``eval``, ``xargs``,
+        # ``timeout``, ``watch``, ``ssh``) runs a further command string that the
+        # scanner reads as one segment's words. Resolve it through these same
+        # rules, to a bounded depth, so a nested wrapped invocation such as
+        # ``bash -c "bash -c '…'"`` still matches (#23134).
+        for script in _wrapper_scripts(text):
+            pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
     if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False
     return not (not_pattern and re.search(not_pattern, exemption_text))
@@ -122,6 +221,11 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
         ch = command[i]
         if ch == "\\":
             i += 2
+        elif ch == "#" and (i == 0 or command[i - 1] in " \t\n;|&()"):
+            # An unquoted ``#`` at word start comments through the newline; the
+            # text inside it is prose, so a quote there must not open a span.
+            end = command.find("\n", i)
+            i = n if end < 0 else end
         elif ch == "'":
             end = command.find("'", i + 1)
             end = n if end == -1 else end

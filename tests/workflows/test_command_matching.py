@@ -13,6 +13,7 @@ import pytest
 from gobby.workflows.engine.command_matching import (
     command_patterns_match,
     executable_command_subjects,
+    mask_quoted_spans,
 )
 
 pytestmark = pytest.mark.unit
@@ -261,3 +262,44 @@ class TestCommandPatternsMatch:
             not_pattern=not_pattern,
             mask_quoted=True,
         )
+
+
+def test_mask_quoted_is_comment_aware() -> None:
+    """A `#` comment ends at the newline, so a following line stays code.
+
+    The masker reads quotes before it knows about comments, so an apostrophe
+    inside a comment used to open an unterminated single-quoted span that
+    blanked the real invocation on the next line (#23134).
+    """
+    command = "# don't\ngit commit"
+    assert "git commit" in mask_quoted_spans(command)
+    assert command_patterns_match(command, pattern=COMMIT_PATTERN, mask_quoted=True)
+
+    assert command_patterns_match(
+        "echo hi # it's\ngit commit", pattern=COMMIT_PATTERN, mask_quoted=True
+    )
+    # A real trailing comment is still a comment, and a real invocation
+    # carrying one still blocks.
+    assert command_patterns_match(
+        "git commit -m 'x' # ok", pattern=COMMIT_PATTERN, mask_quoted=True
+    )
+
+
+def test_mask_quoted_unwraps_literal_execution_wrappers() -> None:
+    """A quoted script that a shell/xargs/eval/timeout/watch/ssh runs stays code."""
+    for command in (
+        "bash -c 'git commit'",
+        'bash -c "git commit"',
+        "eval 'git commit'",
+        "echo 1 | xargs -I{} git commit",
+        "timeout 5 git commit",
+        "watch -n1 'git commit'",
+        "ssh host 'git commit'",
+    ):
+        assert command_patterns_match(command, pattern=COMMIT_PATTERN, mask_quoted=True), command
+
+    # The same words inside a data string or a data heredoc stay data.
+    assert not command_patterns_match('echo "git commit"', pattern=COMMIT_PATTERN, mask_quoted=True)
+    assert not command_patterns_match(
+        "cat <<'EOF'\ngit commit\nEOF", pattern=COMMIT_PATTERN, mask_quoted=True
+    )

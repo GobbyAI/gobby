@@ -919,3 +919,20 @@ async def test_engine_without_mask_quoted_blocks_quoted_prose(
     assert prose.decision == "block", (
         "without mask_quoted the quoted multi-line prose must be evaluated raw and block"
     )
+
+
+def test_sibling_mask_quoted_rule_is_comment_aware(
+    db: HubDatabase, manager: RuleDefinitionManager
+) -> None:
+    """A sibling mask_quoted rule shares the comment-aware masker (#23134).
+
+    ``no-full-pytest-suite`` carries ``mask_quoted: true``; an apostrophe in a
+    ``#`` comment must not blank the real suite run on the next line.
+    """
+    _sync_bundled(db)
+    body = _get_rule(manager, "no-full-pytest-suite")
+
+    assert _blocks(body, "# don't\nuv run pytest")
+    assert _blocks(body, "echo hi # it's\nuv run pytest")
+    # A commit message that merely mentions the command stays prose.
+    assert not _blocks(body, 'git commit -m "docs: run uv run pytest for the suite"')
