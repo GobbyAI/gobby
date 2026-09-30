@@ -1560,6 +1560,14 @@ async def test_tilde_navigation_refuses_before_git(
             "/repos/agent tree/nested",
         ),
         ("cd /owned; git commit -m safe", "/owned"),
+        ("cd owned && git commit -m 'fix (thing) `x`' -- a.txt", "owned"),
+        (
+            "git commit -m \"$(cat <<'EOF'\nfix: git commit guard (don't regress)\nEOF\n)\"",
+            None,
+        ),
+        ("bash -c 'echo ready' && git commit -m safe", None),
+        ("cd owned && git commit -m safe # (cd /other; see notes)\n", "owned"),
+        ('echo "$(date)" && git commit -m safe', None),
     ],
 )
 def test_conditional_navigation_preserves_literal_commit_paths(
@@ -1570,3 +1578,94 @@ def test_conditional_navigation_preserves_literal_commit_paths(
     assert len(invocations) == 1
     assert not invocations[0].cwd_unverified
     assert invocations[0].chdir == expected_chdir
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        "(cd /other && git commit -m x -- a.txt)",
+        "cd /other && (git commit -m x -- a.txt)",
+        "{ cd /other; git commit -m x -- a.txt; }",
+        "if cd /other; then git commit -m x -- a.txt; fi",
+        "if false; then\ncd /other\nfi\ngit commit -m x -- a.txt",
+        "for d in x; do cd /other; done; git commit -m x -- a.txt",
+        "case x in x) cd /other;; esac; git commit -m x -- a.txt",
+        "f() { cd /other; }; f; git commit -m x -- a.txt",
+        "pushd /other && git commit -m x -- a.txt",
+        "builtin cd /other && git commit -m x -- a.txt",
+        "env -C /other git commit -m x -- a.txt",
+        "env --chdir=/other git commit -m x -- a.txt",
+        "CDPATH=/repos cd other && git commit -m x -- a.txt",
+        "export CDPATH=/repos; cd other && git commit -m x -- a.txt",
+        "x=$(cd /other && git commit -m x -- a.txt)",
+        "echo `cd /other && git commit -m x -- a.txt`",
+        'echo "$(cd /other && git commit -m x -- a.txt)"',
+        "bash -c 'cd /other && git commit -m x -- a.txt'",
+        'sh -c "git commit -m x -- a.txt"',
+        "eval 'cd /other && git commit -m x -- a.txt'",
+    ],
+)
+async def test_unmodeled_navigation_refuses_before_git(
+    guard_harness: GuardHarness,
+    caplog: pytest.LogCaptureFixture,
+    command: str,
+) -> None:
+    """Navigation the parser cannot follow fails closed instead of inspecting the tool cwd."""
+    from gobby.workflows.commit_guard import foreign_staged_commit_conflict
+
+    invocations = parse_git_commit_invocations(command)
+    assert invocations
+    assert all(invocation.cwd_unverified for invocation in invocations)
+    git_run = AsyncMock()
+    with caplog.at_level("WARNING", logger="gobby.workflows.commit_guard"):
+        with patch.object(daemon_git, "run", git_run):
+            refusal = await foreign_staged_commit_conflict(
+                guard_harness.db,
+                guard_harness.event(command),
+                session_id=guard_harness.current_session.id,
+                project_id=guard_harness.project.id,
+                project_path=str(guard_harness.repo),
+            )
+
+    assert refusal.startswith("Commit blocked:")
+    assert "working directory" in refusal
+    git_run.assert_not_awaited()
+    assert not caplog.records
+
+
+@pytest.mark.asyncio
+async def test_subshell_navigation_cannot_hide_foreign_staged_checkout(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "owned worktree"
+    _git(guard_harness.repo, "worktree", "add", "-q", "-b", "subshell-cd", str(worktree))
+    SessionVariableManager(guard_harness.db).merge_variables(
+        guard_harness.current_session.id,
+        {
+            "task_edited_files": {guard_harness.current_task.id: ["foreign.txt"]},
+            "task_edited_file_checkouts": {
+                guard_harness.current_task.id: {str(worktree): ["foreign.txt"]},
+            },
+        },
+    )
+    (guard_harness.repo / "foreign.txt").write_text("foreign shared bytes\n", encoding="utf-8")
+    (worktree / "foreign.txt").write_text("owned isolated bytes\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+    _git(worktree, "add", "--", "foreign.txt")
+    foreign_index = _git(guard_harness.repo, "write-tree")
+    owned_index = _git(worktree, "write-tree")
+    command = (
+        f"(cd {shlex.quote(str(guard_harness.repo))} && git commit --only -m unsafe -- foreign.txt)"
+    )
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(command, workdir=worktree)
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "working directory" in response.reason
+    assert _git(guard_harness.repo, "write-tree") == foreign_index
+    assert _git(worktree, "write-tree") == owned_index

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import re
-import shlex
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -318,10 +317,6 @@ def is_commit_producing(tool_name: str, tool_input: dict[str, Any]) -> bool:
         command = tool_input.get("command")
         if not isinstance(command, str):
             return False
-        try:
-            command = shlex.join(shlex.split(command, comments=True))
-        except ValueError:
-            pass
         from gobby.workflows.commit_guard import parse_git_commit_invocations
 
         return bool(parse_git_commit_invocations(command))
