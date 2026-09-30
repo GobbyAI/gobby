@@ -26,7 +26,7 @@
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14949 |
-| monitor.md | gobby#14573 |
+| monitor.md | gobby#14965 |
 | plan-writer.md | gobby#14578 |
 | plan-adversary.md | gobby#14579 |
 
