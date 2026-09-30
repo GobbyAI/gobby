@@ -371,11 +371,16 @@ def _confirmed(
         return False
     if settlement == "exited":
         return row.state == "exited"
+    # The row must carry the whole prepared identity: locator, epoch and every
+    # recorded process key (the store keeps unrelated process keys beside them).
+    if row.state != "orphaned" or identity is None:
+        return False
+    process = row.process or {}
     return (
-        row.state == "orphaned"
-        and identity is not None
-        and row.locator_key == identity.locator_key
+        row.locator_key == identity.locator_key
+        and dict(row.locator or {}) == dict(identity.locator)
         and (identity.host_epoch is None or row.host_epoch == identity.host_epoch)
+        and all(process.get(key) == value for key, value in (identity.process or {}).items())
     )
 
 
