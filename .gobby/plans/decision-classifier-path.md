@@ -48,23 +48,26 @@ The plan also sets:
    because Decision 2 leaves one wire in use and a knob with one value is
    unjustified. Adding the OpenRouter path is a later task, taken only if Josh
    lifts Decision 2.
-2. **No hosted text, enforced in config.** Josh ruled on 2026-09-24 (relayed by
-   #14069): no memory, session or repository text goes to a hosted decision
-   provider. Pilots wait for a local Kev.
-   - `DecisionsConfig` validates that `api_base`'s host is `localhost`, an
+2. **Loopback by default, hosted only by explicit opt-in.** Josh ruled on
+   2026-09-24 (relayed by #14069) that no memory, session or repository text
+   goes to a hosted decision provider for the pilots. On 2026-09-29 he chose
+   the `allow_remote` button: loopback stays the default, and a hosted or
+   other non-loopback endpoint requires `ai.decisions.allow_remote: true`.
+   - `DecisionsConfig.allow_remote: bool = False`.
+   - With `allow_remote` false, `api_base`'s host must be `localhost`, an
      address in `127.0.0.0/8`, or `::1`. Any other host fails config
-     validation, and the error cites the ruling.
-   - A remote server stays reachable through a loopback tunnel the user
-     creates. That is the user's choice, outside Gobby.
+     validation, and the error names `allow_remote` and cites the ruling.
+   - With `allow_remote` true, any host that passes
+     `validate_optional_endpoint_url` is accepted, and the daemon logs one
+     WARNING at startup naming the host, because consumer text then leaves
+     the machine.
    - Rejected: policy prose alone. Prose makes "provider-agnostic" and "no
      hosted" read as a contradiction and enforces neither.
-   - This also makes hosted Jev unconfigurable, while Josh's 2026-09-28 note
-     names Jev as a candidate backend. The ruling was stated for pilots, so
-     this goes to Josh as a button: keep the loopback-only validator
-     (recommended, as drafted), or add an explicit `allow_remote: true`
-     opt-in for a hosted backend. If he picks the opt-in, 1.1 gains that one
-     field. The OpenRouter path stays a separate later task either way
-     (Decision 1).
+   - A remote backend reaches `enforce` only with a Decision 10 backend
+     identity. An endpoint with no `/v1/models` card runs as `shadow`, fail
+     closed.
+   - The OpenRouter `/api/alpha/decisions` path stays a separate later task
+     (Decision 1). `allow_remote` admits only `/v1/systemone` endpoints.
 3. **Gobby points at a server and never runs one.** Kev's server is its own
    process. Gobby does not install, start, stop or load models (memory
    606b6838). Josh ruled on 2026-09-24 that local Kev is an opt-in installer
@@ -390,9 +393,11 @@ when every one of these holds:
 
 1. Leaves 1.1 and 1.2 are landed on `0.5.0`, and the PD has restarted the
    daemon from the main checkout.
-2. On Josh's machine, a `/v1/systemone` server is listening on loopback, and
-   `ai.decisions.api_base` and `ai.decisions.model` name it. The server can be
-   Kev from the post-0.6 installer option, or any compatible server Josh runs.
+2. A `/v1/systemone` server is reachable, and `ai.decisions.api_base` and
+   `ai.decisions.model` name it. By default it listens on loopback on Josh's
+   machine: Kev from the post-0.6 installer option, or any compatible server
+   Josh runs. A non-loopback endpoint also needs `ai.decisions.allow_remote:
+   true` (Decision 2).
 3. `GET /api/llm/status` reports `decide` available with that model.
 4. The PD has verified a live capture against that server, committed as
    `docs/evidence/decisions/systemone-live-<date>.md`:
@@ -441,7 +446,7 @@ service that speaks the `/v1/systemone` wire.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/config/ai.py::*` — scope-reason: add `DecisionsConfig`, the three typed consumer configs, the loopback validator, and `AIConfig.decisions`
+- `src/gobby/config/ai.py::*` — scope-reason: add `DecisionsConfig`, the three typed consumer configs, the loopback validator with its `allow_remote` opt-in, and `AIConfig.decisions`
 - `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`
 - `src/gobby/ai/registry.py::AICapability`
 - `src/gobby/ai/registry_builder.py::*` — scope-reason: add `_decision_binding` and register it in `build_daemon_ai_capability_registry`
@@ -452,8 +457,8 @@ Targets:
 - `tests/ai/test_capability_registry.py::*` — scope-reason: cover the `decide` binding's unavailable and available states
 - `tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`
 
-**Granularity:** Fourteen acceptance items, one outcome: a loadable
-`ai.decisions` config surfaced as the `decide` capability. 1.1.5 to 1.1.14
+**Granularity:** Fifteen acceptance items, one outcome: a loadable
+`ai.decisions` config surfaced as the `decide` capability. 1.1.5 to 1.1.15
 give each row of the `DecisionsConfig` table its own obligation, because
 plan-coverage requires one item per work-enumerating table row. The rows share
 one model, one validator set, and two parametrized tests, and no row can land
@@ -474,6 +479,7 @@ names a different protocol, and no enum member is added.
 | Field | Type | Default |
 | --- | --- | --- |
 | `api_base` | `str \| None` | `None` |
+| `allow_remote` | `bool` | `False` |
 | `api_key` | `str \| None` | `None` |
 | `model` | `str \| None` | `None` |
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
@@ -503,10 +509,11 @@ The consumer configs:
 resolves at load like every other secret field.
 
 Validators:
-- `api_base` passes `validate_optional_endpoint_url`, and its parsed host must
-  be `localhost`, an `ipaddress` loopback address, or `::1`. Otherwise it
-  raises `ValueError("ai.decisions.api_base must be a loopback address: hosted
-  decision providers are disabled (Josh, 2026-09-24: no hosted text)")`.
+- `api_base` passes `validate_optional_endpoint_url`. Unless `allow_remote`
+  is true, its parsed host must be `localhost`, an `ipaddress` loopback
+  address, or `::1`. Otherwise it raises `ValueError("ai.decisions.api_base
+  must be a loopback address unless ai.decisions.allow_remote is true (Josh,
+  2026-09-24: no hosted text by default)")`.
 - `model` is required when `api_base` is set.
 - `mode == "enforce"` with `evaluated_model` or `evaluated_backend` unset is
   rejected, because enforcement needs a recorded evaluation.
@@ -566,8 +573,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 1.1.1 - A non-loopback `api_base` fails validation with the no-hosted-text
-  message; `localhost`, `127.0.0.1`, and `[::1]` pass. test:
+- 1.1.1 - With `allow_remote` false, a non-loopback `api_base` fails
+  validation with the message naming `allow_remote`, and `localhost`,
+  `127.0.0.1`, and `[::1]` pass. With `allow_remote` true, a hosted `https`
+  `api_base` passes and one startup WARNING names its host. test:
   `tests/config/test_decisions_config.py::test_api_base_must_be_loopback`.
 - 1.1.2 - `model` is required with `api_base`, `enforce` requires
   `evaluated_model` and `evaluated_backend`, `accept_below < accept_above`,
@@ -614,6 +623,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `accept_above` `0.9`, and unset `evaluated_model` and `evaluated_backend`,
   and rejects `enforce` without both. test:
   `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
+- 1.1.15 - `allow_remote` row: defaults to `False`, and only `True` admits a
+  non-loopback `api_base`. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
 ### 1.2 `DecisionService` with Choice, request ceiling, and cooldown [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -700,7 +712,8 @@ Transport, per Decisions 8 and 9:
 - the oversize check runs before sending;
 - the client is `httpx.AsyncClient(trust_env=False,
   follow_redirects=False)`, so proxy environment variables and redirects can
-  never carry a request off the loopback host. This follows the local-daemon
+  never carry a request to a host other than the configured `api_base`. This
+  follows the local-daemon
   hardening in `utils/daemon_client.py:396-466`. There is no config knob to
   change it;
 - `Authorization: Bearer` is sent only when `api_key` is set;
@@ -1189,7 +1202,8 @@ rows. `docs/guides/configuration.md` documents config sections and the
 
 Edits:
 - Add an `ai.decisions` section to `configuration.md`. It covers the fields,
-  the loopback rule and the ruling behind it, the `/v1/systemone` contract,
+  the loopback default, the `allow_remote` opt-in, and the rulings behind
+  them, the `/v1/systemone` contract,
   and `GET /api/llm/status`.
 - Add rows to `llm-features.md` for `ai.decisions.tool_rerank` and
   `ai.decisions.found_work`, with their modes and fallbacks.
@@ -1199,7 +1213,8 @@ Edits:
 **Acceptance:**
 
 - 4.1.1 - The configuration guide documents `ai.decisions` with the loopback
-  rule and the wire contract. behavior: "ai.decisions" in
+  default, the `allow_remote` opt-in, and the wire contract. behavior:
+  "allow_remote" in
   `docs/guides/configuration.md`.
 - 4.1.2 - The features guide lists both consumers with their modes and
   fallbacks. behavior: "found_work" in `docs/guides/llm-features.md`.
