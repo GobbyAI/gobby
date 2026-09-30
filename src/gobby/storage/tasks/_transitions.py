@@ -221,7 +221,17 @@ def claim_task(
             permitted_owners,
         )
     with db.transaction() as conn:
+        prior = conn.execute(
+            "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
+        ).fetchone()
         cursor = conn.execute(sql, params)
+        prior_owner = prior["claimed_by_session_id"] if prior is not None else None
+        if cursor.rowcount == 1 and prior_owner is not None and str(prior_owner) != session_id:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            # The ambient transaction retains the task row lock through the
+            # variable mutation. A failed cleanup rolls back the ownership move.
+            SessionVariableManager(db).release_task_claim(str(prior_owner), task_id)
 
     if cursor.rowcount == 0:
         task = get_task(db, task_id)

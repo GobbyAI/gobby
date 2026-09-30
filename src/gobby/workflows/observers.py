@@ -43,6 +43,7 @@ from gobby.workflows.observer_utils import (
     _shell_tool_succeeded,
     _successful_close_result,
 )
+from gobby.workflows.task_claim_state import active_task_id_for_edit
 from gobby.workflows.turn_interrupt_observer import detect_turn_interrupt
 
 if TYPE_CHECKING:
@@ -308,6 +309,7 @@ def reconcile_claimed_tasks(
                 session_id,
             )
         variables["task_claimed"] = bool(claimed_tasks)
+        variables["active_task_id"] = active_task_id_for_edit(variables)
         refresh_claimed_task_extra_skills(variables, None)
         return
 
@@ -370,6 +372,7 @@ def reconcile_claimed_tasks(
 
     variables["claimed_tasks"] = claimed_tasks
     variables["task_claimed"] = bool(claimed_tasks)
+    variables["active_task_id"] = active_task_id_for_edit(variables)
     refresh_claimed_task_extra_skills(variables, task_manager)
 
 
