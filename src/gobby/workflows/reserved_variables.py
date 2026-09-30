@@ -12,6 +12,11 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "_block_reasons_shown",
         HANDOFF_TURN_END_PENDING_VARIABLE,
         "consecutive_tool_blocks",
+        # Claim-sweep shields: each keeps an owner's claims through an absence,
+        # so only their dedicated writers may place or clear them.
+        "contested_terminal_expiry",
+        "handoff_compact_continue_pending",
+        "operator_claim_hold",
         "grok_pending_briefing",
         "grok_pending_delivery",
         "grok_pending_turn_context",

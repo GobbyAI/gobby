@@ -18,10 +18,12 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
-from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.storage.sessions._operator_claim_hold import record_operator_claim_hold
+from gobby.storage.tasks import LocalTaskManager, Task, _live_session_recovery
 from gobby.storage.tasks._live_session_recovery import recover_expired_live_session_claims
-from gobby.storage.tasks._transitions import escalate_task_if_owned, release_task_claim_if_owned
+from gobby.storage.tasks._transitions import escalate_abandoned_task, release_abandoned_task_claim
 from gobby.workflows.state_manager import SessionVariableManager
+from gobby.workflows.task_dirty_state import task_dirty_paths_async
 from tests.fixtures.isolated_checkout import (
     insert_isolated_machine,
     install_isolated_checkout_project,
@@ -407,7 +409,7 @@ def test_release_owned_claim_rejects_unknown_rowcount() -> None:
     connection = db.transaction.return_value.__enter__.return_value
     connection.execute.return_value.rowcount = -1
 
-    result = release_task_claim_if_owned(
+    result = release_abandoned_task_claim(
         cast(HubDatabase, db),
         "task-id",
         expected_owner="session-id",
@@ -421,7 +423,7 @@ def test_escalate_owned_claim_rejects_unknown_rowcount() -> None:
     connection = db.transaction.return_value.__enter__.return_value
     connection.execute.return_value.rowcount = -1
 
-    result = escalate_task_if_owned(
+    result = escalate_abandoned_task(
         cast(HubDatabase, db),
         "task-id",
         reason="indeterminate",
@@ -442,7 +444,7 @@ def test_expected_owner_release_is_compare_and_set(
     newer_owner = _session(temp_db, project_id, tmp_path, status="active")
     manager.claim_task(task.id, newer_owner.id, force=True)
 
-    transitioned = release_task_claim_if_owned(
+    transitioned = release_abandoned_task_claim(
         temp_db,
         task.id,
         expected_owner=session.id,
@@ -463,7 +465,7 @@ def test_expected_owner_escalation_is_compare_and_set(
     newer_owner = _session(temp_db, project_id, tmp_path, status="active")
     manager.claim_task(task.id, newer_owner.id, force=True)
 
-    transitioned = escalate_task_if_owned(
+    transitioned = escalate_abandoned_task(
         temp_db,
         task.id,
         reason="stale owner",
@@ -474,3 +476,40 @@ def test_expected_owner_escalation_is_compare_and_set(
     assert transitioned is None
     assert recovered.claimed_by_session_id == newer_owner.id
     assert not recovered.is_escalated
+
+
+@pytest.mark.parametrize(
+    "dirty", [pytest.param(True, id="escalate"), pytest.param(False, id="release")]
+)
+async def test_a_hold_placed_during_the_dirty_check_keeps_the_claim(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    dirty: bool,
+) -> None:
+    """Eligibility is re-decided inside the ownership UPDATE, after every await."""
+    repo_path = tmp_path / "repo"
+    repo_path.mkdir()
+    subprocess.run(["git", "init"], cwd=repo_path, check=True, capture_output=True, text=True)
+    if dirty:
+        (repo_path / "edited.txt").write_text("uncommitted\n", encoding="utf-8")
+    project_id = _project_id(temp_db, repo_path)
+    session = _session(temp_db, project_id, repo_path)
+    task = _live_task(temp_db, project_id, session.id, title="Held mid-recovery task")
+    _set_claim_variables(temp_db, session.id, [task], task_edited_files={task.id: ["edited.txt"]})
+    operator = _session(temp_db, project_id, repo_path, status="active")
+
+    async def hold_then_check(paths: set[str], cwd: str) -> set[str] | None:
+        record_operator_claim_hold(
+            temp_db, session.id, actor_session_id=operator.id, reason="CLI update"
+        )
+        return await task_dirty_paths_async(paths, cwd)
+
+    with patch.object(_live_session_recovery, "task_dirty_paths_async", hold_then_check):
+        result = await recover_expired_live_session_claims(temp_db, project_id=project_id)
+
+    recovered = LocalTaskManager(temp_db).get_task(task.id)
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert (result.released, result.escalated, result.raced) == (0, 0, 1)
+    assert recovered.claimed_by_session_id == session.id
+    assert not recovered.is_escalated
+    assert variables["task_edited_files"] == {task.id: ["edited.txt"]}

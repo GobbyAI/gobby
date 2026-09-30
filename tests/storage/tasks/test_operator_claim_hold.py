@@ -10,7 +10,12 @@ from unittest.mock import patch
 
 import pytest
 
-from gobby.sessions.contested_expiry import contested_expiry_stamp
+from gobby.mcp_proxy.tools.workflows._variables import set_variable
+from gobby.sessions.compact_markers import HANDOFF_COMPACT_CONTINUE_VARIABLE
+from gobby.sessions.contested_expiry import (
+    CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+    contested_expiry_stamp,
+)
 from gobby.sessions.operator_claim_hold import (
     OPERATOR_CLAIM_HOLD_VARIABLE,
     is_operator_claim_held,
@@ -154,6 +159,12 @@ def test_status_writes_leave_the_hold_in_place(
 _NOW_OFFSET = timedelta(minutes=5)
 
 
+def _in_range_stamp_with(*, minute: str = "00", second: str = "00") -> str:
+    """A fixed-width stamp an hour ago whose minute or second cannot exist."""
+    hour_ago = contested_expiry_stamp(datetime.now(UTC) - timedelta(hours=1))
+    return f"{hour_ago[:14]}{minute}:{second}{hour_ago[19:]}"
+
+
 @pytest.mark.parametrize(
     ("stamp", "expect_held"),
     [
@@ -171,6 +182,11 @@ _NOW_OFFSET = timedelta(minutes=5)
             id="future",
         ),
         pytest.param(lambda: "2026-09-29T12:00:00Z", False, id="malformed"),
+        # In-range text with an impossible field: fixed width and inside the
+        # horizon lexicographically, so only calendar validation can refuse it.
+        pytest.param(lambda: _in_range_stamp_with(second="99"), False, id="second_99"),
+        pytest.param(lambda: _in_range_stamp_with(minute="60"), False, id="minute_60"),
+        pytest.param(lambda: "2026-02-30T12:00:00.000000+00:00", False, id="feb_30"),
     ],
 )
 def test_the_python_and_sql_shields_read_the_hold_alike(
@@ -191,3 +207,88 @@ def test_the_python_and_sql_shields_read_the_hold_alike(
     sql_shields = _claim(temp_db, task.id) == session_id
 
     assert (python_shields, sql_shields) == (expect_held, expect_held)
+
+
+@pytest.mark.parametrize(
+    "marker",
+    [
+        OPERATOR_CLAIM_HOLD_VARIABLE,
+        CONTESTED_TERMINAL_EXPIRY_VARIABLE,
+        HANDOFF_COMPACT_CONTINUE_VARIABLE,
+    ],
+)
+def test_generic_set_variable_cannot_forge_a_claim_shield(
+    temp_db: HubDatabase, sample_project: dict[str, Any], marker: str
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "active")
+    forged = {"cause": "context_reuse", "created_at": contested_expiry_stamp(datetime.now(UTC))}
+
+    result = set_variable(SessionManager(temp_db), temp_db, marker, forged, session_id)
+
+    assert result["success"] is False
+    assert marker not in (read_session_variables(temp_db, session_id) or {})
+
+
+@pytest.mark.parametrize("value", [None, {}], ids=["null", "overwrite"])
+def test_generic_set_variable_cannot_clear_a_hold(
+    temp_db: HubDatabase, sample_project: dict[str, Any], value: Any
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "paused")
+    _hold(temp_db, session_id)
+
+    result = set_variable(
+        SessionManager(temp_db), temp_db, OPERATOR_CLAIM_HOLD_VARIABLE, value, session_id
+    )
+
+    assert result["success"] is False
+    assert is_operator_claim_held(read_session_variables(temp_db, session_id))
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+@pytest.mark.parametrize("attestation", ["actor_session_id", "reason"])
+def test_a_hold_without_its_attestation_shields_nothing(
+    temp_db: HubDatabase, sample_project: dict[str, Any], attestation: str
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired")
+    _hold(temp_db, session_id)
+    temp_db.execute(
+        "UPDATE session_variables SET variables = variables #- %s::text[] WHERE session_id = %s",
+        ([OPERATOR_CLAIM_HOLD_VARIABLE, attestation], session_id),
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    python_shields = is_operator_claim_held(read_session_variables(temp_db, session_id))
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert (python_shields, _claim(temp_db, task.id)) == (False, None)
+
+
+@pytest.mark.parametrize(
+    ("renewed", "kept"), [(True, True), (False, False)], ids=["live", "lapsed"]
+)
+def test_cleanup_keeps_a_hold_renewed_after_the_expiry_until_it_lapses(
+    temp_db: HubDatabase, sample_project: dict[str, Any], renewed: bool, kept: bool
+) -> None:
+    """Expire at t0, renew at t0+23h: the row outlives t0+24h cleanup until its expires_at."""
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "expired")
+    _hold(temp_db, session_id)
+    if not renewed:
+        _restamp_hold(
+            temp_db,
+            session_id,
+            contested_expiry_stamp(
+                datetime.now(UTC) - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS) - _NOW_OFFSET
+            ),
+        )
+    temp_db.execute(
+        "UPDATE sessions SET updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+        (session_id,),
+    )
+
+    SessionManager(temp_db).cleanup_expired_session_state()
+
+    assert _held(temp_db, session_id) is kept

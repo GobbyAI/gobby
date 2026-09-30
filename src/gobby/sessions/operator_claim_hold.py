@@ -33,6 +33,7 @@ OPERATOR_CLAIM_HOLD_VARIABLE = "operator_claim_hold"
 # Same fixed-width UTC stamp as the contested-expiry marker, for the same
 # reason: the SQL shield compares it as text, the Python shield as a datetime.
 _STAMP_RE = re.compile(CONTESTED_EXPIRY_STAMP_PATTERN)
+_ATTESTED_KEYS = ("actor_session_id", "reason")
 
 
 def operator_claim_hold_payload(
@@ -52,6 +53,9 @@ def operator_claim_hold_recorded_at(variables: Mapping[str, Any] | None) -> date
         return None
     payload = variables.get(OPERATOR_CLAIM_HOLD_VARIABLE)
     if not isinstance(payload, Mapping):
+        return None
+    # A hold names who placed it and why; anything less is not one.
+    if not all(isinstance(payload.get(key), str) and payload[key] for key in _ATTESTED_KEYS):
         return None
     recorded_at = payload.get("created_at")
     if not isinstance(recorded_at, str) or _STAMP_RE.fullmatch(recorded_at) is None:
@@ -82,9 +86,18 @@ def is_operator_claim_held(variables: Mapping[str, Any] | None) -> bool:
     return now - operator_claim_hold_horizon() <= recorded_at <= now
 
 
+def live_operator_claim_hold_actor(variables: Mapping[str, Any] | None) -> str | None:
+    """Return the session that placed a live hold; only it may renew or release it."""
+    if variables is None or not is_operator_claim_held(variables):
+        return None
+    actor = variables[OPERATOR_CLAIM_HOLD_VARIABLE].get("actor_session_id")
+    return actor if isinstance(actor, str) and actor else None
+
+
 __all__ = [
     "OPERATOR_CLAIM_HOLD_VARIABLE",
     "is_operator_claim_held",
+    "live_operator_claim_hold_actor",
     "operator_claim_hold_horizon",
     "operator_claim_hold_payload",
     "operator_claim_hold_recorded_at",

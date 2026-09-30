@@ -12,8 +12,9 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.operator_claim_hold import operator_claim_hold_horizon
 from gobby.storage.sessions._operator_claim_hold import (
-    clear_operator_claim_hold,
+    OperatorClaimHoldHeldByOther,
     record_operator_claim_hold,
+    release_operator_claim_hold,
 )
 
 if TYPE_CHECKING:
@@ -69,6 +70,15 @@ def _authorize(
     return caller, target
 
 
+def _held_by_other(held: OperatorClaimHoldHeldByOther) -> dict[str, Any]:
+    return {
+        "success": False,
+        "error": "Only the session that placed this live hold may renew or release it.",
+        "error_code": "claim_hold_held_by_other",
+        "actor_session_id": held.actor_session_id,
+    }
+
+
 def register_claim_hold_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
@@ -81,7 +91,8 @@ def register_claim_hold_tools(
         description=(
             "Root terminal operators only: keep a parked seat's task claims through its "
             "absence (e.g. a directed CLI update) until release, proven resume, or the "
-            "revival horizon. Returns the fixed expiry."
+            "revival horizon. Returns the fixed expiry. Only the placing session may renew "
+            "a live hold."
         ),
     )
     async def hold_session_claims(session_id: str, reason: str) -> dict[str, Any]:
@@ -96,13 +107,16 @@ def register_claim_hold_tools(
         if isinstance(authorized, dict):
             return authorized
         caller, target = authorized
-        placed_at = await asyncio.to_thread(
-            record_operator_claim_hold,
-            db,
-            target.id,
-            actor_session_id=caller.id,
-            reason=reason.strip(),
-        )
+        try:
+            placed_at = await asyncio.to_thread(
+                record_operator_claim_hold,
+                db,
+                target.id,
+                actor_session_id=caller.id,
+                reason=reason.strip(),
+            )
+        except OperatorClaimHoldHeldByOther as held:
+            return _held_by_other(held)
         return {
             "success": True,
             "session_id": target.id,
@@ -113,15 +127,23 @@ def register_claim_hold_tools(
 
     @registry.tool(
         name="release_session_claims_hold",
-        description="Root terminal operators only: release a seat's claim hold.",
+        description=(
+            "Root terminal operators only: release a seat's claim hold. Only the placing "
+            "session may release a live hold."
+        ),
     )
     async def release_session_claims_hold(session_id: str) -> dict[str, Any]:
         """Clear the hold on `session_id`; its claims return to the ordinary schedule."""
         authorized = _authorize(session_manager, session_id)
         if isinstance(authorized, dict):
             return authorized
-        _caller, target = authorized
-        released = await asyncio.to_thread(clear_operator_claim_hold, db, target.id)
+        caller, target = authorized
+        try:
+            released = await asyncio.to_thread(
+                release_operator_claim_hold, db, target.id, actor_session_id=caller.id
+            )
+        except OperatorClaimHoldHeldByOther as held:
+            return _held_by_other(held)
         return {"success": True, "session_id": target.id, "released": released}
 
 

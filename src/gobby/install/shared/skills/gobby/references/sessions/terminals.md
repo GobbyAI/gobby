@@ -39,7 +39,9 @@ Before a directed seat pause, such as a CLI update, a root terminal operator cal
 sweep does not treat the seat's exit as a death. The hold survives status writes
 and clears when revival proves the seat resumed, on `release_session_claims_hold`,
 or at the returned `expires_at` (the revival horizon). Nothing places it
-implicitly.
+implicitly. Only the placing session may renew or release a live hold, generic
+`set_variable` cannot write the marker, and expired-session cleanup keeps it
+until it lapses.
 
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 

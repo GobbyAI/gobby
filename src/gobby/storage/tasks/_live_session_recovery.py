@@ -22,8 +22,8 @@ from gobby.storage.sessions._constants import (
 )
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._transitions import (
-    escalate_task_if_owned,
-    release_task_claim_if_owned,
+    escalate_abandoned_task,
+    release_abandoned_task_claim,
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
@@ -118,7 +118,7 @@ async def recover_expired_live_session_claims(
 
         if dirty_paths == set():
             transitioned = await asyncio.to_thread(
-                release_task_claim_if_owned,
+                release_abandoned_task_claim,
                 db,
                 task.id,
                 expected_owner=owner,
@@ -130,7 +130,7 @@ async def recover_expired_live_session_claims(
         else:
             evidence_paths = dirty_paths if dirty_paths is not None else attributed_paths
             transitioned = await asyncio.to_thread(
-                escalate_task_if_owned,
+                escalate_abandoned_task,
                 db,
                 task.id,
                 reason=_escalation_reason(session, owner, evidence_paths, dirty_paths is None),

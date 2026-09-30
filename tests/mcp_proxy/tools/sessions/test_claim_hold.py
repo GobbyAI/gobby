@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -12,11 +13,15 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._claim_hold import register_claim_hold_tools
-from gobby.sessions.operator_claim_hold import OPERATOR_CLAIM_HOLD_VARIABLE
+from gobby.sessions.operator_claim_hold import (
+    OPERATOR_CLAIM_HOLD_VARIABLE,
+    operator_claim_hold_payload,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.sessions._constants import SESSION_REVIVAL_HORIZON_HOURS
 from gobby.storage.sessions._contested_expiry import read_session_variables
+from gobby.utils.datetime import utc_now
 from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import insert_isolated_machine
 from tests.storage.tasks.test_sweep_stale_claims import _make_session
@@ -116,3 +121,61 @@ def test_a_hold_without_a_reason_is_refused(
         )
 
     assert (result["error_code"], _held(temp_db, target)) == ("claim_hold_reason_required", False)
+
+
+def test_only_the_issuer_renews_or_releases_a_live_hold(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    issuer, other = (
+        _seat(temp_db, sample_project, "active"),
+        _seat(temp_db, sample_project, "active"),
+    )
+    target = _seat(temp_db, sample_project)
+    registry = _registry(temp_db)
+    with session_context_for_test(issuer):
+        asyncio.run(registry.get_tool("hold_session_claims")(session_id=target, reason="update"))
+
+    with session_context_for_test(other):
+        renewed = asyncio.run(
+            registry.get_tool("hold_session_claims")(session_id=target, reason="takeover")
+        )
+        released = asyncio.run(registry.get_tool("release_session_claims_hold")(session_id=target))
+    stored = (read_session_variables(temp_db, target) or {})[OPERATOR_CLAIM_HOLD_VARIABLE]
+
+    for refused in (renewed, released):
+        assert (refused["success"], refused["error_code"], refused["actor_session_id"]) == (
+            False,
+            "claim_hold_held_by_other",
+            issuer,
+        )
+    assert (stored["actor_session_id"], stored["reason"]) == (issuer, "update")
+
+
+def test_a_lapsed_hold_no_longer_binds_to_its_issuer(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    issuer, other = (
+        _seat(temp_db, sample_project, "active"),
+        _seat(temp_db, sample_project, "active"),
+    )
+    target = _seat(temp_db, sample_project)
+    registry = _registry(temp_db)
+    lapsed_at = utc_now() - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS, minutes=1)
+    with session_context_for_test(issuer):
+        asyncio.run(registry.get_tool("hold_session_claims")(session_id=target, reason="update"))
+    temp_db.execute(
+        "UPDATE session_variables SET variables = jsonb_set(variables, %s, %s::jsonb) "
+        "WHERE session_id = %s",
+        (
+            [OPERATOR_CLAIM_HOLD_VARIABLE],
+            json.dumps(operator_claim_hold_payload(issuer, "update", lapsed_at)),
+            target,
+        ),
+    )
+
+    with session_context_for_test(other):
+        renewed = asyncio.run(
+            registry.get_tool("hold_session_claims")(session_id=target, reason="second update")
+        )
+
+    assert (renewed["success"], renewed["actor_session_id"]) == (True, other)
