@@ -201,6 +201,18 @@ The plan also sets:
       server restarted onto a different checkpoint therefore shows up on the
       very next decision. A failed fetch, or a card missing any of those
       fields, yields no identity, and enforce then runs as shadow.
+    - `ai.decisions.identity_contract` names how identity is verified, and
+      consumer code never branches on vendor:
+      - `model_card`: the card hash above, the verified Kev contract.
+      - `response_version`: identity is `response:` plus the response's
+        `model`. Hosted Jev resolves an alias to a versioned ID there, and
+        TypeSafe recommends pinning that ID for tuned thresholds
+        (`https://docs.typesafe.ai/models.md`). Its `/v1/models` lists only
+        name, description, and release date, so no card is fetched. This
+        contract requires `allow_remote: true`, because Kev echoes any
+        requested name and so gives no version signal.
+      - unset (the default): no identity, so every consumer stays in
+        `shadow`, fail closed.
     - Residual gap: Kev reports the run path as submitted, unresolved, and
       the card carries no server source version. A checkpoint swapped in
       place at the same path with an identical card, or a server code upgrade
@@ -469,8 +481,8 @@ Targets:
 - `tests/ai/test_capability_registry.py::*` — scope-reason: cover the `decide` binding's unavailable and available states
 - `tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`
 
-**Granularity:** Fifteen acceptance items, one outcome: a loadable
-`ai.decisions` config surfaced as the `decide` capability. 1.1.5 to 1.1.15
+**Granularity:** Sixteen acceptance items, one outcome: a loadable
+`ai.decisions` config surfaced as the `decide` capability. 1.1.5 to 1.1.16
 give each row of the `DecisionsConfig` table its own obligation, because
 plan-coverage requires one item per work-enumerating table row. The rows share
 one model, one validator set, and two parametrized tests, and no row can land
@@ -492,6 +504,7 @@ names a different protocol, and no enum member is added.
 | --- | --- | --- |
 | `api_base` | `str \| None` | `None` |
 | `allow_remote` | `bool` | `False` |
+| `identity_contract` | `Literal["model_card", "response_version"] \| None` | `None` |
 | `api_key` | `str \| None` | `None` |
 | `model` | `str \| None` | `None` |
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
@@ -530,6 +543,8 @@ Validators:
 - `mode == "enforce"` with `evaluated_model` or `evaluated_backend` unset is
   rejected, because enforcement needs a recorded evaluation.
 - `max_input_tokens >= backend_max_state_tokens` is rejected.
+- `identity_contract == "response_version"` without `allow_remote` is
+  rejected.
 
 `CodeIndexCommunityLabelConfig` loses `decisions_api_base`,
 `decisions_api_key`, `decisions_model`, `decisions_min_confidence`, and
@@ -638,6 +653,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.1.15 - `allow_remote` row: defaults to `False`, and only `True` admits a
   non-loopback `api_base`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.16 - `identity_contract` row: defaults to `None`, accepts `model_card`,
+  and accepts `response_version` only with `allow_remote` true. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
 ### 1.2 `DecisionService` with Choice, request ceiling, and cooldown [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -650,12 +668,12 @@ Targets:
 - `tests/ai/fixtures/systemone_choice_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
 
-**Granularity:** Nine acceptance items, one outcome: a `choose` call that
+**Granularity:** Ten acceptance items, one outcome: a `choose` call that
 either returns validated answers from an identified backend or raises a typed
 `DecisionsUnavailable`.
 - Transport limits (1.2.2, 1.2.7), the size ceiling and truncation guard
   (1.2.3), the shared cooldown and its service identity (1.2.4, 1.2.8),
-  backend identity (1.2.9), strict parsing (1.2.1), and log redaction (1.2.5)
+  backend identity (1.2.9, 1.2.10), strict parsing (1.2.1), and log redaction (1.2.5)
   are all properties of that one call path, in one module and one test file.
 - No subset is independently closeable. A service without strict parsing
   hands consumers unvalidated answers, one without the ceiling lets Kev
@@ -728,6 +746,10 @@ Module contents:
     `backend_identity=None`. It never fails the decision and never opens the
     cooldown. If the decision request itself fails, the card task is
     cancelled and awaited.
+  - The card fetch runs only under `identity_contract: model_card`. Under
+    `response_version`, the identity is `response:` plus the parsed
+    `response_model`, and no card is fetched. With the contract unset, the
+    identity is `None`.
 - `estimate_tokens(body) -> int`, computed as `len(json.dumps(body)) // 4`.
 - `get_decision_service(config: DecisionsConfig) -> DecisionService`, which
   returns the one cached service while the Decision 9 fingerprint is
@@ -816,6 +838,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   without failing the decision or opening the cooldown, and a failed decision
   leaves no pending card task. test:
   `tests/ai/test_decisions_service.py::test_backend_identity_from_model_card`.
+- 1.2.10 - Under `response_version`, a `jev-latest` request answered as
+  `jev-1.13.0` yields identity `response:jev-1.13.0` with no card request, a
+  later answer as `jev-1.14.0` yields a different identity, and with the
+  contract unset the identity is `None`. test:
+  `tests/ai/test_decisions_service.py::test_backend_identity_from_response_version`.
 - 1.2.3 - A request over `max_input_tokens` raises `oversize` without sending,
   for path-heavy state and for low characters-per-token state. A response
   with `usage.input_tokens` at `backend_max_state_tokens - 1` or above, or
@@ -866,6 +893,7 @@ single fitted temperature, and its answers are order-sensitive (research doc
   propositions), `state`, the questions or propositions, `classifier` as
   `{status: "ok" | "unavailable", reason, answers}`, `incumbent` as
   `{status: "ok" | "unavailable", verdict}`, `backend_identity`,
+  `response_model`, `endpoint_host`,
   `latency_ms`, and `estimated_tokens`.
 - `tool_rerank` records add `k` (the requested `top_k`), `candidates` (the
   fetched `server/tool` ids in semantic order), classifier probabilities keyed
@@ -968,8 +996,9 @@ runs against `ai.decisions` loaded from the daemon config:
    Community labels are outside the harness. Their promotion evidence is
    #22604's Q1.6 report, which that task owns, cited by path in the consumer's
    promotion evidence.
-6. Write a Markdown report. It names the model, the dataset hash, and both
-   splits, and ends in an explicit gate `PASS` or `FAIL` listing each measured
+6. Write a Markdown report. It names the configured model, the reported
+   `response_model` values, the endpoint host, the backend identity, the
+   dataset hash, and both splits, and ends in an explicit gate `PASS` or `FAIL` listing each measured
    value against its threshold.
 
 A labeled set holds at least 200 records per consumer. Reports live under
