@@ -153,6 +153,18 @@ def build_results(
     return ordered[:limit]
 
 
+# The duplicate screen (#22910) only ever rules a fold out. math.sumprod scaled by
+# the norms and the exact cosine below each land within about len(vector) * 2**-53
+# (~1e-13 at 768 dims; measured 3e-16) of the true cosine, so a pair screened
+# more than this margin below the threshold cannot fold under the exact
+# arithmetic. Every other pair is still decided by that exact arithmetic.
+_DUPLICATE_SCREEN_MARGIN = 1e-9
+# Inside this norm range, norm products and per-term products stay finite and
+# normal, which that error bound assumes; other vectors are never screened.
+_SCREEN_MIN_NORM = 1e-100
+_SCREEN_MAX_NORM = 1e100
+
+
 def _norm(vector: list[float]) -> float:
     return math.sqrt(sum(a * a for a in vector))
 
@@ -187,15 +199,32 @@ def collapse_near_duplicates(
     # Hoisting them keeps the arithmetic identical (same sqrt, same product) while
     # computing each norm once.
     norms = {memory_id: _norm(vector) for memory_id, vector in vectors.items()}
+    # Without the screen, nearly every pair of distinct hits paid the exact
+    # pure-Python cosine, which dominated recall at a few hundred hits.
+    screenable = {
+        memory_id
+        for memory_id, norm in norms.items()
+        if _SCREEN_MIN_NORM <= norm <= _SCREEN_MAX_NORM
+    }
+    screen_floor = threshold - _DUPLICATE_SCREEN_MARGIN
     kept: list[Memory] = []
     for mem in ordered:
         vector = vectors.get(mem.id)
         representative: Memory | None = None
         if vector is not None:
             vector_norm = norms[mem.id]
+            screen = mem.id in screenable
             for candidate in kept:
                 candidate_vector = vectors.get(candidate.id)
                 if candidate_vector is None:
+                    continue
+                if (
+                    screen
+                    and candidate.id in screenable
+                    and len(vector) == len(candidate_vector)
+                    and math.sumprod(vector, candidate_vector)
+                    < screen_floor * vector_norm * norms[candidate.id]
+                ):
                     continue
                 if (
                     _cosine_from_norms(vector, candidate_vector, vector_norm, norms[candidate.id])
