@@ -127,6 +127,12 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     daemon_error: Option<DaemonError>,
     event_rx: Option<EventReceiver>,
     attached_generation: HashMap<PaneId, Generation>,
+    /// Panes whose direct stream is restored by a host-local reconnect: the
+    /// daemon's reconcile pass leaves their attachment alone (#23076).
+    host_recovered: std::collections::HashSet<PaneId>,
+    /// Panes with a host-local reconnect in flight, cancelled only by a pane
+    /// replace/close or a foreign host epoch (#23076).
+    host_recovering: std::collections::HashSet<PaneId>,
     pending_spawns: HashSet<String>,
     status_message: Option<String>,
     exit_reason: Option<String>,
@@ -236,6 +242,8 @@ impl Workspace {
             daemon_error: None,
             event_rx: None,
             attached_generation: HashMap::new(),
+            host_recovered: HashSet::new(),
+            host_recovering: HashSet::new(),
             pending_spawns: HashSet::new(),
             status_message: None,
             exit_reason: None,
@@ -756,6 +764,13 @@ impl<D: Daemon> Workspace<D> {
         pane_id: PaneId,
         now: tokio::time::Instant,
     ) -> Option<(String, String, Generation)> {
+        // A pane reconnecting or restored straight onto its host does not
+        // depend on the daemon control plane: a control request that failed
+        // while the daemon was away must not tear down the host stream, the
+        // reconnect still in flight, or the grant it carries (#23076).
+        if self.host_recovering.contains(&pane_id) || self.host_recovered.contains(&pane_id) {
+            return None;
+        }
         let outcome = {
             let pane = self.panes.get_mut(&pane_id)?;
             let terminal_id = pane.terminal_id.clone();

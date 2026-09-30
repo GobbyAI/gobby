@@ -32,6 +32,7 @@ use super::run_loop::{
 };
 use super::sidebar_model::SidebarModel;
 use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel};
+use host_recovery::HostRecoveries;
 
 mod actions;
 pub(super) mod arrange;
@@ -39,6 +40,7 @@ mod control;
 mod focus_hints;
 pub(super) mod jobs;
 mod jobs_apply;
+pub(super) mod host_recovery;
 pub(super) mod menu;
 mod menu_bar;
 pub(super) mod menu_dispatch;
@@ -48,7 +50,9 @@ pub(super) mod orphans;
 mod projection;
 pub(super) mod projects;
 mod reconnect;
+mod render;
 pub use projection::sync_live_chrome;
+mod signals;
 mod startup;
 mod suspend;
 mod terminal_location;
@@ -66,7 +70,9 @@ use reconnect::{
     await_reconnect_job, begin_reconnect, handle_live_event, handle_reconnect_outcome,
     recv_daemon_event, settle_sidebar_banner, wait_for_reconnect,
 };
-use suspend::{suspend_process, SuspendSignal};
+use render::{pane_hit_map_stale, render_live_workspace, resize_live_workspace};
+use signals::{recv_exit_signal, recv_resize_signal, recv_suspend_signal};
+use suspend::suspend_process;
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -116,88 +122,6 @@ impl WorkspaceView for Workspace<LiveDaemon> {
     }
 }
 
-#[cfg(unix)]
-struct ExitSignals {
-    interrupt: tokio::signal::unix::Signal,
-    terminate: tokio::signal::unix::Signal,
-    hangup: tokio::signal::unix::Signal,
-}
-
-#[cfg(unix)]
-impl ExitSignals {
-    fn new() -> std::io::Result<Self> {
-        use tokio::signal::unix::{signal, SignalKind};
-
-        Ok(Self {
-            interrupt: signal(SignalKind::interrupt())?,
-            terminate: signal(SignalKind::terminate())?,
-            hangup: signal(SignalKind::hangup())?,
-        })
-    }
-
-    async fn recv(&mut self) -> &'static str {
-        loop {
-            tokio::select! {
-                _ = self.interrupt.recv() => return "SIGINT",
-                _ = self.terminate.recv() => return "SIGTERM",
-                // Registered so the default disposition (terminate) stays
-                // off, then ignored: a hangup is not a reason to drop the
-                // window, and a terminal that really went away still ends
-                // the loop through input EOF or the failed draw.
-                _ = self.hangup.recv() => {
-                    tracing::info!(
-                        lifecycle_stage = "sighup-ignored",
-                        "SIGHUP ignored; the terminal is still attached"
-                    );
-                }
-            }
-        }
-    }
-}
-
-#[cfg(not(unix))]
-struct ExitSignals;
-
-#[cfg(not(unix))]
-impl ExitSignals {
-    fn new() -> std::io::Result<Self> {
-        Ok(Self)
-    }
-
-    async fn recv(&mut self) -> &'static str {
-        let _ = tokio::signal::ctrl_c().await;
-        "SIGINT"
-    }
-}
-
-#[cfg(unix)]
-struct ResizeSignal(tokio::signal::unix::Signal);
-
-#[cfg(unix)]
-impl ResizeSignal {
-    fn new() -> std::io::Result<Self> {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change()).map(Self)
-    }
-
-    async fn recv(&mut self) {
-        let _ = self.0.recv().await;
-    }
-}
-
-#[cfg(not(unix))]
-struct ResizeSignal;
-
-#[cfg(not(unix))]
-impl ResizeSignal {
-    fn new() -> std::io::Result<Self> {
-        Ok(Self)
-    }
-
-    async fn recv(&mut self) {
-        std::future::pending::<()>().await;
-    }
-}
-
 /// Run the interactive client against the authenticated daemon connection.
 pub async fn run_live_loop<B: Backend>(
     workspace: &mut Workspace<LiveDaemon>,
@@ -216,9 +140,10 @@ pub async fn run_live_loop<B: Backend>(
 
     let (_, fallback_events) = Daemon::subscribe(&daemon);
     let mut events = Some(workspace.event_rx.take().unwrap_or(fallback_events));
-    let mut exit_signals = install_exit_signals(workspace, &mut loop_error);
-    let mut resize_signal = install_resize_signal(workspace, &mut loop_error);
-    let mut suspend_signal = install_suspend_signal(workspace, &mut loop_error);
+    let signals = signals::install(workspace, &mut loop_error);
+    let mut exit_signals = signals.exit;
+    let mut resize_signal = signals.resize;
+    let mut suspend_signal = signals.suspend;
     let mut render_tick = tokio::time::interval(RENDER_TICK);
     render_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut next_frame_render_at = Instant::now();
@@ -237,6 +162,7 @@ pub async fn run_live_loop<B: Backend>(
     let mut sidebar_job: Option<SidebarFetchFuture> = None;
     let mut relist_job: Option<RelistFuture> = None;
     let mut recoveries: FuturesUnordered<RecoveryFuture> = FuturesUnordered::new();
+    let mut host_recoveries = HostRecoveries::default();
     // Control replies come back on a channel rather than a single in-flight
     // slot: a grant still out for one pane must never hold up the grant the
     // pane someone just clicked is waiting for (#22573).
@@ -448,12 +374,22 @@ pub async fn run_live_loop<B: Backend>(
                     output.flush()?;
                 }
                 if let Some((pane_id, Err(error))) = frame {
-                    // The recovery's waits run beside the loop; its branch
-                    // below applies each step (#22747).
-                    match workspace.begin_frame_recovery(pane_id, &error) {
-                        Ok(Some(recovery)) => recoveries.push(recovery),
-                        Ok(None) => {}
-                        Err(error) => chrome.notify(Toast::error(error.to_string())),
+                    // A direct pane reconnects straight to its host first; its
+                    // result is applied by pane identity and epoch, so a daemon
+                    // reconnect cannot cancel it (#23076). Everything else, and
+                    // every host-local failure, goes down the daemon path. The
+                    // recovery's waits run beside the loop; its branch below
+                    // applies each step (#22747).
+                    if let Some((cancel, future)) =
+                        workspace.begin_host_frame_recovery(pane_id, &error)
+                    {
+                        host_recoveries.push(pane_id, cancel, future);
+                    } else {
+                        match workspace.begin_frame_recovery(pane_id, &error) {
+                            Ok(Some(recovery)) => recoveries.push(recovery),
+                            Ok(None) => {}
+                            Err(error) => chrome.notify(Toast::error(error.to_string())),
+                        }
                     }
                 }
                 let now = Instant::now();
@@ -493,6 +429,12 @@ pub async fn run_live_loop<B: Backend>(
                     Ok(Some(next)) => recoveries.push(next),
                     Ok(None) => {}
                     Err(error) => chrome.notify(Toast::error(error.to_string())),
+                }
+                sync_live_chrome(workspace, chrome);
+            }
+            Some(recovery) = host_recoveries.next(), if !host_recoveries.is_empty() => {
+                if let Some(next) = workspace.apply_host_recovery(recovery) {
+                    recoveries.push(next);
                 }
                 sync_live_chrome(workspace, chrome);
             }
@@ -636,6 +578,9 @@ pub async fn run_live_loop<B: Backend>(
                 loop_error = Some(error);
             }
         }
+        // A pane replaced or closed while its host connect was in flight must
+        // not come back and attach (#23076).
+        host_recoveries.retain_existing(workspace);
         // Again after the event, not only before it: the event just handled is
         // usually the click or key that asked for the grant, and an event that
         // also ends the loop gets no next iteration to start it in (#22573).
@@ -661,6 +606,7 @@ pub async fn run_live_loop<B: Backend>(
     drop(sidebar_job.take());
     drop(relist_job.take());
     recoveries.clear();
+    host_recoveries.clear();
     // A reply still in flight has nowhere to land: the exit latch is set, a
     // latched exit issues no further requests, and `shutdown` releases the
     // lease this client asked for either way. Waiting for it here would hang on
@@ -680,69 +626,6 @@ pub async fn run_live_loop<B: Backend>(
     match (loop_error, shutdown_result) {
         (Some(error), _) => Err(error),
         (None, result) => result,
-    }
-}
-
-fn install_exit_signals(
-    workspace: &mut Workspace<LiveDaemon>,
-    loop_error: &mut Option<FrameError>,
-) -> Option<ExitSignals> {
-    match ExitSignals::new() {
-        Ok(signals) => Some(signals),
-        Err(error) => {
-            workspace.latch_exit(error.to_string());
-            *loop_error = Some(FrameError::Other(error.to_string()));
-            None
-        }
-    }
-}
-
-fn install_resize_signal(
-    workspace: &mut Workspace<LiveDaemon>,
-    loop_error: &mut Option<FrameError>,
-) -> Option<ResizeSignal> {
-    match ResizeSignal::new() {
-        Ok(signal) => Some(signal),
-        Err(error) => {
-            workspace.latch_exit(error.to_string());
-            *loop_error = Some(FrameError::Other(error.to_string()));
-            None
-        }
-    }
-}
-
-fn install_suspend_signal(
-    workspace: &mut Workspace<LiveDaemon>,
-    loop_error: &mut Option<FrameError>,
-) -> Option<SuspendSignal> {
-    match SuspendSignal::new() {
-        Ok(signal) => Some(signal),
-        Err(error) => {
-            workspace.latch_exit(error.to_string());
-            *loop_error = Some(FrameError::Other(error.to_string()));
-            None
-        }
-    }
-}
-
-async fn recv_exit_signal(signals: &mut Option<ExitSignals>) -> &'static str {
-    match signals {
-        Some(signals) => signals.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
-async fn recv_resize_signal(signal: &mut Option<ResizeSignal>) {
-    match signal {
-        Some(signal) => signal.recv().await,
-        None => std::future::pending().await,
-    }
-}
-
-async fn recv_suspend_signal(signal: &mut Option<SuspendSignal>) {
-    match signal {
-        Some(signal) => signal.recv().await,
-        None => std::future::pending().await,
     }
 }
 
@@ -875,50 +758,4 @@ async fn recv_workspace_frame(
         workspace.record_source_message(*pane_id, message);
     }
     next
-}
-
-fn pane_hit_map_stale(chrome: &Chrome) -> bool {
-    let Some(tab) = chrome.active_tab() else {
-        return !chrome.view.pane_infos.is_empty();
-    };
-    let (expected, _) = crate::ui::pane_layout::pane_geometry(
-        tab,
-        chrome.tab_focus(tab),
-        chrome.is_zoomed(),
-        chrome.view.terminal_area,
-        &chrome.prefs,
-    );
-    expected.len() != chrome.view.pane_infos.len()
-        || expected
-            .iter()
-            .zip(&chrome.view.pane_infos)
-            .any(|(current, drawn)| current.id != drawn.id || current.rect != drawn.rect)
-}
-
-fn render_live_workspace<B: Backend>(
-    terminal: &mut Terminal<B>,
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-) -> Result<(), FrameError> {
-    workspace.rebuild_sidebar();
-    let workspace = &*workspace;
-    terminal
-        .draw(|frame| {
-            chrome.compute_view(workspace, frame.area());
-            // Read focus out before the closure exists: capturing `chrome`
-            // inside it would borrow across the `apply_hits` below.
-            let focused = chrome.cursor_pane();
-            let mut content = |frame: &mut ratatui::Frame<'_>, area, pane| {
-                crate::views::grid::render(
-                    frame,
-                    area,
-                    workspace.pane(pane),
-                    focused == Some(pane),
-                );
-            };
-            let hits = crate::ui::render_workspace_with(frame, workspace, chrome, &mut content);
-            chrome.apply_hits(hits);
-        })
-        .map(|_| ())
-        .map_err(|error| FrameError::Other(error.to_string()))
 }

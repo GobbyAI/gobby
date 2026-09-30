@@ -2,6 +2,10 @@
 
 mod workspace;
 
+pub mod host;
+
+#[allow(unused_imports)]
+pub use host::{live_workspace_on_direct_host, DirectHost};
 pub use workspace::WorkspaceSim;
 
 use base64::engine::general_purpose::STANDARD;

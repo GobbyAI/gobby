@@ -46,6 +46,8 @@ impl Workspace<LiveDaemon> {
             daemon_error: None,
             event_rx: None,
             attached_generation: HashMap::new(),
+            host_recovered: HashSet::new(),
+            host_recovering: HashSet::new(),
             pending_spawns: HashSet::new(),
             status_message: None,
             exit_reason: None,

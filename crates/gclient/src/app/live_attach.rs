@@ -15,7 +15,7 @@ enum ProxyAttachOutcome {
 
 /// A direct attach the daemon granted: its reply, attachment id, locator
 /// and the connected source.
-type DirectAttach = (Value, String, AttachLocator, UnixSocketFrameSource);
+pub(super) type DirectAttach = (Value, String, AttachLocator, UnixSocketFrameSource);
 
 /// What one step of a pane's frame recovery came back with.
 pub(super) struct Recovery {
@@ -73,6 +73,7 @@ impl Workspace<LiveDaemon> {
                 || self.panes[&pane_id].attached_generation() == Some(snapshot.generation)
                 || self.panes[&pane_id].attach_retry_pending(now)
                 || self.panes[&pane_id].fallback_in_flight
+                || self.pane_host_attached(pane_id)
             {
                 continue;
             }
@@ -136,6 +137,7 @@ impl Workspace<LiveDaemon> {
             pane.backend = Backend::parse(backend);
         }
         pane.expected_host_epoch = locator.frame_host_epoch.clone();
+        pane.remember_host_locator(locator);
         let lease_generation = reply
             .get("lease_generation")
             .and_then(Value::as_u64)
@@ -162,6 +164,14 @@ impl Workspace<LiveDaemon> {
         let Err(error) = &result else {
             return result;
         };
+        if let Some(host) = self.begin_host_frame_recovery(pane_id, error) {
+            let (_, future) = host;
+            let mut step = self.apply_host_recovery(future.await);
+            while let Some(recovery) = step {
+                step = self.apply_frame_recovery(recovery.await)?;
+            }
+            return result;
+        }
         let mut step = self.begin_frame_recovery(pane_id, error)?;
         while let Some(recovery) = step {
             step = self.apply_frame_recovery(recovery.await)?;
@@ -212,12 +222,20 @@ impl Workspace<LiveDaemon> {
         &mut self,
         pane_id: PaneId,
     ) -> Result<Option<RecoveryFuture>, FrameError> {
-        let pane = self
-            .panes
-            .get_mut(&pane_id)
-            .ok_or_else(|| FrameError::Protocol("unknown pane".into()))?;
+        if !self.panes.contains_key(&pane_id) {
+            return Err(FrameError::Protocol("unknown pane".into()));
+        }
+        Ok(self.begin_daemon_recovery(pane_id))
+    }
+
+    /// The daemon re-attach path, with no error attached: a failed or
+    /// cancelled host-local reconnect lands here unchanged (#23076).
+    pub(super) fn begin_daemon_recovery(&mut self, pane_id: PaneId) -> Option<RecoveryFuture> {
+        self.host_recovering.remove(&pane_id);
+        self.host_recovered.remove(&pane_id);
+        let pane = self.panes.get_mut(&pane_id)?;
         if pane.fallback_in_flight {
-            return Ok(None);
+            return None;
         }
         pane.fallback_in_flight = true;
         let terminal_id = pane.terminal_id.clone();
@@ -233,10 +251,10 @@ impl Workspace<LiveDaemon> {
         self.attached_generation.remove(&pane_id);
         let generation = self.daemon.generation();
         let Some((old_attachment, deadline)) = detaching else {
-            return Ok(self.begin_recovery_attach(pane_id, terminal_id, generation));
+            return self.begin_recovery_attach(pane_id, terminal_id, generation);
         };
         let daemon = self.daemon.clone();
-        Ok(Some(Box::pin(async move {
+        Some(Box::pin(async move {
             let outcome = detach_attachment(&daemon, &terminal_id, &old_attachment, deadline).await;
             Recovery {
                 pane_id,
@@ -247,7 +265,32 @@ impl Workspace<LiveDaemon> {
                     outcome,
                 },
             }
-        })))
+        }))
+    }
+
+    /// A host-local reconnect for a pane whose frame source just died, when
+    /// the pane has a direct locator to use. `None` sends the caller down the
+    /// daemon path (#23076).
+    pub(super) fn begin_host_frame_recovery(
+        &mut self,
+        pane_id: PaneId,
+        error: &FrameError,
+    ) -> Option<(
+        std::sync::Arc<super::live_loop::host_recovery::HostCancel>,
+        super::live_loop::host_recovery::HostRecoveryFuture,
+    )> {
+        if !matches!(
+            error,
+            FrameError::Eof
+                | FrameError::Lag
+                | FrameError::Cancelled
+                | FrameError::Io(_)
+                | FrameError::Protocol(_)
+                | FrameError::Daemon(_)
+        ) {
+            return None;
+        }
+        self.begin_host_recovery(pane_id)
     }
 
     /// Applies one recovery step, returning the next when there is one.
@@ -336,7 +379,7 @@ impl Workspace<LiveDaemon> {
     /// retries; with the connection down it waits detached for the
     /// reconnect's reconcile, which a backoff earned on the dead socket would
     /// only hold back (#22747).
-    fn defer_pane_attach(&mut self, pane_id: PaneId, code: &str, error: &FrameError) {
+    pub(super) fn defer_pane_attach(&mut self, pane_id: PaneId, code: &str, error: &FrameError) {
         let pane = self.panes.get_mut(&pane_id).expect("pane exists");
         if self.daemon.ready() {
             pane.defer_attach(code, &error.to_string(), tokio::time::Instant::now());
@@ -459,6 +502,10 @@ impl Workspace<LiveDaemon> {
                     && !pane.fallback_in_flight
                     && pane.attached_generation() != Some(generation)
                     && self.attached_generation.get(pane_id) != Some(&generation)
+                    // A pane already speaking straight to its host keeps that
+                    // attachment; a daemon generation change must not replace
+                    // it with a daemon attach (#23076).
+                    && !self.pane_host_attached(*pane_id)
             })
             .collect();
         let mut started = Vec::new();
@@ -529,7 +576,7 @@ impl Workspace<LiveDaemon> {
         );
     }
 
-    fn clear_fallback_flight(&mut self, pane_id: PaneId) {
+    pub(super) fn clear_fallback_flight(&mut self, pane_id: PaneId) {
         if let Some(pane) = self.panes.get_mut(&pane_id) {
             pane.fallback_in_flight = false;
         }
@@ -537,7 +584,13 @@ impl Workspace<LiveDaemon> {
 
     /// Hands the panes of recoveries a reconnect dropped to its reconcile.
     pub(super) fn abandon_frame_recoveries(&mut self) {
-        for pane in self.panes.values_mut() {
+        for (pane_id, pane) in self.panes.iter_mut() {
+            // A host-local reconnect is not a daemon recovery: a daemon
+            // generation change must not clear its flight flag or detach the
+            // attachment it is keeping (#23076).
+            if self.host_recovering.contains(pane_id) {
+                continue;
+            }
             pane.fallback_in_flight = false;
             // A canceled recovery cannot complete this attach on the new socket.
             if matches!(&pane.attach, AttachState::Attaching { .. }) {
@@ -546,7 +599,7 @@ impl Workspace<LiveDaemon> {
         }
     }
 
-    fn retire_pane_attachment(&mut self, pane_id: PaneId) {
+    pub(super) fn retire_pane_attachment(&mut self, pane_id: PaneId) {
         if let Some(pane) = self.panes.get_mut(&pane_id) {
             let attachment = pane.attachment_id().to_string();
             if attachment.is_empty() {

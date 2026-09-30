@@ -223,7 +223,18 @@ pub(super) async fn send_live_input(
     data: &[u8],
     paste: bool,
 ) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+    if workspace.exit_reason().is_some() {
+        return Ok(());
+    }
+    // A direct pane types on its host socket, which needs no daemon. Once its
+    // stream is restored across the exec, the carried grant types even while
+    // the daemon is still away; the host refuses the key if the grant moved
+    // (#23076). Scoped to a restored pane so every other input path is
+    // unchanged: an ordinary direct pane still needs its daemon lease.
+    if workspace.host_recovered.contains(&pane_id) && workspace.pane(pane_id).direct_input() {
+        return send_live_write(workspace, pane_id, data, paste).await;
+    }
+    if !workspace.daemon_ready() {
         return Ok(());
     }
     if workspace.pane(pane_id).writable() {
@@ -287,13 +298,18 @@ pub(super) async fn send_live_write(
 ) -> Result<(), FrameError> {
     let message = {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-        if !pane.writable() {
-            return Ok(());
-        }
         // A direct native pane types on its own frame socket: no write
         // sequence, no in-flight write, no daemon round trip per key (#22573).
-        if pane.direct_input() {
+        // A pane restored by a host-local reconnect keeps typing even after a
+        // later daemon outage cleared its lease: the carried grant lives at
+        // the host, which enforces it, and the daemon was never part of that
+        // reconnect (#23076).
+        let host_recovered = workspace.host_recovered.contains(&pane_id);
+        if pane.direct_input() && (host_recovered || pane.writable()) {
             return pane.send_host_input(data, paste);
+        }
+        if !pane.writable() {
+            return Ok(());
         }
         pane.client_write_seq += 1;
         pane.in_flight_write = Some(pane.client_write_seq);
