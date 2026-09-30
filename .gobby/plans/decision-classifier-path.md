@@ -21,8 +21,16 @@ This plan adds that path. It mirrors the four parts of the embedding path:
 - one service module, `gobby.ai.decisions`;
 - per-consumer policy.
 
-The provider contract is the `POST /v1/systemone` wire. TypeSafe's Jev, Kev and
-the other open clones all serve it. Jev is one backend; the contract is the wire.
+The provider contract is the decision wire: `{model, state, questions}` in,
+typed answers per question key out. Two endpoints serve it, and both are
+first-class choices through one config shape, as local and hosted embedding
+endpoints are:
+- `POST /v1/systemone`, served by TypeSafe's direct API, Kev, and the other
+  open clones;
+- OpenRouter's `POST /api/alpha/decisions`, which serves Jev and is the
+  external test target.
+
+Jev is one backend; the contract is the wire.
 
 The plan also sets:
 - a shadow-capture and evaluation harness, so every consumer is promoted on
@@ -34,40 +42,39 @@ The plan also sets:
 ## Decision Record
 `kind: framing`
 
-1. **The contract is the `/v1/systemone` wire.** The request is
+1. **The contract is the decision wire, over two endpoints.** The request is
    `{model, state, questions}`. It returns a typed answer per question key.
-   Several backends serve it:
-   - TypeSafe's direct endpoint;
-   - Kev (Apache-2.0, MLX on Apple Silicon), whose server takes TypeSafe's SDK
-     unchanged;
-   - jeff and reflex.
+   `ai.decisions.wire_api` selects the endpoint, following
+   `GenerationEndpointConfig.wire_api` (`config/ai.py:56`):
+   - `systemone` (default): the service posts to `{api_base}/v1/systemone`.
+     TypeSafe's direct endpoint, Kev (Apache-2.0, MLX on Apple Silicon, whose
+     server takes TypeSafe's SDK unchanged), jeff and reflex serve it.
+   - `openrouter-decisions`: the service posts to `{api_base}/alpha/decisions`,
+     with `api_base` `https://openrouter.ai/api`. OpenRouter documents the
+     same request and answer schemas in its API reference
+     (`https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request.md`,
+     retrieved 2026-09-30), plus OpenRouter-only request fields. Every request
+     on this wire carries `provider: {"zdr": true, "data_collection":
+     "deny"}`, because OpenRouter documents that request-level flag and no
+     source confirms that account-level guardrails apply to this alpha
+     route. There is no knob for it.
 
-   `api_base` is the server root; the service posts to `{api_base}/v1/systemone`.
-   OpenRouter serves Jev at `/api/alpha/decisions`, an alpha contract that
-   #22604's 6.3 records as unverified. No path or `wire` field is added for it,
-   because Decision 2 leaves one wire in use and a knob with one value is
-   unjustified. Adding the OpenRouter path is a later task, taken only if Josh
-   lifts Decision 2.
-2. **Loopback by default, hosted only by explicit opt-in.** Josh ruled on
-   2026-09-24 (relayed by #14069) that no memory, session or repository text
-   goes to a hosted decision provider for the pilots. On 2026-09-29 he chose
-   the `allow_remote` button: loopback stays the default, and a hosted or
-   other non-loopback endpoint requires `ai.decisions.allow_remote: true`.
-   - `DecisionsConfig.allow_remote: bool = False`.
-   - With `allow_remote` false, `api_base`'s host must be `localhost`, an
-     address in `127.0.0.0/8`, or `::1`. Any other host fails config
-     validation, and the error names `allow_remote` and cites the ruling.
-   - With `allow_remote` true, any host that passes
-     `validate_optional_endpoint_url` is accepted, and the daemon logs one
-     WARNING at startup naming the host, because consumer text then leaves
-     the machine.
-   - Rejected: policy prose alone. Prose makes "provider-agnostic" and "no
-     hosted" read as a contradiction and enforces neither.
-   - A remote backend reaches `enforce` only with a Decision 10 backend
-     identity. An endpoint with no `/v1/models` card runs as `shadow`, fail
-     closed.
-   - The OpenRouter `/api/alpha/decisions` path stays a separate later task
-     (Decision 1). `allow_remote` admits only `/v1/systemone` endpoints.
+   Consumers never branch on the wire. Everything after the URL, the request
+   extras, and the per-wire defaults below is one code path.
+2. **Local and hosted endpoints are equal choices, as in embeddings.** On
+   2026-09-29 Josh dropped the loopback restriction and the `allow_remote`
+   opt-in, superseding his 2026-09-24 pilot ruling and his earlier
+   `allow_remote` choice. `ai.decisions.api_base` accepts any URL that passes
+   `validate_optional_endpoint_url`, exactly as `EmbeddingsConfig.api_base`
+   does (`config/persistence.py:247`). There is no remote flag and no host
+   check.
+   - Configuring a hosted `api_base` is the operator's choice to send
+     consumer text off the machine, as with a hosted embedding endpoint. The
+     OpenRouter wire's `zdr` and `data_collection` request flags (Decision 1)
+     are the privacy mechanism Gobby supplies.
+   - Every backend, local or hosted, reaches `enforce` only with a Decision
+     10 backend identity and the Activation Gate's live capture. Without
+     them it runs as `shadow`, fail closed.
 3. **Gobby points at a server and never runs one.** Kev's server is its own
    process. Gobby does not install, start, stop or load models (memory
    606b6838). Josh ruled on 2026-09-24 that local Kev is an opt-in installer
@@ -89,8 +96,10 @@ The plan also sets:
    the enum, and `_decision_binding` in `ai/registry_builder.py` follows
    `_embedding_binding`:
    - it is `unavailable` with a reason when `api_base` or `model` is unset;
-   - otherwise it is available, with provider `local`, and
-     `metadata = {model, max_input_tokens}`.
+   - otherwise it is available, with provider `systemone` or `openrouter`
+     from `wire_api`, adapter style `LLM_PROVIDER` for both wires, and
+     `metadata = {model, wire_api, max_input_tokens}`. Embeddings likewise
+     use one adapter style for local and hosted endpoints.
 
    `GET /api/llm/status` already returns `registry.status_snapshot()` for every
    capability, so no new route is needed. This supersedes the research doc's
@@ -132,6 +141,14 @@ The plan also sets:
      `DecisionsUnavailable(reason="truncated")`, and so does a response with no
      `usage.input_tokens`. `backend_max_state_tokens` defaults to 65,536 from
      the pinned Kev commit. A false positive fails closed.
+   - `backend_max_state_tokens` defaults per wire: 65,536 for `systemone`
+     from the pinned Kev commit, and 32,000 for `openrouter-decisions`, which
+     OpenRouter documents as the whole input, state plus questions
+     (`https://openrouter.ai/docs/guides/community/jev.md`, retrieved
+     2026-09-30). An explicit value overrides the default. OpenRouter's
+     response to an oversize request is undocumented. If it truncates, the
+     guard catches it; if it rejects, the request fails as `http_status`.
+     The Activation Gate's live capture records which one happens.
    - Consumers batch to `service.max_input_tokens`.
    - The evaluation (2.1) measures quality at the state sizes each consumer
      actually sends, because every consumer runs far beyond Kev's training
@@ -162,9 +179,10 @@ The plan also sets:
      propagates unchanged.
    - `get_decision_service(config)` keeps one cached service, identified by a
      fingerprint of every service-affecting field: `api_base`, `model`, a hash
-     of the resolved `api_key`, `allow_remote`, `identity_contract`,
-     `timeout_seconds`, `max_input_tokens`, `backend_max_state_tokens`, and
-     `failure_cooldown_seconds`. It is replaced whenever the fingerprint
+     of the resolved `api_key`, `wire_api`, `identity_contract`,
+     `timeout_seconds`, `max_input_tokens`, the resolved
+     `backend_max_state_tokens`, and `failure_cooldown_seconds`. It is
+     replaced whenever the fingerprint
      changes.
      - The cache exists only to share cooldown state.
      - The credential hash is used for identity only and is never logged.
@@ -204,14 +222,19 @@ The plan also sets:
       fields, yields no identity, and enforce then runs as shadow.
     - `ai.decisions.identity_contract` names how identity is verified, and
       consumer code never branches on vendor:
-      - `model_card`: the card hash above, the verified Kev contract.
+      - `model_card`: the card hash above, the verified Kev contract. It
+        is valid only with `wire_api: systemone`.
       - `response_version`: identity is `response:` plus the response's
-        `model`. Hosted Jev resolves an alias to a versioned ID there, and
-        TypeSafe recommends pinning that ID for tuned thresholds
-        (`https://docs.typesafe.ai/models.md`). Its `/v1/models` lists only
-        name, description, and release date, so no card is fetched. This
-        contract requires `allow_remote: true`, because Kev echoes any
-        requested name and so gives no version signal.
+        `model`. TypeSafe answers `jev-latest` as `jev-1.13.0` and recommends
+        pinning that ID for tuned thresholds
+        (`https://docs.typesafe.ai/models.md`). OpenRouter answers
+        `typesafe/jev-1.13` with the dated snapshot that served it, such as
+        `typesafe/jev-1.13-20260917`
+        (`https://openrouter.ai/docs/guides/community/jev-tutorial.md`). A
+        pinned minor slug can move to a newer snapshot, and the identity then
+        changes with it. No card is fetched. Kev echoes any requested name,
+        so this contract gives Kev no version signal, and the Activation
+        Gate's alias check fails it there.
       - unset (the default): no identity, so every consumer stays in
         `shadow`, fail closed.
     - Residual gap: under `model_card`, the card fetch and the decision
@@ -396,16 +419,16 @@ stamped M1, so that file is not edited. At expansion, the PD updates task
 - sizes each batch to `service.max_input_tokens`. At the 8,192-token ceiling and
   6.3's budget of about 500 tokens of state plus 250 per question per
   community, that is at most 10 communities per request instead of 20;
-- records its wire spike against the local `/v1/systemone` server only. The
-  OpenRouter alpha arm is dropped under Decisions 1 and 2, and the Activation
-  Gate's live capture (item 4) satisfies the spike;
+- records its two-arm wire spike as the Activation Gate's live capture
+  (item 4), one capture per wire: a `/v1/systemone` server and OpenRouter's
+  `/api/alpha/decisions`;
 - keeps 6.3.2 to 6.3.5 unchanged.
 
 Two stamped 6.3 items change their anchors:
 - 6.3.1's test anchor (`tests/llm/test_decisions_client.py`) is satisfied by
   1.2.1 here.
-- 6.3.6's two-arm spike is satisfied by the Activation Gate's live capture
-  (item 4), with the OpenRouter arm dropped under Decision 2.
+- 6.3.6's two-arm spike is satisfied by the Activation Gate's live
+  captures (item 4) for both wires.
 
 The completed plan's M1 is not edited. The PD records both substitutions in
 #22604's description and validation criteria at expansion, so the close
@@ -424,14 +447,13 @@ when every one of these holds:
 
 1. Leaves 1.1 and 1.2 are landed on `0.5.0`, and the PD has restarted the
    daemon from the main checkout.
-2. A `/v1/systemone` server is reachable, and `ai.decisions.api_base` and
-   `ai.decisions.model` name it. By default it listens on loopback on Josh's
-   machine: Kev from the post-0.6 installer option, or any compatible server
-   Josh runs. A non-loopback endpoint also needs `ai.decisions.allow_remote:
-   true` (Decision 2).
+2. A decision endpoint is reachable, and `ai.decisions.wire_api`,
+   `ai.decisions.api_base` and `ai.decisions.model` name it: a
+   `/v1/systemone` server, such as Kev from the post-0.6 installer option, or
+   OpenRouter's `/api/alpha/decisions`.
 3. `GET /api/llm/status` reports `decide` available with that model.
-4. The PD has verified a live capture against that server, committed as
-   `docs/evidence/decisions/systemone-live-<date>.md`:
+4. The PD has verified a live capture against that endpoint, committed as
+   `docs/evidence/decisions/<wire_api>-live-<date>.md`:
    - the Decision 10 backend identity under the configured
      `identity_contract`;
    - one Choice and one Noul round trip that the service parses;
@@ -442,15 +464,22 @@ when every one of these holds:
      - `model_card` (a server Josh runs): the server's source commit, its
        `/v1/models` card, and the limit and usage semantics read from that
        source;
-     - `response_version` (hosted): `ai.decisions.model` set to the
-       versioned ID, such as `jev-1.13.0`, and every captured response
-       reporting that ID; TypeSafe's documented state limit, error codes,
-       and `usage.input_tokens` semantics, cited by URL and retrieval date;
-       and two live checks: a request estimated just under
+     - `response_version` (TypeSafe direct or OpenRouter):
+       `ai.decisions.model` pinned to a version (`jev-1.13.0`, or
+       `typesafe/jev-1.13`), and every captured response reporting one
+       resolved version; an alias check, where a request for the provider's
+       alias (`jev-latest`, or `~typesafe/jev-latest`) must come back as a
+       resolved version different from the alias, which a server that echoes
+       names fails; the provider's documented input limit, error codes, and
+       `usage.input_tokens` semantics, cited by URL and retrieval date; and
+       two live checks: a request estimated just under
        `backend_max_state_tokens` answers with a `usage.input_tokens`
-       consistent with the measured ratio, and a request over it returns a
-       documented error or a usage the Decision 8 guard classifies as
-       `truncated`.
+       consistent with the measured ratio, and a request over it returns an
+       error or a usage the Decision 8 guard classifies as `truncated`, with
+       the observed behavior recorded. OpenRouter captures also record the
+       model's `canonical_slug` from `GET
+       https://openrouter.ai/api/v1/models?output_modalities=decisions` and
+       that the `zdr` and `data_collection` flags were sent.
 
      If the limit or the usage semantics are undocumented, unknown, or
      mismatched, this item does not hold.
@@ -489,13 +518,13 @@ The consumer contract #22075's own plan inherits (Decision 14):
 `kind: framing`
 
 **Goal:** Gobby has a configured, status-reporting decision capability and one
-service that speaks the `/v1/systemone` wire.
+service that speaks the decision wire over either endpoint.
 
 ### 1.1 `ai.decisions` config and the `decide` capability binding [category: code]
 `kind: deliverable`
 
 Targets:
-- `src/gobby/config/ai.py::*` — scope-reason: add `DecisionsConfig`, the three typed consumer configs, the loopback validator with its `allow_remote` opt-in, and `AIConfig.decisions`
+- `src/gobby/config/ai.py::*` — scope-reason: add `DecisionsConfig` with its `wire_api` choice, the three typed consumer configs, and `AIConfig.decisions`
 - `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`
 - `src/gobby/ai/registry.py::AICapability`
 - `src/gobby/ai/registry_builder.py::*` — scope-reason: add `_decision_binding` and register it in `build_daemon_ai_capability_registry`
@@ -520,21 +549,22 @@ alone without leaving `AIConfig` unloadable.
 (`ai/registry_builder.py:126-162`). That binding returns
 `CapabilityBinding.unavailable(capability, provider, adapter_style=..., reason=..., models=..., metadata=...)`
 when unconfigured and `CapabilityBinding(...)` when available. Use the
-existing `AIAdapterStyle.LOCAL` (`ai/registry.py:49`). `OPENAI_COMPATIBLE`
-names a different protocol, and no enum member is added.
+existing `AIAdapterStyle.LLM_PROVIDER` (`ai/registry.py:54`) for both wires,
+as `_embedding_binding` uses one style for local and hosted endpoints.
+`OPENAI_COMPATIBLE` names a different protocol, and no enum member is added.
 
 `DecisionsConfig` (`extra="forbid"`, like `AIConfig`) has these fields:
 
 | Field | Type | Default |
 | --- | --- | --- |
 | `api_base` | `str \| None` | `None` |
-| `allow_remote` | `bool` | `False` |
+| `wire_api` | `Literal["systemone", "openrouter-decisions"]` | `"systemone"` |
 | `identity_contract` | `Literal["model_card", "response_version"] \| None` | `None` |
 | `api_key` | `str \| None` | `None` |
 | `model` | `str \| None` | `None` |
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
-| `max_input_tokens` | `int` | `8192`, `ge=256`, below `backend_max_state_tokens` |
-| `backend_max_state_tokens` | `int` | `65536`, `gt=0` |
+| `max_input_tokens` | `int` | `8192`, `ge=256`, below the resolved `backend_max_state_tokens` |
+| `backend_max_state_tokens` | `int \| None` | `None`, resolving to `65536` for `systemone` and `32000` for `openrouter-decisions`; an explicit value is `gt=0` |
 | `failure_cooldown_seconds` | `float` | `60`, `ge=0` |
 | `community_label` | `ChoiceConsumerConfig` | `default_factory` |
 | `tool_rerank` | `RerankConsumerConfig` | `default_factory` |
@@ -559,17 +589,19 @@ The consumer configs:
 resolves at load like every other secret field.
 
 Validators:
-- `api_base` passes `validate_optional_endpoint_url`. Unless `allow_remote`
-  is true, its parsed host must be `localhost`, an `ipaddress` loopback
-  address, or `::1`. Otherwise it raises `ValueError("ai.decisions.api_base
-  must be a loopback address unless ai.decisions.allow_remote is true (Josh,
-  2026-09-24: no hosted text by default)")`.
+- `api_base` passes `validate_optional_endpoint_url`, as in
+  `EmbeddingsConfig`. Any host is accepted.
 - `model` is required when `api_base` is set.
 - `mode == "enforce"` with `evaluated_model` or `evaluated_backend` unset is
   rejected, because enforcement needs a recorded evaluation.
-- `max_input_tokens >= backend_max_state_tokens` is rejected.
-- `identity_contract == "response_version"` without `allow_remote` is
+- `max_input_tokens` at or above the resolved `backend_max_state_tokens` is
   rejected.
+- `identity_contract == "model_card"` with `wire_api` other than
+  `systemone` is rejected, because only a `/v1/systemone` server exposes the
+  card.
+- A `resolved_backend_max_state_tokens` property returns the explicit value
+  or the per-wire default. The service, the fingerprint, and the validators
+  read only that property.
 
 `CodeIndexCommunityLabelConfig` loses `decisions_api_base`,
 `decisions_api_key`, `decisions_model`, `decisions_min_confidence`, and
@@ -591,9 +623,10 @@ precondition against the shared config. The rest of the test is unchanged.
 `_decision_binding(config)`:
 - `unavailable` with reason "Decision capability requires ai.decisions.api_base
   and ai.decisions.model." when either is unset;
-- otherwise available, with provider `local`,
+- otherwise available, with provider `systemone` or `openrouter` from
+  `wire_api`, `adapter_style=AIAdapterStyle.LLM_PROVIDER`,
   `models=(config.ai.decisions.model,)`, and
-  `metadata={"max_input_tokens": ..., "api_base_configured": True}`.
+  `metadata={"wire_api": ..., "max_input_tokens": ..., "api_base_configured": True}`.
 
 Register it in `build_daemon_ai_capability_registry` beside
 `_embedding_binding`. Any test that pins the capability list or the
@@ -625,11 +658,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 1.1.1 - With `allow_remote` false, a non-loopback `api_base` fails
-  validation with the message naming `allow_remote`, and `localhost`,
-  `127.0.0.1`, and `[::1]` pass. With `allow_remote` true, a hosted `https`
-  `api_base` passes and one startup WARNING names its host. test:
-  `tests/config/test_decisions_config.py::test_api_base_must_be_loopback`.
+- 1.1.1 - A loopback `api_base` and a hosted `https://openrouter.ai/api`
+  both load, a malformed URL is rejected by `validate_optional_endpoint_url`,
+  and no `allow_remote` field exists. test:
+  `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
 - 1.1.2 - `model` is required with `api_base`, `enforce` requires
   `evaluated_model` and `evaluated_backend`, `accept_below < accept_above`,
   every threshold outside
@@ -641,8 +673,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`. test:
   `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
 - 1.1.4 - `decide` reports unavailable with its reason when unconfigured and
-  available with the model and `adapter_style` `local` when configured, and it
-  appears in the registry status snapshot. test:
+  available with the model, `adapter_style` `llm_provider`, and provider
+  `systemone` or `openrouter` by `wire_api` when configured, and it appears
+  in the registry status snapshot. test:
   `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
 - 1.1.5 - `api_base` row: defaults to `None`, and the capability is
   unavailable while it is unset. test:
@@ -655,10 +688,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.1.8 - `timeout_seconds` row: defaults to `2.0` and rejects `0`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.9 - `max_input_tokens` row: defaults to `8192`, rejects `255`, and
-  rejects a value at or above `backend_max_state_tokens`. test:
+  rejects a value at or above the resolved `backend_max_state_tokens`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-- 1.1.10 - `backend_max_state_tokens` row: defaults to `65536` and rejects
-  `0`. test:
+- 1.1.10 - `backend_max_state_tokens` row: defaults to `None`, resolves to
+  `65536` under `systemone` and `32000` under `openrouter-decisions`, keeps
+  an explicit value, and rejects `0`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 - 1.1.11 - `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`.
   test:
@@ -675,11 +709,12 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `accept_above` `0.9`, and unset `evaluated_model` and `evaluated_backend`,
   and rejects `enforce` without both. test:
   `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-- 1.1.15 - `allow_remote` row: defaults to `False`, and only `True` admits a
-  non-loopback `api_base`. test:
+- 1.1.15 - `wire_api` row: defaults to `systemone`, accepts
+  `openrouter-decisions`, and rejects any other value. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-- 1.1.16 - `identity_contract` row: defaults to `None`, accepts `model_card`,
-  and accepts `response_version` only with `allow_remote` true. test:
+- 1.1.16 - `identity_contract` row: defaults to `None`, accepts
+  `response_version` with either wire, and accepts `model_card` only with
+  `systemone`. test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
 
 ### 1.2 `DecisionService` with Choice, request ceiling, and cooldown [category: code] (depends: 1.1)
@@ -691,15 +726,17 @@ Targets:
 - `tests/llm/test_llm_claude.py::TestRetryAsync`
 - `tests/ai/test_decisions_service.py`
 - `tests/ai/fixtures/systemone_choice_response.json`
+- `tests/ai/fixtures/openrouter_decisions_choice_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
 
-**Granularity:** Ten acceptance items, one outcome: a `choose` call that
+**Granularity:** Eleven acceptance items, one outcome: a `choose` call that
 either returns validated answers with their backend identity metadata, which
 is `None` when identity is unverified, or raises a typed
 `DecisionsUnavailable`.
 - Transport limits (1.2.2, 1.2.7), the size ceiling and truncation guard
   (1.2.3), the shared cooldown and its service identity (1.2.4, 1.2.8),
-  backend identity (1.2.9, 1.2.10), strict parsing (1.2.1), and log redaction (1.2.5)
+  backend identity (1.2.9, 1.2.10), strict parsing (1.2.1), the
+  OpenRouter wire (1.2.11), and log redaction (1.2.5)
   are all properties of that one call path, in one module and one test file.
 - No subset is independently closeable. A service without strict parsing
   hands consumers unvalidated answers, one without the ceiling lets Kev
@@ -719,8 +756,8 @@ Kev's README both require `instructions` on every question, so
 
 `get_decision_service(config)` fingerprints every service-affecting field
 (Decision 9): `api_base`, `model`, a sha256 of the resolved `api_key`,
-`allow_remote`, `identity_contract`, `timeout_seconds`, `max_input_tokens`,
-`backend_max_state_tokens`, and `failure_cooldown_seconds`. Consumer fields
+`wire_api`, `identity_contract`, `timeout_seconds`, `max_input_tokens`, the
+resolved `backend_max_state_tokens`, and `failure_cooldown_seconds`. Consumer fields
 are excluded, so a policy-only reload keeps the cached service.
 
 The documented API is the contract, and the wire shape is pinned from it
@@ -731,8 +768,20 @@ before any code, with no live server:
   local backend: `MODEL_NAMES`, `SERVE_MAX_STATE`, `SERVE_MAX_BRANCH`, the
   silent truncation in `Server.submit`, the `usage` block in `Server._body`,
   and the `/v1/models` card fields Decision 10 hashes.
-- `tests/ai/fixtures/systemone_choice_response.json` is authored from that
-  documented schema, with `usage.input_tokens`.
+- It records OpenRouter's documented Decisions contract as retrieved on
+  2026-09-30: the API reference's `DecisionsRequest` and
+  `DecisionsResponse` (required `model`, `answers`, `usage`; optional `id`
+  and `provider`; `usage.input_tokens`, `output_tokens`, `cost`), the
+  tutorial's live-captured response, the 32,000-token input limit, and the
+  documented error statuses 400, 401, 402, 403, 404, 413, 429, 500, 502,
+  503, 524 and 529 with the `{"error": {"code", "message"}}` body. It also
+  records what stays unverified: oversize behavior, decision-specific rate
+  limits, and whether a dated slug is accepted as a request model.
+- `tests/ai/fixtures/systemone_choice_response.json` is authored from the
+  TypeSafe schema, with `usage.input_tokens`.
+  `tests/ai/fixtures/openrouter_decisions_choice_response.json` is authored
+  from OpenRouter's schema and its tutorial capture, with a dated `model`,
+  `id`, `provider`, and `usage` carrying `output_tokens` and `cost`.
 - Where 6.3's field names differ from the documented schema, the schema wins,
   and the evidence file records the difference.
 
@@ -795,6 +844,10 @@ Transport, per Decisions 8 and 9:
   follows the local-daemon
   hardening in `utils/daemon_client.py:396-466`. There is no config knob to
   change it;
+- the URL is `{api_base}/v1/systemone` under `systemone` and
+  `{api_base}/alpha/decisions` under `openrouter-decisions`, and only the
+  latter adds `provider: {"zdr": true, "data_collection": "deny"}` to the
+  body;
 - `Authorization: Bearer` is sent only when `api_key` is set;
 - every 3xx and every 4xx except 429 raise `http_status` without retry;
 - transport errors and 429, 529 and 5xx retry through `retry_async` with the
@@ -803,9 +856,17 @@ Transport, per Decisions 8 and 9:
 - responses are parsed strictly. Any violation raises `parse` before any
   consumer policy sees it:
   - the response `model` must be a non-empty string. It is returned as
-    `response_model` and never compared with the request, because the
-    documented API answers `jev-latest` with a resolved version such as
-    `jev-1.13.0`. Backend identity is Decision 10's job;
+    `response_model` and never compared with the request, because both
+    documented APIs answer with a resolved version: `jev-1.13.0` for
+    `jev-latest` on TypeSafe, and `typesafe/jev-1.13-20260917` for
+    `typesafe/jev-1.13` on OpenRouter. Backend identity is Decision 10's
+    job;
+  - response fields outside the answer schemas and `usage.input_tokens`,
+    such as OpenRouter's `id`, `provider`, `usage.output_tokens` and
+    `usage.cost`, are ignored;
+  - a Choice answer must carry `probabilities` and `confidence`. OpenRouter's
+    reference marks them optional, TypeSafe's marks them required, and a
+    Choice answer without them raises `parse`;
   - answer keys must match the question keys exactly;
   - each answer's `type` must equal its question's type;
   - probability keys must match the option keys;
@@ -819,8 +880,9 @@ Transport, per Decisions 8 and 9:
     Decision 8, before any policy sees the answers;
   - the truncation guard is sound only for a backend whose
     `usage.input_tokens` counts every encoded state token and whose actual
-    state limit equals `backend_max_state_tokens`. Kev at the pinned commit
-    satisfies both. The Activation Gate's live capture verifies both for the
+    state limit equals the resolved `backend_max_state_tokens`. Kev at the
+    pinned commit satisfies both, and OpenRouter documents
+    `usage.input_tokens` and a 32,000-token limit. The Activation Gate's live capture verifies both for the
     configured server, and an unverified or mismatched server keeps every
     consumer in `shadow`;
 - the Decision 9 cooldown rules apply exactly: remote failures open it, and
@@ -857,9 +919,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.7 - The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a
   redirect. test:
   `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.
-- 1.2.8 - A rotated secret, a changed timeout, ceiling, `allow_remote`,
+- 1.2.8 - A rotated secret, a changed timeout, ceiling, `wire_api`,
   `identity_contract` (including `None` to `response_version` or
-  `model_card` on an otherwise identical config), or
+  `model_card` on an otherwise identical config), or resolved
   `backend_max_state_tokens` yields a new service, while identical config
   shares one cooldown. test:
   `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.
@@ -892,10 +954,19 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.5 - Log records carry no state or option text. test:
   `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.
 - 1.2.6 - The pinned contract record holds the documented TypeSafe Choice and
-  Noul schemas and the Kev `0fe8fc97c2bc` reference facts: model names, state
-  and branch limits, truncation, `usage`, and the `/v1/models` card fields.
+  Noul schemas, the Kev `0fe8fc97c2bc` reference facts (model names, state
+  and branch limits, truncation, `usage`, and the `/v1/models` card fields),
+  and OpenRouter's documented Decisions contract with its unverified items.
   behavior:
-  "/v1/systemone" in `docs/evidence/decisions/systemone-wire.md`.
+  "/alpha/decisions" in `docs/evidence/decisions/systemone-wire.md`.
+- 1.2.11 - Under `openrouter-decisions`, `choose` posts to
+  `{api_base}/alpha/decisions` with the bearer key and `provider: {"zdr":
+  true, "data_collection": "deny"}`, parses the OpenRouter fixture while
+  ignoring `id`, `provider`, `output_tokens` and `cost`, and under
+  `response_version` returns identity `response:typesafe/jev-1.13-20260917`.
+  400, 402 and 413 make one call and raise `http_status`; 502, 503 and 524
+  retry. A `systemone` request carries no `provider` field. test:
+  `tests/ai/test_decisions_service.py::test_openrouter_wire_posts_and_parses`.
 
 ## P2: Evaluation
 `kind: framing`
@@ -927,7 +998,7 @@ single fitted temperature, and its answers are order-sensitive (research doc
   propositions), `state`, the questions or propositions, `classifier` as
   `{status: "ok" | "unavailable", reason, answers}`, `incumbent` as
   `{status: "ok" | "unavailable", verdict}`, `backend_identity`,
-  `response_model`, `endpoint_host`,
+  `response_model`, `wire_api`, `endpoint_host`,
   `latency_ms`, and `estimated_tokens`.
 - `tool_rerank` records add `k` (the requested `top_k`), `candidates` (the
   fetched `server/tool` ids in semantic order), classifier probabilities keyed
@@ -1057,7 +1128,8 @@ runs against `ai.decisions` loaded from the daemon config:
    #22604's Q1.6 report, which that task owns, cited by path in the consumer's
    promotion evidence.
 6. Write a Markdown report. It names the configured model, the reported
-   `response_model` values, the endpoint host, the backend identity, the
+   `response_model` values, the wire, the endpoint host, the backend
+   identity, the
    dataset hash, and both splits, and ends in an explicit gate `PASS` or `FAIL` listing each measured
    value against its threshold.
 
@@ -1121,6 +1193,7 @@ Targets:
 - `src/gobby/mcp_proxy/server.py::*` — scope-reason: pass `decisions_resolver` to `RecommendationService`
 - `tests/ai/test_decisions_service.py`
 - `tests/ai/fixtures/systemone_noul_response.json`
+- `tests/ai/fixtures/openrouter_decisions_noul_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
 - `tests/mcp_proxy/services/test_recommendation_decisions.py`
 
@@ -1366,9 +1439,9 @@ rows. `docs/guides/configuration.md` documents config sections and the
 
 Edits:
 - Add an `ai.decisions` section to `configuration.md`. It covers the fields,
-  the loopback default, the `allow_remote` opt-in, and the rulings behind
-  them, the `/v1/systemone` contract,
-  and `GET /api/llm/status`.
+  the two `wire_api` choices with a local Kev example and an OpenRouter
+  example, the OpenRouter privacy flags, the identity contracts, and
+  `GET /api/llm/status`.
 - Add rows to `llm-features.md` for `ai.decisions.tool_rerank` and
   `ai.decisions.found_work`, with their modes and fallbacks.
 - Add a paragraph on shadow records, the 2.1 evaluation script, and the
@@ -1376,9 +1449,9 @@ Edits:
 
 **Acceptance:**
 
-- 4.1.1 - The configuration guide documents `ai.decisions` with the loopback
-  default, the `allow_remote` opt-in, and the wire contract. behavior:
-  "allow_remote" in
+- 4.1.1 - The configuration guide documents `ai.decisions` with both
+  `wire_api` choices, a local and an OpenRouter example, and the identity
+  contracts. behavior: "openrouter-decisions" in
   `docs/guides/configuration.md`.
 - 4.1.2 - The features guide lists both consumers with their modes and
   fallbacks. behavior: "found_work" in `docs/guides/llm-features.md`.
@@ -1400,8 +1473,8 @@ uv run gobby plans validate /Users/josh/.gobby/worktrees/gobby/task-23024-classi
 Plan validation takes the absolute worktree plan path, with the project root
 `/Users/josh/Projects/gobby`.
 
-Live check after the PD-owned restart, on Josh's machine with a loopback
-`/v1/systemone` server configured: `GET /api/llm/status` lists `decide` as
+Live check after the PD-owned restart, with a decision endpoint of either
+wire configured: `GET /api/llm/status` lists `decide` as
 available with the configured model. With the server stopped, a
 `recommend_tools` call in `shadow` mode returns its usual result. Do not run
 the full pytest suite.
@@ -1443,295 +1516,10 @@ the full pytest suite.
   statement to tool rerank (3.1) and keeps #22604's dependency on 1.2.
 - 2026-09-29: Renewed consensus with Plan Adversary gobby#14579 on
   4fd29ee after independent verification of the PD repairs.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: '`ai.decisions` config and the `decide` capability binding'
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: With `allow_remote` false, a non-loopback `api_base`
-    fails validation with the message naming `allow_remote`, and `localhost`, `127.0.0.1`,
-    and `[::1]` pass. With `allow_remote` true, a hosted `https` `api_base` passes
-    and one startup WARNING names its host. test: `tests/config/test_decisions_config.py::test_api_base_must_be_loopback`.
-
-    1.1.2: `model` is required with `api_base`, `enforce` requires `evaluated_model`
-    and `evaluated_backend`, `accept_below < accept_above`, every threshold outside
-    [0,1] is rejected, and an empty `AIConfig` loads with every consumer `off`. test:
-    `tests/config/test_decisions_config.py::test_decisions_config_invariants`.
-
-    1.1.3: The five `code_index.community_label.decisions_*` keys no longer exist
-    on the model. symbol: `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`.
-    test: `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
-
-    1.1.4: `decide` reports unavailable with its reason when unconfigured and available
-    with the model and `adapter_style` `local` when configured, and it appears in
-    the registry status snapshot. test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
-
-    1.1.5: `api_base` row: defaults to `None`, and the capability is unavailable while
-    it is unset. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.6: `api_key` row: defaults to `None`, a `$secret:` reference loads resolved,
-    and the value is never logged. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.7: `model` row: defaults to `None`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.8: `timeout_seconds` row: defaults to `2.0` and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.9: `max_input_tokens` row: defaults to `8192`, rejects `255`, and rejects
-    a value at or above `backend_max_state_tokens`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.10: `backend_max_state_tokens` row: defaults to `65536` and rejects `0`. test:
-    `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.11: `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`. test:
-    `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.12: `community_label` row: defaults to `mode` `off`, `min_confidence` `0.5`,
-    and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce` without
-    both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-
-    1.1.13: `tool_rerank` row: defaults to `mode` `off`, `min_probability` `0.5`,
-    and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce` without
-    both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-
-    1.1.14: `found_work` row: defaults to `mode` `off`, `accept_below` `0.1`, `accept_above`
-    `0.9`, and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce`
-    without both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-
-    1.1.15: `allow_remote` row: defaults to `False`, and only `True` admits a non-loopback
-    `api_base`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.16: `identity_contract` row: defaults to `None`, accepts `model_card`, and
-    accepts `response_version` only with `allow_remote` true. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.'
-  labels:
-  - covers:decision-classifier-path:1.1:1.1.1
-  - covers:decision-classifier-path:1.1:1.1.2
-  - covers:decision-classifier-path:1.1:1.1.3
-  - covers:decision-classifier-path:1.1:1.1.4
-  - covers:decision-classifier-path:1.1:1.1.5
-  - covers:decision-classifier-path:1.1:1.1.6
-  - covers:decision-classifier-path:1.1:1.1.7
-  - covers:decision-classifier-path:1.1:1.1.8
-  - covers:decision-classifier-path:1.1:1.1.9
-  - covers:decision-classifier-path:1.1:1.1.10
-  - covers:decision-classifier-path:1.1:1.1.11
-  - covers:decision-classifier-path:1.1:1.1.12
-  - covers:decision-classifier-path:1.1:1.1.13
-  - covers:decision-classifier-path:1.1:1.1.14
-  - covers:decision-classifier-path:1.1:1.1.15
-  - covers:decision-classifier-path:1.1:1.1.16
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: '`DecisionService` with Choice, request ceiling, and cooldown'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: "1.2.1: `choose` posts `{model, state, questions}` to `{api_base}/v1/systemone`,\
-    \ parses the documented-schema fixture, and raises `parse` for these responses:\
-    \ an empty or non-string model, a missing or extra answer key, a wrong answer\
-    \ type, a choice outside the offered options or below the maximum probability,\
-    \ mismatched probability keys, probabilities summing outside `1 \xB1 1e-3`, and\
-    \ any non-finite or out-of-range value. A tied maximum is accepted, and a resolved\
-    \ model name such as `jev-1.13.0` for a `jev-latest` request is accepted and returned\
-    \ as `response_model`. The request carries `type` and `instructions` on every\
-    \ question. test: `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_documented_wire`.\n\
-    1.2.2: With an ample budget, call counts are exact per status: 3xx, 401, 403,\
-    \ 404, and 422 make one call each; 429, 529, 500, and transport errors make three.\
-    \ With a budget shorter than the backoff sequence, the call ends at the budget\
-    \ with fewer attempts and raises `timeout`. `retry_async` without a predicate\
-    \ keeps its current behavior. test: `tests/ai/test_decisions_service.py::test_retry_only_on_transient_status`.\n\
-    1.2.7: The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a redirect.\
-    \ test: `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.\n\
-    1.2.8: A rotated secret, a changed timeout, ceiling, `allow_remote`, `identity_contract`\
-    \ (including `None` to `response_version` or `model_card` on an otherwise identical\
-    \ config), or `backend_max_state_tokens` yields a new service, while identical\
-    \ config shares one cooldown. test: `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.\n\
-    1.2.9: `backend_identity` is established on every call: two consecutive calls\
-    \ on one cached service against a server whose card changes between them (a restart\
-    \ onto another checkpoint) return different identities. A changed run path, dtype,\
-    \ temperature, or configured `backend_max_state_tokens` changes it under the same\
-    \ alias; a changed statistic does not. A failed, slow, or incomplete card yields\
-    \ `None` without failing the decision or opening the cooldown, and a failed decision\
-    \ leaves no pending card task. test: `tests/ai/test_decisions_service.py::test_backend_identity_from_model_card`.\n\
-    1.2.10: Under `response_version`, a `jev-latest` request answered as `jev-1.13.0`\
-    \ yields identity `response:jev-1.13.0` with no card request, a later answer as\
-    \ `jev-1.14.0` yields a different identity, and with the contract unset the identity\
-    \ is `None`. test: `tests/ai/test_decisions_service.py::test_backend_identity_from_response_version`.\n\
-    1.2.3: A request over `max_input_tokens` raises `oversize` without sending, for\
-    \ path-heavy state and for low characters-per-token state. A response with `usage.input_tokens`\
-    \ at `backend_max_state_tokens - 1` or above, or with no `usage.input_tokens`,\
-    \ raises `truncated` without opening the cooldown; one token below passes. test:\
-    \ `tests/ai/test_decisions_service.py::test_oversize_request_never_dials`.\n1.2.4:\
-    \ Table-driven: transport error, exhausted 529, 401, `parse`, and a full-budget\
-    \ `timeout` each open the cooldown; `unconfigured`, `oversize`, a caller-budget\
-    \ `timeout`, and caller cancellation do not, and cancellation propagates. Inside\
-    \ the cooldown, calls raise `cooldown` without dialing, and the first call after\
-    \ it dials again. test: `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.\n\
-    1.2.5: Log records carry no state or option text. test: `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.\n\
-    1.2.6: The pinned contract record holds the documented TypeSafe Choice and Noul\
-    \ schemas and the Kev `0fe8fc97c2bc` reference facts: model names, state and branch\
-    \ limits, truncation, `usage`, and the `/v1/models` card fields. behavior: \"\
-    /v1/systemone\" in `docs/evidence/decisions/systemone-wire.md`."
-  labels:
-  - covers:decision-classifier-path:1.2:1.2.1
-  - covers:decision-classifier-path:1.2:1.2.2
-  - covers:decision-classifier-path:1.2:1.2.7
-  - covers:decision-classifier-path:1.2:1.2.8
-  - covers:decision-classifier-path:1.2:1.2.9
-  - covers:decision-classifier-path:1.2:1.2.10
-  - covers:decision-classifier-path:1.2:1.2.3
-  - covers:decision-classifier-path:1.2:1.2.4
-  - covers:decision-classifier-path:1.2:1.2.5
-  - covers:decision-classifier-path:1.2:1.2.6
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Shadow capture and the reproducible evaluation harness
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '2.1.1: Shadow records are written `0600` under a `0700` directory,
-    capped and rotated, and a write failure never raises. test: `tests/ai/test_decisions_shadow.py::test_shadow_record_permissions_cap_and_failure`.
-
-    2.1.2: The harness splits deterministically by `content_hash` and computes accuracy,
-    Brier, ECE, selective accuracy, and order-flip rate on a synthetic set with known
-    answers. Two records with identical content and different ids land in the same
-    split, while cohort selection still orders by `sha256(id)`. test: `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
-
-    2.1.3: The report names the configured model, the one evaluated backend identity
-    and response model, the dataset hash, both splits, and the consumer bar. test:
-    `tests/scripts/test_decisions_eval.py::test_report_identifies_run`.
-
-    2.1.4: Synthetic passing and failing datasets for `tool_rerank` and `found_work`
-    produce the expected metric values and gate verdicts. `PASS` requires ECE at most
-    0.10, order-flip rate at most 10%, p95 latency at most 1 s against the configured
-    backend, at least 20 records per gold class per split, and the consumer inequality
-    (deployed Recall@k at least the incumbent''s; cascade false-clear rate at most
-    the incumbent''s with escalation at most 50%). Each failing set breaches one constant
-    and yields `FAIL` naming it. Thresholds come from the development split only.
-    test: `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
-
-    2.1.5: Known-answer edge cases: an incumbent `null` verdict counts as an alert,
-    an unavailable classifier escalates, a cohort where the classifier beats the incumbent
-    on available records but the deployed list trails it overall yields `FAIL`, the
-    found-work pair and `min_probability` selections match hand-computed values, a
-    record whose `k` exceeds its returned list length still scores Recall@k against
-    `k`, short support or a zero denominator yields `FAIL` with `insufficient support`,
-    and a replay whose backend identity or response model switches midway, or whose
-    answers carry no identity, yields `FAIL` with `mixed or unverified backend`. test:
-    `tests/scripts/test_decisions_eval.py::test_metric_edge_cases_fail_closed`.
-
-    2.1.6: On a synthetic skewed mix with a 5% disagreement rate, the gate metrics
-    equal the cohort''s actual rates; audit records are excluded, and duplicate content
-    lands in one split. test: `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.'
-  labels:
-  - covers:decision-classifier-path:2.1:2.1.1
-  - covers:decision-classifier-path:2.1:2.1.2
-  - covers:decision-classifier-path:2.1:2.1.3
-  - covers:decision-classifier-path:2.1:2.1.4
-  - covers:decision-classifier-path:2.1:2.1.5
-  - covers:decision-classifier-path:2.1:2.1.6
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: MCP tool reranking through Noul
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.1'
-  validation_criteria: '3.1.1: `noul` posts per-proposition questions, parses the
-    documented-schema Noul fixture, and returns probabilities by key under the same
-    ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/systemone-wire.md`.
-    test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
-
-    3.1.2: Shadow mode returns today''s result unchanged and writes one shadow record.
-    An incumbent that succeeds after `timeout_seconds` still returns its own result.
-    A stalled classifier is cancelled and awaited when the incumbent returns and is
-    recorded unavailable. Caller cancellation propagates with no pending task. test:
-    `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
-
-    3.1.3: Enforce mode ranks by probability, drops candidates below `min_probability`,
-    and can return none. An unavailable classifier invokes the LLM rerank; semantic
-    order is returned only when both the classifier and the LLM fail. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_enforce_ranks_rejects_and_falls_back`.
-
-    3.1.4: Enforce mode with a mismatched `evaluated_model`, a mismatched `evaluated_backend`,
-    or no backend identity behaves as shadow. A `mode` or `min_probability` change
-    reaches the next call through the same cached service. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
-
-    3.1.5: One rerank is bounded and complete: - more than `top_k` passing candidates
-    return exactly `top_k`; - equal probabilities keep semantic order; - a failed
-    second batch makes the whole result unavailable, so enforce falls back to the
-    LLM rerank; - two batches with different backend identities, with different response
-    models, or with one known and one unknown identity make the whole result unavailable,
-    so enforce falls back to the LLM rerank and shadow records the classifier as unavailable;
-    - an oversized singleton yields `oversize` without truncation; - a shadow classifier
-    exception leaves the incumbent''s result and failure semantics intact, with no
-    task pending after return. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_rerank_batches_are_bounded_and_complete`.'
-  labels:
-  - covers:decision-classifier-path:3.1:3.1.1
-  - covers:decision-classifier-path:3.1:3.1.2
-  - covers:decision-classifier-path:3.1:3.1.3
-  - covers:decision-classifier-path:3.1:3.1.4
-  - covers:decision-classifier-path:3.1:3.1.5
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Found-work confirmation cascade
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '3.2.1: `found_work_gate.py` delegates confirmation to `found_work_confirm.confirm_shirk`,
-    ends below its starting line count, and keeps its existing found-work tests passing.
-    symbol: `src/gobby/workflows/found_work_confirm.py::confirm_shirk`.
-
-    3.2.2: In enforce mode a probability at or above `accept_above` confirms and one
-    at or below `accept_below` clears, both without an LLM call; the band between
-    escalates to the LLM. test: `tests/workflows/test_found_work_confirm.py::test_cascade_accepts_confident_and_escalates_uncertain`.
-
-    3.2.3: An unavailable classifier escalates to the LLM path and never returns `False`
-    by itself. The escalated call''s timeout is the configured cap minus the classifier''s
-    elapsed time, and an exhausted budget returns `None`. test: `tests/workflows/test_found_work_confirm.py::test_outage_never_clears_a_finding`.
-
-    3.2.4: Shadow mode returns the LLM verdict and writes one shadow record. An unexpected
-    classifier exception leaves the LLM verdict intact. test: `tests/workflows/test_found_work_confirm.py::test_shadow_returns_llm_verdict`.
-
-    3.2.5: Budget and admission: - a configured 1 s cap bounds the whole confirmation
-    in shadow and enforce; - `off` makes no classifier call and returns today''s result;
-    - `validation.enabled` false or a missing service returns `None` with no classifier
-    call; - caller cancellation propagates and leaves no pending task; - a mismatched
-    `evaluated_model` or `evaluated_backend` behaves as shadow; - a `mode` or threshold
-    change reaches the next call through the same cached service. test: `tests/workflows/test_found_work_confirm.py::test_budget_admission_and_cancellation`.'
-  labels:
-  - covers:decision-classifier-path:3.2:3.2.1
-  - covers:decision-classifier-path:3.2:3.2.2
-  - covers:decision-classifier-path:3.2:3.2.3
-  - covers:decision-classifier-path:3.2:3.2.4
-  - covers:decision-classifier-path:3.2:3.2.5
-  tdd: true
-  source_section: '3.2'
-  implementation_domain: backend
-- title: Decision capability guide rows
-  category: docs
-  task_type: chore
-  depends_on:
-  - '3.2'
-  validation_criteria: '4.1.1: The configuration guide documents `ai.decisions` with
-    the loopback default, the `allow_remote` opt-in, and the wire contract. behavior:
-    "allow_remote" in `docs/guides/configuration.md`.
-
-    4.1.2: The features guide lists both consumers with their modes and fallbacks.
-    behavior: "found_work" in `docs/guides/llm-features.md`.'
-  labels:
-  - covers:decision-classifier-path:4.1:4.1.1
-  - covers:decision-classifier-path:4.1:4.1.2
-  tdd: false
-  source_section: '4.1'
-  assigned_agent: tech-writer
-```
+- 2026-09-29: Josh clicked REVISE on stamped 7c51454, and the PD withdrew
+  its approval. Josh then dropped `allow_remote` and the loopback check:
+  local and hosted endpoints are equal choices through one config shape, as
+  in embeddings. OpenRouter's `/api/alpha/decisions` came into scope as the
+  external test target through `wire_api`, pinned from OpenRouter's API
+  reference, tutorial and hub pages (Researcher gobby#14550, retrieved
+  2026-09-30). The superseded M1 was retired for re-derivation.
