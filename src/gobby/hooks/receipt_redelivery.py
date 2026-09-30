@@ -17,6 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 from starlette.types import Receive, Scope, Send
 
@@ -37,19 +38,26 @@ def receipt_session_id(
     payload: dict[str, Any],
     platform_session_id: str,
     envelope_id: str,
-) -> str:
-    """Pick the canonical session identity a receipt is recorded against."""
-    if claim_lease is not None and claim_lease.session_id:
-        return claim_lease.session_id
-    if platform_session_id:
-        return platform_session_id
+) -> str | None:
+    """Pick a session UUID; an envelope id is never a session identity.
+
+    Provider labels can precede a valid session hint. Skip them rather than
+    passing them to the UUID storage column, and leave unidentified hooks
+    without a receipt instead of inventing an identity from ``envelope_id``.
+    """
+    candidates = [claim_lease.session_id if claim_lease is not None else None, platform_session_id]
     input_data = payload.get("input_data")
     if isinstance(input_data, dict):
-        for key in ("session_id", "conversationId", "conversation_id"):
-            value = input_data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return envelope_id
+        candidates.extend(
+            input_data.get(key) for key in ("session_id", "conversationId", "conversation_id")
+        )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            try:
+                return str(UUID(candidate.strip()))
+            except ValueError:
+                continue
+    return None
 
 
 def _carry_forward_staged_effects(
@@ -96,13 +104,13 @@ def attach_delivery_receipt(
     *,
     db: Any,
     envelope_id: str,
-    session_id: str,
+    session_id: str | None,
     staged_payload: dict[str, Any] | None = None,
     force_continue_execution_num: int | None = None,
     skip_empty_receipt: bool = False,
 ) -> dict[str, Any]:
     """Prepare (or carry forward) the receipt for this envelope and attach it."""
-    if db is None:
+    if db is None or session_id is None:
         return strip_unbudgeted_force_continue(response)
     try:
         from gobby.storage.hook_receipts import prepare_receipt
