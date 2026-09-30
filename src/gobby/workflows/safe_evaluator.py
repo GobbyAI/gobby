@@ -575,6 +575,7 @@ def build_condition_helpers(
         wrapped_validation_command,
     )
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
+    from .condition_helpers_tasks import task_condition_helpers
     from .monolith_guard import (
         outstanding_monolith_paths,
         projected_monolith_paths,
@@ -653,6 +654,7 @@ def build_condition_helpers(
             "touches_claude_memory_path": touches_claude_memory_path,
             "touches_ui_design_path": touches_ui_design_path,
             **PATH_CONDITION_HELPERS,
+            **task_condition_helpers(task_manager),
         }
     )
 

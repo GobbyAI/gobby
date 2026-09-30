@@ -137,7 +137,8 @@ rules:
         or (tool_input.get('tool_name') == 'update_task'
           and isinstance(tool_input.get('labels'), list)
           and 'enhancer-pass-spent' not in tool_input.get('labels')
-          and all_tasks_have_label(tool_input.get('task_id'), 'enhancer-pass-spent'))
+          and task_may_carry_label(tool_input.get('task_id'), 'enhancer-pass-spent',
+            event.project_id))
       )
     effects:
       - type: block

@@ -453,3 +453,49 @@ async def test_plan_writer_enhancer_pass_is_per_task(harness: _ProxyHarness) -> 
     orchestrator = harness.session("orchestrator", ORCHESTRATOR)
     assert await harness.call(orchestrator, "gobby-tasks", "remove_label", remove) is None
     assert await harness.call(orchestrator, "gobby-tasks", "update_task", relabel) is None
+
+
+@pytest.mark.asyncio
+async def test_receipt_retention_resolves_supported_task_refs(
+    harness: _ProxyHarness, tmp_path: Path
+) -> None:
+    """Receipt retention protects the task update_task targets for every ref form."""
+    plan = harness.task("plan")
+    receipted = harness.tasks.create_task(
+        project_id=harness.project_id,
+        title="planning task",
+        validation_criteria="Plan is enhanced once.",
+        parent_task_id=plan,
+    )
+    harness.tasks.add_label(receipted.id, RECEIPT)
+    path = harness.tasks.update_path_cache(receipted.id)
+    assert path is not None and "." in path
+    # Another project reuses both sequence numbers, so an unscoped #N lookup is ambiguous.
+    other = install_isolated_checkout_project(
+        harness.db, tmp_path / "other", name="other-project", machine_id=LOCAL_MACHINE_ID
+    )
+    for title in ("other plan", "other task"):
+        harness.tasks.create_task(
+            project_id=other.project.id, title=title, validation_criteria="Unrelated."
+        )
+    refs = [receipted.id, f"#{receipted.seq_num}", str(receipted.seq_num), path]
+
+    writer = harness.session("writer", PLAN_WRITER, claim=receipted.id)
+    developer = harness.session("developer", DEVELOPER)
+    for session_id in (writer, developer):
+        for ref in [*refs, "#999", "9.9.9"]:
+            relabel = {"task_id": ref, "labels": ["plan"]}
+            refused = await harness.call(session_id, "gobby-tasks", "update_task", relabel)
+            assert refused is not None and "only the Orchestrator" in refused["error"], ref
+    assert harness.receipted(receipted.id)
+    assert await harness.spawn(writer, **ENHANCER_CALL) is not None
+
+    for ref in refs:
+        keep = {"task_id": ref, "labels": ["plan", RECEIPT]}
+        assert await harness.call(writer, "gobby-tasks", "update_task", keep) is None, ref
+    unreceipted = {"task_id": f"#{harness.tasks.get_task(plan).seq_num}", "labels": ["plan"]}
+    assert await harness.call(developer, "gobby-tasks", "update_task", unreceipted) is None
+    orchestrator = harness.session("orchestrator", ORCHESTRATOR)
+    for ref in refs:
+        relabel = {"task_id": ref, "labels": ["plan"]}
+        assert await harness.call(orchestrator, "gobby-tasks", "update_task", relabel) is None
