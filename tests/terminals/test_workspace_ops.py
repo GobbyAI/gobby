@@ -1415,34 +1415,44 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
 async def test_workspace_snapshot_log_separates_worker_wait_and_execution(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from gobby.telemetry.query_timing import observe_queries, record_pool_acquire, record_query
+
     machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
     workspace = SimpleNamespace(id="ws-1")
     workspaces = MagicMock()
-    workspaces.resolve_reference.return_value = SimpleNamespace(
-        tab=None, pane=None, workspace=workspace, node=machine
-    )
+
+    def resolve_reference(_reference: str, *, node: str | None = None) -> SimpleNamespace:
+        record_pool_acquire(0.2)
+        record_query(0.05)
+        return SimpleNamespace(tab=None, pane=None, workspace=workspace, node=machine)
+
+    workspaces.resolve_reference.side_effect = resolve_reference
     workspaces.sweep_dead_panes.return_value = SimpleNamespace(removed_panes=(), removed_tabs=())
     workspaces.list_tabs.return_value = ()
     workspaces.list_panes.return_value = ()
     ops = _storage_ops(workspaces)
 
-    async def run_storage(fn: Callable[..., Any], *args: Any) -> Any:
-        return fn(*args)
-
+    caller_queries: list[float] = []
+    caller_acquires: list[float] = []
     ticks = iter((0.0, 0.1, 0.2, 1.2, 1.25, 1.5, 1.55, 1.6, 1.65, 1.7, 2.0, 2.1))
     with (
         patch("gobby.terminals.workspace_ops.time", SimpleNamespace(monotonic=ticks.__next__)),
         patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"),
-        patch.object(ops, "_db", side_effect=run_storage),
         patch.object(ops, "_publish_removal", return_value=None),
+        observe_queries(caller_queries.append, pool_acquire_observer=caller_acquires.append),
     ):
         snapshot = await ops.workspace_snapshot("operator", "ws-1")
+        record_query(0.25)
+        record_pool_acquire(0.3)
 
     assert snapshot.workspace.id == "ws-1"
     workspaces.sweep_dead_panes.assert_called_once_with("ws-1")
     workspaces.list_tabs.assert_called_once_with("ws-1")
     workspaces.list_panes.assert_called_once_with("ws-1")
     assert "worker_wait_ms=1000.0 worker_ms=500.0 worker_return_ms=300.0" in caplog.text
+    assert "query_ms=50.0 query_count=1 pool_wait_ms=200.0 pool_acquires=1" in caplog.text
+    assert caller_queries == [0.25]
+    assert caller_acquires == [0.3]
 
 
 @pytest.mark.asyncio

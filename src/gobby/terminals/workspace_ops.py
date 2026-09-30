@@ -44,6 +44,7 @@ from gobby.storage.workspaces import (
     WorkspaceTarget,
     mint_pane_id,
 )
+from gobby.telemetry.query_timing import observe_queries
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import (
     InputPayloadTooLargeError,
@@ -222,31 +223,45 @@ class WorkspaceOps:
         workspace publish waiting on the fence stays above the watermark.
         """
         started = time.monotonic()
-        if workspace is None and project_id is None:
-            workspace = (await self.workspace_create(actor, node=node)).id
-        elif workspace is None:
-            machine = await self._db(self._workspaces.resolve_node, node)
-            _require_local(machine)
-            resolved, created = await self._db_guarded(
-                resolve_launch_workspace,
-                self._workspaces,
-                machine.id,
-                workspace=None,
-                project_id=project_id,
-            )
-            if created:
-                await self._emit("workspace.created", resolved.id, workspace=resolved)
-            workspace = resolved.id
-        fence_start = time.monotonic()
-        storage_timing: dict[str, float] = {}
-        async with self._publish_fence:
-            fence_acquired = time.monotonic()
-            snapshot, change = await self._db(
-                self._snapshot_storage, workspace, node, storage_timing
-            )
-            storage_done = time.monotonic()
-            seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
-            published = time.monotonic()
+        query_seconds = pool_seconds = 0.0
+        query_count = pool_acquires = 0
+
+        def observe_query(seconds: float) -> None:
+            nonlocal query_seconds, query_count
+            query_seconds += seconds
+            query_count += 1
+
+        def observe_pool_acquire(seconds: float) -> None:
+            nonlocal pool_seconds, pool_acquires
+            pool_seconds += seconds
+            pool_acquires += 1
+
+        with observe_queries(observe_query, pool_acquire_observer=observe_pool_acquire):
+            if workspace is None and project_id is None:
+                workspace = (await self.workspace_create(actor, node=node)).id
+            elif workspace is None:
+                machine = await self._db(self._workspaces.resolve_node, node)
+                _require_local(machine)
+                resolved, created = await self._db_guarded(
+                    resolve_launch_workspace,
+                    self._workspaces,
+                    machine.id,
+                    workspace=None,
+                    project_id=project_id,
+                )
+                if created:
+                    await self._emit("workspace.created", resolved.id, workspace=resolved)
+                workspace = resolved.id
+            fence_start = time.monotonic()
+            storage_timing: dict[str, float] = {}
+            async with self._publish_fence:
+                fence_acquired = time.monotonic()
+                snapshot, change = await self._db(
+                    self._snapshot_storage, workspace, node, storage_timing
+                )
+                storage_done = time.monotonic()
+                seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+                published = time.monotonic()
         if published - started >= SLOW_WORKSPACE_SNAPSHOT_SECONDS:
             worker_started = storage_timing["worker_started"]
             worker_finished = storage_timing["worker_finished"]
@@ -254,7 +269,8 @@ class WorkspaceOps:
                 "Slow workspace snapshot | workspace_id=%s total_ms=%.1f resolve_ms=%.1f "
                 "fence_wait_ms=%.1f worker_wait_ms=%.1f worker_ms=%.1f "
                 "worker_return_ms=%.1f target_ms=%.1f sweep_ms=%.1f "
-                "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d",
+                "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d "
+                "query_ms=%.1f query_count=%d pool_wait_ms=%.1f pool_acquires=%d",
                 snapshot.workspace.id,
                 (published - started) * 1000,
                 (fence_start - started) * 1000,
@@ -268,6 +284,10 @@ class WorkspaceOps:
                 storage_timing["panes"],
                 (published - storage_done) * 1000,
                 len(change.removed_panes),
+                query_seconds * 1000,
+                query_count,
+                pool_seconds * 1000,
+                pool_acquires,
             )
         if seq is None:
             return snapshot
