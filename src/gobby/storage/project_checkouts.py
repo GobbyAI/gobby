@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -311,6 +312,10 @@ def _registered_operation_overlay(
 ) -> str | None:
     """Return the registered overlay path matching `overlay_path` canonical or raw."""
     candidates = list(dict.fromkeys((_canonical_path(overlay_path), overlay_path)))
+    from gobby.storage.hub.managed import managed_grant_path
+
+    if managed_grant_path() is not None:
+        return _bound_operation_overlay(db, machine_id, project_id, candidates)
     row = db.fetchone(
         """
         SELECT worktree_path AS path FROM worktrees
@@ -323,6 +328,34 @@ def _registered_operation_overlay(
         (machine_id, project_id, candidates, machine_id, project_id, candidates),
     )
     return None if row is None else str(row["path"])
+
+
+def _bound_operation_overlay(
+    db: HubDatabase, machine_id: str, project_id: str, candidates: list[str]
+) -> str | None:
+    """Match `candidates` against a managed execution's issuer-verified overlay.
+
+    The grant's scoped role cannot read worktrees or clones. Issuance already proved
+    the bound overlay is `code_index_project_id(<registered path>)` of this project
+    and machine, so the candidate hashing to it is the registered spelling.
+    """
+    from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
+
+    row = db.fetchone(
+        """
+        SELECT gobby_agent_auth.current_project_id()::text AS project_id,
+               gobby_agent_auth.current_machine_id()::text AS machine_id,
+               gobby_agent_auth.current_code_overlay_project_id()::text AS overlay_id
+        """
+    )
+    if row is None or row["overlay_id"] is None:
+        return None
+    if (row["project_id"], row["machine_id"]) != (project_id, machine_id):
+        return None
+    for candidate in candidates:
+        if str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, candidate)) == row["overlay_id"]:
+            return candidate
+    return None
 
 
 def require_root(db: HubDatabase, project_id: str, machine_id: str | None) -> str:

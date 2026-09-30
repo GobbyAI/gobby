@@ -26,6 +26,7 @@ from gobby.runtime_grants.schema import SchemaIdentity
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import Row, Transaction
 from gobby.storage.managed_credentials import (
+    MANAGED_EXECUTION_BOOTSTRAP_ENV,
     CredentialAuthorizationError,
     CredentialIssuanceError,
     ManagedCredential,
@@ -221,6 +222,60 @@ def test_issue_maintenance_records_registered_overlay_claim(
         assert bound == (overlay_id,)
         manager.revoke(execution_id, reason="test-maintenance-overlay")
         del issued
+    finally:
+        manager.close()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute("DELETE FROM public.worktrees WHERE id = %s", (worktree_id,))
+
+
+def test_scoped_principal_resolves_its_bound_overlay_without_reading_worktrees(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sandboxed CLI proves its overlay through the issuer-verified binding (#23095)."""
+    from uuid import uuid5
+
+    from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
+    from gobby.storage.project_checkouts import _registered_operation_overlay
+
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    worktree_id = uuid4()
+    worktree_path = f"/tmp/gobby-overlay-{execution_id.hex}"
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            """INSERT INTO public.worktrees (
+                   id, project_id, machine_id, branch_name, worktree_path
+               ) VALUES (%s, %s, %s, %s, %s)""",
+            (worktree_id, fixture.project_id, fixture.machine_id, "overlay-cli", worktree_path),
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        issued = manager.issue_maintenance(
+            managed_execution_id=execution_id,
+            project_id=fixture.project_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            code_overlay_project_id=uuid5(CODE_INDEX_UUID_NAMESPACE, worktree_path),
+        )
+        scoped = PostgresHubDatabase(issued.dsn)
+        scoped.open()
+        try:
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                scoped.fetchone("SELECT worktree_path FROM worktrees LIMIT 1")
+            monkeypatch.setenv(MANAGED_EXECUTION_BOOTSTRAP_ENV, str(tmp_path / "grant.json"))
+            project_id, machine_id = str(fixture.project_id), str(fixture.machine_id)
+            resolved = _registered_operation_overlay(scoped, machine_id, project_id, worktree_path)
+            unbound = _registered_operation_overlay(
+                scoped, machine_id, project_id, f"{worktree_path}-other"
+            )
+            other_project = _registered_operation_overlay(
+                scoped, machine_id, str(fixture.other_project_id), worktree_path
+            )
+        finally:
+            scoped.close()
+        assert (resolved, unbound, other_project) == (worktree_path, None, None)
+        manager.revoke(execution_id, reason="test-scoped-overlay")
     finally:
         manager.close()
         with psycopg.connect(fixture.database_url, autocommit=True) as admin:
