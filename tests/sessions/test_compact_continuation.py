@@ -1076,6 +1076,18 @@ async def test_pull_prompt_waits_for_the_shared_composer_lock(
     )
 
 
+async def test_confirmed_empty_pull_prompt_types_without_draining() -> None:
+    """A positive empty read leaves the drain nothing to remove but late keystrokes (#22915)."""
+    tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯\xa0")
+    assert _CLAUDE_READ(tmux.composer_text).state == "empty"
+
+    assert await _send_pull_prompt(tmux) is True
+
+    assert [text for _pane, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
+    assert [key for _pane, key, literal in tmux.sent_keys if not literal] == ["Enter"]
+
+
 class TestPullPromptFallback:
     """The pull prompt survives a failed send and never submits an operator draft."""
 
@@ -1178,7 +1190,7 @@ class TestPullPromptFallback:
         with (
             patch(
                 "gobby.sessions.compact_continuation.clear_composer",
-                side_effect=[(True, None), (False, "drain failed")],
+                side_effect=[(False, "drain failed")],
             ),
             caplog.at_level(logging.ERROR, logger="gobby.sessions.compact_continuation"),
         ):

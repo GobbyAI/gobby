@@ -249,7 +249,8 @@ async def test_a_composer_the_enter_empties_is_submitted_once() -> None:
     )
 
     assert result == (True, None, True, None)
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
+    # The re-probe after the interrupt confirms empty, so no drain precedes the command.
+    assert pane.keys == ["escape", "enter"]
     assert pane.typed == ["/compact\n"]
 
 
@@ -263,7 +264,7 @@ async def test_a_command_the_paste_kept_is_submitted_by_the_enter() -> None:
 
     assert result == (True, None, True, None)
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
+    assert pane.keys == ["escape", "enter"]
     clear.assert_not_called()
 
 
@@ -286,12 +287,7 @@ async def test_command_the_recovery_enter_cannot_submit_fails_without_retyping(
     }
     assert reason is not None and "/compact" in reason
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == [
-        "escape",
-        *composer_clear_sequence("claude"),
-        "enter",
-        "enter",
-    ]
+    assert pane.keys == ["escape", "enter", "enter"]
     clear.assert_called_once()
 
 
@@ -324,12 +320,7 @@ async def test_command_that_never_leaves_the_composer_fails_typed(
     assert len(records) == 1
     assert records[0].levelno == logging.ERROR
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == [
-        "escape",
-        *composer_clear_sequence("claude"),
-        "enter",
-        "enter",
-    ]
+    assert pane.keys == ["escape", "enter", "enter"]
     clear.assert_called_once()
 
 
@@ -651,3 +642,34 @@ def test_resolve_pane_io_requires_a_managed_terminal() -> None:
         terminal_manager=None,
         terminal_runtime_registry=None,
     ) == (None, error)
+
+
+class _DraftAfterInterruptPane(_ComposerPane):
+    """Claude pane that reads empty until the interrupt, then holds an operator draft."""
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        if "escape" in self.keys and not self.typed:
+            return _claude_frame("half-typed wor")
+        return _claude_frame("")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", ["/compact", "/clear"])
+async def test_draft_typed_after_the_first_probe_refuses_before_any_drain(command: str) -> None:
+    """The empty read before the settle wait cannot authorize the later write (#22915).
+
+    The composer is probed again right before the command, so an operator draft
+    typed during the wait is neither drained nor submitted, and the continuation
+    marker is released for durable recovery.
+    """
+    pane = _DraftAfterInterruptPane()
+
+    result, _mark, clear = await _send(
+        pane, lambda: True, command=command, composer_read=_CLAUDE_READ
+    )
+
+    assert result[0] is False
+    assert result[3] == {"error_code": "composer_occupied", "continuation_pending": False}
+    assert pane.keys == ["escape"]
+    assert pane.typed == []
+    clear.assert_called_once_with()

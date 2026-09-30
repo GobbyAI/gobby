@@ -54,7 +54,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     for target in targets:
         operations = [
             NativeBatchOperation(kind="key", payload=key)
-            for key in composer_clear_sequence(target.cli_source)
+            for key in (composer_clear_sequence(target.cli_source) if target.drain else ())
         ]
         operations.extend(
             [

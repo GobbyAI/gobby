@@ -102,6 +102,9 @@ class NativeWakeTarget:
     session_id: str
     terminal_id: str
     cli_source: str | None
+    # False once a probe confirmed the composer empty under the composer lock: the
+    # drain could then only delete keystrokes an operator typed after that read.
+    drain: bool = True
 
 
 class NativeBatchSender(Protocol):
@@ -345,6 +348,7 @@ class WakeDispatcher:
     async def _retry_withheld_wake(self, session_id: str, *, priority: str) -> None:
         delay = COMPOSER_RETRY_BASE_SECONDS
         attempt = 0
+        previous: str | None = None
         while True:
             await self._composer_retry_wait(delay)
             lock = self._live_wake_locks.get(session_id)
@@ -363,8 +367,12 @@ class WakeDispatcher:
                 return
             skipped = result.get("skipped")
             attempt += 1
+            # A draft held for hours retries at the cap; report only its first attempt
+            # and each outcome change at INFO so the loop does not spam the log.
+            changed = attempt == 1 or skipped != previous
+            previous = skipped
             logger.log(
-                logging.DEBUG if skipped == "debounced" else logging.INFO,
+                logging.INFO if changed and skipped != "debounced" else logging.DEBUG,
                 "Composer retry for session %s: attempt=%d delivered=%s skipped=%s",
                 session_id,
                 attempt,
@@ -679,8 +687,11 @@ class WakeDispatcher:
         terminal: Any | None,
         *,
         method: str,
-    ) -> dict[str, Any] | None:
+    ) -> tuple[dict[str, Any] | None, bool]:
         """Withhold the drain unless a probe positively confirms an empty composer.
+
+        Returns the withheld outcome (``None`` to deliver) and whether the composer
+        was confirmed empty; only an unconfirmed delivery keeps the blind drain.
 
         Only an ``empty`` read authorizes typing. A ``draft`` blocks, and an
         ``unknown`` read blocks too when the provider can classify its composer
@@ -701,7 +712,7 @@ class WakeDispatcher:
         cannot authorize a later overlapping write.
         """
         if self._activity_probe is None:
-            return None
+            return None, False
         try:
             activity = await self._activity_probe(session, terminal)
         except Exception:
@@ -711,17 +722,17 @@ class WakeDispatcher:
                 session_id,
                 exc_info=True,
             )
-            return composer_unconfirmed_result(session_id, method=method)
+            return composer_unconfirmed_result(session_id, method=method), False
         if activity.turn_in_flight_fingerprint is not None:
             logger.warning(
                 "wake for session %s deferred: a provider turn is in flight, so "
                 "the durable message waits rather than steering it",
                 session_id,
             )
-            return composer_unconfirmed_result(session_id, method=method)
+            return composer_unconfirmed_result(session_id, method=method), False
         state = activity.composer.state
         if state == "empty":
-            return None
+            return None, True
         if state == "draft":
             excerpt = " ".join((activity.composer.line or "").split())
             if len(excerpt) > 160:
@@ -731,15 +742,15 @@ class WakeDispatcher:
                 session_id,
                 excerpt,
             )
-            return composer_occupied_result(session_id, method=method)
+            return composer_occupied_result(session_id, method=method), False
         if not activity.composer_probeable:
-            return None
+            return None, False
         logger.warning(
             "wake for session %s deferred: composer state unconfirmed, so the "
             "durable message waits for a positive empty read",
             session_id,
         )
-        return composer_unconfirmed_result(session_id, method=method)
+        return composer_unconfirmed_result(session_id, method=method), False
 
     async def _send_managed_terminal_wake(
         self,
@@ -772,7 +783,7 @@ class WakeDispatcher:
                 return state_failure
             if current is not None:
                 session = current
-            blocked = await self._composer_blocks_wake(
+            blocked, confirmed_empty = await self._composer_blocks_wake(
                 session_id, session, terminal, method="terminal"
             )
             if blocked is not None:
@@ -782,7 +793,7 @@ class WakeDispatcher:
                     terminal_id,
                     prompt,
                     submit=True,
-                    clear_before_submit=True,
+                    clear_before_submit=not confirmed_empty,
                     cli_source=getattr(session, "source", None),
                 )
             except IndeterminateWrite as exc:

@@ -642,7 +642,32 @@ async def _send_terminal_compaction_command_locked(
                     None,
                 )
 
-            cleared, clear_reason = await clear_composer(pane, cli_source)
+            # The settle wait and interrupt ran since the first probe, so that empty read
+            # cannot authorize this write: probe again, refuse a draft or unknown frame,
+            # and drain only a composer no probe could read.
+            writable, refuse_reason, composer_state = await composer_gate_for_write(
+                pane, cli_source, composer_read, action=command
+            )
+            if not writable:
+                if continuation_pending:
+                    clear_continuation_pending()
+                logger.info("Refusing %s for session %s: %s", command, session_id, refuse_reason)
+                error_code = (
+                    _COMPOSER_OCCUPIED_ERROR_CODE
+                    if composer_state == "draft"
+                    else _COMPOSER_UNKNOWN_ERROR_CODE
+                )
+                return (
+                    False,
+                    refuse_reason,
+                    False,
+                    {"error_code": error_code, "continuation_pending": False},
+                )
+            cleared, clear_reason = (
+                (True, None)
+                if composer_state == "empty"
+                else await clear_composer(pane, cli_source)
+            )
             if not cleared:
                 if continuation_pending:
                     clear_continuation_pending()

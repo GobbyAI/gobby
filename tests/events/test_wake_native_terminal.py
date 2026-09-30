@@ -205,6 +205,8 @@ async def test_three_native_recipients_use_one_ordered_batch() -> None:
     targets = batch_call.args[0]
     assert [target.session_id for target in targets] == session_ids
     assert [target.terminal_id for target in targets] == [row.id for row in rows]
+    # No probe confirmed these composers empty, so each keeps its blind drain.
+    assert [target.drain for target in targets] == [True, True, True]
     assert [result["session_id"] for result in results] == session_ids
     assert all(result["delivered"] is True for result in results)
 
@@ -643,16 +645,17 @@ async def test_urgent_wake_injects_an_empty_composer() -> None:
         _managed_terminal_id(dispatcher),
         CONTINUE_WAKE_MESSAGE,
         submit=True,
-        clear_before_submit=True,
+        clear_before_submit=False,
         cli_source=ANY,
     )
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("probe", [_empty, None])
-async def test_confirmed_empty_or_no_probe_keeps_the_blind_drain(
-    probe: ActivityProbe | None,
+@pytest.mark.parametrize(("probe", "drains"), [(_empty, False), (None, True)])
+async def test_only_an_unconfirmed_composer_keeps_the_blind_drain(
+    probe: ActivityProbe | None, drains: bool
 ) -> None:
+    """A confirmed-empty wake types directly; only a missing probe drains first."""
     terminal_sender = AsyncMock()
     dispatcher = _managed_dispatcher(probe, terminal_sender)
 
@@ -663,7 +666,7 @@ async def test_confirmed_empty_or_no_probe_keeps_the_blind_drain(
         _managed_terminal_id(dispatcher),
         CONTINUE_WAKE_MESSAGE,
         submit=True,
-        clear_before_submit=True,
+        clear_before_submit=drains,
         cli_source=ANY,
     )
 
@@ -772,6 +775,8 @@ async def test_batch_wake_still_injects_an_empty_composer() -> None:
     assert results[0]["delivered"] is True
     assert batch_sender.await_args is not None
     assert [t.session_id for t in batch_sender.await_args.args[0]] == [WAKE_SESSION_ID]
+    # The positive empty read under the lock leaves the batch drain nothing to do.
+    assert [t.drain for t in batch_sender.await_args.args[0]] == [False]
 
 
 @pytest.mark.asyncio
@@ -792,7 +797,11 @@ async def test_native_spawned_agent_wakes_through_its_terminal_row(
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result == {"session_id": WAKE_SESSION_ID, "delivered": True, "method": "terminal"}
-    assert managed_chain.native.write_log == WAKE_SEQUENCE
+    # The probe confirmed the composer empty, so the wake types without draining.
+    assert managed_chain.native.write_log == [
+        ("text", CONTINUE_WAKE_MESSAGE),
+        ("key", "enter"),
+    ]
     assert managed_chain.tmux.write_log == []
     sdk_resumer.assert_not_awaited()
 

@@ -572,8 +572,9 @@ async def _type_handoff_compact_continuation(
     try:
         # An operator draft in the composer would be submitted with the pull
         # prompt, so require a positively empty composer before typing anything.
-        # The clear below only drains what this path may safely replace.
-        writable, refuse_reason, _state = await composer_gate_for_write(
+        # Only an unprobed composer keeps the blind drain: after a confirmed-empty
+        # read it could only delete keystrokes the operator typed since.
+        writable, refuse_reason, composer_state = await composer_gate_for_write(
             pane,
             cli_source,
             composer_read,
@@ -586,7 +587,9 @@ async def _type_handoff_compact_continuation(
                 refuse_reason,
             )
             return False
-        ok, reason = await clear_composer(pane, cli_source)
+        ok, reason = (
+            (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
+        )
         if not ok:
             logger.warning(
                 "Failed clearing the composer before set_handoff continuation for %s: %s",
