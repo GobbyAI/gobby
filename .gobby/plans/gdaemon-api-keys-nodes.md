@@ -967,8 +967,8 @@ deferral:
     - D1.7
 ```
 
-## V1: Plan Changelog
-`kind: framing`
+## V1 Plan Changelog
+`kind: verification`
 
 - 2026-09-29: Sliced out of the plan of record's P4 under #23106 (Plan P4 API
   keys and node registration front-door slice), rooted at #21555, and refreshed
@@ -1031,6 +1031,12 @@ deferral:
     4.5.7).
   - P4-08: login validates the full 2xx enrollment response before any
     publication and revokes an identifiable bad key (4.5.8).
+- 2026-09-29: Consensus. The Adversary (gobby#14579) independently verified
+  251eed5 and found P4-01 to P4-08 resolved with no blocking findings left.
+  Writer and Adversary agree on the narrative scope: four executable leaves
+  (4.6, 4.1, 4.2, 4.5) carrying 42 acceptance items, and D1 to D5 deferred.
+  This entry makes no narrative change. The Adversary applies M1 next, before
+  PD review and Josh's approval.
 
 ## V2: Verification
 `kind: verification`
