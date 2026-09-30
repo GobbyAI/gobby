@@ -153,10 +153,20 @@ def build_results(
     return ordered[:limit]
 
 
-def _cosine(left: list[float], right: list[float]) -> float:
+def _norm(vector: list[float]) -> float:
+    return math.sqrt(sum(a * a for a in vector))
+
+
+def _cosine_from_norms(
+    left: list[float], right: list[float], left_norm: float, right_norm: float
+) -> float:
     dot = sum(a * b for a, b in zip(left, right, strict=False))
-    norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+    norm = left_norm * right_norm
     return dot / norm if norm else 0.0
+
+
+def _cosine(left: list[float], right: list[float]) -> float:
+    return _cosine_from_norms(left, right, _norm(left), _norm(right))
 
 
 def collapse_near_duplicates(
@@ -172,16 +182,25 @@ def collapse_near_duplicates(
     (#21010). Runs before the limit cut. A hit whose vector the store could not
     serve is kept as-is.
     """
+    # The comparison is pairwise, so each vector's norm is otherwise recomputed
+    # once per pair -- O(n**2) square roots over 768-float vectors (#22910).
+    # Hoisting them keeps the arithmetic identical (same sqrt, same product) while
+    # computing each norm once.
+    norms = {memory_id: _norm(vector) for memory_id, vector in vectors.items()}
     kept: list[Memory] = []
     for mem in ordered:
         vector = vectors.get(mem.id)
         representative: Memory | None = None
         if vector is not None:
+            vector_norm = norms[mem.id]
             for candidate in kept:
                 candidate_vector = vectors.get(candidate.id)
                 if candidate_vector is None:
                     continue
-                if _cosine(vector, candidate_vector) >= threshold:
+                if (
+                    _cosine_from_norms(vector, candidate_vector, vector_norm, norms[candidate.id])
+                    >= threshold
+                ):
                     representative = candidate
                     break
         if representative is None:

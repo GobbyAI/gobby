@@ -1370,3 +1370,79 @@ def test_order_results_keeps_earlier_hit_on_equal_undecayed_scores() -> None:
     }
 
     assert order_results(hits, lambda hit: scores[hit]) == ["first", "second"]
+
+
+def test_collapse_near_duplicates_matches_pairwise_cosine_reference() -> None:
+    """F3 (#22910): hoisting vector norms must not change the clustering.
+
+    The pairwise cosine previously recomputed both sqrt norms for every pair.
+    Precomputing each norm once is a pure hoist, so the folded set must be
+    identical to a reference that recomputes the norms exactly as before.
+    """
+    import math
+
+    from gobby.memory.services._search_results import (
+        _cosine,
+        collapse_near_duplicates,
+    )
+
+    def ref_cosine(left: list[float], right: list[float]) -> float:
+        dot = sum(a * b for a, b in zip(left, right, strict=False))
+        norm = math.sqrt(sum(a * a for a in left)) * math.sqrt(sum(b * b for b in right))
+        return dot / norm if norm else 0.0
+
+    def ref_collapse(
+        ordered: list[Memory], vectors: dict[str, list[float]], threshold: float
+    ) -> list[Memory]:
+        kept: list[Memory] = []
+        for mem in ordered:
+            vector = vectors.get(mem.id)
+            representative: Memory | None = None
+            if vector is not None:
+                for candidate in kept:
+                    candidate_vector = vectors.get(candidate.id)
+                    if candidate_vector is None:
+                        continue
+                    if ref_cosine(vector, candidate_vector) >= threshold:
+                        representative = candidate
+                        break
+            if representative is None:
+                kept.append(mem)
+                continue
+            if representative.collapsed_duplicates is None:
+                representative.collapsed_duplicates = []
+            representative.collapsed_duplicates.append(mem.id)
+        return kept
+
+    def _memory(memory_id: str) -> Memory:
+        memory = Memory.__new__(Memory)
+        object.__setattr__(memory, "id", memory_id)
+        object.__setattr__(memory, "collapsed_duplicates", None)
+        return memory
+
+    # Two tight clusters plus a singleton, built so several pairs cross 0.92.
+    base_a = [1.0, 0.0, 0.0, 0.0]
+    base_b = [0.0, 1.0, 0.0, 0.0]
+    vectors = {
+        "a1": base_a,
+        "a2": [0.999, 0.001, 0.0, 0.0],
+        "b1": base_b,
+        "b2": [0.001, 0.999, 0.0, 0.0],
+        "c1": [0.0, 0.0, 1.0, 0.0],
+    }
+    threshold = 0.92
+
+    ordered = [_memory(mid) for mid in vectors]
+    expected = [mem.id for mem in ref_collapse(ordered, vectors, threshold)]
+
+    for memory in ordered:
+        object.__setattr__(memory, "collapsed_duplicates", None)
+    actual = [mem.id for mem in collapse_near_duplicates(ordered, vectors, threshold)]
+
+    assert actual == expected
+    # The hoisted version is bit-identical to the pairwise reference.
+    for memory in ordered:
+        object.__setattr__(memory, "collapsed_duplicates", None)
+    actual_again = [mem.id for mem in collapse_near_duplicates(ordered, vectors, threshold)]
+    assert actual_again == expected
+    assert _cosine(base_a, [0.999, 0.001, 0.0, 0.0]) >= threshold
