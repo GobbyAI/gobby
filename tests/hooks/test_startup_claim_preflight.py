@@ -403,7 +403,14 @@ class TestResolveOrAdoptOrRegister:
                 }
             },
         )
-        assert release_receipt(temp_db, receipt_id=receipt.receipt_id) is not None
+        assert (
+            release_receipt(
+                temp_db,
+                receipt_id=receipt.receipt_id,
+                delivery_generation=receipt.delivery_generation,
+            )
+            is not None
+        )
 
         again = preflight_agy_startup_claim(_payload(workspace=workspace), manager)
 

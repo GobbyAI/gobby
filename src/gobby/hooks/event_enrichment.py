@@ -195,7 +195,7 @@ class EventEnricher:
         reserved = reserve_pending_messages(
             platform_session_id, [message.id for message in undelivered]
         )
-        undelivered = [message for message in undelivered if message.id in reserved]
+        undelivered = [message for message in undelivered if message.id in reserved.message_ids]
         if not undelivered:
             return
 
@@ -226,7 +226,9 @@ class EventEnricher:
             self._stage_pending_messages(response, rendered, platform_session_id)
             staged_ids = rendered.represented_message_ids
         finally:
-            release_pending_messages(platform_session_id, reserved.difference(staged_ids))
+            release_pending_messages(
+                platform_session_id, reserved, reserved.message_ids.difference(staged_ids)
+            )
 
     @staticmethod
     def _stage_pending_messages(

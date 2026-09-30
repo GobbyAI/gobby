@@ -1675,7 +1675,11 @@ class TestExecuteHookReceiptRedelivery:
             )
             assert first.status_code == 200
             first_receipt = first.json()["_gobby_delivery_receipt"]
-            assert release_receipt(session_storage.db, receipt_id=first_receipt["receipt_id"])
+            assert release_receipt(
+                session_storage.db,
+                receipt_id=first_receipt["receipt_id"],
+                delivery_generation=first_receipt["delivery_generation"],
+            )
 
             second = client.post(
                 "/api/hooks/execute",
@@ -1738,7 +1742,14 @@ class TestExecuteHookReceiptRedelivery:
             first_receipt = first.json()["_gobby_delivery_receipt"]
             assert first_receipt["delivery_generation"] == 1
             # Transport loss: the emitted response never reached the hook process.
-            assert release_receipt(db, receipt_id=first_receipt["receipt_id"]) is not None
+            assert (
+                release_receipt(
+                    db,
+                    receipt_id=first_receipt["receipt_id"],
+                    delivery_generation=first_receipt["delivery_generation"],
+                )
+                is not None
+            )
 
             second = client.post(
                 "/api/hooks/execute",

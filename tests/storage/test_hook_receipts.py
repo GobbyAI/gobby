@@ -91,7 +91,11 @@ class TestHookReceiptLifecycle:
             envelope_id="env-orig",
             staged_payload={"context": "startup"},
         )
-        released = receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        released = receipts.release_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
         assert released is not None
         assert released.state == "released"
         reprepared = receipts.reprepare_receipt(
@@ -192,7 +196,11 @@ class TestReleaseAndReprepareForSession:
             envelope_id="env-released",
             staged_payload={"context": "startup"},
         )
-        receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        receipts.release_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
         carried = receipts.release_and_reprepare_for_session(
             receipts_db,
             session_id=session_id,
@@ -203,6 +211,34 @@ class TestReleaseAndReprepareForSession:
         assert carried.current_envelope_id == "env-next"
         assert carried.delivery_generation == 2
         assert carried.staged_payload == {"context": "startup"}
+
+    def test_a_late_transport_release_leaves_the_carried_generation_prepared(
+        self, receipts_db: HubDatabase
+    ) -> None:
+        receipts = _receipts()
+        session_id = str(uuid4())
+        receipt = receipts.prepare_receipt(
+            receipts_db,
+            session_id=session_id,
+            envelope_id="env-first",
+            staged_payload={"context": "startup"},
+        )
+        receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id, delivery_generation=1)
+        carried = receipts.release_and_reprepare_for_session(
+            receipts_db, session_id=session_id, envelope_id="env-next"
+        )
+        assert carried is not None
+
+        stale = receipts.release_receipt(
+            receipts_db, receipt_id=receipt.receipt_id, delivery_generation=1
+        )
+        current = receipts.release_receipt(
+            receipts_db, receipt_id=receipt.receipt_id, delivery_generation=2
+        )
+
+        assert stale is None
+        assert current is not None
+        assert current.state == "released"
 
     def test_fresh_prepared_row_is_not_presumed_lost_until_grace_expires(
         self, receipts_db: HubDatabase
@@ -610,7 +646,11 @@ class TestHookReceiptRetention:
             session_id=str(uuid4()),
             envelope_id="env-released",
         )
-        receipts.release_receipt(receipts_db, receipt_id=released.receipt_id)
+        receipts.release_receipt(
+            receipts_db,
+            receipt_id=released.receipt_id,
+            delivery_generation=released.delivery_generation,
+        )
         stale = now - (window + timedelta(seconds=5))
         _set_transition(receipts_db, prepared.receipt_id, stale)
         _set_transition(receipts_db, released.receipt_id, stale, state="released")

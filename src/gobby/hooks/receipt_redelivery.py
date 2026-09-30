@@ -6,6 +6,10 @@ but never acknowledged, or released after an emission failure) is re-prepared
 onto the new envelope and its staged effects are merged into the new response,
 so the provider sees the lost delivery again on its next live hook. When the
 daemon fails to emit a receipted response, the receipt is released at once.
+
+Pending-message ids are never carried: those messages stay undelivered until a
+receipt that rendered them is acknowledged, so a later hook re-reads and
+re-renders a lost batch, and a receipt acknowledges only what its response showed.
 """
 
 from __future__ import annotations
@@ -17,7 +21,6 @@ from typing import Any
 from starlette.types import Receive, Scope, Send
 
 from gobby.adapters.agy_contract import AGY_FORCE_CONTINUE_LIMIT, strip_unbudgeted_force_continue
-from gobby.hooks.pending_message_reservations import release_pending_messages
 from gobby.hooks.receipt_effects import merge_staged_payloads
 from gobby.hooks.startup_claim_preflight import StartupClaimLease
 from gobby.servers.responses import JSONResponse
@@ -25,6 +28,7 @@ from gobby.servers.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 DELIVERY_RECEIPT_FIELD = "_gobby_delivery_receipt"
+_PENDING_MESSAGE_EFFECT_KEYS = frozenset({"pending_message_ids", "pending_message_session_id"})
 
 
 def receipt_session_id(
@@ -79,7 +83,12 @@ def _carry_forward_staged_effects(
         carried.delivery_generation,
         envelope_id,
     )
-    return merge_staged_payloads(carried.staged_payload, staged_payload or {}), True
+    carried_effects = {
+        key: value
+        for key, value in carried.staged_payload.items()
+        if key not in _PENDING_MESSAGE_EFFECT_KEYS
+    }
+    return merge_staged_payloads(carried_effects, staged_payload or {}), True
 
 
 def attach_delivery_receipt(
@@ -137,14 +146,6 @@ def attach_delivery_receipt(
     return attached
 
 
-def _release_staged_message_reservations(staged_payload: Mapping[str, Any]) -> None:
-    """Let the next hook redeliver a released receipt's messages without waiting."""
-    session_id = staged_payload.get("pending_message_session_id")
-    message_ids = staged_payload.get("pending_message_ids")
-    if isinstance(session_id, str) and isinstance(message_ids, list):
-        release_pending_messages(session_id, (str(message_id) for message_id in message_ids))
-
-
 def release_receipt_for_response(db: Any, response: Mapping[str, Any]) -> bool:
     """Release the receipt attached to a response whose emission failed."""
     receipt = response.get(DELIVERY_RECEIPT_FIELD)
@@ -153,15 +154,17 @@ def release_receipt_for_response(db: Any, response: Mapping[str, Any]) -> bool:
     receipt_id = receipt.get("receipt_id")
     if not isinstance(receipt_id, str) or not receipt_id:
         return False
+    generation = receipt.get("delivery_generation")
+    if not isinstance(generation, int):
+        return False
     from gobby.storage.hook_receipts import release_receipt
 
     try:
-        released = release_receipt(db, receipt_id=receipt_id)
+        released = release_receipt(db, receipt_id=receipt_id, delivery_generation=generation)
     except Exception:
         logger.warning("Failed to release hook receipt %s", receipt_id, exc_info=True)
         return False
     if released is not None:
-        _release_staged_message_reservations(released.staged_payload)
         logger.warning(
             "Released hook receipt %s after the response could not be emitted",
             receipt_id,
