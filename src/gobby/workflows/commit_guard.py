@@ -221,20 +221,27 @@ def _unmodeled_navigation(tokens: list[ShellToken]) -> bool:
             token.value in {"{", "}"} or any(char in token.value for char in "()`")
         ):
             return True
-    if values[0] == "env":
-        git_index = next((i for i, value in enumerate(values) if _is_git_word(value)), None)
-        return any(value.startswith(("-C", "--chdir")) for value in values[1:git_index])
-    return False
+    # Position-independent so assignments and wrappers (`command env`, `FOO=x env`)
+    # cannot hide env's directory option ahead of git.
+    git_index = next((i for i, value in enumerate(values) if _is_git_word(value)), None)
+    head = values[:git_index]
+    return any(value.rsplit("/", maxsplit=1)[-1] == "env" for value in head) and any(
+        value.startswith(("-C", "--chdir")) for value in head
+    )
 
 
 def _nested_shell_texts(tokens: list[ShellToken]) -> list[str]:
     """Shell source this segment hands to another shell parse."""
     values = shell_token_values(tokens)
-    command = values[0].rsplit("/", maxsplit=1)[-1]
-    if command == "eval" or (
-        command in _NESTED_SHELLS and any(_SHELL_C_FLAG.fullmatch(value) for value in values)
-    ):
-        return values[1:]
+    # Any position, so assignments and wrappers (env, command, timeout, xargs)
+    # ahead of the shell cannot hide its source from the parse.
+    for index, value in enumerate(values):
+        name = value.rsplit("/", maxsplit=1)[-1]
+        if name == "eval" or (
+            name in _NESTED_SHELLS
+            and any(_SHELL_C_FLAG.fullmatch(later) for later in values[index + 1 :])
+        ):
+            return values[index + 1 :]
     return [
         token.value
         for token in tokens
