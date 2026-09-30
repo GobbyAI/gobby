@@ -968,8 +968,11 @@ runs against `ai.decisions` loaded from the daemon config:
 1. Split by `int(content_hash, 16) % 5 == 0` into a holdout, with the rest
    as the development set. Records with identical content share a hash, so a
    repeated example never lands in both splits.
-2. Replay every record with its original order and with options, or candidate
-   order in the state, reversed.
+2. Replay every record in its original order and reversed. For Choice
+   consumers the reversal is the criteria order. For Noul consumers it is
+   the proposition order. Candidate ids, gold labels, the incumbent
+   comparison, and the semantic-order tie rule stay bound to each candidate,
+   so the reversal changes only the order the backend sees.
    - Every available replayed answer must carry the same non-null
      `backend_identity` and the same `response_model`. Answers that span
      identities or response models, or any available answer with no
@@ -1366,7 +1369,7 @@ Edits:
 - 4.1.2 - The features guide lists both consumers with their modes and
   fallbacks. behavior: "found_work" in `docs/guides/llm-features.md`.
 
-## V1: Verification
+## V2: Verification
 `kind: verification`
 
 Each leaf runs its own `Verification planned` command after its final
@@ -1389,12 +1392,30 @@ available with the configured model. With the server stopped, a
 `recommend_tools` call in `shadow` mode returns its usual result. Do not run
 the full pytest suite.
 
-Plan changelog:
+## V1 Plan Changelog
+`kind: verification`
+
 - 2026-09-29: First draft by Plan Writer gobby#14578.
 - 2026-09-29: Enhancer pass (run 4aeff78d) and PD dispositions applied:
   - accepted E1 to E8 and E10: transport hardening, the status-aware retry
     predicate, the incumbent-first rerank fallback, the complete gate harness,
     strict response parsing, config defaults and bounds, the service
     fingerprint, found-work budget containment, and post-deployment labeling;
-  - modified E9: V1 validates the absolute worktree plan path against the
+  - modified E9: the verification section (now V2) validates the absolute
+    worktree plan path against the
     `/Users/josh/Projects/gobby` root.
+- 2026-09-29: Consensus with Plan Adversary gobby#14579 on 4f79ea9, with
+  the order-flip permutation wording in 2.1 step 2 folded in after it.
+  Findings DC-01 to DC-14 and their follow-ups were resolved through commits
+  0d53f3b, 6faeaaa, e034808, 8e9d54a, 4d94cba, 1fa80a8, b759d6e, 9a4f0c3,
+  cf1697c, and 4f79ea9. They covered the pinned TypeSafe and Kev contracts,
+  the truncation guard and its advisory ceiling, retry and cooldown
+  semantics, the service fingerprint, per-call backend identity under
+  `identity_contract`, consistent identity across rerank batches and replays,
+  the deployment owner's drain rule, per-contract live-capture evidence, and
+  the promotion gate constants copied into 2.1. Governing rulings: Josh chose
+  the `allow_remote` opt-in (Decision 2); the PD ruled DC-11 as the proposed
+  primitive build order, with #22604 keeping its independent parking and the
+  live capture required before any consumer leaves `shadow` (Decision 7,
+  Activation Gate item 4); Decision 14 stands as the PD's explicit
+  assumption for whole-plan approval.
