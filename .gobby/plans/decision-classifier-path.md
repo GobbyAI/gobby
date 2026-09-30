@@ -654,9 +654,21 @@ single fitted temperature, and its answers are order-sensitive (research doc
 `decisions_shadow.record(consumer, record)` appends one JSON line to
 `~/.gobby/decisions/shadow/<consumer>.jsonl`.
 - The directory is created `0700` and the file `0600`.
-- Each record carries `id` (uuid4), `ts`, `model`, `state`, `questions`, the
-  classifier answer or unavailable reason, the incumbent verdict, and
-  `latency_ms`.
+- Every record carries `id` (uuid4), `ts`, `consumer`, `model`,
+  `content_hash` (sha256 of the canonical JSON of `state` and the questions or
+  propositions), `state`, the questions or propositions, `classifier` as
+  `{status: "ok" | "unavailable", reason, answers}`, `incumbent` as
+  `{status: "ok" | "unavailable", verdict}`, `latency_ms`, and
+  `estimated_tokens`.
+- `tool_rerank` records add `k` (the requested `top_k`), `candidates` (the
+  fetched `server/tool` ids in semantic order), classifier probabilities keyed
+  by candidate id, and the incumbent verdict as the ordered id list the LLM
+  rerank returned. When the LLM rerank failed, the verdict is the semantic
+  order the caller actually received, with incumbent status `unavailable`.
+- `found_work` records add the classifier probability and the incumbent
+  verdict as `true`, `false`, or `null`. `null` means the caller alerted on
+  the fast-path verdict.
+- 3.1 and 3.2 write these fields, and their shadow tests assert them.
 - The file is capped at 10,000 lines. On overflow it is rewritten with the
   newest 5,000 lines through a temp file and a rename.
 - Writes are best effort: a failure logs once at WARNING and never raises into
@@ -665,8 +677,14 @@ single fitted temperature, and its answers are order-sensitive (research doc
 The file is machine-local and never committed.
 
 Labeling:
-- The labeling queue is the shadow records where the classifier and the
-  incumbent disagree, plus an equal random sample of agreements.
+- The promotion cohort is a uniform random sample of the consumer's shadow
+  records, drawn by ascending `sha256(id)`. Enriched sampling would skew every
+  rate toward disagreements, so the cohort takes no disagreement weighting and
+  stands for the live distribution.
+- Gold fields, added by the labeler to a curated copy:
+  - `tool_rerank`: `gold_relevant`, a list of candidate ids that materially
+    apply to the request. An empty list means reject-all is correct.
+  - `found_work`: `gold_shirk`, a boolean.
 - Plan expansion creates no labeling task, because no data exists before
   deployment.
 - After deployment, once a consumer's shadow file reaches 200 records, the
@@ -674,14 +692,15 @@ Labeling:
   The PD records the task ref with that consumer's promotion evidence.
 - The consumer stays in `shadow` until the labeling task and its eval report
   are complete, and `enforce` stays gated on that report.
-- The lane adds a `gold` field to a curated copy.
-- The Assistant presents 20 disagreements per consumer to Josh as a spot
-  audit before any promotion.
+- The lane labels the cohort.
+- Separately, the Assistant presents 20 disagreements per consumer to Josh as
+  a spot audit before any promotion. Audit records never enter the metrics.
 
 `scripts/decisions_eval.py --consumer <name> --dataset <jsonl> --out <md>`
 runs against `ai.decisions` loaded from the daemon config:
-1. Split by `int(sha256(id), 16) % 5 == 0` into a holdout, with the rest as the
-   development set.
+1. Split by `int(content_hash, 16) % 5 == 0` into a holdout, with the rest
+   as the development set. Records with identical content share a hash, so a
+   repeated example never lands in both splits.
 2. Replay every record with its original order and with options, or candidate
    order in the state, reversed.
 3. Compute accuracy, Brier score, ECE (10 equal-width bins on confidence for
@@ -693,13 +712,37 @@ runs against `ai.decisions` loaded from the daemon config:
    The local backend's per-call cost is zero, so this gives one
    local-versus-hosted number per consumer.
 5. Compute every Decision 12 metric for the consumer:
-   - tool rerank: Recall@k and reject-all accuracy, each against the LLM
-     rerank;
-   - found-work: the false-clear rate, the false-alert rate, and the
-     escalation rate.
+   - tool rerank, with the classifier's list being candidates at or above
+     `min_probability`, ordered by probability:
+     - Recall@k = `|top_k(list) ∩ gold_relevant| / |gold_relevant|`, averaged
+       over records with non-empty gold, computed for the classifier and for
+       the incumbent's recorded order;
+     - reject-all accuracy = the share of empty-gold records where the
+       classifier list is empty;
+     - records whose classifier status is `unavailable` are excluded from
+       classifier quality and reported as the unavailability rate.
+   - found-work, simulating the cascade at the candidate thresholds:
+     - probability at or above `accept_above` is a confirm, at or below
+       `accept_below` a clear, anything else or `unavailable` an escalation;
+     - an escalation takes the incumbent verdict, and a `null` verdict counts
+       as an alert;
+     - false-clear rate = final clears with `gold_shirk` true, over records
+       with `gold_shirk` true, for the cascade and for the incumbent alone;
+     - false-alert rate = final alerts with `gold_shirk` false, over records
+       with `gold_shirk` false;
+     - escalation rate = escalations over all records.
    Thresholds are selected on the development split only, and the frozen
-   holdout is evaluated once. Community labels import #22604's Q1.6 results
-   through an adapter and do not redefine them.
+   holdout is evaluated once.
+
+   Support: each split needs at least 20 records per gold class (non-empty and
+   empty `gold_relevant`; `gold_shirk` true and false). A metric with a zero
+   denominator or short support is undefined, and any undefined gate metric
+   makes the verdict `FAIL` with the reason `insufficient support`. The PD
+   then requests a further random cohort.
+
+   Community labels are outside the harness. Their promotion evidence is
+   #22604's Q1.6 report, which that task owns, cited by path in the consumer's
+   promotion evidence.
 6. Write a Markdown report. It names the model, the dataset hash, and both
    splits, and ends in an explicit gate `PASS` or `FAIL` listing each measured
    value against its threshold.
@@ -726,6 +769,15 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `found_work` produce the expected metric values and gate verdicts. Thresholds
   come from the development split only. test:
   `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
+- 2.1.5 - Known-answer edge cases: an incumbent `null` verdict counts as an
+  alert, an unavailable classifier escalates, a record whose `k` exceeds its
+  returned list length still scores Recall@k against `k`, and short support or
+  a zero denominator yields `FAIL` with `insufficient support`. test:
+  `tests/scripts/test_decisions_eval.py::test_metric_edge_cases_fail_closed`.
+- 2.1.6 - On a synthetic skewed mix with a 5% disagreement rate, the gate
+  metrics equal the cohort's actual rates; audit records are excluded, and
+  duplicate content lands in one split. test:
+  `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.
 
 ## P3: Consumers
 `kind: framing`
@@ -845,7 +897,7 @@ both texts.
 By `found_work.mode`:
 - `off`: today's LLM path.
 - `shadow`: today's LLM path decides. The classifier runs alongside it under
-  `asyncio.gather` within the same 8 s cap, and a shadow record pairs the
+  `asyncio.gather` within the same budget, and a shadow record pairs the
   probability with the LLM verdict.
 - `enforce`, with a matching `evaluated_model`:
   - a probability at or above `accept_above` returns `True`;
@@ -854,15 +906,26 @@ By `found_work.mode`:
   - `DecisionsUnavailable` also escalates to today's LLM path, whose own
     `None` keeps the fast-path alert.
 
-The whole confirmation stays within today's 8 s cap:
-- A wrapper converts every classifier failure, typed or unexpected, into an
-  unavailable result. So a classifier exception never cancels the incumbent
+Admission is today's, in every mode. With no LLM service, no daemon
+config, or `validation.enabled` false, `confirm_shirk` returns `None` before
+any classifier call. The cascade extends the incumbent path and never runs
+where the incumbent is not admitted.
+
+Budget: `cap = min(validation.close_review_total_timeout_seconds, 8.0)`, the
+incumbent's current cap. `confirm_shirk` fixes one deadline,
+`loop.time() + cap`, at entry, and every call gets only the time left:
+- A wrapper converts every classifier `Exception`, typed or unexpected, into
+  an unavailable result. So a classifier failure never cancels the incumbent
   in `shadow`.
-- The classifier's own timeout is bounded by the remaining budget.
-- The escalated LLM call gets `remaining = max(0, 8.0 -
-  classifier_elapsed)` seconds.
+- In `shadow`, both calls get `remaining` as their timeout. A classifier task
+  still pending at the deadline is cancelled and awaited before return.
+- In `enforce`, the classifier's timeout is `remaining`. The escalated LLM
+  call gets `remaining = max(0, deadline - loop.time())`.
 - When `remaining` is 0, confirmation returns `None`, so the caller keeps the
   fast-path alert and no LLM call is made with an invalid timeout.
+- Caller cancellation propagates. `asyncio.CancelledError` is never
+  converted, and child tasks are cancelled and awaited before it re-raises.
+- `enforce` with a mismatched `evaluated_model` behaves as `shadow`.
 
 So a classifier outage never clears a finding, and only a confident
 classifier verdict skips the LLM.
@@ -881,12 +944,23 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   band between escalates to the LLM. test:
   `tests/workflows/test_found_work_confirm.py::test_cascade_accepts_confident_and_escalates_uncertain`.
 - 3.2.3 - An unavailable classifier escalates to the LLM path and never
-  returns `False` by itself. The escalated call's timeout is the 8 s cap minus
-  the classifier's elapsed time, and an exhausted budget returns `None`. test:
+  returns `False` by itself. The escalated call's timeout is the configured
+  cap minus the classifier's elapsed time, and an exhausted budget returns
+  `None`. test:
   `tests/workflows/test_found_work_confirm.py::test_outage_never_clears_a_finding`.
 - 3.2.4 - Shadow mode returns the LLM verdict and writes one shadow record.
   An unexpected classifier exception leaves the LLM verdict intact. test:
   `tests/workflows/test_found_work_confirm.py::test_shadow_returns_llm_verdict`.
+- 3.2.5 - Budget and admission:
+  - a configured 1 s cap bounds the whole confirmation in shadow and enforce;
+  - `off` makes no classifier call and returns today's result;
+  - `validation.enabled` false or a missing service returns `None` with no
+    classifier call;
+  - caller cancellation propagates and leaves no pending task;
+  - a mismatched `evaluated_model` behaves as shadow.
+
+  test:
+  `tests/workflows/test_found_work_confirm.py::test_budget_admission_and_cancellation`.
 
 ## P4: Documentation
 `kind: framing`
