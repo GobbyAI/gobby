@@ -677,8 +677,6 @@ class WorkspaceManager:
         """
         pane_id, beside_id, split_axis = _uuid(pane_id), _uuid(beside), _axis(axis)
         with self.db.transaction() as conn:
-            if expected_workspace_id is not None:
-                _lock_rows(conn, "workspaces", _uuid(expected_workspace_id))
             (home,), tabs = _lock_pane_tabs(conn, [beside_id])
             # A tab keeps its id across workspaces, so both ids are checked.
             expected = (expected_workspace_id, expected_tab_id, expected_project_id)

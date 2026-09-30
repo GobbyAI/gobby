@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
+from threading import Event, Thread, current_thread
 from typing import Any
 from unittest.mock import patch
 
+import psycopg
 import pytest
 
+from gobby.storage import workspaces as workspaces_module
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
@@ -483,33 +488,126 @@ def test_guarded_mutations_refuse_in_flight_panes(
     assert [pane.id for pane in manager.remove_pane(seat.hot).removed_panes] == [seat.hot]
 
 
+@dataclass(frozen=True)
+class _Hold:
+    """Where the first call parks: after ``name`` on ``owner`` returns, or before it runs."""
+
+    owner: object
+    name: str
+    after: bool = True
+
+
+_AFTER_GUARD = _Hold(WorkspaceManager, "_guard")
+_AFTER_INSERT = _Hold(workspaces_module, "_insert_pane")
+
+
+def _wait_for_lock_waiter(db: PostgresHubDatabase, contender: Thread) -> None:
+    deadline = time.monotonic() + 5.0
+    with psycopg.connect(db.conninfo) as monitor:
+        while time.monotonic() < deadline:
+            if not contender.is_alive():
+                raise AssertionError("the contender finished instead of waiting on a lock")
+            row = monitor.execute(
+                "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() "
+                "AND application_name = %s AND wait_event_type = 'Lock'",
+                (db.application_name,),
+            ).fetchone()
+            if row is not None and int(row[0]) >= 1:
+                return
+            time.sleep(0.02)
+    raise AssertionError("timed out waiting for the contender to block on a row lock")
+
+
+def _race(
+    db: PostgresHubDatabase,
+    hold: _Hold,
+    first: Callable[[], object],
+    second: Callable[[], object],
+    *,
+    second_waits: bool = True,
+) -> tuple[Exception | None, Exception | None]:
+    """Park ``first`` inside its transaction, run ``second`` on its own connection, release.
+
+    With ``second_waits`` the contender must block on a row lock ``first`` holds;
+    without it the contender must finish while ``first`` is still parked. Returns
+    each call's exception.
+    """
+    original = getattr(hold.owner, hold.name)
+    parked, release = Event(), Event()
+    errors: dict[str, Exception | None] = {"first": None, "second": None}
+
+    def held(*args: Any, **kwargs: Any) -> object:
+        if current_thread().name != "first":
+            return original(*args, **kwargs)
+        result = original(*args, **kwargs) if hold.after else None
+        parked.set()
+        if not release.wait(10):
+            raise AssertionError("the race was never released")
+        return result if hold.after else original(*args, **kwargs)
+
+    def thread(name: str, call: Callable[[], object]) -> Thread:
+        def run() -> None:
+            try:
+                call()
+            except Exception as exc:
+                errors[name] = exc
+
+        return Thread(target=run, name=name, daemon=True)
+
+    one, two = thread("first", first), thread("second", second)
+    with patch.object(hold.owner, hold.name, held):
+        try:
+            one.start()
+            assert parked.wait(10), "the first call never reached its hold point"
+            two.start()
+            if second_waits:
+                _wait_for_lock_waiter(db, two)
+            else:
+                two.join(5)
+                assert not two.is_alive(), "the contender blocked behind the parked call"
+        finally:
+            release.set()
+            one.join(10)
+            two.join(10)
+    assert not one.is_alive() and not two.is_alive()
+    return errors["first"], errors["second"]
+
+
 @pytest.mark.parametrize("first", ["insert", "guard"])
 def test_guard_and_insert_serialize(
-    manager: WorkspaceManager, sample_project: dict[str, Any], first: str
+    manager: WorkspaceManager,
+    temp_db: PostgresHubDatabase,
+    sample_project: dict[str, Any],
+    first: str,
 ) -> None:
     project_id = sample_project["id"]
     workspace, _created = manager.create(manager.resolve_node(None).id)
     created = manager.create_tab(workspace.id, pane_id=_pane_id(), project_id=project_id)
     tab, root = created.tabs[0], created.panes[0]
     agent = _pane_id()
-    expected = {"expected_workspace_id": workspace.id, "expected_tab_id": tab.id}
+    manager.mark_spawn_in_flight(agent)
 
     def insert() -> None:
-        manager.mark_spawn_in_flight(agent)
-        manager.add_pane(agent, beside=root.id, axis="vertical", **expected)
+        manager.add_pane(
+            agent,
+            beside=root.id,
+            axis="vertical",
+            expected_workspace_id=workspace.id,
+            expected_tab_id=tab.id,
+        )
 
     def guard() -> None:
         manager.close_tab(tab.id, refuse_in_flight=True, expected_panes={root.id: None})
 
     if first == "insert":
-        insert()
-        with pytest.raises(WorkspaceBusyError):
-            guard()
+        errors = _race(temp_db, _AFTER_INSERT, insert, guard)
+        assert errors[0] is None
+        assert isinstance(errors[1], WorkspaceBusyError)
         assert {pane.id for pane in manager.list_panes(workspace.id)} == {root.id, agent}
     else:
-        guard()
-        with pytest.raises(WorkspaceNotFoundError):
-            insert()
+        errors = _race(temp_db, _AFTER_GUARD, guard, insert)
+        assert errors[0] is None
+        assert isinstance(errors[1], WorkspaceNotFoundError)
         assert manager.list_panes(workspace.id) == []
         assert _pane_row(manager, agent) is None
 
@@ -553,28 +651,70 @@ def test_add_pane_refuses_moved_beside_target(
 
 @pytest.mark.parametrize("first", ["close", "insert"])
 def test_empty_workspace_close_serializes_with_new_tab(
-    manager: WorkspaceManager, sample_project: dict[str, Any], first: str
+    manager: WorkspaceManager,
+    temp_db: PostgresHubDatabase,
+    sample_project: dict[str, Any],
+    first: str,
 ) -> None:
     workspace, _created = manager.create(manager.resolve_node(None).id)
     agent = _pane_id()
+    manager.mark_spawn_in_flight(agent)
 
     def insert() -> None:
-        manager.mark_spawn_in_flight(agent)
         manager.create_tab(workspace.id, pane_id=agent, project_id=sample_project["id"])
 
     def close() -> None:
         manager.close(workspace.id, refuse_in_flight=True, expected_panes={})
 
     if first == "close":
-        close()
-        with pytest.raises(WorkspaceNotFoundError):
-            insert()
+        errors = _race(temp_db, _AFTER_GUARD, close, insert)
+        assert errors[0] is None
+        assert isinstance(errors[1], WorkspaceNotFoundError)
         assert manager.get(workspace.id) is None
+        assert _pane_row(manager, agent) is None
     else:
-        insert()
-        with pytest.raises(WorkspaceBusyError):
-            close()
+        errors = _race(temp_db, _AFTER_INSERT, insert, close)
+        assert errors[0] is None
+        assert isinstance(errors[1], WorkspaceBusyError)
         assert [pane.id for pane in manager.list_panes(workspace.id)] == [agent]
+
+
+def test_add_pane_with_stale_workspace_never_locks_against_a_reverse_move(
+    manager: WorkspaceManager, temp_db: PostgresHubDatabase, sample_project: dict[str, Any]
+) -> None:
+    node = manager.resolve_node(None).id
+    low, high = sorted(
+        (manager.create(node, f"lock-{_pane_id()}")[0] for _ in range(2)), key=lambda ws: ws.id
+    )
+    created = manager.create_tab(high.id, pane_id=_pane_id(), project_id=sample_project["id"])
+    tab, root = created.tabs[0], created.panes[0]
+    manager.move_tab(tab.id, workspace_id=low.id, position=0)
+    agent = _pane_id()
+    manager.mark_spawn_in_flight(agent)
+
+    # Preflight read the tab in ``high``; it now sits in ``low``, which sorts first.
+    def insert() -> None:
+        manager.add_pane(
+            agent,
+            beside=root.id,
+            axis="vertical",
+            expected_workspace_id=high.id,
+            expected_tab_id=tab.id,
+        )
+
+    def move_back() -> None:
+        manager.move_tab(tab.id, workspace_id=high.id, position=0)
+
+    errors = _race(
+        temp_db,
+        _Hold(workspaces_module, "_lock_pane_tabs", after=False),
+        insert,
+        move_back,
+        second_waits=False,
+    )
+    assert errors == (None, None)
+    assert {pane.id for pane in manager.list_panes(high.id)} == {root.id, agent}
+    assert manager.list_panes(low.id) == []
 
 
 def test_sweep_keeps_orphaned_panes(
