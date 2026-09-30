@@ -10,7 +10,7 @@ from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from gobby.telemetry.instruments import observe_histogram
 from gobby.telemetry.query_timing import observe_queries
@@ -203,22 +203,38 @@ class SlowHookLogSampler:
     _suppressed: int = 0
     _max_seconds: float = 0.0
 
+    def window_deadline(self) -> float | None:
+        if self._window_start is None:
+            return None
+        return self._window_start + self.window_seconds
+
+    def close_due_window(self, now: float) -> SlowHookWindowSummary | None:
+        deadline = self.window_deadline()
+        if deadline is None or now < deadline:
+            return None
+        return self.close_window(now)
+
+    def close_window(self, now: float) -> SlowHookWindowSummary | None:
+        """Summarize the open window, reporting how long it actually covered."""
+        if self._window_start is None:
+            return None
+        summary = SlowHookWindowSummary(
+            count=sum(self._by_phase.values()),
+            suppressed=self._suppressed,
+            max_seconds=self._max_seconds,
+            window_seconds=min(now - self._window_start, self.window_seconds),
+            by_phase=dict(self._by_phase),
+        )
+        self._window_start = None
+        self._by_phase = {}
+        self._suppressed = 0
+        self._max_seconds = 0.0
+        return summary
+
     def observe(
         self, *, total_seconds: float, dominant_phase: str, now: float
     ) -> SlowHookLogDecision:
-        summary = None
-        if self._window_start is not None and now - self._window_start >= self.window_seconds:
-            summary = SlowHookWindowSummary(
-                count=sum(self._by_phase.values()),
-                suppressed=self._suppressed,
-                max_seconds=self._max_seconds,
-                window_seconds=self.window_seconds,
-                by_phase=dict(self._by_phase),
-            )
-            self._window_start = None
-            self._by_phase = {}
-            self._suppressed = 0
-            self._max_seconds = 0.0
+        summary = self.close_due_window(now)
         if total_seconds < SLOW_HOOK_THRESHOLD_SECONDS:
             return SlowHookLogDecision(log_full=False, summary=summary)
         if self._window_start is None:
@@ -229,3 +245,65 @@ class SlowHookLogSampler:
         if not log_full:
             self._suppressed += 1
         return SlowHookLogDecision(log_full=log_full, summary=summary)
+
+
+class _SummaryTimer(Protocol):
+    def cancel(self) -> None: ...
+
+
+class _SummaryLoop(Protocol):
+    def time(self) -> float: ...
+
+    def call_later(self, delay: float, callback: Callable[[], object], /) -> _SummaryTimer: ...
+
+
+@dataclass
+class SlowHookSummaryReporter:
+    """Deliver each window summary by its deadline, whether or not another hook arrives.
+
+    The sampler only produces a summary inside a later ``observe``, so an idle
+    daemon would hold the last window indefinitely and a shutdown would drop it.
+    A loop timer armed at the window deadline bounds the delay; ``close`` drains
+    the open window when the app stops.
+    """
+
+    emit: Callable[[SlowHookWindowSummary], None]
+    sampler: SlowHookLogSampler = field(default_factory=SlowHookLogSampler)
+    loop_factory: Callable[[], _SummaryLoop] = asyncio.get_running_loop
+    _loop: _SummaryLoop | None = None
+    _timer: _SummaryTimer | None = None
+
+    def observe(self, *, total_seconds: float, dominant_phase: str) -> bool:
+        """Count one hook; return whether it gets the full slow-hook WARNING."""
+        self._loop = self.loop_factory()
+        decision = self.sampler.observe(
+            total_seconds=total_seconds, dominant_phase=dominant_phase, now=self._loop.time()
+        )
+        self._deliver(decision.summary)
+        self._arm()
+        return decision.log_full
+
+    def close(self) -> None:
+        if self._timer is not None:
+            self._timer.cancel()
+            self._timer = None
+        if self._loop is not None:
+            self._deliver(self.sampler.close_window(self._loop.time()))
+
+    def _arm(self) -> None:
+        deadline = self.sampler.window_deadline()
+        if deadline is None or self._timer is not None or self._loop is None:
+            return
+        self._timer = self._loop.call_later(max(0.0, deadline - self._loop.time()), self._flush_due)
+
+    def _flush_due(self) -> None:
+        # asyncio may run a timer one clock resolution early, and a hook may have
+        # rolled the window over since arming, so re-arm for any open window.
+        self._timer = None
+        if self._loop is not None:
+            self._deliver(self.sampler.close_due_window(self._loop.time()))
+        self._arm()
+
+    def _deliver(self, summary: SlowHookWindowSummary | None) -> None:
+        if summary is not None:
+            self.emit(summary)

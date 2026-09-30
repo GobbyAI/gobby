@@ -3569,6 +3569,50 @@ class TestHooksEndpoints:
         assert messages.count("Slow hook execution dominated by %s") == 1
         assert not [message for message in messages if message.startswith("Slow hook summary")]
 
+    def test_daemon_shutdown_drains_the_open_slow_hook_summary(
+        self, session_storage: SessionManager
+    ) -> None:
+        """#22866: the last window's summary is logged at shutdown, not lost with the process."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+
+        # The warning patch encloses the app lifespan so the shutdown emission is captured.
+        with (
+            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
+            patch(
+                "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
+                return_value={"continue": True},
+            ),
+            patch(
+                "gobby.servers.routes.mcp.hooks.observe_hook_phase_timings",
+                return_value=("admission_wait", 6.0, {"admission_wait": 6.0}),
+            ),
+            patch("gobby.hooks.phase_timing.SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+        ):
+            with TestClient(server.app) as client:
+                for _ in range(3):
+                    client.post(
+                        "/api/hooks/execute",
+                        json=_hook_envelope(hook_type="session-start", source="claude"),
+                    )
+                assert not [
+                    entry
+                    for entry in warning.call_args_list
+                    if entry.args and entry.args[0].startswith("Slow hook summary")
+                ]
+
+        (summary,) = [
+            entry
+            for entry in warning.call_args_list
+            if entry.args and entry.args[0].startswith("Slow hook summary")
+        ]
+        count, suppressed, _max_seconds, _window, by_phase = summary.args[1:]
+        assert (count, suppressed, by_phase) == (3, 2, {"admission_wait": 3})
+
     def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
         server = create_http_server(

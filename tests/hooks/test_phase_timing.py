@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from unittest.mock import call, patch
 
 import pytest
 
+from gobby.hooks import phase_timing
 from gobby.hooks.phase_timing import (
     HOOK_PHASES,
     HookPhaseTimings,
@@ -168,3 +171,138 @@ def test_slow_hook_sampler_ignores_fast_hooks() -> None:
     ]
 
     assert all(not d.log_full and d.summary is None for d in decisions)
+
+
+def test_slow_hook_sampler_close_window_reports_the_elapsed_partial_window() -> None:
+    sampler = SlowHookLogSampler(window_seconds=60.0)
+    assert sampler.close_window(now=5.0) is None
+
+    sampler.observe(total_seconds=6.0, dominant_phase="admission_wait", now=10.0)
+    sampler.observe(total_seconds=8.0, dominant_phase="admission_wait", now=20.0)
+
+    assert sampler.close_window(now=35.0) == SlowHookWindowSummary(
+        count=2,
+        suppressed=1,
+        max_seconds=8.0,
+        window_seconds=25.0,
+        by_phase={"admission_wait": 2},
+    )
+    assert sampler.close_window(now=36.0) is None
+
+
+@dataclass
+class _ManualTimer:
+    when: float
+    callback: Callable[[], object]
+    cancelled: bool = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+@dataclass
+class _ManualLoop:
+    """A loop clock the test advances by hand; timers fire only when told to."""
+
+    now: float = 0.0
+    timers: list[_ManualTimer] = field(default_factory=list)
+
+    def time(self) -> float:
+        return self.now
+
+    def call_later(self, delay: float, callback: Callable[[], object]) -> _ManualTimer:
+        timer = _ManualTimer(when=self.now + delay, callback=callback)
+        self.timers.append(timer)
+        return timer
+
+    def pending(self) -> list[_ManualTimer]:
+        return [timer for timer in self.timers if not timer.cancelled]
+
+    def fire_at(self, now: float) -> None:
+        self.now = now
+        (timer,) = self.pending()
+        self.timers.remove(timer)
+        timer.callback()
+
+
+def _reporter(
+    loop: _ManualLoop,
+) -> tuple[phase_timing.SlowHookSummaryReporter, list[SlowHookWindowSummary]]:
+    emitted: list[SlowHookWindowSummary] = []
+    reporter = phase_timing.SlowHookSummaryReporter(
+        emit=emitted.append,
+        sampler=SlowHookLogSampler(window_seconds=60.0),
+        loop_factory=lambda: loop,
+    )
+    return reporter, emitted
+
+
+def test_slow_hook_reporter_delivers_an_idle_window_at_its_deadline() -> None:
+    loop = _ManualLoop(now=100.0)
+    reporter, emitted = _reporter(loop)
+
+    assert reporter.observe(total_seconds=6.0, dominant_phase="admission_wait") is True
+    loop.now = 110.0
+    assert reporter.observe(total_seconds=7.0, dominant_phase="admission_wait") is False
+
+    # One timer, bounded by the window that opened at 100.
+    assert [timer.when for timer in loop.pending()] == [160.0]
+    loop.fire_at(160.0)
+
+    assert emitted == [
+        SlowHookWindowSummary(
+            count=2,
+            suppressed=1,
+            max_seconds=7.0,
+            window_seconds=60.0,
+            by_phase={"admission_wait": 2},
+        )
+    ]
+    assert loop.pending() == []
+
+
+def test_slow_hook_reporter_rearms_when_its_timer_fires_before_the_deadline() -> None:
+    loop = _ManualLoop()
+    reporter, emitted = _reporter(loop)
+    reporter.observe(total_seconds=6.0, dominant_phase="rule_evaluation")
+
+    # asyncio may run a timer up to one clock resolution early.
+    loop.fire_at(59.999)
+    assert emitted == []
+    assert [timer.when for timer in loop.pending()] == [60.0]
+
+    loop.fire_at(60.0)
+    assert [summary.count for summary in emitted] == [1]
+
+
+def test_slow_hook_reporter_does_not_arm_for_fast_hooks() -> None:
+    loop = _ManualLoop()
+    reporter, emitted = _reporter(loop)
+
+    assert reporter.observe(total_seconds=0.2, dominant_phase="response") is False
+
+    assert loop.pending() == []
+    reporter.close()
+    assert emitted == []
+
+
+def test_slow_hook_reporter_close_drains_the_open_window_and_cancels_its_timer() -> None:
+    loop = _ManualLoop()
+    reporter, emitted = _reporter(loop)
+    reporter.observe(total_seconds=6.0, dominant_phase="admission_wait")
+    loop.now = 12.0
+    reporter.observe(total_seconds=9.0, dominant_phase="rule_evaluation")
+
+    reporter.close()
+    reporter.close()
+
+    assert emitted == [
+        SlowHookWindowSummary(
+            count=2,
+            suppressed=0,
+            max_seconds=9.0,
+            window_seconds=12.0,
+            by_phase={"admission_wait": 1, "rule_evaluation": 1},
+        )
+    ]
+    assert loop.pending() == []

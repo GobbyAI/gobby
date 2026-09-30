@@ -623,3 +623,11 @@ def test_malformed_job_id_is_not_found_without_a_uuid_cast(
     assert cron_storage.update_job(job_id, enabled=False) is None
     assert cron_storage.delete_job(job_id) is False
     assert cron_storage.list_runs(job_id) == []
+
+
+@pytest.mark.parametrize("run_id", ["84446b0d", "not-a-uuid", ""])
+def test_malformed_run_id_is_not_found_without_a_uuid_cast(
+    cron_storage: CronJobStorage, run_id: str
+) -> None:
+    """#22866: GET /api/cron/runs/{run_id} passes a caller-supplied id straight through."""
+    assert cron_storage.get_run(run_id) is None

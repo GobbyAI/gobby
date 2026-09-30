@@ -25,10 +25,10 @@ from gobby.utils.machine_id import get_machine_id
 logger = logging.getLogger(__name__)
 
 
-def is_cron_job_id(job_id: str) -> bool:
-    """Whether ``job_id`` can name a row; other ids (e.g. CLI-native cron ids) never can."""
+def is_cron_row_id(row_id: str) -> bool:
+    """Whether ``row_id`` can name a cron row; other ids (e.g. CLI-native cron ids) never can."""
     try:
-        uuid.UUID(job_id)
+        uuid.UUID(row_id)
     except ValueError:
         return False
     return True
@@ -213,6 +213,8 @@ class CronRunStorageMixin:
 
     def get_run(self, run_id: str) -> CronRun | None:
         """Get a cron run by ID."""
+        if not is_cron_row_id(run_id):
+            return None
         row = self.db.fetchone("SELECT * FROM cron_runs WHERE id = %s", (run_id,))
         if not row:
             return None
@@ -220,7 +222,7 @@ class CronRunStorageMixin:
 
     def list_runs(self, cron_job_id: str, limit: int = 20) -> list[CronRun]:
         """List runs for a cron job, most recent first."""
-        if not is_cron_job_id(cron_job_id):
+        if not is_cron_row_id(cron_job_id):
             return []
         rows = self.db.fetchall(
             """
