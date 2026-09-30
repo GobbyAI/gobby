@@ -132,6 +132,8 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "git commit -m \"$(cat <<'EOF'\nfix: the watchdog's hook (1M context\nEOF\n)\"",
         'git commit -m "$(cat <<EOF\nit\'s done\nEOF\n)"',
         "x=\"$(cat <<-'EOF' |\n tr a b\n\tit's (text\n\tEOF\n)\"",
+        # ANSI-C quoting escapes its apostrophe; the string is data (#23134).
+        "echo $'it\\'s'",
     ],
 )
 def test_administration_and_documentation(command: str) -> None:
@@ -227,6 +229,9 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         'x="$(cat <<EOF\nit\'s $(claude -p hi)\nEOF\n)"',
         "x=\"$(sh <<'EOF'\ncodex exec\nEOF\n)\"",
         "echo $(( 1 << EOF\n))\nclaude -p hi\nEOF\n))",
+        "bash -c $'claude -p \\'hi\\''",
+        "echo $'it\\'s'; claude -p hi",
+        "bash -c -- 'claude -p hi'",
     ],
 )
 def test_execution_contexts(command: str) -> None:

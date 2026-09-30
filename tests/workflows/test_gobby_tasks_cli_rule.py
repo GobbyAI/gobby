@@ -98,6 +98,10 @@ def test_allows_read_only_task_cli_commands(
         'RTK_DISABLED=1 uv run python - <<\'PY\'\nPAYLOAD = \'{"content": "gobby tasks close", "task": "#1"}\'\nPY',
         # A quoted echo argument is prose.
         'echo "gobby tasks close 42"',
+        # A wrapper keeps its command's word boundaries: the quoted -c source
+        # is one data argument, not a `;`-separated invocation.
+        'timeout 5 python -c "x = 1; gobby tasks close 42"',
+        'uv run --with pyyaml python -c "x = 1; gobby tasks close 42"',
     ],
 )
 def test_allows_quoted_heredoc_and_string_data(
@@ -159,6 +163,31 @@ def test_blocks_command_after_apostrophe_comment(
     assert RuleEngine(db)._should_block(effect, event) is True
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        # In ANSI-C quoting `\'` is an escaped apostrophe, not the closing
+        # quote; misreading it opens a span that blanks the real invocation.
+        "echo $'it\\'s'; " + _MUTATION + "; echo 'z'",
+        "echo $'it\\'s'\n" + _MUTATION + "\necho 'z'",
+        "echo $'x\\'y' | xargs " + _MUTATION + " 'z'",
+        "echo \"$(echo $'a\\'b'; " + _MUTATION + ')"',
+    ],
+)
+def test_blocks_command_after_ansi_c_escaped_quote(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    event = _shell_event("Bash", command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
+
+
+def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect) -> None:
+    event = _shell_event("Bash", "echo $'it\\'s " + _MUTATION + "'")
+
+    assert RuleEngine(db)._should_block(effect, event) is False
+
+
 @pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
 @pytest.mark.parametrize(
     "command",
@@ -172,6 +201,15 @@ def test_blocks_command_after_apostrophe_comment(
         "timeout 5 " + _MUTATION,
         "watch -n1 '" + _MUTATION + "'",
         "ssh host '" + _MUTATION + "'",
+        # watch and ssh join every remaining word into the command they run.
+        "watch -n1 " + _MUTATION,
+        "watch -n 5 -d " + _MUTATION,
+        "ssh host " + _MUTATION,
+        "ssh -p 22 host " + _MUTATION,
+        # `--` ends the shell's options; the script is the word after it.
+        "sh -c -- '" + _MUTATION + "'",
+        "uv run --with pyyaml " + _MUTATION,
+        "uv run --project . --frozen " + _MUTATION,
     ],
 )
 def test_blocks_wrapped_mutating_script(

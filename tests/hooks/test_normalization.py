@@ -2075,6 +2075,14 @@ class TestHeredocTokenization:
             HeredocBody("$(x)", quoted=False, terminated=True, opener=8),
         ]
 
+    def test_scan_reads_ansi_c_quote_escapes(self) -> None:
+        # `$'...'` lets a backslash escape the apostrophe, so `\'` stays inside
+        # the word and the separator after the closing quote still splits.
+        scan = scan_shell_command("echo $'it\\'s' ; x $'a\\\\'")
+
+        assert shell_token_values(scan.tokens) == ["echo", "it's", ";", "x", "a\\"]
+        assert [token.quoted for token in scan.tokens] == [False, True, False, False, True]
+
     def test_scan_records_an_unterminated_body_as_live_input(self) -> None:
         command = "cat <<EOF > out.txt\nstill > body\nnever closed"
 

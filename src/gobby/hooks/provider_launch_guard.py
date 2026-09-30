@@ -140,7 +140,7 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append(command[index : index + 2])
             index += 2
             continue
-        if quote != "'" and (
+        if quote not in {"'", "$"} and (
             command.startswith("$(", index)
             or char == "`"
             or (not data and not quote and command[index : index + 2] in {"<(", ">("})
@@ -152,10 +152,16 @@ def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list
             output.append("__gobby_expansion__")
             index = end + 1
             continue
+        if not data and not quote and command.startswith("$'", index):
+            # ANSI-C `$'...'` ("$" state): a backslash escapes the next character.
+            quote = "$"
+            output.append("$'")
+            index += 2
+            continue
         if not data and char in "\"'":
             if not quote:
                 quote = char
-            elif quote == char:
+            elif quote == char or (quote == "$" and char == "'"):
                 quote = ""
         elif not data and not quote:
             if char == "#" and (index == 0 or command[index - 1] in " \t\n;|&()"):
@@ -385,7 +391,11 @@ def _blocked(command: str, depth: int) -> bool:
             if name in _SHELLS:
                 for index, arg in enumerate(words[1:], 1):
                     if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-                        if index + 1 < len(words) and _blocked(words[index + 1], depth + 1):
+                        # `--` ends the options; the script is the word after it.
+                        script = words[index + 1 : index + 3]
+                        if script[:1] == ["--"]:
+                            script = script[1:]
+                        if script and _blocked(script[0], depth + 1):
                             return True
                         break
                 # Literal here-strings are executable input as well.

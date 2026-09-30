@@ -137,6 +137,7 @@ def scan_shell_command(command: str) -> ShellScan:
     current: list[str] = []
     quoted = False
     in_single_quote = False
+    ansi_c = False
     in_double_quote = False
     escaped = False
     token_start: int | None = None
@@ -186,6 +187,14 @@ def scan_shell_command(command: str) -> ShellScan:
         char = command[index]
 
         if in_single_quote:
+            if ansi_c and char == "\\" and command[index + 1 : index + 2] in {"'", "\\"}:
+                current.append(command[index + 1])
+                index += 2
+                continue
+            if ansi_c and char == "\\" and index + 1 < len(command):
+                current.append(command[index : index + 2])
+                index += 2
+                continue
             if char == "'":
                 in_single_quote = False
             else:
@@ -233,11 +242,13 @@ def scan_shell_command(command: str) -> ShellScan:
             index += 1
             continue
 
-        if char == "'":
+        if char == "'" or command.startswith("$'", index):
+            # ANSI-C `$'...'` lets a backslash escape the next character.
             begin(index)
             quoted = True
             in_single_quote = True
-            index += 1
+            ansi_c = char == "$"
+            index += 2 if ansi_c else 1
             continue
 
         if char == '"':

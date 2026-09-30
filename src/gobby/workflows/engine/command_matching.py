@@ -33,6 +33,7 @@ established by an earlier segment (#21056) and a quoted path such as
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass
 
 from gobby.hooks._normalization_shell import (
@@ -95,9 +96,8 @@ def mask_quoted_spans(command: str) -> str:
 # depth, matching the substitution-recursion guard used by the shell scanner.
 _WRAPPER_DEPTH = 8
 # Value-taking options for wrapper tools whose executed command follows them.
-_WATCH_VALUE_OPTIONS = frozenset(
-    {"-n", "-d", "-p", "-i", "--interval", "--precise", "--differences"}
-)
+# procps watch: only these take a separate operand; -d/-p/-x and the rest are flags.
+_WATCH_VALUE_OPTIONS = frozenset({"-n", "--interval", "-q", "--equexit"})
 _SSH_VALUE_OPTIONS = frozenset(
     {
         "-p",
@@ -119,6 +119,30 @@ _SSH_VALUE_OPTIONS = frozenset(
         "-B",
         "-I",
         "-Q",
+    }
+)
+
+
+_UV_RUN_VALUE_OPTIONS = frozenset(
+    {
+        "--with",
+        "--with-editable",
+        "--with-requirements",
+        "--project",
+        "--directory",
+        "--python",
+        "-p",
+        "--package",
+        "--extra",
+        "--group",
+        "--only-group",
+        "--no-group",
+        "--env-file",
+        "--index",
+        "--find-links",
+        "-f",
+        "--config-file",
+        "--cache-dir",
     }
 )
 
@@ -155,22 +179,32 @@ def _wrapper_scripts(subject: str) -> list[str]:
         if name in _SHELLS:
             for index, arg in enumerate(unwrapped[1:], 1):
                 if arg.startswith("-") and not arg.startswith("--") and "c" in arg:
-                    if index + 1 < len(unwrapped):
-                        scripts.append(unwrapped[index + 1])
+                    # `--` ends the options; the script is the word after it.
+                    script = unwrapped[index + 1 : index + 3]
+                    if script[:1] == ["--"]:
+                        script = script[1:]
+                    scripts.extend(script[:1])
                     break
             continue
+        # watch and ssh join every remaining word into the command they run.
         if name == "watch":
             rest = _after_options(unwrapped[1:], _WATCH_VALUE_OPTIONS)
             if rest:
-                scripts.append(rest[0])
+                scripts.append(" ".join(rest))
             continue
         if name == "ssh":
             rest = _after_options(unwrapped[1:], _SSH_VALUE_OPTIONS)
             if len(rest) > 1:
-                scripts.append(rest[1])
+                scripts.append(" ".join(rest[1:]))
+            continue
+        # These exec their argv directly, so each word stays one word.
+        if name == "uv" and unwrapped[1:2] == ["run"]:
+            rest = _after_options(unwrapped[2:], _UV_RUN_VALUE_OPTIONS)
+            if rest:
+                scripts.append(shlex.join(rest))
             continue
         if unwrapped != words:
-            scripts.append(" ".join(unwrapped))
+            scripts.append(shlex.join(unwrapped))
     return scripts
 
 
@@ -226,6 +260,16 @@ def _blank_quoted_chars(command: str, *, chars: frozenset[str] | None) -> str:
             # text inside it is prose, so a quote there must not open a span.
             end = command.find("\n", i)
             i = n if end < 0 else end
+        elif command.startswith("$'", i):
+            # ANSI-C `$'...'`: a backslash escapes the next character.
+            end = i + 2
+            while end < n and command[end] != "'":
+                end += 2 if command[end] == "\\" else 1
+            end = min(end, n)
+            for j in range(i + 2, end):
+                if chars is None or command[j] in chars:
+                    out[j] = " "
+            i = end + 1
         elif ch == "'":
             end = command.find("'", i + 1)
             end = n if end == -1 else end
