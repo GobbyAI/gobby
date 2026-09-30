@@ -278,7 +278,7 @@ the change it is the busy fraction of the single slot.
 | --- | --- |
 | Reviewers cost more per call than standing seats. | Rejected. §4. |
 | Reviewer concurrency saturates hooks or the DB. | Rejected for the §5 window. Bucket `rule_eval` p95 stayed at or below 10 ms and the pool had no waiter, up to 26 active sessions. §5. |
-| #22729: SRT verification dominates launch. | Supported: 78% of this launch, p50 about 2.8 s across the fleet. It is a small share of reviewer wall time. |
+| #22729: SRT verification dominates launch. | Supported: 78% of this launch. Across the fleet, the per-spawn sum of SRT verification and preflight has p50 3.103486 s (3.1 s rounded). It is a small share of reviewer wall time. |
 | #22629: all-seat counting must include reviewers. | Supported as an accounting rule. Reviewers were exempt from the per-project cap. §5 shows reviewers add a load increment comparable to a seat, so count them like seats, with no separate penalty. |
 | The single slot is justified by measured load. | Unsupported. §5 and §6. |
 | Reviewer model choice drives close latency. | Unsupported by this data. The medians differ (613 s against 200 s), but the task mixes are unequal and the `gpt-6.1-sol` sample is 4 runs. §3. |
