@@ -59,6 +59,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _TIMEOUT_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
+# Stale-pending reaps that own an in-doubt claim until their kill settles.
+_REAP_TASKS: set[asyncio.Task[bool]] = set()
 _SLOW_SPAWN_THRESHOLD_MS = 1_000.0
 
 __all__ = [
@@ -562,10 +564,22 @@ async def reap_stale_pending_terminals(
 async def _reap_stale_row(
     manager: TerminalManager, runtime_registry: TerminalRuntimeRegistry, listed: Terminal
 ) -> bool:
-    from gobby.agents.spawn_in_doubt_owner import release_claim
-
     if not in_doubt_spawns.claim(listed.id):
         return False
+    # The claim moves to a retained settlement task that releases it only after
+    # its kill, proof and settlement finish: cancelling the caller (monitor stop)
+    # leaves that work, and the claim, with the task until it settles.
+    task = asyncio.create_task(_reap_claimed_row(manager, runtime_registry, listed))
+    _REAP_TASKS.add(task)
+    task.add_done_callback(_REAP_TASKS.discard)
+    return await asyncio.shield(task)
+
+
+async def _reap_claimed_row(
+    manager: TerminalManager, runtime_registry: TerminalRuntimeRegistry, listed: Terminal
+) -> bool:
+    from gobby.agents.spawn_in_doubt_owner import release_claim
+
     try:
         row = manager.get(listed.id)
         pair = (listed.attempt_generation, listed.attempt_started_at)
