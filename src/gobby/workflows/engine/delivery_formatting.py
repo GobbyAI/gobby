@@ -66,14 +66,13 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         """Inline pipeline for surfaced memory results."""
         from gobby.memory.surface_format import format_memory_index
 
-        if _is_empty_inject_payload(result):
+        if result.get("success") is False:
             return None
-        memories = result.get("memories") or []
-        if not memories:
-            return None
+        # Every successful surfacing advances the sequence, including an empty one.
+        memories = result.get("memories")
         reshow = result.get("reshow_after_injections")
         new_memories = self._filter_and_track_new_memories(
-            memories,
+            memories if isinstance(memories, list) else [],
             platform_session_id,
             reshow if isinstance(reshow, int) and reshow >= 1 else DEFAULT_RESHOW_AFTER_INJECTIONS,
         )

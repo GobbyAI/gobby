@@ -46,8 +46,6 @@ class InjectionTrackingMixin:
         from gobby.workflows.state_manager import SessionVariableManager
 
         new_memories: list[dict[str, Any]] = []
-        if not memories:
-            return new_memories
 
         from gobby.hooks.receipt_effects import (
             record_worker_staging,

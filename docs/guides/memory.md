@@ -655,8 +655,9 @@ the situation in which a future session needs the memory. Most turns need no
 memory write.
 
 Rule-delivered review lessons are deduplicated for one context epoch through
-`injected_review_lesson_ids`. Memory indexes track two sets. Each surfacing that
-carries hits advances `_memory_surface_seq`, and every line it renders is stamped
+`injected_review_lesson_ids`. Memory indexes track two sets. Every successful
+surfacing advances `_memory_surface_seq`, including one with no hits or no rendered
+line, and every line it renders is stamped
 `<memory_id>@<seq>` in `surfaced_memory_ids`. A shown but unfetched memory is
 listed again once `index_reshow_after_injections` further surfacings have passed.
 `gobby-memory:get_memory` appends `{memory_id, task_id}` records to

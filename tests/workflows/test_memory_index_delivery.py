@@ -249,12 +249,30 @@ def test_surfaced_memory_reshown_after_horizon(engine: RuleEngine) -> None:
     assert short == [True, False, True]
 
 
-def test_empty_index_injects_nothing(engine: RuleEngine) -> None:
+def test_empty_index_injects_nothing_but_advances_the_sequence(engine: RuleEngine) -> None:
     handled, formatted, _ids = _surface(engine, [])
 
     assert handled is True
     assert formatted is None
-    assert take_worker_staging() == {}
+    staged = take_worker_staging()
+    assert not staged.get("append_set_variables", {}).get("surfaced_memory_ids")
+    assert staged["session_variables"] == {"_memory_surface_seq": 1}
+
+
+def test_empty_surfacings_count_toward_the_horizon(engine: RuleEngine) -> None:
+    memory_id = "002c13ae-4b1f-4d4a-9a1e-6f0d2a3b4c5d"
+    hits = [[_hit(memory_id)], [], [], [], [], [_hit(memory_id)]]
+
+    rendered = [_surface(engine, surfacing)[1] is not None for surfacing in hits]
+
+    # The final hit is the fifth further surfacing, so it renders again.
+    assert rendered == [True, False, False, False, False, True]
+    staged = take_worker_staging()
+    assert staged["append_set_variables"]["surfaced_memory_ids"] == [
+        f"{memory_id}@1",
+        f"{memory_id}@6",
+    ]
+    assert staged["session_variables"] == {"_memory_surface_seq": 6}
 
 
 def test_unregistered_memory_tool_is_not_routed_to_the_index(engine: RuleEngine) -> None:
