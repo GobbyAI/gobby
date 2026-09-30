@@ -103,6 +103,7 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
 
     invocations: list[GitCommitInvocation] = []
     shell_chdir: str | None = None
+    conditional_chdir = False
     segments = _split_shell_segments(shell_tokens)
     for segment_index, segment in enumerate(segments):
         tokens = shell_token_values(segment.tokens)
@@ -111,6 +112,10 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             if segment_index + 1 < len(segments)
             else None
         )
+        if conditional_chdir and segment.separator_before != "&&":
+            # An earlier failure can skip conditional navigation while a later
+            # unconditional command still runs in the original checkout.
+            cwd_unverified = True
         if shell_chdir and segment.separator_before in {"||", "&"}:
             cwd_unverified = True
         if tokens[0] == "cd":
@@ -118,10 +123,13 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
             # later commands in the parent. Dynamic targets are unprovable.
             if segment.separator_before != "|" and next_separator not in {"|", "&"}:
                 target = _literal_cd_target(tokens)
-                if target is None or segment.separator_before == "||":
+                if target is None or target.startswith("~") or segment.separator_before == "||":
+                    # The tokenizer's quoted bit also covers partial quoting,
+                    # which does not prove a leading tilde stayed literal.
                     cwd_unverified = True
                 else:
                     shell_chdir = _join_chdir(shell_chdir, target)
+                    conditional_chdir |= segment.separator_before == "&&"
             continue
 
         for index, token in enumerate(tokens):
@@ -148,7 +156,7 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
                     root_options=root_options,
                     cwd_unverified=cwd_unverified
                     or any(
-                        _contains_unexpanded_shell_reference(path)
+                        _contains_unexpanded_shell_reference(path) or path.startswith("~")
                         for path in (chdir, work_tree, *root_options)
                         if path is not None
                     ),
