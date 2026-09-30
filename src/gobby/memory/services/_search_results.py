@@ -163,6 +163,9 @@ _DUPLICATE_SCREEN_MARGIN = 1e-9
 # normal, which that error bound assumes; other vectors are never screened.
 _SCREEN_MIN_NORM = 1e-100
 _SCREEN_MAX_NORM = 1e100
+# The bound grows with length and passes the margin near 9e6 components, and no
+# config or store caps embedding dimensions, so longer vectors are never screened.
+_SCREEN_MAX_DIM = 1 << 20
 
 
 def _norm(vector: list[float]) -> float:
@@ -205,6 +208,7 @@ def collapse_near_duplicates(
         memory_id
         for memory_id, norm in norms.items()
         if _SCREEN_MIN_NORM <= norm <= _SCREEN_MAX_NORM
+        and len(vectors[memory_id]) <= _SCREEN_MAX_DIM
     }
     screen_floor = threshold - _DUPLICATE_SCREEN_MARGIN
     kept: list[Memory] = []

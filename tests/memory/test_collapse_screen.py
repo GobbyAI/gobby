@@ -165,3 +165,29 @@ def test_random_clusters_match_the_reference() -> None:
     rng.shuffle(ids)
 
     assert _collapse(ids, vectors, THRESHOLD) == _reference_collapse(ids, vectors, THRESHOLD)
+
+
+def test_vectors_over_the_dimension_cap_take_the_exact_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rng = random.Random(5)
+    ids = [f"m{index}" for index in range(12)]
+    vectors = {memory_id: _gauss(rng) for memory_id in ids}
+    vectors["m11"] = _at_cosine(rng, vectors["m0"], 0.95)
+    exact = _search_results._cosine_from_norms
+    calls = 0
+
+    def counted(
+        left: list[float], right: list[float], left_norm: float, right_norm: float
+    ) -> float:
+        nonlocal calls
+        calls += 1
+        return exact(left, right, left_norm, right_norm)
+
+    monkeypatch.setattr(_search_results, "_cosine_from_norms", counted)
+    monkeypatch.setattr(_search_results, "_SCREEN_MAX_DIM", DIM - 1)
+
+    assert _collapse(ids, vectors, THRESHOLD) == _reference_collapse(ids, vectors, THRESHOLD)
+    # m0..m10 are all kept, so each of them compares against every earlier one, and
+    # m11 folds into m0 on its first comparison: 55 + 1 exact calls, none screened.
+    assert calls == 56
