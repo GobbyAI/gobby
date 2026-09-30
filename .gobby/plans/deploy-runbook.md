@@ -186,6 +186,9 @@ removal needs no Targets.
 - `agents_query_tools.py` stays under 1,000 lines: 6.1 moves
   `_list_run_payload` into a new module before extending it.
 - Every refusal names the held seat and its holder (run id or session ref).
+- 7.1 changes cron behavior for every pipeline job: a cron pipeline whose
+  cron session cannot be created now fails instead of running under the
+  system session.
 - Tests use the isolated test hub and `GOBBY_TEST_PROTECT=1`. Live placed
   launch runs only in D1, against an isolated daemon.
 - 5.1 and 6.2 change imported Python. After landing, the PD restarts the
@@ -259,6 +262,11 @@ Targets:
 - `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::*` — scope-reason: cover the tag filter
 - `tests/cli/test_cli_pipelines.py::*` — scope-reason: cover the --tag option
 
+**Granularity:** seven production Target files carry one behavior, the
+`tags` field from YAML to row to filter. Splitting the model from its sync
+and filter would leave tags parsed and never stored, or a filter with nothing
+to match.
+
 **Research context:** `PipelineDefinition` gains
 `tags: list[str] = Field(default_factory=list)`, each tag a non-empty
 string. Bundled sync writes `sorted({"gobby", *definition.tags})`. Project
@@ -331,8 +339,12 @@ only there gains `seat`. #23015 (D8) adds `placement` to the resume snapshot
 (`agents/resume_metadata.py::build_resume_metadata`) with the kind, workspace
 id and canonical title. `seat` is
 `{"workspace": <id>, "title": <canonical title>}` when
-`resume_metadata_json["placement"]` carries both, else `None`. The test builds
-runs with and without that key, so it does not wait on #23015.
+`resume_metadata_json["placement"]` carries both, else `None`. The snapshot is built in
+`spawn_agent/_runtime.py::build_spawn_context` at spawn, before provider
+exec, so a fresh placed run carries its seat from launch. The key names are
+the ones #23015 lands; the 6.1 executor reads them from its
+`build_resume_metadata`. The test builds runs with and without that key, so
+it does not wait on #23015. D1 proves the field on real placed runs.
 
 **Acceptance:**
 
@@ -355,7 +367,8 @@ Targets:
 - `tests/agents/test_runbook_seats.py`
 
 **Research context:** `gobby-agents:check_runbook_seats(workspace, seats)`
-takes `seats` as a list of `{title, role_file}`. It is read-only and is the
+takes `seats` as a list of `{title, role_file}` and checks only those seats.
+A runbook passes only the seats its `seats` input requests. It is read-only and is the
 runbook's first step. Called from a pipeline `mcp` step, its ambient session
 is the pipeline child. It finds its own execution id from the child's
 external id `pipeline-<execution id>`, and refuses when that session is not
@@ -413,6 +426,7 @@ spawn, across every entrypoint and a restart.
 
 Targets:
 - `.gobby/workflows/pipelines/planning-council.yaml`
+- `src/gobby/scheduler/executor.py::CronExecutor`
 - `tests/workflows/test_runbook_pipeline.py`
 - `tests/scheduler/test_cron_runbook_chain.py`
 
@@ -421,18 +435,26 @@ Targets:
 `writer_title` (default `Plan Writer`), `adversary_title` (default
 `Plan Adversary`) and `seats` (default `[writer, adversary]`). Steps:
 
-1. `guard`: `mcp` `gobby-agents:check_runbook_seats` with both seats and
-   role files `plan-writer.md` and `plan-adversary.md`.
+1. `guard`: `mcp` `gobby-agents:check_runbook_seats` with `seats` set to a
+   pure expression that keeps only the requested entries of
+   `[{title: writer_title, role_file: plan-writer.md}, {title:
+   adversary_title, role_file: plan-adversary.md}]`. A pure `${{ }}` argument
+   keeps its native type (`pipeline/renderer.py::StepRenderer._render_argument_value`).
 2. `writer`: `condition: ${{ 'writer' in inputs.seats }}`; `mcp`
    `gobby-agents:spawn_agent` with `agent: default`, a prompt telling the
    session to read `.gobby/roles/_common.md` and then
    `.gobby/roles/plan-writer.md`, and
    `placement: {tab: {workspace: ${{inputs.workspace}}, title: ${{inputs.writer_title}}}}`.
-3. `adversary`: the same for `plan-adversary.md` with
-   `placement: {split: {pane: ${{steps.writer.output.pane_ref}}, axis: right, title: ${{inputs.adversary_title}}}}`
-   when the writer step ran, and a tab placement otherwise.
+3. `adversary_split`: `condition: ${{ 'writer' in inputs.seats and
+   'adversary' in inputs.seats }}`; the same spawn for `plan-adversary.md`
+   with `placement: {split: {pane: ${{steps.writer.output.pane_ref}}, axis: right, title: ${{inputs.adversary_title}}}}`.
+4. `adversary_tab`: `condition: ${{ 'adversary' in inputs.seats and
+   'writer' not in inputs.seats }}`; the same spawn with a tab placement
+   titled `adversary_title`.
 
-Its outputs are both steps' `run_id` and `pane_ref`. The `seats` input lets
+Conditions run through `StepRenderer.should_run_step`, which evaluates the
+`${{ }}` body with `SafeExpressionEvaluator` and skips the step when false.
+Its outputs are the `run_id` and `pane_ref` of each seat step that ran. The `seats` input lets
 an operator relaunch only the missing seat after a partial failure. The file
 is imported per project and is not bundled.
 
@@ -446,8 +468,14 @@ answers a second launch of a held seat with `placement_error: "seat_live"`:
   parent is the calling session for MCP and the system session for HTTP.
   Both runs resolve the pipeline's project.
 - Cron. A cron `pipeline` job through `CronExecutor` parents the child to the
-  cron session. When `_create_cron_session` fails, or its parent does not
-  resolve, no execution starts and no spawn is recorded.
+  cron session. As-is, `_execute_pipeline` (`scheduler/executor.py:431`)
+  continues with `session_id=None` when `_create_cron_session` returns `None`
+  or no session manager exists, and the executor then uses the system session.
+  This leaf makes `_execute_pipeline` fail the cron run with a typed error in
+  both cases, before any execution row exists. The existing
+  `tests/scheduler/test_cron_executor.py::test_execute_pipeline_recreates_missing_system_session`
+  keeps passing, because it recreates the system session and still gets a
+  cron session.
 - Restart. The executor is stopped after the writer's spawn returned and
   before its step is written completed. Startup recovery then resumes the
   execution. The writer step re-runs, gets `seat_live` and fails the execution
@@ -458,6 +486,19 @@ answers a second launch of a held seat with `placement_error: "seat_live"`:
   execution fails with the writer's output kept. A fresh run with
   `seats: [adversary]` launches only the adversary. The guard refuses a fresh
   run that asks for the writer while the writer's run is active.
+
+Consumers unchanged:
+- `src/gobby/runner_init/orchestration.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `src/gobby/runner_init/project_purge.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `src/gobby/scheduler/scheduler.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/dispatch/test_spawn_forwarding.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/reports/test_retirement.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/scheduler/test_cron_executor.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/scheduler/test_cron_integration.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/scheduler/test_cron_scheduler.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/scheduler/test_cron_shell_output.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/scheduler/test_dispatch_executor.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
+- `tests/scheduler/test_system_automation_loop.py` — no-edit-reason: it constructs or drives `CronExecutor` through the unchanged constructor and `execute` entry; only the pipeline action's missing-session branch changes.
 
 **Acceptance:**
 
@@ -478,6 +519,13 @@ answers a second launch of a held seat with `placement_error: "seat_live"`:
 - 7.1.5 - A partial deploy keeps the launched seat's output, and a relaunch
   of only the missing seat passes the guard and launches that seat alone.
   test: `tests/workflows/test_runbook_pipeline.py::test_partial_deploy_relaunches_missing_seat`.
+- 7.1.6 - With real placed launch, both seats land in their titled tab and
+  split, SRT-wrapped, and `list_running_agents` shows each seat's `seat`
+  field. test:
+  `tests/workflows/test_placed_runbook_live.py::test_live_two_seat_runbook`.
+- 7.1.7 - With real placed launch, `kill_agent` on the recorded run ids ends
+  both seats and frees their panes. test:
+  `tests/workflows/test_placed_runbook_live.py::test_live_stop_by_run_ids`.
 
 ## P8: Documentation
 `kind: framing`
@@ -534,6 +582,8 @@ deferral:
   owner: "program-director"
   original_acceptance_items:
     - 7.1.4
+    - 7.1.6
+    - 7.1.7
 ```
 
 ## D2 Agent pane reservation primitives
@@ -744,7 +794,7 @@ deferral:
 ## D7 Spawn failure cleanup
 `kind: deferred`
 
-Delivered leaf #23014, placed-launch 1.6, closed. A failed seat launch
+Delivered leaf #23014, placed-launch 1.6, closed `completed` at `0229892d08`. A failed seat launch
 cleans up once and never leaves a running provider.
 
 Provenance: task #23014. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
@@ -809,7 +859,7 @@ deferral:
 ## D9 In-doubt spawn ownership and restart recovery
 `kind: deferred`
 
-Delivered leaf #23017, placed-launch 1.9, closed. A launch whose outcome is
+Delivered leaf #23017, placed-launch 1.9, closed `completed` at `50e12a6490`. A launch whose outcome is
 in doubt keeps its seat until its owner settles it.
 
 Provenance: task #23017. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
