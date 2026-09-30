@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
-use common::{TIMEOUT, refused_addr};
+use common::TIMEOUT;
 use gobby_core::bootstrap::RouteBackend;
 use gobby_daemon::front_door::health::SERVED_BY_HEADER;
 use gobby_daemon::front_door::routes::{FAMILIES, RouteFamily, unimplemented_families};
@@ -27,7 +27,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
 use serde_json::{Map, Value, json};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::{TcpListener, TcpSocket, TcpStream};
 
 const CORPUS_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../tests/contracts/http");
 const MASK: &str = "@mask@";
@@ -252,6 +252,17 @@ async fn stub_backend(case: &Value) -> (SocketAddr, SeenLog) {
     (addr, seen)
 }
 
+/// A loopback address bound without listening, so connections to it are refused for as
+/// long as the returned socket is held.
+fn refusing_backend() -> (TcpSocket, SocketAddr) {
+    let socket = TcpSocket::new_v4().expect("socket");
+    socket
+        .bind("127.0.0.1:0".parse().expect("loopback"))
+        .expect("bind refusing backend");
+    let addr = socket.local_addr().expect("refusing addr");
+    (socket, addr)
+}
+
 async fn start_front_door(
     backend: SocketAddr,
     routes: BTreeMap<String, RouteBackend>,
@@ -443,12 +454,13 @@ async fn front_door_backend_down_replays_equal() {
         "the corpus has no front_door case"
     );
     for case in cases {
-        let backend = refused_addr().await;
+        let (held, backend) = refusing_backend();
         let front_door = start_front_door(backend, BTreeMap::new()).await;
 
         let (actual, _) = replay(front_door, &case).await;
 
         assert_eq!(actual, expected_response(&case), "{}", case["name"]);
+        drop(held);
     }
 }
 
