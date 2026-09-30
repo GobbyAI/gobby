@@ -101,12 +101,26 @@ The plan also sets:
    - 1.2 ships `choose`.
    - 3.1 (tool rerank, the second consumer after #22604) adds `noul`.
    - Score has no consumer and is not built.
-8. **Request ceiling.** Kev is trained on 384 tokens and serves up to 8,192.
-   `ai.decisions.max_input_tokens` (default `8192`) caps the estimated size of
-   one request, estimated as `len(json.dumps(body)) // 4`. No Python token
-   estimator exists; gcore's `estimate_tokens` is Rust-only.
+8. **Request ceiling and truncation guard.** At Kev commit `0fe8fc97c2bc` (2026-09-29), Kev trains on
+   384 state tokens and serves up to 65,536 state tokens
+   (`kev/model.py::SERVE_MAX_STATE`) and 73,728 branch tokens
+   (`SERVE_MAX_BRANCH`). `Server.submit` calls `encode` without `strict=True`,
+   so an overlong state is truncated from its end with no error. Its response
+   reports `usage.input_tokens`, the encoded length after truncation
+   (`kev/serve.py::Server._body`).
+   - `ai.decisions.max_input_tokens` (default `8192`) is a Gobby-side quality
+     and latency ceiling on the estimated request size,
+     `len(json.dumps(body)) // 4`. No Python token estimator exists; gcore's
+     `estimate_tokens` is Rust-only. The estimate is advisory and carries no
+     truncation guarantee.
    - The service raises `DecisionsUnavailable(reason="oversize")` before
-     sending.
+     sending when the estimate exceeds the ceiling.
+   - The truncation guard is enforced per response. A truncated state always
+     leaves at least `backend_max_state_tokens - 1` input tokens, so a
+     response whose `usage.input_tokens` reaches that value raises
+     `DecisionsUnavailable(reason="truncated")`, and so does a response with no
+     `usage.input_tokens`. `backend_max_state_tokens` defaults to 65,536 from
+     the pinned Kev commit. A false positive fails closed.
    - Consumers batch to `service.max_input_tokens`.
    - The evaluation (2.1) measures quality at the state sizes each consumer
      actually sends, because every consumer runs far beyond Kev's training
@@ -156,11 +170,32 @@ The plan also sets:
     `mode` is `off`, `shadow` or `enforce`, and defaults to `off`.
 
     How `enforce` behaves:
-    - It acts only when `evaluated_model == ai.decisions.model`. Otherwise the
-      consumer runs as `shadow` and logs `evaluated_model_mismatch` once per
-      cooldown window.
-    - A model change is therefore a new evaluator by construction (`jev.md`),
-      and a changed model can never inherit thresholds.
+    - It acts only when `evaluated_model == ai.decisions.model` and
+      `evaluated_backend` equals the service's current backend identity.
+      Otherwise the consumer runs as `shadow` and logs
+      `evaluated_backend_mismatch` once per cooldown window.
+    - Kev echoes the requested model name in `response.model` and accepts
+      both `kev-latest` and `jev-latest` for any loaded checkpoint
+      (`kev/serve.py::MODEL_NAMES`, `Server._body`). So the alias alone proves
+      nothing about which checkpoint answered.
+    - Backend identity is `sha256:` plus the sha256 of the canonical JSON of
+      the stable fields in the configured model's `GET {api_base}/v1/models`
+      card: run path, base model, LoRA config, dtype, and calibration
+      temperature. Runtime statistics are excluded. The service fetches the
+      card when it is created and on the first call after each cooldown
+      expires. A failed fetch, or a card missing any of those fields, yields no
+      identity, and enforce then runs as shadow.
+    - Residual gap: Kev reports the run path as submitted, unresolved. A
+      checkpoint swapped in place at the same path, with an identical card,
+      is undetectable. The operator rule is that a new checkpoint gets a new
+      run path or a new evaluation. The plan claims detection only for what
+      the card reports.
+    - Consumers read `mode` and thresholds from the resolver's current config
+      on every call. The service fingerprint excludes consumer fields, so a
+      policy-only reload takes effect on the next call without rebuilding the
+      service.
+    - A model or backend change is therefore a new evaluator by construction
+      (`jev.md`), and it can never inherit thresholds.
     - Probability, confidence and weighted score are never compared across
       primitives.
 
@@ -195,6 +230,10 @@ The plan also sets:
         the escalation rate is at most 50%, and false clears and false alerts
         are reported separately;
       - community labels: #22604's Q1.6 bars.
+
+    The ECE, flip-rate, and latency bars apply to the two harness consumers,
+    tool rerank and found-work. The community-label gate is #22604's Q1.6
+    report alone, which that task owns and supplies.
 
     Thresholds come from the development split and are confirmed on the
     holdout. No threshold is copied from vendor examples.
@@ -313,7 +352,7 @@ stamped M1, so that file is not edited. At expansion, the PD updates task
 - reads `ai.decisions.community_label.min_confidence`, `mode`, and
   `evaluated_model`, since the `code_index.community_label.decisions_*` keys
   are gone after 1.1;
-- sizes each batch to `service.max_input_tokens`. At Kev's 8,192 tokens and
+- sizes each batch to `service.max_input_tokens`. At the 8,192-token ceiling and
   6.3's budget of about 500 tokens of state plus 250 per question per
   community, that is at most 10 communities per request instead of 20;
 - records its wire spike against the local `/v1/systemone` server only. The
@@ -401,9 +440,9 @@ Targets:
 `config/url_validation.py`, and `_embedding_binding`
 (`ai/registry_builder.py:126-162`). That binding returns
 `CapabilityBinding.unavailable(capability, provider, adapter_style=..., reason=..., models=..., metadata=...)`
-when unconfigured and `CapabilityBinding(...)` when available. Use
-`AIAdapterStyle.OPENAI_COMPATIBLE` unless the enum gains a closer style; do not
-add one for a single binding.
+when unconfigured and `CapabilityBinding(...)` when available. Use the
+existing `AIAdapterStyle.LOCAL` (`ai/registry.py:49`). `OPENAI_COMPATIBLE`
+names a different protocol, and no enum member is added.
 
 `DecisionsConfig` (`extra="forbid"`, like `AIConfig`) has these fields:
 
@@ -413,7 +452,8 @@ add one for a single binding.
 | `api_key` | `str \| None` | `None` |
 | `model` | `str \| None` | `None` |
 | `timeout_seconds` | `float` | `2.0`, `gt=0` |
-| `max_input_tokens` | `int` | `8192`, `ge=256` |
+| `max_input_tokens` | `int` | `8192`, `ge=256`, below `backend_max_state_tokens` |
+| `backend_max_state_tokens` | `int` | `65536`, `gt=0` |
 | `failure_cooldown_seconds` | `float` | `60`, `ge=0` |
 | `community_label` | `ChoiceConsumerConfig` | `default_factory` |
 | `tool_rerank` | `RerankConsumerConfig` | `default_factory` |
@@ -426,12 +466,16 @@ carry `Field(ge=0, le=1)`.
 
 The consumer configs:
 - `ChoiceConsumerConfig`: `mode: Literal["off", "shadow", "enforce"] = "off"`,
-  `min_confidence: float = 0.5`, `evaluated_model: str | None = None`.
+  `min_confidence: float = 0.5`, `evaluated_model: str | None = None`,
+  `evaluated_backend: str | None = None`.
 - `RerankConsumerConfig`: `mode`, `min_probability: float = 0.5`,
-  `evaluated_model`.
+  `evaluated_model`, `evaluated_backend`.
 - `CascadeConsumerConfig`: `mode`, `accept_below: float = 0.1`,
   `accept_above: float = 0.9` (validated `accept_below < accept_above`),
-  `evaluated_model`.
+  `evaluated_model`, `evaluated_backend`.
+
+`api_key` accepts a `$secret:` reference, which `config/_loading.py`
+resolves at load like every other secret field.
 
 Validators:
 - `api_base` passes `validate_optional_endpoint_url`, and its parsed host must
@@ -439,8 +483,9 @@ Validators:
   raises `ValueError("ai.decisions.api_base must be a loopback address: hosted
   decision providers are disabled (Josh, 2026-09-24: no hosted text)")`.
 - `model` is required when `api_base` is set.
-- `mode == "enforce"` with `evaluated_model is None` is rejected, because
-  enforcement needs a recorded evaluation.
+- `mode == "enforce"` with `evaluated_model` or `evaluated_backend` unset is
+  rejected, because enforcement needs a recorded evaluation.
+- `max_input_tokens >= backend_max_state_tokens` is rejected.
 
 `CodeIndexCommunityLabelConfig` loses `decisions_api_base`,
 `decisions_api_key`, `decisions_model`, `decisions_min_confidence`, and
@@ -500,7 +545,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   message; `localhost`, `127.0.0.1`, and `[::1]` pass. test:
   `tests/config/test_decisions_config.py::test_api_base_must_be_loopback`.
 - 1.1.2 - `model` is required with `api_base`, `enforce` requires
-  `evaluated_model`, `accept_below < accept_above`, every threshold outside
+  `evaluated_model` and `evaluated_backend`, `accept_below < accept_above`,
+  every threshold outside
   [0,1] is rejected, and an empty `AIConfig` loads with every consumer `off`.
   test:
   `tests/config/test_decisions_config.py::test_decisions_config_invariants`.
@@ -509,9 +555,23 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`. test:
   `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
 - 1.1.4 - `decide` reports unavailable with its reason when unconfigured and
-  available with the model when configured, and it appears in the registry
-  status snapshot. test:
+  available with the model and `adapter_style` `local` when configured, and it
+  appears in the registry status snapshot. test:
   `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
+- 1.1.5 - One parametrized case per scalar row of the `DecisionsConfig`
+  table: `api_base` defaults `None`; `api_key` defaults `None` and a
+  `$secret:` reference loads resolved; `model` defaults `None`;
+  `timeout_seconds` defaults `2.0` and rejects `0`; `max_input_tokens`
+  defaults `8192`, rejects `255`, and rejects a value at or above
+  `backend_max_state_tokens`; `backend_max_state_tokens` defaults `65536` and
+  rejects `0`; `failure_cooldown_seconds` defaults `60` and rejects `-1`.
+  test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.6 - One parametrized case per consumer row: `community_label`,
+  `tool_rerank`, and `found_work` each default to `mode` `off` with their
+  documented thresholds and unset `evaluated_model` and `evaluated_backend`,
+  and each rejects `enforce` without both. test:
+  `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
 
 ### 1.2 `DecisionService` with Choice, request ceiling, and cooldown [category: code] (depends: 1.1)
 `kind: deliverable`
@@ -524,12 +584,13 @@ Targets:
 - `tests/ai/fixtures/systemone_choice_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
 
-**Granularity:** Eight acceptance items, one outcome: a `choose` call that
-either returns validated answers or raises a typed `DecisionsUnavailable`.
-- Transport limits (1.2.2, 1.2.7), the size ceiling (1.2.3), the shared
-  cooldown and its service identity (1.2.4, 1.2.8), strict parsing (1.2.1),
-  and log redaction (1.2.5) are all properties of that one call path, in one
-  module and one test file.
+**Granularity:** Nine acceptance items, one outcome: a `choose` call that
+either returns validated answers from an identified backend or raises a typed
+`DecisionsUnavailable`.
+- Transport limits (1.2.2, 1.2.7), the size ceiling and truncation guard
+  (1.2.3), the shared cooldown and its service identity (1.2.4, 1.2.8),
+  backend identity (1.2.9), strict parsing (1.2.1), and log redaction (1.2.5)
+  are all properties of that one call path, in one module and one test file.
 - No subset is independently closeable. A service without strict parsing
   hands consumers unvalidated answers, one without the ceiling lets Kev
   truncate silently, and one without the cooldown stalls every consumer on a
@@ -559,16 +620,16 @@ The wire shape is pinned by capture, before any code:
 - If the captured field names differ from 6.3's, the capture wins. The evidence
   file records the difference.
 
-The same capture sends one deliberately oversized request, over 8,192
-tokens of path-heavy state like the community-label batches. It records
-whether the server rejects it with an error or silently truncates the state.
-It also records the server-reported token count for a path-heavy request that
-fits.
-- The estimate's divisor is set from that count: the default stays 4 unless
-  the measured ratio is lower.
-- If the server truncates silently, the ceiling check applies a 20% margin
-  (`estimate * 1.25 <= max_input_tokens`). This keeps a truncated request
-  from ever reaching a consumer as a valid answer.
+The evidence file pins the backend as Kev commit `0fe8fc97c2bc` (2026-09-29), with its `SERVE_MAX_STATE`,
+`SERVE_MAX_BRANCH`, truncation behavior, and `/v1/models` card fields. The
+same capture records:
+- the server-reported `usage.input_tokens` for a path-heavy request that fits.
+  This sets the estimate's divisor for the quality ceiling: the default stays
+  4 unless the measured ratio is lower;
+- the `/v1/models` card, with the fields Decision 10 hashes.
+
+The truncation guard (Decision 8) needs no probe, because it reads every
+response's own `usage.input_tokens`.
 
 This capture is also #22604's wire spike (Coordination With #22604).
 
@@ -578,7 +639,17 @@ Module contents:
   `instructions` is required, with no default; each consumer writes its own.
 - `ChoiceAnswer(choice, probabilities, confidence)`.
 - `DecisionsUnavailable(reason: Literal["unconfigured", "cooldown",
-  "oversize", "timeout", "http_status", "parse"], detail: str)`.
+  "oversize", "truncated", "timeout", "transport", "http_status", "parse"],
+  detail: str)`. `truncated` is a local outcome under Decision 9 and never
+  opens the cooldown.
+- Every failure leaves the service as `DecisionsUnavailable`, and no `httpx`
+  exception escapes. After retries, an `httpx.TransportError` maps to
+  `transport`. Expiry of the service's own `asyncio.timeout` maps to
+  `timeout`. A caller's `asyncio.CancelledError` is never caught and
+  propagates unchanged.
+- The service holds only transport fields and cooldown state. It reads no
+  consumer mode or threshold.
+- `DecisionService.backend_identity: str | None`, the Decision 10 card hash.
 - `DecisionService`, holding the config and a cooldown deadline. Each call
   opens its own `httpx.AsyncClient`. Its method is `async choose(consumer: str, state:
   Mapping[str, Any], questions: Mapping[str, ChoiceQuestion], *,
@@ -650,8 +721,16 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.8 - A rotated secret or a changed timeout or ceiling yields a new
   service, while identical config shares one cooldown. test:
   `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.
-- 1.2.3 - A request over `max_input_tokens` raises `oversize` without sending.
-  test:
+- 1.2.9 - `backend_identity` hashes only the stable card fields: a changed run
+  path, dtype, or temperature under the same alias changes it, a changed
+  statistic does not, and a failed or incomplete card yields `None`. The card
+  is refetched on the first call after a cooldown. test:
+  `tests/ai/test_decisions_service.py::test_backend_identity_from_model_card`.
+- 1.2.3 - A request over `max_input_tokens` raises `oversize` without sending,
+  for path-heavy state and for low characters-per-token state. A response
+  with `usage.input_tokens` at `backend_max_state_tokens - 1` or above, or
+  with no `usage.input_tokens`, raises `truncated` without opening the
+  cooldown; one token below passes. test:
   `tests/ai/test_decisions_service.py::test_oversize_request_never_dials`.
 - 1.2.4 - Table-driven: transport error, exhausted 529, 401, `parse`, and a
   full-budget `timeout` each open the cooldown; `unconfigured`, `oversize`, a
@@ -661,8 +740,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.
 - 1.2.5 - Log records carry no state or option text. test:
   `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.
-- 1.2.6 - The wire capture from a local server is recorded, including
-  the oversized request's outcome and the measured token ratio. behavior:
+- 1.2.6 - The wire capture from a local server is recorded, including the
+  pinned Kev commit, its state and branch limits, the `/v1/models` card, and
+  the measured token ratio. behavior:
   "/v1/systemone" in `docs/evidence/decisions/systemone-wire.md`.
 
 ## P2: Evaluation
@@ -694,8 +774,8 @@ single fitted temperature, and its answers are order-sensitive (research doc
   `content_hash` (sha256 of the canonical JSON of `state` and the questions or
   propositions), `state`, the questions or propositions, `classifier` as
   `{status: "ok" | "unavailable", reason, answers}`, `incumbent` as
-  `{status: "ok" | "unavailable", verdict}`, `latency_ms`, and
-  `estimated_tokens`.
+  `{status: "ok" | "unavailable", verdict}`, `backend_identity`,
+  `latency_ms`, and `estimated_tokens`.
 - `tool_rerank` records add `k` (the requested `top_k`), `candidates` (the
   fetched `server/tool` ids in semantic order), classifier probabilities keyed
   by candidate id, and the incumbent verdict as the ordered id list the LLM
@@ -750,13 +830,17 @@ runs against `ai.decisions` loaded from the daemon config:
 5. Compute every Decision 12 metric for the consumer:
    - tool rerank, with the classifier's list being candidates at or above
      `min_probability`, ordered by probability:
+     - the deployed list is the classifier's list when the classifier is
+       available, and the incumbent's recorded order otherwise, the
+       all-or-fallback policy 3.1 ships;
      - Recall@k = `|top_k(list) ∩ gold_relevant| / |gold_relevant|`, averaged
-       over records with non-empty gold, computed for the classifier and for
-       the incumbent's recorded order;
+       over records with non-empty gold. The gate compares the deployed list
+       with the incumbent's recorded order over the same records;
+     - a paired complete-case comparison over classifier-available records,
+       and the unavailability rate, are reported beside the gate and do not
+       decide it;
      - reject-all accuracy = the share of empty-gold records where the
-       classifier list is empty;
-     - records whose classifier status is `unavailable` are excluded from
-       classifier quality and reported as the unavailability rate.
+       deployed list is empty.
    - found-work, simulating the cascade at the candidate thresholds:
      - probability at or above `accept_above` is a confirm, at or below
        `accept_below` a clear, anything else or `unavailable` an escalation;
@@ -767,8 +851,22 @@ runs against `ai.decisions` loaded from the daemon config:
      - false-alert rate = final alerts with `gold_shirk` false, over records
        with `gold_shirk` false;
      - escalation rate = escalations over all records.
+   Calibration (step 3) for Noul consumers treats each probability as one
+   prediction. Tool rerank labels each candidate `1` when it is in
+   `gold_relevant`. Found-work labels each record by `gold_shirk`. Brier, ECE,
+   and accuracy at the consumer threshold are micro-averaged over all
+   predictions in the split.
+
    Thresholds are selected on the development split only, and the frozen
-   holdout is evaluated once.
+   holdout is evaluated once:
+   - `min_probability` is the grid value, 0.05 to 0.95 in steps of 0.05, with
+     the highest reject-all accuracy among values whose deployed Recall@k is
+     at least the incumbent's; the lowest such value wins ties;
+   - `(accept_below, accept_above)` is the grid pair with
+     `accept_below < accept_above` and the lowest escalation rate among pairs
+     whose cascade false-clear rate is at most the incumbent's; the widest
+     band wins ties.
+   - When no value or pair qualifies, the verdict is `FAIL`.
 
    Support: each split needs at least 20 records per gold class (non-empty and
    empty `gold_relevant`; `gold_shirk` true and false). A metric with a zero
@@ -806,7 +904,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   come from the development split only. test:
   `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
 - 2.1.5 - Known-answer edge cases: an incumbent `null` verdict counts as an
-  alert, an unavailable classifier escalates, a record whose `k` exceeds its
+  alert, an unavailable classifier escalates, a cohort where the classifier
+  beats the incumbent on available records but the deployed list trails it
+  overall yields `FAIL`, the found-work pair and `min_probability` selections
+  match hand-computed values, a record whose `k` exceeds its
   returned list length still scores Recall@k against `k`, and short support or
   a zero denominator yields `FAIL` with `insufficient support`. test:
   `tests/scripts/test_decisions_eval.py::test_metric_edge_cases_fail_closed`.
@@ -911,8 +1012,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   the LLM rerank; semantic order is returned only when both the classifier and
   the LLM fail. test:
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_enforce_ranks_rejects_and_falls_back`.
-- 3.1.4 - Enforce mode with a mismatched `evaluated_model` behaves as shadow.
-  test:
+- 3.1.4 - Enforce mode with a mismatched `evaluated_model`, a mismatched
+  `evaluated_backend`, or no backend identity behaves as shadow. A `mode` or
+  `min_probability` change reaches the next call through the same cached
+  service. test:
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
 - 3.1.5 - One rerank is bounded and complete:
   - more than `top_k` passing candidates return exactly `top_k`;
@@ -1021,7 +1124,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   - `validation.enabled` false or a missing service returns `None` with no
     classifier call;
   - caller cancellation propagates and leaves no pending task;
-  - a mismatched `evaluated_model` behaves as shadow.
+  - a mismatched `evaluated_model` or `evaluated_backend` behaves as shadow;
+  - a `mode` or threshold change reaches the next call through the same
+    cached service.
 
   test:
   `tests/workflows/test_found_work_confirm.py::test_budget_admission_and_cancellation`.
