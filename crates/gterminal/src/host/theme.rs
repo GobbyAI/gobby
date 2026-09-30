@@ -20,6 +20,9 @@ impl HostState {
         attachment_id: Option<u64>,
         theme: ThemeDeclaration,
     ) -> Result<(), &'static str> {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return Err("host_upgrading");
+        };
         let attachment_id = attachment_id.ok_or("attach_required")?;
         let mut inner = self.inner.lock().await;
         let attachment = inner

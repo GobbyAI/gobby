@@ -28,9 +28,13 @@ mod ledger;
 mod native_ops;
 pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
+pub(crate) mod sigterm;
+#[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;
 mod theme;
+#[cfg(all(unix, feature = "vt-engine"))]
+mod upgrade;
 mod write;
 
 pub use backpressure::{FrameMailbox, PushResult};
@@ -196,6 +200,18 @@ pub async fn run() -> io::Result<()> {
         }
     };
 
+    // SIGTERM stays blocked until both handlers are in place, so one that
+    // reached the earlier image during an upgrade drains this one.
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    #[cfg(all(unix, feature = "vt-engine"))]
+    sigterm::start(&state.draining)?;
+    #[cfg(all(unix, feature = "vt-engine"))]
+    state.attempts.install(upgrade::UpgradeContext::new(
+        args.socket_dir.clone(),
+        std::os::fd::AsRawFd::as_raw_fd(&control_listener),
+        std::os::fd::AsRawFd::as_raw_fd(&frames_listener),
+    ));
+
     info!(
         epoch = %state.host_epoch,
         pid = host_pid,
@@ -260,18 +276,23 @@ pub async fn run() -> io::Result<()> {
                 }
                 let _ = crate::platform::take_terminal_resize_signal();
                 state.expire_prepared().await;
+                let _gate = state.mutation_gate.read().await;
                 state.broadcast_frames().await;
             }
         })
     };
 
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tokio::select! {
         _ = shutdown_rx.changed() => {}
-        _ = sigterm.recv() => {
+        _ = terminate.recv() => {
             state.draining.store(true, Ordering::SeqCst);
         }
     }
+    // An attempt in flight answers first: one still probing rechecks, finds
+    // the host draining, and defers before the sockets go; an accepted one
+    // aborts at its next cutoff.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    let _settled = state.attempts.settled().await;
     ticker.abort();
 
     let socket_dir_removed = state.socket_dir_removed.load(Ordering::SeqCst);

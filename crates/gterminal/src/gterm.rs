@@ -18,14 +18,24 @@ pub fn main_entry() {
 }
 
 fn run_host() {
+    // Before any thread exists, so every thread inherits the mask.
+    #[cfg(unix)]
+    crate::host::sigterm::block();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    if let Err(error) = runtime.block_on(crate::host::run()) {
-        eprintln!("gterm host failed: {error}");
-        std::process::exit(1);
-    }
+    let host = move || {
+        if let Err(error) = runtime.block_on(crate::host::run()) {
+            eprintln!("gterm host failed: {error}");
+            std::process::exit(1);
+        }
+    };
+    // Main takes SIGTERM and runs the upgrade exec; see `sigterm`.
+    #[cfg(unix)]
+    crate::host::sigterm::serve(host);
+    #[cfg(not(unix))]
+    host();
 }
 
 fn usage() -> ! {

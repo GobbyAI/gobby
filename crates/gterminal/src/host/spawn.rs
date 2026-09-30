@@ -214,6 +214,8 @@ pub fn spawn_prepared(
     let slave_fd = slave.as_raw_fd();
     unsafe {
         command.pre_exec(move || {
+            // The host blocks SIGTERM, and the gate and pane would inherit it.
+            super::sigterm::unblock();
             duplicate_in_child(gate_reader_fd, GATE_FD)?;
             duplicate_in_child(status_writer_fd, STATUS_FD)?;
             duplicate_in_child(slave_fd, PTY_FD)?;
