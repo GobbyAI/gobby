@@ -10,7 +10,7 @@ import pytest
 import yaml
 
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
-from gobby.storage.definitions import AgentDefinitionManager
+from gobby.storage.definitions import AgentDefinitionManager, get_definitions_revision
 from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
@@ -112,6 +112,64 @@ class TestSyncBundledAgents:
             assert result2["synced"] == 0
             assert result2["skipped"] == 1
             assert result2["updated"] == 0
+
+    @pytest.mark.unit
+    def test_sync_unchanged_child_preserves_all_rows_and_revisions(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        (agents_dir / "test-agent.yaml").write_text(
+            "name: test-agent\n"
+            "description: A test agent\n"
+            "provider: claude\n"
+            "mode: interactive\n"
+            "prompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+            "step_workflow:\n"
+            "  variables:\n    goal: ship\n"
+            "  exit_condition: done\n"
+            "  steps:\n    - name: work\n      prompt: Perform the work.\n"
+        )
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            first = sync_bundled_agents(definition_db)
+            assert first["errors"] == []
+            assert first["synced"] == 1
+            parent_before = definition_db.fetchall("SELECT * FROM agent_definitions ORDER BY id")
+            children_before = definition_db.fetchall(
+                "SELECT * FROM agent_step_workflows ORDER BY id"
+            )
+            assert len(children_before) == 1
+            revisions_before = definition_db.fetchall(
+                "SELECT * FROM definition_revisions ORDER BY domain"
+            )
+            local_before = (
+                get_definitions_revision("agents"),
+                get_definitions_revision("agent_step_workflows"),
+            )
+
+            second = sync_bundled_agents(definition_db)
+
+        assert second["errors"] == []
+        assert second["skipped"] == 1
+        assert second["synced"] == 0
+        assert second["updated"] == 0
+        assert second["orphaned"] == 0
+        assert (
+            definition_db.fetchall("SELECT * FROM agent_definitions ORDER BY id") == parent_before
+        )
+        assert (
+            definition_db.fetchall("SELECT * FROM agent_step_workflows ORDER BY id")
+            == children_before
+        )
+        assert (
+            definition_db.fetchall("SELECT * FROM definition_revisions ORDER BY domain")
+            == revisions_before
+        )
+        assert (
+            get_definitions_revision("agents"),
+            get_definitions_revision("agent_step_workflows"),
+        ) == local_before
 
     @pytest.mark.unit
     def test_sync_uses_filename_when_yaml_name_is_null(

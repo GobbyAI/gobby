@@ -274,6 +274,80 @@ def test_rolled_back_child_write_bumps_neither(definition_db: PostgresHubDatabas
     assert "step_workflow" not in manager.get(parent.id).definition_json
 
 
+@pytest.mark.parametrize(
+    "workflow",
+    [
+        {"steps": [{"name": "only"}]},
+        {
+            "steps": [{"name": "only", "prompt": "run"}],
+            "variables": {"goal": "ship", "attempts": 2},
+            "exit_condition": "done",
+        },
+    ],
+)
+def test_identical_child_write_preserves_rows_and_revisions(
+    definition_db: PostgresHubDatabase, workflow: dict[str, Any]
+) -> None:
+    manager = _mgr(definition_db)
+    parent = manager.create(name="coder", definition_json=_body())
+    manager.set_step_workflow(parent.id, workflow)
+    child_before = manager.get_step_workflow(parent.id)
+    parent_before = manager.get(parent.id)
+    revisions_before = _revisions(definition_db)
+    fired: list[str] = []
+    register_revision_listener("agents", lambda: fired.append("agents"))
+    register_revision_listener("agent_step_workflows", lambda: fired.append("agent_step_workflows"))
+
+    # JSON object order and omitted default fields do not change the workflow.
+    variables = workflow.get("variables", {})
+    equivalent = {
+        "exit_condition": workflow.get("exit_condition"),
+        "variables": dict(reversed(list(variables.items()))),
+        "steps": workflow["steps"],
+    }
+    returned = manager.set_step_workflow(parent.id, equivalent)
+
+    assert manager.get_step_workflow(parent.id) == child_before
+    assert returned == parent_before
+    assert _revisions(definition_db) == revisions_before
+    assert fired == []
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"steps": [{"name": "replacement"}]},
+        {"variables": {"goal": "changed"}},
+        {"exit_condition": "cancelled"},
+    ],
+)
+def test_child_write_persists_each_changed_column(
+    definition_db: PostgresHubDatabase, change: dict[str, Any]
+) -> None:
+    manager = _mgr(definition_db)
+    parent = manager.create(name="coder", definition_json=_body())
+    manager.set_step_workflow(parent.id, _STEPS)
+    before = manager.get_step_workflow(parent.id)
+    revisions_before = _revisions(definition_db)
+    changed = {**_STEPS, **change}
+
+    stored = manager.set_step_workflow(parent.id, changed)
+
+    after = manager.get_step_workflow(parent.id)
+    assert before is not None and after is not None
+    assert after.id == before.id
+    assert after.updated_at != before.updated_at
+    assert stored.definition_json["step_workflow"] == changed
+    agents_local, child_local, agents_db, child_db = revisions_before
+    assert agents_db is not None and child_db is not None
+    assert _revisions(definition_db) == (
+        agents_local + 1,
+        child_local + 1,
+        agents_db + 1,
+        child_db + 1,
+    )
+
+
 def test_purge_deleted_cascades_child_and_bumps_both(
     definition_db: PostgresHubDatabase,
 ) -> None:
