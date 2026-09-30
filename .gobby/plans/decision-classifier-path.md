@@ -381,6 +381,7 @@ Targets:
 - `web/src/api/runtimeConfigCodecVectors.gen.ts::*` — scope-reason: derived config carrier; regenerated with `scripts/generate_runtime_config_contract.py --stdout-web` and expected unchanged unless key encoding moves
 - `tests/config/test_decisions_config.py`
 - `tests/ai/test_capability_registry.py::*` — scope-reason: cover the `decide` binding's unavailable and available states
+- `tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`
 
 **Research context:** The precedent is `EmbeddingsConfig`
 (`config/persistence.py:187-248`), which uses
@@ -440,6 +441,12 @@ the way `config/app.py:169` rejects `memory_usefulness`. The executor checks
 the five keys (`docs/audits/configuration-audit.md:456-460`) become one
 `ai.decisions` entry.
 
+`tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`
+asserts `CodeIndexCommunityLabelConfig().decisions_api_base is None` (`:332`)
+as its ungated precondition. That line becomes
+`assert DecisionsConfig().community_label.mode == "off"`, which states the same
+precondition against the shared config. The rest of the test is unchanged.
+
 `_decision_binding(config)`:
 - `unavailable` with reason "Decision capability requires ai.decisions.api_base
   and ai.decisions.model." when either is unset;
@@ -458,7 +465,6 @@ Config carriers: any `.py` change under `src/gobby/config/` regenerates
 `tests/config/test_runtime_config_contract.py` checks both byte for byte.
 
 Consumers unchanged:
-- `tests/code_index/test_community_labeler.py` — no-edit-reason: it builds `CodeIndexCommunityLabelConfig(candidates=...)` only and reads none of the removed `decisions_*` keys.
 - `src/gobby/ai/__init__.py` — no-edit-reason: it names existing `AICapability` members only; adding `DECIDE` changes no existing member or lookup.
 - `src/gobby/ai/_text_generation_service.py` — no-edit-reason: it names existing `AICapability` members only; adding `DECIDE` changes no existing member or lookup.
 - `src/gobby/ai/_tool_chat_codex.py` — no-edit-reason: it names existing `AICapability` members only; adding `DECIDE` changes no existing member or lookup.
@@ -473,7 +479,7 @@ Consumers unchanged:
 - `tests/communications/test_sticker_vision.py` — no-edit-reason: it names existing `AICapability` members only; adding `DECIDE` changes no existing member or lookup.
 - `tests/servers/routes/test_voice_routes.py` — no-edit-reason: it names existing `AICapability` members only; adding `DECIDE` changes no existing member or lookup.
 
-Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/config/test_runtime_config_contract.py tests/ai/test_capability_registry.py tests/config -q`;
+Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/config/test_runtime_config_contract.py tests/ai/test_capability_registry.py tests/code_index/test_community_labeler.py tests/config -q`;
 `uv run ruff check src/ && uv run mypy src/`.
 
 **Acceptance:**
@@ -505,6 +511,19 @@ Targets:
 - `tests/ai/test_decisions_service.py`
 - `tests/ai/fixtures/systemone_choice_response.json`
 - `docs/evidence/decisions/systemone-wire.md`
+
+**Granularity:** Eight acceptance items, one outcome: a `choose` call that
+either returns validated answers or raises a typed `DecisionsUnavailable`.
+- Transport limits (1.2.2, 1.2.7), the size ceiling (1.2.3), the shared
+  cooldown and its service identity (1.2.4, 1.2.8), strict parsing (1.2.1),
+  and log redaction (1.2.5) are all properties of that one call path, in one
+  module and one test file.
+- No subset is independently closeable. A service without strict parsing
+  hands consumers unvalidated answers, one without the ceiling lets Kev
+  truncate silently, and one without the cooldown stalls every consumer on a
+  dead server.
+- The capture (1.2.6) fixes the field names the parser and its fixture pin, so
+  it comes first inside the same leaf.
 
 **Research context:** #22604's 6.3 specified a client that this module
 replaces. It used `ChoiceQuestion(criteria: dict[str, str])`,
@@ -722,6 +741,8 @@ Targets:
 - `src/gobby/mcp_proxy/services/recommendation.py::*` — scope-reason: add the decision-rerank branch in `_recommend_hybrid` and a `decisions_resolver` constructor argument
 - `src/gobby/mcp_proxy/server.py::*` — scope-reason: pass `decisions_resolver` to `RecommendationService`
 - `tests/ai/test_decisions_service.py`
+- `tests/ai/fixtures/systemone_noul_response.json`
+- `docs/evidence/decisions/systemone-wire.md`
 - `tests/mcp_proxy/services/test_recommendation_decisions.py`
 
 **Research context:** `_recommend_hybrid`
@@ -734,8 +755,13 @@ cannot reject every candidate, which is why the tool consumer uses Noul
 
 Add `async noul(consumer, state, propositions: Mapping[str, str]) ->
 dict[str, NoulAnswer(probability: float)]` to `DecisionService`. It uses the
-same transport, ceiling, and cooldown; its wire field names come from a second
-capture appended to `systemone-wire.md`.
+same transport, ceiling, and cooldown. Its wire field names come from a second
+capture, taken before any code in this leaf:
+- Run one Noul request with three propositions against the same local server.
+- Append the redacted request and response to
+  `docs/evidence/decisions/systemone-wire.md`, which 1.2 created.
+- Save the response body as `tests/ai/fixtures/systemone_noul_response.json`.
+  The `noul` parser tests read this fixture.
 
 Consumer: state is `{"request": task_description}`, with one proposition per
 candidate, "Tool `<server>/<tool>` (`<description>`) materially applies to the
@@ -767,8 +793,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 3.1.1 - `noul` posts per-proposition questions and returns probabilities by
-  key under the same ceiling and cooldown. test:
+- 3.1.1 - `noul` posts per-proposition questions, parses the captured Noul
+  fixture, and returns probabilities by key under the same ceiling and
+  cooldown. The Noul capture is appended to
+  `docs/evidence/decisions/systemone-wire.md`. test:
   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 - 3.1.2 - Shadow mode returns today's result unchanged and writes one shadow
   record. test:
@@ -898,7 +926,10 @@ Edits:
 ## V1: Verification
 `kind: verification`
 
-Run after each leaf's final edit and again before the PD lands the branch:
+Each leaf runs its own `Verification planned` command after its final
+edit, because the combined command names test files that later leaves create.
+Run the combined command below after the last leaf (4.1) and again before the
+PD lands the branch:
 
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/ai/test_capability_registry.py tests/ai/test_decisions_service.py tests/ai/test_decisions_shadow.py tests/scripts/test_decisions_eval.py tests/mcp_proxy/services tests/workflows/test_found_work_confirm.py -q
