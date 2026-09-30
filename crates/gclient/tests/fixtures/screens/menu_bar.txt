@@ -2,28 +2,28 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*19 surface_dim/bar_ink+b*6 bar_ink/bar+b*95
-01 |                   ┌──────────────────┐                                                                                 |
-01 : text/panel_bg*19 surface0/panel_bg*20 text/panel_bg*81
-02 | 1: Untitled    +  │ ✓ This project   │                                                                                 |
-02 : text/surface1+b*15 overlay1/surface0*3 text/surface0*1 surface0/panel_bg*1 overlay0/panel_bg+dv*18 surface0/panel_bg*1 text/surface0*81
-03 |┌ ○ term-alpha · Fo│   All projects   │────────────────────────────────────────────────────────────────────────────────┐|
-03 : accent/panel_bg*1 accent/panel_bg+b*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 accent/panel_bg*81
-04 |│                  │ ✓ Grouped        │                                                                                │|
-04 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 overlay0/panel_bg+d*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-05 |│                  │   Priority       │                                                                                │|
-05 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-06 |│                  │ Working projects │                                                                                │|
-06 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-07 |│                  │ Show sidebar     │                                                                                │|
-07 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-08 |│                  │ Pin sidebar      │                                                                                │|
-08 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-09 |│                  │ Legend           │                                                                                │|
-09 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-10 |│                  │ Theme: Dark ▸    │                                                                                │|
-10 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
-11 |│                  └──────────────────┘                                                                                │|
-11 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*20 text/panel_bg*80 accent/panel_bg*1
+01 |                   ┌─────────────────┐                                                                                  |
+01 : text/panel_bg*19 surface0/panel_bg*19 text/panel_bg*82
+02 | 1: Untitled   │ + │   Theme: Dark ▸ │                                                                                  |
+02 : text/surface1+b*15 line/surface0*1 overlay1/surface0*3 surface0/panel_bg*1 accent/panel_bg+bv*17 surface0/panel_bg*1 text/surface0*82
+03 |┌ ○ term-alpha · Fo│   Monochrome    │─────────────────────────────────────────────────────────────────────────────────┐|
+03 : accent/panel_bg*1 accent/panel_bg+b*18 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 accent/panel_bg*82
+04 |│                  │   Sidebar ▸     │                                                                                 │|
+04 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*17 surface0/panel_bg*1 text/panel_bg*81 accent/panel_bg*1
+05 |│                  └─────────────────┘                                                                                 │|
+05 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*19 text/panel_bg*81 accent/panel_bg*1
+06 |│                                                                                                                      │|
+06 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
+07 |│                                                                                                                      │|
+07 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
+08 |│                                                                                                                      │|
+08 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
+09 |│                                                                                                                      │|
+09 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
+10 |│                                                                                                                      │|
+10 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
+11 |│                                                                                                                      │|
+11 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 12 |│                                                                                                                      │|
 12 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 13 |│                                                                                                                      │|

@@ -154,7 +154,9 @@ pub fn project_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                         })
                         .to_string(),
                     kind: RowKind::Worktree,
-                    state: worktree.state,
+                    // Rollups never yield Unknown, so here it marks a
+                    // worktree with no agent bound, drawn without a glyph.
+                    state: worktree.state.unwrap_or(RowState::Unknown),
                     detail: worktree.task_ref.clone().unwrap_or_default(),
                     nested: true,
                     last_child: index + 1 == count,
@@ -323,6 +325,12 @@ pub(crate) fn row_line_with_scrolling<'a>(
             let prefix = format!("  {}", nest_prefix(row));
             let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
+            // No agent bound, no state: a blank keeps the branch aligned.
+            let glyph = if row.state == RowState::Unknown {
+                (" ", glyph.1)
+            } else {
+                glyph
+            };
             let name_budget = worktree_name_budget(row, width);
             if name_budget > 0 && display_width(&row.label) > name_budget {
                 // A name the row cannot hold drops its task and scrolls
@@ -593,9 +601,11 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
     let budget = usize::from(width).saturating_sub(indent);
     Line::from(vec![
         Span::raw(" ".repeat(indent.min(usize::from(width)))),
+        // The slug names the provider's family itself (`claude-…`, `gpt-…`);
+        // it sits a neutral tier below the title so no state hue is borrowed.
         Span::styled(
             truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.subtext0),
+            Style::default().fg(chrome.palette.overlay1),
         ),
     ])
 }

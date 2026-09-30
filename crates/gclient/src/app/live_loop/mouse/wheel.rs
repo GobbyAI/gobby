@@ -73,19 +73,17 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::Project(_)
         | Hit::Worktree(_)
         | Hit::GroupToggle(_)
-        | Hit::ProjectsFilter
         | Hit::Agent(_)
-        | Hit::AgentsView
         | Hit::SidebarScrollbar { .. }
         | Hit::SidebarEmpty
         | Hit::SidebarDivider => {
             let section = match hit {
                 Hit::Machine(_) => SidebarSection::Machines,
-                Hit::Project(_) | Hit::Worktree(_) | Hit::GroupToggle(_) | Hit::ProjectsFilter => {
+                Hit::Project(_) | Hit::Worktree(_) | Hit::GroupToggle(_) => {
                     SidebarSection::Projects
                 }
                 Hit::Agent(id) if id.starts_with(TERMINAL_ROW) => SidebarSection::Terminals,
-                Hit::Agent(_) | Hit::AgentsView => SidebarSection::Agents,
+                Hit::Agent(_) => SidebarSection::Agents,
                 Hit::SidebarScrollbar { section, .. } => section,
                 _ => sidebar_section_at(&chrome.view, row),
             };

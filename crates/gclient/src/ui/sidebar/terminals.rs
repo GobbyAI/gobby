@@ -2,7 +2,7 @@
 //! Bare terminals that are not named by roster entries.
 
 use super::agents::{machine_admits, TERMINAL_ROW};
-use super::{render_band, render_section_rows, BandStyle, SidebarHits};
+use super::{render_band, render_section_rows, SidebarHits};
 use crate::app::sidebar_model::pane_state;
 use crate::ui::chrome::{Chrome, WorkspaceView};
 use crate::ui::hit::SidebarSection;
@@ -73,13 +73,7 @@ pub(super) fn render_terminals(
     hits: &mut SidebarHits,
 ) {
     let section = SidebarSection::Terminals;
-    render_band(
-        frame,
-        area,
-        section.title(),
-        &[],
-        BandStyle::section(&chrome.palette),
-    );
+    render_band(frame, area, section.title(), &chrome.palette);
     render_section_rows(frame, area, section, rows, chrome, hits);
 }
 

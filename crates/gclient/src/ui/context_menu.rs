@@ -20,24 +20,21 @@ use crate::theme::Palette;
 use crate::ui::widgets::render_panel_shell;
 use crate::ui::Chrome;
 
-/// Draw the open menu over the frame, the menu it opened from first and
-/// beneath it, and hand back the row rect of each item as drawn, in item
-/// order: the open menu's, then its parent's; empty when the frame cannot
-/// hold the panel.
-pub fn render_context_menu(
-    frame: &mut Frame,
-    area: Rect,
-    chrome: &Chrome,
-) -> (Vec<Rect>, Vec<Rect>) {
-    let Some(menu) = chrome.menu.as_ref() else {
-        return (Vec::new(), Vec::new());
-    };
-    let parent = menu
-        .parent
-        .as_deref()
-        .map(|parent| draw_menu(frame, area, &chrome.palette, parent))
-        .unwrap_or_default();
-    (draw_menu(frame, area, &chrome.palette, menu), parent)
+/// Draw the open menu over the frame, every menu it cascades from first and
+/// beneath it, outermost first, and hand back the row rect of each item as
+/// drawn: one list per menu in item order, the open menu's first, then its
+/// parent's and so on out; a list is empty when the frame cannot hold that
+/// panel.
+pub fn render_context_menu(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Vec<Rect>> {
+    let chain: Vec<&ContextMenuState> =
+        std::iter::successors(chrome.menu.as_ref(), |menu| menu.parent.as_deref()).collect();
+    let mut rows: Vec<Vec<Rect>> = chain
+        .iter()
+        .rev()
+        .map(|menu| draw_menu(frame, area, &chrome.palette, menu))
+        .collect();
+    rows.reverse();
+    rows
 }
 
 fn draw_menu(

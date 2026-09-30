@@ -150,6 +150,9 @@ impl AgentSort {
 #[serde(default, deny_unknown_fields)]
 pub struct ClientPrefs {
     pub theme: String,
+    /// Draw gclient's chrome in grays (`Palette::monochrome`); pane
+    /// contents keep their apps' colours.
+    pub monochrome: bool,
     /// Capture mouse events for gclient; `false` leaves the terminal's native
     /// selection and scrolling untouched (`--no-mouse` forces it off).
     pub mouse_capture: bool,
@@ -188,6 +191,7 @@ impl Default for ClientPrefs {
     fn default() -> Self {
         Self {
             theme: "dark".to_string(),
+            monochrome: false,
             mouse_capture: true,
             keybinds: String::new(),
             layout: "default".to_string(),
@@ -232,6 +236,7 @@ impl ClientPrefs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsRow {
     Theme,
+    Monochrome,
     MouseCapture,
     PaneScrollbars,
     PaneGaps,
@@ -246,8 +251,9 @@ pub enum SettingsRow {
 }
 
 impl SettingsRow {
-    pub const ALL: [SettingsRow; 12] = [
+    pub const ALL: [SettingsRow; 13] = [
         SettingsRow::Theme,
+        SettingsRow::Monochrome,
         SettingsRow::MouseCapture,
         SettingsRow::PaneScrollbars,
         SettingsRow::PaneGaps,
@@ -272,6 +278,7 @@ pub struct SettingsState {
 fn row_label(row: SettingsRow) -> &'static str {
     match row {
         SettingsRow::Theme => "theme",
+        SettingsRow::Monochrome => "monochrome",
         SettingsRow::MouseCapture => "mouse capture",
         SettingsRow::PaneScrollbars => "pane scrollbars",
         SettingsRow::PaneGaps => "pane gaps",
@@ -297,6 +304,7 @@ fn on_off(value: bool) -> &'static str {
 fn row_value(row: SettingsRow, prefs: &ClientPrefs) -> String {
     match row {
         SettingsRow::Theme => prefs.theme.clone(),
+        SettingsRow::Monochrome => on_off(prefs.monochrome).to_string(),
         SettingsRow::MouseCapture => on_off(prefs.mouse_capture).to_string(),
         SettingsRow::PaneScrollbars => on_off(prefs.pane_scrollbars).to_string(),
         SettingsRow::PaneGaps => on_off(prefs.pane_gaps).to_string(),
@@ -464,6 +472,7 @@ mod tests {
             labels,
             [
                 "theme",
+                "monochrome",
                 "mouse capture",
                 "pane scrollbars",
                 "pane gaps",
@@ -493,6 +502,9 @@ mod tests {
         assert_eq!(loaded.sidebar_side, SidebarSide::Right);
         assert!(loaded.sidebar_pinned);
         assert_eq!(row_value(SettingsRow::Theme, &prefs), "dark");
+        assert_eq!(row_value(SettingsRow::Monochrome, &prefs), "off");
+        prefs.monochrome = true;
+        assert_eq!(row_value(SettingsRow::Monochrome, &prefs), "on");
         assert_eq!(row_value(SettingsRow::MouseCapture, &prefs), "on");
         assert_eq!(row_value(SettingsRow::PaneGaps, &prefs), "on");
         prefs.pane_gaps = false;

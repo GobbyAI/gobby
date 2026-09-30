@@ -57,6 +57,7 @@ impl Default for StatusPrefs {
 #[serde(default, deny_unknown_fields)]
 struct UiPrefs {
     theme: String,
+    monochrome: bool,
     mouse_capture: bool,
     /// Retired: every pane draws its edges. Still declared so a file that
     /// names it loads under `deny_unknown_fields`; never read or saved.
@@ -91,6 +92,7 @@ impl From<&ClientPrefs> for UiPrefs {
     fn from(prefs: &ClientPrefs) -> Self {
         Self {
             theme: prefs.theme.clone(),
+            monochrome: prefs.monochrome,
             mouse_capture: prefs.mouse_capture,
             _pane_borders: false,
             pane_scrollbars: prefs.pane_scrollbars,
@@ -138,6 +140,7 @@ impl From<PrefsFile> for ClientPrefs {
         let PrefsFile { ui, keymap, status } = file;
         Self {
             theme: ui.theme,
+            monochrome: ui.monochrome,
             keybinds: keymap.path,
             mouse_capture: ui.mouse_capture,
             pane_scrollbars: ui.pane_scrollbars,

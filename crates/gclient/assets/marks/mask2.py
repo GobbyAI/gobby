@@ -156,6 +156,40 @@ grid = [[(cell(c, 2 * r), cell(c, 2 * r + 1)) for c in range(cols)] for r in ran
 # the mark is narrower than its box; emit only its own columns so layouts centre the visible shape
 used = [c for c in range(cols) if any(grid[r][c] != (".", ".") for r in range(rows))]
 grid = [row[used[0] : used[-1] + 1] for row in grid]
+
+
+def normalize_pupils(grid):
+    """Draw every eye's glint as one full cell at the centre of its sampled glint.
+
+    Rasterizing the logo leaves each eye a differently shaped glint (a half-cell
+    here, two half-cells there), so the pupils read as mismatched at terminal size.
+    """
+    halves = {
+        (c, 2 * r + h)
+        for r, row in enumerate(grid)
+        for c, cell in enumerate(row)
+        for h in (0, 1)
+        if cell[h] == "W"
+    }
+    cells = [[list(cell) for cell in row] for row in grid]
+    while halves:
+        stack, cluster = [halves.pop()], []
+        while stack:
+            c, y = stack.pop()
+            cluster.append((c, y))
+            for n in ((c + 1, y), (c - 1, y), (c, y + 1), (c, y - 1)):
+                if n in halves:
+                    halves.remove(n)
+                    stack.append(n)
+        for c, y in cluster:
+            cells[y // 2][c][y % 2] = "K"
+        col = round(sum(c for c, _ in cluster) / len(cluster))
+        row = int(sum(y for _, y in cluster) / len(cluster)) // 2
+        cells[row][col] = ["W", "W"]
+    return [[tuple(cell) for cell in row] for row in cells]
+
+
+grid = normalize_pupils(grid)
 print(f"{used[-1] + 1 - used[0]}x{rows} mark from a {cols}x{rows} box", file=sys.stderr)
 
 

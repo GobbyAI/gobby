@@ -516,12 +516,15 @@ fn modal_keys_drive_every_mode() {
     // Settings: space toggles the selected row and queues the capture switch;
     // right steps the sidebar width; enter and esc close.
     chrome.mode = Mode::Settings;
-    chrome.settings.selected = 0;
+    chrome.settings.selected = 1;
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Down),
         ModalOutcome::Consumed
     );
-    assert_eq!(chrome.settings.selected, 1);
+    assert_eq!(
+        SettingsRow::ALL[chrome.settings.selected],
+        SettingsRow::MouseCapture
+    );
     assert_eq!(
         press(&ws, &mut chrome, KeyCode::Char(' ')),
         ModalOutcome::Consumed

@@ -1,5 +1,5 @@
-# gclient screen golden: projects_agents
-# 120x40, dark theme, colours normalised to theme::Palette roles
+# gclient screen golden: monochrome
+# 120x40, dark theme in grays, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
 01 |                                                                                                                        |
@@ -7,23 +7,23 @@
 02 | Machines                                                                                                               |
 02 : text/panel_bg*1 text/panel_bg+b*8 text/panel_bg*111
 03 | ⍾ scripted                                                                                                             |
-03 : text/surface0*1 yellow/surface0*1 overlay0/surface0+d*1 text/surface0+b*8 text/surface0*14 text/panel_bg*95
+03 : text/surface0*1 accent/surface0*1 overlay0/surface0+d*1 text/surface0+b*8 text/surface0*14 text/panel_bg*95
 04 |                                                                                                                        |
 04 : text/panel_bg*120
 05 | Projects                                                                                                               |
 05 : text/panel_bg*1 text/panel_bg+b*8 text/panel_bg*111
-06 | ⍾ alpha (main ↑2 ↓1)   ▸                                                                                               |
-06 : text/surface0*1 yellow/surface0*1 overlay0/surface0+d*1 text/surface0+b*5 subtext0/surface0*6 green/surface0*3 subtext0/surface0*4 text/surface0*3 accent/surface0*1 text/panel_bg*95
-07 |                                                                                                                        |
-07 : text/panel_bg*120
-08 | Agents                                                                                                                 |
-08 : text/panel_bg*1 text/panel_bg+b*6 text/panel_bg*113
-09 | ⍾ Unknown                                                                                                              |
-09 : text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*1 subtext0/panel_bg*7 text/panel_bg*110
-10 |   No assigned task                                                                   ▄▄▀                               |
-10 : text/panel_bg*3 overlay1/panel_bg*16 text/panel_bg*67 panel_bg/panel_bg*3 text/panel_bg*31
-11 |                                                        ▀▀▄▄        ▄▄▄▄▄▄▄▄▄    ▄▄▄▀▀▀▀▀                               |
-11 : text/panel_bg*56 panel_bg/panel_bg*4 text/panel_bg*8 panel_bg/panel_bg*9 text/panel_bg*4 panel_bg/panel_bg*3 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*31
+06 | ⍾ alpha (main ↑2 ↓1)   ▾                                                                                               |
+06 : text/surface0*1 accent/surface0*1 overlay0/surface0+d*1 text/surface0+b*5 subtext0/surface0*6 green/surface0*3 subtext0/surface0*4 text/surface0*3 accent/surface0*1 text/panel_bg*95
+07 |   └─ ⍾ feature · #123                                                                                                  |
+07 : text/panel_bg*1 overlay0/panel_bg*5 accent/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*7 overlay0/panel_bg*7 text/panel_bg*98
+08 |                                                                                                                        |
+08 : text/panel_bg*120
+09 | Agents                                                                                                                 |
+09 : text/panel_bg*1 text/panel_bg+b*6 text/panel_bg*113
+10 | ⍾ Unknown                                                                            ▄▄▀                               |
+10 : text/panel_bg*1 accent/panel_bg*1 text/panel_bg*1 subtext0/panel_bg*7 text/panel_bg*76 panel_bg/panel_bg*3 text/panel_bg*31
+11 |   No assigned task                                     ▀▀▄▄        ▄▄▄▄▄▄▄▄▄    ▄▄▄▀▀▀▀▀                               |
+11 : text/panel_bg*3 overlay1/panel_bg*16 text/panel_bg*37 panel_bg/panel_bg*4 text/panel_bg*8 panel_bg/panel_bg*9 text/panel_bg*4 panel_bg/panel_bg*3 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*31
 12 |                                                        ▀▀▀▀▀▀▀▀▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                |
 12 : text/panel_bg*56 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*3 panel_bg/overlay0*2 overlay0/overlay0*8 panel_bg/overlay0*3 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/overlay0*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*32
 13 |                                                         ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                 |
@@ -79,4 +79,4 @@
 38 |                                                                                                                        |
 38 : text/panel_bg*120
 39 | ⍾ 1 needs you                                                                                            prefix ctrl+b |
-39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*12 text/surface0*92 subtext0/surface0*13 text/surface0*1
+39 : text/surface0*1 accent/surface0*1 subtext0/surface0*12 text/surface0*92 subtext0/surface0*13 text/surface0*1

@@ -24,7 +24,7 @@ pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
 pub use live_loop::arrange::plan_arrange;
 pub use live_loop::menu::{
     build_menu, item_rects, menu_rect, ArrangeLayout, ContextMenuKind, ContextMenuState,
-    MenuAction, MenuItem,
+    MenuAction, MenuItem, Submenu,
 };
 pub use live_loop::menu_dispatch::apply_live_menu_action;
 pub use live_loop::modal_input::{apply_rename, route_modal_key, ModalOutcome};

@@ -94,7 +94,16 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
     );
     chrome.sidebar.all_sessions = false;
 
-    let mut tmux_pane = Pane::new(PaneId(100), "term-alpha", Backend::Tmux, "epoch");
+    // A tmux pane the workspace holds takes its gclient address over the
+    // tmux id (#23120), and the tmux id stays on the pane untouched.
+    let mut held = Pane::new(PaneId(99), "term-alpha", Backend::Tmux, "epoch");
+    held.address = Some("%14".to_owned());
+    assert_eq!(
+        pane_corners(&ws, &chrome, &held, true).address_label(),
+        "tmux · 0:0:1:2"
+    );
+    assert_eq!(held.address.as_deref(), Some("%14"));
+    let mut tmux_pane = Pane::new(PaneId(100), "term-outside", Backend::Tmux, "epoch");
     tmux_pane.address = Some("%15".to_owned());
     // Josh's order (#23049): mark, then tmux for a tmux pane, then the address.
     // This seat has no SRT record, so no mark leads (#23096).

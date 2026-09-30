@@ -217,12 +217,16 @@ fn every_tab_carries_the_rolled_up_state_of_its_agents() {
         cell(&term, rect.x + 1, rect.y).style().fg,
         Some(palette().peach)
     );
-    for idx in 0..2 {
+    // The same rule parts the last tab from the `+` one column on.
+    for idx in 0..3 {
         let rect = hits.tabs[idx].1;
         let rule = cell(&term, rect.right(), rect.y);
         assert_eq!(rule.symbol(), "│", "tab row: {row:?}");
         assert_eq!(rule.style().fg, Some(palette().line));
     }
+    let new_tab = hits.new_tab.expect("+ drawn");
+    assert_eq!(new_tab.x, hits.tabs[2].1.right() + 1);
+    assert_eq!(cell(&term, new_tab.x + 1, new_tab.y).symbol(), "+");
 
     chrome.activate_tab(1);
     let mut term = terminal(area.width, area.height);
@@ -286,9 +290,9 @@ fn an_edge_count_turns_needs_you_when_a_hidden_tab_does() {
     let whole: Vec<(usize, Rect)> = vec![(0, Rect::new(0, 0, 15, 1)), (1, Rect::new(16, 0, 15, 1))];
     assert_eq!(hits.tabs, whole, "tab row: {row:?}");
     assert_eq!(hits.scroll_left, None);
-    assert_eq!(hits.scroll_right, Some(Rect::new(40, 0, 7, 1)));
-    assert!(row.ends_with(" ⍾ 3 ›  +"), "tab row: {row:?}");
-    for x in [41, 43, 45] {
+    assert_eq!(hits.scroll_right, Some(Rect::new(39, 0, 7, 1)));
+    assert!(row.ends_with(" ⍾ 3 › │ +"), "tab row: {row:?}");
+    for x in [40, 42, 44] {
         assert_eq!(
             cell(&term, x, 0).style().fg,
             Some(palette().peach),
