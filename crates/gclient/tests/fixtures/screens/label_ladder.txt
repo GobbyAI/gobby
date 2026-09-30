@@ -2,14 +2,14 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*120
+01 |                                                                                                                        |
+01 : text/panel_bg*120
 02 | alpha       +                                                                                                          |
-02 : text/panel_bg+b*12 overlay1/surface0*3 text/surface0*105
-03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-03 : line/panel_bg*120
-04 |┌ ○ Codex ─────────────────────────────────────────────────┐┌ ○ nvim ────────────────────┐┌ ○ term-gam · Focused ──────┐|
-04 : overlay0/panel_bg*90 accent/panel_bg*1 accent/panel_bg+b*22 accent/panel_bg*7
+02 : text/surface1+b*12 overlay1/surface0*3 text/surface0*105
+03 |┌ ○ Codex ─────────────────────────────────────────────────┐┌ ○ nvim ────────────────────┐┌ ○ term-gam · Focused ──────┐|
+03 : overlay0/panel_bg*90 accent/panel_bg*1 accent/panel_bg+b*22 accent/panel_bg*7
+04 |│                                                          ││                            ││                            │|
+04 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 05 |│                                                          ││                            ││                            │|
 05 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 06 |│                                                          ││                            ││                            │|
@@ -40,10 +40,10 @@
 18 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 19 |│                                                          ││                            ││                            │|
 19 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
-20 |│                                                          ││                            ││                            │|
-20 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
-21 |│                   waiting for frames                     ││    waiting for frames      ││    waiting for frames      │|
-21 : overlay0/panel_bg*1 text/panel_bg*19 overlay0/panel_bg*18 text/panel_bg*21 overlay0/panel_bg*2 text/panel_bg*4 overlay0/panel_bg*18 text/panel_bg*6 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*4 overlay0/panel_bg*18 text/panel_bg*6 accent/panel_bg*1
+20 |│                   waiting for frames                     ││    waiting for frames      ││    waiting for frames      │|
+20 : overlay0/panel_bg*1 text/panel_bg*19 overlay0/panel_bg*18 text/panel_bg*21 overlay0/panel_bg*2 text/panel_bg*4 overlay0/panel_bg*18 text/panel_bg*6 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*4 overlay0/panel_bg*18 text/panel_bg*6 accent/panel_bg*1
+21 |│                                                          ││                            ││                            │|
+21 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 22 |│                                                          ││                            ││                            │|
 22 : overlay0/panel_bg*1 text/panel_bg*58 overlay0/panel_bg*2 text/panel_bg*28 overlay0/panel_bg*1 accent/panel_bg*1 text/panel_bg*28 accent/panel_bg*1
 23 |│                                                          ││                            ││                            │|

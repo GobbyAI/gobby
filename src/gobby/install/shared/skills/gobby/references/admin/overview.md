@@ -19,7 +19,7 @@ authorize executing them against the user's running installation.
 7. Load `recovery.md` for failed startup, schema maintenance, and restore.
 8. Load `portability.md` for pack/unpack and hub/node file ownership.
 9. Load `clients.md` for browser, native terminal, and provider client access.
-10. Load [gclient commands](../gclient/commands.md) for command-mode verbs, refs, and exits.
+10. Load [gclient commands](gclient-commands.md) for command-mode verbs, refs, and exits.
 
 Identify the checkout, machine, Gobby home, hub, and operation before acting.
 Preserve active sessions and their changes. Coordinate disruptive operations

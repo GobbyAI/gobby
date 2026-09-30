@@ -5,7 +5,10 @@ import logging
 import signal
 import sys
 from collections.abc import Iterator
+from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
+from typing import Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import psutil
@@ -19,17 +22,9 @@ from gobby.agents.kill import (
     kill_agent,
     pid_matches_agent_identity,
 )
-from gobby.agents.tmux import configure_tmux
-from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture(autouse=True)
-def _configured_tmux() -> None:
-    """(Re)configure daemon tmux helpers; earlier runner-shutdown tests reset them."""
-    configure_tmux(TmuxConfig())
 
 
 class TestRunSubprocess:
@@ -313,7 +308,6 @@ class TestPidMatchesAgentIdentity:
 
 class TestValidateTerminalValue:
     def test_valid_patterns(self):
-        assert _validate_terminal_value("tmux_pane", "%123") is True
         assert _validate_terminal_value("parent_pid", "1234") is True
         assert _validate_terminal_value("session_id", "my-test-sess") is True
 
@@ -329,20 +323,13 @@ class TestCloseTerminalWindow:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.SessionManager")
     @patch("gobby.agents.kill._run_subprocess")
-    async def test_close_tmux_pane(self, mock_run, mock_sm_cls):
-        mock_session = MagicMock()
-        mock_session.terminal_context = {"tmux_pane": "%99"}
-        mock_sm = MagicMock()
-        mock_sm.get.return_value = mock_session
-        mock_sm_cls.return_value = mock_sm
-
-        # display-message passes, then kill-pane passes
-        mock_run.side_effect = [(0, "%99\n", ""), (0, "", "")]
+    async def test_legacy_tmux_context_does_not_run_tmux(self, mock_run, mock_sm_cls):
+        session = SimpleNamespace(terminal_context={"tmux_pane": "%99"})
+        mock_sm_cls.return_value = SimpleNamespace(get=lambda _session_id: session)
 
         res = await _close_terminal_window("sess1", MagicMock())
-        assert res["success"] is True
-        assert res["method"] == "tmux_kill_pane"
-        assert res["pane"] == "%99"
+        assert res == {"success": False, "error": "No terminal close method available"}
+        mock_run.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.sys")
@@ -443,10 +430,10 @@ class TestKillAgent:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
-    @patch("gobby.agents.kill._close_tmux_session")
-    async def test_close_terminal_prefers_persisted_tmux_session(
+    @patch("gobby.agents.kill._close_managed_terminal")
+    async def test_close_terminal_prefers_managed_runtime(
         self,
-        mock_close_tmux,
+        mock_close_managed,
         mock_close_window,
         mock_kill,
         agent_run,
@@ -454,7 +441,7 @@ class TestKillAgent:
     ):
         agent_run.pid = 999
         agent_run.terminal_id = "gobby-run-123"
-        mock_close_tmux.return_value = {
+        mock_close_managed.return_value = {
             "success": True,
             "method": "terminal_kill",
             "terminal_id": "gobby-run-123",
@@ -464,8 +451,8 @@ class TestKillAgent:
 
         assert res["success"] is True
         assert res["method"] == "terminal_kill"
-        assert res["terminal_close"] == mock_close_tmux.return_value
-        mock_close_tmux.assert_awaited_once_with(
+        assert res["terminal_close"] == mock_close_managed.return_value
+        mock_close_managed.assert_awaited_once_with(
             agent_run,
             mock_db,
             terminal_action="cancel",
@@ -479,10 +466,10 @@ class TestKillAgent:
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
     @patch("gobby.agents.kill._close_terminal_window")
-    @patch("gobby.agents.kill._close_tmux_session")
+    @patch("gobby.agents.kill._close_managed_terminal")
     async def test_close_terminal_falls_back_to_session_context(
         self,
-        mock_close_tmux,
+        mock_close_managed,
         mock_close_window,
         mock_kill,
         agent_run,
@@ -491,14 +478,14 @@ class TestKillAgent:
         agent_run.pid = 999
         agent_run.terminal_id = "gobby-run-123"
         mock_kill.side_effect = ProcessLookupError("already dead")
-        mock_close_tmux.return_value = {"success": False, "error": "missing"}
-        mock_close_window.return_value = {"success": True, "method": "tmux_kill_pane"}
+        mock_close_managed.return_value = {"success": False, "error": "missing"}
+        mock_close_window.return_value = {"success": True, "method": "parent_pid"}
 
         res = await kill_agent(agent_run, mock_db, close_terminal=True)
 
         assert res["success"] is True
-        assert res["method"] == "tmux_kill_pane"
-        mock_close_tmux.assert_awaited_once_with(
+        assert res["method"] == "parent_pid"
+        mock_close_managed.assert_awaited_once_with(
             agent_run,
             mock_db,
             terminal_action="cancel",
@@ -801,3 +788,38 @@ async def test_close_terminal_treats_exited_terminal_row_as_already_dead() -> No
     assert result["method"] == "terminal_exited"
     assert result["terminal_close"]["terminal_id"] == terminal.id
     assert runtime.killed == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["pending", "live", "orphaned"])
+async def test_close_terminal_fences_nonnative_row(
+    state: Literal["pending", "live", "orphaned"],
+) -> None:
+    from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.services import TerminalServices
+    from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+
+    terminal = replace(make_memory_terminal(), state=state)
+    run = AgentRun(
+        id="run-legacy",
+        parent_session_id="parent1",
+        child_session_id="sess1",
+        provider="claude",
+        prompt="do it",
+        status="running",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2024, 1, 1, tzinfo=UTC),
+        terminal_id=terminal.id,
+    )
+    services = TerminalServices(
+        manager=MemoryTerminalStore(terminal),
+        registry=TerminalRuntimeRegistry(),
+    )
+
+    with patch("gobby.agents.kill.os.kill") as signal_process:
+        result = await kill_agent(run, MagicMock(), close_terminal=True, terminal_services=services)
+
+    assert result["success"] is False
+    assert result["error_code"] == "unsupported_terminal_backend"
+    assert result["terminal_id"] == terminal.id
+    signal_process.assert_not_called()

@@ -736,6 +736,10 @@ def test_remove_waits_for_orphaned_writer_group(
                 os.killpg(child_pid, 0)
             except ProcessLookupError:
                 break
+            except PermissionError:
+                # macOS answers EPERM while the group holds only a zombie that launchd
+                # has not reaped yet; keep polling until the group is gone.
+                pass
             threading.Event().wait(0.01)
 
         second = installer.remove_impeccable_runtime()
@@ -749,7 +753,7 @@ def test_remove_waits_for_orphaned_writer_group(
         if child_pid is not None:
             try:
                 os.killpg(child_pid, signal.SIGKILL)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
 
 

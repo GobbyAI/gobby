@@ -15,8 +15,8 @@ use crate::ui::{
     sidebar, splash, status, tab_surface,
 };
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Clear, Paragraph};
+use ratatui::style::{Color, Modifier};
+use ratatui::widgets::Clear;
 use ratatui::Frame;
 
 /// Every rect the chrome renderers drew this frame; the run loop writes it
@@ -138,9 +138,8 @@ fn splashing<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> bool {
         && ws.daemon_error().is_none()
 }
 
-/// The menu bar and the line under it, the content column with the line
-/// under its tab row, the sidebar over both, then the status line and the
-/// toasts.
+/// The menu bar over a row of bare ground, the content column, the sidebar
+/// over both, then the status line and the toasts.
 fn render_chrome<W: WorkspaceView>(
     frame: &mut Frame,
     ws: &W,
@@ -148,8 +147,6 @@ fn render_chrome<W: WorkspaceView>(
     content: &mut PaneContent<'_>,
 ) -> ChromeHits {
     let menu_bar = menu_bar::render_menu_bar(frame, chrome.view.menu_bar_rect, chrome);
-    render_line(frame, chrome.view.menu_bar_line, chrome);
-    render_line(frame, chrome.view.tab_bar_line, chrome);
     // The sidebar after the content: the overlay lies over it.
     let tab_bar = render_content_column(frame, ws, chrome, content);
     let sidebar = render_navigation_chrome(frame, ws, chrome);
@@ -174,19 +171,6 @@ fn render_chrome<W: WorkspaceView>(
     // Ambient notifications sit above panes, but below interactive overlays.
     hits.toast = render_notifications(frame, chrome);
     hits
-}
-
-/// One row of `▀` in the line colour over the ground: the upper half of the
-/// row reads as a thin black line under the bar or under the tabs.
-fn render_line(frame: &mut Frame, rect: Rect, chrome: &Chrome) {
-    if rect.is_empty() {
-        return;
-    }
-    frame.render_widget(
-        Paragraph::new("▀".repeat(usize::from(rect.width)))
-            .style(Style::new().fg(chrome.palette.line)),
-        rect,
-    );
 }
 
 /// Compose the whole frame with empty pane bodies.

@@ -284,6 +284,29 @@ class TestIsolation:
 @pytest.mark.integration
 class TestRuntimeEnvironment:
     @pytest.mark.asyncio
+    async def test_terminal_availability_uses_native_registry(
+        self, definition_db: PostgresHubDatabase, mock_runner: MagicMock
+    ) -> None:
+        from gobby.terminals import TerminalRuntimeRegistry
+        from tests.terminals.fakes import FakeRuntime
+
+        _create_agent(definition_db)
+        registry = TerminalRuntimeRegistry()
+        registry.register(FakeRuntime(backend="native"))
+        mock_runner.terminal_runtime_registry = registry
+
+        available = await evaluate_spawn(agent="test-agent", db=definition_db, runner=mock_runner)
+        assert [item.code for item in available.items if item.layer == "runtime"] == [
+            "TERMINALS_AVAILABLE"
+        ]
+
+        mock_runner.terminal_runtime_registry = TerminalRuntimeRegistry()
+        unavailable = await evaluate_spawn(agent="test-agent", db=definition_db, runner=mock_runner)
+        assert [item.code for item in unavailable.items if item.layer == "runtime"] == [
+            "NO_TERMINALS_AVAILABLE"
+        ]
+
+    @pytest.mark.asyncio
     async def test_spawn_depth_exceeded(
         self, definition_db: PostgresHubDatabase, mock_runner: MagicMock
     ) -> None:

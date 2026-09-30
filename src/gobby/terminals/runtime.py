@@ -106,6 +106,9 @@ class TerminalSpawnRequest:
     reservation_id: str | None = None
     reserve_key: str | None = None
     auth_cli: str | None = None
+    # The requesting client's colours, as the gterm host's ThemeDeclaration
+    # JSON. Only the native host reads it; the host validates it.
+    terminal_theme: dict[str, object] | None = None
 
 
 # Snapshot representations every backend implements. ``text`` is plain unwrapped

@@ -64,6 +64,21 @@ def test_preparer_has_no_one_shot_generation_path() -> None:
             },
             True,
         ),
+        (
+            {
+                "checklist_facts": {
+                    **_BASE["checklist_facts"],
+                    "close_receipts": [
+                        {
+                            "kind": "independent_review_approval",
+                            "commit_sha": "a" * 40,
+                            "verdict": "LAND",
+                        }
+                    ],
+                }
+            },
+            True,
+        ),
     ],
 )
 def test_structured_inputs_move_review_fingerprint(
@@ -92,22 +107,15 @@ def test_additive_transcript_facts_do_not_stale_review() -> None:
     assert changed.evidence_fingerprint == baseline.evidence_fingerprint
 
 
-@pytest.mark.parametrize(
-    "field", ["close_review_min_severity", "close_review_max_concurrency_per_project"]
-)
-def test_review_policy_change_stales_fingerprints(field: str) -> None:
+def test_review_severity_policy_change_stales_fingerprints() -> None:
     baseline = _prepare()
-    changed_values = {
-        "close_review_min_severity": "high",
-        "close_review_max_concurrency_per_project": 4,
-    }
-    changed = _prepare(config=TaskValidationConfig(**{field: changed_values[field]}))
+    changed = _prepare(config=TaskValidationConfig(close_review_min_severity="high"))
 
     assert changed.review_fingerprint != baseline.review_fingerprint
     assert changed.evidence_fingerprint != baseline.evidence_fingerprint
     review_policy = changed.stable_facts["review_policy"]
     assert isinstance(review_policy, dict)
-    assert review_policy[field] == changed_values[field]
+    assert review_policy == {"close_review_min_severity": "high"}
 
 
 def test_blank_closure_reason_normalizes_to_completed() -> None:

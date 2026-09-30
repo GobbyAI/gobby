@@ -274,6 +274,11 @@ def test_task_close_reviewer_definition_submits_then_terminates() -> None:
     assert "run, never ask for a run to be repeated" in guidance
     assert "never reject a criterion because" in guidance
     assert "your own sandbox cannot reproduce it" in guidance
+    # Receipts are the only view of other sessions' review and activation
+    # evidence; they inform the verdict and never replace it.
+    assert "close_receipts facts are daemon-attested records" in guidance
+    assert "never as an automatic verdict" in guidance
+    assert "supports a criterion about its commit only when matches_linked_commit" in guidance
     # A retry reads the task row after an earlier verdict was persisted. Those
     # fields are history, not fresh deterministic evidence; treating them as
     # current creates a self-reinforcing invalid-review loop.

@@ -293,26 +293,6 @@
       "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
     },
     {
-      "name": "ask_artifacts.body",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "ask_artifacts.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "ask_artifacts.execution_id",
-      "definition": "uuid|uuid|NO||NEVER"
-    },
-    {
-      "name": "ask_artifacts.kind",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "ask_artifacts.sha256",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
       "name": "attention_states.attention_id",
       "definition": "text|text|NO||NEVER"
     },
@@ -2377,6 +2357,10 @@
       "definition": "timestamp with time zone|timestamptz|YES||NEVER"
     },
     {
+      "name": "memories.last_surfaced_at",
+      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
+    },
+    {
       "name": "memories.memory_type",
       "definition": "text|text|NO|'fact'::text|NEVER"
     },
@@ -2399,6 +2383,10 @@
     {
       "name": "memories.source_type",
       "definition": "text|text|YES||NEVER"
+    },
+    {
+      "name": "memories.surfaced_count",
+      "definition": "integer|int4|YES|0|NEVER"
     },
     {
       "name": "memories.tags",
@@ -3351,430 +3339,6 @@
     {
       "name": "provider_model_capabilities.supports_tools",
       "definition": "boolean|bool|YES||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.attempts",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "recall_gate_runs.claim_token",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_gate_runs.decision",
-      "definition": "jsonb|jsonb|YES||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.fit_settings_digest",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.holdout_consumption_key",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.last_error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.lease_expires_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.ship",
-      "definition": "boolean|bool|YES||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.status",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_gate_runs.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_holdout_consumed.consumed_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
-    },
-    {
-      "name": "recall_holdout_consumed.holdout_consumption_key",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_holdout_consumed.id",
-      "definition": "bigint|int8|NO|nextval('recall_holdout_consumed_id_seq'::regclass)|NEVER"
-    },
-    {
-      "name": "recall_holdout_consumed.request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.caller",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.drop_detail",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.drop_reason",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.injection_group",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.injection_position",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.memory_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.outcome",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.project_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.recall_request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.session_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_injection_outcomes.turn_seq",
-      "definition": "integer|int4|YES||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.cohort_digest",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.human_verdict",
-      "definition": "boolean|bool|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.id",
-      "definition": "bigint|int8|NO|nextval('recall_shadow_audit_verdicts_id_seq'::regclass)|NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.memory_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.prompt_hash",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.reviewer",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.sample_digest",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.attempts",
-      "definition": "integer|int4|NO|0|NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.claim_token",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.judge_protocol_version",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.label_source",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.last_error",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.lease_expires_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.next_attempt_at",
-      "definition": "timestamp with time zone|timestamptz|YES||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.recall_request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.status",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_judge_state.updated_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.judge_config_fingerprint",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.judge_model",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.judge_protocol_version",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.label_source",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.presented",
-      "definition": "jsonb|jsonb|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.prompt_hash",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.query_text",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.recall_request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.system_prompt",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.content_hash",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_signal_hits.edge_cosine",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.edge_decay_factor",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.edge_support_norm",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.edge_weight_blend",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.graph_score",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.memory_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.project_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.rank",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.ranking_mode",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.ranking_score",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.raw_semantic_score",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.recall_request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.search_via",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.session_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.similarity",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_hits.temporal_decay_factor",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.caller",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.constants_provenance",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.created_at",
-      "definition": "timestamp with time zone|timestamptz|NO|now()|NEVER"
-    },
-    {
-      "name": "recall_signal_requests.graph_score_map",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "recall_signal_requests.graph_synthetic_similarity_discount",
-      "definition": "double precision|float8|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.merged_ids",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "recall_signal_requests.project_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.query",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.ranking_score_map",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "recall_signal_requests.recall_request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.returned_ids",
-      "definition": "jsonb|jsonb|NO|'[]'::jsonb|NEVER"
-    },
-    {
-      "name": "recall_signal_requests.rrf_applied",
-      "definition": "boolean|bool|NO|false|NEVER"
-    },
-    {
-      "name": "recall_signal_requests.schema_version",
-      "definition": "integer|int4|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.session_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_signal_requests.weighting",
-      "definition": "jsonb|jsonb|NO|'{}'::jsonb|NEVER"
-    },
-    {
-      "name": "recall_usefulness.ablation_delta",
-      "definition": "real|float4|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.ablation_method",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.feature_extractor_version",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.id",
-      "definition": "bigint|int8|NO|nextval('recall_usefulness_id_seq'::regclass)|NEVER"
-    },
-    {
-      "name": "recall_usefulness.judge_confidence",
-      "definition": "real|float4|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.judge_model",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.judge_protocol_version",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.judge_useful",
-      "definition": "boolean|bool|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.label_source",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.labeled_at",
-      "definition": "timestamp with time zone|timestamptz|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.length_controlled",
-      "definition": "boolean|bool|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.memory_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.position_randomized",
-      "definition": "boolean|bool|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.project_id",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.rationale",
-      "definition": "text|text|YES||NEVER"
-    },
-    {
-      "name": "recall_usefulness.recall_request_id",
-      "definition": "text|text|NO||NEVER"
-    },
-    {
-      "name": "recall_usefulness.session_id",
-      "definition": "text|text|NO||NEVER"
     },
     {
       "name": "rule_definitions.created_at",
@@ -6271,22 +5835,6 @@
       "definition": "PRIMARY KEY (id)"
     },
     {
-      "name": "ask_artifacts.ask_artifacts_execution_id_fkey",
-      "definition": "FOREIGN KEY (execution_id) REFERENCES pipeline_executions(id) ON DELETE CASCADE"
-    },
-    {
-      "name": "ask_artifacts.ask_artifacts_kind_check",
-      "definition": "CHECK (kind ~ '^[a-z0-9_-]+$'::text)"
-    },
-    {
-      "name": "ask_artifacts.ask_artifacts_pkey",
-      "definition": "PRIMARY KEY (execution_id, kind, sha256)"
-    },
-    {
-      "name": "ask_artifacts.ask_artifacts_sha256_check",
-      "definition": "CHECK (sha256 ~ '^[a-f0-9]{64}$'::text)"
-    },
-    {
       "name": "attention_states.attention_states_check",
       "definition": "CHECK (state IS NULL OR attention_id IS NOT NULL AND reason IS NOT NULL AND kind IS NOT NULL AND fingerprint IS NOT NULL AND since IS NOT NULL)"
     },
@@ -7265,94 +6813,6 @@
     {
       "name": "provider_model_capabilities.provider_model_capabilities_pkey",
       "definition": "PRIMARY KEY (provider, canonical_model)"
-    },
-    {
-      "name": "recall_gate_runs.recall_gate_runs_attempts_check",
-      "definition": "CHECK (attempts >= 0)"
-    },
-    {
-      "name": "recall_gate_runs.recall_gate_runs_pkey",
-      "definition": "PRIMARY KEY (holdout_consumption_key)"
-    },
-    {
-      "name": "recall_gate_runs.recall_gate_runs_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['reserved'::text, 'complete'::text]))"
-    },
-    {
-      "name": "recall_holdout_consumed.recall_holdout_consumed_holdout_consumption_key_fkey",
-      "definition": "FOREIGN KEY (holdout_consumption_key) REFERENCES recall_gate_runs(holdout_consumption_key) ON DELETE RESTRICT"
-    },
-    {
-      "name": "recall_holdout_consumed.recall_holdout_consumed_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "recall_holdout_consumed.recall_holdout_consumed_request_id_key",
-      "definition": "UNIQUE (request_id)"
-    },
-    {
-      "name": "recall_injection_outcomes.recall_injection_outcomes_check",
-      "definition": "CHECK ((outcome = 'injected'::text) = (drop_reason IS NULL))"
-    },
-    {
-      "name": "recall_injection_outcomes.recall_injection_outcomes_check1",
-      "definition": "CHECK ((outcome = 'filtered'::text) = (injection_position IS NULL))"
-    },
-    {
-      "name": "recall_injection_outcomes.recall_injection_outcomes_drop_reason_check",
-      "definition": "CHECK (drop_reason IS NULL OR (drop_reason = ANY (ARRAY['already_injected'::text, 'review_lesson'::text, 'empty_content'::text, 'payload_empty'::text, 'budget'::text, 'other'::text])))"
-    },
-    {
-      "name": "recall_injection_outcomes.recall_injection_outcomes_outcome_check",
-      "definition": "CHECK (outcome = ANY (ARRAY['injected'::text, 'filtered'::text]))"
-    },
-    {
-      "name": "recall_injection_outcomes.recall_injection_outcomes_pkey",
-      "definition": "PRIMARY KEY (recall_request_id, memory_id)"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.recall_shadow_audit_verdicts_cohort_digest_request_id_memor_key",
-      "definition": "UNIQUE (cohort_digest, request_id, memory_id)"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts.recall_shadow_audit_verdicts_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "recall_shadow_judge_state.recall_shadow_judge_state_attempts_check",
-      "definition": "CHECK (attempts >= 0)"
-    },
-    {
-      "name": "recall_shadow_judge_state.recall_shadow_judge_state_pkey",
-      "definition": "PRIMARY KEY (recall_request_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "recall_shadow_judge_state.recall_shadow_judge_state_status_check",
-      "definition": "CHECK (status = ANY (ARRAY['claimed'::text, 'retryable'::text, 'terminal'::text, 'complete'::text]))"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot.recall_shadow_prompt_snapshot_pkey",
-      "definition": "PRIMARY KEY (recall_request_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "recall_signal_hits.recall_signal_hits_pkey",
-      "definition": "PRIMARY KEY (recall_request_id, memory_id)"
-    },
-    {
-      "name": "recall_signal_requests.recall_signal_requests_pkey",
-      "definition": "PRIMARY KEY (session_id, recall_request_id)"
-    },
-    {
-      "name": "recall_usefulness.recall_usefulness_label_source_check",
-      "definition": "CHECK (label_source = ANY (ARRAY['llm_judge'::text, 'ablation'::text, 'digest'::text, 'digest_shadow'::text, 'human'::text]))"
-    },
-    {
-      "name": "recall_usefulness.recall_usefulness_pkey",
-      "definition": "PRIMARY KEY (id)"
-    },
-    {
-      "name": "recall_usefulness.recall_usefulness_recall_request_id_memory_id_label_source__key",
-      "definition": "UNIQUE (recall_request_id, memory_id, label_source, judge_protocol_version)"
     },
     {
       "name": "rule_definitions.rule_definitions_pkey",
@@ -8427,10 +7887,6 @@
       "definition": "CREATE UNIQUE INDEX agent_step_workflows_pkey ON $schema.agent_step_workflows USING btree (id)"
     },
     {
-      "name": "ask_artifacts_pkey",
-      "definition": "CREATE UNIQUE INDEX ask_artifacts_pkey ON $schema.ask_artifacts USING btree (execution_id, kind, sha256)"
-    },
-    {
       "name": "attention_states_pkey",
       "definition": "CREATE UNIQUE INDEX attention_states_pkey ON $schema.attention_states USING btree (entry_id)"
     },
@@ -8721,10 +8177,6 @@
     {
       "name": "idx_asi_step_workflow",
       "definition": "CREATE INDEX idx_asi_step_workflow ON $schema.agent_step_instances USING btree (agent_step_workflow_id)"
-    },
-    {
-      "name": "idx_ask_terminal_retention",
-      "definition": "CREATE INDEX idx_ask_terminal_retention ON $schema.pipeline_executions USING btree (completed_at, id) WHERE ((pipeline_name = 'native-ask'::text) AND (status = ANY (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text])))"
     },
     {
       "name": "idx_attention_states_blocked",
@@ -9339,42 +8791,6 @@
       "definition": "CREATE INDEX idx_prompts_scope ON $schema.prompts USING btree (scope)"
     },
     {
-      "name": "idx_recall_injection_outcomes_memory",
-      "definition": "CREATE INDEX idx_recall_injection_outcomes_memory ON $schema.recall_injection_outcomes USING btree (memory_id)"
-    },
-    {
-      "name": "idx_recall_injection_outcomes_session",
-      "definition": "CREATE INDEX idx_recall_injection_outcomes_session ON $schema.recall_injection_outcomes USING btree (session_id)"
-    },
-    {
-      "name": "idx_recall_signal_hits_memory",
-      "definition": "CREATE INDEX idx_recall_signal_hits_memory ON $schema.recall_signal_hits USING btree (memory_id)"
-    },
-    {
-      "name": "idx_recall_signal_hits_session",
-      "definition": "CREATE INDEX idx_recall_signal_hits_session ON $schema.recall_signal_hits USING btree (session_id)"
-    },
-    {
-      "name": "idx_recall_signal_requests_project_created",
-      "definition": "CREATE INDEX idx_recall_signal_requests_project_created ON $schema.recall_signal_requests USING btree (project_id, created_at)"
-    },
-    {
-      "name": "idx_recall_signal_requests_request_id",
-      "definition": "CREATE UNIQUE INDEX idx_recall_signal_requests_request_id ON $schema.recall_signal_requests USING btree (recall_request_id)"
-    },
-    {
-      "name": "idx_recall_usefulness_memory",
-      "definition": "CREATE INDEX idx_recall_usefulness_memory ON $schema.recall_usefulness USING btree (memory_id)"
-    },
-    {
-      "name": "idx_recall_usefulness_request_source_protocol",
-      "definition": "CREATE INDEX idx_recall_usefulness_request_source_protocol ON $schema.recall_usefulness USING btree (recall_request_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "idx_recall_usefulness_session",
-      "definition": "CREATE INDEX idx_recall_usefulness_session ON $schema.recall_usefulness USING btree (session_id)"
-    },
-    {
       "name": "idx_rule_defs_event",
       "definition": "CREATE INDEX idx_rule_defs_event ON $schema.rule_definitions USING btree (((definition_json ->> 'event'::text))) WHERE (deleted_at IS NULL)"
     },
@@ -9929,54 +9345,6 @@
     {
       "name": "provider_model_capabilities_pkey",
       "definition": "CREATE UNIQUE INDEX provider_model_capabilities_pkey ON $schema.provider_model_capabilities USING btree (provider, canonical_model)"
-    },
-    {
-      "name": "recall_gate_runs_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_gate_runs_pkey ON $schema.recall_gate_runs USING btree (holdout_consumption_key)"
-    },
-    {
-      "name": "recall_holdout_consumed_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_holdout_consumed_pkey ON $schema.recall_holdout_consumed USING btree (id)"
-    },
-    {
-      "name": "recall_holdout_consumed_request_id_key",
-      "definition": "CREATE UNIQUE INDEX recall_holdout_consumed_request_id_key ON $schema.recall_holdout_consumed USING btree (request_id)"
-    },
-    {
-      "name": "recall_injection_outcomes_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_injection_outcomes_pkey ON $schema.recall_injection_outcomes USING btree (recall_request_id, memory_id)"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts_cohort_digest_request_id_memor_key",
-      "definition": "CREATE UNIQUE INDEX recall_shadow_audit_verdicts_cohort_digest_request_id_memor_key ON $schema.recall_shadow_audit_verdicts USING btree (cohort_digest, request_id, memory_id)"
-    },
-    {
-      "name": "recall_shadow_audit_verdicts_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_shadow_audit_verdicts_pkey ON $schema.recall_shadow_audit_verdicts USING btree (id)"
-    },
-    {
-      "name": "recall_shadow_judge_state_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_shadow_judge_state_pkey ON $schema.recall_shadow_judge_state USING btree (recall_request_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "recall_shadow_prompt_snapshot_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_shadow_prompt_snapshot_pkey ON $schema.recall_shadow_prompt_snapshot USING btree (recall_request_id, label_source, judge_protocol_version)"
-    },
-    {
-      "name": "recall_signal_hits_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_signal_hits_pkey ON $schema.recall_signal_hits USING btree (recall_request_id, memory_id)"
-    },
-    {
-      "name": "recall_signal_requests_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_signal_requests_pkey ON $schema.recall_signal_requests USING btree (session_id, recall_request_id)"
-    },
-    {
-      "name": "recall_usefulness_pkey",
-      "definition": "CREATE UNIQUE INDEX recall_usefulness_pkey ON $schema.recall_usefulness USING btree (id)"
-    },
-    {
-      "name": "recall_usefulness_recall_request_id_memory_id_label_source__key",
-      "definition": "CREATE UNIQUE INDEX recall_usefulness_recall_request_id_memory_id_label_source__key ON $schema.recall_usefulness USING btree (recall_request_id, memory_id, label_source, judge_protocol_version)"
     },
     {
       "name": "rule_definitions_pkey",

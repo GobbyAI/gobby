@@ -12,7 +12,10 @@ from uuid import uuid4
 
 import pytest
 
-from gobby.hooks.event_handlers._session_start.claims import preserve_task_claim_state
+from gobby.hooks.event_handlers._session_start.claims import (
+    MCP_PROXY_READY_VARIABLE,
+    preserve_task_claim_state,
+)
 from gobby.hooks.hook_types import SessionEndReason
 from gobby.llm.claude_models import DoneEvent
 from gobby.servers.websocket.chat._session import ChatSessionMixin
@@ -360,7 +363,7 @@ class TestCommitClearSuccessor:
                 "gobby.servers.websocket.chat._session.SessionVariableManager",
             ) as sv_cls,
         ):
-            sv_cls.return_value.get_variables.return_value = {}
+            sv_cls.return_value.get_variables.return_value = {MCP_PROXY_READY_VARIABLE: True}
             result = await mixin.commit_clear_successor(
                 conversation_id="conv-1",
                 session=session,
@@ -370,6 +373,10 @@ class TestCommitClearSuccessor:
 
         assert result["ok"] is True
         assert result["successor_id"] == "succ-db"
+        # The rebound wrapper keeps its stdio bridge, which reported only to pred-db.
+        sv_cls.return_value.merge_variables.assert_called_once_with(
+            "succ-db", {MCP_PROXY_READY_VARIABLE: True}
+        )
         assert session.db_session_id == "succ-db"
         assert session.seq_num == 99
         assert session.message_index == 0

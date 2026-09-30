@@ -15,6 +15,8 @@ _OPTIONAL_MEMORY_COLUMNS = (
     "rationale",
     "source_task_id",
     "created_by_agent",
+    "surfaced_count",
+    "last_surfaced_at",
 )
 _MEMORY_COLUMNS = (
     "id",
@@ -29,6 +31,8 @@ _MEMORY_COLUMNS = (
     "created_by_agent",
     "access_count",
     "last_accessed_at",
+    "surfaced_count",
+    "last_surfaced_at",
     "tags",
     "graph_processed",
     "created_at",
@@ -285,6 +289,8 @@ class _DreamJournalMixin:
         # data.get() defaults the dream soft-delete columns to NULL on pre-289 snapshots.
         values = {column: data.get(column) for column in _MEMORY_COLUMNS}
         values["tags"] = _json(values.get("tags") or [])
+        # Pre-454 snapshots lack surfaced stats; an explicit NULL would bypass DEFAULT 0.
+        values["surfaced_count"] = values.get("surfaced_count") or 0
         with self.db.transaction() as conn:
             conn.execute(
                 _RESTORE_MEMORY_SQL,

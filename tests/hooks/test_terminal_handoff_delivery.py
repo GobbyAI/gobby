@@ -43,6 +43,7 @@ from gobby.sessions.compact_continuation import (
 )
 from gobby.sessions.compact_markers import COMPACT_NOTIFICATION_STARTED_AT_VARIABLE
 from gobby.sessions.handoff import (
+    DISPATCH_OWNER,
     FAILED_HANDOFF_VARIABLE,
     FOUND_WORK_VARIABLE,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
@@ -351,6 +352,7 @@ def test_unclaimed_completion_is_logged(caplog: pytest.LogCaptureFixture) -> Non
         PENDING_HANDOFF_VARIABLE: {
             "attempt_id": ATTEMPT_ID,
             "dispatch_started_at": "2026-09-03T21:47:00+00:00",
+            "dispatch_owner": DISPATCH_OWNER,
             "clear_session": False,
             "handoff_record_id": "handoff-1",
         },
@@ -740,13 +742,17 @@ def _variable_manager(failures: int | None) -> MagicMock:
     return manager
 
 
-async def _settle_failed_delivery(variable_manager: MagicMock) -> MagicMock:
+async def _settle_failed_delivery(
+    variable_manager: MagicMock,
+    result: dict[str, Any] | None = None,
+) -> MagicMock:
     claimed = ClaimedHandoffDelivery(SESSION_ID, ATTEMPT_ID, "handoff-1", False)
     restore = MagicMock(return_value=True)
+    delivered = result or {"compacted": False, "reason": "pane disappeared"}
     with (
         patch(
             "gobby.hooks.terminal_handoff_delivery.deliver_staged_compact_handoff",
-            new=AsyncMock(return_value={"compacted": False, "reason": "pane disappeared"}),
+            new=AsyncMock(return_value=delivered),
         ),
         patch(
             "gobby.hooks.terminal_handoff_delivery.shielded_terminal_delivery",
@@ -781,6 +787,35 @@ async def test_first_delivery_failure_counts_and_keeps_retry_guidance() -> None:
     variable_manager.merge_variables.assert_called_once_with(
         SESSION_ID, {HANDOFF_DELIVERY_FAILURES_VARIABLE: 1}
     )
+
+
+@pytest.mark.asyncio
+async def test_missing_seat_settles_without_counting_toward_abandonment(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.WARNING, logger=LOGGER_NAME)
+    variable_manager = _variable_manager(1)
+
+    restore = await _settle_failed_delivery(
+        variable_manager,
+        {
+            "compacted": False,
+            "reason": "the recorded CLI process no longer owns its terminal",
+            "error_code": "no_terminal_target",
+        },
+    )
+
+    failure = restore.call_args.kwargs["failure_result"]
+    assert failure["delivery_abandoned"] is False
+    assert failure["delivery_pending"] is False
+    assert failure["error_code"] == "no_terminal_target"
+    assert "Do not call set_handoff again" in failure["retry_guidance"]
+    assert f"failed_attempt_id={ATTEMPT_ID!r}" in failure["recovery_guidance"]
+    variable_manager.merge_variables.assert_not_called()
+    assert _warnings(caplog) == [
+        f"Terminal handoff delivery failed for session {SESSION_ID} attempt {ATTEMPT_ID}: "
+        "the recorded CLI process no longer owns its terminal"
+    ]
 
 
 @pytest.mark.asyncio
@@ -1605,32 +1640,92 @@ async def test_held_compact_failed_interrupt_preserves_undelivered_payload(
     assert claim_staged_handoff_delivery(hub_db, SESSION_ID, ATTEMPT_ID) is None
 
 
-async def test_tmux_pane_session_still_receives_the_continuation_by_tmux(
+async def test_tmux_pane_only_session_gets_no_continuation(
     hub_db: HubDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """Continuations are native-only; a session bound just to a tmux pane has no delivery path."""
     session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
-    tmux = MagicMock()
-    tmux.dispatch_keys = AsyncMock(return_value=True)
-    tmux.snapshot_lines = AsyncMock(return_value=None)
-    monkeypatch.setattr(
-        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
-        0.0,
-    )
     assert mark_handoff_compact_continuation_pending(hub_db, SESSION_ID, attempt_id=ATTEMPT_ID)
-    registry = runtime_registry(FakeRuntime(backend="native"))
-    handler = _session_start_handler(session_manager, MemoryTerminalStore(), registry)
+    runtime = FakeRuntime(backend="native")
+    handler = _session_start_handler(
+        session_manager, MemoryTerminalStore(), runtime_registry(runtime)
+    )
 
-    with patch(
-        "gobby.sessions.compact_continuation.manager_for_terminal_context", return_value=tmux
+    scheduled = _consume_pending_handoff_compact_continuation(
+        handler,
+        session_source="compact",
+        pending_session_id=SESSION_ID,
+        target_session=session_manager.get(SESSION_ID),
+    )
+    await _await_continuations()
+
+    assert scheduled is False
+    assert runtime.write_log == []
+
+
+@pytest.mark.parametrize(
+    ("dispatch_owner", "recovers"),
+    [(DISPATCH_OWNER, False), ("dead-daemon-owner", True)],
+    ids=["dispatched-by-this-daemon", "abandoned-by-a-dead-daemon"],
+)
+def test_stop_recovers_only_a_dispatch_this_daemon_does_not_own(
+    hub_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+    dispatch_owner: str,
+    recovers: bool,
+) -> None:
+    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"}, source="grok")
+    variables = SessionVariableManager(hub_db)
+    started_at = datetime.now(UTC).isoformat()
+    variables.merge_variables(
+        SESSION_ID,
+        {
+            PENDING_HANDOFF_VARIABLE: {
+                "attempt_id": ATTEMPT_ID,
+                "clear_session": False,
+                "handoff_record_id": "22222222-2222-4222-8222-222222222222",
+                "created_at": started_at,
+                "dispatch_started_at": started_at,
+                "dispatch_owner": dispatch_owner,
+            },
+            HANDOFF_DISPATCH_GATE_VARIABLE: {
+                "handoff_staged": True,
+                "delivery_pending": True,
+                "attempt_id": ATTEMPT_ID,
+                "clear_session": False,
+            },
+        },
+    )
+    event_loop = MagicMock()
+    event_loop.is_closed.return_value = False
+    event = HookEvent(
+        event_type=HookEventType.STOP,
+        session_id="provider-session",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": SESSION_ID},
+    )
+
+    with (
+        caplog.at_level(logging.WARNING, logger=LOGGER_NAME),
+        patch("gobby.hooks.terminal_handoff_delivery._settle_delivery", new_callable=AsyncMock),
+        patch("gobby.hooks.terminal_handoff_delivery.asyncio.run_coroutine_threadsafe") as submit,
     ):
-        scheduled = _consume_pending_handoff_compact_continuation(
-            handler,
-            session_source="compact",
-            pending_session_id=SESSION_ID,
-            target_session=session_manager.get(SESSION_ID),
+        scheduled = terminal_handoff_delivery.schedule_staged_handoff_on_stop(
+            event,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            event_loop=event_loop,
         )
-        await _await_continuations()
 
-    assert scheduled is True
-    tmux.dispatch_keys.assert_any_await("%12", f"{build_handoff_continue_prompt()}\n", literal=True)
+    marker = variables.get_variables(SESSION_ID)[PENDING_HANDOFF_VARIABLE]
+    assert scheduled is recovers
+    assert _warnings(caplog) == []
+    assert submit.call_count == int(recovers)
+    if recovers:
+        assert marker["dispatch_owner"] == DISPATCH_OWNER
+        submit.call_args.args[0].close()
+    else:
+        assert marker["dispatch_owner"] == dispatch_owner
+        assert marker["dispatch_started_at"] == started_at

@@ -37,9 +37,10 @@ rules:
           - `{{ path }}`
           {% endfor %}
           {% elif session_owned_reviewable_paths is not none %}
-          Gobby found no reviewable paths owned by this session. Do not review
-          or modify another session's staged paths; resolve that ownership
-          conflict first.
+          The edit ledger has no matching reviewable paths, so ownership is
+          unconfirmed. If this is your claimed worktree, inspect and review
+          your own staged paths. Do not review or modify another session's
+          staged paths.
           {% else %}
           Gobby could not determine an exact owned path set for this Git
           operation. Do not include another session's staged paths.
@@ -83,9 +84,10 @@ rules:
           - `{{ path }}`
           {% endfor %}
           {% elif session_owned_reviewable_paths is not none %}
-          Gobby found no reviewable paths owned by this session. Do not review
-          or modify another session's staged paths; resolve that ownership
-          conflict first.
+          The edit ledger has no matching reviewable paths, so ownership is
+          unconfirmed. If this is your claimed worktree, inspect and review
+          your own staged paths. Do not review or modify another session's
+          staged paths.
           {% else %}
           Gobby could not determine an exact owned path set for this Git
           operation. Do not include another session's staged paths.

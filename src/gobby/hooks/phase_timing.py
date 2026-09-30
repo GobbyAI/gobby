@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import threading
 import time
 from collections.abc import Awaitable, Callable, Iterator
@@ -71,11 +72,13 @@ class HookPhaseTimings:
         with self._lock:
             values = sorted(self._query_latencies)
         if not values:
-            return {"count": 0, "p50": 0.0, "p95": 0.0}
+            return {"count": 0, "p50": 0.0, "p95": 0.0, "max": 0.0}
+        # Below 20 queries p95 is the max; above it, one lock-blocked query hides past p95.
         return {
             "count": len(values),
             "p50": values[(len(values) - 1) // 2] * 1000,
             "p95": values[(95 * len(values) + 99) // 100 - 1] * 1000,
+            "max": values[-1] * 1000,
         }
 
 
@@ -90,7 +93,10 @@ def hook_phase_timing_scope(timings: HookPhaseTimings) -> Iterator[None]:
     """Expose one delivery's collector across hook and workflow calls."""
     token = _current_timings.set(timings)
     try:
-        with observe_queries(timings.add_query_latency):
+        with observe_queries(
+            timings.add_query_latency,
+            pool_acquire_observer=functools.partial(timings.add, "hub_pool_acquire"),
+        ):
             yield
     finally:
         _current_timings.reset(token)

@@ -85,6 +85,8 @@ def _fingerprint_deltas(
                 deltas.append(delta)
         if previous_facts.get("had_attributed_edits") != current_facts.get("had_attributed_edits"):
             deltas.append("attributed edit state changed")
+        if previous_facts.get("close_receipts") != current_facts.get("close_receipts"):
+            deltas.append("close receipts changed")
         if previous_facts.get("commit_count") != current_facts.get(
             "commit_count"
         ) and previous_facts.get("commit_shas") == current_facts.get("commit_shas"):
@@ -239,6 +241,8 @@ async def evaluate_close_criteria(
             # Gate 10's run record travels to the reviewer launch prompt; the
             # taskless reviewer cannot read the transcript itself.
             "validation_commands": checklist_facts.get("validation_commands"),
+            # Other sessions' attestations; the reviewer reads no session.
+            "close_receipts": checklist_facts.get("close_receipts"),
         },
     )
 

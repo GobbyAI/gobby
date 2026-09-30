@@ -32,6 +32,15 @@ IssueCode = Literal["invalid_pattern", "pattern_timeout"]
 # stopped delimiting the frame cost the whole composer region, and a region nobody
 # can find reads as ``unknown``: no draft is seen and no Enter is ever verified.
 _COMPOSER_RULE_RE = re.compile(r"^\s*[─━]{8,}(?:[^\n]*[─━])?\s*$")
+_CODEX_PROMPT_RE = re.compile(r"^\s*›(?:[ \t].*)?$")
+_CODEX_MODEL_RE = re.compile(r"^\s{2,}\S.* · .*$")
+# Codex drops the agents hint and appends a warnings indicator when it has any, so
+# both are optional. A footer this does not recognise leaves no region, which reads
+# ``unknown`` and strands a stale-active seat (#23102).
+_CODEX_FOOTER_RE = re.compile(
+    r"^\s*(?:← for agents · )?\? for shortcuts"
+    r"(?:\s{2,}⚠️? \d+ warnings? · f2 to view)?\s*$"
+)
 
 # The rules a manifest needs before any composer probe of it can mean anything.
 _COMPOSER_RULE_IDS = frozenset({"composer_draft", "composer_empty"})
@@ -179,17 +188,31 @@ def _select_region(pane_snapshot: str, region: str) -> str:
 
 
 def composer_region(pane_snapshot: str) -> str:
-    """Return the bottom-most composer frame: rule-delimited, else the last prompt box.
+    """Return the bottom-most framed or Codex bare composer.
 
     Claude Code draws the composer between two horizontal rules; Droid draws it
     as a box. Status bars sit below the frame, so they never enter the region.
     An empty string means no complete frame is visible.
     """
     lines = pane_snapshot.splitlines()
+    codex_composer = _bare_codex_composer(lines)
+    if codex_composer:
+        return codex_composer
     rule_indexes = [index for index, line in enumerate(lines) if _COMPOSER_RULE_RE.match(line)]
     if len(rule_indexes) >= 2:
         return "\n".join(lines[rule_indexes[-2] + 1 : rule_indexes[-1]])
     return _last_prompt_box(pane_snapshot)
+
+
+def _bare_codex_composer(lines: list[str]) -> str:
+    if len(lines) < 3 or _CODEX_FOOTER_RE.match(lines[-1]) is None:
+        return ""
+    if _CODEX_MODEL_RE.match(lines[-2]) is None:
+        return ""
+    prompt_index = len(lines) - 4 if not lines[-3].strip() else len(lines) - 3
+    if prompt_index < 0 or _CODEX_PROMPT_RE.match(lines[prompt_index]) is None:
+        return ""
+    return lines[prompt_index]
 
 
 def _last_prompt_box(pane_snapshot: str) -> str:

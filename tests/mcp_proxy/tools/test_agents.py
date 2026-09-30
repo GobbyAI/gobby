@@ -2196,6 +2196,57 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
     """
 
     @pytest.mark.asyncio
+    async def test_legacy_terminal_returns_unsupported_without_completing(self) -> None:
+        from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
+        from gobby.terminals.runtime import UnregisteredBackendError
+
+        run = MagicMock(id="run-legacy", child_session_id=None, terminal_id="terminal-legacy")
+        run.status = "running"
+        runner = MagicMock()
+        runner.terminal_runtime_registry.resolve.side_effect = UnregisteredBackendError("tmux")
+        terminal = MagicMock(id=run.terminal_id, backend="tmux", state="live")
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents_termination.agent_run_task_dirty_paths",
+                new_callable=AsyncMock,
+                return_value=[],
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents_termination.build_agent_exit_notification",
+                return_value=(None, {}, ""),
+            ),
+            patch("gobby.storage.terminals.TerminalManager") as terminal_manager_cls,
+            patch(
+                "gobby.agents.capture.terminate_managed_runtime_async",
+                new_callable=AsyncMock,
+            ) as terminate,
+            patch(
+                "gobby.mcp_proxy.tools.agents.complete_and_notify_agent_run",
+                new_callable=AsyncMock,
+            ) as complete,
+        ):
+            terminal_manager_cls.return_value.get.return_value = terminal
+            result = await _complete_self_terminated_run(
+                runner=runner,
+                run=run,
+                kill_db=MagicMock(),
+                completion_registry=None,
+                session_manager=None,
+            )
+
+        assert result == {
+            "success": False,
+            "run_id": run.id,
+            "error": "unsupported terminal backend: tmux",
+            "error_code": "unsupported_terminal_backend",
+        }
+        assert run.status == "running"
+        runner.terminal_runtime_registry.resolve.assert_called_once_with("tmux")
+        terminate.assert_not_awaited()
+        complete.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_provider_process_is_killed_before_terminal_persistence(self) -> None:
         from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
 

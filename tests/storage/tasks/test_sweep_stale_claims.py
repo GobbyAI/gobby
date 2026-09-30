@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any, cast
@@ -37,6 +38,7 @@ from gobby.storage.task_close_reviews import QueuedAgentRunSpec, TaskCloseReview
 from gobby.storage.tasks._automation import list_automation_candidates, sweep_stale_claims
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._models import Isolation, Task
+from gobby.storage.terminals import TerminalManager, native_locator_key
 from gobby.terminal_ownership import PaneOwnershipDecision, resolve_pane_ownership
 from gobby.utils.machine_id import require_machine_id
 from tests.storage.tasks._stage_test_helpers import (
@@ -367,7 +369,8 @@ def test_sweep_keeps_a_claim_while_its_close_review_is_active(
     reviewed = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     settled = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
     store = TaskCloseReviewStore(temp_db)
-    for task, settle in ((reviewed, False), (settled, True)):
+    # Close reviews run one at a time (#23059), so the settled one goes first.
+    for task, settle in ((settled, True), (reviewed, False)):
         row = temp_db.fetchone("SELECT updated_at FROM tasks WHERE id = %s", (task.id,))
         assert row is not None
         review, created = store.create_or_get_active(
@@ -397,6 +400,10 @@ def test_sweep_keeps_a_claim_while_its_close_review_is_active(
         assert created
         if settle:
             store.finish(review.id, status="error", result_payload={}, error="reviewer died")
+            # A review holds reviewer capacity until its run exits too (#23059).
+            temp_db.execute(
+                "UPDATE agent_runs SET status = 'error' WHERE id = %s", (review.agent_run_id,)
+            )
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
@@ -547,6 +554,7 @@ def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
         "gobby.storage.sessions._terminal_revival.resolve_pane_ownership",
         _nested_process_resolve,
     )
+    monkeypatch.setattr("gobby.terminal_ownership.psutil.Process", _NestedProcess)
     revived = manager.revive_expired_terminal_session(outer.id)
 
     assert reclaimed == 0
@@ -558,6 +566,7 @@ def test_a_nested_cli_start_leaves_the_outer_sessions_claim_intact(
 def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
     _local_machine_identity: None,
 ) -> None:
     """The same cascade without tmux, where the contest is settled by tty.
@@ -603,6 +612,8 @@ def test_a_nested_cli_start_in_a_plain_terminal_leaves_the_outer_claim_intact(
     assert expired.status == "expired"
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+    # The outer CLI still runs under the nested one; only the foreground moved.
+    monkeypatch.setattr("gobby.terminal_ownership.psutil.Process", _NestedProcess)
     revived = manager.revive_expired_terminal_session(outer.id)
 
     assert reclaimed == 0
@@ -772,3 +783,152 @@ def test_sweep_reclaims_a_claim_held_by_an_expired_non_terminal_session(
 
     assert reclaimed >= 1
     assert _claim(temp_db, task.id) is None
+
+
+_EXITED_HOST_EPOCH = "host-epoch-before-drain"
+
+
+def _expire_seat_whose_native_pane_exited(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    *,
+    live_host_epoch: str,
+    before_expiry: Callable[[str], object] | None = None,
+) -> tuple[SessionManager, str]:
+    """Expire a paused seat whose native pane exited under ``_EXITED_HOST_EPOCH``."""
+    sessions = SessionManager(temp_db)
+    terminals = TerminalManager(temp_db)
+    terminal_id = str(uuid.uuid4())
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "paused")
+    sessions.update(session_id, terminal_context={"gobby_terminal_id": terminal_id})
+    assert terminals.create_pending(
+        terminal_id=terminal_id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+        machine_id=MACHINE_ID,
+        session_id=session_id,
+    )
+    host_terminal_id = f"host-{terminal_id[:8]}"
+    assert terminals.promote_to_live(
+        terminal_id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(_EXITED_HOST_EPOCH, host_terminal_id),
+        host_epoch=_EXITED_HOST_EPOCH,
+    )
+    assert terminals.mark_exited(terminal_id) is not None
+    paused = sessions.get(session_id)
+    assert paused is not None
+    if before_expiry is not None:
+        before_expiry(session_id)
+    expired = sessions.expire_if_paused_terminal_exited(
+        session_id,
+        terminal_id=terminal_id,
+        machine_id=MACHINE_ID,
+        observed_updated_at=paused.updated_at,
+        live_host_epoch=live_host_epoch,
+    )
+    assert expired is not None
+    assert expired.status == "expired"
+    return sessions, session_id
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+@pytest.mark.parametrize(
+    ("live_host_epoch", "claim_survives"),
+    [
+        pytest.param("host-epoch-after-drain", True, id="host_drain"),
+        pytest.param(_EXITED_HOST_EPOCH, False, id="pane_closed_under_live_host"),
+    ],
+)
+def test_a_native_pane_exit_releases_its_claim_only_when_the_host_stayed_up(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    live_host_epoch: str,
+    claim_survives: bool,
+) -> None:
+    """A host drain ends every pane and the seats resume into the same sessions.
+
+    ``gobby restart --terminals`` exits each pane under the old host epoch, and
+    the liveness monitor expires the paused seat before anything resumes it.
+    That expiry is a guess, so the claim waits for the resume. A pane closed
+    while its host is still the live one is finished, and releases on schedule.
+    """
+    _sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db, sample_project, live_host_epoch=live_host_epoch
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed == (0 if claim_survives else 1)
+    assert _claim(temp_db, task.id) == (session_id if claim_survives else None)
+    marker = (read_session_variables(temp_db, session_id) or {}).get(
+        CONTESTED_TERMINAL_EXPIRY_VARIABLE
+    )
+    assert (marker is not None and marker["cause"] == "terminal_drain") is claim_survives
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+def test_a_seat_resumed_after_a_host_drain_keeps_its_claim(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Revival settles the drain guess and clears its marker; the claim stays put."""
+    sessions, session_id = _expire_seat_whose_native_pane_exited(
+        temp_db, sample_project, live_host_epoch="host-epoch-after-drain"
+    )
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+
+    revived = sessions.revive_expired_terminal_session(session_id)
+
+    assert revived is not None
+    assert revived.status == "active"
+    assert CONTESTED_TERMINAL_EXPIRY_VARIABLE not in (
+        read_session_variables(temp_db, session_id) or {}
+    )
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+    assert _claim(temp_db, task.id) == session_id
+
+
+@pytest.mark.usefixtures("_local_machine_identity")
+def test_a_claim_sweep_racing_a_drain_expiry_never_sees_the_seat_unshielded(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """The drain marker commits with the expiry, so no sweep can land in between."""
+    claimed: list[Task] = []
+    released_during_expiry: list[int] = []
+
+    def sweep_before_marker(db: HubDatabase, session_id: str, cause: Any) -> None:
+        # A sweep on its own connection, run after the expiry UPDATE and before
+        # the marker write, which is where the two used to commit separately.
+        worker = threading.Thread(
+            target=lambda: released_during_expiry.append(
+                sweep_stale_claims(temp_db, project_id=sample_project["id"])
+            )
+        )
+        worker.start()
+        worker.join(timeout=30)
+        record_contested_terminal_expiry(db, session_id, cause)
+
+    with patch(
+        "gobby.storage.sessions._field_update.record_contested_terminal_expiry",
+        side_effect=sweep_before_marker,
+    ):
+        _sessions, session_id = _expire_seat_whose_native_pane_exited(
+            temp_db,
+            sample_project,
+            live_host_epoch="host-epoch-after-drain",
+            before_expiry=lambda owner: claimed.append(
+                _claimed_task(temp_db, sample_project, claimed_by=owner)
+            ),
+        )
+
+    assert released_during_expiry == [0]
+    assert _claim(temp_db, claimed[0].id) == session_id
+    assert sweep_stale_claims(temp_db, project_id=sample_project["id"]) == 0
+    assert _claim(temp_db, claimed[0].id) == session_id

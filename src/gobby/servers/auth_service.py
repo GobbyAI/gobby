@@ -63,7 +63,6 @@ class _AgentRoute(NamedTuple):
     method: str
     route: str
     bind_identity: bool
-    allow_ask_principal: bool = True
 
 
 def request_path(request: HTTPConnection) -> str:
@@ -96,19 +95,6 @@ _AGENT_CAPABILITY_MATRIX: tuple[_AgentRoute, ...] = (
     _AgentRoute("POST", "/api/mcp/tools/recommend", True),
     _AgentRoute("POST", "/api/mcp/tools/search", True),
     _AgentRoute("POST", "/api/mcp/*/tools/*", True),
-    # Ask's HTTP MCP adapter exposes only the same three stage wrapper tools.
-    _AgentRoute("POST", "/api/ask/mcp", True),
-    _AgentRoute("GET", "/api/ask/mcp", True),
-    _AgentRoute("DELETE", "/api/ask/mcp", True),
-    # Public Ask lifecycle. Managed Ask children must stay inside their
-    # stage-scoped MCP capabilities and cannot recursively start or control runs.
-    _AgentRoute("POST", "/api/ask/runs", True, False),
-    _AgentRoute("GET", "/api/ask/runs/*", True, False),
-    _AgentRoute("GET", "/api/ask/runs/*/wait", True, False),
-    _AgentRoute("POST", "/api/ask/runs/*/resume", True, False),
-    _AgentRoute("POST", "/api/ask/runs/*/cancel", True, False),
-    _AgentRoute("GET", "/api/ask/runs/*/export", True, False),
-    _AgentRoute("GET", "/api/ask/runs/*/citations/*", True, False),
     # Session-scoped variables (stdio proxy get/set_variable).
     _AgentRoute("POST", "/api/sessions/*/variables/get", True),
     _AgentRoute("POST", "/api/sessions/*/variables/set", True),
@@ -422,10 +408,7 @@ class AuthService:
         entry = _agent_capability_allows(request)
         if entry is None:
             return "route_not_permitted"
-        if not self._managed_capability_is_live(
-            claims,
-            allow_ask_principal=entry.allow_ask_principal,
-        ):
+        if not self._managed_capability_is_live(claims):
             return "run_inactive"
         if not _agent_identity_matches(
             request,
@@ -436,17 +419,9 @@ class AuthService:
             return "identity_mismatch"
         return claims
 
-    def _managed_capability_is_live(
-        self,
-        claims: AgentApiTokenClaims,
-        *,
-        allow_ask_principal: bool,
-    ) -> bool:
+    def _managed_capability_is_live(self, claims: AgentApiTokenClaims) -> bool:
         if claims.agent_run_id is not None:
-            return self._agent_run_is_live(
-                claims.agent_run_id,
-                allow_ask_principal=allow_ask_principal,
-            )
+            return self._agent_run_is_live(claims.agent_run_id)
         if claims.managed_execution_id is None:
             return False
         try:
@@ -462,7 +437,7 @@ class AuthService:
             return False
         return row is not None and row["login_capable"] is True
 
-    def _agent_run_is_live(self, run_id: str, *, allow_ask_principal: bool) -> bool:
+    def _agent_run_is_live(self, run_id: str) -> bool:
         """A capability dies with its run: only pending/running runs pass.
 
         Checked on every request; token expiry is only defense-in-depth
@@ -470,18 +445,14 @@ class AuthService:
         """
         try:
             row = self._database_getter().fetchone(
-                "SELECT status, workflow_name FROM agent_runs WHERE id = %s",
+                "SELECT status FROM agent_runs WHERE id = %s",
                 (run_id,),
             )
         except Exception:
             # Malformed run ids and storage failures must fail closed at the
             # auth boundary, never surface as a 500.
             return False
-        return (
-            row is not None
-            and row["status"] in ACTIVE_AGENT_RUN_STATUSES
-            and (allow_ask_principal or row["workflow_name"] != "native-ask")
-        )
+        return row is not None and row["status"] in ACTIVE_AGENT_RUN_STATUSES
 
     def _resolve_agent_session_ref(self, ref: str, project_id: str) -> str | None:
         try:

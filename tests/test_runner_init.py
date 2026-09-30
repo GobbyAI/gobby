@@ -234,7 +234,7 @@ class TestGobbyRunnerInit:
         assert mock_store.ensure_ready.call_args.kwargs == {}
         assert mock_config_store.method_calls == []
 
-    def test_init_provisions_local_api_token_after_secret_envelope_setup(
+    def test_init_provisions_local_api_token_after_config_reconciliation(
         self,
         mock_config_with_websocket: DaemonConfig,
     ) -> None:
@@ -247,16 +247,19 @@ class TestGobbyRunnerInit:
                 for patch_context, entered_mock in zip(patches, entered, strict=True)
             }
             secret_store = mocks["SecretStore"].return_value
+            config_repository = mocks["ConfigRepository"].return_value
             auth_store = mocks["AuthStore"].return_value
             ensure_token = mocks["ensure_local_api_token"]
             ordering = MagicMock()
             ordering.attach_mock(secret_store.ensure_ready, "ensure_ready")
+            ordering.attach_mock(config_repository.reconcile_registry, "reconcile_registry")
             ordering.attach_mock(ensure_token, "ensure_local_api_token")
 
             GobbyRunner()
 
-        assert [call[0] for call in ordering.mock_calls[:2]] == [
+        assert [call[0] for call in ordering.mock_calls[:3]] == [
             "ensure_ready",
+            "reconcile_registry",
             "ensure_local_api_token",
         ]
         ensure_token.assert_called_once_with(auth_store)

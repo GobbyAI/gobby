@@ -38,22 +38,22 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
 def _agy_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
     reasoning = entry.get("reasoning")
     if not isinstance(reasoning, dict):
-        raise ValueError(f"AGY model {entry.get('value')} is missing reasoning metadata")
+        raise ValueError(f"Antigravity model {entry.get('value')} is missing reasoning metadata")
     supported_efforts = reasoning.get("supported_efforts")
     if not isinstance(supported_efforts, list) or not supported_efforts:
-        raise ValueError(f"AGY model {entry.get('value')} has invalid supported_efforts")
+        raise ValueError(f"Antigravity model {entry.get('value')} has invalid supported_efforts")
     if not all(isinstance(effort, str) for effort in supported_efforts):
-        raise ValueError(f"AGY model {entry.get('value')} has non-string supported_efforts")
+        raise ValueError(f"Antigravity model {entry.get('value')} has non-string supported_efforts")
 
     effort_display = entry.get("effort_display")
     if not isinstance(effort_display, dict):
-        raise ValueError(f"AGY model {entry.get('value')} is missing effort_display")
+        raise ValueError(f"Antigravity model {entry.get('value')} is missing effort_display")
 
     supported_set = set(supported_efforts)
     display_set = set(effort_display)
     if display_set != supported_set:
         raise ValueError(
-            f"AGY model {entry.get('value')} effort_display keys {sorted(display_set)} "
+            f"Antigravity model {entry.get('value')} effort_display keys {sorted(display_set)} "
             f"do not match supported efforts {sorted(supported_set)}"
         )
 

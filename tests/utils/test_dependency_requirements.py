@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from functools import partial
 from pathlib import Path
 
@@ -321,3 +323,44 @@ def test_platform_support_and_tmux_requirement(
     else:
         assert error_fragment in (error or "")
     assert requirements.requires_tmux() is requires_tmux
+
+
+def test_report_marks_probes_past_the_deadline_timed_out_without_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    healthy = DependencyStatus(
+        state="healthy",
+        installed_version="99.0.0",
+        minimum_version=None,
+        expected_version=None,
+        path="/bin/tool",
+        error=None,
+    )
+
+    def command_status(**kwargs: object) -> DependencyStatus:
+        if kwargs["arguments"] == ("--version",) and kwargs["executable"] == "git":
+            release.wait(10)
+        return healthy
+
+    monkeypatch.setattr(requirements, "_python_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "_command_status", command_status)
+    monkeypatch.setattr(requirements, "node_dependency_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "impeccable_dependency_status", lambda: healthy)
+    monkeypatch.setattr(requirements, "_docker_running", lambda _path: True)
+    try:
+        started = time.monotonic()
+        report = requirements.collect_dependency_report(
+            managed_services=False,
+            include_srt=False,
+            deadline=started + 0.2,
+        )
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert elapsed < 1.5
+    assert report.timed_out == ("git",)
+    assert report.required["git"].state == "timed_out"
+    assert report.required["node"] == healthy
+    assert report.optional["tailscale"] == healthy

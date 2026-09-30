@@ -24,7 +24,6 @@ def create_lifespan(
     *,
     hook_manager_factory_getter: Callable[[], Callable[..., Any]],
     codex_adapter_cls_getter: Callable[[], Any],
-    additional_mcp_apps: tuple[Any, ...] = (),
 ) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
     """Build the FastAPI lifespan handler for the daemon server."""
 
@@ -269,31 +268,29 @@ def create_lifespan(
             if server.codex_client.is_connected:
                 app.state.codex_sync_task = asyncio.create_task(_sync_existing_codex_sessions())
 
-        if config and config.tmux.enabled:
-            try:
-                from gobby.agents.tmux import set_tmux_pane_monitor
-                from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
+        try:
+            from gobby.agents.interactive_attention_monitor import InteractiveAttentionMonitor
 
-                detection_registry = server.services.detection_registry
-                if detection_registry is None:
-                    raise RuntimeError("Tmux pane monitor requires a detection registry")
-                runtime_registry = getattr(server.services, "terminal_runtime_registry", None)
-                if runtime_registry is None:
-                    raise RuntimeError("Tmux pane monitor requires a terminal runtime registry")
-                monitor = TmuxPaneMonitor(
-                    session_end_callback=app.state.hook_manager.event_handlers.handle_session_end,
-                    detection_registry=detection_registry,
-                    config=config.tmux,
-                    session_manager=app.state.hook_manager._session_manager,
-                    attention_manager=server.services.attention_manager,
-                    registry=runtime_registry,
-                    startup_ready=lambda: server.services.startup_ready,
+            detection_registry = server.services.detection_registry
+            if detection_registry is None:
+                raise RuntimeError("Interactive attention monitor requires a detection registry")
+            runtime_registry = getattr(server.services, "terminal_runtime_registry", None)
+            if runtime_registry is None:
+                raise RuntimeError(
+                    "Interactive attention monitor requires a terminal runtime registry"
                 )
-                set_tmux_pane_monitor(monitor)
-                await monitor.start()
-                logger.debug("TmuxPaneMonitor started")
-            except Exception as e:
-                logger.warning("Failed to start TmuxPaneMonitor: %s", e)
+            monitor = InteractiveAttentionMonitor(
+                detection_registry=detection_registry,
+                session_manager=app.state.hook_manager._session_manager,
+                attention_manager=server.services.attention_manager,
+                registry=runtime_registry,
+                startup_ready=lambda: server.services.startup_ready,
+            )
+            app.state.interactive_attention_monitor = monitor
+            await monitor.start()
+            logger.debug("InteractiveAttentionMonitor started")
+        except Exception as e:
+            logger.warning("Failed to start InteractiveAttentionMonitor: %s", e)
 
         try:
             from gobby.sessions.liveness_monitor import SessionLivenessMonitor
@@ -305,9 +302,11 @@ def create_lifespan(
                     app.state.hook_manager, "_dispatch_session_summaries", None
                 ),
                 message_processor_resolver=lambda: server.message_processor,
-                tmux_config=config.tmux if config else None,
                 terminal_manager=getattr(server.services, "terminal_manager", None),
                 startup_ready=lambda: server.services.startup_ready,
+                live_host_epoch=lambda: getattr(
+                    getattr(server.services, "terminal_host_manager", None), "host_epoch", None
+                ),
             )
             app.state.liveness_monitor = liveness_monitor
             app.state.hook_manager.event_handlers.set_liveness_monitor(liveness_monitor)
@@ -317,8 +316,8 @@ def create_lifespan(
             logger.warning("Failed to start SessionLivenessMonitor: %s", e)
 
         async with AsyncExitStack() as mcp_lifespans:
-            for transport in ((mcp_app,) if mcp_app is not None else ()) + additional_mcp_apps:
-                await mcp_lifespans.enter_async_context(transport.router.lifespan_context(app))
+            if mcp_app is not None:
+                await mcp_lifespans.enter_async_context(mcp_app.router.lifespan_context(app))
             logger.debug("MCP server lifespans initialized")
             yield
         logger.debug("MCP server lifespans shutdown complete")
@@ -392,16 +391,14 @@ def create_lifespan(
             except Exception as e:
                 logger.warning("Failed to stop SessionLivenessMonitor: %s", e)
 
-        try:
-            from gobby.agents.tmux import get_tmux_pane_monitor, set_tmux_pane_monitor
-
-            pane_monitor = get_tmux_pane_monitor()
-            if pane_monitor:
-                await pane_monitor.stop()
-                set_tmux_pane_monitor(None)
-                logger.debug("TmuxPaneMonitor stopped")
-        except Exception as e:
-            logger.warning("Failed to stop TmuxPaneMonitor: %s", e)
+        attention_monitor = getattr(app.state, "interactive_attention_monitor", None)
+        if attention_monitor is not None:
+            try:
+                await attention_monitor.stop()
+                app.state.interactive_attention_monitor = None
+                logger.debug("InteractiveAttentionMonitor stopped")
+            except Exception as e:
+                logger.warning("Failed to stop InteractiveAttentionMonitor: %s", e)
 
         if hasattr(app.state, "pending_interaction_manager"):
             try:

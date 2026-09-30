@@ -10,6 +10,7 @@ import uuid
 from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -37,7 +38,7 @@ from gobby.terminals.ws_protocol import (
 )
 from gobby.utils.datetime import to_json_safe
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
 pytestmark = pytest.mark.unit
@@ -312,6 +313,36 @@ async def test_attach_translates_lifecycle_close_when_shutdown_starts_mid_reques
     assert reply["reason"] == "Daemon is shutting down"
 
 
+async def test_slow_failed_workspace_attach_logs_snapshot_and_error_send(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    server = _bare_server()
+    server.shutdown_in_progress = lambda: False
+    websocket = MockWebSocket()
+    server.clients[websocket] = {"id": "client-1"}
+    ticks = iter((0.0, 1.2, 1.5))
+    with (
+        patch(
+            "gobby.servers.websocket.workspace_ws.time", SimpleNamespace(monotonic=ticks.__next__)
+        ),
+        patch.object(
+            server, "_read_workspace", AsyncMock(side_effect=WorkspaceOpError("busy", "busy"))
+        ),
+        patch.object(server, "_send_json", AsyncMock()) as send,
+    ):
+        await server._handle_workspace_attach(websocket, {"type": "workspace_attach"})
+
+    assert send.await_count == 1
+    sent_call = send.await_args
+    assert sent_call is not None
+    assert sent_call.args[1]["type"] == "workspace_error"
+    assert sent_call.args[1]["code"] == "busy"
+    assert (
+        "client_id=client-1 workspace_id=None outcome=busy total_ms=1500.0 "
+        "snapshot_ms=1200.0 reply_ms=0.0 send_ms=300.0"
+    ) in caplog.text
+
+
 async def test_attach_propagates_lifecycle_publication_fault_while_running(
     stack: _Stack,
 ) -> None:
@@ -565,6 +596,33 @@ async def test_oversized_workspace_events_fragment_without_faulting_publication(
     )
     assert (rowless["seq"], after["seq"]) == (seq + 1, seq + 2)
     assert stack.server.lease_registry.lifecycle_snapshot()["seq"] == seq + 2
+
+
+async def test_shell_ops_carry_the_client_theme_to_the_spawn(stack: _Stack) -> None:
+    """tab.create and pane.split spawn with the requesting client's colours."""
+    websocket = _client(stack, set())
+    home = (await _op(stack, websocket, "workspace.create", name="themed"))["id"]
+    light: dict[str, object] = {"background": {"r": 250, "g": 251, "b": 252}, "palette": []}
+    dark: dict[str, object] = {"background": {"r": 16, "g": 17, "b": 18}, "palette": []}
+
+    created = await _op(
+        stack,
+        websocket,
+        "tab.create",
+        workspace=home,
+        project_id=stack.project_id,
+        terminal_theme=light,
+    )
+    assert stack.native.last_request is not None
+    assert stack.native.last_request.terminal_theme == light
+    first = created["panes"][0]["id"]
+    await _op(stack, websocket, "pane.split", pane=first, axis="vertical", terminal_theme=dark)
+    assert stack.native.last_request.terminal_theme == dark
+    await _op(stack, websocket, "pane.split", pane=first, axis="horizontal")
+    assert stack.native.last_request.terminal_theme is None
+
+    refused = _op_request("pane.split", pane=first, axis="vertical", terminal_theme=["dark"])
+    assert await _error(stack.server, websocket, refused) == "invalid_op"
 
 
 def test_op_fields_refuse_types_a_message_cannot_be_checked_against() -> None:

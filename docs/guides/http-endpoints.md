@@ -287,6 +287,7 @@ available at `/mcp`.
 | `DELETE` | `/api/mcp/servers/{name}` | Remove the exact `(name, resolved project)` row. |
 | `GET` | `/api/mcp/templates` | List templates visible to the resolved project with parameter contracts. |
 | `GET` | `/api/mcp/status` | Return MCP registry/status data. |
+| `POST` | `/api/mcp/bridge/ready` | Stdio bridge report, sent once the CLI lists the Gobby tools; sets `_mcp_proxy_ready` on the caller's session. An unresolved wrapper caller gets `409 SESSION_REQUIRED`; the bridge retries that, `DAEMON_UNAVAILABLE` and `REQUEST_TIMEOUT` eight times, with backoff sleeps totalling about 90 seconds, and logs a late success, or a give-up as a warning unless no session ever registered. |
 | `POST` | `/api/mcp/refresh` | Re-index tool schemas: `server`/`server_id` targets one resolved instance; otherwise every internal registry and enabled visible instance. Body may include `server`, `server_id`, `project_id`, `scope`, and `force`. |
 | `GET` | `/api/mcp/tools` | List tools across servers. |
 | `POST` | `/api/mcp/tools/search` | Search tools. |
@@ -850,6 +851,7 @@ daemon config.
 | Method | Route | Purpose |
 | --- | --- | --- |
 | `POST` | `/api/comms/send` | Send content through an active named channel with optional session and adapter metadata. |
+| `POST` | `/api/comms/attachment` | Send caller-supplied text (at most 64 KiB, bare `.txt`/`.log` filename) as a `text/plain` document; reads no host path. |
 | `GET` | `/api/comms/channels` | List communication channels. |
 | `POST` | `/api/comms/channels` | Create a channel. |
 | `PUT` | `/api/comms/channels/{channel_id}` | Update a channel. |

@@ -5,7 +5,6 @@ Rules that were merged into context-handoff (preserve-context-on-compact)
 are tested there instead.
 
 Active memory-lifecycle rules:
-- judge-shadow-relevance-on-response: background mcp_call on turn_end
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start
 - check-memory-guidance-on-initial-stop: acknowledged block on the first turn_end
@@ -48,10 +47,12 @@ SURFACE_RULES = (
 )
 
 MEMORY_RULES = {
-    "judge-shadow-relevance-on-response",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "check-memory-guidance-on-initial-stop",
+    "snapshot-mcp-proxy-ready-on-turn-start",
+    "retry-gobby-tools-after-proxy-connects",
+    "note-mcp-proxy-missed-turn",
     "review-closed-task-memories-before-handoff",
     "review-closed-task-memories-on-stop",
     "guard-plan-memory-writes",
@@ -160,32 +161,6 @@ class TestMemoryLifecycleSync:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# judge-shadow-relevance-on-response
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestShadowRelevanceOnResponse:
-    """Judge pending shadow-memory rows independently at turn end."""
-
-    def test_event_and_effect(
-        self,
-        db: HubDatabase,
-        manager: RuleDefinitionManager,
-    ) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("judge-shadow-relevance-on-response")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate(row.definition_json)
-        assert body.event.value == "turn_end"
-        assert body.effects is not None
-        effect = body.effects[0]
-        assert effect.type == "mcp_call"
-        assert effect.server == "gobby-memory"
-        assert effect.tool == "judge_shadow_relevance"
-        assert effect.background is True
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # reset-memory-tracking-on-start
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -280,6 +255,7 @@ def _turn_end_event(
 def _initial_gate_variables(**overrides: Any) -> dict[str, Any]:
     variables: dict[str, Any] = {
         "_memory_initial_stop_checked": False,
+        "_mcp_proxy_ready_this_turn": True,
         "loaded_skills": [],
         "open_tool_errors": [],
     }
@@ -713,6 +689,7 @@ class TestPostCloseMemoryReviewRules:
         variables = _review_variables(
             _pending_review("#42", "Completed work."),
             _memory_initial_stop_checked=False,
+            _mcp_proxy_ready_this_turn=True,
             loaded_skill_references=[],
             open_tool_errors=[],
             # The research-feedback stop gate shares this trigger; keep it quiet

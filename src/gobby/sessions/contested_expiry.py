@@ -3,14 +3,17 @@
 Two SessionStart paths expire a terminal session before anything validates who
 owns the terminal: the reused-context scan and the parent-registration branch.
 Both run on a guess, and ``revive_expired_terminal_session`` routinely reverses
-them, so an ``expired`` status written by either one can simply be wrong. Every
-other expiry writer -- inactivity, a killed tmux server, an explicit close --
-knows the session is finished.
+them, so an ``expired`` status written by either one can simply be wrong. So can
+the liveness monitor's expiry of a session whose native pane exited under a
+terminal host that has since been replaced: a host drain ends every pane, and
+the seats are resumed into the same sessions afterwards. Every other expiry
+writer -- inactivity, a killed tmux server, a pane closed under the live host,
+an explicit close -- knows the session is finished.
 
 The row itself cannot tell those apart, so the speculative writer records why it
-expired the session and the claim shields read that cause back. Only the two
-causes below are contestable; an expiry that left no marker is final and its
-claims release on the ordinary schedule (#20837).
+expired the session and the claim shields read that cause back. Only the causes
+below are contestable; an expiry that left no marker is final and its claims
+release on the ordinary schedule (#20837).
 
 The marker lives in ``session_variables`` beside the compact-continue marker,
 which encodes the same kind of fact -- an owner whose status is transiently
@@ -31,10 +34,12 @@ CONTESTED_TERMINAL_EXPIRY_VARIABLE = "contested_terminal_expiry"
 # context_reuse: a newly registering session's terminal context matched this
 # one's, so the reused-context scan expired it.
 # parent_registration: a child session registered under this one as its parent.
-ContestedExpiryCause = Literal["context_reuse", "parent_registration"]
+# terminal_drain: the session's native pane exited under a terminal host epoch
+# that is no longer the live one.
+ContestedExpiryCause = Literal["context_reuse", "parent_registration", "terminal_drain"]
 
 # session_variables is a shared store, so a fresh created_at under this key is
-# not on its own evidence of a contest. Only a cause naming one of the two
+# not on its own evidence of a contest. Only a cause naming one of the
 # speculative writers is, and both shields check the name against this set.
 CONTESTED_EXPIRY_CAUSES: frozenset[str] = frozenset(get_args(ContestedExpiryCause))
 
@@ -45,7 +50,12 @@ CONTESTED_EXPIRY_CAUSES: frozenset[str] = frozenset(get_args(ContestedExpiryCaus
 # same field widths, always six fractional digits, always +00:00, which makes
 # lexicographic order chronological order. A stamp in any other shape -- a local
 # offset, a bare date, more or less precision -- is read as no marker by both.
-CONTESTED_EXPIRY_STAMP_PATTERN = r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00$"
+# Field ranges are bounded here and the SQL side adds pg_input_is_valid, so a
+# calendar-invalid stamp (second 99, Feb 30) also reads as no marker on both.
+CONTESTED_EXPIRY_STAMP_PATTERN = (
+    r"^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])"
+    r"T([01]\d|2[0-3]):[0-5]\d:[0-5]\d\.\d{6}\+00:00$"
+)
 
 _STAMP_FORMAT = "%Y-%m-%dT%H:%M:%S.%f+00:00"
 _STAMP_RE = re.compile(CONTESTED_EXPIRY_STAMP_PATTERN)

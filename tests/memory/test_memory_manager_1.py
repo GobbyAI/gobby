@@ -420,50 +420,18 @@ class TestSearchMemories:
         assert len(memories) == 3
 
     @pytest.mark.asyncio
-    async def test_search_memories_updates_access_stats(
+    async def test_search_memories_updates_surfaced_stats(
         self, memory_manager: MemoryManager
     ) -> None:
-        """Test search_memories updates access statistics."""
-        memory = await memory_manager.create_memory(content="Track access")
-        original_count = memory.access_count
+        """A surfacing search counts its hits as surfaced, never as accessed."""
+        memory = await memory_manager.create_memory(content="Track surfacing")
 
-        _ = await memory_manager.search_memories(limit=10)
+        _ = await memory_manager.search_memories(limit=10, caller="memory.surface")
 
         updated = memory_manager.get_memory(memory.id)
-        assert updated.access_count == original_count + 1
-        assert updated.last_accessed_at is not None
-
-    @pytest.mark.asyncio
-    async def test_recall_search_on_degraded_manager_emits_caller_event(
-        self, memory_manager: MemoryManager
-    ) -> None:
-        """Regression #17491: a manager without vector wiring routes queries through
-        the keyword fallback, which must still emit one recall-signal event per
-        search carrying the caller and join keys — fallback is never silent."""
-        snapshots = []
-        memory_manager._search_service._search_debug_sink = snapshots.append
-
-        await memory_manager.search_memories(
-            query="anything at all",
-            session_id="session-1",
-            recall_request_id="request-1",
-            caller="memory.recall",
-        )
-
-        assert len(snapshots) == 1
-        assert snapshots[0].caller == "memory.recall"
-        assert snapshots[0].session_id == "session-1"
-        assert snapshots[0].recall_request_id == "request-1"
-
-    def test_injection_outcome_recorder_follows_the_signal_hub_flag(
-        self, db: HubDatabase, memory_config: MemoryConfig
-    ) -> None:
-        """#21011: the search tool's delivery recorder exists only with the hub on."""
-        assert MemoryManager(db=db, config=memory_config).injection_outcome_recorder is None
-
-        hub_on = memory_config.model_copy(update={"recall_signal_hub": True})
-
-        assert MemoryManager(db=db, config=hub_on).injection_outcome_recorder is not None
+        assert (updated.surfaced_count, updated.access_count) == (1, 0)
+        assert updated.last_surfaced_at is not None
+        assert updated.last_accessed_at is None
 
 
 # =============================================================================
@@ -475,49 +443,48 @@ class TestAccessStats:
     """Tests for access statistics updates."""
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_debouncing(self, memory_manager: MemoryManager) -> None:
-        """Test access stats debouncing prevents rapid updates."""
+    async def test_update_surfaced_stats_debouncing(self, memory_manager: MemoryManager) -> None:
+        """Surfaced-stat debouncing prevents rapid updates."""
         memory = await memory_manager.create_memory(content="Debounce test")
 
-        # First search - should update
-        _ = await memory_manager.search_memories(limit=10)
-        updated = memory_manager.get_memory(memory.id)
-        first_access_count = updated.access_count
+        _ = await memory_manager.search_memories(limit=10, caller="memory.surface")
+        first = memory_manager.get_memory(memory.id)
 
-        # Second immediate search - should be debounced
-        _ = await memory_manager.search_memories(limit=10)
-        updated_again = memory_manager.get_memory(memory.id)
+        # A second immediate surfacing search falls inside the debounce window.
+        _ = await memory_manager.search_memories(limit=10, caller="memory.surface")
+        again = memory_manager.get_memory(memory.id)
 
-        # Should still be same count due to debouncing
-        assert updated_again.access_count == first_access_count
+        assert (first.surfaced_count, again.surfaced_count) == (1, 1)
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_empty_list(self, memory_manager: MemoryManager) -> None:
-        """Test _update_access_stats handles empty list."""
-        with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
-            result = await memory_manager._update_access_stats([])
+    async def test_update_surfaced_stats_empty_list(self, memory_manager: MemoryManager) -> None:
+        """Test search-service surfaced stats handle empty list."""
+        with patch.object(memory_manager.storage, "update_surfaced_stats") as update_surfaced:
+            result = await memory_manager._search_service.update_surfaced_stats([])
 
         assert result is None
-        assert update_access_stats.call_count == 0
+        assert update_surfaced.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_invalid_timestamp(
+    async def test_update_surfaced_stats_invalid_timestamp(
         self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
-        """Test _update_access_stats handles invalid timestamps gracefully."""
+        """Test search-service surfaced stats skip invalid timestamps gracefully."""
         manager = MemoryManager(db=db, config=memory_config)
 
         memory = MagicMock(spec=Memory)
         memory.id = "mm-test"
-        memory.last_accessed_at = "invalid-timestamp"
+        memory.last_surfaced_at = "invalid-timestamp"
 
-        assert await manager._update_access_stats([memory]) is None
+        with patch.object(manager.storage, "update_surfaced_stats") as update_surfaced:
+            assert await manager._search_service.update_surfaced_stats([memory]) is None
+        assert update_surfaced.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_no_timezone(
+    async def test_update_surfaced_stats_no_timezone(
         self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
-        """Test _update_access_stats handles timestamps without timezone."""
+        """Test search-service surfaced stats handle timestamps without timezone."""
         manager = MemoryManager(db=db, config=memory_config)
 
         real_memory = manager.storage.create_memory(
@@ -526,12 +493,31 @@ class TestAccessStats:
 
         memory = MagicMock(spec=Memory)
         memory.id = real_memory.id
-        memory.last_accessed_at = "2024-01-01T00:00:00"
+        memory.last_surfaced_at = "2024-01-01T00:00:00"
 
-        await manager._update_access_stats([memory])
+        await manager._search_service.update_surfaced_stats([memory])
 
         updated = manager.get_memory(real_memory.id)
-        assert updated.access_count >= 1
+        assert (updated.surfaced_count, updated.access_count) == (1, 0)
+
+
+@pytest.mark.asyncio
+async def test_record_memory_access(memory_manager: MemoryManager) -> None:
+    memory = await memory_manager.create_memory(content="Fetched memory")
+
+    await memory_manager.record_memory_access(memory.id)
+    once = memory_manager.get_memory(memory.id)
+    assert once is not None
+    assert once.access_count == 1
+    assert once.last_accessed_at is not None
+
+    await memory_manager.record_memory_access(memory.id)
+    twice = memory_manager.get_memory(memory.id)
+    assert twice is not None
+    assert twice.access_count == 2
+    assert twice.last_accessed_at is not None
+    assert twice.surfaced_count == 0
+    assert not hasattr(memory_manager, "_update_access_stats")
 
 
 # =============================================================================
@@ -685,7 +671,9 @@ class TestUpdateMemory:
         updated = await memory_manager.update_memory(memory.id, memory_type="preference")
 
         assert updated.memory_type == "preference"
-        assert memory_manager.get_memory(memory.id).memory_type == "preference"
+        stored = memory_manager.get_memory(memory.id)
+        assert stored is not None
+        assert stored.memory_type == "preference"
 
     @pytest.mark.asyncio
     async def test_update_memory_not_found_raises(self, memory_manager: MemoryManager) -> None:
@@ -723,7 +711,9 @@ class TestUpdateMemory:
                 content="Cross-project rewrite",
             )
 
-        assert manager.get_memory(memory.id).content == "Project B memory"
+        unchanged = manager.get_memory(memory.id)
+        assert unchanged is not None
+        assert unchanged.content == "Project B memory"
         assert all(
             call.kwargs["payload"]["content"] != "Cross-project rewrite"
             for call in mock_vs.upsert.await_args_list
@@ -784,20 +774,20 @@ class TestEdgeCases:
         assert memories == []
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_exception_handling(
+    async def test_update_surfaced_stats_exception_handling(
         self, db: HubDatabase, memory_config: MemoryConfig
     ) -> None:
-        """Test _update_access_stats handles storage exceptions."""
+        """Test search-service surfaced stats handle storage exceptions."""
         manager = MemoryManager(db=db, config=memory_config)
 
         memory = MagicMock(spec=Memory)
         memory.id = "mm-test"
-        memory.last_accessed_at = None
+        memory.last_surfaced_at = None
 
-        with patch.object(manager.storage, "update_access_stats") as mock_update:
+        with patch.object(manager.storage, "update_surfaced_stats") as mock_update:
             mock_update.side_effect = Exception("Database error")
 
-            assert await manager._update_access_stats([memory]) is None
+            assert await manager._search_service.update_surfaced_stats([memory]) is None
             assert mock_update.call_count == 1
 
 

@@ -948,6 +948,7 @@ class TestRequireRustSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                     "canonical_write_file_path": file_path,
                 }
@@ -1075,6 +1076,7 @@ class TestRequireJavaScriptSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -1201,6 +1203,7 @@ class TestRequireDartSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -1335,6 +1338,7 @@ class TestRequireCSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -1484,6 +1488,7 @@ class TestRequireCppSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -1647,6 +1652,7 @@ class TestRequireElixirSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -1795,6 +1801,7 @@ class TestRequireRubySkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -1957,6 +1964,7 @@ class TestRequireCSharpSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2091,6 +2099,7 @@ class TestRequireGoSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2219,6 +2228,7 @@ class TestRequireJavaSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2351,6 +2361,7 @@ class TestRequireKotlinSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2487,6 +2498,7 @@ class TestRequireScalaSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2617,6 +2629,7 @@ class TestRequireLuaSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2737,6 +2750,7 @@ class TestRequireObjcSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -2858,6 +2872,7 @@ class TestRequireSwiftSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -3000,6 +3015,7 @@ class TestRequireYamlSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -3296,6 +3312,7 @@ class TestRequirePlanSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -3418,6 +3435,7 @@ class TestRequireJsonSkillCondition:
             variables["injected_skills"] = injected_skills
         event_data = {
             "canonical_tool_kind": canonical_tool_kind,
+            "canonical_repo_mutation": True,
             "canonical_file_path": file_path,
         }
         if content_write:
@@ -3564,6 +3582,7 @@ class TestRequirePhpSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -3702,6 +3721,7 @@ class TestRequireTypeScriptSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -3958,6 +3978,7 @@ class TestRequireBashSkillCondition:
             "event": SimpleNamespace(
                 data={
                     "canonical_tool_kind": canonical_tool_kind,
+                    "canonical_repo_mutation": True,
                     "canonical_file_path": file_path,
                 }
             ),
@@ -5635,3 +5656,59 @@ async def test_reference_contract_4_1_1(db: HubDatabase) -> None:
         },
     )
     assert not response.context
+
+
+LANGUAGE_RULE_SAMPLE_PATHS = {
+    "require-bash-skill": "run.sh",
+    "require-c-skill": "main.c",
+    "require-cpp-skill": "main.cpp",
+    "require-csharp-skill": "Program.cs",
+    "require-dart-skill": "main.dart",
+    "require-elixir-skill": "app.ex",
+    "require-go-skill": "main.go",
+    "require-java-skill": "Main.java",
+    "require-javascript-skill": "app.js",
+    "require-json-skill": "data.json",
+    "require-kotlin-skill": "Main.kt",
+    "require-lua-skill": "init.lua",
+    "require-objc-skill": "View.m",
+    "require-php-skill": "index.php",
+    "require-python-skill": "app.py",
+    "require-ruby-skill": "app.rb",
+    "require-rust-skill": "main.rs",
+    "require-scala-skill": "Main.scala",
+    "require-swift-skill": "App.swift",
+    "require-typescript-skill": "app.ts",
+    "require-yaml-skill": "config.yaml",
+}
+
+
+def test_language_rule_samples_cover_every_language_gate() -> None:
+    assert set(LANGUAGE_RULE_SAMPLE_PATHS) == LANGUAGE_SKILL_RULES
+
+
+@pytest.mark.parametrize("rule_name", sorted(LANGUAGE_RULE_SAMPLE_PATHS))
+@pytest.mark.parametrize(("repo_mutation", "expected"), [(True, True), (False, False)])
+def test_language_gate_fires_only_for_repository_writes(
+    rule_name: str, repo_mutation: bool, expected: bool
+) -> None:
+    # A scratchpad or external write needs no repository coding standards.
+    path = f"/scratch/{LANGUAGE_RULE_SAMPLE_PATHS[rule_name]}"
+    context = {
+        "variables": {"loaded_skills": []},
+        "event": SimpleNamespace(
+            data={
+                "canonical_tool_kind": "write",
+                "canonical_repo_mutation": repo_mutation,
+                "canonical_file_path": path,
+                "canonical_write_file_path": path,
+            }
+        ),
+        "tool_input": {},
+    }
+    condition = _bundled_rule_condition(f"skill-discovery/{rule_name}.yaml", rule_name)
+    evaluator = SafeExpressionEvaluator(
+        context=context, allowed_funcs=build_condition_helpers(context=context)
+    )
+
+    assert evaluator.evaluate(condition) is expected

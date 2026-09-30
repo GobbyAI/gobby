@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -135,3 +136,88 @@ def test_finalized_marker_survives_request_teardown(
     assert renewal_tasks[0].done()
     # Processed is terminal: the envelope cannot be claimed for a second run.
     assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is False
+
+
+def test_claim_release_reports_executor_queue_apart_from_work(
+    session_storage: SessionManager,
+    processed_dir: Path,
+    renewal_tasks: list[asyncio.Task[None]],
+) -> None:
+    """The persistence hops split default-executor wait from their own work (#23063)."""
+    server = _server(session_storage)
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+        patch.object(hooks_route, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+        patch.object(hooks_route.logger, "warning") as warning,
+    ):
+        adapter = MagicMock()
+        adapter.handle_native.return_value = {"continue": True}
+        adapter_cls.return_value = adapter
+        response = client.post(
+            "/api/hooks/execute",
+            headers={ENVELOPE_ID_HEADER: ENVELOPE_ID},
+            json=_envelope(),
+        )
+
+    assert response.status_code == 200
+    assert read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir) is not None
+    assert renewal_tasks[0].done()
+    (slow,) = [
+        entry
+        for entry in warning.call_args_list
+        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
+    ]
+    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
+    # Two envelope_claim hops (claim, owner token) accumulate into one key.
+    for hop in ("envelope_claim", "persistence_receipt", "persistence_release_claim"):
+        assert breakdown[f"{hop}_work"] > 0
+        assert breakdown[hop] >= breakdown[f"{hop}_queue"] + breakdown[f"{hop}_work"]
+    # The worker finished, so the loop's delay in resuming the request is recorded too.
+    assert breakdown["adapter_worker"] > 0
+    assert "adapter_resume" in breakdown
+
+
+def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
+    session_storage: SessionManager,
+    processed_dir: Path,
+    renewal_tasks: list[asyncio.Task[None]],
+) -> None:
+    """A duplicate's replay and marker lookups land in envelope_claim, not `response` (#23063)."""
+    server = _server(session_storage)
+    lookup_seconds = 0.05
+
+    def slow_terminal_response(envelope_id: str) -> None:
+        time.sleep(lookup_seconds)
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        adapter = MagicMock()
+        adapter.handle_native.return_value = {"continue": True}
+        adapter_cls.return_value = adapter
+        first = client.post(
+            "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
+        )
+        with (
+            patch.object(hooks_route, "envelope_terminal_response", slow_terminal_response),
+            patch.object(hooks_route, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+            patch.object(hooks_route.logger, "warning") as warning,
+        ):
+            duplicate = client.post(
+                "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
+            )
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 409
+    (slow,) = [
+        entry
+        for entry in warning.call_args_list
+        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
+    ]
+    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
+    assert breakdown["envelope_claim_work"] >= lookup_seconds
+    assert breakdown["envelope_claim"] >= (
+        breakdown["envelope_claim_queue"] + breakdown["envelope_claim_work"]
+    )

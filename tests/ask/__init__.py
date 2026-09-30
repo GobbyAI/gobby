@@ -1,1 +1,0 @@
-"""Ask pipeline acceptance tests."""

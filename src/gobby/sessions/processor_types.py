@@ -91,7 +91,7 @@ class ProcessorHost(Protocol):
         transcript_path: str,
         *,
         at_eof: bool = False,
-    ) -> None: ...
+    ) -> bool: ...
 
     async def flush_session(self, session_id: str) -> SessionFlushResult: ...
 
@@ -103,7 +103,7 @@ class ProcessorHost(Protocol):
         transcript_path: str,
         *,
         at_eof: bool = False,
-    ) -> None: ...
+    ) -> bool: ...
 
     async def _loop(self) -> None: ...
 
@@ -145,14 +145,22 @@ class ProcessorHost(Protocol):
     ) -> list[ParsedMessage]: ...
 
     async def _process_parsed_batch(
-        self, session_id: str, records: Sequence[StatsRecord]
+        self,
+        session_id: str,
+        records: Sequence[StatsRecord],
+        *,
+        publish_occupancy: bool = True,
     ) -> MessageStats: ...
 
     async def _persist_usage_events(
         self,
         session_id: str,
         messages: list[ParsedMessage],
+        *,
+        publish_occupancy: bool = True,
     ) -> None: ...
+
+    async def _publish_tail_occupancy(self, session_id: str, transcript_path: str) -> None: ...
 
     async def _feed_attached_session_tts(
         self,

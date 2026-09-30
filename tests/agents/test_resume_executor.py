@@ -13,7 +13,6 @@ import pytest
 from gobby.agents import resume_executor
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.ai.codex_endpoint import CODEX_ENDPOINT_API_KEY_ENV
-from gobby.ask.permissions import AskPermissionStore
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.providers.capabilities.local_context import (
@@ -43,16 +42,16 @@ def mock_codex_prompt_delivery(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
     """
     mock_delivery = MagicMock(return_value=True)
     monkeypatch.setattr(resume_executor, "schedule_codex_prompt_delivery", mock_delivery)
-    monkeypatch.setattr(AskPermissionStore, "find", lambda _self, _run_id: None)
     return mock_delivery
 
 
-def _original_run(*, provider: str = "codex") -> AgentRun:
+def _original_run(*, provider: str = "codex", agent_name: str | None = None) -> AgentRun:
     return AgentRun(
         id="e87bc595-eb81-4cd2-9745-06fc59dcd13d",
         parent_session_id="7d307ae2-5834-43d0-8d59-c385ab37885f",
         child_session_id="0bd17b43-4097-4efe-b16c-4c739ea4787d",
         provider=provider,
+        agent_name=agent_name,
         prompt="Original prompt",
         status="cancelled",
         created_at=datetime(2026, 5, 30, tzinfo=UTC),
@@ -174,6 +173,53 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
     assert delivery_args[2] == "Continue"
     assert delivery_args[3] == str(_SUCCESSOR_ID)
     assert delivery_args[4] is runner.run_storage
+
+
+@pytest.mark.asyncio
+async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    mock_codex_prompt_delivery: MagicMock,
+) -> None:
+    runner = _runner()
+    finalize = AsyncMock()
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=finalize)
+    prepare_sandbox = AsyncMock(
+        return_value=SandboxLaunch(
+            backend="srt",
+            enforced=True,
+            provider_executable="/opt/codex/versions/0.157.0",
+            policy_path="/policy/settings.json",
+            violation_path="/policy/violations.jsonl",
+            node_path="/managed/node",
+            runner_path="/managed/runner.mjs",
+        )
+    )
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
+    metadata = _resume_metadata()
+    metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
+    metadata["config_overrides"] = [
+        "features.plugins=false",
+        "features.remote_plugin=false",
+        'sandbox_mode="danger-full-access"',
+    ]
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(agent_name="task-close-reviewer"),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is True
+    command = runner._test_runtime.last_request.command
+    provider_argv = command[command.index("--") + 1 :]
+    assert provider_argv[:2] == ["/opt/codex/versions/0.157.0", "exec"]
+    assert "--dangerously-bypass-approvals-and-sandbox" in provider_argv
+    assert provider_argv[-3:] == ["resume", "native-123", "Continue"]
+    assert "features.plugins=false" in provider_argv
+    assert "features.remote_plugin=false" in provider_argv
+    mock_codex_prompt_delivery.assert_not_called()
+    prepare_sandbox.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1029,7 +1075,7 @@ async def test_agy_resume_uses_conversation_and_add_dir(
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     record = SimpleNamespace(
         supported=True,
-        reason="AGY 1.1.18 meets required version 1.1.18.",
+        reason="Antigravity 1.1.18 meets required version 1.1.18.",
     )
     monkeypatch.setattr(
         resume_executor,
@@ -1073,7 +1119,7 @@ async def test_agy_resume_refuses_unsupported_record_before_spawn(
     _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
     record = SimpleNamespace(
         supported=False,
-        reason="Installed AGY version 1.1.0 does not meet required version 1.1.18.",
+        reason="Installed Antigravity version 1.1.0 does not meet required version 1.1.18.",
     )
     monkeypatch.setattr(
         resume_executor,

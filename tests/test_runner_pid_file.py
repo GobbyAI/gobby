@@ -19,7 +19,8 @@ from click.testing import CliRunner
 
 import gobby.runner_lifecycle as runner_lifecycle
 from gobby.cli._daemon_services import ServiceStartResult
-from gobby.cli.daemon import _do_stop, start
+from gobby.cli.daemon import _do_stop
+from gobby.cli.daemon_start import start
 from gobby.cli.runtime import CliRuntime
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import (
@@ -639,11 +640,13 @@ class TestStartStopBarriers:
         runtime = MagicMock()
         try:
             with (
-                patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
-                patch("gobby.cli.daemon._start_dependency_errors", return_value=[]),
-                patch("gobby.cli.daemon._services_start", services),
+                patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
+                patch("gobby.cli.daemon_start._start_dependency_errors", return_value=[]),
+                patch("gobby.cli.daemon_start._services_start", services),
                 patch("gobby.cli.runtime.get_cli_runtime", runtime),
-                patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
+                patch(
+                    "gobby.cli.daemon_start.get_service_status", return_value={"installed": False}
+                ),
             ):
                 result = _cli_runtime().invoke(start, [])
         finally:
@@ -658,9 +661,9 @@ class TestStartStopBarriers:
         reserve_service_start(pid_file, backend="launchd")
         services = MagicMock()
         with (
-            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
-            patch("gobby.cli.daemon._start_dependency_errors", return_value=[]),
-            patch("gobby.cli.daemon._services_start", services),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
+            patch("gobby.cli.daemon_start._start_dependency_errors", return_value=[]),
+            patch("gobby.cli.daemon_start._services_start", services),
             patch("gobby.cli.runtime.get_cli_runtime") as runtime,
         ):
             result = _cli_runtime().invoke(start, [])
@@ -683,21 +686,21 @@ class TestStartStopBarriers:
         config.web_chat_sandbox.enabled = False
         runtime = CliRuntime(config_file=None, config=config)
         with (
-            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
-            patch("gobby.cli.daemon._start_dependency_errors", return_value=[]),
-            patch("gobby.cli.daemon._services_start", services),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
+            patch("gobby.cli.daemon_start._start_dependency_errors", return_value=[]),
+            patch("gobby.cli.daemon_start._services_start", services),
             patch("gobby.cli.runtime.get_cli_runtime", return_value=runtime),
-            patch("gobby.cli.daemon.get_service_status", return_value={"installed": False}),
-            patch("gobby.cli.daemon.init_local_storage", return_value=MagicMock()),
-            patch("gobby.cli.daemon.is_port_available", return_value=True),
+            patch("gobby.cli.daemon_start.get_service_status", return_value={"installed": False}),
+            patch("gobby.cli.daemon_start.init_local_storage", return_value=MagicMock()),
+            patch("gobby.cli.daemon_start.is_port_available", return_value=True),
             # The binary-set probe and boot-id lookup shell out; neither may see the fake Popen.
             patch("gobby.storage.schema_divergence.binary_set_apply_refusal", return_value=None),
             patch("gobby.runner_pid_record.current_boot_id", return_value="boot-test"),
-            patch("gobby.cli.daemon.subprocess.Popen", return_value=process) as popen,
-            patch("gobby.cli.daemon._wait_for_daemon_health", return_value=0.1),
-            patch("gobby.cli.daemon._poll_startup_progress", return_value=True),
-            patch("gobby.cli.daemon._reconcile_ui_exposure"),
-            patch("gobby.cli.daemon.has_auth_env", return_value=True),
+            patch("gobby.cli.daemon_start.subprocess.Popen", return_value=process) as popen,
+            patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=0.1),
+            patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True),
+            patch("gobby.cli.daemon_start._reconcile_ui_exposure"),
+            patch("gobby.cli.daemon_start.has_auth_env", return_value=True),
             patch("gobby.cli.daemon.time.sleep"),
         ):
             (tmp_path / "logs").mkdir()

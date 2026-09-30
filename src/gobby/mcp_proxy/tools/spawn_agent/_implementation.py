@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import uuid
 from collections.abc import Callable
@@ -27,7 +28,7 @@ from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
-from gobby.agents.spawn_models import ManagedRuntimeProfile, resolve_terminal_backend
+from gobby.agents.spawn_models import resolve_terminal_backend
 from gobby.agents.spawn_timing import finish_spawn_phase, start_spawn_phase
 from gobby.agents.worktree_reuse import ReusedWorktreeRebaseConflict
 from gobby.mcp_proxy.tools._background_task_lifecycle import schedule_background_task
@@ -37,6 +38,7 @@ from gobby.providers.version_gate import (
     ensure_agy_support,
     peek_agy_support,
 )
+from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
@@ -45,14 +47,9 @@ from gobby.workflows.definitions import AgentDefinitionBody
 from ._code_index import code_index_preflight_mode
 from ._execution import finalize_executed_spawn
 from ._failure_cleanup import (
+    SpawnCleanupOnce,
     cleanup_created_isolation,
     cleanup_failed_spawn,
-    remember_spawn_pid,
-)
-from ._managed_runtime import (
-    managed_runtime_pair_error,
-    managed_runtime_path_error,
-    managed_runtime_selection_error,
 )
 from ._provider_resolution import (
     concrete_provider,
@@ -68,10 +65,11 @@ from ._runtime import (
 )
 from ._spawn_guards import (
     TaskSpawnLease,
-    active_task_response_if_blocked,
+    admit_task_spawn,
     reserve_agent_slot,
     resolve_spawn_task_context,
 )
+from ._spawn_phase import SpawnPhase
 from ._step_state import persist_initial_step_instance_if_resolved
 from ._worktree_reuse import prepare_reused_worktree
 
@@ -123,8 +121,6 @@ async def spawn_agent_impl(
     held_task_mutex: Any | None = None,
     terminal_backend: Literal["tmux", "native"] | None = None,
     droid_mode: Literal["exec", "interactive"] = "exec",
-    managed_runtime_profile: ManagedRuntimeProfile | None = None,
-    prelaunch_authority: Callable[[str], None] | None = None,
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,
     reserved_run_id: str | None = None,
@@ -152,11 +148,6 @@ async def spawn_agent_impl(
         resolved_terminal_backend = resolve_terminal_backend(terminal_backend, daemon_config)
     except ValueError as exc:
         return {"success": False, "error": str(exc)}
-    managed_error = managed_runtime_pair_error(managed_runtime_profile, prelaunch_authority)
-    if managed_error:
-        return {"success": False, "error": managed_error}
-    if managed_runtime_profile is not None and write_grant:
-        return {"success": False, "error": "ask_external_write_grant_forbidden"}
     # Structural failures block planning roles. Authoring roles may continue
     # past symbol-only failures with repair diagnostics appended to the prompt.
     from gobby.tasks.expansion._plan_gate import validate_plan_for_agent_spawn
@@ -206,13 +197,6 @@ async def spawn_agent_impl(
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
-    managed_error = managed_runtime_selection_error(
-        managed_runtime_profile,
-        isolation=effective_isolation,
-        provider=effective_provider,
-    )
-    if managed_error:
-        return {"success": False, "error": managed_error}
     if effective_provider == "agy":
         # Gate on the published support record before any isolation, slot,
         # session, or agent-run side effect exists to clean up.
@@ -287,17 +271,6 @@ async def spawn_agent_impl(
             else:
                 effective_api_token = token
 
-    if managed_runtime_profile is not None:
-        try:
-            managed_runtime_profile.validate_selection(
-                provider=effective_provider,
-                model=effective_model,
-                reasoning_effort=requested_reasoning_effort,
-                api_base=effective_api_base,
-            )
-        except (RuntimeError, ValueError) as selection_error:
-            return {"success": False, "error": str(selection_error)}
-
     requested_model_selector = effective_model
     machine_id = await asyncio.to_thread(get_machine_id)
     from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
@@ -361,10 +334,6 @@ async def spawn_agent_impl(
 
     if not resolved_project_path or not isinstance(resolved_project_path, str):
         return {"success": False, "error": "Could not resolve project_path from context"}
-    managed_error = managed_runtime_path_error(managed_runtime_profile, resolved_project_path)
-    if managed_error:
-        return {"success": False, "error": managed_error}
-
     target_clone_manager = clone_manager
     if target_git_manager is not None and (effective_isolation == "clone" or clone_id):
         try:
@@ -391,10 +360,8 @@ async def spawn_agent_impl(
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
-    effective_sandbox_config: SandboxConfig = (
-        managed_runtime_profile.sandbox_config
-        if managed_runtime_profile is not None
-        else apply_write_grant(agent_sandbox_config(daemon_config), write_grant)
+    effective_sandbox_config: SandboxConfig = apply_write_grant(
+        agent_sandbox_config(daemon_config), write_grant
     )
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
     if not parent_session_id:
@@ -584,22 +551,11 @@ async def spawn_agent_impl(
                 response["error_code"] = error_code
             return response
 
-    if (
-        managed_runtime_profile is not None
-        and Path(isolation_ctx.cwd).resolve()
-        != Path(managed_runtime_profile.scratch_root).resolve()
-    ):
-        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
-        return {
-            "success": False,
-            "error": "managed runtime cwd does not match immutable scratch root",
-        }
-
     if effective_isolation in {"worktree", "clone"}:
         config_error = provider_mcp_config_error(isolation_ctx.cwd, effective_provider)
         if config_error is not None:
             await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=reserved_run_id
             )
             return {"success": False, "error": config_error}
     code_index_mode = code_index_preflight_mode(
@@ -643,57 +599,54 @@ async def spawn_agent_impl(
         task_id=resolved_task_id,
         held_mutex=held_task_mutex,
     )
-    if resolved_task_id and runner.run_storage:
-        active_response = await asyncio.to_thread(
-            active_task_response_if_blocked,
-            run_storage=runner.run_storage,
-            task_id=resolved_task_id,
-            task_ref=task_id,
-            requested_agent_name=requested_agent_name,
-            parent_session_id=parent_session_id,
+
+    async def cleanup_unattached_spawn() -> None:
+        await run_thread_to_completion(task_spawn_lease.release_unattached)
+        await cleanup_created_isolation(
+            handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=run_id
         )
-        if active_response is not None:
-            await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
-            )
-            return active_response
-    lease_response = await asyncio.to_thread(task_spawn_lease.acquire)
+
+    lease_response = await admit_task_spawn(
+        task_spawn_lease,
+        run_storage=runner.run_storage,
+        task_id=resolved_task_id,
+        task_ref=task_id,
+        requested_agent_name=requested_agent_name,
+        parent_session_id=parent_session_id,
+        cleanup=cleanup_unattached_spawn,
+    )
     if lease_response is not None:
-        await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation_on_failure)
         return lease_response
-    if resolved_task_id and runner.run_storage:
-        active_response = await asyncio.to_thread(
-            active_task_response_if_blocked,
-            run_storage=runner.run_storage,
-            task_id=resolved_task_id,
-            task_ref=task_id,
-            requested_agent_name=requested_agent_name,
-            parent_session_id=parent_session_id,
+
+    cleanup_once = SpawnCleanupOnce()
+
+    async def rollback_cancelled_spawn(error: str, child_session_id: str | None = None) -> None:
+        await run_thread_to_completion(task_spawn_lease.release_unattached)
+        await cleanup_failed_spawn(
+            runner,
+            run_id,
+            error,
+            handler,
+            spawn_config,
+            completion_registry=completion_registry,
+            cleanup_isolation=cleanup_isolation_on_failure,
+            task_manager=task_manager,
+            child_session_id=child_session_id,
+            cleanup_once=cleanup_once,
         )
-        if active_response is not None:
-            await asyncio.to_thread(task_spawn_lease.release_unattached)
-            await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
-            )
-            return active_response
 
     async with reserve_agent_slot(
         db=db,
         project_id=project_id,
         project_path=resolved_project_path,
+        on_entry_cancel=cleanup_unattached_spawn,
     ) as slot_response:
         if slot_response is not None:
-            await asyncio.to_thread(task_spawn_lease.release_unattached)
-            await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
-            )
+            await run_to_completion(cleanup_unattached_spawn())
             return slot_response
         child_session_manager = runner.child_session_manager
         if child_session_manager is None:
-            await asyncio.to_thread(task_spawn_lease.release_unattached)
-            await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
-            )
+            await run_to_completion(cleanup_unattached_spawn())
             return {"success": False, "error": "Session manager is required to spawn an agent"}
         phase_timings_ms: dict[str, float] = {}
         prepare_terminal_started = start_spawn_phase()
@@ -706,7 +659,7 @@ async def spawn_agent_impl(
             # grant materialization are synchronous. PostgreSQL pool acquisition alone
             # can wait for its full timeout, so keep the complete transactional
             # preparation chain off the daemon event loop.
-            prepared_spawn = await asyncio.to_thread(
+            prepared_spawn = await run_thread_to_completion(
                 prepare_terminal_spawn,
                 session_manager=child_session_manager,
                 credential_manager=runner.run_storage.credential_manager,
@@ -738,10 +691,15 @@ async def spawn_agent_impl(
                 clone_id=isolation_ctx.clone_id,
                 workspace_path=str(isolation_ctx.cwd),
             )
+        except asyncio.CancelledError:
+            await run_to_completion(
+                rollback_cancelled_spawn("Agent spawn cancelled during preparation")
+            )
+            raise
         except Exception as exc:
             await asyncio.to_thread(task_spawn_lease.release_unattached)
             await cleanup_created_isolation(
-                handler, spawn_config, cleanup=cleanup_isolation_on_failure
+                handler, spawn_config, cleanup=cleanup_isolation_on_failure, run_id=run_id
             )
             return {
                 "success": False,
@@ -759,136 +717,92 @@ async def spawn_agent_impl(
             "worktree_id": isolation_ctx.worktree_id,
             "branch_name": isolation_ctx.branch_name,
         }
-        if prelaunch_authority is not None:
-            try:
-                await asyncio.to_thread(prelaunch_authority, prepared_spawn.agent_run_id)
-            except Exception as exc:
+        try:
+            attach_error = await run_thread_to_completion(task_spawn_lease.attach, run_id)
+            if attach_error is not None:
                 await asyncio.to_thread(task_spawn_lease.release_unattached)
+                error = f"task spawn mutex attach failed: {attach_error}"
                 await cleanup_failed_spawn(
                     runner,
                     run_id,
-                    str(exc),
+                    error,
                     handler,
                     spawn_config,
                     completion_registry=completion_registry,
                     cleanup_isolation=cleanup_isolation_on_failure,
                     task_manager=task_manager,
                     child_session_id=prepared_spawn.session_id,
+                    cleanup_once=cleanup_once,
                 )
                 return {
                     "success": False,
-                    "error": str(exc),
+                    "error": error,
                     **spawn_identity,
                     "reasoning": reasoning.to_dict(),
                 }
-        attach_error = await asyncio.to_thread(task_spawn_lease.attach, run_id)
-        if attach_error is not None:
-            await asyncio.to_thread(task_spawn_lease.release_unattached)
-            error = f"task spawn mutex attach failed: {attach_error}"
-            await cleanup_failed_spawn(
-                runner,
-                run_id,
-                error,
-                handler,
-                spawn_config,
-                completion_registry=completion_registry,
-                cleanup_isolation=cleanup_isolation_on_failure,
-                task_manager=task_manager,
-                child_session_id=prepared_spawn.session_id,
+            if db is not None and agent_body is not None and agent_body.step_workflow is not None:
+                try:
+                    await run_thread_to_completion(
+                        persist_initial_step_instance_if_resolved,
+                        db,
+                        agent_body,
+                        session_id=prepared_spawn.session_id,
+                        project_id=project_id,
+                        initial_variables=effective_initial_variables,
+                    )
+                except Exception as exc:
+                    await cleanup_failed_spawn(
+                        runner,
+                        run_id,
+                        str(exc),
+                        handler,
+                        spawn_config,
+                        completion_registry=completion_registry,
+                        cleanup_isolation=cleanup_isolation_on_failure,
+                        task_manager=task_manager,
+                        child_session_id=prepared_spawn.session_id,
+                        cleanup_once=cleanup_once,
+                    )
+                    return {
+                        "success": False,
+                        "error": str(exc),
+                        **spawn_identity,
+                        "reasoning": reasoning.to_dict(),
+                    }
+            spawn_request = build_spawn_request(
+                prompt=enhanced_prompt,
+                spawn_config=spawn_config,
+                isolation_ctx=isolation_ctx,
+                prepared_spawn=prepared_spawn,
+                runner=runner,
+                run_id=run_id,
+                workflow=effective_workflow,
+                initial_variables=effective_initial_variables,
+                claimed_session_id=claimed_session_id,
+                agent_name=agent_display_name,
+                machine_id=machine_id,
+                endpoint=endpoint_resolution,
+                reasoning=reasoning,
+                sandbox_config=effective_sandbox_config,
+                timeout=effective_timeout,
+                daemon_config=daemon_config,
+                resume_metadata=resume_metadata,
+                code_index_mode=code_index_mode,
+                code_index_api_token=await run_thread_to_completion(read_local_api_token),
+                phase_timings_ms=phase_timings_ms,
+                terminal_backend=resolved_terminal_backend,
+                droid_mode=droid_mode,
             )
-            return {
-                "success": False,
-                "error": error,
-                **spawn_identity,
-                "reasoning": reasoning.to_dict(),
-            }
-        if db is not None and agent_body is not None and agent_body.step_workflow is not None:
-            try:
-                await asyncio.to_thread(
-                    persist_initial_step_instance_if_resolved,
-                    db,
-                    agent_body,
-                    session_id=prepared_spawn.session_id,
-                    project_id=project_id,
-                    initial_variables=effective_initial_variables,
-                )
-            except Exception as exc:
-                await cleanup_failed_spawn(
-                    runner,
-                    run_id,
-                    str(exc),
-                    handler,
-                    spawn_config,
-                    completion_registry=completion_registry,
-                    cleanup_isolation=cleanup_isolation_on_failure,
-                    task_manager=task_manager,
-                    child_session_id=prepared_spawn.session_id,
-                )
-                return {
-                    "success": False,
-                    "error": str(exc),
-                    **spawn_identity,
-                    "reasoning": reasoning.to_dict(),
-                }
-        spawn_request = build_spawn_request(
-            prompt=enhanced_prompt,
-            managed_runtime_profile=managed_runtime_profile,
-            spawn_config=spawn_config,
-            isolation_ctx=isolation_ctx,
-            prepared_spawn=prepared_spawn,
-            runner=runner,
-            run_id=run_id,
-            workflow=effective_workflow,
-            initial_variables=effective_initial_variables,
-            claimed_session_id=claimed_session_id,
-            agent_name=agent_display_name,
-            machine_id=machine_id,
-            endpoint=endpoint_resolution,
-            reasoning=reasoning,
-            sandbox_config=effective_sandbox_config,
-            timeout=effective_timeout,
-            daemon_config=daemon_config,
-            resume_metadata=resume_metadata,
-            code_index_mode=code_index_mode,
-            code_index_api_token=await asyncio.to_thread(read_local_api_token),
-            phase_timings_ms=phase_timings_ms,
-            terminal_backend=resolved_terminal_backend,
-            droid_mode=droid_mode,
-        )
 
-        async def _spawn_failure(error: str, *, infrastructure: bool = False) -> dict[str, Any]:
-            if infrastructure:
-                await asyncio.to_thread(
-                    runner.run_storage.merge_resume_metadata,
-                    run_id,
-                    {"spawn_retryable_infrastructure": True},
-                )
-            await cleanup_failed_spawn(
-                runner,
-                run_id,
-                error,
-                handler,
-                spawn_config,
-                completion_registry=completion_registry,
-                cleanup_isolation=cleanup_isolation_on_failure,
-                task_manager=task_manager,
-                child_session_id=prepared_spawn.session_id,
-            )
-            return {
-                "success": False,
-                "error": error,
-                **spawn_identity,
-                "reasoning": reasoning.to_dict(),
-            }
-
-        async def _execute_spawn_phase() -> dict[str, Any]:
-            try:
-                spawn_result = await execute_spawn(spawn_request)
-                await asyncio.to_thread(remember_spawn_pid, spawn_result.pid, run_id=run_id)
-                return await finalize_executed_spawn(
+            spawn_phase = SpawnPhase(
+                runner=runner,
+                run_id=run_id,
+                spawn_request=spawn_request,
+                execute=execute_spawn,
+                finalize=functools.partial(
+                    finalize_executed_spawn,
                     runner=runner,
                     run_id=run_id,
-                    spawn_result=spawn_result,
                     spawn_request=spawn_request,
                     isolation_ctx=isolation_ctx,
                     effective_isolation=effective_isolation,
@@ -907,58 +821,61 @@ async def spawn_agent_impl(
                     agent_body=agent_body,
                     effective_initial_variables=effective_initial_variables,
                     reasoning=reasoning,
-                )
-            except asyncio.CancelledError:
-                await _spawn_failure("Agent spawn cancelled")
-                raise
-            except Exception as exc:
-                return await _spawn_failure(str(exc), infrastructure=isinstance(exc, OSError))
-
-        async def _run_spawn_phase() -> None:
-            result = await _execute_spawn_phase()
-            if not result.get("success"):
-                logger.warning(
-                    "Background agent boot failed for run %s: %s",
-                    run_id,
-                    result.get("error", "unknown error"),
-                )
-
-        if notify_parent_on_completion and completion_registry and parent_session_id:
-            try:
-                await asyncio.to_thread(
-                    subscribe_agent_completion,
-                    completion_registry=completion_registry,
-                    run_id=run_id,
-                    subscriber_session_id=parent_session_id,
-                    db=db,
-                    strict=managed_runtime_profile is not None,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to subscribe parent session to agent completion for run %s",
-                    run_id,
-                    exc_info=True,
-                )
-
-        try:
-            schedule_background_task(
-                _spawn_background_tasks,
-                run_id,
-                _run_spawn_phase,
-                name=f"gobby-agent-spawn-{run_id}",
-                logger=logger,
-                description="Agent spawn background task",
+                    cleanup_once=cleanup_once,
+                ),
+                handler=handler,
+                spawn_config=spawn_config,
+                completion_registry=completion_registry,
+                cleanup_isolation=cleanup_isolation_on_failure,
+                task_manager=task_manager,
+                child_session_id=prepared_spawn.session_id,
+                spawn_identity=spawn_identity,
+                reasoning=reasoning,
+                cleanup_once=cleanup_once,
             )
-        except RuntimeError as exc:
-            return await _spawn_failure(str(exc))
 
-        return {
-            "success": True,
-            "status": "starting",
-            GRANT_KEY: write_grant,
-            **spawn_identity,
-            "child_session_id": prepared_spawn.session_id,
-            "isolation": effective_isolation,
-            "clone_id": isolation_ctx.clone_id,
-            "reasoning": reasoning.to_dict(),
-        }
+            if notify_parent_on_completion and completion_registry and parent_session_id:
+                try:
+                    await run_thread_to_completion(
+                        subscribe_agent_completion,
+                        completion_registry=completion_registry,
+                        run_id=run_id,
+                        subscriber_session_id=parent_session_id,
+                        db=db,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Failed to subscribe parent session to agent completion for run %s",
+                        run_id,
+                        exc_info=True,
+                    )
+
+            try:
+                schedule_background_task(
+                    _spawn_background_tasks,
+                    run_id,
+                    spawn_phase.run,
+                    name=f"gobby-agent-spawn-{run_id}",
+                    logger=logger,
+                    description="Agent spawn background task",
+                )
+            except RuntimeError as exc:
+                return await spawn_phase.fail(str(exc))
+
+            return {
+                "success": True,
+                "status": "starting",
+                GRANT_KEY: write_grant,
+                **spawn_identity,
+                "child_session_id": prepared_spawn.session_id,
+                "isolation": effective_isolation,
+                "clone_id": isolation_ctx.clone_id,
+                "reasoning": reasoning.to_dict(),
+            }
+        except asyncio.CancelledError:
+            await run_to_completion(
+                rollback_cancelled_spawn(
+                    "Agent spawn cancelled before launch", prepared_spawn.session_id
+                )
+            )
+            raise

@@ -603,7 +603,7 @@ async def test_progress_timeout_emits_one_error_and_stays_reconstructable() -> N
     errors = [
         event
         for event in timed_out
-        if isinstance(event, TextChunk) and "Timed out waiting for AGY" in event.content
+        if isinstance(event, TextChunk) and "Timed out waiting for Antigravity" in event.content
     ]
     assert len(errors) == 1
     assert first.terminated is True
@@ -884,7 +884,7 @@ async def test_ignored_lines_expire_on_progress_clock(trickle: str) -> None:
     errors = [
         event
         for event in events
-        if isinstance(event, TextChunk) and "Timed out waiting for AGY" in event.content
+        if isinstance(event, TextChunk) and "Timed out waiting for Antigravity" in event.content
     ]
     assert len(errors) == 1
     assert process.terminated is True
@@ -1076,7 +1076,7 @@ async def test_runtime_manager_agy_session_streams_tools_resumes_and_interrupts(
     second = _FakeProcess([_init(), *_turn_lines("resumed")])
     record = SimpleNamespace(
         supported=True,
-        reason="AGY 1.1.18 meets required version 1.1.18.",
+        reason="Antigravity 1.1.18 meets required version 1.1.18.",
     )
     manager = WebChatRuntimeManager(
         codex_client=None,

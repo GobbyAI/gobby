@@ -38,18 +38,18 @@ def _record(installed_version: str | None, *, supported: bool, reason: str) -> A
 _MISSING_BINARY = _record(
     None,
     supported=False,
-    reason=f"Installed AGY version none does not meet required version {AGY_REQUIRED_VERSION}.",
+    reason=f"Installed Antigravity version none does not meet required version {AGY_REQUIRED_VERSION}.",
 )
 _SUB_FLOOR = _record(
     "1.1.0",
     supported=False,
-    reason=f"Installed AGY version 1.1.0 does not meet required version {AGY_REQUIRED_VERSION}.",
+    reason=f"Installed Antigravity version 1.1.0 does not meet required version {AGY_REQUIRED_VERSION}.",
 )
 _UNPARSEABLE = _record(
     None,
     supported=False,
     reason=(
-        f"Installed AGY version unparseable does not meet required version {AGY_REQUIRED_VERSION}."
+        f"Installed Antigravity version unparseable does not meet required version {AGY_REQUIRED_VERSION}."
     ),
 )
 _UNPUBLISHED = _record(None, supported=False, reason=AGY_UNPUBLISHED_REASON)
@@ -57,7 +57,7 @@ _REVALIDATING = _record(None, supported=False, reason=AGY_REVALIDATING_REASON)
 _SUPPORTED = _record(
     AGY_REQUIRED_VERSION,
     supported=True,
-    reason=f"AGY {AGY_REQUIRED_VERSION} meets required version {AGY_REQUIRED_VERSION}.",
+    reason=f"Antigravity {AGY_REQUIRED_VERSION} meets required version {AGY_REQUIRED_VERSION}.",
 )
 _REFUSED_RECORDS = [_MISSING_BINARY, _SUB_FLOOR, _UNPARSEABLE]
 _REFUSED_IDS = ["missing-binary", "sub-floor", "unparseable"]

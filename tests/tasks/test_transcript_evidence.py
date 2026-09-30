@@ -8,14 +8,19 @@ import json
 import logging
 import multiprocessing
 import os
+import signal
+import subprocess
+import sys
 import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
+import psutil
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
@@ -67,6 +72,53 @@ def test_validation_output_is_bounded_with_failure_edges_preserved() -> None:
     assert output.startswith("AssertionError: first")
     assert output.endswith("ImportError: last")
     assert len(output) <= 16_000
+
+
+def test_validation_output_uses_normalized_tool_result_once() -> None:
+    pytest_output = (
+        "E   KeyError: 'missing'\n" + ("captured log\n" * 700) + "FAILED test.py::test_missing"
+    )
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": pytest_output, "is_error": True},
+            "raw_json": {
+                "message": {"content": [{"type": "tool_result", "content": pytest_output}]},
+                "toolUseResult": pytest_output + "\nE   ValueError: suffix-only failure",
+            },
+        }
+    )
+
+    assert output is not None
+    assert output.startswith(pytest_output)
+    assert output.count(pytest_output) == 1
+    assert "E   ValueError: suffix-only failure" in output
+    assert truncated is False
+
+
+def test_validation_output_keeps_failure_detail_after_shared_prefix() -> None:
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": "short summary"},
+            "raw_json": {"toolUseResult": "short summary\nE   ValueError: missing"},
+        }
+    )
+
+    assert output == "short summary\nE   ValueError: missing"
+    assert truncated is False
+
+
+@pytest.mark.parametrize("normalized", ["short summary", ""])
+def test_validation_output_keeps_unique_transport_result(normalized: str) -> None:
+    output, truncated = _extract_output(
+        {
+            "tool_result": {"content": normalized},
+            "raw_json": {"toolUseResult": "failure detail absent from summary"},
+        }
+    )
+
+    assert output is not None
+    assert "failure detail absent from summary" in output
+    assert truncated is False
 
 
 def _raise_missing_transcript() -> None:
@@ -219,6 +271,59 @@ def _resource_tracker_pid() -> int | None:
     from multiprocessing import resource_tracker
 
     return cast(int | None, getattr(resource_tracker._resource_tracker, "_pid", None))
+
+
+_POOL_OWNER = """
+import asyncio, time
+from multiprocessing import resource_tracker
+from gobby.tasks import transcript_evidence_pool
+
+asyncio.run(transcript_evidence_pool.prewarm_transcript_evidence_pool())
+pool = transcript_evidence_pool._get_pool()
+pids = [proc.pid for proc in pool._processes.values()]
+pids.append(resource_tracker._resource_tracker._pid)
+print(" ".join(str(pid) for pid in pids), flush=True)
+time.sleep(600)
+"""
+
+
+def test_pool_processes_exit_when_the_daemon_is_killed() -> None:
+    # A SIGKILLed daemon runs no shutdown; its workers and tracker must still go.
+    owner = subprocess.Popen(
+        [sys.executable, "-c", _POOL_OWNER], stdout=subprocess.PIPE, stdin=subprocess.DEVNULL
+    )
+    pids: list[int] = []
+    try:
+        assert owner.stdout is not None
+        pids = [int(pid) for pid in owner.stdout.readline().split()]
+        assert len(pids) == 5
+        owner.kill()
+        owner.wait(timeout=10)
+
+        assert _survivors(pids, timeout=15.0) == []
+    finally:
+        owner.kill()
+        for pid in _survivors(pids, timeout=0.0):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+def _survivors(pids: list[int], timeout: float) -> list[int]:
+    deadline = time.monotonic() + timeout
+    while alive := [pid for pid in pids if psutil.pid_exists(pid) and not _zombie(pid)]:
+        if time.monotonic() >= deadline:
+            return alive
+        time.sleep(0.1)
+    return []
+
+
+def _zombie(pid: int) -> bool:
+    try:
+        return bool(psutil.Process(pid).status() == psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return True
 
 
 def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
@@ -3330,6 +3435,115 @@ async def test_edits_in_another_checkout_match_task_files_by_suffix(tmp_path: Pa
     ]
     assert [(edit.path, edit.tool_name) for edit in claude_evidence.edits] == [
         ("src/changed.py", "Edit")
+    ]
+
+
+async def test_task_checkout_paths_reject_foreign_root_and_file(tmp_path: Path) -> None:
+    owned_a = tmp_path / "worktrees" / "task-259-runbook"
+    owned_b = tmp_path / "worktrees" / "task-259-supply"
+    foreign = tmp_path / "worktrees" / "task-260-resources"
+    transcript = tmp_path / "claude-checkouts.jsonl"
+    records = []
+    edits = (
+        (owned_a, "docs/replenishment.md"),
+        (foreign, "docs/replenishment.md"),
+        (owned_b, "docs/replenishment.md"),
+        (owned_a, "docs/other.md"),
+    )
+    for index, (root, path) in enumerate(edits):
+        records.append(
+            {
+                "type": "assistant",
+                "timestamp": (BASE_TIME + timedelta(seconds=index)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"edit-{index}",
+                            "name": "Edit",
+                            "input": {"file_path": str(root / path)},
+                        }
+                    ],
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    # This session works both tasks and currently points at the foreign checkout.
+    session = replace(_session("claude", transcript), workspace_path=str(foreign))
+
+    evidence = await derive_transcript_evidence(
+        session,
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"docs/replenishment.md", "docs/other.md"},
+        str(foreign),
+        task_checkout_paths=frozenset(
+            {
+                (str(owned_a), "docs/replenishment.md"),
+                (str(owned_b), "docs/replenishment.md"),
+                (str(owned_b), "docs/other.md"),
+            }
+        ),
+    )
+
+    assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
+        ("docs/replenishment.md", BASE_TIME),
+        ("docs/replenishment.md", BASE_TIME + timedelta(seconds=2)),
+    ]
+
+
+@pytest.mark.parametrize("tool_name", ["Edit", "apply_patch", "Bash"])
+async def test_relative_edits_require_call_time_checkout_proof(
+    tmp_path: Path, tool_name: str
+) -> None:
+    owned_a = tmp_path / "task-259-runbook"
+    foreign = tmp_path / "task-260-resources"
+    owned_b = tmp_path / "task-259-supply"
+    path = "docs/replenishment.md"
+    transcript = tmp_path / f"{tool_name}.jsonl"
+    records = []
+    for index, workdir in enumerate((owned_a, foreign, owned_b, None)):
+        if tool_name == "Edit":
+            arguments = {"file_path": path}
+        elif tool_name == "apply_patch":
+            arguments = {"patch": f"*** Begin Patch\n*** Update File: {path}\n*** End Patch"}
+        else:
+            arguments = {"command": _heredoc_write(path)}
+        if workdir is not None:
+            arguments["workdir"] = str(workdir)
+        records.append(
+            {
+                "type": "assistant",
+                "timestamp": (BASE_TIME + timedelta(seconds=index)).isoformat(),
+                "message": {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": f"edit-{index}",
+                            "name": tool_name,
+                            "input": arguments,
+                        }
+                    ],
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    session = replace(_session("claude", transcript), workspace_path=str(foreign))
+
+    evidence = await derive_transcript_evidence(
+        session,
+        BASE_TIME,
+        default_validation_detection_config(),
+        {path},
+        str(owned_a),
+        task_checkout_paths=frozenset({(str(owned_a), path), (str(owned_b), path)}),
+    )
+
+    assert [edit.timestamp for edit in evidence.edits] == [
+        BASE_TIME,
+        BASE_TIME + timedelta(seconds=2),
     ]
 
 

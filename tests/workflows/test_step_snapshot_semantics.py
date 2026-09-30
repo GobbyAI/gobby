@@ -478,10 +478,13 @@ async def test_post_launch_faults_leave_no_live_process() -> None:
         backend="native",
         state="pending",
         spawn_key="gobby-run",
+        attempt_generation=0,
+        attempt_started_at=datetime(2026, 9, 29),
     )
     runner.terminal_manager.get.return_value = terminal
     runtime = MagicMock()
     runtime.terminate = AsyncMock()
+    runtime.session_present = AsyncMock(return_value=False)
     runner.terminal_runtime_registry.resolve.return_value = runtime
     with (
         patch("os.kill") as kill,
@@ -504,7 +507,11 @@ async def test_post_launch_faults_leave_no_live_process() -> None:
             terminal_id=terminal.id,
         )
     runtime.terminate.assert_awaited_once_with(terminal, 0.2)
-    runner.terminal_manager.fail_pending.assert_called_once_with(terminal.id)
+    runner.terminal_manager.fail_pending_attempt.assert_called_once_with(
+        terminal.id,
+        attempt_generation=terminal.attempt_generation,
+        attempt_started_at=terminal.attempt_started_at,
+    )
     assert kill.call_count == 0
     assert runner.child_session_manager._storage.delete.call_count >= 1
 
@@ -1042,8 +1049,7 @@ def test_compact_end_retains_instance_expired_end_deletes(
         )
 
     handler = _Handler()
-    with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        compact = handler.handle_session_end(_event(SessionEndReason.COMPACT))
+    compact = handler.handle_session_end(_event(SessionEndReason.COMPACT))
     assert compact.decision == "allow"
     retained = manager.get_for_session(S1)
     assert retained is not None
@@ -1051,8 +1057,7 @@ def test_compact_end_retains_instance_expired_end_deletes(
     assert retained.current_step == "implement"
     assert retained.variables == {"goal": "ship", "progress": 2}
 
-    with patch("gobby.agents.tmux.get_tmux_pane_monitor", return_value=None):
-        expired = handler.handle_session_end(_event(SessionEndReason.CLEAR))
+    expired = handler.handle_session_end(_event(SessionEndReason.CLEAR))
     assert expired.decision == "allow"
     assert manager.get_for_session(S1) is None
 
@@ -1253,7 +1258,11 @@ async def _run_post_launch_failure_case(
                 env=_tmux_env(),
             )
 
+        async def session_present(row: SimpleNamespace) -> bool:
+            return await asyncio.to_thread(_tmux_session_exists, row.spawn_key)
+
         runtime.terminate = AsyncMock(side_effect=terminate)
+        runtime.session_present = session_present
         runner.terminal_runtime_registry.resolve.return_value = runtime
         return SimpleNamespace(
             success=True,

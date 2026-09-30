@@ -73,7 +73,6 @@ def _tool_inventory(temp_db: Any, sample_project: dict[str, Any]) -> dict[str, s
         # Gates the memory and review-learning registries, whose tools bundled
         # agents reference; the registries only need the manager to construct.
         memory_manager_resolver=MagicMock(),
-        ask_service_resolver=MagicMock(),
         project_id=str(sample_project["id"]),
     )
     inventory = {
@@ -270,7 +269,7 @@ def test_every_bundled_agent_declares_rule_selectors() -> None:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
         workflows = AgentWorkflows.model_validate(data.get("workflows"))
         assert workflows.rule_selectors is not None, path.name
-        if path.stem in {"ask-investigator", "ask-reviewer", "expansion-qa", "triage-agent"}:
+        if path.stem in {"expansion-qa", "triage-agent"}:
             assert workflows.rule_selectors.include == ["tag:default", "tag:worker-safety"]
             assert workflows.rule_selectors.exclude == ["tag:task-skill-gates"]
         elif path.stem == "comms-agent":

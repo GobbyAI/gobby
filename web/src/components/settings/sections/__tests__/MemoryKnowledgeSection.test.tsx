@@ -81,10 +81,6 @@ const SCHEMA: Record<string, unknown> = {
         crossref_threshold: { type: "number" },
         kg: { $ref: "#/$defs/MemoryKnowledgeGraphConfig" },
         dream: { $ref: "#/$defs/MemoryDreamConfig" },
-        recall_signal_logging: { type: "boolean" },
-        recall_signal_log_path: {
-          anyOf: [{ type: "string" }, { type: "null" }],
-        },
       },
     },
     // The embedding-switch structural keys carry managed activation: the
@@ -197,8 +193,6 @@ function makeConfigValues(): Record<string, unknown> {
       materialize_cooccurrence: false,
       graph_edge_decay: true,
       edge_half_life_days: 14,
-      recall_signal_logging: false,
-      recall_signal_log_path: null,
     },
     ai: {
       embeddings: {
@@ -263,9 +257,17 @@ describe("MemoryKnowledgeSection", () => {
 
     expect(screen.getByRole("switch", { name: "Enable memory" })).toBeChecked();
     expect(screen.getByLabelText("Cross-reference threshold")).toHaveValue(0.7);
+  });
+
+  it("renders no rows for the retired recall-signal keys", () => {
+    renderSection(makeContext());
+
     expect(
-      screen.getByRole("switch", { name: "Log recall signals" }),
-    ).not.toBeChecked();
+      screen.queryByRole("switch", { name: "Log recall signals" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Recall signal log path"),
+    ).not.toBeInTheDocument();
   });
 
   it("renders memory backend as a bounded local/null select", () => {

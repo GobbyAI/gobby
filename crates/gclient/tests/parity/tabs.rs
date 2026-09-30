@@ -12,7 +12,7 @@ use gobby_client::ui::text::display_width_u16;
 use gobby_client::ui::{Action, Chrome};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier};
+use ratatui::style::Modifier;
 use ratatui::Terminal;
 use serde_json::json;
 
@@ -112,7 +112,7 @@ parity_tests! {
             let (_, tab_rect) = hits.tabs[0];
             let style = cell(&term, tab_rect.x + 1, tab_rect.y).style();
 
-            assert_eq!(style.bg, Some(Color::Reset), "the terminal's own ground");
+            assert_eq!(style.bg, Some(palette().surface1), "the raised surface");
             assert!(!style.add_modifier.contains(Modifier::DIM));
             assert!(style.add_modifier.contains(Modifier::BOLD));
         }
@@ -201,17 +201,27 @@ fn every_tab_carries_the_rolled_up_state_of_its_agents() {
     draw(&mut term, |frame| {
         hits = render_tab_bar(frame, area, &ws, &chrome);
     });
-    // The active tab carries its state too; an agent awaiting input is
-    // idle, and an idle tab draws no glyph.
+    // Only the bell reaches a tab, the active one included: a working or
+    // idle agent draws nothing there, and a thin rule parts adjacent tabs.
     let row = buffer_row_text(&term, area, 0);
-    assert!(row.contains("▶ 1: Untitled"), "tab row: {row:?}");
+    assert!(row.starts_with(" 1: Untitled"), "tab row: {row:?}");
     assert!(row.contains("⍾ 2: Untitled"), "tab row: {row:?}");
     assert!(row.contains(" 3: Untitled"), "tab row: {row:?}");
-    assert!(!row.contains('‖') && !row.contains('○'), "tab row: {row:?}");
-    for (idx, glyph, color) in [(0, "▶", palette().accent), (1, "⍾", palette().peach)] {
+    assert!(
+        !row.contains('▶') && !row.contains('‖') && !row.contains('○'),
+        "tab row: {row:?}"
+    );
+    let rect = hits.tabs[1].1;
+    assert_eq!(cell(&term, rect.x + 1, rect.y).symbol(), "⍾");
+    assert_eq!(
+        cell(&term, rect.x + 1, rect.y).style().fg,
+        Some(palette().peach)
+    );
+    for idx in 0..2 {
         let rect = hits.tabs[idx].1;
-        assert_eq!(cell(&term, rect.x + 1, rect.y).symbol(), glyph);
-        assert_eq!(cell(&term, rect.x + 1, rect.y).style().fg, Some(color));
+        let rule = cell(&term, rect.right(), rect.y);
+        assert_eq!(rule.symbol(), "│", "tab row: {row:?}");
+        assert_eq!(rule.style().fg, Some(palette().line));
     }
 
     chrome.activate_tab(1);

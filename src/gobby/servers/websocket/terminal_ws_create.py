@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from gobby.config.terminals import TerminalConfig
-from gobby.servers.websocket.tmux_activation import TmuxAttachHost, teardown_terminal_bridges
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.terminals.dimensions import InvalidTerminalDimensionsError, validate_dimensions
 from gobby.terminals.termination import kill_terminal
@@ -98,6 +97,7 @@ class TerminalCreateMixin:
         command = data.get("command") or ["zsh"]
         if not isinstance(command, list):
             command = ["zsh"]
+        terminal_theme = data.get("terminal_theme")
         result: WebSpawnResult = await spawn_web_terminal(
             manager=manager,
             runtime=runtime,
@@ -107,6 +107,7 @@ class TerminalCreateMixin:
             cols=data.get("cols"),
             cwd=data.get("cwd"),
             command=[str(part) for part in command],
+            terminal_theme=terminal_theme if isinstance(terminal_theme, dict) else None,
         )
         if not result.success:
             logger.warning(
@@ -151,8 +152,6 @@ class TerminalCreateMixin:
 
     async def _handle_terminal_kill(self, websocket: Any, data: dict[str, Any]) -> None:
         terminal_id = data.get("terminal_id")
-        if isinstance(terminal_id, str):
-            await teardown_terminal_bridges(cast(TmuxAttachHost, self), terminal_id)
         manager = getattr(self, "terminal_manager", None)
         row = (
             None
@@ -161,7 +160,9 @@ class TerminalCreateMixin:
         )
         transitioned = None
         failure: str | None = None
-        if (
+        if row is not None and row.backend != "native" and row.state in {"live", "orphaned"}:
+            failure = "unsupported_terminal_backend"
+        elif (
             row is not None
             and manager is not None
             and getattr(self, "terminal_runtime_registry", None) is not None
@@ -175,6 +176,11 @@ class TerminalCreateMixin:
                 logger.warning("terminal_kill failed for %s", row.id, exc_info=True)
                 failure = str(exc) or type(exc).__name__
             if transitioned is not None:
+                hub = getattr(self, "_proxy_hub", None)
+                if hub is not None:
+                    for attachment_id, attachment in list(hub.attachments.items()):
+                        if attachment.terminal_id == row.id:
+                            await hub.finalize_attachment(attachment_id, "terminal_killed")
                 await self.broadcast_tmux_session_event("killed", terminal_id=row.id)
         payload: dict[str, Any] = {
             "type": "terminal_kill_result",
@@ -183,7 +189,8 @@ class TerminalCreateMixin:
             "request_id": data.get("request_id"),
         }
         if failure is not None:
-            payload.update(code="kill_failed", reason=failure)
+            code = failure if failure == "unsupported_terminal_backend" else "kill_failed"
+            payload.update(code=code, reason=failure)
         elif transitioned is None:
             payload.update(code="terminal_not_live", reason="terminal is not live")
         await self._send_json(websocket, payload)

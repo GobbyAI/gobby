@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.communications.models import CommsAttachment, CommsMessage
+from gobby.communications.models import ChannelNotFoundError, CommsAttachment, CommsMessage
 from gobby.communications.sticker_vision import apply_sticker_vision
 from gobby.communications.telegram_decisions import (
     accept_decision_callback,
@@ -64,7 +64,7 @@ class InboundCommunications:
         manager = self._manager
         channel = manager._channel_by_name.get(channel_name)
         if channel is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
         adapter = manager._adapters.get(channel_name)
 
         handled: list[CommsMessage] = []
@@ -292,7 +292,7 @@ class InboundCommunications:
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
 

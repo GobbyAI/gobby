@@ -7,6 +7,7 @@ import time as _time_module
 from collections.abc import Callable
 from pathlib import Path
 from shutil import copy2 as _copy2
+from shutil import which
 from typing import Any, cast
 
 _FACADE_MODULE = "gobby.cli.installers.mcp_config"
@@ -100,6 +101,14 @@ def _trailing_blank_or_comment_lines(text: str) -> str:
     return "".join(suffix)
 
 
+def _resolved_gobby_mcp_command() -> str:
+    """Return an absolute ``gobby`` so the launching CLI's PATH cannot hide it."""
+    gobby_bin = Path(sys.executable).parent / _GOBBY_MCP_COMMAND
+    if gobby_bin.exists():
+        return str(gobby_bin)
+    return which(_GOBBY_MCP_COMMAND) or _GOBBY_MCP_COMMAND
+
+
 def _command_basename(command: Any) -> str | None:
     if not isinstance(command, str):
         return None
@@ -187,8 +196,13 @@ def _repair_stale_gobby_mcp_server_toml(
     if not _is_current_gobby_mcp_server_config(
         server_config
     ) and _is_repairable_stale_gobby_mcp_server_config(server_config):
-        updates["command"] = _GOBBY_MCP_COMMAND
+        updates["command"] = _resolved_gobby_mcp_command()
         updates["args"] = [*_GOBBY_MCP_ARGS]
+    elif server_config.get("command") == _GOBBY_MCP_COMMAND:
+        # ``required = true`` turns a bare command missing from PATH into a failed launch.
+        resolved = _resolved_gobby_mcp_command()
+        if resolved != _GOBBY_MCP_COMMAND:
+            updates["command"] = resolved
 
     if _needs_codex_gobby_mcp_tool_timeout(server_config):
         updates["tool_timeout_sec"] = _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC
@@ -196,6 +210,8 @@ def _repair_stale_gobby_mcp_server_toml(
         updates["startup_timeout_sec"] = _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC
     if _needs_codex_gobby_mcp_tools_approval_mode(server_config):
         updates["default_tools_approval_mode"] = _CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE
+    if server_config.get("required") is not True:
+        updates["required"] = True
 
     if not updates:
         return None, None

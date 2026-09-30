@@ -1958,6 +1958,51 @@ fn stop_connect_failure_with_shutdown_marker_retains_envelope_and_diagnostic() -
     Ok(())
 }
 
+#[test]
+fn typed_503_counts_as_unreachable() -> TestResult {
+    let typed =
+        r#"{"status":"unavailable","backend":{"state":"starting","target":"127.0.0.1:60888"}}"#;
+    let untyped = r#"{"error":"unavailable"}"#;
+    for (body, failure_kind, suppressed) in [(typed, "connect", true), (untyped, "http", false)] {
+        let home = tempfile::tempdir()?;
+        let gobby_home = tempfile::tempdir()?;
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs_f64();
+        fs::write(
+            gobby_home.path().join("shutdown_intent_active.json"),
+            format!(r#"{{"intent":"restart","timestamp":{now}}}"#),
+        )?;
+        let (daemon_url, daemon) =
+            start_daemon(http_json_status(503, "Service Unavailable", body))?;
+
+        let output = run_ghook_with_dirs(
+            home.path(),
+            gobby_home.path(),
+            Some("codex"),
+            Some("Stop"),
+            &daemon_url,
+            VALID_STDIN,
+            &[],
+        )?;
+        let _request = join_daemon(daemon)?;
+
+        if suppressed {
+            assert_eq!(output.status.code(), Some(0));
+            assert_json_stdout(&output, serde_json::json!({"continue": true}))?;
+            assert_stderr_empty(&output, "typed 503 under a shutdown marker")?;
+        } else {
+            // Not suppressed: the Stop failure surfaces instead of continuing.
+            assert_ne!(output.status.code(), Some(0), "{output:?}");
+        }
+        assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+        let failures = read_failure_artifacts(gobby_home.path())?;
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0]["failure_kind"], failure_kind);
+        assert_eq!(failures[0]["status_code"], 503);
+    }
+
+    Ok(())
+}
+
 fn run_with_closed_daemon(
     cli: &str,
     hook_type: &str,

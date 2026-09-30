@@ -41,6 +41,8 @@ class _ShellSegmentMetadata:
     stdin_program_interpreter: str | None = None
     cwd: str | None = None
     loop_binding_variable: str | None = None
+    # Absolute literal `name=/path` bindings from a leading bare-assignment segment.
+    assignment_bindings: tuple[tuple[str, str], ...] = ()
     shell_words: tuple[str, ...] = ()
     shell_raw_words: tuple[str, ...] = ()
 

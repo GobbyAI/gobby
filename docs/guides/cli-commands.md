@@ -337,7 +337,7 @@ for the web UI, or re-running daemon setup.
 
 When enabled, `ghook` remains every CLI's installed hook. Gobby calls
 `rtk rewrite -- <command>` only for synchronous `before_tool` shell-command
-rewrites on Claude Code, Codex, Qwen, Grok, Droid, and AGY. `rewrite` is the
+rewrites on Claude Code, Codex, Qwen, Grok, Droid, and Antigravity. `rewrite` is the
 same contract stock RTK host hooks use, so RTK's heredoc, command-substitution,
 and file-redirect gates apply: exit 0 (allow) and exit 3 (ask) apply the
 rewritten command from stdout; exit 1 (no equivalent) and exit 2 (deny) pass the
@@ -878,8 +878,8 @@ gobby memory export [--output PATH]
 gobby memory stats
 ```
 
-Memory also provides backup/restore, graph/index maintenance, dream run
-observation/revert, and recall-signal diagnostics. See the audited
+Memory also provides backup/restore, graph/index maintenance, and dream run
+observation/revert. See the audited
 [Memory CLI reference](memory.md#cli-reference) and
 [Dream operations](memory.md#dream-operations) for scope and recovery boundaries.
 
@@ -1132,7 +1132,7 @@ exit 2 because remote clients hold no datastore credentials.
 gobby sync [--force] [--verify-only] [--fail-on-verify] [--type TYPE] [--verbose] [--reinstall rules|agents|pipelines|variables|all]
 gobby tokens audit [--session SESSION] [--all] [--fix] [--project PROJECT]
 gobby comms status
-gobby comms send CHANNEL MESSAGE
+gobby comms send [--redact] CHANNEL MESSAGE
 gobby comms channels list
 gobby comms channels add CHANNEL_TYPE NAME
 gobby comms channels remove NAME

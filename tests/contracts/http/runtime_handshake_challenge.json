@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "name": "runtime_handshake_challenge",
+  "family": "runtime_handshake",
+  "credential": "none",
+  "request": {
+    "method": "POST",
+    "path": "/api/runtime/handshake/challenge",
+    "query": {},
+    "headers": {},
+    "body": {
+      "nonce": "AAAAAAAAAAAAAAAAAAAAAA"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "cache-control": "no-store",
+      "content-type": "application/json"
+    },
+    "body": {
+      "proof": "@secret@"
+    }
+  },
+  "mask": []
+}

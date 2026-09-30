@@ -27,7 +27,6 @@ from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
-from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.terminals.pane_io import (
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
@@ -85,6 +84,13 @@ def arm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
         waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
         if waiter is not None and waiter.attempt_id == attempt_id:
             waiter.submitted = True
+
+
+def compact_boundary_wait_submitted(session_id: str) -> bool:
+    """Return whether a delivery operation already watches this session's compact."""
+    with _COMPACT_BOUNDARY_WAITERS_LOCK:
+        waiter = _COMPACT_BOUNDARY_WAITERS.get(session_id)
+        return waiter is not None and waiter.submitted
 
 
 def disarm_compact_boundary_waiter(session_id: str, attempt_id: str) -> None:
@@ -302,8 +308,8 @@ def _continuation_pane(
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
 ) -> PaneIO | None:
-    """Route like compaction delivery: live row, unbound gterm context, else tmux."""
-    from gobby.terminals.pane_io import TmuxPaneIO, context_runtime_pane, live_runtime_pane
+    """Use a live native row or a bound native terminal context."""
+    from gobby.terminals.pane_io import context_runtime_pane, live_runtime_pane
 
     try:
         pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
@@ -316,18 +322,13 @@ def _continuation_pane(
             exc_info=True,
         )
         pane = None
-    if pane is not None:
+    if pane is not None and pane.backend == "native":
         return pane
-    ctx = parse_terminal_context_value(getattr(session, "terminal_context", None))
-    target = None if ctx is None else ctx.get("tmux_pane") or ctx.get("tmux_session")
-    if not target:
-        logger.warning(
-            "Cannot schedule set_handoff compact continuation for session %s; "
-            "no live terminal or tmux target",
-            session_id,
-        )
-        return None
-    return TmuxPaneIO(manager_for_terminal_context(ctx), str(target))
+    logger.warning(
+        "Cannot schedule set_handoff compact continuation for session %s; no live native terminal",
+        session_id,
+    )
+    return None
 
 
 def _composer_reader(db: HubDatabase | None, cli_source: str | None) -> ComposerReader | None:

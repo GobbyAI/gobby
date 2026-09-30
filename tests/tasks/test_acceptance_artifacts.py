@@ -1162,6 +1162,196 @@ def test_tdd_evidence_accepts_rtk_class_dot_failure() -> None:
     assert non_assertion.red_runs == ()
 
 
+def test_tdd_evidence_credits_tb_line_failure_for_sole_selected_node() -> None:
+    started = datetime(2026, 9, 28, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/config/test_persistence.py::test_removed_memory_keys_raise",
+        path="tests/config/test_persistence.py",
+        symbol="test_removed_memory_keys_raise",
+        body="def test_removed_memory_keys_raise(): assert key not in fields",
+    )
+    edits = (
+        _edit("tests/config/test_persistence.py", started, 1),
+        _edit("src/gobby/config/persistence.py", started + timedelta(minutes=2), 3),
+    )
+    green = _run(test, started + timedelta(minutes=3), "success", "1 passed", 4)
+    # pytest --tb=line prints the location without the test symbol (#22839 red).
+    tb_line_failure = (
+        "tests/config/test_persistence.py F\n"
+        "=================================== FAILURES ===================================\n"
+        "E   AssertionError: assert 'recall_signal_hub' not in {...}\n"
+        "/repo/tests/config/test_persistence.py:145: AssertionError: "
+        "assert 'recall_signal_hub' not in {...}\n"
+        "============================== 1 failed in 1.20s ==============================\n"
+    )
+
+    accepted = evaluate_tdd_evidence(
+        (test,),
+        TranscriptEvidence(
+            edits=edits,
+            validation_runs=(
+                _run(test, started + timedelta(minutes=1), "failure", tb_line_failure, 2),
+                green,
+            ),
+        ),
+    )
+
+    assert accepted.passed is True
+    assert accepted.red_runs
+
+    sibling = replace(
+        _run(test, started + timedelta(minutes=1), "failure", tb_line_failure, 2),
+        command=f"pytest {test.reference} tests/config/test_persistence.py::test_other",
+    )
+    ambiguous = evaluate_tdd_evidence(
+        (test,), TranscriptEvidence(edits=edits, validation_runs=(sibling, green))
+    )
+    assert ambiguous.passed is False
+    assert "no attributable failure section" in ambiguous.findings[0]
+
+
+@pytest.mark.parametrize(
+    ("red_command", "failure_detail", "failure_location", "sibling_path", "sibling_node"),
+    [
+        (
+            "pytest tests/test_feature.py -q --tb=line",
+            "E   KeyError: 'new_field'",
+            "/repo/tests/test_feature.py:24: KeyError: 'new_field'",
+            "/repo/tests/test_feature.py:40",
+            "tests/test_feature.py::test_sibling",
+        ),
+        (
+            "pytest tests/test_feature.py::test_feature tests/test_other.py -q --tb=line",
+            "E   ImportError: cannot import name 'new_api' from 'feature'",
+            "/repo/tests/test_feature.py:24: ImportError: cannot import name 'new_api' from 'feature'",
+            "/repo/tests/test_other.py:10",
+            "tests/test_other.py::test_other",
+        ),
+        (
+            "pytest tests/test_feature.py tests/test_other.py -q --tb=line",
+            "E   assert False",
+            "/repo/tests/test_feature.py:24: assert False",
+            "/repo/tests/test_other.py:10",
+            "tests/test_other.py::test_other",
+        ),
+    ],
+)
+def test_tdd_evidence_credits_tb_line_summary_with_body_exception(
+    red_command: str,
+    failure_detail: str,
+    failure_location: str,
+    sibling_path: str,
+    sibling_node: str,
+) -> None:
+    started = datetime(2026, 9, 29, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    red_output = (
+        "=================================== FAILURES ===================================\n"
+        f"{failure_detail}\n"
+        f"{failure_location}\n"
+        "E   ImportError: unrelated sibling failure\n"
+        f"{sibling_path}: ImportError: unrelated sibling failure\n"
+        "=========================== short test summary info ============================\n"
+        "FAILED tests/test_feature.py::test_feature\n"
+        f"FAILED {sibling_node}\n"
+        "======================== 2 failed in 0.10s ========================\n"
+    )
+    red = replace(
+        _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+        command=red_command,
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert result.passed is True
+    assert result.red_runs == (red_command,)
+
+
+def test_tdd_evidence_does_not_borrow_tb_line_detail_from_sibling_summary() -> None:
+    started = datetime(2026, 9, 29, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    red_output = (
+        "=================================== FAILURES ===================================\n"
+        "E   AssertionError: assert 0 == 1\n"
+        "/repo/tests/test_feature.py:40: AssertionError: assert 0 == 1\n"
+        "=========================== short test summary info ============================\n"
+        "FAILED tests/test_feature.py::test_feature\n"
+        "FAILED tests/test_feature.py::test_sibling\n"
+    )
+    red = replace(
+        _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+        command="pytest tests/test_feature.py -q --tb=line",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    assert evaluate_tdd_evidence((test,), evidence).passed is False
+
+
+def test_tdd_evidence_does_not_borrow_sibling_assertion_after_summary_rejection() -> None:
+    started = datetime(2026, 9, 29, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body="def test_feature(): assert feature() == 1",
+    )
+    red_output = (
+        "=================================== FAILURES ===================================\n"
+        "E   Failed: something-other-than-DID NOT RAISE\n"
+        "/repo/tests/test_feature.py:24: Failed: something-other-than-DID NOT RAISE\n"
+        "E   AssertionError: assert 0 == 1\n"
+        "/repo/tests/test_other.py:10: AssertionError: assert 0 == 1\n"
+        "=========================== short test summary info ============================\n"
+        "FAILED tests/test_feature.py::test_feature\n"
+        "FAILED tests/test_other.py::test_other\n"
+    )
+    red = replace(
+        _run(test, started + timedelta(minutes=1), "failure", red_output, 2),
+        command="pytest tests/test_feature.py::test_feature tests/test_other.py -q --tb=line",
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=2), 3),
+        ),
+        validation_runs=(
+            red,
+            _run(test, started + timedelta(minutes=3), "success", "1 passed", 4),
+        ),
+    )
+
+    assert evaluate_tdd_evidence((test,), evidence).passed is False
+
+
 def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> None:
     started = datetime(2026, 9, 26, tzinfo=UTC)
     test = AcceptanceTest(

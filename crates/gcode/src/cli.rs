@@ -1,9 +1,7 @@
 use crate::output;
 use clap::{ArgGroup, Parser, Subcommand};
 
-mod ask;
 mod graph_view;
-pub(crate) use ask::{AskAction, AskArgs};
 pub(crate) use graph_view::{GraphViewArgs, GraphViewKind, GraphViewSeed};
 
 const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
@@ -82,9 +80,6 @@ pub(crate) enum Command {
         #[arg(long, hide = true)]
         allow_stale: bool,
     },
-    /// Ask a source-bound question through the durable Gobby pipeline
-    Ask(AskArgs),
-
     // ── Project Setup ────────────────────────────────────────────────
     /// Index this machine's registered Gobby checkout and install gcode skills
     Init,
@@ -585,7 +580,7 @@ pub(crate) fn effective_format(
     command: &Command,
 ) -> output::Format {
     explicit_format.unwrap_or_else(|| {
-        if command.is_navigation() || matches!(command, Command::Ask(_)) {
+        if command.is_navigation() {
             output::Format::Text
         } else {
             output::Format::Json

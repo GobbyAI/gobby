@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct KittyKeyboardTracker {
     pending: Vec<u8>,
     stack: Vec<u16>,

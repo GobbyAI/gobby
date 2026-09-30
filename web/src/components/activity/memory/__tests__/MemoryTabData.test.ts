@@ -32,6 +32,8 @@ function makeMemory(overrides: Partial<GobbyMemory> = {}): GobbyMemory {
     importance: 0.5,
     access_count: 0,
     last_accessed_at: null,
+    surfaced_count: 0,
+    last_surfaced_at: null,
     tags: [],
     deleted_at: null,
     dream_action: null,

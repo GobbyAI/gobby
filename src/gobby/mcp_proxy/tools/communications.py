@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_resolution import resolve_session_reference
+from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 from gobby.utils.datetime import utc_now
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_context import get_current_session_id
@@ -26,6 +27,14 @@ def _is_project_seq_ref(ref: str) -> bool:
     if separator:
         return bool(project) and "#" not in project and seq.isdigit()
     return ref.isdigit()
+
+
+def _is_within(path: Path, root: Path) -> bool:
+    """True when resolved ``path`` lies under ``root`` once ``root`` resolves strictly."""
+    try:
+        return path.is_relative_to(root.expanduser().resolve(strict=True))
+    except OSError:
+        return False
 
 
 def create_communications_registry(
@@ -48,7 +57,8 @@ def create_communications_registry(
             "Send a message to a communication channel. session_id defaults to the calling "
             "session when available. For Telegram clarification or approval "
             "prompts, pass inline_keyboard as rows of {text, value} buttons with a session_id; "
-            "the selected value returns to that session. For Telegram text messages, "
+            "the selected value returns to that session. callback_ttl_seconds sets how long "
+            "those buttons stay answerable and must be 1-3600. For Telegram text messages, "
             "link_preview_options overrides the channel's preview defaults."
         )
     )
@@ -104,6 +114,9 @@ def create_communications_registry(
                 metadata=metadata,
             )
             return {"success": msg.status == "sent", "message_id": msg.id, "error": msg.error}
+        except ValueError as e:
+            # Invalid caller input goes back to the caller; it is not a daemon fault.
+            return {"success": False, "error": str(e)}
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
@@ -132,7 +145,42 @@ def create_communications_registry(
         except ValueError as e:
             return {"success": False, "error": str(e)}
 
-    @registry.tool(description="Send an existing local file to a communication channel.")
+    async def _registered_worktree_roots(
+        project_context: dict[str, Any] | None, requested: Path, resolved: Path
+    ) -> list[Path]:
+        """Active or stale worktrees of the caller's project registered at an ancestor path.
+
+        One exact-path lookup per ancestor of the requested and resolved file paths, so
+        the lookup is bounded by path depth rather than the project's worktree count.
+        """
+        from gobby.app_context import get_app_context
+
+        project_id = project_context.get("id") if project_context else None
+        if db is None or not project_id:
+            return []
+        live = {WorktreeStatus.ACTIVE.value, WorktreeStatus.STALE.value}
+
+        def lookup() -> list[Path]:
+            manager = LocalWorktreeManager(db)
+            roots: list[Path] = []
+            for ancestor in dict.fromkeys([*requested.parents, *resolved.parents]):
+                worktree = manager.get_by_path(str(ancestor))
+                if worktree and worktree.project_id == project_id and worktree.status in live:
+                    roots.append(Path(worktree.worktree_path))
+            return roots
+
+        app_context = get_app_context()
+        if app_context is not None and app_context.db_executor is not None:
+            roots: list[Path] = await app_context.run_db(lookup)
+            return roots
+        return await asyncio.to_thread(lookup)
+
+    @registry.tool(
+        description=(
+            "Send an existing local file to a communication channel. The file must be "
+            "inside the project checkout or one of its active or stale registered worktrees."
+        )
+    )
     async def send_attachment(
         channel: str,
         file_path: str,
@@ -144,7 +192,8 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Validate and send a local image or document."""
         try:
-            resolved_path = Path(file_path).expanduser().resolve(strict=True)
+            requested_path = Path(file_path).expanduser().absolute()
+            resolved_path = requested_path.resolve(strict=True)
             if not resolved_path.is_file():
                 return {"success": False, "error": f"Attachment path is not a file: {file_path}"}
             project_context = get_project_context()
@@ -154,8 +203,12 @@ def create_communications_registry(
             )
             if configured_root is None:
                 return {"success": False, "error": "Attachment workspace is unavailable"}
-            resolved_root = configured_root.expanduser().resolve(strict=True)
-            if not resolved_path.is_relative_to(resolved_root):
+            if not _is_within(resolved_path, configured_root) and not any(
+                _is_within(resolved_path, root)
+                for root in await _registered_worktree_roots(
+                    project_context, requested_path, resolved_path
+                )
+            ):
                 return {
                     "success": False,
                     "error": f"Attachment path is outside the workspace: {file_path}",

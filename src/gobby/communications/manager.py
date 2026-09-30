@@ -20,6 +20,7 @@ from gobby.communications.inbound import InboundCommunications
 from gobby.communications.lifecycle import AdapterLifecycleOperations
 from gobby.communications.models import (
     ChannelConfig,
+    ChannelNotFoundError,
     CommsAttachment,
     CommsIdentity,
     CommsMessage,
@@ -241,7 +242,7 @@ class CommunicationsManager:
         """Publish a typing indicator through an active adapter."""
         adapter = self._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
         if not self.supports_typing(channel_name):
             raise NotImplementedError(
                 f"{adapter.channel_type} adapter does not support typing indicators"
@@ -260,7 +261,7 @@ class CommunicationsManager:
         """Add or remove a reaction through an active adapter."""
         adapter = self._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
         if not self.supports_reactions(channel_name):
             raise NotImplementedError(f"{adapter.channel_type} adapter does not support reactions")
         channel = self._channel_by_name[channel_name]
@@ -279,7 +280,7 @@ class CommunicationsManager:
         """Replace an existing platform message through an active adapter."""
         adapter = self._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
         if not self.supports_message_edit(channel_name):
             raise NotImplementedError(
                 f"{adapter.channel_type} adapter does not support message editing"

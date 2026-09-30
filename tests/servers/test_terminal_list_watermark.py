@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -25,7 +26,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.terminals import ws_protocol
 from gobby.terminals.leases import LifecyclePublicationError, TerminalLeaseRegistry
 from gobby.terminals.web_spawn import WebSpawnResult
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -97,6 +98,10 @@ class _LifecycleManager:
     def get(self, terminal_id: str) -> _Row | None:
         return self.row if terminal_id == self.row.id else None
 
+    @asynccontextmanager
+    async def settle_lock(self, _terminal_id: str) -> AsyncIterator[None]:
+        yield
+
     def mark_exited(self, terminal_id: str) -> _Row | None:
         if terminal_id != self.row.id or self.exited or self.row.state not in {"live", "orphaned"}:
             return None
@@ -145,7 +150,6 @@ async def test_snapshot_orders_lifecycle_events(
     _create_pending(manager, sample_project["id"])
     server = _server()
     server.terminal_manager = manager
-    monkeypatch.setattr(server, "sweep_tmux_panes", AsyncMock(return_value={}))
 
     before_socket = MockWebSocket()
     server.clients[before_socket] = {}
@@ -214,10 +218,8 @@ async def test_every_lifecycle_emitter_is_stamped() -> None:
             "lease_generation": 2,
         },
     )
-    await server._broadcast_tmux_event("session_created", "legacy", "default")
-
     messages = _lifecycle_messages(websocket)
-    assert [message["seq"] for message in messages] == [1, 2, 3, 4]
+    assert [message["seq"] for message in messages] == [1, 2, 3]
     assert len({message["daemon_epoch"] for message in messages}) == 1
     assert {message["type"] for message in messages} == {
         "terminal_event",
@@ -318,7 +320,11 @@ async def test_create_and_kill_publish_ordered_lifecycle_events(
     server = _server()
     row = _Row()
     manager = _LifecycleManager(row)
-    runtime = SimpleNamespace(backend="native", terminate=AsyncMock())
+    runtime = SimpleNamespace(
+        backend="native",
+        terminate=AsyncMock(),
+        session_present=AsyncMock(return_value=False),
+    )
     server.terminal_manager = manager
     server.terminal_runtime_registry = SimpleNamespace(resolve=lambda _backend: runtime)
     server.terminal_config = SimpleNamespace(default_backend="native")
@@ -480,7 +486,7 @@ async def test_publication_worker_lifecycle_settles_all_waiters(
     server = _server()
     listener = _Listener()
     monkeypatch.setattr(websocket_server_module, "serve", AsyncMock(return_value=listener))
-    monkeypatch.setattr(server, "_cleanup_tmux", AsyncMock())
+    monkeypatch.setattr(server, "_cleanup_terminals", AsyncMock())
     monkeypatch.setattr(server, "cleanup_voice", AsyncMock())
     await server.start()
     assert server.lease_registry.lifecycle_worker is not None
@@ -586,7 +592,6 @@ async def test_byte_cap_truncation_preserves_forward_progress(
     page_row = _Row(title="x" * 500)
     server = _server()
     server.terminal_manager = _PageManager([page_row])
-    monkeypatch.setattr(server, "sweep_tmux_panes", AsyncMock(return_value={}))
     monkeypatch.setattr(
         "gobby.servers.websocket.terminal_ws.require_machine_id", lambda: LOCAL_MACHINE_ID
     )

@@ -1,7 +1,9 @@
 """Tests for auto-heal dispatch: inject_result, block_on_failure, proxy self-routing."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 
 def _make_hook_manager_stub(
-    tool_proxy_getter=None,
+    tool_proxy_getter: Callable[[], Any] | None = None,
     loop: asyncio.AbstractEventLoop | None = None,
 ) -> MagicMock:
     """Create a minimal stub with just the fields _dispatch_mcp_calls needs."""
@@ -695,3 +697,34 @@ class TestReturnValueBackwardsCompat:
 
         result = stub._dispatch_mcp_calls([{"server": "s", "tool": "t", "arguments": {}}], event)
         assert result == []
+
+
+class TestDispatchTiming:
+    """Blocking dispatches record per-server/tool time inside the hook delivery."""
+
+    @pytest.mark.parametrize("inject_result", [True, False])
+    def test_blocking_dispatch_records_per_tool_duration(self, inject_result: bool) -> None:
+        from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
+
+        proxy = AsyncMock()
+        proxy.list_servers = AsyncMock(
+            return_value={"success": True, "servers": [], "total": 0, "connected": 0}
+        )
+        stub = _make_hook_manager_stub(tool_proxy_getter=lambda: proxy, loop=None)
+        calls = [
+            {
+                "server": "_proxy",
+                "tool": "list_mcp_servers",
+                "arguments": {},
+                "background": False,
+                "inject_result": inject_result,
+                "block_on_failure": False,
+            }
+        ]
+        timings = HookPhaseTimings()
+
+        with hook_phase_timing_scope(timings):
+            stub._dispatch_mcp_calls(calls, _make_event())
+
+        proxy.list_servers.assert_awaited_once()
+        assert timings.breakdown()["hook_mcp_dispatch:_proxy:list_mcp_servers"] > 0

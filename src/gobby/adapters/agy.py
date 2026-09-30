@@ -39,7 +39,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 AGY_APPROVAL_DENIED_REASON = (
-    "This tool requires user approval, which AGY cannot collect; the call is denied."
+    "This tool requires user approval, which Antigravity cannot collect; the call is denied."
 )
 
 

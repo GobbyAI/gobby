@@ -15,7 +15,7 @@ _MONITOR_PATHS = (
     ROOT / "src/gobby/agents/kill.py",
     ROOT / "src/gobby/agents/capture.py",
     ROOT / "src/gobby/agents/memory_watchdog.py",
-    ROOT / "src/gobby/agents/tmux/pane_monitor.py",
+    ROOT / "src/gobby/agents/interactive_attention_monitor.py",
 )
 
 _OWNED_CONSUMER_PATHS = _MONITOR_PATHS + (
@@ -96,7 +96,7 @@ _SLICE_PATHS = (
     ROOT / "tests/agents/test_lifecycle_monitor_watchdog_idle_recovery.py",
     ROOT / "tests/agents/test_lifecycle_monitor_extra.py",
     ROOT / "tests/agents/test_lifecycle_monitor_watchdog_diagnostics.py",
-    ROOT / "tests/agents/tmux/test_pane_monitor.py",
+    ROOT / "tests/agents/test_interactive_attention_monitor.py",
     ROOT / "tests/agents/test_memory_watchdog.py",
     ROOT / "tests/agents/test_spawn_executor.py",
     ROOT / "tests/agents/test_resume_executor.py",

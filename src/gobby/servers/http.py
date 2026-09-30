@@ -128,7 +128,7 @@ class HTTPServer:
         self._hook_manager: HookManager | None = None
 
         if self.mcp_manager:
-            self._init_mcp_subsystems(services, port)
+            self._init_mcp_subsystems(services)
 
         from gobby.servers.app_factory import create_app
 
@@ -204,7 +204,7 @@ class HTTPServer:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
 
-    def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
+    def _init_mcp_subsystems(self, services: ServiceContainer) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
         from gobby.mcp_proxy.manager import MCPClientManager
         from gobby.runner_init.services import AIServiceBundle, MemoryServiceBundle
@@ -264,10 +264,6 @@ class HTTPServer:
         def resolve_task_validator() -> TaskValidator | None:
             service = self._runtime_service("task_validator")
             return service if isinstance(service, TaskValidator) else services.task_validator
-
-        def resolve_ask_service(project_id: str) -> Any | None:
-            resolver = getattr(services, "get_ask_service", None)
-            return resolver(project_id) if callable(resolver) else None
 
         memory_services = captured_service("memory_services")
         mcp_manager = resolve_mcp_manager()
@@ -364,7 +360,6 @@ class HTTPServer:
             terminal_runtime_registry=getattr(services, "terminal_runtime_registry", None),
             write_coordinator=getattr(services, "write_coordinator", None),
             dream_coordinator_resolver=lambda: getattr(services, "memory_dream_coordinator", None),
-            ask_service_resolver=resolve_ask_service,
             workspace_manager=services.workspace_manager,
             workspace_ops_resolver=lambda: getattr(
                 services.websocket_server, "workspace_ops", None
@@ -423,7 +418,7 @@ class HTTPServer:
         # Create tools handler
         self._tools_handler = GobbyDaemonTools(
             mcp_manager=mcp_manager,
-            daemon_port=port,
+            daemon_port=self.bootstrap_config.daemon_port,
             websocket_port=ws_port,
             start_time=self._start_time,
             internal_manager=self._internal_manager,

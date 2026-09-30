@@ -93,8 +93,11 @@ def detect_context_compact_guidance(
         or variables.get("pending_context_reset") is True
         or _is_plan_mode(variables)
     )
-    # A timed-out read must leave the previous guidance and turn counters intact.
-    session = None if skip_session_lookup else _load_session(session_manager, session_id)
+    # A timed-out or failed read must leave the previous guidance and turn counters intact.
+    try:
+        session = None if skip_session_lookup else _load_session(session_manager, session_id)
+    except _SessionReadFailed:
+        return
     variables["context_compact_guidance_kind"] = ""
     variables["context_compact_guidance_message"] = ""
 
@@ -175,7 +178,10 @@ def detect_mid_turn_context_compact_guidance(
         variables[TOOL_CALLS_SINCE_NUDGE_VARIABLE] = 0
         return
 
-    session = _load_session(session_manager, session_id)
+    try:
+        session = _load_session(session_manager, session_id)
+    except _SessionReadFailed:
+        return
     used = _used_tokens_from_session(session)
     if used is None:
         _write_band(variables, "none", None, None)
@@ -342,8 +348,16 @@ def _load_session(
     except (DatabaseOperationDeadlineExceeded, QueryCanceled):
         raise
     except Exception as exc:
-        logger.debug("Failed to load session %s for context usage observer: %s", session_id, exc)
-        return None
+        logger.warning(
+            "Context usage observer could not read session %s; keeping its pressure band: %s",
+            session_id,
+            exc,
+        )
+        raise _SessionReadFailed from exc
+
+
+class _SessionReadFailed(Exception):
+    """The session read failed; the caller keeps the session's prior pressure state."""
 
 
 def _used_tokens_from_session(session: _SessionValue | None) -> int | None:

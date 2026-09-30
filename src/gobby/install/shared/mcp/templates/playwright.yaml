@@ -5,3 +5,4 @@ enabled: true
 transport: stdio
 command: npx
 args: ["-y", "@playwright/mcp@latest"]
+runtime_hook: chrome_executable_path

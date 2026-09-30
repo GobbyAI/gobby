@@ -84,19 +84,19 @@ def test_kept_fields_still_exist() -> None:
     assert hasattr(config, "access_debounce_seconds")
     assert hasattr(config, "kg")
     assert hasattr(config, "code_link_min_score")
-    assert hasattr(config, "recall_signal_logging")
-    assert hasattr(config, "recall_signal_log_path")
+    assert hasattr(config, "index_reshow_after_injections")
     assert hasattr(config, "cluster_recall_expansion")
     assert hasattr(config, "cluster_expansion_per_entity")
     assert hasattr(config, "cluster_min_cluster_size")
     assert hasattr(config, "cluster_min_samples")
 
 
-def test_recall_signal_logging_defaults_off() -> None:
-    """Recall/search signal logging should be explicitly opt-in."""
-    config = MemoryConfig()
-    assert config.recall_signal_logging is False
-    assert config.recall_signal_log_path is None
+def test_index_reshow_after_injections_default() -> None:
+    """The re-show horizon defaults to 5 injections and must be at least 1."""
+    assert MemoryConfig().index_reshow_after_injections == 5
+    assert MemoryConfig(index_reshow_after_injections=1).index_reshow_after_injections == 1
+    with pytest.raises(ValidationError, match="index_reshow_after_injections"):
+        MemoryConfig(index_reshow_after_injections=0)
 
 
 def test_cluster_recall_expansion_defaults_off() -> None:

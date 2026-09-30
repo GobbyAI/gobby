@@ -25,7 +25,7 @@ _LW = 18
 # nothing at all: see #22551.
 _MANAGED_BIN_LABELS = ("gcode", "ghook", "gterm", "gclient")
 _CODING_CLI_LABELS = (
-    ("agy", "AGY CLI"),
+    ("agy", "Antigravity CLI"),
     ("claude", "Claude Code"),
     ("codex", "Codex CLI"),
     ("droid", "Droid CLI"),
@@ -248,7 +248,8 @@ def _unhealthy_required_dependencies(deps_info: dict[str, Any] | None) -> list[t
     required, _, runtime = _dependency_sections(deps_info)
     unhealthy: list[tuple[str, str]] = []
     for name, record in {**runtime, **required}.items():
-        if not isinstance(record, dict) or record.get("state") == "healthy":
+        # A probe that missed the status deadline is unknown, not unhealthy.
+        if not isinstance(record, dict) or record.get("state") in {"healthy", "timed_out"}:
             continue
         error = _safe_status_text(record.get("error")) or "dependency is unhealthy"
         unhealthy.append((str(name), error))
@@ -313,6 +314,8 @@ def format_status_message(
     lines: list[str] = []
     data = api_data or {}
     unhealthy_dependencies = _unhealthy_required_dependencies(deps_info)
+    raw_timed_out = (deps_info or {}).get("timed_out")
+    timed_out = [str(name) for name in raw_timed_out] if isinstance(raw_timed_out, list) else []
     starting = (
         running
         and control_plane_error is not None
@@ -429,7 +432,8 @@ def format_status_message(
                     detail += "  [stale: rebuild and install]"
                 lines.append(f"  {f'{name}:':<{_LW}}{detail}")
             elif version is None:
-                lines.append(f"  {f'{name}:':<{_LW}}not installed")
+                missing = "timed out" if f"gobby.{name}" in timed_out else "not installed"
+                lines.append(f"  {f'{name}:':<{_LW}}{missing}")
 
         lines.append("")
 
@@ -446,7 +450,8 @@ def format_status_message(
             if version:
                 lines.append(f"  {label + ':':<{_LW}}{version}{details}")
             else:
-                lines.append(f"  {label + ':':<{_LW}}not installed{details}")
+                missing = "timed out" if f"coding_clis.{name}" in timed_out else "not installed"
+                lines.append(f"  {label + ':':<{_LW}}{missing}{details}")
         lines.append("")
 
     # ---- Git hooks ----
@@ -680,6 +685,9 @@ def format_status_message(
 
     for name, error in unhealthy_dependencies:
         health_issues.append(f"Required dependency {name}: {error}")
+
+    if timed_out:
+        health_issues.append(f"Status probes timed out: {', '.join(timed_out)}")
 
     degraded_services = data.get("degraded_services")
     if isinstance(degraded_services, list):

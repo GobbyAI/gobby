@@ -396,6 +396,56 @@ async def test_inline_mcp_effect_runs_on_daemon_loop(
     assert dispatch_loops == [loop]
 
 
+@pytest.mark.asyncio
+async def test_rule_loop_timing_attributes_executor_bridge_and_mcp_call(
+    db: HubDatabase,
+    manager: RuleDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "timed-dispatch",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.AFTER_TOOL,
+            effects=[
+                RuleEffect(type="mcp_call", server="gobby-test", tool="slow", inject_result=True)
+            ],
+        ),
+    )
+
+    async def dispatcher(
+        _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+    ) -> dict[str, Any]:
+        released = asyncio.Event()
+        asyncio.get_running_loop().call_later(0.01, released.set)
+        await released.wait()
+        return {"success": True, "result": {}}
+
+    timings = HookPhaseTimings()
+    with hook_phase_timing_scope(timings):
+        await RuleEngine(db, mcp_dispatcher=dispatcher).evaluate(
+            _make_event(HookEventType.AFTER_TOOL),
+            SESSION_ID,
+            {"project": {"id": "project-id", "path": "/tmp/project"}},
+        )
+
+    breakdown = timings.breakdown()
+    assert "rule_loop_executor_queue" in breakdown
+    assert "rule_loop_bridge_queue" in breakdown
+    assert breakdown["rule_loop_bridge_work"] > 0
+    assert breakdown["rule_mcp_call:gobby-test:slow"] >= breakdown["rule_loop_bridge_work"]
+    assert breakdown["rule_loop_pass_work"] >= breakdown["rule_mcp_call:gobby-test:slow"]
+    assert "rule_loop_pass_resume" in breakdown
+    for key in ("rule_step_after_tool", "rule_late_mcp_injections", "rule_finalize_response"):
+        assert key in breakdown
+    # A fresh engine misses the rule cache, so both read sites run and split.
+    for site in ("rule_db_load_rules", "rule_db_active_rules"):
+        for part in ("queue", "work", "resume"):
+            assert f"{site}_{part}" in breakdown
+    assert breakdown["rule_engine_db_reads"] >= (
+        breakdown["rule_db_load_rules_work"] + breakdown["rule_db_active_rules_work"]
+    )
+
+
 async def _assert_evaluation(
     db: HubDatabase,
     event: HookEvent,
@@ -2146,7 +2196,7 @@ class TestOverrideCollectsMcpCalls:
                     RuleEffect(
                         type="mcp_call",
                         server="gobby-memory",
-                        tool="judge_shadow_relevance",
+                        tool="surface_memories",
                         arguments={"session_id": "test"},
                         background=True,
                     )
@@ -2165,7 +2215,7 @@ class TestOverrideCollectsMcpCalls:
         # The critical assertion: mcp_calls must be collected despite the override block
         calls = response.metadata.get("mcp_calls", [])
         assert len(calls) == 1
-        assert calls[0]["tool"] == "judge_shadow_relevance"
+        assert calls[0]["tool"] == "surface_memories"
         # tool_block_pending should still be cleared
         assert variables["tool_block_pending"] is False
 
@@ -2184,7 +2234,7 @@ class TestOverrideCollectsMcpCalls:
                     RuleEffect(
                         type="mcp_call",
                         server="gobby-memory",
-                        tool="judge_shadow_relevance",
+                        tool="surface_memories",
                         arguments={"session_id": "test"},
                         background=True,
                     )
@@ -2201,7 +2251,7 @@ class TestOverrideCollectsMcpCalls:
         assert response.decision == "allow"
         calls = response.metadata.get("mcp_calls", [])
         assert len(calls) == 1
-        assert calls[0]["tool"] == "judge_shadow_relevance"
+        assert calls[0]["tool"] == "surface_memories"
         assert variables["force_allow_stop"] is False
 
     @pytest.mark.asyncio

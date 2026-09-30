@@ -240,7 +240,7 @@ _CLI_INSTALL_META: dict[str, tuple[str, str, str | None]] = {
     "claude": ("Claude Code", "~/.claude/settings.json", "~/.claude.json"),
     "grok": ("Grok CLI", "~/.grok/hooks/gobby.json", None),
     "qwen": ("Qwen CLI", "~/.qwen/settings.json", "~/.qwen/settings.json"),
-    "agy": ("AGY CLI", "~/.gemini/config/hooks.json", "~/.gemini/config/mcp_config.json"),
+    "agy": ("Antigravity CLI", "~/.gemini/config/hooks.json", "~/.gemini/config/mcp_config.json"),
     "codex": ("Codex", "~/.codex/hooks.json", None),
     "droid": ("Droid CLI", "~/.factory/hooks.json", "~/.factory/mcp.json"),
 }
@@ -508,7 +508,7 @@ def _echo_uninstall_summary(results: dict[str, dict[str, Any]]) -> bool:
 
 # Uninstall CLI meta: cli_name -> (display_name, uninstall_label)
 _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
-    "agy": ("AGY CLI", "hooks from settings"),
+    "agy": ("Antigravity CLI", "hooks from settings"),
     "claude": ("Claude Code", "hooks from settings"),
     "grok": ("Grok CLI", "hooks from settings"),
     "qwen": ("Qwen CLI", "hooks from settings"),

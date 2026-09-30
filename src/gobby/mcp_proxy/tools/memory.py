@@ -29,68 +29,32 @@ from gobby.mcp_proxy.tools.memory_scope import (
     memory_owned_by_current_project,
     resolve_current_memory_id,
 )
+from gobby.mcp_proxy.tools.memory_session import resolve_claimed_task_id, resolve_session
 from gobby.mcp_proxy.tools.memory_surface import register_memory_surface_tools
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
 from gobby.memory.manager import MemoryManager
 from gobby.memory.scoring import undecay
-from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from gobby.config.app import DaemonConfig
-    from gobby.llm.service import LLMService
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
 
 logger = logging.getLogger(__name__)
 
 _SEARCH_CALLER = "mcp_proxy.memory.search_memories"
-
-
-def _record_delivered_hits(
-    manager: MemoryManager,
-    *,
-    session_id: str | None,
-    recall_request_id: str,
-    project_id: str,
-    hits: list[dict[str, Any]],
-) -> None:
-    """Write one ``recall_injection_outcomes`` row per hit the agent received.
-
-    The tool result is the delivery point of the search cohort (usefulness-label
-    contract §5.1): a returned hit is ``injected`` at its list position; hits cut
-    by ``limit`` or ``min_score`` never reach the agent and get no row. Fails
-    open — the recorder is None while the signal hub is off and swallows its own
-    write errors.
-    """
-    recorder = getattr(manager, "injection_outcome_recorder", None)
-    if recorder is None or not session_id or not hits:
-        return
-    recorder(
-        [
-            {
-                "session_id": session_id,
-                "recall_request_id": recall_request_id,
-                "memory_id": hit["id"],
-                "project_id": project_id,
-                "outcome": "injected",
-                "injection_position": position,
-                "caller": _SEARCH_CALLER,
-            }
-            for position, hit in enumerate(hits)
-        ]
-    )
+ACCESSED_MEMORY_IDS_VARIABLE = "accessed_memory_ids"
+# One record per (memory, fetching task); the oldest is evicted at the cap.
+_ACCESSED_MEMORY_IDS_MAX = 1000
 
 
 def create_memory_registry(
     memory_manager_resolver: Callable[[], MemoryManager | None],
-    llm_service_resolver: Callable[[], LLMService | None] | None = None,
     memory_backup_manager_resolver: Callable[[], Any | None] | None = None,
     session_manager: Any | None = None,
-    startup_config: DaemonConfig | None = None,
-    config_resolver: Callable[[], DaemonConfig | None] | None = None,
     dream_coordinator_resolver: Callable[[], MemoryDreamCoordinator | None] | None = None,
     task_manager: Any | None = None,
 ) -> InternalToolRegistry:
@@ -99,12 +63,9 @@ def create_memory_registry(
 
     Args:
         memory_manager_resolver: per-call resolver for the current MemoryManager
-        llm_service_resolver: per-call resolver for the current LLM service (optional)
         memory_backup_manager_resolver: per-call resolver for the current
             MemoryBackupManager (optional)
         session_manager: SessionManager for session lookups (optional)
-        startup_config: DaemonConfig fallback before runtime readiness
-        config_resolver: per-operation current DaemonConfig resolver
         dream_coordinator_resolver: resolves the daemon-owned dream coordinator
             for the memory_dream tools (optional)
         task_manager: Task manager used to resolve and authorize closed-task reviews
@@ -126,17 +87,10 @@ def create_memory_registry(
             raise RuntimeError("Memory services are unavailable in the current runtime epoch")
         return manager
 
-    def _llm_service() -> LLMService | None:
-        return llm_service_resolver() if llm_service_resolver is not None else None
-
     def _memory_backup_manager() -> Any | None:
         return (
             memory_backup_manager_resolver() if memory_backup_manager_resolver is not None else None
         )
-
-    def _config() -> DaemonConfig | None:
-        config = config_resolver() if config_resolver is not None else None
-        return config if config is not None else startup_config
 
     register_memory_write_tools(registry, _memory_manager)
     register_memory_review_tools(
@@ -197,14 +151,9 @@ def create_memory_registry(
         and the undecayed ``score_range``.
         """
         try:
-            from uuid import uuid4
-
             from gobby.utils.session_context import get_current_session_id
 
             effective_min_score = min_score if min_score > 0 else 0.0
-            # Joinable correlation id (contract §2): threads the signal event,
-            # the returned payload, and any downstream injection outcome.
-            recall_request_id = str(uuid4())
             current_session_id = get_current_session_id()
             current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
             canonical_memory_type = (
@@ -224,7 +173,6 @@ def create_memory_registry(
                 tags_any=tags_any,
                 tags_none=tags_none,
                 session_id=current_session_id,
-                recall_request_id=recall_request_id,
                 caller=_SEARCH_CALLER,
             )
 
@@ -267,17 +215,9 @@ def create_memory_registry(
                         }
                     )
 
-            _record_delivered_hits(
-                manager,
-                session_id=current_session_id,
-                recall_request_id=recall_request_id,
-                project_id=current_project_id,
-                hits=hits,
-            )
             return {
                 "success": True,
                 "memories": hits,
-                "recall_request_id": recall_request_id,
                 "project_id": current_project_id,
                 "diagnostics": {
                     "candidates_considered": len(candidates),
@@ -415,24 +355,48 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _record_accessed_memory(session_id: str, memory_id: str) -> None:
+        if session_manager is None:
+            return
+        resolved = resolve_session(session_manager, session_id)
+        if resolved is None:
+            return
+        resolved_session_id = resolved[0]
+        record = {
+            "memory_id": memory_id,
+            "task_id": resolve_claimed_task_id(session_manager.db, resolved_session_id),
+        }
+        SessionVariableManager(session_manager.db).upsert_bounded_list_variable(
+            resolved_session_id,
+            ACCESSED_MEMORY_IDS_VARIABLE,
+            record,
+            identity=record,
+            max_items=_ACCESSED_MEMORY_IDS_MAX,
+        )
+
     @registry.tool(
         name="get_memory",
-        read_only=True,
         description="Get details of a specific memory by ID.",
     )
-    def get_memory(memory_id: str) -> dict[str, Any]:
+    async def get_memory(memory_id: str, session_id: str) -> dict[str, Any]:
         """
-        Get details of a specific memory.
+        Get details of a specific memory, counting the fetch as an access.
 
         Args:
             memory_id: The ID of the memory to retrieve
+            session_id: The fetching session; its claimed task tags the access record
         """
         try:
-            resolved_id = resolve_current_memory_id(_memory_manager(), memory_id)
+            manager = _memory_manager()
+            resolved_id = await asyncio.to_thread(resolve_current_memory_id, manager, memory_id)
             if resolved_id is None:
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = _memory_manager().get_memory(resolved_id, project_id=get_current_project_id())
+            memory = await asyncio.to_thread(
+                manager.get_memory, resolved_id, project_id=get_current_project_id()
+            )
             if memory:
+                await manager.record_memory_access(memory.id)
+                await asyncio.to_thread(_record_accessed_memory, session_id, memory.id)
                 return {
                     "success": True,
                     "memory": {
@@ -448,6 +412,7 @@ def create_memory_registry(
                         "source_task_id": getattr(memory, "source_task_id", None),
                         "created_by_agent": getattr(memory, "created_by_agent", None),
                         "access_count": memory.access_count,
+                        "surfaced_count": memory.surfaced_count,
                         "tags": memory.tags,
                     },
                 }
@@ -734,35 +699,6 @@ def create_memory_registry(
             project_id = get_current_project_id()
             count = await backup_manager.backup(project_id=project_id)
             return {"success": True, "backed_up": count}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
-
-    @registry.tool(
-        name="judge_shadow_relevance",
-        description=(
-            "Judge pending shadow-memory recall candidates for the current session. "
-            "The turn-end lifecycle rule invokes this independently of session summaries."
-        ),
-    )
-    async def judge_shadow_relevance_tool(
-        session_id: str = "",
-    ) -> dict[str, Any]:
-        """Process pending durable shadow-recall rows for one completed turn."""
-        if not session_id:
-            return {"success": False, "error": "session_id is required"}
-        try:
-            manager = _memory_manager()
-            llm_service = _llm_service()
-            config = _config()
-            if llm_service is None or config is None:
-                return {"success": True, "skipped": True, "reason": "judge unavailable"}
-            completed = await judge_shadow_candidate_relevance(
-                memory_manager=manager,
-                llm_service=llm_service,
-                config=config,
-                session_id=session_id,
-            )
-            return {"success": True, "completed": completed}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

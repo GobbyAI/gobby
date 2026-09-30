@@ -8,6 +8,8 @@ DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
 DAEMON_HEALTH_RETRY_DELAY_SECONDS = 1.0
 DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS = 2.0
 DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS = 5.0
+DAEMON_UNAVAILABLE_ERROR_CODE = "DAEMON_UNAVAILABLE"
+REQUEST_TIMEOUT_ERROR_CODE = "REQUEST_TIMEOUT"
 
 
 def _strip_none(obj: Any) -> Any:
@@ -32,7 +34,7 @@ def _daemon_unavailable_result(port: int, detail: str) -> dict[str, Any]:
             f"Gobby daemon HTTP control plane is unavailable at localhost:{port}: {detail}. "
             "Check `gobby status` or restart with `gobby restart --verbose`."
         ),
-        "error_code": "DAEMON_UNAVAILABLE",
+        "error_code": DAEMON_UNAVAILABLE_ERROR_CODE,
     }
 
 
@@ -48,7 +50,7 @@ def _request_timeout_result(path: str, timeout: float) -> dict[str, Any]:
         "error": (
             f"Gobby daemon request timed out after {timeout:g}s while calling {path}.{retry_hint}"
         ),
-        "error_code": "REQUEST_TIMEOUT",
+        "error_code": REQUEST_TIMEOUT_ERROR_CODE,
     }
 
 

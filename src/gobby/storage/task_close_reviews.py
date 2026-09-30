@@ -11,8 +11,8 @@ from typing import Any, Literal, cast
 
 from psycopg.errors import UniqueViolation
 
-from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.agents import DELIBERATE_STOP_TERMINAL_REASONS, TERMINAL_AGENT_RUN_STATUSES
+from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 ActiveTaskCloseReviewStatus = Literal["queued", "launching", "running", "finalizing"]
@@ -148,6 +148,14 @@ class TaskCloseReview:
         return self.status in TERMINAL_TASK_CLOSE_REVIEW_STATUSES
 
 
+class TaskCloseReviewBusyError(RuntimeError):
+    """Another task owns this project's close-review admission slot."""
+
+    def __init__(self, active_review: TaskCloseReview) -> None:
+        self.active_review = active_review
+        super().__init__(f"Close reviewer active for {active_review.task_ref}")
+
+
 class TaskCloseReviewStore:
     """Transactional CRUD for ``task_close_reviews``."""
 
@@ -220,11 +228,26 @@ class TaskCloseReviewStore:
         stable_facts: Mapping[str, object],
         review_id: str,
         run: QueuedAgentRunSpec,
+        max_concurrency: int = 1,
     ) -> tuple[TaskCloseReview, bool]:
-        """Atomically enqueue a review and its durable waitable agent run."""
+        """Atomically enqueue a review and its durable waitable agent run.
+
+        Other tasks' active reviews count against ``max_concurrency``; a task
+        never holds two reviews at once.
+        """
         now = datetime.now(UTC)
         active = list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)
         with self.db.transaction() as conn:
+            project_row = conn.execute(
+                "SELECT project_id FROM tasks WHERE id = %s", (task_id,)
+            ).fetchone()
+            if project_row is not None:
+                project_id = project_row["project_id"]
+                # Serialize admissions with queue promotion on the project row.
+                conn.execute("SELECT id FROM projects WHERE id = %s FOR UPDATE", (project_id,))
+                blocker = _admission_blocker(conn, project_id, task_id, max_concurrency)
+                if blocker is not None:
+                    raise TaskCloseReviewBusyError(blocker)
             row = conn.execute(
                 f"""
                 WITH launch_task AS (
@@ -368,10 +391,19 @@ class TaskCloseReviewStore:
                 SELECT COUNT(*) AS count
                 FROM task_close_reviews r
                 JOIN tasks t ON t.id = r.task_id
+                LEFT JOIN agent_runs a ON a.id = r.agent_run_id
                 WHERE t.project_id = %s
-                  AND r.status = ANY(%s)
+                  AND (
+                      r.status = ANY(%s)
+                      OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+                  )
                 """,
-                (project_id, ["launching", "running", "finalizing"]),
+                (
+                    project_id,
+                    ["launching", "running", "finalizing"],
+                    list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+                    list(TERMINAL_AGENT_RUN_STATUSES),
+                ),
             ).fetchone()
             active_count = int(active["count"]) if isinstance(active, Mapping) else 0
             slots = max_concurrency - active_count
@@ -442,6 +474,13 @@ class TaskCloseReviewStore:
             "task_id = %s AND status = ANY(%s)",
             (task_id, list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES)),
         )
+
+    def get_admission_blocker(
+        self, project_id: str, *, task_id: str, max_concurrency: int
+    ) -> TaskCloseReview | None:
+        """Report, for an advisory preview, the review that admission would refuse beside."""
+        with self.db.transaction() as conn:
+            return _admission_blocker(conn, project_id, task_id, max_concurrency)
 
     def get_delivered_rejected_verdict(
         self,
@@ -799,6 +838,44 @@ class TaskCloseReviewStore:
         return _review_from_row(row) if row is not None else None
 
 
+def _admission_blocker(
+    conn: Transaction, project_id: str, task_id: str, max_concurrency: int
+) -> TaskCloseReview | None:
+    """Return the review that keeps ``task_id`` from a new review, if any.
+
+    A terminal review whose run is still alive holds its slot until the run exits.
+    The task's own live review is reused rather than refused.
+    """
+    occupied = conn.execute(
+        f"""
+        SELECT {_QUALIFIED_COLUMNS}
+        FROM task_close_reviews AS r
+        JOIN tasks AS t ON t.id = r.task_id
+        LEFT JOIN agent_runs AS a ON a.id = r.agent_run_id
+        WHERE t.project_id = %s
+          AND (
+              r.status = ANY(%s)
+              OR (r.status = ANY(%s) AND a.status <> ALL(%s))
+          )
+        ORDER BY (r.task_id = %s) DESC, r.created_at, r.id
+        """,  # nosec B608 - static column fragment
+        (
+            project_id,
+            list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
+            list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
+            list(TERMINAL_AGENT_RUN_STATUSES),
+            task_id,
+        ),
+    ).fetchall()
+    own = next((row for row in occupied if str(row["task_id"]) == task_id), None)
+    if own is not None:
+        return (
+            _review_from_row(own) if own["status"] in TERMINAL_TASK_CLOSE_REVIEW_STATUSES else None
+        )
+    others = [row for row in occupied if str(row["task_id"]) != task_id]
+    return _review_from_row(others[0]) if len(others) >= max_concurrency else None
+
+
 def _json(value: Mapping[str, Any]) -> str:
     return json.dumps(dict(value), sort_keys=True, separators=(",", ":"), default=str)
 
@@ -852,6 +929,7 @@ __all__ = [
     "TERMINAL_TASK_CLOSE_REVIEW_STATUSES",
     "ActiveTaskCloseReviewStatus",
     "TaskCloseReview",
+    "TaskCloseReviewBusyError",
     "TaskCloseReviewStatus",
     "TaskCloseReviewStore",
     "TerminalTaskCloseReviewStatus",

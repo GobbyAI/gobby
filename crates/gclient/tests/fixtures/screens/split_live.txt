@@ -2,18 +2,18 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*120
-02 | Machines                  ⍾ alpha      ⍾ second    +                                                                   |
-02 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*1 text/panel_bg+b*1 yellow/panel_bg+b*1 text/panel_bg+b*10 text/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*13 text/surface0*66
-03 | ⍾ scripted · local       ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-03 : text/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*8 overlay0/surface_dim*8 text/surface_dim*6 text/panel_bg*1 line/panel_bg*94
-04 |                          ┌ ⍾ term-alpha ───────────────────────────────┐┌ ○ term-beta · Focused ──────────────────────┐|
-04 : text/panel_bg*26 yellow/panel_bg*47 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*23
+01 |                                                                                                                        |
+01 : text/panel_bg*120
+02 | Machines                  ⍾ alpha    │ ⍾ second    +                                                                   |
+02 : text/surface0*1 subtext0/surface0+b*8 text/surface0*16 text/panel_bg*1 text/surface1+b*1 yellow/surface1+b*1 text/surface1+b*10 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 overlay1/surface0*3 text/surface0*66
+03 | ⍾ scripted · local       ┌ ⍾ term-alpha ───────────────────────────────┐┌ ○ term-beta · Focused ──────────────────────┐|
+03 : text/surface0*1 yellow/surface0*1 overlay0/surface0+d*1 text/surface0+b*8 overlay0/surface0*8 text/surface0*6 text/panel_bg*1 yellow/panel_bg*47 accent/panel_bg*1 accent/panel_bg+b*23 accent/panel_bg*23
+04 |                          │                                             ││                                             │|
+04 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 05 | Projects      [working]  │                                             ││                                             │|
 05 : text/surface0*1 subtext0/surface0+b*8 text/surface0*6 overlay0/surface0*9 text/surface0*1 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 06 | ⍾ alpha (main ↑2 ↓1)   ▸ │                                             ││                                             │|
-06 : text/surface_dim*1 yellow/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*5 subtext0/surface_dim*6 green/surface_dim*3 subtext0/surface_dim*4 text/surface_dim*3 accent/surface_dim*1 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+06 : text/surface0*1 yellow/surface0*1 overlay0/surface0+d*1 text/surface0+b*5 subtext0/surface0*6 green/surface0*3 subtext0/surface0*4 text/surface0*3 accent/surface0*1 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 07 |                          │                                             ││                                             │|
 07 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 08 | Agents           [view]  │                                             ││                                             │|
@@ -40,10 +40,10 @@
 18 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 19 |                          │                                             ││                                             │|
 19 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-20 |                          │                                             ││                                             │|
-20 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
-21 |                          │             waiting for frames              ││             waiting for frames              │|
-21 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*13 overlay0/panel_bg*18 text/panel_bg*14 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*13 overlay0/panel_bg*18 text/panel_bg*14 accent/panel_bg*1
+20 |                          │             waiting for frames              ││             waiting for frames              │|
+20 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*13 overlay0/panel_bg*18 text/panel_bg*14 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*13 overlay0/panel_bg*18 text/panel_bg*14 accent/panel_bg*1
+21 |                          │                                             ││                                             │|
+21 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 22 |                          │                                             ││                                             │|
 22 : text/panel_bg*26 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 23 |                          │                                             ││                                             │|
@@ -51,9 +51,9 @@
 24 | Terminals                │                                             ││                                             │|
 24 : text/surface0*1 subtext0/surface0+b*9 text/surface0*15 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 25 | ○ term-beta      gclient │                                             ││                                             │|
-25 : text/surface_dim*1 overlay0/surface_dim*1 overlay0/surface_dim+d*1 text/surface_dim+b*9 text/surface_dim*6 overlay0/surface_dim*7 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+25 : text/surface0*1 overlay0/surface0*1 overlay0/surface0+d*1 text/surface0+b*9 text/surface0*6 overlay0/surface0*7 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 26 |                          │                                             ││                                             │|
-26 : text/surface_dim*25 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
+26 : text/surface0*25 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 27 | ○ term-gamma     gclient │                                             ││                                             │|
 27 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*10 text/panel_bg*5 overlay0/panel_bg*7 text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*45 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*45 accent/panel_bg*1
 28 |                          │                                             ││                                             │|

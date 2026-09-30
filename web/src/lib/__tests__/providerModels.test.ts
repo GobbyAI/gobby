@@ -390,7 +390,7 @@ describe("providerModels", () => {
         provider: "agy",
         available: false,
         source: "unsupported",
-        display_name: "AGY",
+        display_name: "Antigravity",
         installed: true,
         supports_web_chat: false,
         supports_agent_spawn: false,
@@ -400,8 +400,8 @@ describe("providerModels", () => {
     ];
 
     expect(getProviderDisplayName("grok")).toBe("Grok");
-    expect(getProviderDisplayName("agy")).toBe("AGY");
-    expect(getProviderDisplayNameFromEntry(entries[1])).toBe("AGY");
+    expect(getProviderDisplayName("agy")).toBe("Antigravity");
+    expect(getProviderDisplayNameFromEntry(entries[1])).toBe("Antigravity");
     expect(getOrderedProviders(["qwen", "agy", "grok"])).toEqual([
       "agy",
       "grok",
@@ -829,7 +829,7 @@ describe("providerModels", () => {
     expect(isHiddenProvider("AGY")).toBe(false);
     expect(isHiddenProvider("codex")).toBe(false);
     expect(isHiddenProvider(null)).toBe(false);
-    expect(getProviderDisplayName("agy")).toBe("AGY");
+    expect(getProviderDisplayName("agy")).toBe("Antigravity");
   });
 
   it("drops unavailable AGY catalog entries", async () => {

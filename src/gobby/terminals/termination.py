@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from gobby.terminals.actor_scope import ActorScopeError, resolve_actor_scope
+from gobby.terminals.in_doubt import in_doubt_spawns
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -27,6 +29,14 @@ class TerminalTerminationError(RuntimeError):
         self.code = code
 
 
+class TerminalInDoubtError(RuntimeError):
+    """A spawn owner still holds the terminal, so no kill may decide its outcome."""
+
+
+class TerminalKillUnprovenError(RuntimeError):
+    """The runtime kill returned but the backend session is still present."""
+
+
 class TerminalStore(Protocol):
     """The terminal manager operations termination needs."""
 
@@ -35,6 +45,8 @@ class TerminalStore(Protocol):
     def get_live_for_session(self, session_id: str) -> Terminal | None: ...
 
     def mark_exited(self, terminal_id: str) -> Terminal | None: ...
+
+    def settle_lock(self, terminal_id: str) -> AbstractAsyncContextManager[None]: ...
 
 
 def resolve_terminal_reference(
@@ -66,9 +78,22 @@ async def kill_terminal(
     *,
     grace_seconds: float = 1.0,
 ) -> Terminal | None:
-    """Terminate one tracked row and synchronously mark it exited."""
-    await registry.resolve(terminal.backend).terminate(terminal, grace_seconds)
-    return terminals.mark_exited(terminal.id)
+    """Terminate one tracked row and mark it exited only once the kill is proven."""
+    from gobby.agents.capture import backend_session_present
+
+    async with terminals.settle_lock(terminal.id):
+        if in_doubt_spawns.holds(terminal.id):
+            raise TerminalInDoubtError(f"Terminal {terminal.id} has a spawn in flight")
+        current = terminals.get(terminal.id)
+        if current is None or current.state == "exited":
+            return None
+        runtime = registry.resolve(current.backend)
+        await runtime.terminate(current, grace_seconds)
+        if await backend_session_present(runtime, current):
+            raise TerminalKillUnprovenError(
+                f"Terminal {current.id} is still present after terminate"
+            )
+        return terminals.mark_exited(current.id)
 
 
 async def terminate_terminal(

@@ -14,6 +14,7 @@ from gobby.hooks.terminal_context import (
     clear_codex_seat_index,
     enrich_terminal_context_with_cwd,
     hook_cwd,
+    hook_sandbox_enabled,
 )
 from gobby.sessions.handoff_identity import terminal_contexts_match
 
@@ -477,3 +478,110 @@ def test_fresh_seat_adoption_is_cached_without_a_rescan() -> None:
     assert first == second == expected
     assert third == {"cwd": "/repo"}
     assert process_iter.call_count == 2
+
+
+# The successor TUI for #14730 sat at a login prompt for 62 s before minting its thread.
+SLOW_SEAT_STARTED_AT = FRESH_MINTED_AT - 188.0
+
+
+def test_new_thread_adopts_the_only_unowned_seat_past_the_fresh_window() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    owned = _fresh_seat(
+        70100, tty="/dev/ttys004", terminal_id="pane-b", create_time=SLOW_SEAT_STARTED_AT - 30
+    )
+    slow = _fresh_seat(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=SLOW_SEAT_STARTED_AT
+    )
+    checked: list[tuple[int, float]] = []
+
+    def available(pid: int, create_time: float) -> bool:
+        checked.append((pid, create_time))
+        return pid != 70100
+
+    with _process_table([_managed_host(), owned, slow]):
+        hook_only = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread
+        )
+        adopted = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, seat_available=available
+        )
+        later_hook = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread
+        )
+
+    expected = _seat_context(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=SLOW_SEAT_STARTED_AT
+    )
+    assert hook_only == {"cwd": "/repo"}
+    assert adopted == later_hook == expected
+    assert sorted(checked) == [(70100, SLOW_SEAT_STARTED_AT - 30), (71386, SLOW_SEAT_STARTED_AT)]
+
+
+@pytest.mark.parametrize(
+    ("second_seat_owned", "cwd"),
+    [(False, "/repo"), (True, None)],
+    ids=["two-unowned-seats", "unknown-cwd"],
+)
+def test_new_thread_refuses_an_ambiguous_unowned_seat(
+    second_seat_owned: bool, cwd: str | None
+) -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    first = _fresh_seat(
+        70100, tty="/dev/ttys004", terminal_id="pane-b", create_time=SLOW_SEAT_STARTED_AT - 30
+    )
+    second = _fresh_seat(
+        71386, tty="/dev/ttys001", terminal_id="pane-a", create_time=SLOW_SEAT_STARTED_AT
+    )
+
+    with _process_table([_managed_host(), first, second]):
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT),
+            cwd,
+            external_id=thread,
+            seat_available=lambda pid, _: pid != second.pid or not second_seat_owned,
+        )
+
+    assert result == ({"cwd": cwd} if cwd else {})
+
+
+def test_new_thread_never_adopts_an_owned_or_later_seat() -> None:
+    thread = _uuid7(FRESH_MINTED_AT)
+    owned = _fresh_seat(
+        70100, tty="/dev/ttys004", terminal_id="pane-b", create_time=SLOW_SEAT_STARTED_AT
+    )
+    later = _fresh_seat(
+        71500, tty="/dev/ttys001", terminal_id="pane-a", create_time=FRESH_MINTED_AT + 0.5
+    )
+    checked: list[int] = []
+
+    def available(pid: int, _create_time: float) -> bool:
+        checked.append(pid)
+        return pid != 70100
+
+    with _process_table([_managed_host(), owned, later]):
+        result = enrich_terminal_context_with_cwd(
+            dict(HOST_CONTEXT), "/repo", external_id=thread, seat_available=available
+        )
+
+    assert result == {"cwd": "/repo"}
+    assert checked == [70100]
+
+
+# #23049 option A: a pane locks only under Gobby's SRT, which the launch and
+# run records carry. The hook records only a launcher's explicit bool; a
+# provider's own sandbox flags or permission mode never read as locked.
+@pytest.mark.parametrize(
+    ("input_data", "expected"),
+    [
+        ({"sandbox_enabled": True}, True),
+        ({"sandbox_enabled": False}, False),
+        ({}, None),
+        ({"sandbox_enabled": "yes"}, None),
+        ({"sandbox_enabled": 1}, None),
+        ({"permission_mode": "bypassPermissions"}, None),
+    ],
+)
+def test_hook_sandbox_enabled_reports_only_the_launcher_bool(
+    input_data: dict[str, Any], expected: bool | None
+) -> None:
+    assert hook_sandbox_enabled(input_data) is expected

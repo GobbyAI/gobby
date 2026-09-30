@@ -19,6 +19,10 @@ from gobby.storage.tasks._models import (
     TaskClosedError,
     TaskStaleStateError,
 )
+from gobby.storage.tasks._owner_shield import (
+    OWNER_MAY_RESUME_GUARD_SQL,
+    owner_may_resume_guard_params,
+)
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.storage.tasks._updates import update_task
@@ -217,7 +221,17 @@ def claim_task(
             permitted_owners,
         )
     with db.transaction() as conn:
+        prior = conn.execute(
+            "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE", (task_id,)
+        ).fetchone()
         cursor = conn.execute(sql, params)
+        prior_owner = prior["claimed_by_session_id"] if prior is not None else None
+        if cursor.rowcount == 1 and prior_owner is not None and str(prior_owner) != session_id:
+            from gobby.workflows.state_manager import SessionVariableManager
+
+            # The ambient transaction retains the task row lock through the
+            # variable mutation. A failed cleanup rolls back the ownership move.
+            SessionVariableManager(db).release_task_claim(str(prior_owner), task_id)
 
     if cursor.rowcount == 0:
         task = get_task(db, task_id)
@@ -286,10 +300,40 @@ def release_task_claim_if_owned(
     expected_owner: str,
 ) -> Task | None:
     """Clear ownership only when the task still has the expected live owner."""
+    return _release_if_owned(db, task_id, expected_owner, "", [])
+
+
+def release_abandoned_task_claim(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    expected_owner: str,
+) -> Task | None:
+    """Clear ownership only while the expected owner still cannot resume.
+
+    The owner-may-resume guard runs inside the UPDATE, so a hold, revival, or
+    compaction committed after the caller's eligibility read keeps the claim.
+    """
+    return _release_if_owned(
+        db,
+        task_id,
+        expected_owner,
+        f"AND {OWNER_MAY_RESUME_GUARD_SQL}",
+        owner_may_resume_guard_params(utc_now()),
+    )
+
+
+def _release_if_owned(
+    db: HubDatabase,
+    task_id: str,
+    expected_owner: str,
+    guard_sql: str,
+    guard_params: list[Any],
+) -> Task | None:
     now = utc_now()
     with db.transaction() as conn:
         cursor = conn.execute(
-            """
+            f"""
             UPDATE tasks
                SET claimed_by_session_id = NULL,
                    updated_at = %s
@@ -297,8 +341,9 @@ def release_task_claim_if_owned(
                AND claimed_by_session_id = %s
                AND closed_at IS NULL
                AND escalated_at IS NULL
+               {guard_sql}
             """,
-            (now, task_id, expected_owner),
+            (now, task_id, expected_owner, *guard_params),
         )
     return get_task(db, task_id) if cursor.rowcount == 1 else None
 
@@ -401,18 +446,22 @@ def escalate_task(
     return get_task(db, task_id)
 
 
-def escalate_task_if_owned(
+def escalate_abandoned_task(
     db: HubDatabase,
     task_id: str,
     *,
     reason: str,
     expected_owner: str,
 ) -> Task | None:
-    """Escalate only when the task still has the expected live owner."""
+    """Escalate only while the expected owner still owns it and cannot resume.
+
+    The owner-may-resume guard runs inside the UPDATE, so a hold, revival, or
+    compaction committed after the caller's eligibility read keeps the claim.
+    """
     now = utc_now()
     with db.transaction() as conn:
         cursor = conn.execute(
-            """
+            f"""
             UPDATE tasks
                SET claimed_by_session_id = NULL,
                    escalated_at = %s,
@@ -423,8 +472,9 @@ def escalate_task_if_owned(
                AND claimed_by_session_id = %s
                AND closed_at IS NULL
                AND escalated_at IS NULL
+               AND {OWNER_MAY_RESUME_GUARD_SQL}
             """,
-            (now, reason, now, task_id, expected_owner),
+            (now, reason, now, task_id, expected_owner, *owner_may_resume_guard_params(now)),
         )
     return get_task(db, task_id) if cursor.rowcount == 1 else None
 

@@ -14,7 +14,7 @@ agents use their authorized domain MCP tools.
 3. For the terminal workspace, inspect `gclient --help`. Select the intended
    `--project`, `--daemon-url`, and `--token-file` when defaults do not identify
    the target. Startup checks configuration, health, and host protocol support.
-   For command-mode verbs, read [gclient commands](../gclient/commands.md) and
+   For command-mode verbs, read [gclient commands](gclient-commands.md) and
    use `gclient help`; pane and workspace context determine omitted refs.
 4. Distinguish observing a terminal from taking keyboard control. Follow the
    gclient guide for control, detach, close, and orphan cleanup; a diagnostic

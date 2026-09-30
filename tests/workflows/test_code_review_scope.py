@@ -168,6 +168,41 @@ async def test_cd_tail_wrapped_only_commit_excludes_unrelated_staged_code(repo: 
     assert await _reviewable(wrapper.replace("--only", "--include"), repo, cwd=repo.parent)
 
 
+async def test_chained_add_then_pathspec_commit_of_new_documentation_needs_no_review(
+    repo: Path,
+) -> None:
+    _edit(repo, "src/app.py", "value = 2\n")
+    _git(repo, "add", "--", "src/app.py")
+    _edit(repo, "docs/new.md", "new page\n")
+
+    # The add stages the untracked page; only mode leaves the staged code out.
+    assert (
+        await _reviewable("git add -- docs/new.md && git commit -m d -- docs/new.md", repo) is False
+    )
+
+
+async def test_chained_add_then_heredoc_message_commit_needs_no_review(repo: Path) -> None:
+    _edit(repo, "docs/new.md", "new page\n")
+    command = "git add -- docs/new.md && git commit -F - -- docs/new.md <<'EOF'\ndocs\nEOF"
+
+    assert await _reviewable(command, repo) is False
+
+
+async def test_chained_add_then_pathspec_commit_of_new_code_stays_gated(repo: Path) -> None:
+    _edit(repo, "src/new.py", "value = 3\n")
+
+    assert await _reviewable("git add -- src/new.py && git commit -m c -- src/new.py", repo) is True
+
+
+async def test_chained_commit_records_only_untracked_paths_the_add_stages(repo: Path) -> None:
+    _edit(repo, "docs/new.md", "new page\n")
+    _edit(repo, "docs/tool.py", "value = 4\n")
+
+    # The untracked code under the commit pathspec is never added, so never recorded.
+    assert await _reviewable("git add docs/new.md && git commit -m d docs", repo) is False
+    assert await _reviewable("git add docs && git commit -m d docs", repo) is True
+
+
 async def test_commit_all_reads_unstaged_tracked_changes(repo: Path) -> None:
     _edit(repo, "docs/guide.md", "changed guide\n")
     assert await _reviewable("git commit -am docs", repo) is False
@@ -254,6 +289,12 @@ async def test_git_failure_stays_gated(repo: Path, tmp_path: Path) -> None:
     "command",
     [
         "git add src/app.py && git commit -m mixed",
+        "git add -A && git commit -m docs -- docs/guide.md",
+        "git add -- 'docs/*.md' && git commit -m docs -- docs/guide.md",
+        "git add -- docs/guide.md && git commit -i -m docs -- docs/guide.md",
+        "git add -- docs/guide.md; git commit -m docs -- docs/guide.md",
+        "git rm -- src/app.py && git commit -m docs -- docs/guide.md",
+        "git -C other add docs/guide.md && git commit -m docs -- docs/guide.md",
         "cd other && git commit -m docs",
         "git commit -m docs | tee log.txt",
         "git commit --amend --no-edit",
@@ -333,6 +374,19 @@ async def test_gate_allows_a_documentation_only_commit(
     response = await handler._evaluate_rules(
         _gate_event("git commit -m docs", session, project, repo)
     )
+
+    assert response.decision == "allow"
+
+
+async def test_gate_allows_chained_add_documentation_commit(
+    gate_handler: tuple[WorkflowHookHandler, Session, Project],
+    repo: Path,
+) -> None:
+    handler, session, project = gate_handler
+    _edit(repo, "docs/new.md", "new page\n")
+    command = "git add -- docs/new.md && git commit -m docs -- docs/new.md"
+
+    response = await handler._evaluate_rules(_gate_event(command, session, project, repo))
 
     assert response.decision == "allow"
 

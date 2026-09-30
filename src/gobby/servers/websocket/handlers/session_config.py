@@ -16,7 +16,8 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from gobby.servers.websocket.db import run_db
-from gobby.terminals.lookup import manager_for_terminal_context
+from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.write_coordinator import WriteRequest
 from gobby.utils.json_helpers import json_dumps
 
 if TYPE_CHECKING:
@@ -206,36 +207,62 @@ async def _set_attached_session_agent(
     if not await _validate_persona_agent(mixin, websocket, session_manager, agent_name, session):
         return
 
-    ctx: dict[str, Any] = {}
-    if isinstance(getattr(session, "terminal_context", None), dict):
-        ctx = session.terminal_context
-    tmux_pane = ctx.get("tmux_pane")
-    if not tmux_pane and isinstance(getattr(session, "metadata", None), dict):
-        tmux_pane = session.metadata.get("terminal_tmux_pane")
-    if not isinstance(tmux_pane, str) or not tmux_pane:
+    terminal_manager = getattr(mixin, "terminal_manager", None)
+    coordinator = getattr(mixin, "write_coordinator", None)
+    try:
+        terminal = (
+            await run_db(mixin, terminal_manager.resolve_live_for_session, session)
+            if terminal_manager is not None
+            else None
+        )
+    except Exception:
+        logger.warning("Failed to resolve managed terminal for persona change", exc_info=True)
+        terminal = None
+    if terminal is None or coordinator is None:
         await mixin._send_error(
             websocket,
-            f"Session {target_session_id} has no tmux pane for persona switching",
+            f"Session {target_session_id} has no managed terminal for persona switching",
             code="NO_TERMINAL_TARGET",
+        )
+        return
+    if terminal.backend != "native":
+        await mixin._send_error(
+            websocket,
+            "Persona switching requires a native terminal",
+            code="UNSUPPORTED_TERMINAL_BACKEND",
         )
         return
 
     try:
         # Extra defense: quote the agent_name even though regex should ensure safety
-        ok = await manager_for_terminal_context(ctx).dispatch_keys(
-            tmux_pane,
-            f"/gobby persona {quote(agent_name)}\n",
+        outcome = await coordinator.write(
+            WriteRequest(
+                terminal_id=terminal.id,
+                action_key=f"persona:{agent_name}",
+                origin="automatic",
+                kind="text",
+                payload=f"/gobby persona {quote(agent_name)}",
+                submit=True,
+            )
         )
     except (OSError, RuntimeError, ValueError) as exc:
         logger.warning(
-            "tmux persona send_keys failed for pane %s: %s",
-            tmux_pane,
+            "Native persona write failed for terminal %s: %s",
+            terminal.id,
             exc,
             exc_info=True,
         )
-        ok = False
-    if not ok:
-        await mixin._send_error(websocket, "Failed to send persona command to attached session")
+        outcome = None
+    if not isinstance(outcome, Delivered):
+        await mixin._send_error(
+            websocket,
+            "Persona command delivery is unconfirmed"
+            if isinstance(outcome, IndeterminateWrite)
+            else "Failed to send persona command to attached session",
+            code="PERSONA_DISPATCH_UNCONFIRMED"
+            if isinstance(outcome, IndeterminateWrite)
+            else "PERSONA_DISPATCH_FAILED",
+        )
         return
 
     await websocket.send(

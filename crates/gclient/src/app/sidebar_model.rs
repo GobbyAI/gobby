@@ -82,9 +82,9 @@ pub struct AgentEntry {
     pub name: String,
     /// The run's agent definition (`backend-developer`); no rung of `name`.
     pub agent_definition_name: Option<String>,
-    /// Persisted session title before the row-label fallback ladder. Pane
-    /// headers use this exact rung, then fall back to their own label/name.
-    pub session_title: Option<String>,
+    /// The session's manual title without its ref prefix; it takes the
+    /// definition's place in the row's line 1 and the pane header.
+    pub manual_title: Option<String>,
     pub provider: String,
     pub model: Option<String>,
     /// The model's provider-printed name, resolved daemon-side; the row
@@ -114,14 +114,48 @@ pub struct AgentEntry {
     pub state: RowState,
     pub attention: Option<Attention>,
     pub last_activity_at: Option<String>,
+    /// Whether an OS sandbox wraps the agent's process.
+    pub sandbox: SandboxState,
+}
+
+/// Whether Gobby's SRT launch sandbox wraps a pane's process.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SandboxState {
+    Sandboxed,
+    /// Every pane Gobby did not launch under SRT: hand-opened seats, bare
+    /// shells, and panes with no agent row.
+    #[default]
+    Unrestricted,
+}
+
+impl SandboxState {
+    /// Locked only on a Gobby launch record: the run's SRT record says it was
+    /// enforced, or a managed session's launch contract enabled it. A direct
+    /// session's own claim never locks the pane.
+    pub fn resolve(session: Option<bool>, run: Option<bool>, managed: bool) -> Self {
+        if run == Some(true) || (managed && session == Some(true)) {
+            Self::Sandboxed
+        } else {
+            Self::Unrestricted
+        }
+    }
+
+    /// The word the state stands for, for help text and the text glyphs.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Sandboxed => "sandboxed",
+            Self::Unrestricted => "unrestricted",
+        }
+    }
 }
 
 impl AgentEntry {
-    /// The run's agent definition name, else the provider label a session's
-    /// provisional title carries.
+    /// The session's manual title, else the run's agent definition name,
+    /// else the provider label a session's provisional title carries.
     pub fn definition_label(&self) -> String {
-        self.agent_definition_name
+        self.manual_title
             .clone()
+            .or_else(|| self.agent_definition_name.clone())
             .unwrap_or_else(|| provider_label(&self.provider).to_string())
     }
 
@@ -157,7 +191,7 @@ impl AgentEntry {
 
 /// The daemon's `_PROVIDER_TITLE_LABELS` (`storage/sessions/_title_defaults.py`).
 const PROVIDER_LABELS: [(&str, &str); 10] = [
-    ("agy", "AGY"),
+    ("agy", "Antigravity"),
     ("claude", "Claude"),
     ("claude_code", "Claude Code"),
     ("codex", "Codex"),
@@ -270,7 +304,6 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 .and_then(|(_, run)| run.agent_name.clone())
                 .filter(|name| !name.is_empty());
             let name = session_title
-                .clone()
                 .or_else(|| agent_definition_name.clone())
                 .or_else(|| {
                     entry
@@ -280,11 +313,22 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 })
                 .or_else(|| pane.map(|pane| pane.display_name().to_string()))
                 .unwrap_or_else(|| short_terminal_id(&terminal.terminal_id).to_string());
+            let manual_title = session
+                .and_then(|(project, session)| {
+                    let name = rows
+                        .projects
+                        .iter()
+                        .find(|row| row.id == project)
+                        .map_or("", |row| row.name.as_str());
+                    session.manual_title(name)
+                })
+                .map(str::to_owned);
             let machine_id = session
                 .and_then(|(_, session)| session.machine_id.clone())
                 .or_else(|| run.and_then(|(_, run)| run.machine_id.clone()))
                 .filter(|machine| !machine.is_empty())
                 .unwrap_or_else(|| inputs.local_machine.to_string());
+            let managed = entry.run_id.is_some() || entry.entry_id.starts_with("run:");
             Some(AgentEntry {
                 entry_id: entry.entry_id.clone(),
                 project_id: project_id.to_string(),
@@ -293,7 +337,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 backend: terminal.backend,
                 name,
                 agent_definition_name,
-                session_title,
+                manual_title,
                 provider: provider.unwrap_or_default(),
                 model: entry
                     .model
@@ -318,13 +362,18 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                     }),
                 context_percent: entry.context_percent,
                 tokens_used: entry.tokens_used,
-                managed: entry.run_id.is_some() || entry.entry_id.starts_with("run:"),
+                managed,
                 worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),
                 state: agent_state(entry, pane),
                 attention: entry.attention.clone(),
                 last_activity_at: entry.last_activity_at.clone(),
+                sandbox: SandboxState::resolve(
+                    session.and_then(|(_, session)| session.sandbox_enabled),
+                    run.and_then(|(_, run)| run.sandbox.as_ref()?.enforced),
+                    managed,
+                ),
             })
         })
         .collect()

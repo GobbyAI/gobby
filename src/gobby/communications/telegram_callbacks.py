@@ -95,7 +95,7 @@ class TelegramCallbackRegistry:
         normalized_chat_id = _required_string(chat_id, "chat_id")
         normalized_thread_id = _optional_string(thread_id)
         normalized_project_id = _optional_string(project_id)
-        ttl = _bounded_ttl(ttl_seconds)
+        ttl = bounded_callback_ttl(ttl_seconds)
         buttons = _normalized_keyboard(keyboard)
         button_count = sum(len(row) for row in buttons)
         if button_count > self._max_entries:
@@ -352,13 +352,13 @@ def callback_generation(callback_data: object) -> int:
     return int(tag) if separator and tag.isdigit() else 0
 
 
-def _bounded_ttl(value: object) -> int:
+def bounded_callback_ttl(value: object) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise ValueError("Telegram callback_ttl_seconds must be an integer")
     if not _MIN_TTL_SECONDS <= value <= _MAX_TTL_SECONDS:
         raise ValueError(
             "Telegram callback_ttl_seconds must be between "
-            f"{_MIN_TTL_SECONDS} and {_MAX_TTL_SECONDS}"
+            f"{_MIN_TTL_SECONDS} and {_MAX_TTL_SECONDS} (got {value})"
         )
     return value
 

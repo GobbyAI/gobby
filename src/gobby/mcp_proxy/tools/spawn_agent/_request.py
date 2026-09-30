@@ -8,7 +8,7 @@ from gobby.agents.isolation import IsolationContext, SpawnConfig
 from gobby.agents.reasoning import SpawnReasoningResolution
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
-from gobby.agents.spawn_models import ManagedRuntimeProfile, SpawnRequest
+from gobby.agents.spawn_models import SpawnRequest
 
 from ._generation_endpoint import SpawnGenerationEndpointResolution
 
@@ -37,14 +37,12 @@ def build_spawn_request(
     phase_timings_ms: dict[str, float],
     terminal_backend: Literal["tmux", "native"],
     droid_mode: Literal["exec", "interactive"],
-    managed_runtime_profile: ManagedRuntimeProfile | None = None,
 ) -> SpawnRequest:
     """Keep request construction separate from allocation and launch scheduling."""
     return SpawnRequest(
         prompt=prompt,
         cwd=isolation_ctx.cwd,
         provider=spawn_config.provider,
-        managed_runtime_profile=managed_runtime_profile,
         session_id=prepared_spawn.session_id,
         run_id=run_id,
         agent_run_id=run_id,
@@ -78,12 +76,8 @@ def build_spawn_request(
         reasoning_required=reasoning.reasoning_required,
         reasoning_status=reasoning.status,
         reasoning_message=reasoning.message,
-        auto_approve=(
-            managed_runtime_profile.auto_approve if managed_runtime_profile is not None else True
-        ),
-        provider_args=(
-            managed_runtime_profile.provider_args if managed_runtime_profile is not None else ()
-        ),
+        auto_approve=True,
+        provider_args=(),
         sandbox_config=sandbox_config,
         extra_env={
             **(endpoint.child_env or {}),

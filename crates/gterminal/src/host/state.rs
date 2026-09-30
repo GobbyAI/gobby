@@ -14,6 +14,7 @@ use super::backpressure::FrameMailbox;
 use super::config::HostConfig;
 use super::events::{EventReceiver, HostEvents};
 use super::helpers::{err, list_rows, resolved_spawn_cwd, s, spawn_fingerprint};
+use super::image::PinnedImage;
 #[cfg(feature = "vt-engine")]
 use super::spawn::{spawn_prepared, PreparedChild};
 use crate::protocol::render_ansi::BlitEncoder;
@@ -21,6 +22,7 @@ use crate::protocol::{
     validate_dimensions, FrameData, ObservationReason, ObservationState, RenderEncoding,
     ServerMessage, LIFECYCLE_RESERVED_SLOTS,
 };
+use crate::terminal_theme::ThemeDeclaration;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Identity {
@@ -82,6 +84,12 @@ pub(crate) struct TerminalSlot {
     pub(crate) reserve_generation: u64,
     pub(crate) observer_bind: ObserverBind,
     pub(crate) commit_deadline: Option<Instant>,
+    /// Set while a kill proves its group gone. The slot stays listed so an
+    /// in-flight kill never reads as absence; commit and reapers leave it alone.
+    pub(crate) killing: bool,
+    /// Set once a kill failed to prove its group gone. From then on the
+    /// slot's death is its group's death, not its leader's exit.
+    pub(crate) kill_unproven: bool,
     #[cfg(feature = "vt-engine")]
     pub(crate) child: Option<PreparedChild>,
     #[cfg(feature = "vt-engine")]
@@ -126,6 +134,9 @@ pub struct Attachment {
     pub(crate) last_semantic_frame: Option<FrameData>,
     /// Per-attachment diff state for `terminal_ansi` frames.
     pub(crate) encoder: BlitEncoder,
+    /// Last `SetTerminalTheme` this stream declared; applied to the slot
+    /// whenever this stream's bound attachment holds the input grant.
+    pub(crate) declared_theme: Option<crate::terminal_theme::ThemeDeclaration>,
 }
 
 pub(crate) struct Inner {
@@ -136,6 +147,36 @@ pub(crate) struct Inner {
     pub(crate) attachments: HashMap<u64, Attachment>,
     pub(crate) next_attachment: u64,
     control_owners: HashSet<u64>,
+    /// Most recent declaration from any stream: the theme a spawn without an
+    /// explicit `terminal_theme` starts with. `None` until a client declares,
+    /// in which case panes start with the unset theme.
+    pub(crate) latest_theme: Option<crate::terminal_theme::ThemeDeclaration>,
+}
+
+impl Inner {
+    /// Registry state with no connections: attachments and control owners
+    /// are connection-scoped and never outlive the image that held them.
+    pub(crate) fn restored(
+        terminals: HashMap<Identity, TerminalSlot>,
+        next_host_id: u64,
+        reservations: HashMap<String, Reservation>,
+        latest_theme: Option<ThemeDeclaration>,
+    ) -> Self {
+        let by_host_id = terminals
+            .values()
+            .map(|slot| (slot.host_terminal_id.clone(), slot.identity.clone()))
+            .collect();
+        Self {
+            terminals,
+            by_host_id,
+            next_host_id,
+            reservations,
+            attachments: HashMap::new(),
+            next_attachment: 1,
+            control_owners: HashSet::new(),
+            latest_theme,
+        }
+    }
 }
 
 pub struct HostState {
@@ -144,11 +185,19 @@ pub struct HostState {
     pub local_token: String,
     pub host_epoch: String,
     pub version: String,
+    /// The pinned image this host runs from; `version` is its `CARGO_PKG_VERSION`.
+    pub image: PinnedImage,
     pub host_pid: u32,
     pub draining: AtomicBool,
     pub socket_dir_removed: AtomicBool,
     pub shutdown: watch::Sender<bool>,
     pub next_conn: AtomicU64,
+    /// Upgrades this host epoch has survived; a cold start is generation 0.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) generation: u64,
+    /// The last upgrade attempt and its outcome, carried across the exec.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) upgrade: std::sync::Mutex<Option<super::handover::UpgradeRecord>>,
     pub(crate) events: HostEvents,
     pub(crate) inner: Mutex<Inner>,
     pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -160,33 +209,63 @@ impl HostState {
         token: String,
         local_token: String,
         host_epoch: String,
-        version: String,
+        image: PinnedImage,
         host_pid: u32,
         shutdown: watch::Sender<bool>,
     ) -> Arc<Self> {
         let events = HostEvents::new(host_epoch.clone(), config.event_queue_bytes as usize);
+        let inner = Inner::restored(HashMap::new(), 1, HashMap::new(), None);
         Arc::new(Self {
             config,
             token,
             local_token,
             host_epoch,
-            version,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            image,
             host_pid,
             draining: AtomicBool::new(false),
             socket_dir_removed: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
+            #[cfg(all(unix, feature = "vt-engine"))]
+            generation: 0,
+            #[cfg(all(unix, feature = "vt-engine"))]
+            upgrade: std::sync::Mutex::new(None),
             events,
             polls: Mutex::new(HashMap::new()),
-            inner: Mutex::new(Inner {
-                terminals: HashMap::new(),
-                by_host_id: HashMap::new(),
-                next_host_id: 1,
-                reservations: HashMap::new(),
-                attachments: HashMap::new(),
-                next_attachment: 1,
-                control_owners: HashSet::new(),
-            }),
+            inner: Mutex::new(inner),
+        })
+    }
+
+    /// A host rebuilt from a handover: the carried epoch, generation, event
+    /// log, slots, and reservations, with this image's config and tokens.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) fn restored(
+        config: HostConfig,
+        token: String,
+        local_token: String,
+        image: PinnedImage,
+        host_pid: u32,
+        shutdown: watch::Sender<bool>,
+        carried: super::handover::CarriedHost,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            config,
+            token,
+            local_token,
+            host_epoch: carried.host_epoch,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            image,
+            host_pid,
+            draining: AtomicBool::new(false),
+            socket_dir_removed: AtomicBool::new(false),
+            shutdown,
+            next_conn: AtomicU64::new(1),
+            generation: carried.generation,
+            upgrade: std::sync::Mutex::new(Some(carried.upgrade)),
+            events: carried.events,
+            polls: Mutex::new(HashMap::new()),
+            inner: Mutex::new(carried.inner),
         })
     }
 
@@ -204,6 +283,8 @@ impl HostState {
             "ok": true,
             "host_epoch": self.host_epoch,
             "version": self.version,
+            "binary_version": self.version,
+            "binary_sha256": self.image.sha256,
             "host_pid": self.host_pid,
         })
     }
@@ -273,12 +354,22 @@ impl HostState {
             .get("commit_deadline_ms")
             .and_then(Value::as_u64)
             .unwrap_or(30_000);
+        let explicit_theme = match extra.get("terminal_theme") {
+            None | Some(Value::Null) => None,
+            Some(value) => match serde_json::from_value::<ThemeDeclaration>(value.clone()) {
+                Ok(theme) => Some(theme),
+                Err(_) => return err("invalid_terminal_theme"),
+            },
+        };
         let identity = Identity {
             terminal_id: terminal_id.clone(),
             spawn_key: spawn_key.clone(),
         };
         let fingerprint = spawn_fingerprint(&argv, &env, &cwd, dims, &reservation_id, &reserve_key);
-        {
+        // The child waits at the gate until commit, so the theme resolved here
+        // answers its first OSC 10/11 query: the request's own theme, else the
+        // latest client declaration, else the unset theme.
+        let spawn_theme = {
             let inner = self.inner.lock().await;
             if let Some(existing) = inner.terminals.get(&identity) {
                 if existing.fingerprint == fingerprint {
@@ -308,10 +399,11 @@ impl HostState {
             if res.key != reserve_key || res.terminal_id != terminal_id {
                 return err("invalid_reservation");
             }
-        }
+            explicit_theme.or_else(|| inner.latest_theme.clone())
+        };
         #[cfg(not(feature = "vt-engine"))]
         {
-            let _ = (conn_id, deadline_ms, argv, cwd, env);
+            let _ = (conn_id, deadline_ms, argv, cwd, env, spawn_theme);
             err("not_implemented")
         }
         #[cfg(feature = "vt-engine")]
@@ -323,6 +415,7 @@ impl HostState {
                 &argv,
                 &env,
                 self.config.native_scrollback_max_bytes as usize,
+                spawn_theme.as_ref(),
             ) {
                 Ok(child) => child,
                 Err(_) => return err("spawn_failed"),
@@ -379,6 +472,8 @@ impl HostState {
                     generation,
                 },
                 commit_deadline: Some(Instant::now() + Duration::from_millis(deadline_ms)),
+                killing: false,
+                kill_unproven: false,
                 child: Some(child),
                 written_bytes: 0,
                 dropped_bytes: 0,
@@ -478,6 +573,7 @@ impl HostState {
                 delta_bytes: 0,
                 last_semantic_frame: None,
                 encoder: BlitEncoder::new(),
+                declared_theme: None,
             },
         );
         if let Some(slot) = inner.terminals.get_mut(&identity) {
@@ -532,6 +628,8 @@ impl HostState {
             .get_mut(&attachment_id)
             .ok_or("terminal_gone")?;
         attachment.client_attachment_id = Some(client_attachment_id);
+        let host_terminal_id = attachment.host_terminal_id.clone();
+        super::theme::apply_holder_theme(&mut inner, &host_terminal_id);
         Ok(())
     }
 
@@ -672,6 +770,8 @@ pub(crate) async fn insert_native_slot(
         reserve_generation: 0,
         observer_bind: ObserverBind::None,
         commit_deadline: None,
+        killing: false,
+        kill_unproven: false,
         #[cfg(feature = "vt-engine")]
         child: None,
         #[cfg(feature = "vt-engine")]

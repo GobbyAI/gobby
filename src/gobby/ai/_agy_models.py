@@ -13,7 +13,7 @@ def _agy_model_entry(model: str) -> dict[str, Any]:
     entry = AGY_MODELS.get(normalized)
     if entry is None:
         supported = ", ".join(sorted(AGY_MODELS))
-        raise ValueError(f"Unsupported AGY model {model!r}. Supported models: {supported}")
+        raise ValueError(f"Unsupported Antigravity model {model!r}. Supported models: {supported}")
     return entry
 
 
@@ -21,14 +21,14 @@ def _effort_display_map(model: str) -> dict[str, str]:
     entry = _agy_model_entry(model)
     raw_display = entry.get("effort_display")
     if not isinstance(raw_display, dict):
-        raise RuntimeError(f"AGY model {model!r} is missing effort display mappings")
+        raise RuntimeError(f"Antigravity model {model!r} is missing effort display mappings")
 
     display_by_effort: dict[str, str] = {}
     for effort, display in raw_display.items():
         if not isinstance(effort, str) or not effort.strip():
-            raise RuntimeError(f"AGY model {model!r} has an invalid effort key")
+            raise RuntimeError(f"Antigravity model {model!r} has an invalid effort key")
         if not isinstance(display, str) or not display.strip():
-            raise RuntimeError(f"AGY model {model!r} has an invalid display string")
+            raise RuntimeError(f"Antigravity model {model!r} has an invalid display string")
         display_by_effort[effort.strip().lower()] = display.strip()
     return display_by_effort
 
@@ -44,13 +44,13 @@ def agy_default_effort(model: str) -> str:
     reasoning = entry.get("reasoning")
     default = reasoning.get("default_effort") if isinstance(reasoning, dict) else None
     if not isinstance(default, str) or not default.strip():
-        raise RuntimeError(f"AGY model {model!r} is missing a default effort")
+        raise RuntimeError(f"Antigravity model {model!r} is missing a default effort")
 
     normalized = default.strip().lower()
     if normalized not in agy_supported_efforts(model):
         supported = ", ".join(sorted(agy_supported_efforts(model)))
         raise RuntimeError(
-            f"AGY model {model!r} default effort {normalized!r} is not in {supported}"
+            f"Antigravity model {model!r} default effort {normalized!r} is not in {supported}"
         )
     return normalized
 
@@ -59,7 +59,7 @@ def resolve_agy_effort(model: str, effort: str | None) -> str:
     """Resolve None/auto to AGY's concrete default and reject invalid pairs."""
     normalized_model, normalized_effort = normalize_agy_model_selection(model, effort)
     if normalized_model is None:
-        raise ValueError("AGY model is required")
+        raise ValueError("Antigravity model is required")
     normalized = normalize_reasoning_effort(normalized_effort)
     if normalized is None or normalized == "auto":
         return agy_default_effort(normalized_model)
@@ -68,7 +68,7 @@ def resolve_agy_effort(model: str, effort: str | None) -> str:
     if normalized not in supported:
         accepted = ", ".join(sorted(supported)) or "<none>"
         raise ValueError(
-            f"Unsupported AGY reasoning_effort {normalized!r} for model {normalized_model!r}; "
+            f"Unsupported Antigravity reasoning_effort {normalized!r} for model {normalized_model!r}; "
             f"accepted: {accepted}"
         )
     return normalized
@@ -78,14 +78,14 @@ def resolve_agy_display(model: str, effort: str | None) -> str:
     """Return the exact AGY --model display string for a model/effort pair."""
     normalized_model, normalized_effort = normalize_agy_model_selection(model, effort)
     if normalized_model is None:
-        raise ValueError("AGY model is required")
+        raise ValueError("Antigravity model is required")
     resolved = resolve_agy_effort(normalized_model, normalized_effort)
     display_by_effort = _effort_display_map(normalized_model)
     try:
         return display_by_effort[resolved]
     except KeyError as exc:
         raise RuntimeError(
-            f"AGY model {normalized_model!r} is missing display string for effort {resolved!r}"
+            f"Antigravity model {normalized_model!r} is missing display string for effort {resolved!r}"
         ) from exc
 
 

@@ -58,7 +58,6 @@ const VALIDATION_PATHS = [
   "gobby-tasks.validation.max_iterations",
   "gobby-tasks.validation.close_review_prompt_max_chars",
   "gobby-tasks.validation.close_review_min_severity",
-  "gobby-tasks.validation.close_review_max_concurrency_per_project",
   "gobby-tasks.validation.escalation_enabled",
   "gobby-tasks.validation.escalation_notify",
   "gobby-tasks.validation.escalation_webhook_url",
@@ -89,7 +88,6 @@ const TMUX_PATHS = [
   "tmux.reasoning_watchdog_interrupt_enabled",
   "tmux.reasoning_watchdog_settle_seconds",
   "tmux.init_timeout_seconds",
-  "tmux.init_activity_grace_seconds",
   "tmux.registration_timeout_seconds",
   "tmux.auto_enter_approval_prompts",
   "tmux.auto_enter_agent_terminals",
@@ -308,12 +306,6 @@ function ValidationGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Minimum blocking finding severity"
         ariaLabel="Minimum blocking finding severity"
       />
-      <NumberConfigField
-        fields={fields}
-        path="gobby-tasks.validation.close_review_max_concurrency_per_project"
-        label="Concurrent close reviewers per project"
-        ariaLabel="Concurrent close reviewers per project"
-      />
       <SwitchConfigField
         fields={fields}
         path="gobby-tasks.validation.escalation_enabled"
@@ -483,13 +475,6 @@ function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
         path="tmux.init_timeout_seconds"
         label="Init timeout (seconds)"
         ariaLabel="Init timeout (seconds)"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="tmux.init_activity_grace_seconds"
-        label="Init activity grace (seconds)"
-        ariaLabel="Init activity grace (seconds)"
-        step={0.5}
       />
       <NumberConfigField
         fields={fields}

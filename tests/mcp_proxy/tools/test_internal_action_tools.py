@@ -74,13 +74,11 @@ def memory_registry(
     mock_memory_manager,
     mock_memory_backup_manager,
     mock_session_manager,
-    mock_llm_service,
 ):
     from gobby.mcp_proxy.tools.memory import create_memory_registry
 
     return create_memory_registry(
         memory_manager_resolver=lambda: mock_memory_manager,
-        llm_service_resolver=lambda: mock_llm_service,
         memory_backup_manager_resolver=lambda: mock_memory_backup_manager,
         session_manager=mock_session_manager,
     )

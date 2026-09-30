@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct RgbColor {
     pub r: u8,
     pub g: u8,
@@ -36,6 +36,47 @@ pub struct TerminalTheme {
     pub foreground: Option<RgbColor>,
     pub background: Option<RgbColor>,
     pub palette: [Option<RgbColor>; 256],
+}
+
+/// A client's terminal colours as sent to the gterm host: on the frame stream
+/// in `ClientMessage::SetTerminalTheme`, and as the control `spawn` request's
+/// `terminal_theme` field. Only the colours the client sets travel, so the
+/// palette is sparse. Appearance follows the background's luminance.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+pub struct ThemeDeclaration {
+    pub foreground: Option<RgbColor>,
+    pub background: Option<RgbColor>,
+    pub palette: Vec<(u8, RgbColor)>,
+}
+
+impl ThemeDeclaration {
+    pub fn terminal_theme(&self) -> TerminalTheme {
+        let mut theme = TerminalTheme {
+            foreground: self.foreground,
+            background: self.background,
+            ..TerminalTheme::default()
+        };
+        for &(index, color) in &self.palette {
+            theme.palette[usize::from(index)] = Some(color);
+        }
+        theme
+    }
+
+    pub fn appearance(&self) -> Option<HostAppearance> {
+        self.background.map(RgbColor::inferred_appearance)
+    }
+}
+
+impl From<&TerminalTheme> for ThemeDeclaration {
+    fn from(theme: &TerminalTheme) -> Self {
+        Self {
+            foreground: theme.foreground,
+            background: theme.background,
+            palette: (0..=u8::MAX)
+                .filter_map(|index| Some((index, theme.palette[usize::from(index)]?)))
+                .collect(),
+        }
+    }
 }
 
 impl Default for TerminalTheme {

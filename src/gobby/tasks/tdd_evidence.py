@@ -27,7 +27,8 @@ _ASSERTION_DETAIL_RE = re.compile(
 _PYTEST_FAILURE_HEADER_RE = re.compile(r"^_{2,}\s+(?P<name>\S+)\s+_{2,}\s*$")
 _PYTEST_LOCATION_RE = re.compile(
     r"^\s*(?P<path>\S+\.py):\d+:"
-    r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed))?\s*$"
+    r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
+    r"| assert(?:\s+.*)?)?\s*$"
 )
 _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
     r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
@@ -303,6 +304,8 @@ def _has_named_red_failure(
     )
     lines = output.splitlines()
     for index, line in enumerate(lines):
+        if _PYTEST_LOCATION_RE.match(line):
+            continue
         if not any(pattern.search(line) for pattern in symbol_patterns):
             continue
         if _PASS_STATUS_RE.search(line):
@@ -315,8 +318,6 @@ def _has_named_red_failure(
 
 def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) -> tuple[bool, str]:
     """Recognize a failure raised from a targeted pytest body, including RTK summaries."""
-    if not is_assertion_failure(output):
-        return False, "run output is not an assertion, panic, or test-body failure"
     artifact_nodes, same_file_nodes = _selected_pytest_nodes(command, test)
     lines = output.splitlines()
     has_attributable_section = False
@@ -331,6 +332,11 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
             has_attributable_section = True
             if _section_has_failure_detail(section):
                 return True, ""
+    ordered_failure = _has_ordered_pytest_failure(lines, test)
+    if ordered_failure:
+        return True, ""
+    if ordered_failure is False:
+        return False, _red_section_rejection(test, has_attributable_section)
     if not artifact_nodes:
         # Location-only shapes (RTK, --tb=short) carry no failure header, so an
         # unqualified frame symbol is attributable only through explicit node
@@ -341,17 +347,65 @@ def _has_pytest_body_failure(command: str, output: str, test: AcceptanceTest) ->
         if match is None:
             continue
         reported_symbol = match.group("symbol")
-        if (
-            reported_symbol is None
-            or not _path_matches_artifact(match.group("path"), test)
-            or not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes)
-        ):
+        if not _path_matches_artifact(match.group("path"), test):
+            continue
+        if reported_symbol is None:
+            # --tb=line names no symbol; the location is attributable only when
+            # the artifact is the sole node the command selected in that file.
+            if same_file_nodes != artifact_nodes or len(artifact_nodes) != 1:
+                continue
+        elif not _selected_node_matches(reported_symbol, artifact_nodes, same_file_nodes):
             continue
         has_attributable_section = True
         section = _failure_section(lines, index)
         if _section_has_failure_detail(section):
             return True, ""
     return False, _red_section_rejection(test, has_attributable_section)
+
+
+def _has_ordered_pytest_failure(lines: list[str], test: AcceptanceTest) -> bool | None:
+    """Pair --tb=line locations with ordered summaries; None means no complete report."""
+    failures = next(
+        (index for index, line in enumerate(lines) if line.strip("= ") == "FAILURES"), None
+    )
+    if failures is None:
+        return None
+    summary = next(
+        (
+            index
+            for index in range(failures + 1, len(lines))
+            if lines[index].strip("= ") == "short test summary info"
+        ),
+        None,
+    )
+    if summary is None:
+        return None
+    sections: list[str] = []
+    start = failures + 1
+    for index in range(start, summary):
+        if _PYTEST_LOCATION_RE.match(lines[index]):
+            sections.append("\n".join(lines[start : index + 1]))
+            start = index + 1
+    failed_nodes: list[str] = []
+    for line in lines[summary + 1 :]:
+        if line.startswith("FAILED "):
+            parts = line.split(maxsplit=2)
+            if len(parts) < 2:
+                return False
+            failed_nodes.append(parts[1])
+    if len(sections) != len(failed_nodes):
+        return False
+    artifact = test.symbol.replace("::", ".")
+    for node, section in zip(failed_nodes, sections, strict=True):
+        path, separator, name = node.partition("::")
+        if (
+            separator
+            and _path_matches_artifact(path, test)
+            and name.replace("::", ".").split("[", maxsplit=1)[0] == artifact
+            and _section_has_failure_detail(section)
+        ):
+            return True
+    return False
 
 
 def _red_section_rejection(test: AcceptanceTest, has_attributable_section: bool) -> str:

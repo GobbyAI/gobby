@@ -121,7 +121,7 @@ impl FocusEvent {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum ColorScheme {
     Light,
     Dark,
@@ -340,7 +340,7 @@ pub struct CursorViewport {
     pub wide_tail: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct RgbColor {
     pub r: u8,
     pub g: u8,

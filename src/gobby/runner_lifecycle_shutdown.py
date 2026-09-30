@@ -219,7 +219,6 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_vector_rebuild_task",
         "_sandbox_run_root_sweep_task",
         "_memory_reconcile_task",
-        "_recall_drift_task",
         "_tmux_window_repair_task",
     )
 
@@ -745,9 +744,6 @@ async def shutdown_daemon_services(
                 if services is not None:
                     services.startup_ready = False
                     services.shutdown_in_progress = True
-                    stop_ask_services = getattr(services, "stop_ask_services", None)
-                    if stop_ask_services is not None:
-                        await stop_ask_services()
                 graceful_timeout = asyncio.timeout_at(graceful_deadline)
                 try:
                     async with graceful_timeout:

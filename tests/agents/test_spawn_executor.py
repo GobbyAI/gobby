@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import signal
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -1487,7 +1487,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=False,
-            reason="Installed AGY version 1.1.0 does not meet required version 1.1.18.",
+            reason="Installed Antigravity version 1.1.0 does not meet required version 1.1.18.",
         )
         with (
             patch(
@@ -1516,8 +1516,8 @@ class TestExecuteSpawn:
     @pytest.mark.parametrize(
         "reason",
         [
-            "Installed AGY version none does not meet required version 1.1.18.",
-            "Installed AGY version unparseable does not meet required version 1.1.18.",
+            "Installed Antigravity version none does not meet required version 1.1.18.",
+            "Installed Antigravity version unparseable does not meet required version 1.1.18.",
             "version probe has not run",
         ],
     )
@@ -1576,7 +1576,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         with (
             patch(
@@ -1636,7 +1636,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         launch = SandboxLaunch(
             backend="srt",
@@ -1695,7 +1695,7 @@ class TestExecuteSpawn:
         )
         record = SimpleNamespace(
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         with (
             patch(
@@ -3090,12 +3090,17 @@ class TestCodexPromptDelivery:
             cleanup_agent.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_failed_paste_fails_run_and_kills_terminal(self) -> None:
+    async def test_failed_paste_fails_run_and_kills_terminal(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from gobby.terminals.host_client import HostConnectionLost
         from gobby.terminals.runtime import TerminalWriteError
 
         runtime = FakeRuntime()
         runtime.snapshot_text = "› "
-        runtime.raise_on_write = TerminalWriteError(stage="none")
+        failure = TerminalWriteError(stage="none")
+        failure.__cause__ = HostConnectionLost("control closed; sk-test-secret")
+        runtime.raise_on_write = failure
         coordinator, terminal = _codex_delivery_target(runtime)
         run_manager = MagicMock()
 
@@ -3112,6 +3117,8 @@ class TestCodexPromptDelivery:
             error=error,
         )
         assert terminal.id in runtime.killed_ids
+        assert "stage=none cause=HostConnectionLost" in caplog.text
+        assert "sk-test-secret" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_failed_enter_fails_run_and_kills_terminal(self) -> None:
@@ -3459,7 +3466,7 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
     retried = await execute_spawn(retry)
     assert retried.success is False
     assert retried.error == "retry_terminal_not_pending"
-    assert retried.terminal_id == row.id
+    assert retried.terminal_id is None
     assert len(manager.rows) == 1
 
 
@@ -3657,6 +3664,233 @@ async def test_retry_generation_fences_the_reaper() -> None:
     failed = await execute_spawn(stale)
     assert failed.success is False
     assert failed.error == "retry_terminal_not_pending"
+
+
+@pytest.mark.asyncio
+def _run_read_failing_once(run: SimpleNamespace) -> Callable[[str], SimpleNamespace]:
+    """Fail cleanup's ownership read once; later reads see the persisted run."""
+    reads = 0
+
+    def get(_run_id: str) -> SimpleNamespace:
+        nonlocal reads
+        reads += 1
+        if reads == 1:
+            raise RuntimeError("hub blip")
+        return run
+
+    return get
+
+
+@pytest.mark.parametrize("read_fails", [False, True])
+async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    request = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+    )
+    first = await execute_spawn(request)
+    assert first.success is True
+    manager = _manager_of(request)
+    runtime = _runtime_of(request)
+    live = next(iter(manager.rows.values()))
+    assert live.state == "live"
+    stale = SpawnRequest(
+        prompt="Test",
+        cwd="/path",
+        provider="claude",
+        session_id="sess",
+        run_id="run",
+        parent_session_id="parent",
+        project_id="proj",
+        session_manager=MagicMock(),
+        machine_id="21000000-0000-4000-8000-000000000002",
+        retry_terminal_id=live.id,
+        prepared_spawn=prepared_spawn(),
+        terminal_backend="tmux",
+        terminal_manager=cast(TerminalManager, manager),
+        terminal_runtime_registry=request.terminal_runtime_registry,
+    )
+    refused = await execute_spawn(stale)
+    assert refused.error == "retry_terminal_not_pending"
+
+    # The retried run is already bound to the live attempt, and update_runtime skips
+    # a None terminal_id, so the run row keeps pointing at the live terminal.
+    run_storage = MagicMock()
+    run_storage.db = None
+    live_run = SimpleNamespace(terminal_id=live.id, child_session_id="child-live", pid=None)
+    run_storage.get.return_value = live_run
+    if read_fails:
+        # An unread run's ownership is unknown, so it is left alone too.
+        run_storage.get.side_effect = _run_read_failing_once(live_run)
+    monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(return_value=True))
+    sessions = MagicMock()
+    runner = SimpleNamespace(
+        run_storage=run_storage,
+        terminal_manager=manager,
+        terminal_runtime_registry=request.terminal_runtime_registry,
+        agent_lifecycle_monitor=monitor,
+        child_session_manager=SimpleNamespace(_storage=sessions),
+    )
+    result = await finalize_executed_spawn(
+        runner=runner,
+        run_id="run",
+        spawn_result=refused,
+        spawn_request=stale,
+        isolation_ctx=SimpleNamespace(worktree_id=None, clone_id=None, branch_name=None),
+        effective_isolation="none",
+        base_commit_sha=None,
+        handler=None,
+        spawn_config=None,
+        completion_registry=None,
+        cleanup_isolation_on_failure=False,
+        task_manager=None,
+        session_manager=None,
+        parent_session_id="parent",
+        effective_provider="claude",
+        resolved_task_id=None,
+        task_seq_num=None,
+        db=None,
+        agent_body=None,
+        effective_initial_variables={},
+        reasoning=SimpleNamespace(to_dict=dict),
+    )
+
+    # The refused retry owns nothing: cleanup leaves the live attempt's terminal,
+    # run and child session alone, including through run terminalization.
+    assert result["success"] is False
+    assert runtime.killed == []
+    assert manager.get(live.id) == live
+    assert run_storage.update_runtime.call_args.kwargs["terminal_id"] is None
+    run_storage.record_spawn_error.assert_not_called()
+    monitor.terminalize_cancelled_run.assert_not_awaited()
+    sessions.delete.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("failure", "kill_proven", "read_fails"),
+    [
+        ("result", True, False),
+        ("result", False, False),
+        ("liveness", True, False),
+        ("result", True, True),
+    ],
+)
+async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_terminal(
+    failure: str, kill_proven: bool, read_fails: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._execution import finalize_executed_spawn
+
+    def request_for(**extra: Any) -> SpawnRequest:
+        return SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="claude",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            session_manager=MagicMock(),
+            machine_id="21000000-0000-4000-8000-000000000002",
+            prepared_spawn=prepared_spawn(),
+            terminal_backend="tmux",
+            **extra,
+        )
+
+    first = request_for()
+    assert (await execute_spawn(first)).success is True
+    manager = _manager_of(first)
+    runtime = _runtime_of(first)
+    bound = next(iter(manager.rows.values()))
+    second = request_for(
+        terminal_manager=cast(TerminalManager, manager),
+        terminal_runtime_registry=first.terminal_runtime_registry,
+    )
+    failed = await execute_spawn(second)
+    assert failed.terminal_id is not None
+    own = manager.get(failed.terminal_id)
+    assert own is not None and own.id != bound.id
+    if failure == "result":
+        failed.success = False
+        failed.error = "provider boot failed"
+    else:
+        monkeypatch.setattr(
+            "gobby.mcp_proxy.tools.spawn_agent._execution._terminal_is_live",
+            AsyncMock(return_value=(False, "")),
+        )
+    if not kill_proven:
+        monkeypatch.setattr(
+            runtime, "terminate", AsyncMock(side_effect=RuntimeError("tmux server unreachable"))
+        )
+
+    # Persisting terminal B fails and is swallowed, so the run row keeps terminal A.
+    run_storage = MagicMock()
+    run_storage.db = None
+    run_storage.update_runtime.side_effect = RuntimeError("hub unavailable")
+    bound_run = SimpleNamespace(terminal_id=bound.id, child_session_id="child-bound", pid=None)
+    run_storage.get.return_value = bound_run
+    if read_fails:
+        # An unread run's ownership is unknown, so only terminal B is cleaned.
+        run_storage.get.side_effect = _run_read_failing_once(bound_run)
+    monitor = SimpleNamespace(terminalize_cancelled_run=AsyncMock(return_value=True))
+    sessions = MagicMock()
+    handler = SimpleNamespace(cleanup_environment=AsyncMock())
+    runner = SimpleNamespace(
+        run_storage=run_storage,
+        terminal_manager=manager,
+        terminal_runtime_registry=first.terminal_runtime_registry,
+        agent_lifecycle_monitor=monitor,
+        child_session_manager=SimpleNamespace(_storage=sessions),
+    )
+    result = await finalize_executed_spawn(
+        runner=runner,
+        run_id="run",
+        spawn_result=failed,
+        spawn_request=second,
+        isolation_ctx=SimpleNamespace(worktree_id="wt", clone_id=None, branch_name="b"),
+        effective_isolation="worktree",
+        base_commit_sha=None,
+        handler=handler,
+        spawn_config=None,
+        completion_registry=None,
+        cleanup_isolation_on_failure=True,
+        task_manager=None,
+        session_manager=None,
+        parent_session_id="parent",
+        effective_provider="claude",
+        resolved_task_id=None,
+        task_seq_num=None,
+        db=None,
+        agent_body=None,
+        effective_initial_variables={},
+        reasoning=SimpleNamespace(to_dict=dict),
+    )
+
+    # This attempt's terminal is killed, and its isolation goes only on proof; the
+    # run, its bound terminal and its child session stay with the other attempt.
+    assert result["success"] is False
+    settled = manager.get(own.id)
+    assert settled is not None
+    assert manager.get(bound.id) == bound
+    if kill_proven:
+        assert runtime.killed == [own.spawn_key]
+        assert settled.state == "exited"
+        handler.cleanup_environment.assert_awaited_once_with(None)
+    else:
+        assert settled.state == "orphaned"
+        handler.cleanup_environment.assert_not_awaited()
+    run_storage.record_spawn_error.assert_not_called()
+    monitor.terminalize_cancelled_run.assert_not_awaited()
+    sessions.delete.assert_not_called()
 
 
 @pytest.mark.asyncio

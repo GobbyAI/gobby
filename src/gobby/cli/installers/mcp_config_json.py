@@ -1,24 +1,16 @@
 """JSON and Claude project MCP config operations."""
 
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
 from .mcp_config_shared import (
     _GOBBY_MCP_ARGS,
-    _GOBBY_MCP_COMMAND,
     _facade_copy2,
     _facade_time,
     _is_repairable_stale_gobby_mcp_server_config,
+    _resolved_gobby_mcp_command,
 )
-
-
-def _resolved_gobby_mcp_command() -> str:
-    gobby_bin = Path(sys.executable).parent / "gobby"
-    if gobby_bin.exists():
-        return str(gobby_bin)
-    return _GOBBY_MCP_COMMAND
 
 
 def _load_json_object(

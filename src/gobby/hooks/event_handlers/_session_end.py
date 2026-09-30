@@ -146,17 +146,6 @@ class SessionEndMixin(EventHandlersBase):
             except Exception as e:
                 self.logger.warning("Failed to unregister session from message processor: %s", e)
 
-        # Notify pane monitor to prevent double-fire
-        if session_id:
-            try:
-                from gobby.agents.tmux import get_tmux_pane_monitor
-
-                monitor = get_tmux_pane_monitor()
-                if monitor:
-                    monitor.mark_recently_ended(session_id)
-            except Exception as e:
-                self.logger.debug("Failed to notify pane monitor for session %s: %s", session_id, e)
-
         # Release any interactive plan-adversary lock labels owned by this
         # session. The skill's terminal cleanup handles this on every clean
         # exit; this sweep is the safety net for sessions that die before

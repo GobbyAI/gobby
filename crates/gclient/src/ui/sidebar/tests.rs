@@ -82,43 +82,49 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 fn a_right_sidebar_keeps_its_edge_column_first() {
     // On the right the edge faces the panes, so the sections start one
     // column in and run to the sidebar's last column.
-    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1, 0);
+    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1, 3, 0);
     assert_eq!(layout.sections[0], Rect::new(55, 0, 25, 3));
-    assert_eq!(layout.sections[3], Rect::new(55, 39, 25, 1));
+    assert_eq!(layout.sections[3], Rect::new(55, 11, 25, 29));
 }
 
 #[test]
 fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     let area = Rect::new(0, 0, 26, 40);
     // One machine, one card: each takes its band, its row and the blank
-    // row under it. With no bare terminal the terminals keep only their band,
-    // on the last row, and the agents take everything between.
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 0);
+    // row under it. With no bare terminal the agents keep their band, their
+    // three rows and the blank row, and the terminals band follows them with
+    // the rest of the column under it.
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 3, 0);
     assert_eq!(
         layout.sections,
         [
             Rect::new(0, 0, 25, 3),
             Rect::new(0, 3, 25, 3),
-            Rect::new(0, 6, 25, 33),
-            Rect::new(0, 39, 25, 1),
+            Rect::new(0, 6, 25, 5),
+            Rect::new(0, 11, 25, 29),
         ]
     );
-    // A bare terminal splits the rest in half.
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 2);
+    // More agents than rows: they take everything down to the terminals
+    // band on the last row.
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 60, 0);
+    assert_eq!(layout.sections[2], Rect::new(0, 6, 25, 33));
+    assert_eq!(layout.sections[3], Rect::new(0, 39, 25, 1));
+    // A bare terminal splits the rest in half, however few the agents.
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 3, 2);
     assert_eq!(layout.sections[2], Rect::new(0, 6, 25, 17));
     assert_eq!(layout.sections[3], Rect::new(0, 23, 25, 17));
     // The machines stop at four rows; the cards at the top half, their
     // blank row charged inside it. An odd row left over goes to the agents.
-    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1, 2);
+    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1, 3, 2);
     assert_eq!(layout.sections[0].height, 1 + MACHINES_MAX_ROWS + 1);
     assert_eq!(layout.sections[1], Rect::new(0, 6, 25, 3));
     assert_eq!(layout.sections[2], Rect::new(0, 9, 25, 16));
     assert_eq!(layout.sections[3], Rect::new(0, 25, 25, 15));
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30, 0);
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30, 3, 0);
     assert_eq!(layout.sections[0].height, 3);
     assert_eq!(layout.sections[1], Rect::new(0, 3, 25, 17));
-    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 19));
-    assert_eq!(layout.sections[3], Rect::new(0, 39, 25, 1));
+    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 5));
+    assert_eq!(layout.sections[3], Rect::new(0, 25, 25, 15));
     // Two rows hold the machines band and the agents band, terminals or
     // not; one row the agents band alone; three rows the terminals band as
     // well. Nothing fits a one-column area.
@@ -126,6 +132,7 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
         sidebar_layout(
             Rect::new(0, 0, 26, rows),
             SidebarSide::Left,
+            1,
             1,
             1,
             terminal_rows,
@@ -138,15 +145,15 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     assert_eq!(heights(1, 0), [0, 0, 1, 0]);
     assert_eq!(heights(3, 0), [1, 0, 1, 1]);
     assert_eq!(
-        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1, 0),
+        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1, 3, 0),
         SidebarLayout::default()
     );
     // `section_rects` counts the workspace's rows into the same layout: one
-    // machine, one card and one two-line bare terminal.
+    // machine, one card, one three-line agent and one two-line bare terminal.
     let ws = scripted_workspace();
     assert_eq!(
         section_rects(&ws, &Chrome::dark(), area),
-        sidebar_layout(area, SidebarSide::Left, 1, 1, 2).sections
+        sidebar_layout(area, SidebarSide::Left, 1, 1, 3, 2).sections
     );
 }
 

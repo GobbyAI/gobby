@@ -1,4 +1,4 @@
-"""Terminal interaction tools for tmux-backed sessions.
+"""Terminal interaction tools for managed sessions.
 
 Exposes send_keys, capture_output, and structured handoff tools on gobby-sessions,
 enabling orchestration (heartbeat, pipelines, other agents)
@@ -14,7 +14,6 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
 from gobby.agents.provider_capabilities import provider_capabilities
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.mcp_proxy.tools.sessions._handoff import build_feedback_task_resolver
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
@@ -44,9 +43,6 @@ from gobby.mcp_proxy.tools.sessions._terminal_send_keys import (
 from gobby.mcp_proxy.tools.sessions._terminal_termination import (
     register_terminate_terminal_tool,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_tmux_target import (
-    _resolve_tmux_target as _resolve_tmux_target_impl,
-)
 from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
     _TRANSCRIPT_TAIL_MAX_BYTES,
     _capture_transcript_tail,
@@ -72,14 +68,14 @@ from gobby.sessions.handoff_records import (
 )
 from gobby.sessions.transcript_cursor import (
     TranscriptObservationError,
+    TurnSettledObserver,
     build_interrupt_observer,
+    build_turn_settled_observer,
 )
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.session_activity import reconcile_compact_session_activity
-from gobby.terminal_context import parse_terminal_context_value, terminal_context_has_tmux_target
-from gobby.terminals.lookup import manager_for_terminal_context
-from gobby.terminals.pane_io import PaneIO, TmuxPaneIO, context_runtime_pane, live_runtime_pane
+from gobby.terminals.pane_io import PaneIO, context_runtime_pane, live_runtime_pane
 from gobby.workflows.session_feedback_survey import survey_is_active
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -121,27 +117,12 @@ __all__ = [
     "_resolve_pane_io",
     "_resolve_session_for_compaction",
     "_authorize_send_keys_target",
-    "_resolve_tmux_target",
     "_send_terminal_compaction_command",
+    "_turn_settled_observer",
     "asyncio",
-    "manager_for_terminal_context",
     "LocalAgentRunManager",
     "register_terminal_tools",
 ]
-
-
-def _resolve_tmux_target(
-    session_id: str,
-    session_manager: SessionManager,
-    agent_run_manager: LocalAgentRunManager,
-) -> tuple[str | None, TmuxSessionManager | None, str | None]:
-    """Resolve a session ID to a tmux target through this module's patchable facade."""
-    return _resolve_tmux_target_impl(
-        session_id,
-        session_manager,
-        agent_run_manager,
-        tmux_manager_factory=manager_for_terminal_context,
-    )
 
 
 def _resolve_pane_io(
@@ -152,20 +133,19 @@ def _resolve_pane_io(
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
 ) -> tuple[PaneIO | None, str | None]:
-    """Route through the session's live terminals row when one exists, else raw tmux."""
+    """Route through the session's managed terminal row or context identity."""
     pane = live_runtime_pane(session_id, terminal_manager, terminal_runtime_registry)
     if pane is not None:
-        return pane, None
+        if pane.backend == "native":
+            return pane, None
+        return None, f"Unsupported terminal backend: {pane.backend}"
     session = session_manager.get(session_id)
     pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
     if pane is not None:
-        return pane, None
-    target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
-    if error:
-        return None, error
-    assert target is not None
-    assert tmux is not None
-    return TmuxPaneIO(tmux, target), None
+        if pane.backend == "native":
+            return pane, None
+        return None, f"Unsupported terminal backend: {pane.backend}"
+    return None, f"No live managed terminal for session {session_id}"
 
 
 def _interrupt_observer(
@@ -190,6 +170,22 @@ def _interrupt_observer(
     return observer, None
 
 
+def _turn_settled_observer(source: Any, session: Any) -> TurnSettledObserver | None:
+    """Turn-state observer for CLIs that record turn boundaries; ``None`` interrupts first."""
+    session_id = getattr(session, "id", None)
+    try:
+        return build_turn_settled_observer(
+            source if isinstance(source, str) else None,
+            getattr(session, "transcript_path", None),
+            session_id=session_id,
+        )
+    except TranscriptObservationError as exc:
+        logger.warning(
+            "Cannot observe %s turn state for handoff on session %s: %s", source, session_id, exc
+        )
+        return None
+
+
 async def _send_terminal_compaction_command(
     pane: PaneIO,
     command: str,
@@ -205,6 +201,7 @@ async def _send_terminal_compaction_command(
     settle_seconds: float | None = None,
     composer_read: Callable[[str | None], Any] | None = None,
     on_command_submitting: Callable[[], None] | None = None,
+    seat_left: Callable[[], bool] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Persist continuation state, confirm interruption, drain the composer, then compact."""
     return await _send_terminal_compaction_command_impl(
@@ -227,6 +224,7 @@ async def _send_terminal_compaction_command(
         rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
         composer_read=composer_read,
         on_command_submitting=on_command_submitting,
+        seat_left=seat_left,
     )
 
 
@@ -264,72 +262,6 @@ def _resolve_session_for_compaction(
     return resolved_id, session, None
 
 
-def _backfill_tmux_context_from_sibling(
-    session_id: str,
-    session: Any,
-    session_manager: SessionManager,
-) -> Any | None:
-    """Copy tmux context from a same-identity terminal sibling into session_id."""
-    external_id = getattr(session, "external_id", None)
-    machine_id = getattr(session, "machine_id", None)
-    project_id = getattr(session, "project_id", None)
-    if not all(isinstance(value, str) and value for value in (external_id, machine_id, project_id)):
-        return None
-
-    finder = getattr(session_manager, "find_by_external_id_all_sources", None)
-    if not callable(finder):
-        return None
-
-    try:
-        candidates = finder(
-            external_id=external_id,
-            machine_id=machine_id,
-            project_id=project_id,
-            session_type="terminal",
-        )
-    except Exception as exc:
-        logger.debug(
-            "Failed finding sibling terminal sessions for handoff compaction %s: %s",
-            session_id,
-            exc,
-            exc_info=True,
-        )
-        return None
-
-    for candidate in candidates or ():
-        if getattr(candidate, "id", None) == session_id:
-            continue
-        if getattr(candidate, "session_type", "terminal") != "terminal":
-            continue
-        if (
-            getattr(candidate, "external_id", None) != external_id
-            or getattr(candidate, "machine_id", None) != machine_id
-            or getattr(candidate, "project_id", None) != project_id
-        ):
-            continue
-
-        sibling_context = parse_terminal_context_value(getattr(candidate, "terminal_context", None))
-        if not terminal_context_has_tmux_target(sibling_context):
-            continue
-
-        try:
-            updated_session, _tmux_target_added = session_manager.backfill_terminal_context(
-                session_id,
-                sibling_context,
-            )
-        except Exception as exc:
-            logger.debug(
-                "Failed backfilling tmux context for handoff compaction %s: %s",
-                session_id,
-                exc,
-                exc_info=True,
-            )
-            return None
-        return updated_session or session_manager.get(session_id)
-
-    return None
-
-
 def register_terminal_tools(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
@@ -347,7 +279,6 @@ def register_terminal_tools(
     register_send_keys_tool(
         registry,
         session_manager,
-        db,
         terminal_manager=terminal_manager,
         write_coordinator=write_coordinator,
     )
@@ -647,21 +578,6 @@ def register_terminal_tools(
             terminal_manager=terminal_manager,
             terminal_runtime_registry=terminal_runtime_registry,
         )
-        if error and not terminal_context_has_tmux_target(session.terminal_context):
-            recovered_session = _backfill_tmux_context_from_sibling(
-                resolved_session_id,
-                session,
-                session_manager,
-            )
-            if recovered_session is not None:
-                session = recovered_session
-                pane, error = _resolve_pane_io(
-                    resolved_session_id,
-                    session_manager,
-                    agent_run_manager,
-                    terminal_manager=terminal_manager,
-                    terminal_runtime_registry=terminal_runtime_registry,
-                )
         if error:
             return {
                 "compacted": False,
@@ -833,7 +749,7 @@ def register_terminal_tools(
     ) -> dict[str, Any]:
         if terminal_manager is not None and terminal_runtime_registry is not None:
             terminal = terminal_manager.get_live_for_session(session_id)
-            if terminal is not None:
+            if terminal is not None and terminal.backend == "native":
                 runtime = terminal_runtime_registry.resolve(terminal.backend)
                 snapshot = await runtime.snapshot(terminal, lines)
                 return {
@@ -846,34 +762,23 @@ def register_terminal_tools(
                 }
             session = session_manager.get(session_id)
             pane = context_runtime_pane(session, terminal_manager, terminal_runtime_registry)
-            if pane is not None:
+            if pane is not None and pane.backend == "native":
                 text = await pane.snapshot(lines)
                 if text is not None:
                     return {"success": True, "output": text, "via": pane.backend}
-        target, tmux, error = _resolve_tmux_target(session_id, session_manager, agent_run_manager)
-        if error:
-            fallback, transcript_error = await _capture_transcript_tail(
-                session_id,
-                session_manager,
-                lines,
-                tmux_error=error,
-            )
-            if fallback is not None:
-                return fallback
-            return {
-                "success": False,
-                "error": error,
-                "error_code": "no_live_pane_or_transcript",
-                "tmux_error": error,
-                "transcript_error": transcript_error,
-            }
-
-        assert target is not None
-        assert tmux is not None
-        output = await tmux.snapshot_lines(target, lines)
-        if output is None:
-            return {
-                "success": False,
-                "error": f"Failed to capture pane for session {session_id}",
-            }
-        return {"success": True, "output": output, "via": "tmux"}
+        error = f"No live managed terminal for session {session_id}"
+        fallback, transcript_error = await _capture_transcript_tail(
+            session_id,
+            session_manager,
+            lines,
+            tmux_error=error,
+        )
+        if fallback is not None:
+            return fallback
+        return {
+            "success": False,
+            "error": error,
+            "error_code": "no_live_pane_or_transcript",
+            "tmux_error": error,
+            "transcript_error": transcript_error,
+        }

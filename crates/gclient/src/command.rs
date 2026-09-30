@@ -1,5 +1,7 @@
 //! One-shot workspace commands. Parsing is kept separate from the TUI startup parser.
 
+mod help;
+mod refs;
 mod verbs;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -98,27 +100,14 @@ const VALUE_FLAGS: &[&str] = &[
     "--tab-ref",
     "--kind",
 ];
-const SWITCH_FLAGS: &[&str] = &["--json", "--right", "--down", "--enter"];
+const SWITCH_FLAGS: &[&str] = &["--json", "--right", "--down", "--enter", "--help", "-h"];
 
 fn parse(args: Vec<String>) -> Result<Parsed, CommandError> {
     let mut args = args.into_iter();
     let verb = args
         .next()
         .ok_or_else(|| CommandError::usage("missing verb"))?;
-    if !matches!(
-        verb.as_str(),
-        "list"
-            | "new-tab"
-            | "split"
-            | "resize"
-            | "title"
-            | "select"
-            | "send-keys"
-            | "capture-pane"
-            | "wait-for-output"
-            | "kill"
-            | "help"
-    ) {
+    if !help::is_verb(&verb) {
         return Err(CommandError::usage(format!("unknown verb: {verb}")));
     }
     let mut parsed = Parsed {
@@ -164,11 +153,14 @@ pub fn is_verb(first: &str) -> bool {
 }
 
 /// Return the documented process status; the caller decides when to exit.
+/// Errors go to stderr prefixed with the verb, so a caller sees which
+/// command failed.
 pub fn dispatch(args: Vec<String>, env: CommandEnv) -> i32 {
+    let verb = args.first().cloned().unwrap_or_default();
     match dispatch_inner(args, env) {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("{}", error.message);
+            eprintln!("gclient {verb}: {}", error.message);
             error.code
         }
     }
@@ -176,9 +168,23 @@ pub fn dispatch(args: Vec<String>, env: CommandEnv) -> i32 {
 
 fn dispatch_inner(args: Vec<String>, env: CommandEnv) -> Result<i32, CommandError> {
     let mut parsed = parse(args)?;
+    if parsed.switch("--help") | parsed.switch("-h") {
+        print!("{}", help::verb(&parsed.verb).unwrap_or_else(help::table));
+        return Ok(0);
+    }
     if parsed.verb == "help" {
+        // Help takes the options every verb takes and ignores them.
+        parsed.switch("--json");
+        for option in ["--workspace", "--daemon-url", "--token-file"] {
+            parsed.take(option);
+        }
+        let text = match parsed.position() {
+            Some(verb) => help::verb(&verb)
+                .ok_or_else(|| CommandError::usage(format!("unknown verb: {verb}")))?,
+            None => help::table(),
+        };
         parsed.finish()?;
-        print!("{}", verbs::HELP);
+        print!("{text}");
         return Ok(0);
     }
     let json = parsed.switch("--json");

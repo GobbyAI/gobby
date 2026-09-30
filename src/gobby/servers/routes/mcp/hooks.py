@@ -8,7 +8,8 @@ Extracted from base.py as part of Strangler Fig decomposition.
 import asyncio
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Final, cast
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.requests import ClientDisconnect
@@ -17,9 +18,6 @@ from gobby.adapters.agy_contract import (
     agy_execution_num,
     strip_unbudgeted_force_continue,
 )
-from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
-from gobby.adapters.claude_contract import get_claude_contract
-from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
 from gobby.config.hooks import HookTimeoutConfig
 from gobby.hooks.adapter_execution import HOOK_ADAPTER_MAX_WORKERS as _HOOK_ADAPTER_MAX_WORKERS
 from gobby.hooks.adapter_execution import (
@@ -47,7 +45,9 @@ from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.phase_timing import (
     SLOW_HOOK_THRESHOLD_SECONDS,
     HookPhaseTimings,
+    hook_phase_timing_scope,
     observe_hook_phase_timings,
+    timed_to_thread,
 )
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
@@ -70,6 +70,14 @@ from gobby.hooks.startup_claim_preflight import (
 )
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.mcp import hook_hold_open
+from gobby.servers.routes.mcp.hook_responses import (
+    _graceful_error_response,
+    _hook_exception_response,
+    _hook_timeout_response,
+    _is_fail_safe_hook,
+    _normalize_hold_open_hook_type,
+    _result_encodes_denial,
+)
 from gobby.telemetry.instruments import inc_counter
 
 if TYPE_CHECKING:
@@ -77,122 +85,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-HOLD_OPEN_HOOK_TYPE_MAP: dict[str, str] = {
-    "PreToolUse": "PreToolUse",
-    "pre-tool-use": "PreToolUse",
-    "BeforeTool": "PreToolUse",
-    "AskUserQuestion": "AskUserQuestion",
-}
 
-FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
 HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
-
-
-def _graceful_error_response(
-    hook_type: str,
-    error_msg: str,
-    *,
-    source: str | None = "claude",
-) -> dict[str, Any]:
-    """
-    Create a graceful degradation response for hook errors.
-
-    Instead of returning HTTP 500 (which causes Claude Code to show a confusing
-    "hook failed" warning), return a successful response that:
-    1. Allows the tool to proceed (continue=True)
-    2. Explains the error via additionalContext (so agents understand what happened)
-
-    This prevents agents from being confused by non-fatal hook errors.
-    """
-    provider = source or "claude"
-    message = f"Gobby hook error (non-fatal): {error_msg}. Tool execution will proceed normally."
-    record_adapter_degradation(
-        provider=provider,
-        hook_type=hook_type,
-        kind=AdapterDegradationKind.GRACEFUL_ERROR,
-        response_field="context",
-        destination_channel="provider_capability",
-    )
-
-    try:
-        capabilities = get_provider_capabilities(provider)
-        context_channel = capabilities.context_channel_for(hook_type)
-    except ValueError:
-        provider = "claude"
-        context_channel = get_provider_capabilities(provider).context_channel_for(hook_type)
-
-    from gobby.hooks.events import HookResponse
-
-    if context_channel is not ContextChannel.NONE:
-        hook_response = HookResponse(decision="allow", context=message)
-    else:
-        hook_response = HookResponse(decision="allow", system_message=message)
-
-    if provider == "droid":
-        from gobby.adapters.droid import DroidAdapter
-
-        result = DroidAdapter().translate_from_hook_response(hook_response, hook_type=hook_type)
-        if isinstance(result, dict):
-            return result
-
-    if provider == "agy":
-        from gobby.adapters.agy import AgyAdapter
-
-        agy_response = AgyAdapter().translate_from_hook_response(
-            hook_response,
-            hook_type=hook_type,
-        )
-        if isinstance(agy_response, dict):
-            return agy_response
-
-    if provider == "codex":
-        from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-
-        codex_response = CodexHooksAdapter().translate_from_hook_response(
-            hook_response,
-            hook_type=hook_type,
-        )
-        if isinstance(codex_response, dict):
-            return codex_response
-
-    if provider == "grok":
-        from gobby.adapters.grok import GrokAdapter
-
-        grok_response = GrokAdapter().translate_from_hook_response(
-            hook_response,
-            hook_type=hook_type,
-        )
-        if isinstance(grok_response, dict):
-            return grok_response
-
-    if provider == "qwen":
-        from gobby.adapters.qwen import QwenAdapter
-
-        qwen_response = QwenAdapter().translate_from_hook_response(
-            hook_response,
-            hook_type=hook_type,
-        )
-        if isinstance(qwen_response, dict):
-            return qwen_response
-
-    from gobby.adapters.claude_code import ClaudeCodeAdapter
-
-    claude_response = ClaudeCodeAdapter().translate_from_hook_response(
-        hook_response,
-        hook_type=hook_type,
-    )
-    if isinstance(claude_response, dict):
-        return claude_response
-
-    fallback: dict[str, Any] = {"continue": True}
-    claude_contract = get_claude_contract(hook_type)
-    if claude_contract and claude_contract.allows_additional_context:
-        fallback["hookSpecificOutput"] = {
-            "hookEventName": claude_contract.hook_event_name,
-            "additionalContext": message,
-        }
-    return fallback
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -240,102 +135,6 @@ def _hook_log_extra(
     }
     combined.update(extra)
     return combined
-
-
-def _is_fail_safe_hook(hook_type: str | None, metadata: dict[str, Any]) -> bool:
-    """Return whether hook failures must block for safety."""
-    normalized_hook_type = hook_type.casefold() if hook_type is not None else None
-    return normalized_hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True
-
-
-def _hook_block_response(
-    adapter: Any | None,
-    hook_type: str,
-    source: str | None,
-    reason: str,
-) -> dict[str, Any]:
-    """Translate a fail-safe block, falling back to the shared route shape."""
-    from gobby.hooks.events import HookResponse
-
-    response = HookResponse(decision="block", reason=reason)
-    if adapter is None:
-        return {"continue": False, "decision": "block", "reason": reason}
-
-    try:
-        translated = adapter.translate_from_hook_response(response, hook_type=hook_type)
-    except TypeError:
-        translated = adapter.translate_from_hook_response(response)
-    except Exception:
-        logger.warning(
-            "Failed to translate hook block response for %s/%s",
-            source,
-            hook_type,
-            exc_info=True,
-        )
-        translated = {"continue": False, "decision": "block", "reason": reason}
-
-    return cast(dict[str, Any], translated)
-
-
-def _hook_timeout_response(
-    adapter: Any,
-    hook_type: str,
-    source: str | None,
-    timeout_seconds: float,
-) -> dict[str, Any]:
-    """Build a provider-native timeout response without waiting on hook internals."""
-    reason = (
-        f"Gobby hook evaluation timed out after {timeout_seconds:g}s; "
-        "blocking this critical hook for safety. Try again after the daemon recovers."
-    )
-    return _hook_block_response(adapter, hook_type, source, reason)
-
-
-def _hook_exception_response(
-    adapter: Any | None,
-    hook_type: str,
-    source: str | None,
-    metadata: dict[str, Any],
-    error: str,
-) -> dict[str, Any]:
-    """Fail closed for safety-critical hooks and degrade all other hook errors."""
-    if not _is_fail_safe_hook(hook_type, metadata):
-        return _graceful_error_response(hook_type, error, source=source)
-
-    reason = (
-        f"Gobby hook evaluation failed: {error}; blocking this critical hook for safety. "
-        "Try again after the daemon recovers."
-    )
-    return _hook_block_response(adapter, hook_type, source, reason)
-
-
-def _normalize_hold_open_hook_type(hook_type: str | None) -> str | None:
-    """Normalize provider-specific hook names for web-chat hold-open gating."""
-    if not hook_type:
-        return None
-    return HOLD_OPEN_HOOK_TYPE_MAP.get(hook_type)
-
-
-def _result_encodes_denial(result: dict[str, Any]) -> bool:
-    """Return whether an adapter result already denies the hook operation."""
-    if result.get("continue") is False:
-        return True
-
-    decision = result.get("decision")
-    if isinstance(decision, str) and decision.casefold() in {"block", "deny"}:
-        return True
-
-    permission_decision = result.get("permissionDecision")
-    if isinstance(permission_decision, str) and permission_decision.casefold() == "deny":
-        return True
-
-    hook_output = result.get("hookSpecificOutput")
-    if isinstance(hook_output, dict):
-        permission_decision = hook_output.get("permissionDecision")
-        if isinstance(permission_decision, str) and permission_decision.casefold() == "deny":
-            return True
-
-    return False
 
 
 def _is_codex_root_context_miss(
@@ -479,12 +278,21 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # Receipt and envelope persistence block on the database and inbox
             # files, so they stay off the HTTP loop (#22708).
             with phase_timings.measure("persistence_broadcast"):
-                return await asyncio.to_thread(_mark_processed_and_return, response)
+                return await timed_hop("persistence_receipt", _mark_processed_and_return, response)
+
+        async def timed_hop[T](
+            phase: str, function: Callable[..., T], /, *args: Any, **kwargs: Any
+        ) -> T:
+            # Route hops run outside the adapter worker's timing scope; without
+            # their own, their wall time lands unattributed in `response` (#23063).
+            with hook_phase_timing_scope(phase_timings):
+                return await timed_to_thread(phase, function, *args, **kwargs)
 
         try:
             # Parse request
             try:
-                raw_payload = await request.json()
+                with phase_timings.measure("request_body"):
+                    raw_payload = await request.json()
             except ClientDisconnect:
                 logger.debug(
                     "Hook client disconnected before request body was read",
@@ -527,7 +335,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # the generation those acks would CAS against.
             try:
                 with phase_timings.measure("persistence_broadcast"):
-                    await asyncio.to_thread(consume_pending_delivery_receipts, request.app)
+                    await timed_hop(
+                        "persistence_consume_receipts",
+                        consume_pending_delivery_receipts,
+                        request.app,
+                    )
             except Exception:
                 logger.warning(
                     "Pending delivery-receipt sweep failed; the periodic drain remains",
@@ -563,14 +375,18 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     source=source,
                 )
 
-            if envelope_id and not await asyncio.to_thread(claim_envelope_processing, envelope_id):
-                stored_response = await asyncio.to_thread(envelope_terminal_response, envelope_id)
+            if envelope_id and not await timed_hop(
+                "envelope_claim", claim_envelope_processing, envelope_id
+            ):
+                stored_response = await timed_hop(
+                    "envelope_claim", envelope_terminal_response, envelope_id
+                )
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                marker = await asyncio.to_thread(read_envelope_marker, envelope_id)
-                if marker is None and await asyncio.to_thread(
-                    claim_envelope_processing, envelope_id
+                marker = await timed_hop("envelope_claim", read_envelope_marker, envelope_id)
+                if marker is None and await timed_hop(
+                    "envelope_claim", claim_envelope_processing, envelope_id
                 ):
                     logger.info("Reclaimed expired hook envelope marker %s", envelope_id)
                 elif not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
@@ -580,9 +396,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         status_code=409,
                         content={"status": "malformed_marker", "reason": reason},
                     )
-                elif await asyncio.to_thread(
-                    clear_stale_envelope_processing_marker, envelope_id
-                ) and await asyncio.to_thread(claim_envelope_processing, envelope_id):
+                elif await timed_hop(
+                    "envelope_claim", clear_stale_envelope_processing_marker, envelope_id
+                ) and await timed_hop("envelope_claim", claim_envelope_processing, envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
                     status = marker["status"]
@@ -601,7 +417,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
 
             if envelope_id:
-                owner_token = await asyncio.to_thread(envelope_processing_owner_token, envelope_id)
+                owner_token = await timed_hop(
+                    "envelope_claim", envelope_processing_owner_token, envelope_id
+                )
                 if owner_token:
                     lease_renewal = start_envelope_lease_renewal(envelope_id, owner_token)
 
@@ -967,8 +785,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     if lease_renewal is not None:
                         lease_renewal.cancel()
                     if envelope_id and owner_token:
-                        await asyncio.to_thread(
-                            release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                        await timed_hop(
+                            "persistence_release_claim",
+                            release_envelope_processing_claim,
+                            envelope_id,
+                            owner_token=owner_token,
                         )
             total_seconds = time.perf_counter() - start_time
             dominant_phase, dominant_seconds, phase_durations = observe_hook_phase_timings(

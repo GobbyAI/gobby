@@ -93,6 +93,41 @@ class TestBuildCliCommand:
         assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
         assert "--full-auto" not in cmd
 
+    def test_codex_headless_review_uses_exec_with_external_sandbox(self) -> None:
+        cmd, _env = build_cli_command(
+            "codex",
+            mode="headless",
+            auto_approve=True,
+            external_sandbox_enforced=True,
+            config_overrides=['sandbox_mode="danger-full-access"'],
+            prompt="Review task close",
+        )
+        assert cmd == [
+            "codex",
+            "exec",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            'sandbox_mode="danger-full-access"',
+            *_CODEX_MANAGED_TAIL,
+            "Review task close",
+        ]
+
+    def test_codex_headless_review_resumes_without_tui(self) -> None:
+        cmd, _env = build_cli_command(
+            "codex",
+            mode="headless",
+            auto_approve=True,
+            external_sandbox_enforced=True,
+            resume_session_id="thread-123",
+            prompt="Continue review",
+        )
+        assert cmd[:3] == ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox"]
+        assert cmd[-3:] == ["resume", "thread-123", "Continue review"]
+
+    def test_codex_headless_auto_approval_requires_external_sandbox(self) -> None:
+        with pytest.raises(ValueError, match="requires an enforced sandbox"):
+            build_cli_command("codex", mode="headless", auto_approve=True, prompt="Review")
+
     @pytest.mark.parametrize(
         ("cli", "approval_args"),
         [
@@ -100,7 +135,9 @@ class TestBuildCliCommand:
             ("qwen", ["--approval-mode", "yolo"]),
         ],
     )
-    def test_auto_approve_flags_precede_sandbox_args(self, cli, approval_args) -> None:
+    def test_auto_approve_flags_precede_sandbox_args(
+        self, cli: str, approval_args: list[str]
+    ) -> None:
         cmd, _env = build_cli_command(
             cli,
             auto_approve=True,

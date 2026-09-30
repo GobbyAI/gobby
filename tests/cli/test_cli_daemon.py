@@ -4,6 +4,7 @@ Tests the start, stop, restart, and status commands with various
 argument combinations and error scenarios using Click's CliRunner.
 """
 
+import importlib
 import inspect
 import os
 import subprocess
@@ -20,8 +21,9 @@ from click.testing import CliRunner
 
 from gobby.agents.srt_runtime import SrtRuntimeError
 from gobby.cli import cli
-from gobby.cli.daemon import _reconcile_ui_exposure, _start_dependency_errors
+from gobby.cli.daemon_start import _reconcile_ui_exposure, _start_dependency_errors
 from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
+from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 from gobby.utils.status import RichStatusProbe
 
@@ -32,7 +34,7 @@ pytestmark = pytest.mark.unit
 def _pin_boot_id() -> Generator[None]:
     """Keep the singleton claim off `sysctl`.
 
-    These tests patch ``gobby.cli.daemon.subprocess.Popen`` — the process-wide
+    These tests patch ``gobby.cli.daemon_start.subprocess.Popen`` — the process-wide
     stdlib attribute — so the boot-id probe inside ``claim_pid_file`` would run
     ``subprocess.run`` against the mock on macOS (#21033). Both importing
     modules bind the name, so both are patched.
@@ -67,10 +69,10 @@ def test_start_dependency_errors_detects_managed_services_from_home(
 
     report = MagicMock()
     with (
-        patch("gobby.cli.daemon.unsupported_platform_error", return_value=None),
-        patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.daemon.collect_dependency_report", return_value=report) as collect,
-        patch("gobby.cli.daemon.required_dependency_errors", return_value=[]) as required,
+        patch("gobby.cli.daemon_start.unsupported_platform_error", return_value=None),
+        patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
+        patch("gobby.cli.daemon_start.collect_dependency_report", return_value=report) as collect,
+        patch("gobby.cli.daemon_start.required_dependency_errors", return_value=[]) as required,
     ):
         result = _start_dependency_errors()
 
@@ -99,9 +101,9 @@ def _mock_daemon_command_runtime(
         "gobby.cli.runtime.CliRuntime.require_config",
         lambda *_args, **_kwargs: mock_daemon_config,
     )
-    monkeypatch.setattr("gobby.cli.daemon._start_dependency_errors", lambda: [])
+    monkeypatch.setattr("gobby.cli.daemon_start._start_dependency_errors", lambda: [])
     monkeypatch.setattr(
-        "gobby.cli.daemon._services_start",
+        "gobby.cli.daemon_start._services_start",
         lambda _home: ServiceStartResult("success", "Docker services started"),
     )
 
@@ -300,7 +302,7 @@ class TestStartupProgressPolling:
         side_effect: Exception,
     ) -> None:
         """Non-retryable startup progress failures are reported without escaping."""
-        from gobby.cli.daemon import _poll_startup_progress
+        from gobby.cli.daemon_start import _poll_startup_progress
 
         mock_httpx_get.side_effect = side_effect
 
@@ -314,7 +316,8 @@ def test_startup_readiness_budget_is_not_smaller_than_the_health_budget() -> Non
     starting normally exhausted it and `gobby start`/`restart` exited non-zero on a
     daemon that was already serving. Measured time-to-ready reached 168s.
     """
-    from gobby.cli.daemon import _poll_startup_progress, _wait_for_daemon_health
+    from gobby.cli.daemon import _wait_for_daemon_health
+    from gobby.cli.daemon_start import _poll_startup_progress
 
     readiness_budget = inspect.signature(_poll_startup_progress).parameters["max_wait"].default
     health_budget = inspect.signature(_wait_for_daemon_health).parameters["timeout"].default
@@ -326,7 +329,7 @@ def test_reconcile_ui_exposure_reports_url(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(
-        "gobby.cli.daemon.reconcile_ui_exposure",
+        "gobby.cli.daemon_start.reconcile_ui_exposure",
         lambda _port: UiExposeResult(
             mode="tailscale",
             url="https://host.tailnet.ts.net/",
@@ -345,7 +348,7 @@ def test_reconcile_ui_exposure_warns_without_raising(
     def fail(_port: int) -> None:
         raise UiExposeError("tailscale is unavailable")
 
-    monkeypatch.setattr("gobby.cli.daemon.reconcile_ui_exposure", fail)
+    monkeypatch.setattr("gobby.cli.daemon_start.reconcile_ui_exposure", fail)
 
     _reconcile_ui_exposure(60887)
 
@@ -364,12 +367,12 @@ class TestStartCommand:
 
     @pytest.fixture(autouse=True)
     def mock_ui_exposure_reconciliation(self) -> Generator[MagicMock]:
-        with patch("gobby.cli.daemon._reconcile_ui_exposure") as reconcile:
+        with patch("gobby.cli.daemon_start._reconcile_ui_exposure") as reconcile:
             yield reconcile
 
     @pytest.fixture(autouse=True)
     def mock_service_admission(self) -> Generator[MagicMock]:
-        with patch("gobby.cli.daemon.admit_service_start", return_value=None) as admit:
+        with patch("gobby.cli.daemon_start.admit_service_start", return_value=None) as admit:
             yield admit
 
     def test_start_help(self, runner: CliRunner) -> None:
@@ -426,8 +429,8 @@ class TestStartCommand:
         bootstrap_path.chmod(mode)
 
         with (
-            patch("gobby.cli.daemon._start_dependency_errors", _start_dependency_errors),
-            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+            patch("gobby.cli.daemon_start._start_dependency_errors", _start_dependency_errors),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
         ):
             result = runner.invoke(cli, ["start"])
 
@@ -445,13 +448,13 @@ class TestStartCommand:
     ) -> None:
         services_start = MagicMock()
         monkeypatch.setattr(
-            "gobby.cli.daemon._start_dependency_errors",
+            "gobby.cli.daemon_start._start_dependency_errors",
             lambda: [
                 "Git is outdated; detected 2.37.0, requires >=2.38.0. "
                 "Install Git 2.38.0 or newer and retry."
             ],
         )
-        monkeypatch.setattr("gobby.cli.daemon._services_start", services_start)
+        monkeypatch.setattr("gobby.cli.daemon_start._services_start", services_start)
 
         result = runner.invoke(cli, ["start"])
 
@@ -461,13 +464,15 @@ class TestStartCommand:
         assert "requires >=2.38.0" in result.output
         services_start.assert_not_called()
 
-    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
-    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=2.5)
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
     @patch(
-        "gobby.cli.daemon.get_service_status", return_value={"installed": True, "platform": "macos"}
+        "gobby.cli.daemon_start.get_service_status",
+        return_value={"installed": True, "platform": "macos"},
     )
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_start_via_service_waits_for_health(
         self,
         mock_load_config: MagicMock,
@@ -506,16 +511,42 @@ class TestStartCommand:
         mock_ui_exposure_reconciliation.assert_called_once_with(mock_daemon_config.daemon_port)
         assert call_order == ["ready", "reconcile"]
 
-    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
-    @patch("gobby.cli.daemon._services_start")
-    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
     @patch(
-        "gobby.cli.daemon.get_service_status",
+        "gobby.cli.daemon_start.get_service_status",
         return_value={"installed": True, "platform": "macos"},
     )
-    @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    def test_start_under_test_protect_never_drives_the_service_manager(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_start: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The start half of a protected restart stays off the user-global service."""
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        mock_load_config.return_value = mock_daemon_config
+
+        result = runner.invoke(cli, ["start"])
+
+        assert "Starting via OS service manager" not in result.output
+        mock_get_service_status.assert_not_called()
+        mock_service_start.assert_not_called()
+
+    @patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=2.5)
+    @patch("gobby.cli.daemon_start._services_start")
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
+    @patch(
+        "gobby.cli.daemon_start.get_service_status",
+        return_value={"installed": True, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon_start.get_gobby_home")
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_start_via_service_starts_docker_dependencies_first(
         self,
         mock_load_config: MagicMock,
@@ -569,12 +600,12 @@ class TestStartCommand:
         (services_dir / "docker-compose.yml").touch()
         with (
             patch("gobby.cli.runtime.CliRuntime.require_config", return_value=mock_daemon_config),
-            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
             patch(
-                "gobby.cli.daemon._services_start",
+                "gobby.cli.daemon_start._services_start",
                 return_value=ServiceStartResult("failed", "compose failed"),
             ),
-            patch("gobby.cli.daemon.service_start") as mock_service_start,
+            patch("gobby.cli.daemon_start.service_start") as mock_service_start,
         ):
             result = runner.invoke(cli, ["start"])
 
@@ -585,11 +616,11 @@ class TestStartCommand:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.wait_for_port_available")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.wait_for_port_available")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_success(
@@ -648,11 +679,11 @@ class TestStartCommand:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.wait_for_port_available")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.wait_for_port_available")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_warns_when_no_agent_auth_env_detected(
@@ -688,7 +719,7 @@ class TestStartCommand:
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
-            patch("gobby.cli.daemon.has_auth_env", return_value=False),
+            patch("gobby.cli.daemon_start.has_auth_env", return_value=False),
         ):
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
@@ -703,11 +734,11 @@ class TestStartCommand:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.wait_for_port_available")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.wait_for_port_available")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_with_verbose_flag(
@@ -757,7 +788,7 @@ class TestStartCommand:
             assert "--verbose" in cmd
 
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_daemon_already_running(
         self,
@@ -777,7 +808,7 @@ class TestStartCommand:
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
-            patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=gobby_dir),
         ):
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -799,7 +830,7 @@ class TestStartCommand:
             mock_init_storage.assert_not_called()
 
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_removes_stale_pid_file(
         self,
@@ -818,7 +849,7 @@ class TestStartCommand:
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
-            patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=gobby_dir),
         ):
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -830,8 +861,8 @@ class TestStartCommand:
             # The test will proceed to try starting the daemon after removing
             # stale PID - mock the remaining calls to prevent actual daemon start
             with (
-                patch("gobby.cli.daemon.is_port_available", return_value=True),
-                patch("gobby.cli.daemon.subprocess.Popen") as mock_popen,
+                patch("gobby.cli.daemon_start.is_port_available", return_value=True),
+                patch("gobby.cli.daemon_start.subprocess.Popen") as mock_popen,
                 patch("gobby.cli.daemon.httpx.get") as mock_httpx_get,
                 patch("gobby.cli.daemon.time.sleep"),
             ):
@@ -850,10 +881,10 @@ class TestStartCommand:
                 assert result.exit_code == 0
                 assert "Daemon process launched" in result.output
 
-    @patch("gobby.cli.daemon.wait_for_port_available")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.wait_for_port_available")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_http_port_in_use_timeout(
         self,
@@ -884,11 +915,13 @@ class TestStartCommand:
 
             assert result.exit_code == 1
             assert "Port" in result.output and "still in use" in result.output
+            # The direct path waits as long as the front door child would for reuse.
+            assert mock_wait_port.call_args.kwargs["timeout"] == PORT_REUSE_WAIT_SECONDS
 
-    @patch("gobby.cli.daemon.wait_for_port_available")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.wait_for_port_available")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_websocket_port_in_use_timeout(
         self,
@@ -926,12 +959,13 @@ class TestStartCommand:
 
             assert result.exit_code == 1
             assert "Port" in result.output and "still in use" in result.output
+            assert mock_wait_port.call_args.kwargs["timeout"] == PORT_REUSE_WAIT_SECONDS
 
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_process_exits_immediately(
@@ -970,12 +1004,12 @@ class TestStartCommand:
             assert result.exit_code == 1
             assert "Daemon process exited immediately" in result.output
 
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=None)
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_health_check_fails(
@@ -1019,7 +1053,7 @@ class TestStartCommand:
             mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
 
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_kills_existing_processes(
@@ -1040,15 +1074,15 @@ class TestStartCommand:
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
-            patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
+            patch("gobby.cli.daemon_start.get_gobby_home", return_value=gobby_dir),
         ):
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
             (gobby_dir / "gobby.pid").write_text("99999999")
 
             with (
-                patch("gobby.cli.daemon.is_port_available", return_value=True),
-                patch("gobby.cli.daemon.subprocess.Popen") as mock_popen,
+                patch("gobby.cli.daemon_start.is_port_available", return_value=True),
+                patch("gobby.cli.daemon_start.subprocess.Popen") as mock_popen,
                 patch("gobby.cli.daemon.httpx.get") as mock_httpx_get,
                 patch("gobby.cli.daemon.fetch_rich_status", return_value={}),
             ):
@@ -1142,6 +1176,7 @@ class TestStopCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_stop_via_service_waits_for_shutdown(
         self,
         mock_load_config: MagicMock,
@@ -1176,6 +1211,45 @@ class TestStopCommand:
             timeout=SERVICE_MANAGED_STOP_TIMEOUT_SECONDS,
         )
 
+    @pytest.mark.parametrize(
+        ("marker", "exit_code"),
+        [(None, 0), ("other-home", 1)],
+    )
+    @patch("gobby.cli.daemon.service_stop")
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "running": True, "platform": "macos", "pid": 4321},
+    )
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    def test_stop_under_test_protect_never_drives_the_service_manager(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_service_status: MagicMock,
+        mock_service_stop: MagicMock,
+        marker: str | None,
+        exit_code: int,
+        runner: CliRunner,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The user-global service is out of reach without a matching e2e marker."""
+        monkeypatch.setenv("GOBBY_TEST_PROTECT", "1")
+        if marker is None:
+            monkeypatch.delenv("GOBBY_E2E_ISOLATED_HOME", raising=False)
+        else:
+            monkeypatch.setenv("GOBBY_E2E_ISOLATED_HOME", str(tmp_path / marker))
+        mock_config = MagicMock()
+        mock_config.daemon_port = 60887
+        mock_load_config.return_value = mock_config
+
+        with patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path):
+            result = runner.invoke(cli, ["stop"])
+
+        assert result.exit_code == exit_code
+        assert "Stopping via OS service manager" not in result.output
+        mock_get_service_status.assert_not_called()
+        mock_service_stop.assert_not_called()
+
     @patch("gobby.runner_maintenance.write_shutdown_source")
     @patch("gobby.cli.installers.service.subprocess.run")
     @patch("gobby.cli.installers.service._plist_path")
@@ -1186,6 +1260,7 @@ class TestStopCommand:
     )
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_stop_via_service_falls_back_when_launchctl_bootout_fails(
         self,
         mock_load_config: MagicMock,
@@ -1234,8 +1309,16 @@ class TestRestartCommand:
 
     @pytest.fixture(autouse=True)
     def mock_service_admission(self) -> Generator[MagicMock]:
-        with patch("gobby.cli.daemon.admit_service_start", return_value=None) as admit:
+        with patch("gobby.cli.daemon_start.admit_service_start", return_value=None) as admit:
             yield admit
+
+    @pytest.fixture(autouse=True)
+    def start_reads_patched_service_status(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Restart's start half sees the same service manager its stop half patched."""
+        daemon_cli = importlib.import_module("gobby.cli.daemon")
+        monkeypatch.setattr(
+            "gobby.cli.daemon_start.get_service_status", lambda: daemon_cli.get_service_status()
+        )
 
     @pytest.fixture(autouse=True)
     def skip_start_preflight(self) -> Generator[MagicMock]:
@@ -1260,10 +1343,10 @@ class TestRestartCommand:
         assert result.exit_code == 2
         assert f"No such option '{removed_option}'" in result.output
 
-    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
+    @patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=4.0)
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=1.0)
-    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
     @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
     @patch(
         "gobby.cli.daemon.get_service_status",
@@ -1278,6 +1361,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_waits_for_health(
         self,
         mock_load_config: MagicMock,
@@ -1323,10 +1407,10 @@ class TestRestartCommand:
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
         mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
 
-    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
+    @patch("gobby.cli.daemon_start._poll_startup_progress", return_value=True)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=4.0)
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=45.0)
-    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
     @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
     @patch(
         "gobby.cli.daemon.get_service_status",
@@ -1341,6 +1425,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_allows_slow_launchd_stop(
         self,
         mock_load_config: MagicMock,
@@ -1374,10 +1459,10 @@ class TestRestartCommand:
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
         mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
 
-    @patch("gobby.cli.daemon._poll_startup_progress", return_value=False)
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
+    @patch("gobby.cli.daemon_start._poll_startup_progress", return_value=False)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=4.0)
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=1.0)
-    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
     @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
     @patch(
         "gobby.cli.daemon.get_service_status",
@@ -1392,6 +1477,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_fails_when_startup_readiness_does_not_complete(
         self,
         mock_load_config: MagicMock,
@@ -1415,10 +1501,10 @@ class TestRestartCommand:
         assert "Daemon did not finish startup readiness after service start" in result.output
         mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
 
-    @patch("gobby.cli.daemon._poll_startup_progress")
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
+    @patch("gobby.cli.daemon_start._poll_startup_progress")
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=None)
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=0.8)
-    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch("gobby.cli.daemon_start.service_start", return_value={"success": True})
     @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
     @patch(
         "gobby.cli.daemon.get_service_status",
@@ -1433,6 +1519,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_fails_when_health_does_not_return(
         self,
         mock_load_config: MagicMock,
@@ -1472,8 +1559,8 @@ class TestRestartCommand:
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
         mock_poll_startup.assert_not_called()
 
-    @patch("gobby.cli.daemon._wait_for_daemon_health")
-    @patch("gobby.cli.daemon.service_start")
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health")
+    @patch("gobby.cli.daemon_start.service_start")
     @patch("gobby.cli.daemon._wait_for_service_stop", return_value=None)
     @patch("gobby.cli.daemon.service_stop", return_value={"success": True})
     @patch(
@@ -1489,6 +1576,7 @@ class TestRestartCommand:
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
+    @patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""})
     def test_restart_via_service_fails_when_stop_does_not_complete(
         self,
         mock_load_config: MagicMock,
@@ -1531,10 +1619,10 @@ class TestRestartCommand:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.daemon.time.sleep")
@@ -1613,10 +1701,10 @@ class TestRestartCommand:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.stop_daemon_util")
     @patch("gobby.cli.daemon.setup_logging")
     @patch("gobby.cli.daemon.time.sleep")
@@ -1857,6 +1945,65 @@ class TestStatusCommand:
         )
         mock_psutil_process.assert_called_once_with(listener_pid)
 
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch(
+        "gobby.utils.deps.collect_all_deps",
+        return_value={"gobby": {}, "coding_clis": {}, "dependencies": {}},
+    )
+    @patch("gobby.cli.daemon.probe_daemon_lock")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch(
+        "gobby.cli.daemon.fetch_rich_status",
+        return_value=RichStatusProbe(api_data={"process": {}}, health_confirmed=True),
+    )
+    @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon._is_process_alive", return_value=True)
+    @patch("gobby.cli.runtime.CliRuntime.require_config")
+    def test_status_accepts_the_runners_front_door_child_on_the_http_port(
+        self,
+        mock_load_config: MagicMock,
+        mock_is_process_alive: MagicMock,
+        mock_psutil_process: MagicMock,
+        mock_fetch_status: MagicMock,
+        mock_get_gobby_home: MagicMock,
+        mock_probe: MagicMock,
+        mock_collect_deps: MagicMock,
+        mock_check_mismatches: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        temp_dir: Path,
+        mock_port_listener_pid: MagicMock,
+    ) -> None:
+        from gobby.runner_pid_file import ProbeState, SingletonProbe
+
+        runner_pid = 90236
+        front_door_pid = 90245
+        mock_probe.return_value = SingletonProbe(
+            state=ProbeState.DAEMON, pid=runner_pid, role="daemon"
+        )
+        mock_load_config.return_value = mock_daemon_config
+        mock_port_listener_pid.return_value = front_door_pid
+        mock_psutil_process.return_value.ppid.return_value = runner_pid
+        mock_psutil_process.return_value.create_time.return_value = 2800.0
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            gobby_dir = temp_dir / ".gobby"
+            gobby_dir.mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "gobby.pid").write_text(str(runner_pid))
+            mock_get_gobby_home.return_value = gobby_dir
+
+            with (
+                patch("gobby.cli.daemon.time.time", return_value=10000.0),
+                patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()),
+            ):
+                result = runner.invoke(cli, ["status"])
+
+        assert result.exit_code == 0
+        assert f"Running (PID: {runner_pid})" in result.output
+        assert "PID mismatch" not in result.output
+        assert mock_psutil_process.call_args_list[-1].args == (runner_pid,)
+
     @patch("gobby.cli.daemon._is_process_alive", return_value=False)
     @patch("gobby.cli.daemon.get_gobby_home")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
@@ -2024,10 +2171,10 @@ class TestDaemonCommandsIntegration:
             pid_file.unlink()
 
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     @pytest.mark.parametrize(
@@ -2073,7 +2220,7 @@ class TestDaemonCommandsIntegration:
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
             patch(
-                "gobby.cli.daemon.admit_direct_start",
+                "gobby.cli.daemon_start.admit_direct_start",
                 return_value=(MagicMock(), None),
             ),
             patch(
@@ -2131,13 +2278,13 @@ class TestEdgeCases:
         if pid_file.exists():
             pid_file.unlink()
 
-    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=None)
+    @patch("gobby.cli.daemon_start._wait_for_daemon_health", return_value=None)
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_health_check_timeout(
@@ -2185,10 +2332,10 @@ class TestEdgeCases:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_health_check_non_200_response(
@@ -2246,10 +2393,10 @@ class TestEdgeCases:
             assert result.exit_code == 0
             assert mock_httpx_get.call_count >= len(responses)
 
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_popen_exception(
         self,
@@ -2386,10 +2533,10 @@ class TestCommandBuilding:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_command_uses_correct_module(
@@ -2442,10 +2589,10 @@ class TestCommandBuilding:
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
-    @patch("gobby.cli.daemon.subprocess.Popen")
-    @patch("gobby.cli.daemon.is_port_available")
+    @patch("gobby.cli.daemon_start.subprocess.Popen")
+    @patch("gobby.cli.daemon_start.is_port_available")
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
-    @patch("gobby.cli.daemon.init_local_storage")
+    @patch("gobby.cli.daemon_start.init_local_storage")
     @patch("gobby.cli.daemon.time.sleep")
     @patch("gobby.cli.runtime.CliRuntime.require_config")
     def test_start_subprocess_options(
@@ -2501,9 +2648,9 @@ def test_start_refuses_linked_worktree_before_services(monkeypatch: pytest.Monke
     refusal = "Refusing to start the Gobby daemon from linked worktree /wt"
     dependency_errors = MagicMock(return_value=[])
     services_start = MagicMock()
-    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: refusal)
-    monkeypatch.setattr("gobby.cli.daemon._start_dependency_errors", dependency_errors)
-    monkeypatch.setattr("gobby.cli.daemon._services_start", services_start)
+    monkeypatch.setattr("gobby.cli.daemon_start.worktree_daemon_refusal", lambda: refusal)
+    monkeypatch.setattr("gobby.cli.daemon_start._start_dependency_errors", dependency_errors)
+    monkeypatch.setattr("gobby.cli.daemon_start._services_start", services_start)
 
     result = CliRunner().invoke(cli, ["start"])
 
@@ -2616,9 +2763,11 @@ def test_stop_rejects_force_combined_with_wait(mock_stop_daemon: MagicMock) -> N
 
 @patch("gobby.cli.daemon.get_service_status", return_value={"installed": False})
 @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+@patch("gobby.cli.daemon.restart_start_refusal", return_value=None)
 @patch("gobby.cli.daemon.setup_logging")
 def test_restart_refuses_while_a_protected_run_is_active(
     _setup_logging: MagicMock,
+    _start_refusal: MagicMock,
     mock_stop_daemon: MagicMock,
     _service_status: MagicMock,
     _no_protected_runs: MagicMock,

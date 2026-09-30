@@ -9,6 +9,14 @@ from gobby.hooks._inline_interpreter_classifier import (
     _classify_interpreter_source,
     _InlineProgramClassification,
 )
+from gobby.hooks._normalization_bindings import (
+    _literal_assignment_bindings,
+    _loop_binding_variable_is_stable,
+    _loop_header_words_are_literal,
+    _plain_loop_binding_reference,
+    _shell_loop_binding_disqualifications,
+    _shell_segment_preserves_loop_binding,
+)
 from gobby.hooks._normalization_operands import (
     _curl_output_paths,
     _find_has_mutation_predicate,
@@ -48,14 +56,9 @@ from gobby.hooks._normalization_shell import (
     _literal_cd_target,
     _looks_file_like,
     _looks_path_target,
-    _loop_binding_variable_is_stable,
-    _loop_header_words_are_literal,
-    _plain_loop_binding_reference,
     _rebase_navigation_shell_paths,
     _rebase_shell_paths,
-    _shell_loop_binding_disqualifications,
     _shell_positional_args,
-    _shell_segment_preserves_loop_binding,
     _strip_shell_wrappers,
     extract_redirection_paths,
     has_mutating_output_redirection,
@@ -253,6 +256,11 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
                 loop_bindings[item.loop_binding_variable] = item.paths
             else:
                 loop_bindings.pop(item.loop_binding_variable, None)
+        for variable, value in item.assignment_bindings:
+            if variable not in disqualified_loop_variables and _loop_binding_variable_is_stable(
+                variable
+            ):
+                loop_bindings[variable] = (value,)
         resolvable = [path for path in item.paths if not _contains_unexpanded_shell_reference(path)]
         if (
             item.extra
@@ -269,13 +277,15 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
             mutation_scope_unknown = True
             saw_unexpanded_mutation_path = True
             for path in unresolved_mutation_paths:
-                referenced_variable = _plain_loop_binding_reference(
+                reference = _plain_loop_binding_reference(
                     path,
                     item.shell_words,
                     item.shell_raw_words,
                 )
-                if referenced_variable and referenced_variable in loop_bindings:
-                    for resolved_path in loop_bindings[referenced_variable]:
+                if reference and reference[0] in loop_bindings:
+                    variable, suffix = reference
+                    for bound_path in loop_bindings[variable]:
+                        resolved_path = bound_path + suffix
                         if resolved_path not in mutation_paths:
                             mutation_paths.append(resolved_path)
                 else:
@@ -353,20 +363,30 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     persistent_cwd: str | None = None
     metadata: list[_ShellSegmentMetadata] = []
     segments = _split_shell_segments(tokens)
+    # Only the bare assignments that open a command always run in this shell.
+    leading_assignments = True
     for index, segment in enumerate(segments):
-        in_pipeline = segment.separator_before == "|" or (
-            index + 1 < len(segments) and segments[index + 1].separator_before == "|"
-        )
+        next_separator = segments[index + 1].separator_before if index + 1 < len(segments) else None
+        in_pipeline = segment.separator_before == "|" or next_separator == "|"
         if segment.separator_before not in {None, "&&", ";", "\n", "|"}:
             persistent_cwd = None
         raw_parts = shell_token_values(segment.tokens)
         source_parts = tuple(raw_by_token[id(token)] for token in segment.tokens)
+        assignment_bindings = (
+            _literal_assignment_bindings(tuple(raw_parts), source_parts)
+            if leading_assignments
+            and segment.separator_before in {None, "&&", ";", "\n"}
+            and next_separator not in {"|", "&"}
+            else None
+        )
+        leading_assignments = assignment_bindings is not None
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
             metadata.append(
                 _ShellSegmentMetadata(
                     "execute",
                     neutral_setup=True,
+                    assignment_bindings=assignment_bindings or (),
                     shell_words=tuple(raw_parts),
                     shell_raw_words=source_parts,
                 )
@@ -523,7 +543,8 @@ def _classify_shell_segment(
         )
 
     if input_paths:
-        base_metadata = _classify_shell_segment_without_redirection(plain_parts, cwd)
+        # Input redirection operands are stdin, never positional arguments.
+        base_metadata = _classify_shell_segment_without_redirection(stdin_parts, cwd)
         if _interpreter_reads_program_from_stdin(stdin_parts):
             base_metadata = _ShellSegmentMetadata(
                 "write",
@@ -532,7 +553,9 @@ def _classify_shell_segment(
                 cwd=cwd,
             )
         base_paths = list(base_metadata.paths)
-        if base_metadata.repo_mutation and not base_paths:
+        if base_metadata.repo_mutation:
+            # A mutating segment only reads its stdin source, so that path
+            # must not widen the mutation scope.
             input_paths = []
         return _ShellSegmentMetadata(
             base_metadata.kind,
@@ -553,7 +576,8 @@ def _classify_shell_segment(
                 stdin_program_interpreter=_stdin_program_interpreter(stdin_parts),
                 cwd=cwd,
             )
-        return _ShellSegmentMetadata("execute")
+        # A heredoc only feeds stdin; the command still writes what it names.
+        return _classify_shell_segment_without_redirection(stdin_parts, cwd)
 
     if _is_neutral_echo_segment(tokens, plain_parts):
         return _ShellSegmentMetadata("execute", neutral_setup=True)

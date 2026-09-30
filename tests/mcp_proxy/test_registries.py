@@ -37,6 +37,7 @@ def test_setup_internal_registries_with_merge() -> None:
     registry_names = [r.name for r in registries]
     assert "gobby-merge" in registry_names
     assert "gobby-worktrees" in registry_names
+    assert "gobby-ask" not in registry_names
 
 
 def test_setup_with_config_none() -> None:

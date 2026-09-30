@@ -9,6 +9,11 @@ Plan artifact: `.gobby/plans/memory-surfacing.md`
 > Drafted in plan mode in session gobby#13699 and approved by the user on 2026-09-17. This file
 > is the sole authority; validate it with
 > `uv run gobby plans validate .gobby/plans/memory-surfacing.md -p .`.
+>
+> **Scope note (2026-09-27):** #22837 (retire the recall-signal stack) removed the
+> recall-signal log, shadow relevance judging, `recall_request_id`, and the usefulness-label
+> contract under the `memory-access-semantics` plan. References to them below describe the
+> system as it stood when this plan ran and are preserved as written.
 
 ## C1 Context
 `kind: framing`

@@ -1,7 +1,10 @@
 """Tests for isolated-daemon health polling."""
 
+import subprocess
 import time
 from pathlib import Path
+from typing import cast
+from unittest.mock import Mock
 
 import httpx
 import pytest
@@ -43,6 +46,9 @@ def test_failure_reports_probe_breakdown_and_daemon_log_tail(
     attempts = 0
     log_file = tmp_path / "daemon.log"
     log_file.write_text("old startup line\nlatest startup progress\n")
+    log_file.with_name("daemon_error.log").write_text("startup phase timed out\n")
+    process = Mock(spec=subprocess.Popen)
+    process.poll.return_value = 17
 
     def fail_probe(url: str, *, timeout: float) -> httpx.Response:
         nonlocal attempts
@@ -58,6 +64,7 @@ def test_failure_reports_probe_breakdown_and_daemon_log_tail(
         wait_for_daemon_health(
             find_free_port(),
             log_file=log_file,
+            process=cast(subprocess.Popen[bytes], process),
             timeout=0.0,
             min_attempts=4,
         )
@@ -71,8 +78,11 @@ def test_failure_reports_probe_breakdown_and_daemon_log_tail(
     assert "attempts=4" in message
     assert "connect_refused=2" in message
     assert "timed_out=2" in message
+    assert "process=exited(17)" in message
     assert "--- daemon log tail ---" in message
     assert "latest startup progress" in message
+    assert "--- daemon error log tail ---" in message
+    assert "startup phase timed out" in message
 
 
 def test_daemon_that_never_serves_route_fails_promptly(tmp_path: Path) -> None:

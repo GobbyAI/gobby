@@ -49,6 +49,19 @@ def rehydrate_found_work_gate_arm(handler: Any, session_id: str) -> None:
 
 logger = logging.getLogger(__name__)
 
+MCP_PROXY_READY_VARIABLE = "_mcp_proxy_ready"
+
+
+def inherited_mcp_proxy_ready(predecessor_vars: dict[str, Any]) -> dict[str, Any]:
+    """Carry the predecessor's Gobby MCP proxy readiness onto a clear successor.
+
+    The successor runs in the predecessor's CLI process, whose stdio bridge
+    reported readiness once, to the predecessor session.
+    """
+    if predecessor_vars.get(MCP_PROXY_READY_VARIABLE) is True:
+        return {MCP_PROXY_READY_VARIABLE: True}
+    return {}
+
 
 def preserve_task_claim_state(
     handler: Any,
@@ -85,7 +98,7 @@ def preserve_task_claim_state(
         )
     if merged_claims and sv_mgr is not None:
         try:
-            sv_mgr.merge_variables(successor_id, merged_claims)
+            sv_mgr.merge_variables(successor_id, merged_claims, reconcile_claims=True)
         except Exception as e:
             _log(handler).warning(
                 "Failed to merge successor claim variables for session=%s: %s",

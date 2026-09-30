@@ -5,19 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
-import threading
-from collections import OrderedDict
 from collections.abc import Iterable, Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-
-from pydantic import TypeAdapter
-from pydantic_core import PydanticSerializationError
 
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
@@ -42,7 +36,6 @@ from gobby.sessions.transcripts.base import (
     raw_lines_from_texts,
 )
 from gobby.storage.session_models import Session
-from gobby.tasks.transcript_evidence_cache import clear_snapshots, read_snapshot, write_snapshot
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -51,6 +44,17 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationSegment,
 )
 from gobby.tasks.transcript_evidence_pool import run_in_transcript_evidence_pool
+from gobby.tasks.transcript_evidence_snapshots import (
+    EvidenceSnapshot,
+    PendingTool,
+    TranscriptRead,
+    load_durable_snapshot,
+    load_snapshot,
+    read_transcript,
+    read_transcript_suffix,
+    store_durable_snapshot,
+    store_snapshot,
+)
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
 )
@@ -78,6 +82,7 @@ from gobby.tasks.transcript_tool_arguments import (
 from gobby.tasks.transcript_tool_arguments import (
     normalize_tool_name as _tool_basename,
 )
+from gobby.tasks.transcript_tool_arguments import resolve_edit_path as _resolve_edit_path
 
 logger = logging.getLogger(__name__)
 
@@ -118,21 +123,14 @@ _EDIT_TOOLS = {
 
 
 @dataclass
-class _PendingTool:
-    name: str
-    arguments: dict[str, Any]
-    timestamp: datetime
-    order: int
-
-
-@dataclass
 class _DerivationState:
     session: Session
     detection_config: ValidationDetectionConfig
     task_edited_files: set[str]
     repo_path: str
+    task_checkout_paths: frozenset[tuple[str, str]] | None
     window_start: datetime | None
-    pending: dict[str, _PendingTool] = field(default_factory=dict)
+    pending: dict[str, PendingTool] = field(default_factory=dict)
     runs: list[TranscriptValidationRun] = field(default_factory=list)
     edits: list[TranscriptEdit] = field(default_factory=list)
     degraded: list[str] = field(default_factory=list)
@@ -144,136 +142,13 @@ class _DerivationState:
         return self.order
 
 
-# --- Incremental derivation -------------------------------------------------
-#
-# Deriving evidence reads the whole transcript and reparses the whole claim
-# window on every close attempt, so the cost is O(session length) even though
-# the window's prefix never changes (#20876). Each derivation therefore leaves
-# behind a per-session snapshot: everything the parse accumulated, pinned to a
-# byte-offset watermark at the end of the last newline-terminated line. The
-# next derivation with the same inputs seeks to the watermark, parses only the
-# appended suffix, and continues from the carried state.
-#
-# The split is provably equivalent to one full parse because every coupling
-# across the watermark travels with the snapshot: the parser's own cross-line
-# state (`snapshot_state`/`hydrate_state` — Codex exec chains, Droid usage
-# deltas; Claude/Qwen/Grok parse per line), the derivation's unresolved tool
-# begins (`pending`), the event `order` counter, and the raw pre-dedup
-# `degraded` list. The per-line window filter commutes with splitting the
-# stream, and first-occurrence dedup of (dedup(prefix) + suffix) equals
-# dedup(prefix + suffix).
-#
-# Measured on this repository's 92.6 MB / 59k-line session with a four-hour
-# window: 589–611 ms for every full derivation before, 2 ms resuming over 40
-# appended lines and under 1 ms over none — with identical evidence (79 runs,
-# 35 edits) to a fresh full parse of the same file.
-#
-# A snapshot only ever *narrows* what is reparsed; it can never change what is
-# derived. It is bypassed — and the whole file parsed, as before — whenever
-# the derivation inputs' fingerprint differs, the transcript resolves to a
-# different path (rotation into an archive), or the watermark no longer
-# describes the file: shorter than the watermark (truncation), or different
-# bytes at the watermark's tail (rewrite). The tail check and the suffix read
-# share one file handle, so a rename-over between them cannot mix two files.
-# A trailing line still missing its newline is parsed but never persisted
-# beneath a watermark, so a mid-write race costs one full reparse, never a
-# duplicated or dropped record.
-
-_TAIL_CHECK_BYTES = 65_536
-_SNAPSHOT_LIMIT = 8
-
-
-@dataclass(frozen=True)
-class _EvidenceSnapshot:
-    """Derived evidence for one session transcript up to a byte watermark."""
-
-    fingerprint: str
-    transcript_path: str
-    watermark: int
-    tail_len: int
-    tail_sha256: str
-    parser_state: dict[str, Any]
-    pending: dict[str, _PendingTool]
-    order: int
-    runs: tuple[TranscriptValidationRun, ...]
-    edits: tuple[TranscriptEdit, ...]
-    degraded: tuple[str, ...]
-    parsed_from_offset: int = 0
-    latest_record_at: datetime | None = None
-
-
-_SNAPSHOT_ADAPTER = TypeAdapter(_EvidenceSnapshot)
-
-
-def _snapshot_offsets_valid(snapshot: _EvidenceSnapshot) -> bool:
-    return 0 <= snapshot.tail_len <= min(snapshot.watermark, _TAIL_CHECK_BYTES)
-
-
-def _load_durable_snapshot(session_id: str) -> _EvidenceSnapshot | None:
-    payload = read_snapshot(session_id)
-    if payload is None:
-        return None
-    try:
-        snapshot = _SNAPSHOT_ADAPTER.validate_json(payload)
-        return snapshot if _snapshot_offsets_valid(snapshot) else None
-    except (TypeError, ValueError):
-        logger.debug("Ignoring invalid transcript evidence checkpoint", exc_info=True)
-        return None
-
-
-def _store_durable_snapshot(session_id: str, snapshot: _EvidenceSnapshot) -> None:
-    try:
-        write_snapshot(session_id, _SNAPSHOT_ADAPTER.dump_json(snapshot))
-    except (PydanticSerializationError, TypeError, ValueError):
-        logger.debug("Could not serialize transcript evidence checkpoint", exc_info=True)
-
-
-@dataclass(frozen=True)
-class _TranscriptRead:
-    """Decoded transcript lines plus the watermark bookkeeping behind them."""
-
-    lines: list[str]
-    watermark: int
-    has_partial_tail: bool
-    #: Bytes ending at ``watermark`` (at most ``_TAIL_CHECK_BYTES``), kept in
-    #: memory so the stored checksum always describes the bytes that were
-    #: parsed, not whatever a re-opened path holds by then.
-    tail: bytes
-
-
-_snapshot_lock = threading.Lock()
-_evidence_snapshots: OrderedDict[str, _EvidenceSnapshot] = OrderedDict()
-
-
-def clear_evidence_snapshots() -> None:
-    """Drop every cached per-session derivation (test isolation)."""
-    with _snapshot_lock:
-        _evidence_snapshots.clear()
-    clear_snapshots()
-
-
-def _load_snapshot(session_id: str) -> _EvidenceSnapshot | None:
-    with _snapshot_lock:
-        snapshot = _evidence_snapshots.get(session_id)
-        if snapshot is not None:
-            _evidence_snapshots.move_to_end(session_id)
-        return snapshot
-
-
-def _store_snapshot(session_id: str, snapshot: _EvidenceSnapshot) -> None:
-    with _snapshot_lock:
-        _evidence_snapshots[session_id] = snapshot
-        _evidence_snapshots.move_to_end(session_id)
-        while len(_evidence_snapshots) > _SNAPSHOT_LIMIT:
-            _evidence_snapshots.popitem(last=False)
-
-
 def _derivation_fingerprint(
     session: Session,
     window_start: datetime | None,
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
 ) -> str:
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
@@ -282,6 +157,9 @@ def _derivation_fingerprint(
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
             "repo_path": repo_path,
+            "task_checkout_paths": sorted(task_checkout_paths)
+            if task_checkout_paths is not None
+            else None,
             "task_edited_files": sorted(task_edited_files),
             "detection": detection_config.model_dump(mode="json"),
         },
@@ -289,63 +167,6 @@ def _derivation_fingerprint(
         separators=(",", ":"),
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
-
-
-def _split_transcript_bytes(data: bytes, offset: int, prior_tail: bytes) -> _TranscriptRead:
-    """Decode ``data`` (the bytes at/after ``offset``) into positioned lines.
-
-    ``prior_tail`` holds the bytes just before ``offset`` (empty for a full
-    read); the returned :attr:`_TranscriptRead.tail` is assembled from it and
-    the newly read bytes so no re-read of the file is ever needed. Decoding is
-    strict UTF-8, matching the text-mode read this replaced — a decode error
-    propagates and becomes ``TranscriptEvidenceUnavailable``.
-    """
-    boundary = data.rfind(b"\n") + 1
-    lines = [chunk.decode("utf-8") for chunk in data.splitlines(keepends=True)]
-    watermark = offset + boundary
-    combined = prior_tail + data[:boundary]
-    tail_len = min(watermark, _TAIL_CHECK_BYTES)
-    return _TranscriptRead(
-        lines=lines,
-        watermark=watermark,
-        has_partial_tail=boundary < len(data),
-        tail=combined[len(combined) - tail_len :],
-    )
-
-
-def _read_transcript(path: str) -> _TranscriptRead:
-    """Read a whole transcript for a full parse."""
-    with open(path, "rb") as f:
-        data = f.read()
-    return _split_transcript_bytes(data, 0, b"")
-
-
-def _read_transcript_suffix(path: str, snapshot: _EvidenceSnapshot) -> _TranscriptRead | None:
-    """Validate the snapshot's watermark and read the appended suffix.
-
-    Returns ``None`` — full parse — when the file is shorter than the
-    watermark, the bytes ending at the watermark no longer match, or the file
-    cannot be read. Validation and the suffix read share one file handle so a
-    concurrent rename-over cannot pass the check with one file and serve the
-    suffix of another.
-    """
-    if not _snapshot_offsets_valid(snapshot):
-        return None
-    try:
-        with open(path, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            if f.tell() < snapshot.watermark:
-                return None
-            f.seek(snapshot.watermark - snapshot.tail_len)
-            tail = f.read(snapshot.tail_len)
-            if len(tail) != snapshot.tail_len:
-                return None
-            if hashlib.sha256(tail).hexdigest() != snapshot.tail_sha256:
-                return None
-            data = f.read()
-    except OSError:
-        return None
-    return _split_transcript_bytes(data, snapshot.watermark, tail)
 
 
 async def derive_transcript_evidence(
@@ -356,6 +177,7 @@ async def derive_transcript_evidence(
     repo_path: str,
     *,
     archive_dir: str | None = None,
+    task_checkout_paths: frozenset[tuple[str, str]] | None = None,
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
@@ -366,12 +188,13 @@ async def derive_transcript_evidence(
         detection_config,
         set(task_edited_files),
         repo_path,
+        task_checkout_paths,
         archive_dir,
         local_machine_id,
-        _load_snapshot(session.id),
+        load_snapshot(session.id),
     )
     if snapshot is not None:
-        _store_snapshot(session.id, snapshot)
+        store_snapshot(session.id, snapshot)
     return evidence
 
 
@@ -474,12 +297,13 @@ def _derive_transcript_evidence_sync(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
     archive_dir: str | None,
     local_machine_id: str,
-    resume: _EvidenceSnapshot | None,
-) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
+    resume: EvidenceSnapshot | None,
+) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
     if resume is None:
-        resume = _load_durable_snapshot(session.id)
+        resume = load_durable_snapshot(session.id)
     paths, attempted_paths = _resolve_transcript_paths(session, archive_dir, local_machine_id)
     if not paths:
         raise TranscriptEvidenceUnavailable(
@@ -495,22 +319,31 @@ def _derive_transcript_evidence_sync(
             detection_config,
             task_edited_files,
             repo_path,
+            task_checkout_paths,
             attempted_paths,
-            resume_enabled=index == 0,
-            resume=resume if index == 0 else None,
+            resume=(
+                resume
+                if index == 0
+                else resume.supplemental.get(path)
+                if resume is not None
+                else None
+            ),
         )
         for index, path in enumerate(paths)
     )
     updated = results[0][1]
-    if updated is not None and (
-        resume is None
-        or updated.fingerprint != resume.fingerprint
-        or updated.watermark != resume.watermark
-        or updated.tail_len != resume.tail_len
-        or updated.tail_sha256 != resume.tail_sha256
-    ):
-        _store_durable_snapshot(session.id, updated)
-    return merge_transcript_evidence(*(result[0] for result in results)), results[0][1]
+    if updated is not None:
+        updated = replace(
+            updated,
+            supplemental={
+                path: snapshot
+                for path, (_, snapshot) in zip(paths[1:], results[1:], strict=True)
+                if snapshot is not None
+            },
+        )
+        if resume is None or updated.checkpoint() != resume.checkpoint():
+            store_durable_snapshot(session.id, updated)
+    return merge_transcript_evidence(*(result[0] for result in results)), updated
 
 
 def _derive_transcript_path_evidence(
@@ -520,30 +353,35 @@ def _derive_transcript_path_evidence(
     detection_config: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
     attempted_paths: list[str],
     *,
-    resume_enabled: bool,
-    resume: _EvidenceSnapshot | None,
-) -> tuple[TranscriptEvidence, _EvidenceSnapshot | None]:
+    resume: EvidenceSnapshot | None,
+) -> tuple[TranscriptEvidence, EvidenceSnapshot | None]:
     normalized_task_files = {_normalize_known_path(item, repo_path) for item in task_edited_files}
     fingerprint = _derivation_fingerprint(
-        session, window_start, detection_config, normalized_task_files, repo_path
+        session,
+        window_start,
+        detection_config,
+        normalized_task_files,
+        repo_path,
+        task_checkout_paths,
     )
     if resume is not None and (
         resume.fingerprint != fingerprint or resume.transcript_path != path or path.endswith(".gz")
     ):
         resume = None
 
-    read: _TranscriptRead | None = None
+    read: TranscriptRead | None = None
     try:
         if path.endswith(".gz"):
             lines = list(_iter_archive_lines(path))
         else:
             if resume is not None:
-                read = _read_transcript_suffix(path, resume)
+                read = read_transcript_suffix(path, resume)
             if read is None:
                 resume = None
-                read = _read_transcript(path)
+                read = read_transcript(path)
             lines = read.lines
     except (OSError, UnicodeError, RuntimeError) as exc:
         raise TranscriptEvidenceUnavailable(
@@ -566,6 +404,7 @@ def _derive_transcript_path_evidence(
         detection_config=detection_config,
         task_edited_files=normalized_task_files,
         repo_path=repo_path,
+        task_checkout_paths=task_checkout_paths,
         window_start=window_start,
     )
     if resume is not None:
@@ -592,8 +431,8 @@ def _derive_transcript_path_evidence(
                 _consume_tool_event(state, record)
 
     snapshot = None
-    if resume_enabled and read is not None and not read.has_partial_tail:
-        snapshot = _EvidenceSnapshot(
+    if read is not None and not read.has_partial_tail:
+        snapshot = EvidenceSnapshot(
             fingerprint=fingerprint,
             transcript_path=path,
             watermark=read.watermark,
@@ -686,7 +525,7 @@ def _consume_message(state: _DerivationState, message: ParsedMessage) -> None:
         name = message.tool_name or ""
         arguments = message.tool_input or {}
         if call_id:
-            state.pending[call_id] = _PendingTool(name, arguments, timestamp, order)
+            state.pending[call_id] = PendingTool(name, arguments, timestamp, order)
         _record_edit(state, name, arguments, timestamp, order)
         return
     if message.content_type != "tool_result" or not call_id:
@@ -713,7 +552,7 @@ def _consume_tool_event(state: _DerivationState, event: ParsedToolEvent) -> None
     if event.phase == "begin":
         name = event.tool or ""
         if call_id:
-            state.pending[call_id] = _PendingTool(name, event.arguments, timestamp, order)
+            state.pending[call_id] = PendingTool(name, event.arguments, timestamp, order)
         _record_edit(state, name, event.arguments, timestamp, order)
         return
     if event.phase != "end" or not call_id:
@@ -838,7 +677,7 @@ def _segment_categories(segments: Sequence[TranscriptValidationSegment]) -> tupl
 
 def _record_validation_run(
     state: _DerivationState,
-    pending: _PendingTool,
+    pending: PendingTool,
     *,
     result: Any,
     completed_at: datetime,
@@ -891,23 +730,21 @@ def _record_validation_run(
     )
 
 
-def _shell_write_paths(command: str, repo_path: str) -> set[str]:
-    """Resolve the repository files one shell command writes.
-
-    The canonical classifier here is the one `enforce-tdd-block` gates on, so a
-    heredoc-written test is close-time edit evidence exactly when enforcement
-    already saw it as a repo mutation. Commands that only read, move or delete a
-    path carry no write path and stay uncredited.
-    """
+def _shell_write_paths(
+    command: str, arguments: dict[str, Any], repo_path: str, require_proven_checkout: bool
+) -> set[str]:
+    """Credit writes recognized by the canonical TDD shell classifier."""
     if not command.strip():
         return set()
     write_paths = _shell_tool_metadata(command).get("canonical_write_file_paths")
     if not isinstance(write_paths, list):
         return set()
     return {
-        _normalize_known_path(path, repo_path)
+        resolved
         for path in write_paths
         if isinstance(path, str) and path
+        if (resolved := _resolve_edit_path(path, arguments, repo_path, require_proven_checkout))
+        is not None
     }
 
 
@@ -919,14 +756,21 @@ def _record_edit(
     order: int,
 ) -> None:
     basename = _tool_basename(tool_name)
+    require_proven_checkout = state.task_checkout_paths is not None
     if basename in _EDIT_TOOLS:
-        paths = _extract_edit_paths(basename, arguments, state.repo_path)
+        paths = _extract_edit_paths(
+            basename, arguments, state.repo_path, require_proven_checkout=require_proven_checkout
+        )
     elif basename in _SHELL_TOOLS:
-        paths = _shell_write_paths(_extract_command(arguments), state.repo_path)
+        paths = _shell_write_paths(
+            _extract_command(arguments), arguments, state.repo_path, require_proven_checkout
+        )
     else:
         return
     for path in paths:
-        task_file = _match_task_file(path, state.task_edited_files)
+        task_file = _match_task_file(
+            path, state.task_edited_files, state.repo_path, state.task_checkout_paths
+        )
         if task_file is None:
             continue
         state.edits.append(
@@ -968,7 +812,6 @@ def _as_utc(value: datetime) -> datetime:
 
 
 __all__ = [
-    "clear_evidence_snapshots",
     "derive_transcript_evidence",
     "merge_transcript_evidence",
 ]

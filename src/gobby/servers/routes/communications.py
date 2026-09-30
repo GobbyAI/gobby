@@ -2,17 +2,27 @@
 FastAPI route module for Gobby communications framework.
 """
 
+import asyncio
 import json
 import logging
+import re
+import tempfile
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
+from gobby.communications.models import ChannelNotFoundError
+from gobby.communications.redaction import MAX_LOG_ATTACHMENT_BYTES
 from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
+
+# A bare .txt/.log name: no separators and no leading dot, so it can never address a
+# host path, and the document can only arrive as text.
+_ATTACHMENT_FILENAME = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9._-]{0,59}\.(txt|log)")
 
 
 def create_communications_router(server: HTTPServer) -> APIRouter:
@@ -36,6 +46,12 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         content: str = Field(..., description="Message content")
         session_id: str | None = Field(None, description="Optional originating session")
         metadata: dict[str, Any] | None = Field(None, description="Optional message metadata")
+
+    class SendAttachmentRequest(BaseModel):
+        channel_name: str = Field(..., description="Name of the destination channel")
+        filename: str = Field(..., description="Bare document name, e.g. errors-new.txt")
+        content: str = Field(..., description="Document text, already redacted by the caller")
+        caption: str = Field("", description="Optional caption")
 
     @router.post("/webhooks/{channel_name}")
     async def receive_webhook(
@@ -110,8 +126,10 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
                 session_id=request.session_id,
                 metadata=request.metadata,
             )
-        except ValueError as e:
+        except ChannelNotFoundError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
         if message.status != "sent":
             raise HTTPException(
@@ -119,6 +137,44 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
                 detail=message.error or "Message delivery failed",
             )
         return asdict(message)
+
+    @router.post("/attachment")
+    async def send_attachment(request: SendAttachmentRequest) -> dict[str, Any]:
+        """Send caller-supplied text as a document. Content-fed: no host path is read."""
+        comms_manager = server.services.communications_manager
+        if not comms_manager:
+            raise HTTPException(status_code=503, detail="Communications manager not available")
+        if not _ATTACHMENT_FILENAME.fullmatch(request.filename):
+            raise HTTPException(status_code=400, detail="filename must be a bare .txt or .log name")
+        data = request.content.encode("utf-8")
+        if len(data) > MAX_LOG_ATTACHMENT_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"content exceeds {MAX_LOG_ATTACHMENT_BYTES} bytes",
+            )
+
+        with tempfile.TemporaryDirectory(prefix="gobby-comms-") as tmp:
+            path = Path(tmp) / request.filename
+            await asyncio.to_thread(path.write_bytes, data)
+            try:
+                message, attachment = await comms_manager.send_attachment(
+                    request.channel_name,
+                    path,
+                    filename=request.filename,
+                    content_type="text/plain",
+                    content=request.caption,
+                )
+            except ChannelNotFoundError as e:
+                raise HTTPException(status_code=404, detail=str(e)) from e
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if message.status != "sent":
+            raise HTTPException(
+                status_code=502,
+                detail=message.error or "Attachment delivery failed",
+            )
+        return {"message": asdict(message), "attachment": asdict(attachment)}
 
     @router.get("/channels")
     async def list_channels() -> list[dict[str, Any]]:

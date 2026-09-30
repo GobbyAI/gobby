@@ -16,8 +16,8 @@ from gobby.storage.terminals import TerminalManager, tmux_locator_key
 from gobby.terminals.host_client import HostEpochChangedError
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.fixtures.isolated_checkout import patch_local_machine_id
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.servers.test_terminal_ws_golden import TERMINAL_ID, _server
-from tests.servers.test_tmux_mixin import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID
 
 pytestmark = pytest.mark.unit
@@ -88,12 +88,12 @@ async def test_kill_answers_a_runtime_failure_instead_of_dropping_the_reply() ->
 
 
 @pytest.mark.asyncio
-async def test_kill_detached_external_tmux_row_kills_on_its_socket(
+async def test_kill_refuses_live_external_tmux_row_without_probing_its_socket(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An interactive default-socket session is an external row; the kill targets that socket."""
+    """A live legacy row is fenced until its process state is known."""
     patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
     manager = TerminalManager(temp_db)
     row = manager.upsert_external(
@@ -135,8 +135,9 @@ async def test_kill_detached_external_tmux_row_kills_on_its_socket(
 
     reply = await _kill(server, row.id)
 
-    assert killed == [(DEFAULT_SOCKET, "scratch")]
+    assert killed == []
     refreshed = manager.get(row.id)
-    assert refreshed is not None and refreshed.state == "exited"
-    broadcast.assert_awaited_once_with("killed", terminal_id=row.id)
-    assert reply["success"] is True
+    assert refreshed is not None and refreshed.state == "live"
+    broadcast.assert_not_awaited()
+    assert reply["success"] is False
+    assert reply["code"] == "unsupported_terminal_backend"

@@ -506,7 +506,6 @@ class TestRecoverTaskFromFailedAgent:
             agent_run_manager=mock_run_mgr,
             db=MagicMock(spec=HubDatabase),
             get_session_manager=lambda: session_manager,
-            tmux=MagicMock(),
             idle_detector=idle_detector,
             prompt_detector=PromptDetector(DETECTION_REGISTRY, "codex"),
             stall_classifier=MagicMock(),

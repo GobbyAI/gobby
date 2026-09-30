@@ -4,11 +4,14 @@ import asyncio
 import importlib
 from collections.abc import Awaitable
 from types import ModuleType
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 import click
 
 from ._formatting import truncate
+
+if TYPE_CHECKING:
+    from gobby.storage.memories import Memory
 
 
 class _MemoryDeleteManager(Protocol):
@@ -21,6 +24,10 @@ class _MemoryListManager(_MemoryDeleteManager, Protocol):
 
 def _facade() -> ModuleType:
     return importlib.import_module("gobby.cli.memory")
+
+
+def _created(memory: Memory) -> str:
+    return memory.created_at.strftime("%Y-%m-%dT%H:%M:%S")
 
 
 async def _delete_memories(manager: _MemoryDeleteManager, memory_ids: list[str]) -> int:
@@ -80,13 +87,13 @@ def dedupe_memories(ctx: click.Context, dry_run: bool, yes: bool) -> None:
         click.echo("No memories found.")
         return
 
-    content_groups: dict[tuple[str | None, str], list[tuple[str, str, str | None]]] = {}
+    content_groups: dict[tuple[str | None, str], list[Memory]] = {}
     for memory in memories:
         normalized = memory.content.strip()
         key = (memory.project_id, normalized)
         if key not in content_groups:
             content_groups[key] = []
-        content_groups[key].append((memory.id, memory.created_at, memory.project_id))
+        content_groups[key].append(memory)
 
     duplicates_to_delete: list[str] = []
     duplicate_count = 0
@@ -94,22 +101,22 @@ def dedupe_memories(ctx: click.Context, dry_run: bool, yes: bool) -> None:
     for (_project_id, content), entries in content_groups.items():
         if len(entries) > 1:
             duplicate_count += len(entries) - 1
-            entries.sort(key=lambda x: x[1])
+            entries.sort(key=lambda entry: entry.created_at)
             keeper = entries[0]
             to_delete = entries[1:]
 
             if dry_run:
                 click.echo(f"\nDuplicate content ({len(entries)} copies):")
                 click.echo(f"  Content: {truncate(content, 80)}")
-                click.echo(f"  Keep: {keeper[0][:12]} (created: {keeper[1][:19]})")
+                click.echo(f"  Keep: {keeper.id[:12]} (created: {_created(keeper)})")
                 for duplicate in to_delete:
                     click.echo(
-                        f"  Delete: {duplicate[0][:12]} "
-                        f"(created: {duplicate[1][:19]}, project: {duplicate[2]})"
+                        f"  Delete: {duplicate.id[:12]} "
+                        f"(created: {_created(duplicate)}, project: {duplicate.project_id})"
                     )
             else:
                 for duplicate in to_delete:
-                    duplicates_to_delete.append(duplicate[0])
+                    duplicates_to_delete.append(duplicate.id)
 
     if dry_run:
         click.echo(f"\nFound {duplicate_count} duplicate memories.")

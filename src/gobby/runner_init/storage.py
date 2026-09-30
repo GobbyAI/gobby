@@ -218,7 +218,6 @@ def open_storage_and_config(
 
     runner.secret_store = SecretStore(runner.database)
     runner.secret_store.ensure_ready()
-    ensure_local_api_token(AuthStore(runner.database))
     postgres_database = cast(PostgresHubDatabase, runner.database)
     from gobby.ai.embedding_switch import managed_embedding_projection
     from gobby.config.runtime import ConfigRuntime
@@ -230,6 +229,7 @@ def open_storage_and_config(
         secret_store=runner.secret_store,
     )
     config_repository.reconcile_registry()
+    ensure_local_api_token(AuthStore(runner.database))
     stored_config = config_repository.read()
     runner.startup_config = bootstrap_overlaid_config(
         config_repository.runtime_candidate(

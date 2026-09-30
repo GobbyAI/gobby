@@ -72,6 +72,9 @@ pub struct ViewerState {
     pub panes: PaneInterner,
     /// The `(project, model generation)` last projected onto the chrome.
     pub applied: Option<(String, u64)>,
+    /// Terminals that projection left without a pane; one resolving
+    /// re-projects even though `applied` still matches.
+    pub unresolved: Vec<String>,
 }
 
 impl ViewerState {

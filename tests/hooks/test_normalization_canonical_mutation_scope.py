@@ -5,13 +5,13 @@ from typing import Any
 
 import pytest
 
+from gobby.hooks._normalization_bindings import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 from gobby.hooks._normalization_canonical import (
     _classify_shell_segment_without_redirection,
     _merge_shell_segment_metadata,
     _set_canonical_tool_metadata,
 )
 from gobby.hooks._normalization_segments import _ShellSegmentMetadata
-from gobby.hooks._normalization_shell import _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
 
 pytestmark = pytest.mark.unit
 
@@ -498,3 +498,71 @@ def test_proven_safe_intervening_segment_preserves_loop_binding(
     assert data["canonical_file_paths"] == ["a.py", "b.py"]
     assert data["canonical_repo_mutation"] is True
     assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+def _shell_write_metadata(command: str, project: Path) -> dict[str, Any]:
+    data: dict[str, Any] = {
+        "tool_name": "Bash",
+        "tool_input": {"command": command, "cwd": str(project)},
+        "project_path": str(project),
+    }
+    _set_canonical_tool_metadata(data)
+    return data
+
+
+@pytest.mark.parametrize(
+    ("template", "target"),
+    [
+        pytest.param(
+            "out={scratch}/a.json; cat > \"$out\" <<'EOF'\nhi\nEOF", "a.json", id="heredoc"
+        ),
+        pytest.param('S={scratch}; echo hi > "$S/a.txt"', "a.txt", id="suffix"),
+        pytest.param('S={scratch} && printf hi > "${{S}}/a.txt"', "a.txt", id="braced"),
+        pytest.param('A=1; S={scratch}; mkdir -p "$S"; echo hi > "$S/a.txt"', "a.txt", id="chain"),
+    ],
+)
+def test_leading_literal_assignment_resolves_scratch_write(
+    tmp_path: Path, template: str, target: str
+) -> None:
+    project, scratch = tmp_path / "project", tmp_path / "scratch"
+
+    data = _shell_write_metadata(template.format(scratch=scratch), project)
+
+    assert data["canonical_file_paths"][-1] == f"{scratch}/{target}"
+    assert data["canonical_repo_mutation"] is False
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+def test_leading_literal_assignment_keeps_repository_writes_attributed(tmp_path: Path) -> None:
+    data = _shell_write_metadata(f'out={tmp_path}/src/a.py; echo x > "$out"', tmp_path)
+
+    assert data["canonical_file_paths"] == [f"{tmp_path}/src/a.py"]
+    assert data["canonical_repo_mutation"] is True
+    assert "canonical_repo_mutation_scope_unknown" not in data
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        pytest.param('echo hi > "$TMPDIR/a.txt"', id="environment-value"),
+        pytest.param("S={scratch}; echo hi > $S/a.txt", id="unquoted-reference"),
+        pytest.param('S=scratch; echo hi > "$S/a.txt"', id="relative-value"),
+        pytest.param('S=~/scratch; echo hi > "$S/a.txt"', id="tilde-value"),
+        pytest.param('S="$HOME/x"; echo hi > "$S/a.txt"', id="expanded-value"),
+        pytest.param('S={scratch}; S="$Y"; echo hi > "$S/a.txt"', id="rebound"),
+        pytest.param('S={scratch}; mystery; echo hi > "$S/a.txt"', id="unknown-command"),
+        pytest.param('S={scratch} true; echo hi > "$S/a.txt"', id="env-prefix"),
+        pytest.param('S={scratch} & echo hi > "$S/a.txt"', id="backgrounded"),
+        pytest.param('S={scratch} | true; echo hi > "$S/a.txt"', id="pipeline"),
+        pytest.param('false && S={scratch}; echo hi > "$S/a.txt"', id="conditional"),
+        pytest.param('declare -n S; S={scratch}; echo hi > "$S/a.txt"', id="nameref"),
+        pytest.param('S={scratch}; echo hi > "$S$T/a.txt"', id="second-expansion"),
+    ],
+)
+def test_unproven_assignment_keeps_write_scope_unknown(tmp_path: Path, template: str) -> None:
+    scratch = tmp_path / "scratch"
+
+    data = _shell_write_metadata(template.format(scratch=scratch), tmp_path / "project")
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True

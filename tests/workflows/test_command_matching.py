@@ -37,6 +37,14 @@ class TestExecutableCommandSubjects:
             "true",
         ]
 
+    def test_quoted_substitution_redirect_keeps_the_whole_segment(self) -> None:
+        command = 'echo "$(printf x > out.txt)" && git status'
+
+        assert executable_command_subjects(command) == [
+            'echo "$(printf x > out.txt)"',
+            "git status",
+        ]
+
     @pytest.mark.parametrize(
         "opener",
         [

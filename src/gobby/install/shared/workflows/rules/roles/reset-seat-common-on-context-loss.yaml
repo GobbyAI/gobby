@@ -1,0 +1,15 @@
+tags: [roles, seat, enforcement, gobby, default]
+
+rules:
+  reset-seat-common-on-context-loss:
+    description: "Re-arm the shared seat guidance after context loss"
+    event: session_start
+    enabled: true
+    # Same condition and priority as reset-skill-injection, so a compact or
+    # clear epoch receives the guidance again on its first turn.
+    priority: 8
+    when: "event.data.get('source') in ['clear', 'compact'] or (event.data.get('source') == 'resume' and variables.get('pending_context_reset'))"
+    effects:
+      - type: set_variable
+        variable: _seat_common_injected
+        value: false

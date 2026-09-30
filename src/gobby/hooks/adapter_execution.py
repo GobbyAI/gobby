@@ -29,7 +29,9 @@ from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
 
 logger = logging.getLogger(__name__)
 
-HOOK_ADAPTER_MAX_WORKERS: Final = 8
+# Each worker blocks for the whole rule pass (including the bridged memory recall),
+# so this matches the 16-thread rule-loop pool it waits on; 8 queued fanout wakes (#23063).
+HOOK_ADAPTER_MAX_WORKERS: Final = 16
 _HOOK_ADAPTER_EXECUTOR = ThreadPoolExecutor(
     max_workers=HOOK_ADAPTER_MAX_WORKERS,
     thread_name_prefix="gobby-hook-adapter",
@@ -217,6 +219,7 @@ async def run_adapter_hook(
     def run_adapter() -> dict[str, Any]:
         nonlocal started_at, finished_at
         started_at = time.perf_counter()
+        started_cpu = time.thread_time()
         # This scope is the boundary of one logical delivery. Rule evaluation
         # hops to the workflow runtime thread and offloads to the rule-engine
         # executor; both inherit this context, so they share this delivery's
@@ -235,6 +238,9 @@ async def run_adapter_hook(
             finally:
                 _current_session_admission_release.reset(release_token)
                 finished_at = time.perf_counter()
+                # CPU this thread burned; far below adapter_worker wall time means the
+                # worker waited (locks, I/O, or not being scheduled), not code cost (#23063).
+                timings.add("adapter_worker_cpu", time.thread_time() - started_cpu)
 
     def durations() -> tuple[float, float, float]:
         """Return admission wait, executor queue, and execution seconds so far."""
@@ -289,6 +295,11 @@ async def run_adapter_hook(
         admission_wait, queue_duration, execution_duration = durations()
         timings.add("admission_wait", admission_wait)
         timings.add("executor_queue", queue_duration)
+        # The worker's own wall time and the loop's delay in resuming this
+        # request after it finished are otherwise unattributed `response` (#23063).
+        timings.add("adapter_worker", execution_duration)
+        if finished_at is not None:
+            timings.add("adapter_resume", time.perf_counter() - finished_at)
         input_data = payload.get("input_data")
         payload_session_id = input_data.get("session_id") if isinstance(input_data, dict) else None
         logger.debug(

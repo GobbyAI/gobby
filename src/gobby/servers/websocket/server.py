@@ -33,10 +33,10 @@ from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.session_control import SessionControlMixin
+from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
-from gobby.servers.websocket.tmux import TmuxMixin
 from gobby.servers.websocket.voice import VoiceMixin
 from gobby.servers.websocket.workspace_ws import WORKSPACE_OPS, WorkspaceWsMixin
 from gobby.sessions.terminal_turn_observer import TerminalTurnObserver
@@ -137,7 +137,10 @@ if TYPE_CHECKING:
 
 class WebSocketServer(
     VoiceMixin,
-    TmuxMixin,
+    TerminalCreateMixin,
+    TerminalSizingMixin,
+    TerminalControlMixin,
+    TerminalWsMixin,
     WorkspaceWsMixin,
     SessionControlMixin,
     ChatMixin,
@@ -283,9 +286,6 @@ class WebSocketServer(
 
         # Dispatch table for message routing (lazily populated in _handle_message)
         self._dispatch_table: dict[str, Callable[..., Coroutine[Any, Any, None]]] = {}
-
-        # Initialize tmux subsystem
-        self._init_tmux()
 
         # Initialize voice subsystem
         self._init_voice()
@@ -467,8 +467,7 @@ class WebSocketServer(
 
         finally:
             await self._cancel_off_loop(websocket)
-            # Clean up tmux bridges owned by this client
-            await self._cleanup_tmux_client(websocket)
+            await self._cleanup_terminal_client(websocket)
             # Always cleanup client state (but NOT chat sessions — they persist)
             metadata = self.clients.pop(websocket, None)
             attached_session_id = metadata.get("attached_session_id") if metadata else None
@@ -532,6 +531,7 @@ class WebSocketServer(
                 ),
                 "terminal_set_viewport": self._handle_terminal_set_viewport,
                 "terminal_set_scroll_offset": self._handle_terminal_set_scroll_offset,
+                "terminal_set_theme": self._handle_terminal_set_theme,
                 "terminal_paste": self._handle_terminal_paste,
                 "workspace_attach": self._handle_workspace_attach,
                 "workspace_snapshot": self._handle_workspace_snapshot,
@@ -714,8 +714,7 @@ class WebSocketServer(
                 except asyncio.CancelledError:
                     pass
 
-            # Stop all tmux bridges
-            await self._cleanup_tmux()
+            await self._cleanup_terminals()
 
             # Stop voice subsystem
             await self.cleanup_voice()

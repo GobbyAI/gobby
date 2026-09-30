@@ -16,7 +16,6 @@ from gobby.runner_lifecycle_agents import (
     _refresh_active_run_dispatch_mutex,
     _run_db,
 )
-from gobby.terminals.tmux_runtime import TmuxTerminalRuntime, configured_tmux_runtime
 from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
@@ -81,8 +80,9 @@ async def _reconcile_agent_runs_after_restart(
     )
     manager = getattr(runner, "terminal_manager", None)
 
-    tmux_runs: list[tuple[Any, Terminal | None]] = []
     native_runs: list[tuple[Any, Terminal]] = []
+    missing_runs: list[Any] = []
+    unsupported_runs: list[tuple[Any, Terminal]] = []
     for run in active_runs:
         if run_ids is not None and str(run.id) not in run_ids:
             continue
@@ -90,37 +90,99 @@ async def _reconcile_agent_runs_after_restart(
         if not terminal_id:
             reconciled += await _refresh_surviving_run(runner, run, resolved_run_ids)
             continue
-        row = _terminal_row(manager, str(terminal_id))
-        # A run linked to no terminals row predates the migration: its
-        # terminal_id is the tmux session name, so it reconciles as tmux.
-        if row is not None and row.backend == "native":
+        if manager is None:
+            await _fence_reconciliation_run(
+                runner,
+                run,
+                "terminal_manager_unavailable",
+                "terminal state cannot be verified during restart reconciliation",
+            )
+            continue
+        row = await _terminal_row(runner, manager, str(terminal_id))
+        if row is None:
+            await _fence_reconciliation_run(
+                runner,
+                run,
+                "terminal_row_missing",
+                f"terminal {terminal_id} has no authoritative exit evidence",
+            )
+        elif getattr(row, "agent_run_id", None) not in {None, str(run.id)}:
+            await _fence_reconciliation_run(
+                runner,
+                run,
+                "terminal_ownership_mismatch",
+                f"terminal {row.id} belongs to a different agent run",
+            )
+        elif row.state == "exited":
+            missing_runs.append(run)
+        elif row.backend == "native":
             native_runs.append((run, row))
         else:
-            tmux_runs.append((run, row))
+            unsupported_runs.append((run, row))
 
     if native_runs:
         reconciled += await _reconcile_native_runs(runner, native_runs, resolved_run_ids)
-    if tmux_runs:
-        reconciled += await _reconcile_tmux_runs(runner, tmux_runs, resolved_run_ids)
+    for run in missing_runs:
+        if await _cleanup_missing_terminal_agent_run(runner, run, str(run.terminal_id)):
+            reconciled += 1
+            if resolved_run_ids is not None:
+                resolved_run_ids.add(str(run.id))
+    for run, row in unsupported_runs:
+        await _fence_unsupported_terminal(runner, run, row)
     return reconciled
 
 
-def _terminal_row(manager: TerminalManager | None, terminal_id: str) -> Terminal | None:
+async def _terminal_row(
+    runner: GobbyRunner, manager: TerminalManager | None, terminal_id: str
+) -> Terminal | None:
     if manager is None:
         return None
     try:
-        return manager.get(terminal_id)
+        return cast("Terminal | None", await _run_db(runner, manager.get, terminal_id))
     except ValueError:
-        # Pre-migration links carry a tmux session name, never a row id.
+        # A stale pre-row terminal reference is missing evidence, not a pane route.
         return None
 
 
-def _tmux_runtime(runner: GobbyRunner) -> TmuxTerminalRuntime:
-    """The daemon's tmux runtime; the configured socket when no registry is wired."""
-    registry = getattr(runner, "terminal_runtime_registry", None)
-    if registry is not None:
-        return cast(TmuxTerminalRuntime, registry.resolve("tmux"))
-    return configured_tmux_runtime()
+async def _fence_unsupported_terminal(
+    runner: GobbyRunner,
+    run: Any,
+    row: Terminal,
+) -> None:
+    """Leave a non-native live or uncertain run fenced without duplicating its CLI."""
+    reason = f"unsupported_terminal_backend:{row.backend}:{row.state}"
+    await _fence_reconciliation_run(
+        runner,
+        run,
+        reason,
+        f"terminal {row.id} has {row.backend} backend in {row.state} state",
+    )
+
+
+async def _fence_reconciliation_run(
+    runner: GobbyRunner,
+    run: Any,
+    reason: str,
+    detail: str,
+) -> None:
+    """Persist one operator-visible hold reason and warn only when it changes."""
+    metadata = getattr(run, "resume_metadata_json", None) or {}
+    if (
+        metadata.get("reconciliation_pending") is True
+        and metadata.get("reconciliation_blocked_reason") == reason
+    ):
+        return
+    assert runner.agent_runner is not None
+    await _run_db(
+        runner,
+        runner.agent_runner.run_storage.merge_resume_metadata,
+        run.id,
+        {
+            "reconciliation_pending": True,
+            "reconciliation_blocked_reason": reason,
+        },
+    )
+    logger.warning("Agent %s remains reconciliation-fenced: %s", run.id, detail)
 
 
 async def _refresh_surviving_run(
@@ -140,147 +202,24 @@ async def _reconcile_native_runs(
     runs: list[tuple[Any, Terminal]],
     resolved_run_ids: set[str] | None,
 ) -> int:
-    """Park and resume native runs whose terminal the host manager already lost.
-
-    Native rows are owned by the gterm host manager: it orphans them on host
-    loss and interrupts their runs, so reconciliation trusts the row state and
-    never probes the host (which may not be re-adopted yet at this point).
-    """
+    """Reconnect live native runs and fence uncertain terminal states."""
     reconciled = 0
     for run, row in runs:
         if row.state == "live":
             reconciled += await _refresh_surviving_run(runner, run, resolved_run_ids)
             continue
-        if await _cleanup_missing_terminal_agent_run(runner, run, row.id):
-            reconciled += 1
-            if resolved_run_ids is not None:
-                resolved_run_ids.add(str(run.id))
-    return reconciled
-
-
-async def _reconcile_tmux_runs(
-    runner: GobbyRunner,
-    runs: list[tuple[Any, Terminal | None]],
-    resolved_run_ids: set[str] | None,
-) -> int:
-    """Refresh live tmux runs; park and resume the ones whose session is gone."""
-    if runner.agent_runner is None:
-        return 0
-    tmux_runtime = _tmux_runtime(runner)
-    try:
-        live_sessions = await tmux_runtime.list_sessions()
-    except Exception as e:
-        logger.warning("Failed to list tmux sessions during agent restart reconciliation: %s", e)
-        return 0
-
-    live_by_name = {session.name: session for session in live_sessions}
-    output_reader: Any | None = None
-    reconciled = 0
-    for run, row in runs:
-        run_id = str(run.id)
-        session_name = (
-            str(row.session_name or row.spawn_key or run.terminal_id)
-            if row is not None
-            else str(run.terminal_id)
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            f"native_terminal_{row.state}",
+            f"native terminal {row.id} has uncertain liveness",
         )
-        live_info = live_by_name.get(session_name)
-        if live_info is None or getattr(live_info, "pane_dead", False):
-            if row is not None:
-                try:
-                    if await tmux_runtime.is_live(row):
-                        continue
-                except Exception:
-                    logger.debug("tmux is_live probe failed for %s", run_id, exc_info=True)
-            if await _cleanup_missing_terminal_agent_run(runner, run, session_name):
-                reconciled += 1
-                if resolved_run_ids is not None:
-                    resolved_run_ids.add(run_id)
-            continue
-
-        run_storage = runner.agent_runner.run_storage
-        pane_pid = getattr(live_info, "pane_pid", None)
-        if pane_pid is not None and pane_pid != getattr(run, "pid", None):
-            await _run_db(
-                runner,
-                run_storage.update_runtime,
-                run_id,
-                pid=pane_pid,
-                terminal_id=str(run.terminal_id),
-            )
-            reconciled += 1
-
-        if output_reader is None:
-            from gobby.agents.tmux import get_tmux_output_reader
-
-            output_reader = get_tmux_output_reader()
-        reader_ready = True
-        try:
-            if await output_reader.start_reader(run_id, session_name):
-                reconciled += 1
-        except Exception as e:
-            reader_ready = False
-            logger.warning(
-                "Failed to restart tmux output reader for recovered agent %s: %s",
-                run_id,
-                e,
-            )
-        mutex_refreshed = await _run_db(runner, _refresh_active_run_dispatch_mutex, runner, run)
-        if mutex_refreshed:
-            reconciled += 1
-        metadata = getattr(run, "resume_metadata_json", None) or {}
-        parent_session_id = metadata.get("parent_session_id")
-        child_session_id = getattr(run, "child_session_id", None)
-        if isinstance(parent_session_id, str) and isinstance(child_session_id, str):
-            from gobby.agents.resume_finalization import notify_parent_of_recovery
-
-            await asyncio.to_thread(
-                notify_parent_of_recovery,
-                runner.database,
-                child_session_id=child_session_id,
-                parent_session_id=parent_session_id,
-                content=f"Reconnected agent run {run_id} after daemon restart.",
-                run_id=run_id,
-                event="reconnected",
-                dedupe_key=_BOOT_MARKER,
-            )
-        if (
-            resolved_run_ids is not None
-            and reader_ready
-            and (mutex_refreshed or not getattr(run, "task_id", None))
-        ):
-            resolved_run_ids.add(run_id)
-
     return reconciled
-
-
-def _find_live_tmux_by_planned_name(live_by_name: dict[str, Any], session_name: str) -> Any | None:
-    """Correlate a provisional run's tmux session exactly, then by title prefix.
-
-    The spawner appends a uniqueness suffix to the planned title, so a crash
-    between spawn and runtime-persist leaves only the planned prefix to match.
-    """
-    live_info = live_by_name.get(session_name)
-    if live_info is not None:
-        return live_info
-    prefix = f"{session_name}-"
-    matches = sorted(
-        (name for name in live_by_name if name.startswith(prefix)),
-    )
-    if not matches:
-        return None
-    if len(matches) > 1:
-        logger.warning(
-            "Multiple live tmux sessions match planned title %r: %s",
-            session_name,
-            matches,
-        )
-    return live_by_name[matches[0]]
 
 
 async def _resolve_provisional_daemon_resume_row(
     runner: GobbyRunner,
     run: Any,
-    live_by_name: dict[str, Any],
 ) -> bool:
     """Resolve one provisional successor to exactly one ownership chain."""
     from gobby.agents.resume_executor import resume_agent_run
@@ -313,20 +252,71 @@ async def _resolve_provisional_daemon_resume_row(
             )
         )
 
-    session_name = metadata.get("daemon_stop_resume_spawn_key") or getattr(run, "terminal_id", None)
-    live_info = (
-        _find_live_tmux_by_planned_name(live_by_name, session_name)
-        if isinstance(session_name, str)
-        else None
-    )
-    if live_info is not None and not getattr(live_info, "pane_dead", False):
-        pane_pid = getattr(live_info, "pane_pid", None)
+    terminal_manager = getattr(runner, "terminal_manager", None)
+    if terminal_manager is None:
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_manager_unavailable",
+            "terminal state cannot be verified during daemon resume",
+        )
+        return False
+    rows = await _run_db(runner, terminal_manager.list_for_session, child_session_id)
+    unsettled = [candidate for candidate in rows if candidate.state != "exited"]
+    if len(unsettled) > 1 or (unsettled and unsettled[0].agent_run_id != run.id):
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_ownership_mismatch",
+            "session has another terminal with uncertain liveness",
+        )
+        return False
+    row = next((candidate for candidate in rows if candidate.agent_run_id == run.id), None)
+    if row is not None and row.state == "exited" and unsettled:
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_ownership_mismatch",
+            "an older terminal for this run has uncertain liveness",
+        )
+        return False
+    if row is not None and row.state == "orphaned":
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_orphaned",
+            f"terminal {row.id} has uncertain liveness",
+        )
+        return False
+    if row is not None and row.state not in {"pending", "live", "exited"}:
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_terminal_state_unknown",
+            f"terminal {row.id} has unexpected state {row.state}",
+        )
+        return False
+    if row is not None and row.state != "exited" and row.backend != "native":
+        await _fence_unsupported_terminal(runner, run, row)
+        return False
+    if row is not None and row.state == "pending":
+        await _fence_reconciliation_run(
+            runner,
+            run,
+            "provisional_native_terminal_pending",
+            f"native terminal {row.id} has not settled its spawn",
+        )
+        return False
+    if row is not None and row.state == "live":
+        process = row.process if isinstance(row.process, dict) else {}
+        row_pid = process.get("pgid")
+        pid = row_pid if isinstance(row_pid, int) and row_pid > 0 else getattr(run, "pid", None)
         await _run_db(
             runner,
             run_storage.update_runtime,
             run.id,
-            pid=pane_pid,
-            terminal_id=getattr(run, "terminal_id", None),
+            pid=pid,
+            terminal_id=row.id,
         )
         if phase == "launch_requested":
             await _run_db(
@@ -411,8 +401,6 @@ async def _resolve_provisional_daemon_resumes(
     if not provisional:
         return 0
 
-    live_sessions = await _tmux_runtime(runner).list_sessions()
-    live_by_name = {session.name: session for session in live_sessions}
     resolved = 0
     for run in provisional:
         if run_ids is not None and str(run.id) not in run_ids:
@@ -420,7 +408,7 @@ async def _resolve_provisional_daemon_resumes(
         if not include_fenced and is_reconciliation_pending(run):
             continue
         try:
-            if await _resolve_provisional_daemon_resume_row(runner, run, live_by_name):
+            if await _resolve_provisional_daemon_resume_row(runner, run):
                 resolved += 1
                 if resolved_run_ids is not None:
                     resolved_run_ids.add(str(run.id))
@@ -476,7 +464,7 @@ async def _reclassify_reconciliation_pending_runs(runner: GobbyRunner) -> int:
             runner,
             run_storage.merge_resume_metadata,
             run.id,
-            {"reconciliation_pending": False},
+            {"reconciliation_pending": False, "reconciliation_blocked_reason": None},
         )
     return reconciled
 

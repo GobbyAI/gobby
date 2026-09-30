@@ -162,6 +162,39 @@ class TestConfigPersistence:
         with pytest.raises(ConfigValidationError, match="Unknown configuration key"):
             mutations.patch(expected_revision=0, patch=patch)
 
+    def test_removed_memory_keys_swept(
+        self,
+        repository: ConfigRepository,
+        temp_db: HubDatabase,
+    ) -> None:
+        removed = {
+            "memory.recall_signal_logging": "true",
+            "memory.recall_signal_log_path": '"/tmp/recall_signal.jsonl"',
+            "memory.recall_signal_log_max_mb": "50",
+            "memory.recall_signal_hub": "true",
+            "memory.shadow_relevance_judging": "true",
+            "memory.use_fitted_recall_constants": "true",
+            "memory.fitted_recall_decision_path": '"/tmp/decision.json"',
+            "memory.recall_drift_monitor_enabled": "true",
+            "memory.recall_drift_interval_hours": "24.0",
+            "memory.recall_drift_accuracy_drop": "0.05",
+            "memory_usefulness.candidates": "[]",
+            "memory_usefulness.profile": '"low"',
+            "memory_usefulness.timeout": "30",
+        }
+        for key, value in {**removed, "memory.enabled": "false"}.items():
+            temp_db.execute(
+                """INSERT INTO config_store (key, value, source, is_secret, revision)
+                   VALUES (%s, %s, %s, %s, %s)""",
+                (key, value, "test", False, 0),
+            )
+
+        repository.reconcile_registry()
+
+        rows = temp_db.fetchall("SELECT key FROM config_store ORDER BY key")
+        assert [row["key"] for row in rows] == ["memory.enabled"]
+        assert dict(repository.read(resolve_secrets=False).overrides) == {"memory.enabled": False}
+
     @pytest.mark.parametrize("key", ["llm_providers", "llm_providers.openai.api_key"])
     def test_removed_provider_keys_are_rejected(
         self,

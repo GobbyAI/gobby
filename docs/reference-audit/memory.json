@@ -318,21 +318,6 @@
     },
     {
       "surface": "mcp",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/mcp_proxy/tools/memory.py",
-        "symbol": "create_memory_registry.judge_shadow_relevance_tool"
-      },
-      "verification": [
-        "source-audit",
-        "core-memory"
-      ],
-      "audience": "agent",
-      "server": "gobby-memory",
-      "tool": "judge_shadow_relevance"
-    },
-    {
-      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/memory/capture.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/memory_write.py",
@@ -575,104 +560,6 @@
       "audience": "operator-only",
       "server": "gobby-review-learning",
       "tool": "recall_review_context"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "backfill_events"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals backfill-events"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "backfill_labels"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals backfill-labels"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "gate"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals gate"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "audit_labels"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals audit-labels"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "supersede_legacy_cohort"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals supersede-legacy-cohort"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "drift"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals drift"
-    },
-    {
-      "surface": "cli",
-      "reference": "src/gobby/install/shared/skills/gobby/references/memory/maintenance.md",
-      "implementation": {
-        "path": "src/gobby/cli/memory/signals.py",
-        "symbol": "replay_candidate_filter_command"
-      },
-      "verification": [
-        "source-audit",
-        "cli-http-dream"
-      ],
-      "audience": "operator/client",
-      "command": "gobby memory recall-signals replay-candidate-filter"
     },
     {
       "surface": "cli",

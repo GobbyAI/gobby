@@ -11,6 +11,7 @@ from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import ContextPart, HookEvent, HookResponse, SessionSource
 from gobby.hooks.session_types import has_prior_session_activity
 from gobby.hooks.terminal_handoff_delivery import schedule_staged_handoff_on_stop
+from gobby.sessions.codex_compact_watch import watch_codex_out_of_band_compact
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 from gobby.skills.capability_catalog import load_capability_catalog
 from gobby.skills.capability_routing import (
@@ -619,6 +620,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     "PRE_COMPACT", session_id, "awaiting_handoff"
                 ):
                     self._session_manager.update_session_status(session_id, "awaiting_handoff")
+                if event.source is SessionSource.CODEX:
+                    self._watch_codex_compact(session_id)
             # Generate session summaries from digest before compaction
             try:
                 if self._dispatch_session_summaries_fn:
@@ -634,6 +637,25 @@ class AgentEventHandlerMixin(EventHandlersBase):
             self.logger.debug("PRE_COMPACT (%s)", trigger)
 
         return HookResponse(decision="allow")
+
+    def _watch_codex_compact(self, session_id: str) -> None:
+        """Continue a Codex compact that no handoff dispatch submitted."""
+        if self._session_manager is None:
+            return
+        try:
+            session = self._session_manager.get(session_id)
+            if session is not None:
+                watch_codex_out_of_band_compact(
+                    self._session_manager.db,
+                    session,
+                    loop=self._event_loop,
+                    terminal_manager=getattr(self, "terminal_manager", None),
+                    terminal_runtime_registry=self._terminal_runtime_registry,
+                )
+        except Exception:
+            self.logger.warning(
+                "Failed watching Codex compact for session %s", session_id, exc_info=True
+            )
 
     def handle_subagent_start(self, event: HookEvent) -> HookResponse:
         """Handle SUBAGENT_START event.

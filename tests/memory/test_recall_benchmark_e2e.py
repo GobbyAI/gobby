@@ -52,13 +52,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from gobby.config.persistence import MemoryConfig, MemoryKnowledgeGraphConfig
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
-from gobby.memory.services.search import SearchDebugSnapshot, SearchService
+from gobby.memory.services.search import SearchService
 from gobby.memory.vectorstore import VectorStore
 from gobby.storage.memories import Memory
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -220,8 +220,6 @@ class _ArmConfig:
 class _ArmResult:
     production_recall: float
     production_mrr: float
-    rrf_recall: float
-    rrf_mrr: float
     search_via_counts: Counter[str]
     ranking_mode_counts: Counter[str]
     topk_by_query: dict[str, list[str]]
@@ -297,7 +295,6 @@ async def _build_service(
     arm: _ArmConfig,
     corpus: list[_E2EMemory],
     id_map: dict[str, str],
-    snapshots: list[SearchDebugSnapshot],
 ) -> tuple[SearchService, VectorStore]:
     await client.query("MATCH (n) DETACH DELETE n")
 
@@ -343,7 +340,7 @@ async def _build_service(
         )
 
     search_service = SearchService(
-        storage=_MemoryStorage(corpus, id_map),  # type: ignore[arg-type]
+        storage=cast(Any, _MemoryStorage(corpus, id_map)),
         vector_store=vector_store,
         embed_fn=embed_fn,
         kg_service=service,
@@ -358,7 +355,6 @@ async def _build_service(
         falkordb_rrf_k=60,
         vector_store_failure_logger=lambda message, error: None,
         run_db=None,
-        search_debug_sink=snapshots.append,
     )
     return search_service, vector_store
 
@@ -372,20 +368,16 @@ async def _run_arm(
     id_map: dict[str, str],
     expected_by_query: dict[str, set[str]],
 ) -> _ArmResult:
-    snapshots: list[SearchDebugSnapshot] = []
     search_service, vector_store = await _build_service(
         client=client,
         tmp_path=tmp_path,
         arm=arm,
         corpus=corpus,
         id_map=id_map,
-        snapshots=snapshots,
     )
     try:
         production_recalls: list[float] = []
         production_rrs: list[float] = []
-        rrf_recalls: list[float] = []
-        rrf_rrs: list[float] = []
         search_via_counts: Counter[str] = Counter()
         ranking_mode_counts: Counter[str] = Counter()
         topk_by_query: dict[str, list[str]] = {}
@@ -393,7 +385,6 @@ async def _run_arm(
 
         for cluster in range(NCLUST):
             query = _query_text(cluster)
-            before = len(snapshots)
             query_embedding = await search_service._embed_fn(query, is_query=True)  # type: ignore[misc]
             # Sanity: the resolved query peaks on its cluster axis. A silent embedding
             # degradation would otherwise fake a non-discriminating benchmark.
@@ -403,20 +394,12 @@ async def _run_arm(
             results = await search_service.search(
                 query=query, project_id=PERSONAL_PROJECT_ID, limit=K
             )
-            assert len(snapshots) == before + 1
-            snapshot = snapshots[-1]
-            assert snapshot.returned_ids == [result.id for result in results]
-
             production_ranked = [result.id for result in results][:K]
-            rrf_ranked = list(snapshot.merged_ids)[:K]
             expected = expected_by_query[query]
 
             production_recall, production_rr = _score_ranked(production_ranked, expected)
-            rrf_recall, rrf_rr = _score_ranked(rrf_ranked, expected)
             production_recalls.append(production_recall)
             production_rrs.append(production_rr)
-            rrf_recalls.append(rrf_recall)
-            rrf_rrs.append(rrf_rr)
             topk_by_query[query] = production_ranked
             search_via_by_query[query] = {
                 result.id: result.search_via or "unknown" for result in results
@@ -430,8 +413,6 @@ async def _run_arm(
         return _ArmResult(
             production_recall=mean(production_recalls),
             production_mrr=mean(production_rrs),
-            rrf_recall=mean(rrf_recalls),
-            rrf_mrr=mean(rrf_rrs),
             search_via_counts=search_via_counts,
             ranking_mode_counts=ranking_mode_counts,
             topk_by_query=topk_by_query,
@@ -535,8 +516,7 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
             result = results[name]
             print(
                 f"{name:<10} production recall@{K}={result.production_recall:.3f} "
-                f"MRR={result.production_mrr:.3f} | "
-                f"RRF recall@{K}={result.rrf_recall:.3f} MRR={result.rrf_mrr:.3f}"
+                f"MRR={result.production_mrr:.3f}"
             )
             print(f"  search_via={dict(result.search_via_counts)}")
             print(f"  ranking_mode={dict(result.ranking_mode_counts)}")

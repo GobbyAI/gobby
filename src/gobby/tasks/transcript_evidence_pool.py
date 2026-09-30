@@ -24,6 +24,22 @@ _pool_lock = threading.Lock()
 _fallback_warning_logged = False
 _POOL_WORKERS = 4
 _POOL_PREWARM_TIMEOUT_SECONDS = 60.0
+_PARENT_POLL_SECONDS = 1.0
+
+
+def _exit_with_parent(parent_pid: int) -> None:
+    """Worker initializer: exit once the daemon is gone, however it died.
+
+    Spawn workers hold both ends of the call queue's pipe, so a SIGKILLed daemon never
+    gives them EOF; without this watch they block forever as PPID-1 orphans.
+    """
+
+    def watch() -> None:
+        while os.getppid() == parent_pid:
+            sleep(_PARENT_POLL_SECONDS)
+        os._exit(0)
+
+    threading.Thread(target=watch, name="parent-watch", daemon=True).start()
 
 
 def _prewarm_probe(marker_directory: str) -> None:
@@ -44,6 +60,8 @@ def _get_pool() -> ProcessPoolExecutor:
             _pool = ProcessPoolExecutor(
                 max_workers=_POOL_WORKERS,
                 mp_context=multiprocessing.get_context("spawn"),
+                initializer=_exit_with_parent,
+                initargs=(os.getpid(),),
             )
         return _pool
 

@@ -40,12 +40,6 @@ def socket_path_from_context(terminal_context: Mapping[str, object] | None) -> s
     return socket_path_of(terminal_context)
 
 
-def manager_for_terminal_context(terminal_context: Mapping[str, Any] | None) -> Any:
-    from gobby.sessions.tmux_context import get_tmux_manager_for_context as manager_of
-
-    return manager_of(terminal_context)
-
-
 def parent_pid_from_context(terminal_context: Mapping[str, object] | None) -> int | None:
     from gobby.sessions.tmux_context import get_terminal_parent_pid as parent_pid_of
 

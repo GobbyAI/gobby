@@ -61,7 +61,6 @@ from gobby.config.servers import MCPClientProxyConfig, WebSocketSettings
 from gobby.config.sessions import (
     ChatHistoryConfig,
     ContextHandoffConfig,
-    MemoryUsefulnessConfig,
     MessageTrackingConfig,
     SessionFeedbackConfig,
     SessionLifecycleConfig,
@@ -167,6 +166,11 @@ class DaemonConfig(BaseModel):
                         f"{removed_key} config has been removed. Automatic memory recall "
                         "injection no longer exists; agents search gobby-memory directly."
                     )
+            if "memory_usefulness" in data:
+                raise ValueError(
+                    "memory_usefulness config has been removed with the recall-signal "
+                    "stack. Remove the top-level memory_usefulness section."
+                )
             if "memory_sync" in data:
                 raise ValueError("memory_sync config has been removed. Use memory_backup instead.")
             if "local" in data:
@@ -283,10 +287,6 @@ class DaemonConfig(BaseModel):
     communications: CommunicationsConfig = Field(
         default_factory=CommunicationsConfig,
         description="Communications channel configuration",
-    )
-    memory_usefulness: MemoryUsefulnessConfig = Field(
-        default_factory=MemoryUsefulnessConfig,
-        description="Turn-end memory-usefulness judge configuration (#17195)",
     )
     recommend_tools: RecommendToolsConfig = Field(
         default_factory=RecommendToolsConfig,

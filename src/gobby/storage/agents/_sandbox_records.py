@@ -12,6 +12,7 @@ from gobby.agents.sandbox_policy import (
     RETAINED_SETTINGS_PATH_KEY,
     RETAINED_VIOLATION_PATH_KEY,
     SANDBOX_RETENTION_RELATIVE_PATH,
+    managed_execution_root,
 )
 from gobby.paths import get_gobby_home
 
@@ -36,9 +37,8 @@ def sandbox_list_record(raw: object, *, active: bool) -> dict[str, Any] | None:
     }
     if active:
         gobby_home = get_gobby_home()
-        live_root = gobby_home / "run" / "sandbox"
         retention_root = gobby_home / SANDBOX_RETENTION_RELATIVE_PATH
-        path = _trusted_path(raw.get("violation_path"), live_root) or _trusted_path(
+        path = trusted_live_violation_path(raw.get("violation_path")) or _trusted_path(
             raw.get(RETAINED_VIOLATION_PATH_KEY), retention_root
         )
         count, _, truncated = _read_violations(path, include_events=False)
@@ -79,7 +79,6 @@ def sandbox_record(
         "policy_hash": raw.get("policy_hash"),
     }
     gobby_home = get_gobby_home()
-    live_root = gobby_home / "run" / "sandbox"
     retention_root = gobby_home / SANDBOX_RETENTION_RELATIVE_PATH
     retained_log = _trusted_path(raw.get(RETAINED_VIOLATION_PATH_KEY), retention_root)
     retained_settings = _trusted_path(raw.get(RETAINED_SETTINGS_PATH_KEY), retention_root)
@@ -89,11 +88,21 @@ def sandbox_record(
         record[RETAINED_SETTINGS_PATH_KEY] = str(retained_settings)
     # The live log wins while the run root survives; the retained copy keeps the
     # count honest once the reaper deletes it.
-    violation_path = _trusted_path(raw.get("violation_path"), live_root) or retained_log
+    violation_path = trusted_live_violation_path(raw.get("violation_path")) or retained_log
     count, violations, count_truncated = _read_violations(
         violation_path,
         include_events=include_events,
     )
+    # The terminal transition freezes the count before retention replaces the live log.
+    if violation_path is None:
+        frozen_count = raw.get("violation_count")
+        if (
+            isinstance(frozen_count, int)
+            and not isinstance(frozen_count, bool)
+            and frozen_count >= 0
+        ):
+            count = frozen_count
+            count_truncated = raw.get("violation_count_truncated") is True
     record["violation_count"] = count
     if count_truncated:
         record["violation_count_truncated"] = True
@@ -114,6 +123,24 @@ def _trusted_path(raw_path: object, trusted_root: Path) -> Path | None:
     if not resolved.is_relative_to(root) or not resolved.is_file() or path.is_symlink():
         return None
     return resolved
+
+
+def trusted_live_violation_path(raw_path: object) -> Path | None:
+    """Accept only a run's SRT violation log within a daemon-owned run root."""
+    roots = (
+        (managed_execution_root(), False),
+        (get_gobby_home() / "run" / "sandbox", True),
+    )
+    for root, legacy in roots:
+        path = _trusted_path(raw_path, root)
+        if path is None:
+            continue
+        parts = path.relative_to(root.resolve(strict=False)).parts
+        if len(parts) == 3 and parts[1:] == ("logs", "violations.jsonl"):
+            return path
+        if legacy and len(parts) == 2 and parts[1] == "violations.jsonl":
+            return path
+    return None
 
 
 def _read_violations(

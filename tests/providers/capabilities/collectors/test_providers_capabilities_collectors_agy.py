@@ -35,7 +35,7 @@ _SUPPORTED = AgySupportRecord(
     installed_version=AGY_REQUIRED_VERSION,
     required_version=AGY_REQUIRED_VERSION,
     supported=True,
-    reason=f"AGY {AGY_REQUIRED_VERSION} meets required version {AGY_REQUIRED_VERSION}.",
+    reason=f"Antigravity {AGY_REQUIRED_VERSION} meets required version {AGY_REQUIRED_VERSION}.",
     identity=None,
 )
 

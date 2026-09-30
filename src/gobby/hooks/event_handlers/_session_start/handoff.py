@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.hooks.terminal_context import hook_sandbox_enabled
 from gobby.sessions.clear_continuation import resolve_clear_continuation
 from gobby.sessions.compact_continuation import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
@@ -407,8 +408,7 @@ def rebind_resumed_session_start(
         agent_depth = int(raw_depth) if raw_depth is not None else 0
     except (TypeError, ValueError):
         agent_depth = 0
-    raw_sandbox = input_data.get("sandbox_enabled")
-    sandbox_enabled = raw_sandbox if isinstance(raw_sandbox, bool) else None
+    sandbox_enabled = hook_sandbox_enabled(input_data)
 
     rebound = handler._session_manager.rebind_resumed_terminal_session(
         session.id,

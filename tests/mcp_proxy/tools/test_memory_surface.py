@@ -82,7 +82,7 @@ async def test_surface_search_arguments() -> None:
     assert kwargs["caller"] == "memory.surface"
     assert kwargs["session_id"] == SESSION_ID
     assert kwargs["project_id"] == PROJECT_ID
-    assert kwargs["recall_request_id"]
+    assert "recall_request_id" not in kwargs
 
     assert result["trigger"] == "spawn_agent"
     assert result["count"] == 2
@@ -98,19 +98,6 @@ async def test_surface_search_arguments() -> None:
         "content": "Memory 1 content",
         "rationale": "Memory 1 applies when surfacing",
     }
-
-
-async def test_each_surface_call_mints_its_own_recall_request_id() -> None:
-    registry, memory_manager = _registry(candidates=[_memory(1)])
-    arguments = {"text": "Handoff contract", "trigger": "turn", "session_id": SESSION_ID}
-
-    await registry.call("surface_memories", arguments)
-    await registry.call("surface_memories", arguments)
-
-    minted = [
-        call.kwargs["recall_request_id"] for call in memory_manager.search_memories.await_args_list
-    ]
-    assert len(set(minted)) == 2
 
 
 async def test_surface_truncates_overlong_text() -> None:
@@ -149,7 +136,7 @@ async def test_surface_returns_nothing_for_an_unresolvable_session() -> None:
     registry, memory_manager = _registry(candidates=[_memory(1)])
 
     with patch(
-        "gobby.mcp_proxy.tools.memory_surface.resolve_session_reference",
+        "gobby.mcp_proxy.tools.memory_session.resolve_session_reference",
         side_effect=ValueError("Session 'nope' not found"),
     ):
         result = await registry.call(

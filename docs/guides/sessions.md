@@ -77,7 +77,7 @@ that a run or its assigned task has completed.
 | `qwen` | Qwen CLI hooks |
 | `droid` | Droid CLI hooks |
 | `grok` | Grok CLI hooks |
-| `agy` | AGY CLI hooks or web-chat AGY backend |
+| `agy` | Antigravity CLI hooks or web-chat Antigravity backend |
 | `pipeline` | Pipeline automation |
 | `system` | Bootstrapped root session for cron and pipeline work without a caller |
 
@@ -240,6 +240,8 @@ calls.
 | `get_session_commits` | List commits made during a session timeframe. |
 | `mark_loop_complete` | Set `stop_reason="completed"`; installed workflows determine its effect. This does not end an agent run or close a task. |
 | `capture_baseline_dirty_files` | Store the current dirty-file baseline for edit detection. |
+| `hold_session_claims` | Root terminal operators: keep a same-machine seat's task claims through a directed pause until proven resume, release, or the revival horizon (returned as `expires_at`). |
+| `release_session_claims_hold` | Root terminal operators: release that hold so the seat's claims return to the ordinary sweep schedule. Only the session that placed a live hold may renew or release it (`claim_hold_held_by_other`). |
 | `restore_session_transcript` | Restore one transcript from archive. |
 | `get_transcript_status` | Check archive availability and transcript file stats. |
 | `send_keys` | Send authorized terminal input through the managed runtime or tmux. |
@@ -661,7 +663,7 @@ stop or turn-end event does not release the agent run.
 
 - [tasks.md](./tasks.md) - Task management
 - [agents.md](./agents.md) - Agent spawning and agent-run termination
-- [memory.md](./memory.md) - Persistent memory and shadow-relevance judging
+- [memory.md](./memory.md) - Persistent memory and surfacing
 - [mcp-tools.md](./mcp-tools.md) - MCP tool reference
 - [rules.md](./rules.md) - Semantic workflow events
 - [hook-schemas.md](./hook-schemas.md) - Raw hook mappings

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks.phase_timing import timed_to_thread
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
 from gobby.workflows.observer_utils import _extract_shell_command
@@ -300,7 +301,8 @@ async def foreign_staged_commit_conflict(
 
             if checkout_root not in owners_by_checkout:
                 try:
-                    owners_by_checkout[checkout_root] = await asyncio.to_thread(
+                    owners_by_checkout[checkout_root] = await timed_to_thread(
+                        "commit_guard_owner_query",
                         _active_foreign_path_owners,
                         db,
                         session_id=session_id,
@@ -403,7 +405,8 @@ async def foreign_dirty_edit_conflict(
             return ""
 
         try:
-            owners = await asyncio.to_thread(
+            owners = await timed_to_thread(
+                "commit_guard_owner_query",
                 _active_foreign_path_owners,
                 db,
                 session_id=session_id,
@@ -604,7 +607,14 @@ async def _dirty_owned_paths_releasing_clean(
     }
     clean = candidates - dirty
     if clean:
-        await asyncio.to_thread(_release_clean_ledger_entries, db, owners, clean, checkout_root)
+        await timed_to_thread(
+            "commit_guard_release_clean",
+            _release_clean_ledger_entries,
+            db,
+            owners,
+            clean,
+            checkout_root,
+        )
     return dirty
 
 
@@ -684,7 +694,8 @@ async def foreign_owned_dirty_paths_async(
     status is unavailable.
     """
     try:
-        owners = await asyncio.to_thread(
+        owners = await timed_to_thread(
+            "commit_guard_owner_query",
             _active_foreign_path_owners,
             db,
             session_id=session_id,

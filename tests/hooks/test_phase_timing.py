@@ -58,6 +58,21 @@ def test_hook_scope_reports_hub_query_percentiles(temp_db: HubDatabase) -> None:
     summary = timings.query_latency_summary_ms()
     assert summary["count"] >= 2
     assert 0 < summary["p50"] <= summary["p95"]
+    # Query timing excludes the wait for a pooled connection; it is its own key.
+    assert timings.breakdown()["hub_pool_acquire"] > 0
+
+
+def test_query_summary_exposes_blocked_query_hidden_past_p95() -> None:
+    timings = HookPhaseTimings()
+    for _ in range(33):
+        timings.add_query_latency(0.002)
+    timings.add_query_latency(4.4)
+
+    summary = timings.query_latency_summary_ms()
+
+    assert summary["count"] == 34
+    assert summary["p95"] == pytest.approx(2.0)
+    assert summary["max"] == pytest.approx(4400.0)
 
 
 def test_observe_exports_all_phases_and_finds_dominant_phase() -> None:

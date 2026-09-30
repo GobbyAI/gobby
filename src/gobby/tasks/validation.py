@@ -29,12 +29,17 @@ NO_WORK_CLOSE_REASONS: frozenset[str] = frozenset(
 # evidence only ever grows, and evidence that grew cannot falsify a verdict that
 # has already been rendered; a new commit or a new attributed edit still moves
 # `commit_shas` and `attributed_paths` and correctly invalidates it.
+#
+# `close_receipts` keys them too. Other sessions record receipts deliberately,
+# usually to answer a rejection; a close that reused the delivered rejection
+# because its fingerprint ignored them would never see the new evidence.
 STABLE_CHECKLIST_FACT_KEYS: frozenset[str] = frozenset(
     {
         "commit_count",
         "commit_shas",
         "had_attributed_edits",
         "attributed_paths",
+        "close_receipts",
     }
 )
 
@@ -91,9 +96,6 @@ class TaskValidator:
         # growth cannot stale a verdict.
         review_policy = {
             "close_review_min_severity": self.config.close_review_min_severity,
-            "close_review_max_concurrency_per_project": (
-                self.config.close_review_max_concurrency_per_project
-            ),
         }
         stable_facts = {
             **stable_checklist_facts(checklist_facts),

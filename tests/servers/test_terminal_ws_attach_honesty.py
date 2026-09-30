@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
+from types import SimpleNamespace
 from typing import Any, Literal, cast
 from unittest.mock import MagicMock
 
@@ -11,19 +13,24 @@ import pytest
 
 from gobby.servers.websocket import terminal_ws
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.terminals import AttachLocator, HostEpochMismatchError, TerminalManager
+from gobby.storage.terminals import (
+    AttachLocator,
+    HostEpochMismatchError,
+    TerminalManager,
+    tmux_locator_key,
+)
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.write_coordinator import WriteCoordinator
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.servers.test_terminal_ws_lease import _live_row, _send, _ws_server
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.storage.test_terminals import _create_pending
 
 pytestmark = pytest.mark.unit
 
 _Kind = Literal[
     "no_runtime",
     "no_opener",
-    "row_exited",
     "locator_raises",
     "locator_epoch_stale",
     "locator_invalid",
@@ -167,7 +174,7 @@ def _configure(
 
         server.open_proxy_frame = _frame_opener
         return frame
-    elif kind in {"row_exited", "locator_raises", "locator_epoch_stale", "locator_invalid"}:
+    elif kind in {"locator_raises", "locator_epoch_stale", "locator_invalid"}:
         server.open_proxy_frame = _unused_opener
     return None
 
@@ -178,11 +185,6 @@ def _configure(
     [
         ("no_runtime", "runtime_unavailable", "no terminal runtime for backend"),
         ("no_opener", "proxy_unavailable", "proxy frame opener is not available"),
-        (
-            "row_exited",
-            "terminal_exited",
-            "terminal row is exited or orphaned; nothing to attach",
-        ),
         ("locator_raises", "locator_failed", "attach_locator raised"),
         (
             "locator_epoch_stale",
@@ -233,8 +235,6 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     monkeypatch.setattr(terminal_ws, "PROXY_FRAME_OPEN_SECONDS", 0.01)
     monkeypatch.setattr(terminal_ws, "PROXY_START_SECONDS", 0.01)
     terminal_id = _live_row(temp_db, sample_project)
-    if kind == "row_exited":
-        assert TerminalManager(temp_db).mark_exited(terminal_id) is not None
     server = _ws_server()
     frame = _configure(server, temp_db, kind)
     ws = MockWebSocket()
@@ -283,6 +283,39 @@ async def test_proxy_attach_failures_are_typed_and_finalized(
     control = ws.messages_of_type("terminal_control_result")[-1]
     assert control["granted"] is False
     assert control["reason"] == "stale_attachment"
+
+
+@pytest.mark.asyncio
+async def test_slow_failed_proxy_attach_logs_transport_phase(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminal_id = _live_row(temp_db, sample_project)
+    server = _ws_server()
+    _configure(server, temp_db, "no_runtime")
+    websocket = MockWebSocket()
+    server.clients[websocket] = {"id": "client-1", "subscriptions": {"*"}}
+    ticks = iter((0.0, 0.1, 0.2, 1.4, 1.6))
+    monkeypatch.setattr(terminal_ws, "time", SimpleNamespace(monotonic=ticks.__next__))
+
+    await _send(
+        server,
+        websocket,
+        {
+            "type": "terminal_attach",
+            "request_id": "slow-proxy-failure",
+            "terminal_id": terminal_id,
+            "frame_delivery": "proxy",
+        },
+    )
+
+    assert websocket.messages_of_type("terminal_attach_result")[-1]["code"] == "runtime_unavailable"
+    assert (
+        f"client_id=client-1 terminal_id={terminal_id} outcome=runtime_unavailable "
+        "total_ms=1600.0 row_ms=100.0 lease_ms=100.0 transport_ms=1200.0 reply_ms=200.0"
+    ) in caplog.text
 
 
 class _StartupHost:
@@ -353,6 +386,71 @@ async def test_direct_attach_refuses_exited_row(
     assert result["code"] == "terminal_exited"
     assert result["reason"] == "terminal row is exited or orphaned; nothing to attach"
     assert host.waits == []
+    assert runtime.resolved == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "backend", "code"),
+    [
+        ("missing", "native", "terminal_gone"),
+        ("exited", "native", "terminal_exited"),
+        ("orphaned", "native", "terminal_orphaned"),
+        ("pending", "tmux", "unsupported_terminal_backend"),
+        ("live", "tmux", "unsupported_terminal_backend"),
+    ],
+)
+async def test_attach_fences_unavailable_and_legacy_rows_before_acquiring_a_lease(
+    state: str, backend: str, code: str, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    manager = TerminalManager(temp_db)
+    terminal_id = str(uuid.uuid4())
+    if state != "missing":
+        if backend == "native":
+            terminal_id = _live_row(temp_db, sample_project)
+            if state == "exited":
+                assert manager.mark_exited(terminal_id) is not None
+            else:
+                assert manager.mark_orphaned(terminal_id) is not None
+        else:
+            pending = _create_pending(manager, sample_project["id"])
+            terminal_id = pending.id
+            if state == "live":
+                socket_path = "/tmp/legacy-tmux.sock"
+                promoted = manager.promote_to_live(
+                    pending.id,
+                    locator={"socket_path": socket_path, "pane_id": "%1"},
+                    locator_key=tmux_locator_key(
+                        socket_path=socket_path,
+                        server_pid=100,
+                        server_start_time=200,
+                        pane_id="%1",
+                    ),
+                    session_name="legacy",
+                )
+                assert promoted is not None
+    server = _ws_server()
+    runtime = _AfterStartupRuntime(_StartupHost(settled=True))
+    registry = TerminalRuntimeRegistry()
+    registry.register(cast(TerminalRuntime, runtime))
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
+    ws = MockWebSocket()
+    server.clients[ws] = {"subscriptions": {"*"}}
+    await _send(server, ws, {"type": "terminal_attach", "terminal_id": terminal_id})
+
+    reply = ws.messages_of_type("terminal_attach_result")[-1]
+    assert reply["success"] is False
+    assert reply["code"] == code
+    assert reply["reason"]
+    assert "attachment_id" not in reply
+    assert leases._attachments == {}
     assert runtime.resolved == 0
 
 

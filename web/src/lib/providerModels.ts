@@ -34,7 +34,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   codex: "Codex",
   droid: "Droid",
   grok: "Grok",
-  agy: "AGY",
+  agy: "Antigravity",
   qwen: "Qwen",
   openai: "OpenAI",
 };

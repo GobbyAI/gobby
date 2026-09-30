@@ -78,3 +78,17 @@ class TestTemporalDecay:
         years_ago = now - timedelta(days=365)
         factor = temporal_decay(years_ago.isoformat(), half_life_days=30.0, now=now)
         assert factor < 0.01
+
+
+def test_recency_anchor_prefers_later_access() -> None:
+    """The decay anchor is the later of the last update and the last fetch."""
+    from gobby.memory.scoring import recency_anchor
+
+    updated = datetime(2026, 1, 1, tzinfo=UTC)
+    fetched = datetime(2026, 3, 1, tzinfo=UTC)
+
+    assert recency_anchor(updated.isoformat(), fetched) == fetched
+    assert recency_anchor(fetched.isoformat(), updated) == fetched
+    assert recency_anchor(updated.isoformat(), None) == updated
+    assert recency_anchor(None, fetched) == fetched
+    assert recency_anchor(None, None) is None

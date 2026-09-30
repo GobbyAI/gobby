@@ -1,6 +1,8 @@
 import json
 import logging
 import subprocess
+import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -614,29 +616,19 @@ def test_ollama_info_exception() -> None:
 def test_lmstudio_info() -> None:
     with patch("shutil.which", return_value=False):
         assert deps.get_lmstudio_info() is None
-    with (
-        patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value="Server is running"),
-    ):
+    with patch("shutil.which", return_value=True), patch("gobby.utils.spawn.run") as mock_run:
+        # lms reports on stderr with empty stdout; one spawn must read it.
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="", stderr="The server is running on port 1234."
+        )
         assert deps.get_lmstudio_info() == {"running": True}
-    with (
-        patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value="The server is not running"),
-    ):
+        assert mock_run.call_count == 1
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout="", stderr="The server is NOT RUNNING"
+        )
         assert deps.get_lmstudio_info() == {"running": False}
-    with (
-        patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value=None),
-    ):
-        with patch("gobby.utils.spawn.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="server RUNNING")
-            assert deps.get_lmstudio_info() == {"running": True}
-            mock_run.return_value = MagicMock(
-                returncode=0,
-                stdout="",
-                stderr="The server is NOT RUNNING",
-            )
-            assert deps.get_lmstudio_info() == {"running": False}
+        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="server running")
+        assert deps.get_lmstudio_info() == {"running": False}
 
 
 @pytest.mark.parametrize(
@@ -650,7 +642,6 @@ def test_lmstudio_info_expected_exception(
     with (
         caplog.at_level(logging.DEBUG, logger="gobby.utils.deps"),
         patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value=None),
         patch("gobby.utils.spawn.run", side_effect=error),
     ):
         assert deps.get_lmstudio_info() == {"running": False}
@@ -661,7 +652,6 @@ def test_lmstudio_info_expected_exception(
 def test_lmstudio_info_unexpected_exception_propagates() -> None:
     with (
         patch("shutil.which", return_value=True),
-        patch("gobby.utils.deps._run_cmd", return_value=None),
         patch("gobby.utils.spawn.run", side_effect=RuntimeError("programming error")),
         pytest.raises(RuntimeError, match="programming error"),
     ):
@@ -1155,3 +1145,60 @@ def test_regex_exceptions() -> None:
         assert deps.get_git_version() == "weirdformat"
     with patch("gobby.utils.deps._run_cmd", return_value="   "):
         assert deps.get_node_version() == "   "
+
+
+def test_collect_all_deps_reports_slow_probes_as_timed_out_at_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+
+    def slow() -> str:
+        release.wait(10)
+        return "late"
+
+    for name in (
+        "get_gobby_version",
+        "get_gcode_version",
+        "get_ghook_version",
+        "get_gterm_version",
+        "get_gclient_version",
+        "get_impeccable_version",
+        "get_grok_cli_version",
+        "get_codex_cli_version",
+        "get_droid_cli_version",
+        "get_qwen_cli_version",
+        "get_agy_cli_version",
+    ):
+        monkeypatch.setattr(deps, name, lambda: "1.0")
+    monkeypatch.setattr(deps, "get_claude_code_version", slow)
+    monkeypatch.setattr(deps, "get_tailscale_info", slow)
+    monkeypatch.setattr(deps, "get_coding_cli_hooks_status", lambda: {})
+    monkeypatch.setattr(deps, "get_coding_cli_hook_drift", lambda: {})
+    monkeypatch.setattr(deps, "get_git_hook_drift", lambda _db: {})
+    monkeypatch.setattr(deps, "get_configured_embedding_provider", lambda *_a, **_k: "lmstudio")
+    monkeypatch.setattr(deps, "get_ollama_info", lambda: {"running": True})
+    monkeypatch.setattr(deps, "get_lmstudio_info", lambda: {"running": False})
+    monkeypatch.setattr(
+        deps,
+        "collect_dependency_report",
+        lambda **_kwargs: DependencyReport(runtime={}, required={}, optional={}, services={}),
+    )
+    monkeypatch.setattr(deps, "STATUS_PROBE_DEADLINE_SECONDS", 0.2)
+    try:
+        started = time.monotonic()
+        res = deps.collect_all_deps(MagicMock(), managed_services=False)
+        elapsed = time.monotonic() - started
+    finally:
+        release.set()
+
+    assert elapsed < 1.5
+    assert res["timed_out"] == ["coding_clis.claude", "integrations.tailscale"]
+    assert res["coding_clis"]["claude"] is None
+    assert res["coding_clis"]["codex"] == "1.0"
+    assert res["integrations"]["ollama"] == {"running": True}
+    assert res["integrations"]["embeddings_provider"] == "lmstudio"
+    rendered = format_status_message(running=True, pid=1, deps_info=res)
+    claude_lines = [line for line in rendered.splitlines() if "Claude Code:" in line]
+    assert claude_lines and claude_lines[0].split(":", 1)[1].strip().startswith("timed out")
+    assert "Status probes timed out: coding_clis.claude, integrations.tailscale" in rendered
+    assert "Degraded" not in rendered

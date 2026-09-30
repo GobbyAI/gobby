@@ -4,6 +4,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.memory.backends.storage_adapter import StorageAdapter
+from gobby.memory.protocol import MemoryRecord
+from gobby.memory.services.repository import MemoryRepository
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_crud import DuplicateMemoryContentError
@@ -859,6 +862,60 @@ def test_update_access_stats(memory_manager) -> None:
     updated2 = memory_manager.get_memory(memory.id)
     assert updated2.access_count == 2
     assert updated2.last_accessed_at == datetime.fromisoformat(access_time2)
+
+
+def test_memory_round_trips_surfaced_stats(
+    memory_manager: LocalMemoryManager, db: HubDatabase
+) -> None:
+    created = memory_manager.create_memory(
+        content="Surfaced round trip", project_id=PERSONAL_PROJECT_ID
+    )
+    assert created.surfaced_count == 0
+    assert created.last_surfaced_at is None
+
+    surfaced_at = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    db.execute(
+        "UPDATE memories SET surfaced_count = 7, last_surfaced_at = %s WHERE id = %s",
+        (surfaced_at, created.id),
+    )
+    loaded = memory_manager.get_memory(created.id)
+    assert loaded.surfaced_count == 7
+    assert loaded.last_surfaced_at == surfaced_at
+    data = loaded.to_dict()
+    assert data["surfaced_count"] == 7
+    assert data["last_surfaced_at"] == surfaced_at.isoformat()
+
+    record = StorageAdapter(memory_manager)._to_record(loaded)
+    assert record.surfaced_count == 7
+    assert record.last_surfaced_at == surfaced_at
+    record_data = record.to_dict()
+    assert record_data["surfaced_count"] == 7
+    assert record_data["last_surfaced_at"] == surfaced_at.isoformat()
+    parsed = MemoryRecord.from_dict(record_data)
+    assert parsed.surfaced_count == 7
+    assert parsed.last_surfaced_at == surfaced_at
+
+    restored = MemoryRepository.record_to_memory(parsed)
+    assert restored.surfaced_count == 7
+    assert restored.last_surfaced_at == surfaced_at
+
+
+def test_update_surfaced_stats(memory_manager: LocalMemoryManager) -> None:
+    memory = memory_manager.create_memory(content="Surfaced writer", project_id=PERSONAL_PROJECT_ID)
+    first = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+    second = datetime(2026, 9, 2, 12, 0, tzinfo=UTC)
+
+    memory_manager.update_surfaced_stats(memory.id, first.isoformat())
+    once = memory_manager.get_memory(memory.id)
+    assert once.surfaced_count == 1
+    assert once.last_surfaced_at == first
+
+    memory_manager.update_surfaced_stats(memory.id, second.isoformat())
+    twice = memory_manager.get_memory(memory.id)
+    assert twice.surfaced_count == 2
+    assert twice.last_surfaced_at == second
+    assert twice.access_count == 0
+    assert twice.last_accessed_at is None
 
 
 def test_search_memories_with_project(memory_manager, db) -> None:

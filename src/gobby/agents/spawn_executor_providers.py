@@ -114,15 +114,11 @@ async def _prepare_provider_sandbox(
     env: dict[str, str],
 ) -> SandboxLaunch | SpawnResult:
     try:
-        config = (
-            request.managed_runtime_profile.sandbox_config
-            if request.managed_runtime_profile is not None
-            else _sandbox_config_for_spawn(
-                request.sandbox_config,
-                env,
-                project_path=request.project_path,
-                resume_metadata_json=request.resume_metadata_json,
-            )
+        config = _sandbox_config_for_spawn(
+            request.sandbox_config,
+            env,
+            project_path=request.project_path,
+            resume_metadata_json=request.resume_metadata_json,
         )
         if config is None:
             launch = SandboxLaunch(backend="provider-native", enforced=False)
@@ -446,14 +442,25 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         *request.codex_config_overrides,
     ]
     if request.agent_name == "task-close-reviewer":
+        # The reviewer loads skills through Gobby MCP and needs no Codex plugins.
+        config_overrides.append("features.plugins=false")
+        config_overrides.append("features.remote_plugin=false")
         # Its load_skills step permits Gobby MCP tools; hide execution wrappers.
         config_overrides.append('plugins."unified-computer-use@openai-bundled".enabled=false')
         config_overrides.append("mcp_servers.node_repl.enabled=false")
     if launch.enforced and launch.backend == "srt":
         config_overrides.append('sandbox_mode="danger-full-access"')
+    prompt_text = request.prompt or ""
+    agent_prompt = _agent_prompt_prefix(request)
+    inject_persona = bool(agent_prompt and request.session_manager is not None)
+    if inject_persona:
+        prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
+    headless_reviewer = (
+        request.agent_name == "task-close-reviewer" and launch.enforced and launch.backend == "srt"
+    )
     cmd, _cmd_env = build_cli_command(
         cli="codex",
-        prompt="",
+        prompt=prompt_text if headless_reviewer else "",
         auto_approve=True,
         working_directory=request.cwd,
         model=request.model,
@@ -461,6 +468,8 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=launch.provider_args or None,
         config_overrides=config_overrides,
+        mode="headless" if headless_reviewer else "agent",
+        external_sandbox_enforced=headless_reviewer,
     )
     await asyncio.to_thread(
         _record_resume_launch_details,
@@ -473,11 +482,6 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         sandbox_launch=launch,
     )
     await asyncio.to_thread(pre_approve_directory, "codex", request.cwd)
-    prompt_text = request.prompt or ""
-    agent_prompt = _agent_prompt_prefix(request)
-    inject_persona = bool(agent_prompt and request.session_manager is not None)
-    if inject_persona:
-        prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
     finish_spawn_phase(request.phase_timings_ms, "provider_post_sandbox", post_sandbox_started)
     return ProviderSpawnPlan(
         command=cmd,
@@ -487,7 +491,7 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
         child_session_id=gobby_session_id,
         agent_run_id=spawn_context.agent_run_id,
         title=f"gobby-codex-d{request.agent_depth}",
-        codex_prompt=prompt_text,
+        codex_prompt=None if headless_reviewer else prompt_text,
         inject_persona=inject_persona,
     )
 
@@ -555,7 +559,7 @@ def agy_support_refusal(record: AgySupportRecord) -> str:
 
 
 async def prepare_agy_spawn(request: SpawnRequest) -> ProviderSpawnPlan | SpawnResult:
-    if validation_error := _session_manager_validation_error(request, "AGY"):
+    if validation_error := _session_manager_validation_error(request, "Antigravity"):
         return validation_error
     spawn_context = request.prepared_spawn
     gobby_session_id = spawn_context.session_id

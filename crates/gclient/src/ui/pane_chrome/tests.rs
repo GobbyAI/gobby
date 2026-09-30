@@ -1,6 +1,6 @@
 use super::*;
 use crate::app::{Backend, PaneId, Workspace};
-use crate::daemon::{ProjectRow, SessionRow, SidebarRows, WorkspaceSnapshot};
+use crate::daemon::{ProjectRow, RunRow, RunSandbox, SessionRow, SidebarRows, WorkspaceSnapshot};
 use crate::ui::pane_layout;
 use crate::ui::settings::AgentSort;
 use serde_json::json;
@@ -20,6 +20,9 @@ fn corners(title: &str, address: &str) -> PaneCorners {
     PaneCorners {
         title: title.to_owned(),
         address: address.to_owned(),
+        backend: None,
+        sandbox: SandboxState::Sandboxed,
+        sandbox_mark: sandbox_mark(SandboxState::Sandboxed, true),
         tone: MetadataTone::Focused,
         actionable: false,
     }
@@ -93,10 +96,13 @@ fn corner_title_leads_with_glyph_ref_and_definition() {
 
     let mut tmux_pane = Pane::new(PaneId(100), "term-alpha", Backend::Tmux, "epoch");
     tmux_pane.address = Some("%15".to_owned());
-    assert_eq!(
-        pane_corners(&ws, &chrome, &tmux_pane, true).address,
-        "tmux %15"
-    );
+    // Josh's order (#23049): mark, then tmux for a tmux pane, then the address.
+    // This seat has no SRT record, so no mark leads (#23096).
+    let tmux = pane_corners(&ws, &chrome, &tmux_pane, true);
+    assert_eq!(tmux.address_label(), "tmux · %15");
+    tmux_pane.address = None;
+    let unaddressed = pane_corners(&ws, &chrome, &tmux_pane, true);
+    assert_eq!(unaddressed.address_label(), "tmux");
 
     // No session ref: the definition alone.
     ws.daemon_mut().set_sidebar_rows(SidebarRows::default());
@@ -133,6 +139,63 @@ fn a_seat_without_a_definition_names_its_provider() {
     assert_eq!(
         pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
         "○ Claude Code · Focused"
+    );
+}
+
+/// A seat whose session carries `title` with `title_source`, joined to an
+/// open pane on `term-seat`.
+fn titled_seat(title: &str, title_source: &str) -> (Workspace, PaneId) {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_owned(),
+            name: "gobby".to_owned(),
+            display_name: "gobby".to_owned(),
+            ..ProjectRow::default()
+        }],
+        sessions: [(
+            "proj-alpha".to_owned(),
+            vec![SessionRow {
+                id: "sess-seat".to_owned(),
+                reference: Some("#14069".to_owned()),
+                title: Some(title.to_owned()),
+                title_source: Some(title_source.to_owned()),
+                ..SessionRow::default()
+            }],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1", "seq": 1,
+        "entries": [{
+            "entry_id": "session:sess-seat",
+            "session_id": "sess-seat",
+            "provider": "claude",
+            "terminal": {"terminal_id": "term-seat", "backend": "native"}
+        }]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    let pane = ws.open_terminal("term-seat", "native", "epoch").unwrap();
+    (ws, pane)
+}
+
+#[test]
+fn a_manual_session_title_names_the_seat_in_place_of_its_provider() {
+    let (ws, pane) = titled_seat("gobby#14069: Assistant", "manual");
+    assert_eq!(
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
+        "○ #14069: Assistant · Focused",
+        "the manual title drops the ref prefix the header already leads with"
+    );
+
+    let (ws, pane) = titled_seat("gobby#14069: Task #22974 - fix titles", "task");
+    assert_eq!(
+        pane_corners(&ws, &Chrome::dark(), ws.pane(pane), true).title,
+        "○ #14069: Claude · Focused",
+        "an automatic title keeps the provider"
     );
 }
 
@@ -251,6 +314,8 @@ fn the_address_takes_the_bottom_right_corner_alone() {
     let address = address_rect(&bordered, &text).unwrap();
     assert_eq!(address.right(), rect.right() - 1);
     assert_eq!(address.y, rect.bottom() - 1);
+    // " <lock> · 0:0:1:2 ": the mark is one cell and leads the address.
+    assert_eq!(usize::from(address.width), 1 + 3 + "0:0:1:2".len() + 2);
     assert_eq!(top_reserve(&bordered, &text), 0);
     let title = title_rect(&bordered, &text).unwrap();
     assert_eq!((title.x, title.y), (rect.x + 1, rect.y));
@@ -274,7 +339,8 @@ fn shared_divider_moves_upper_address_beside_title() {
         true,
     );
     let reserve = top_reserve(&upper, &text);
-    assert_eq!(reserve, display_width(&text.address) + 3);
+    // The lock, " · ", then the address, padded, plus one rule cell.
+    assert_eq!(reserve, 1 + 3 + display_width(&text.address) + 3);
     let address = address_rect(&upper, &text).unwrap();
     assert_eq!(address.y, upper.rect.y);
     assert_eq!(address.right(), upper.rect.right() - 1);
@@ -305,4 +371,148 @@ fn title_travel_measures_each_header_window() {
     assert_eq!(title_travel(&ws, &chrome, &pane, &borderless), 0);
     let tiny = info(Rect::new(0, 0, 7, 6), Borders::ALL, true);
     assert_eq!(title_travel(&ws, &chrome, &pane, &tiny), 0);
+}
+
+/// #23096: only an SRT pane draws a mark. The Nerd lock is one cell, the
+/// text fallback widens the address corner rather than truncating it, and an
+/// unrestricted pane draws no padlock of either shape.
+#[test]
+fn only_a_sandboxed_pane_leads_its_address_with_a_mark() {
+    assert_eq!(
+        sandbox_mark(SandboxState::Sandboxed, true),
+        Some("\u{f023}")
+    );
+    assert_eq!(sandbox_mark(SandboxState::Sandboxed, false), Some("sbx"));
+    assert_eq!(display_width("\u{f023}"), 1);
+    for nerd in [true, false] {
+        assert_eq!(
+            sandbox_mark(SandboxState::Unrestricted, nerd),
+            None,
+            "an unrestricted pane draws no mark (nerd={nerd})"
+        );
+    }
+
+    let mut text = corners("○ zsh", "0:0:1:2");
+    assert_eq!(text.address_label(), "\u{f023} · 0:0:1:2");
+    text.sandbox_mark = sandbox_mark(SandboxState::Sandboxed, false);
+    text.backend = Some("tmux");
+    assert_eq!(text.address_label(), "sbx · tmux · 0:0:1:2");
+    let rect = Rect::new(10, 2, 50, 8);
+    let address = address_rect(&info(rect, Borders::ALL, true), &text).unwrap();
+    assert_eq!(
+        usize::from(address.width),
+        display_width("sbx · tmux · 0:0:1:2") + 2
+    );
+    assert_eq!(address.right(), rect.right() - 1);
+
+    text.sandbox = SandboxState::Unrestricted;
+    text.sandbox_mark = sandbox_mark(SandboxState::Unrestricted, true);
+    assert_eq!(text.address_label(), "tmux · 0:0:1:2");
+    text.backend = None;
+    assert_eq!(text.address_label(), "0:0:1:2");
+}
+
+/// #23096: Josh's live roster held one SRT run among interactive seats; only
+/// the run's pane is locked, and every seat's address stands alone.
+#[test]
+fn a_mixed_roster_locks_only_the_srt_pane() {
+    let mut ws = Workspace::scripted();
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_owned(),
+            name: "gobby".to_owned(),
+            display_name: "gobby".to_owned(),
+            ..ProjectRow::default()
+        }],
+        sessions: [(
+            "proj-alpha".to_owned(),
+            vec![
+                SessionRow {
+                    id: "sess-run".to_owned(),
+                    sandbox_enabled: Some(true),
+                    ..SessionRow::default()
+                },
+                SessionRow {
+                    id: "sess-seat".to_owned(),
+                    sandbox_enabled: None,
+                    ..SessionRow::default()
+                },
+                SessionRow {
+                    id: "sess-off".to_owned(),
+                    sandbox_enabled: Some(false),
+                    ..SessionRow::default()
+                },
+            ],
+        )]
+        .into_iter()
+        .collect(),
+        runs: [(
+            "proj-alpha".to_owned(),
+            vec![RunRow {
+                run_id: "run-srt".to_owned(),
+                sandbox: Some(RunSandbox {
+                    enforced: Some(true),
+                }),
+                ..RunRow::default()
+            }],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "run:run-srt",
+                "run_id": "run-srt",
+                "session_id": "sess-run",
+                "provider": "codex",
+                "terminal": {"terminal_id": "term-srt", "backend": "native"}
+            },
+            {
+                "entry_id": "session:sess-seat",
+                "session_id": "sess-seat",
+                "provider": "claude",
+                "terminal": {"terminal_id": "term-seat", "backend": "native"}
+            },
+            {
+                "entry_id": "session:sess-off",
+                "session_id": "sess-off",
+                "provider": "claude",
+                "terminal": {"terminal_id": "term-off", "backend": "native"}
+            }
+        ]
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    for terminal in ["term-srt", "term-seat", "term-off"] {
+        ws.open_terminal(terminal, "native", "epoch").unwrap();
+    }
+    let chrome = Chrome::dark();
+    let corners_for = |terminal: &str| {
+        let pane_id = ws.pane_for_terminal(terminal).unwrap();
+        pane_corners(&ws, &chrome, ws.pane(pane_id), false)
+    };
+
+    let srt = corners_for("term-srt");
+    assert_eq!(srt.sandbox, SandboxState::Sandboxed);
+    assert_eq!(srt.address_label(), format!("\u{f023} · {}", srt.address));
+    for terminal in ["term-seat", "term-off"] {
+        let seat = corners_for(terminal);
+        assert_eq!(seat.sandbox, SandboxState::Unrestricted, "{terminal}");
+        assert_eq!(
+            seat.address_label(),
+            seat.address,
+            "{terminal} draws no mark"
+        );
+    }
+    let bare = Pane::new(PaneId(99), "term-bare", Backend::Native, "epoch");
+    let bare = pane_corners(&ws, &chrome, &bare, false);
+    assert_eq!(
+        bare.address_label(),
+        bare.address,
+        "a bare shell draws no mark"
+    );
 }

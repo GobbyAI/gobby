@@ -92,14 +92,14 @@ async def _readline_with_progress(
 def _validated_agy_option(value: str, option: str) -> str:
     cleaned = value.strip()
     if not cleaned or cleaned.startswith("-"):
-        raise ValueError(f"Invalid AGY {option}: {value!r}")
+        raise ValueError(f"Invalid Antigravity {option}: {value!r}")
     return cleaned
 
 
 def _resolve_agy_cwd(project_path: str | None) -> str:
     cwd = Path(project_path or ".").expanduser().resolve()
     if not cwd.is_dir():
-        raise ValueError(f"AGY working directory does not exist: {cwd}")
+        raise ValueError(f"Antigravity working directory does not exist: {cwd}")
     return str(cwd)
 
 
@@ -113,10 +113,10 @@ def _redact_agy_stderr(text: str) -> str:
 
 def _validate_agy_outbound(record: dict[str, Any]) -> dict[str, Any]:
     if record.get("event") != "user":
-        raise ValueError("AGY outbound line requires event=user")
+        raise ValueError("Antigravity outbound line requires event=user")
     message = record.get("message")
     if not isinstance(message, dict):
-        raise ValueError("AGY outbound line requires a message object")
+        raise ValueError("Antigravity outbound line requires a message object")
     content = message.get("content")
     if isinstance(content, str):
         return record
@@ -127,9 +127,9 @@ def _validate_agy_outbound(record: dict[str, Any]) -> dict[str, Any]:
                 or block.get("type") != "text"
                 or not isinstance(block.get("text"), str)
             ):
-                raise ValueError("AGY outbound line requires text content blocks")
+                raise ValueError("Antigravity outbound line requires text content blocks")
         return record
-    raise ValueError("AGY outbound line requires text content")
+    raise ValueError("Antigravity outbound line requires text content")
 
 
 def _usage_int(usage: Mapping[str, Any], *keys: str) -> int | None:
@@ -236,7 +236,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
     ) -> AsyncIterator[ChatEvent]:
         del request_parameters
         if self._lock.locked():
-            yield TextChunk(content="Error: AGY session turn already in progress")
+            yield TextChunk(content="Error: Antigravity session turn already in progress")
             yield DoneEvent(
                 tool_calls_count=0,
                 sdk_session_id=self.sdk_session_id,
@@ -447,7 +447,7 @@ class AgyWebChatBackend:
 
         await self.start()
         if not self._health.available:
-            raise RuntimeError(self._health.startup_error or "AGY backend unavailable")
+            raise RuntimeError(self._health.startup_error or "Antigravity backend unavailable")
 
         await self.detach_session(session)
 
@@ -511,7 +511,7 @@ class AgyWebChatBackend:
             await self.attach_session(session, model=session._model)
             handle = self._handles[session.conversation_id]
         if handle.process.stdin is None or handle.process.stdout is None:
-            raise RuntimeError("AGY process streams unavailable")
+            raise RuntimeError("Antigravity process streams unavailable")
 
         payload = _validate_agy_outbound({"event": "user", "message": {"content": prompt}})
         encoded = (json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8")
@@ -528,7 +528,7 @@ class AgyWebChatBackend:
             await self.attach_session(session, model=session._model)
             handle = self._handles[session.conversation_id]
             if handle.process.stdin is None:
-                raise RuntimeError("AGY stdin stream unavailable") from None
+                raise RuntimeError("Antigravity stdin stream unavailable") from None
             handle.process.stdin.write(encoded)
             await handle.process.stdin.drain()
 
@@ -554,7 +554,7 @@ class AgyWebChatBackend:
                 data={
                     "code": "timeout",
                     "message": (
-                        "Timed out waiting for AGY stream progress after "
+                        "Timed out waiting for Antigravity stream progress after "
                         f"{self._prompt_timeout:.1f}s"
                     ),
                 },

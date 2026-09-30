@@ -99,6 +99,8 @@ def _patches(predecessor: Any, pane: _Pane, send_command: Any) -> list[Any]:
         # Grok fails closed without a transcript to observe (#22358); the sender is
         # faked here, so the observer is irrelevant to acknowledgment semantics.
         patch.object(_terminal_clear, "_interrupt_observer", return_value=(None, None)),
+        # The fixture's fake parent pid owns no terminal; seat departure has its own tests.
+        patch.object(_terminal_clear, "recorded_seat_left", return_value=False),
         patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
     ]
 
@@ -339,6 +341,38 @@ async def test_pending_attempt_is_reused_and_its_content_refreshed(
     assert handoff is not None
     assert "Refreshed content" in handoff.markdown
     assert "First attempt content" not in handoff.markdown
+
+
+def test_send_stamp_after_successor_bound_reports_delivery(
+    hub_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#22884 found work: SessionStart(clear) can consume the marker before the
+    send confirms (22:06:00 bind, 22:06:05 stamp); that is a delivered /clear."""
+    sessions, predecessor = _register_predecessor(hub_db, tmp_path, monkeypatch)
+    stage_clear_attempt(
+        hub_db,
+        predecessor.id,
+        attempt_id=_PENDING_ATTEMPT_ID,
+        handoff=build_handoff_payload(current_state="Bound early.", next_steps=["Continue."]),
+        terminal_context=_terminal_context(),
+        chat_context=None,
+    )
+    successor_id = sessions.register_session(
+        external_id="provider-bound-before-stamp",
+        machine_id=predecessor.machine_id,
+        source=predecessor.source,
+        project_id=predecessor.project_id,
+        terminal_context=_terminal_context(),
+    )
+    assert take_clear_handoff_marker(
+        hub_db, predecessor.id, attempt_id=_PENDING_ATTEMPT_ID, successor_id=successor_id
+    )
+
+    assert mark_clear_command_sent(hub_db, predecessor.id, attempt_id=_PENDING_ATTEMPT_ID)
+    assert not mark_clear_command_sent(hub_db, predecessor.id, attempt_id="e" * 32)
+    handoff = consume_pending_handoff(hub_db, successor_id)
+    assert handoff is not None
+    assert "Bound early." in handoff.markdown
 
 
 def test_pending_clear_attempt_parks_explicit_resume(

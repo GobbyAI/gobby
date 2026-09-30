@@ -3,6 +3,16 @@ impl GhosttyPaneTerminal {
         mut terminal: crate::ghostty::Terminal,
         _response_writer: mpsc::Sender<Bytes>,
     ) -> std::io::Result<Self> {
+        terminal
+            .set_continuation_max_bytes(PANE_CONTINUATION_MAX_BYTES)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        Self::from_tracked_terminal(terminal)
+    }
+
+    /// Wraps a terminal whose continuation tracking is already enabled.
+    pub(super) fn from_tracked_terminal(
+        mut terminal: crate::ghostty::Terminal,
+    ) -> std::io::Result<Self> {
         let pending_pty_responses = Arc::new(Mutex::new(Vec::new()));
         let callback_responses = pending_pty_responses.clone();
         terminal
@@ -628,7 +638,7 @@ impl GhosttyPaneTerminal {
         })
     }
 
-    pub fn wheel_routing(&self) -> Option<crate::pane::WheelRouting> {
+    pub(crate) fn wheel_routing(&self) -> Option<crate::pane::WheelRouting> {
         let Ok(core) = self.core.lock() else {
             return None;
         };

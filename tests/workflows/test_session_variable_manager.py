@@ -1003,6 +1003,31 @@ def test_release_task_edited_files_pops_last_task_path(db: Any, tmp_path: Path) 
     assert target_task_has_edits(variables, "task-1") is False
 
 
+def test_released_other_task_edit_remains_in_close_history(db: Any, tmp_path: Path) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+    from gobby.workflows.task_claim_state import other_task_edited_checkout_paths
+
+    checkout = tmp_path / "checkout"
+    checkout.mkdir()
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        S1,
+        {"claimed_tasks": {"task-a": "#1", "task-b": "#2"}, "active_task_id": "task-b"},
+    )
+    mgr.record_edited_file(S1, "src/shared.py", checkout_root=str(checkout))
+    released, remaining = mgr.release_task_edited_files(
+        S1, "task-b", ["src/shared.py"], checkout_root=str(checkout)
+    )
+
+    assert released == ["src/shared.py"]
+    assert remaining == []
+    variables = mgr.get_variables(S1)
+    assert "task-b" not in variables["task_edited_file_checkouts"]
+    assert other_task_edited_checkout_paths(variables, "task-a") == {
+        (str(checkout.resolve()), "src/shared.py")
+    }
+
+
 def test_record_edited_files_stamps_the_newest_edit_per_task_path(db: Any, tmp_path: Path) -> None:
     """release_task_paths compares each stamp with the path's last commit, so the
     ledger keeps epoch seconds of the newest edit and overwrites it on every edit."""

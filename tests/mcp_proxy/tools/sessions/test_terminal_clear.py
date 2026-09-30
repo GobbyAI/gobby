@@ -206,6 +206,35 @@ async def test_clear_delivery_failure_restores_staged_attempt() -> None:
 
 
 @pytest.mark.asyncio
+async def test_clear_delivery_waits_on_the_turn_settled_observer() -> None:
+    # gobby#14556 13:45: a clear delivered without it pressed Ctrl+C on the idle
+    # Codex composer after the turn ended, and the second press quit the CLI.
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
+    send_command = AsyncMock(return_value=(False, "delivery failed", False, None))
+
+    def turn_settled() -> bool:
+        return True
+
+    patches = [
+        p
+        for p in _base_patches(session, pane, restore_failed_attempt=MagicMock(return_value=True))
+        if p.attribute not in {"_send_terminal_compaction_command"}
+    ]
+    patches.extend(
+        [
+            patch.object(_terminal_clear, "_turn_settled_observer", return_value=turn_settled),
+            patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+        ]
+    )
+    await _run_clear(patches)
+
+    await_args = send_command.await_args
+    assert await_args is not None
+    assert await_args.kwargs["turn_settled"] is turn_settled
+
+
+@pytest.mark.asyncio
 async def test_clear_fails_closed_when_the_interrupt_cannot_be_observed() -> None:
     session = _terminal_session(source="claude")
     pane = _Pane("> ")
@@ -237,6 +266,37 @@ async def test_clear_fails_closed_when_the_interrupt_cannot_be_observed() -> Non
     stage_attempt.assert_not_called()
     send_command.assert_not_awaited()
     restore_failed_attempt.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_clear_delivery_sends_no_keys_to_a_departed_seat() -> None:
+    session = _terminal_session()
+    pane = _Pane(_IDLE_PANE)
+    send_command = AsyncMock()
+
+    with (
+        patch.object(
+            _terminal_clear,
+            "_resolve_session_for_compaction",
+            return_value=(session.id, session, None),
+        ),
+        patch.object(_terminal_clear, "recorded_seat_left", return_value=True),
+        patch.object(_terminal_clear, "_resolve_pane_io", return_value=(pane, None)),
+        patch.object(_terminal_clear, "_send_terminal_compaction_command", send_command),
+    ):
+        result = await _terminal_clear.deliver_staged_clear_session(
+            session.id,
+            "a" * 32,
+            session_manager=MagicMock(),
+            db=MagicMock(),
+            agent_run_manager=MagicMock(),
+        )
+
+    assert result["success"] is False
+    assert result["error_code"] == "no_terminal_target"
+    assert result["command_sent"] is False
+    assert pane.keys == []
+    send_command.assert_not_awaited()
 
 
 def _clear_patches(

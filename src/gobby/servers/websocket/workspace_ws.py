@@ -11,6 +11,8 @@ own signature, so this surface cannot drift from the ops module.
 from __future__ import annotations
 
 import inspect
+import logging
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass, is_dataclass
 from types import NoneType, UnionType
@@ -23,6 +25,8 @@ from gobby.terminals.leases import LifecyclePublicationError
 from gobby.terminals.workspace_contract import WorkspaceOpError, WorkspaceSnapshot
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.datetime import to_json_safe
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gobby.terminals.leases import TerminalLeaseRegistry
@@ -45,6 +49,9 @@ def _fields(method: Callable[..., Any]) -> dict[str, _Field]:
             continue
         hint = hints[name]
         types = get_args(hint) if isinstance(hint, UnionType) else (hint,)
+        # A JSON object with untyped values checks completely as a dict; whoever
+        # reads it validates the contents.
+        types = tuple(dict if option == dict[str, object] else option for option in types)
         # Only plain classes check with isinstance; fail at import, not per message.
         if not all(isinstance(option, type) for option in types):
             raise TypeError(f"WorkspaceOps.{method.__name__}.{name}: unsupported type {hint}")
@@ -112,21 +119,50 @@ class WorkspaceWsMixin:
         def _leases(self) -> TerminalLeaseRegistry: ...
 
     async def _handle_workspace_attach(self, websocket: Any, data: dict[str, Any]) -> None:
+        started = time.monotonic()
+
+        def log_slow(
+            outcome: str, workspace_id: str | None, read_done: float, reply_done: float
+        ) -> None:
+            completed = time.monotonic()
+            if completed - started < 1.0:
+                return
+            client_id = getattr(self, "clients", {}).get(websocket, {}).get("id")
+            logger.warning(
+                "Slow workspace attach | client_id=%s workspace_id=%s outcome=%s total_ms=%.1f "
+                "snapshot_ms=%.1f reply_ms=%.1f send_ms=%.1f",
+                client_id,
+                workspace_id,
+                outcome,
+                (completed - started) * 1000,
+                (read_done - started) * 1000,
+                (reply_done - read_done) * 1000,
+                (completed - reply_done) * 1000,
+            )
+
         try:
             self._ensure_workspace_requests_open()
             snapshot = await self._read_workspace(data)
         except LifecyclePublicationError:
             if not self.shutdown_in_progress():
                 raise
+            read_done = time.monotonic()
             await self._send_workspace_error(websocket, data, self._shutdown_error())
+            log_slow("shutdown_in_progress", None, read_done, read_done)
             return
         except WorkspaceOpError as exc:
+            read_done = time.monotonic()
             await self._send_workspace_error(websocket, data, exc)
+            log_slow(_bounded_code(exc.code, "invalid_op"), None, read_done, read_done)
             return
+        read_done = time.monotonic()
         if getattr(websocket, "subscriptions", None) is None:
             websocket.subscriptions = set()
         websocket.subscriptions.add(f"workspace_event:workspace_id={snapshot.workspace.id}")
-        await self._send_json(websocket, self._snapshot_reply(data, snapshot))
+        reply = self._snapshot_reply(data, snapshot)
+        reply_done = time.monotonic()
+        await self._send_json(websocket, reply)
+        log_slow("success", snapshot.workspace.id, read_done, reply_done)
 
     async def _handle_workspace_snapshot(self, websocket: Any, data: dict[str, Any]) -> None:
         try:

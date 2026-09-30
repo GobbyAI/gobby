@@ -14,9 +14,10 @@ from .clones import clones
 from .communications import comms
 from .cron import cron
 from .cutover import cutover
-from .daemon import restart, start, status, stop
+from .daemon import restart, status, stop
 from .daemon_health import health
 from .daemon_lease import lease
+from .daemon_start import start
 from .datastores import datastores as datastores_cli
 from .embeddings import embeddings
 from .extensions import hooks, webhooks

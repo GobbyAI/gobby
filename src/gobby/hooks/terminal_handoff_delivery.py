@@ -8,6 +8,7 @@ import threading
 from collections.abc import Mapping
 from concurrent.futures import Future
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 
 from gobby.agents.terminal_delivery import (
@@ -16,13 +17,19 @@ from gobby.agents.terminal_delivery import (
 )
 from gobby.app_context import get_app_context
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.handoff_dispatch_recovery import (
+    confirm_reclaimed_compact,
+    settle_landed_boundary,
+)
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.mcp_proxy.tools.sessions._terminal_clear import deliver_staged_clear_session
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import NO_TERMINAL_TARGET_ERROR_CODE
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
     deliver_staged_compact_handoff,
 )
 from gobby.sessions.clear_continuation import clear_failed_attempt
 from gobby.sessions.handoff import (
+    DISPATCH_OWNER,
     HANDOFF_DELIVERY_FAILURES_VARIABLE,
     HANDOFF_DISPATCH_GATE_VARIABLE,
     HANDOFF_UNAVAILABLE_VARIABLE,
@@ -32,10 +39,12 @@ from gobby.sessions.handoff import (
     restore_staged_handoff,
     staged_handoff_rejection,
 )
+from gobby.sessions.handoff_shutdown import HANDOFF_IN_FLIGHT_MINUTES
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.attention import AttentionStateManager, session_attention_entry_id
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
@@ -67,6 +76,13 @@ _COMPOSER_OCCUPIED_GUIDANCE = (
     "composer. Nothing was interrupted. Tell the operator the handoff is waiting on "
     "their draft, then retry gobby-sessions:set_handoff once they have sent or "
     "cleared it."
+)
+# The recorded CLI no longer owns its pane: no terminal can take the command, so the
+# attempt settles without counting toward abandonment and stays readable (#23095).
+_NO_TERMINAL_TARGET_GUIDANCE = (
+    "Terminal handoff delivery found no live terminal seat for this session; no keys "
+    "were sent. Do not call set_handoff again; its payload stays recoverable as "
+    "recovery_guidance describes."
 )
 # Consecutive failures per session before terminal delivery is abandoned: a CLI
 # that cannot take the command twice will not take it a ninth time (#22364).
@@ -296,6 +312,12 @@ def schedule_staged_handoff_on_stop(
     if not isinstance(attempt_id, str) or not attempt_id:
         _log_skipped_delivery(session_id, attempt_id, "staged marker has no attempt_id")
         return False
+    if (
+        marker.get("dispatch_started_at") is not None
+        and marker.get("dispatch_owner") == DISPATCH_OWNER
+    ):
+        # AFTER_TOOL already dispatched this attempt in this daemon; nothing to recover.
+        return False
     claimed = claim_staged_handoff_delivery(
         session_manager.db, session_id, attempt_id, recover_unarmed_gate=True
     )
@@ -327,6 +349,18 @@ def _schedule_claimed_delivery(
     if event_loop is None or event_loop.is_closed():
         _compensate_delivery_failure(db, claimed, "daemon event loop is unavailable")
         return False
+    confirm_since: datetime | None = None
+    if claimed.reclaimed_dispatch_started_at is not None:
+        settled = _settle_dead_dispatch(
+            claimed,
+            session_manager=session_manager,
+            event_loop=event_loop,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+        )
+        if isinstance(settled, bool):
+            return settled
+        confirm_since = settled
 
     operation = _settle_delivery(
         claimed,
@@ -334,6 +368,7 @@ def _schedule_claimed_delivery(
         agent_run_manager=agent_run_manager,
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
+        confirm_since=confirm_since,
     )
     try:
         future = asyncio.run_coroutine_threadsafe(operation, event_loop)
@@ -352,6 +387,92 @@ def _schedule_claimed_delivery(
     return True
 
 
+def _settle_dead_dispatch(
+    claimed: ClaimedHandoffDelivery,
+    *,
+    session_manager: SessionManager,
+    event_loop: asyncio.AbstractEventLoop,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> bool | datetime | None:
+    """Settle a claim a dead process left.
+
+    ``None`` means dispatch it again; a datetime means its compact is already
+    running, so only confirm the boundary of the dispatch started then.
+    """
+    db = session_manager.db
+    session = session_manager.get(claimed.session_id)
+    try:
+        started_at = datetime.fromisoformat(str(claimed.reclaimed_dispatch_started_at))
+    except ValueError:
+        started_at = None
+    if session is None or started_at is None or started_at.tzinfo is None:
+        _compensate_delivery_failure(db, claimed, "dead dispatch claim is unreadable")
+        return False
+    if settle_landed_boundary(
+        db,
+        claimed,
+        session,
+        started_at,
+        event_loop=event_loop,
+        terminal_manager=terminal_manager,
+        terminal_runtime_registry=terminal_runtime_registry,
+    ):
+        return True
+    if started_at > utc_now() - timedelta(minutes=HANDOFF_IN_FLIGHT_MINUTES):
+        # PreCompact already moved the row: the compact is running, so typing it
+        # again would compact twice.
+        if not claimed.clear_session and getattr(session, "status", None) == "awaiting_handoff":
+            return started_at
+        return None
+    _compensate_delivery_failure(
+        db,
+        claimed,
+        f"dispatch died after claiming at {claimed.reclaimed_dispatch_started_at}",
+        error_code=None if claimed.clear_session else "compact_unconfirmed",
+    )
+    return False
+
+
+def resume_dead_handoff_dispatches(
+    machine_id: str,
+    *,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+    event_loop: asyncio.AbstractEventLoop,
+    terminal_manager: Any | None,
+    terminal_runtime_registry: Any | None,
+) -> int:
+    """Reclaim dispatches another daemon process claimed and died holding."""
+    rows = session_manager.db.fetchall(
+        """
+        SELECT s.id, v.variables -> 'set_handoff_pending' ->> 'attempt_id' AS attempt_id
+          FROM sessions s JOIN session_variables v ON v.session_id = s.id
+         WHERE s.machine_id = %s
+           AND s.status NOT IN ('expired', 'deleted')
+           AND v.variables -> 'set_handoff_pending' ->> 'dispatch_started_at' IS NOT NULL
+           AND (v.variables -> 'set_handoff_pending' ->> 'dispatch_owner') IS DISTINCT FROM %s
+        """,
+        (machine_id, DISPATCH_OWNER),
+    )
+    resumed = 0
+    for row in rows:
+        attempt_id = row["attempt_id"]
+        claimed = claim_staged_handoff_delivery(session_manager.db, str(row["id"]), attempt_id)
+        if claimed is None:
+            _log_skipped_delivery(row["id"], attempt_id, "dead dispatch claim changed")
+            continue
+        resumed += _schedule_claimed_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=agent_run_manager,
+            event_loop=event_loop,
+            terminal_manager=terminal_manager,
+            terminal_runtime_registry=terminal_runtime_registry,
+        )
+    return resumed
+
+
 async def _settle_delivery(
     claimed: ClaimedHandoffDelivery,
     *,
@@ -359,10 +480,24 @@ async def _settle_delivery(
     agent_run_manager: LocalAgentRunManager,
     terminal_manager: Any | None,
     terminal_runtime_registry: Any | None,
+    confirm_since: datetime | None = None,
 ) -> None:
     db = session_manager.db
 
     async def deliver() -> dict[str, Any]:
+        if confirm_since is not None:
+            session = session_manager.get(claimed.session_id)
+            if session is None:
+                return {"compacted": False, "reason": f"Session {claimed.session_id} not found"}
+            return await confirm_reclaimed_compact(
+                db,
+                claimed,
+                session,
+                confirm_since,
+                event_loop=asyncio.get_running_loop(),
+                terminal_manager=terminal_manager,
+                terminal_runtime_registry=terminal_runtime_registry,
+            )
         if claimed.clear_session:
             return await deliver_staged_clear_session(
                 claimed.session_id,
@@ -464,13 +599,16 @@ def _compensate_delivery_failure(
     *,
     error_code: str | None = None,
 ) -> None:
+    seatless = error_code == NO_TERMINAL_TARGET_ERROR_CODE
     failures = _consecutive_delivery_failures(db, claimed.session_id) + 1
-    abandoned = failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
+    abandoned = not seatless and failures >= _MAX_CONSECUTIVE_DELIVERY_FAILURES
     guidance = _RETRY_GUIDANCE
     if error_code == _COMPOSER_OCCUPIED_ERROR_CODE:
         guidance = _COMPOSER_OCCUPIED_GUIDANCE
     elif error_code == "compact_unconfirmed":
         guidance = _COMPACT_UNCONFIRMED_GUIDANCE
+    elif seatless:
+        guidance = _NO_TERMINAL_TARGET_GUIDANCE
     recovery_guidance = (
         "Authored content is available through "
         f"gobby-sessions:get_handoff(failed_attempt_id={claimed.attempt_id!r}); "
@@ -520,11 +658,14 @@ def _compensate_delivery_failure(
             claimed.attempt_id,
         )
         return
-    updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
-    if abandoned:
-        # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
-        updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
-    SessionVariableManager(db).merge_variables(claimed.session_id, updates)
+    # A missing seat is not a delivery the CLI refused, so it neither nears
+    # abandonment nor lifts require-handoff-at-context-limit for the next seat.
+    if not seatless:
+        updates: dict[str, Any] = {HANDOFF_DELIVERY_FAILURES_VARIABLE: failures}
+        if abandoned:
+            # Lifts require-handoff-at-context-limit; the epoch reset clears it again.
+            updates[HANDOFF_UNAVAILABLE_VARIABLE] = True
+        SessionVariableManager(db).merge_variables(claimed.session_id, updates)
     if error_code == "compact_failed":
         try:
             _attention_manager(db).transition(

@@ -1,8 +1,12 @@
 """Tests for gobby-communications MCP tool registry."""
 
+import asyncio
+import logging
+import threading
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,6 +14,10 @@ import pytest
 
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.mcp_proxy.tools.communications import create_communications_registry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
+from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
 
@@ -507,6 +515,32 @@ def test_unlink_identity(registry: Any, mock_store: MagicMock) -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_message_returns_invalid_callback_ttl_to_caller_without_error_log(
+    registry: Any,
+    mock_manager: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_manager.send_message.side_effect = ValueError(
+        "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)"
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = await registry.get_tool("send_message")(
+            channel="telegram",
+            content="Proceed?",
+            session_id="session-1",
+            inline_keyboard=[[{"text": "Approve", "value": "approve"}]],
+            callback_ttl_seconds=86400,
+        )
+
+    assert result == {
+        "success": False,
+        "error": "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)",
+    }
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.asyncio
 async def test_send_message_exposes_inline_keyboard_metadata(
     registry: Any,
     mock_manager: MagicMock,
@@ -625,3 +659,191 @@ async def test_send_message_refuses_unknown_hash_n_session(
     assert result["success"] is False
     assert "14069" in result["error"]
     mock_manager.send_message.assert_not_awaited()
+
+
+@pytest.fixture
+def worktree_project(
+    temp_db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[HubDatabase, str, Path]:
+    """A project checkout with the caller's project context pointed at it."""
+    isolated = install_isolated_checkout_project(
+        temp_db, tmp_path / "checkout", monkeypatch=monkeypatch
+    )
+    root = Path(isolated.root_path)
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_project_context",
+        lambda: {"id": isolated.project.id, "project_path": str(root)},
+    )
+    return temp_db, isolated.project.id, root
+
+
+def _register_worktree(
+    db: HubDatabase, project_id: str, path: Path, status: str = "active"
+) -> Path:
+    path.mkdir(parents=True)
+    worktree = LocalWorktreeManager(db).create(
+        project_id=project_id, branch_name=path.name, worktree_path=str(path.resolve())
+    )
+    if status != WorktreeStatus.ACTIVE.value:
+        LocalWorktreeManager(db).update(worktree.id, status=status)
+    return path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["active", "stale"])
+async def test_send_attachment_accepts_registered_worktree_file(
+    worktree_project: tuple[HubDatabase, str, Path],
+    mock_manager: MagicMock,
+    tmp_path: Path,
+    status: str,
+) -> None:
+    db, project_id, _root = worktree_project
+    worktree = _register_worktree(db, project_id, tmp_path / "wt-lane", status)
+    evidence = worktree / "evidence.txt"
+    evidence.write_text("alarm evidence")
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(mock_manager, db=db).get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(channel="telegram", file_path=str(evidence))
+
+    assert result["success"] is True
+    assert mock_manager.send_attachment.await_args.kwargs["file_path"] == evidence.resolve()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_root_file_skips_worktree_lookup(
+    mock_manager: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_project_context",
+        lambda: {"id": "project-1", "project_path": str(tmp_path)},
+    )
+    failing_db = MagicMock()
+    failing_db.fetchall.side_effect = RuntimeError("hub unavailable")
+    evidence = tmp_path / "evidence.txt"
+    evidence.write_text("root evidence")
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(
+        mock_manager, db=failing_db, workspace_root=tmp_path
+    ).get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(channel="telegram", file_path=str(evidence))
+
+    assert result["success"] is True
+    failing_db.fetchall.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_worktree_lookup_does_not_block_event_loop(
+    mock_manager: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "checkout"
+    root.mkdir()
+    worktree = tmp_path / "wt-lane"
+    worktree.mkdir()
+    evidence = worktree / "evidence.txt"
+    evidence.write_text("worktree evidence")
+    started = threading.Event()
+    release = threading.Event()
+
+    class SlowWorktreeManager:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def get_by_path(self, path: str) -> SimpleNamespace | None:
+            started.set()
+            release.wait(timeout=5)
+            if path != str(worktree):
+                return None
+            return SimpleNamespace(worktree_path=path, project_id="project-1", status="active")
+
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.LocalWorktreeManager", SlowWorktreeManager
+    )
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.communications.get_project_context",
+        lambda: {"id": "project-1", "project_path": str(root)},
+    )
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(
+        mock_manager, db=MagicMock(), workspace_root=root
+    ).get_tool("send_attachment")
+    assert tool is not None
+
+    pending = asyncio.create_task(tool(channel="telegram", file_path=str(evidence)))
+    assert await asyncio.to_thread(started.wait, 5) is True
+    assert pending.done() is False
+    release.set()
+    result = await asyncio.wait_for(pending, timeout=5)
+
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_finds_worktree_outside_any_listing_page(
+    worktree_project: tuple[HubDatabase, str, Path],
+    mock_manager: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A registered worktree past any bounded listing page must still be found."""
+    db, project_id, _root = worktree_project
+    worktree = _register_worktree(db, project_id, tmp_path / "wt-oldest")
+    evidence = worktree / "evidence.txt"
+    evidence.write_text("old worktree evidence")
+    monkeypatch.setattr(LocalWorktreeManager, "list_worktrees", lambda *_a, **_k: [])
+    mock_manager.send_attachment.return_value = (
+        MagicMock(status="sent", error=None),
+        MagicMock(),
+    )
+    tool = create_communications_registry(mock_manager, db=db).get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(channel="telegram", file_path=str(evidence))
+
+    assert result["success"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["merged", "abandoned", "other_project", "symlink_escape"])
+async def test_send_attachment_rejects_unregistered_or_escaping_worktree_paths(
+    worktree_project: tuple[HubDatabase, str, Path],
+    mock_manager: MagicMock,
+    tmp_path: Path,
+    case: str,
+) -> None:
+    db, project_id, _root = worktree_project
+    if case == "other_project":
+        other = LocalProjectManager(db).create(name="other-project")
+        worktree = _register_worktree(db, other.id, tmp_path / "wt-other")
+        target = worktree / "evidence.txt"
+        target.write_text("foreign")
+    elif case == "symlink_escape":
+        worktree = _register_worktree(db, project_id, tmp_path / "wt-lane")
+        secret = tmp_path / "secret.txt"
+        secret.write_text("sensitive")
+        target = worktree / "evidence.txt"
+        target.symlink_to(secret)
+    else:
+        worktree = _register_worktree(db, project_id, tmp_path / "wt-done", case)
+        target = worktree / "evidence.txt"
+        target.write_text("retired")
+    tool = create_communications_registry(mock_manager, db=db).get_tool("send_attachment")
+    assert tool is not None
+
+    result = await tool(channel="telegram", file_path=str(target))
+
+    assert result["success"] is False
+    assert result["error"] == f"Attachment path is outside the workspace: {target}"
+    mock_manager.send_attachment.assert_not_awaited()

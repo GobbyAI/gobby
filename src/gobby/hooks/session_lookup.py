@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from gobby.hooks.codex_seat import codex_seat_available
 from gobby.hooks.events import HookEvent, HookEventType, require_hook_machine_id
 from gobby.hooks.project_context import apply_project_id_to_event, resolve_hook_project_context
 from gobby.hooks.session_types import HookSessionManager
@@ -147,8 +148,7 @@ class SessionLookupService:
 
         if explicit_platform_session_id:
             if apply_session_mutations:
-                self._revive_expired_terminal_session(explicit_platform_session_id, event)
-                self._backfill_terminal_context(explicit_platform_session_id, event)
+                self.apply_session_mutations(event, explicit_platform_session_id)
             self._enrich_task_context(explicit_platform_session_id, event)
             event.metadata["_platform_session_id"] = explicit_platform_session_id
             return explicit_platform_session_id
@@ -162,8 +162,7 @@ class SessionLookupService:
         # Resolve active task for this session
         if platform_session_id:
             if apply_session_mutations:
-                self._revive_expired_terminal_session(platform_session_id, event)
-                self._backfill_terminal_context(platform_session_id, event)
+                self.apply_session_mutations(event, platform_session_id)
             self._enrich_task_context(platform_session_id, event)
 
         # Store platform session_id in event metadata for handlers. Never
@@ -187,8 +186,10 @@ class SessionLookupService:
         """
         if not platform_session_id:
             return
-        self._revive_expired_terminal_session(platform_session_id, event)
+        # The incoming seat is recorded first so revival judges the process that
+        # sent this hook, such as a resumed CLI, rather than the one that left.
         self._backfill_terminal_context(platform_session_id, event)
+        self._revive_expired_terminal_session(platform_session_id, event)
 
     def validate_platform_session_metadata(self, event: HookEvent) -> str | None:
         """Validate caller-supplied _platform_session_id without side effects.
@@ -549,8 +550,16 @@ class SessionLookupService:
         cwd = hook_cwd(event.data, event.cwd)
         raw_terminal_context = event.data.get("terminal_context")
         terminal_context = raw_terminal_context if isinstance(raw_terminal_context, dict) else None
+        # A new Codex thread may start in a seat that waited past the fresh window.
         terminal_context = enrich_terminal_context_with_cwd(
-            terminal_context, cwd, external_id=event.session_id
+            terminal_context,
+            cwd,
+            external_id=event.session_id,
+            seat_available=(
+                codex_seat_available(self._session_manager.db, machine_id)
+                if event.source.value == "codex" and machine_id
+                else None
+            ),
         )
         platform_session_id = self._session_manager.register_session(
             external_id=external_id,

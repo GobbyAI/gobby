@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby import runner_init
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
@@ -94,9 +95,7 @@ def test_topology_uses_bootstrap_only() -> None:
     server_source = inspect.getsource(init_servers)
     ui_source = inspect.getsource(_app_ui)
 
-    assert "runner.bootstrap_config.daemon_port" in server_source
-    assert "runner.bootstrap_config.bind_host" in server_source
-    assert "runner.bootstrap_config.websocket_port" in server_source
+    assert "backend_bind(runner.bootstrap_config)" in server_source
     assert "runner.config.daemon_port" not in server_source
     assert "runner.config.bind_host" not in server_source
     assert "runner.config.websocket.port" not in server_source
@@ -147,17 +146,22 @@ async def test_restart_promotes_desired_to_active(monkeypatch: pytest.MonkeyPatc
 
     runtime.close = close
 
-    def initialize_storage(
+    def open_storage_and_config(
         runner: GobbyRunner,
         _config_path: object,
         _verbose: bool,
+        *,
+        broadcast_loop: object = None,
     ) -> None:
         runner.startup_config = desired
         runner.config_runtime = cast(ConfigRuntime, runtime)
         runner.bootstrap_config = BootstrapConfig()
 
     observed: list[DaemonConfig] = []
-    monkeypatch.setattr(GobbyRunner, "_initialize_storage", initialize_storage)
+    # create() runs these startup phases directly (#22888), not _initialize_storage.
+    monkeypatch.setattr(runner_init, "open_storage_and_config", open_storage_and_config)
+    monkeypatch.setattr(runner_init, "bundled_content_refusal", lambda _runner: None)
+    monkeypatch.setattr(runner_init, "init_startup_content", lambda _runner: None)
 
     async def initialize_runtime_services(runner: GobbyRunner) -> None:
         observed.append(runner.startup_config)

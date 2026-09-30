@@ -6,18 +6,14 @@ import re
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.events.wake_terminal_resolution import resolve_session_terminal_route
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.terminals.key_bytes import normalize_named_key
-from gobby.terminals.lookup import manager_for_terminal_context
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteRequest
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
 
 _FORBIDDEN_SPEED_COMMANDS = frozenset({"/fast"})
@@ -27,25 +23,8 @@ __all__ = [
     "_FORBIDDEN_SPEED_COMMANDS",
     "_authorize_send_keys_target",
     "_is_speed_command",
-    "_resolve_tmux_target",
     "register_send_keys_tool",
 ]
-
-
-def _resolve_tmux_target(
-    session_id: str,
-    session_manager: SessionManager,
-    agent_run_manager: LocalAgentRunManager,
-) -> tuple[str | None, TmuxSessionManager | None, str | None]:
-    """Resolve a session ID to a tmux target through this module's patchable facade."""
-    from gobby.mcp_proxy.tools.sessions._terminal_tmux_target import _resolve_tmux_target as resolve
-
-    return resolve(
-        session_id,
-        session_manager,
-        agent_run_manager,
-        tmux_manager_factory=manager_for_terminal_context,
-    )
 
 
 def _is_speed_command(keys: str) -> bool:
@@ -135,13 +114,11 @@ def _authorize_send_keys_target(
 def register_send_keys_tool(
     registry: InternalToolRegistry,
     session_manager: SessionManager,
-    db: HubDatabase,
     *,
     terminal_manager: Any | None = None,
     write_coordinator: Any | None = None,
 ) -> None:
     """Register coordinator-backed terminal input with the sessions tool registry."""
-    agent_run_manager = LocalAgentRunManager(db)
 
     @registry.tool(
         name="send_keys",
@@ -200,6 +177,13 @@ def register_send_keys_tool(
                 terminal_manager,
             ).managed_terminal
             if terminal is not None:
+                if terminal.backend != "native":
+                    return {
+                        "success": False,
+                        "error": f"Unsupported terminal backend: {terminal.backend}",
+                        "error_code": "unsupported_terminal_backend",
+                        "idempotency_key": resolved_key,
+                    }
                 kind: Literal["text", "key", "paste"] = "text"
                 payload = keys
                 submit = False
@@ -251,19 +235,9 @@ def register_send_keys_tool(
                     }
                 return {"success": True, "idempotency_key": resolved_key}
 
-        target, tmux, error = _resolve_tmux_target(
-            resolved_session_id,
-            session_manager,
-            agent_run_manager,
-        )
-        if error:
-            return {"success": False, "error": error, "idempotency_key": resolved_key}
-        assert target is not None
-        assert tmux is not None
-        if not await tmux.dispatch_keys(target, keys, literal=literal):
-            return {
-                "success": False,
-                "error": f"tmux send-keys failed for session {session_id}",
-                "idempotency_key": resolved_key,
-            }
-        return {"success": True, "idempotency_key": resolved_key}
+        return {
+            "success": False,
+            "error": f"No live managed terminal for session {resolved_session_id}",
+            "error_code": "terminal_target_unavailable",
+            "idempotency_key": resolved_key,
+        }

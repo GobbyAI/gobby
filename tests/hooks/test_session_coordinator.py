@@ -42,7 +42,6 @@ from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from tests.agents.terminal_fixtures import make_live_terminal
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import patch_local_machine_id
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
@@ -66,12 +65,6 @@ PARENT_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000002"
 CHILD_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000003"
 REVIEWER_SESSION_ID = "eeeeeeee-0000-4000-8000-000000000004"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
-
-
-def _run_absent_tmux(command: list[str], **_kwargs: object) -> SimpleNamespace:
-    if "capture-pane" in command:
-        return SimpleNamespace(returncode=0, stdout="captured", stderr="")
-    return SimpleNamespace(returncode=1, stdout="", stderr="")
 
 
 def _create_session_row(db: HubDatabase, session_id: str) -> None:
@@ -629,26 +622,7 @@ class TestSessionLifecycleTransitions:
 class TestAgentRunCompletion:
     """Test agent run completion logic."""
 
-    @patch("gobby.agents.tmux.get_configured_tmux_command_prefix", side_effect=lambda: ["tmux"])
-    @patch("gobby.utils.spawn.run")
-    def test_complete_agent_run_captures_full_tmux_history(
-        self,
-        mock_run: MagicMock,
-        _mock_tmux_prefix: MagicMock,
-    ) -> None:
-        large_output = "old" * 20_000 + "newest"
-        killed = False
-
-        def run_tmux(command: list[str], **_kwargs: object) -> SimpleNamespace:
-            nonlocal killed
-            if "capture-pane" in command:
-                return SimpleNamespace(returncode=0, stdout=large_output)
-            if "kill-session" in command:
-                killed = True
-                return SimpleNamespace(returncode=0, stdout="")
-            return SimpleNamespace(returncode=int(killed), stdout="")
-
-        mock_run.side_effect = run_tmux
+    def test_complete_agent_run_with_terminal_uses_session_result(self) -> None:
         mock_agent_run_manager = MagicMock()
         mock_agent_run_manager.db.fetchone.return_value = None
         running = SimpleNamespace(
@@ -658,26 +632,21 @@ class TestAgentRunCompletion:
             capture_revision=0,
             status="running",
             terminal_id="agent-run",
+            clone_id=None,
         )
-        persisted = SimpleNamespace(**{**vars(running), "result": large_output})
         mock_agent_run_manager.get.return_value = running
-        mock_agent_run_manager.record_termination_intent.return_value = running
-        mock_agent_run_manager.replace_capture_slot.return_value = persisted
-        mock_agent_run_manager.complete.return_value = SimpleNamespace(status="completed")
-        # Since #20271 the coordinator resolves terminal_id -> session name through the
-        # terminal manager; without one it terminalizes directly and never captures.
-        from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
-        coordinator = SessionCoordinator(
-            agent_run_manager=mock_agent_run_manager,
-            terminal_manager=MemoryTerminalStore(
-                make_memory_terminal(terminal_id="agent-run", session_name="gobby-agent-run")
-            ),
-        )
+        def complete_run(**kwargs: Any) -> SimpleNamespace:
+            running.status = "completed"
+            running.result = kwargs["result"]
+            return running
+
+        mock_agent_run_manager.complete.side_effect = complete_run
+        coordinator = SessionCoordinator(agent_run_manager=mock_agent_run_manager)
         session = SimpleNamespace(
             id="session-id",
             agent_run_id="run-id",
-            summary_markdown=None,
+            summary_markdown="Finished work",
             last_assistant_content=None,
             tool_call_count=1,
             turn_count=1,
@@ -685,13 +654,16 @@ class TestAgentRunCompletion:
 
         coordinator.complete_agent_run(session)
 
-        captured = mock_agent_run_manager.replace_capture_slot.call_args.kwargs["slot_content"]
-        assert large_output in captured
-        assert "newest" in captured
-        capture_command = next(
-            call.args[0] for call in mock_run.call_args_list if "capture-pane" in call.args[0]
+        assert running.status == "completed"
+        assert running.result == "Finished work"
+        mock_agent_run_manager.complete.assert_called_once_with(
+            run_id="run-id",
+            result="Finished work",
+            tool_calls_count=1,
+            turns_used=1,
         )
-        assert capture_command[-2:] == ["-S", "-"]
+        mock_agent_run_manager.record_termination_intent.assert_not_called()
+        mock_agent_run_manager.replace_capture_slot.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_complete_agent_run_flushes_stats_before_refresh(self) -> None:
@@ -768,7 +740,7 @@ class TestAgentRunCompletion:
             prompt="finish the task",
             child_session_id=CHILD_SESSION_ID,
         )
-        terminal = make_live_terminal(
+        make_live_terminal(
             run,
             db=temp_db,
             session_name="gobby-transcript-fallback",
@@ -782,12 +754,6 @@ class TestAgentRunCompletion:
             session_storage=cast(HookSessionManager, SessionManager(temp_db)),
             agent_run_manager=run_manager,
             transcript_reader=transcript_reader,
-            terminal_manager=MemoryTerminalStore(
-                make_memory_terminal(
-                    terminal_id=terminal.id,
-                    session_name="gobby-transcript-fallback",
-                )
-            ),
         )
         coordinator.set_completion_registry(MagicMock())
         session = SimpleNamespace(
@@ -799,11 +765,7 @@ class TestAgentRunCompletion:
             turn_count=0,
         )
 
-        with (
-            patch("gobby.agents.tmux.get_configured_tmux_command_prefix", return_value=["tmux"]),
-            patch("gobby.utils.spawn.run", side_effect=_run_absent_tmux),
-        ):
-            await asyncio.to_thread(coordinator.complete_agent_run, session)
+        await asyncio.to_thread(coordinator.complete_agent_run, session)
 
         updated = run_manager.get(run.id)
         assert updated is not None
@@ -828,7 +790,7 @@ class TestAgentRunCompletion:
             prompt="finish the task",
             child_session_id=CHILD_SESSION_ID,
         )
-        terminal = make_live_terminal(
+        make_live_terminal(
             run,
             db=temp_db,
             session_name="gobby-flush-fallback",
@@ -850,12 +812,6 @@ class TestAgentRunCompletion:
             message_processor_resolver=lambda: message_processor,
             agent_run_manager=run_manager,
             transcript_reader=transcript_reader,
-            terminal_manager=MemoryTerminalStore(
-                make_memory_terminal(
-                    terminal_id=terminal.id,
-                    session_name="gobby-flush-fallback",
-                )
-            ),
         )
         coordinator.set_completion_registry(MagicMock())
         session = SimpleNamespace(
@@ -869,8 +825,6 @@ class TestAgentRunCompletion:
 
         with (
             caplog.at_level(logging.WARNING, logger="gobby.hooks.session_coordinator"),
-            patch("gobby.agents.tmux.get_configured_tmux_command_prefix", return_value=["tmux"]),
-            patch("gobby.utils.spawn.run", side_effect=_run_absent_tmux),
         ):
             await asyncio.to_thread(coordinator.complete_agent_run, session)
 
@@ -2043,94 +1997,3 @@ class TestNotifyAgentCompletionDelivery:
         await new_tasks.pop()
         assert removals == [("run-1", ["sess-1"])]
         assert registry.cleanup_calls == ["run-1"]
-
-
-class _AlreadyTerminalRunStorage:
-    """Capture-storage stub for a run that self-terminated before the hook."""
-
-    def __init__(self, run: Any) -> None:
-        self._run = run
-
-    def get(self, run_id: str) -> Any | None:
-        return self._run if run_id == self._run.id else None
-
-    def record_termination_intent(self, run_id: str, **_kwargs: Any) -> Any | None:
-        return None
-
-
-class TestInlineTerminalizationAlreadyTerminal:
-    """Deferred terminalization after self-termination is a benign skip."""
-
-    def test_already_terminal_logs_info_not_warning(self, caplog: pytest.LogCaptureFixture) -> None:
-        from datetime import UTC, datetime
-
-        from gobby.storage.agents import AgentRun
-
-        now = datetime.now(UTC)
-        run = AgentRun(
-            id="run-self-terminated",
-            parent_session_id="parent",
-            provider="codex",
-            prompt="test",
-            status="success",
-            created_at=now,
-            updated_at=now,
-            result="done",
-            terminal_id="gobby-test-inline",
-        )
-        storage = _AlreadyTerminalRunStorage(run)
-        # Since #20271 the terminal manager resolves terminal_id -> session name. Without
-        # one the coordinator takes its no-session_name branch and terminalizes directly,
-        # which is what this test exists to prove does not happen for a terminal run.
-        from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
-
-        coordinator = SessionCoordinator(
-            agent_run_manager=cast(LocalAgentRunManager, storage),
-            terminal_manager=MemoryTerminalStore(
-                make_memory_terminal(
-                    terminal_id="gobby-test-inline", session_name="gobby-test-inline"
-                )
-            ),
-            logger=logging.getLogger("test.inline_terminalization"),
-        )
-
-        with caplog.at_level(logging.INFO, logger="test.inline_terminalization"):
-            outcome = coordinator._terminate_agent_run_inline(
-                run_id=run.id,
-                agent_run=run,
-                action="fail",
-                reason="session ended",
-                result_prefix="",
-                tool_calls_count=0,
-                turns_used=0,
-                session_id="session-inline",
-            )
-
-        assert outcome is None
-        info_messages = [
-            record.message
-            for record in caplog.records
-            if record.levelno == logging.INFO and "already terminal" in record.message
-        ]
-        assert info_messages == [
-            "Agent run run-self-terminated already terminal; "
-            "inline terminalization skipped "
-            "(agent run already terminal (status=success))"
-        ]
-        assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
-
-
-def test_coordinator_receives_composition_root_terminal_services() -> None:
-    from tests.terminals.fakes import FakeRuntime, MemoryTerminalStore, make_memory_terminal
-
-    store = MemoryTerminalStore(make_memory_terminal())
-    runtime = FakeRuntime()
-    bridge = object()
-    coordinator = SessionCoordinator(
-        terminal_manager=store,
-        terminal_runtime_registry=runtime,
-        write_coordinator=object(),
-        terminal_effect_bridge=bridge,
-    )
-    assert coordinator._terminal_manager is store
-    assert coordinator._terminal_effect_bridge is bridge

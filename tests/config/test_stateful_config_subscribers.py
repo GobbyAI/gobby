@@ -428,7 +428,7 @@ async def test_shutdown_cancels_subscriber_work() -> None:
 
     def build(change: ConfigChange) -> object:
         if change.revision == 1:
-            release.wait(timeout=1)
+            release.wait(timeout=10)
         return change.revision
 
     runtime = ConfigRuntime(
@@ -444,7 +444,8 @@ async def test_shutdown_cancels_subscriber_work() -> None:
     elapsed = time.monotonic() - started
     release.set()
 
-    assert elapsed < 0.2
+    # Far below the blocked build's 10s: close never waits for it, even on a loaded host.
+    assert elapsed < 2.0
     assert runtime.ready is False
 
 

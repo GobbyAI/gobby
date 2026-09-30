@@ -6,21 +6,18 @@ impl Terminal {
             ffi::ghostty_terminal_new(ptr::null(), &mut raw, cols, rows).into_result()?;
         }
 
-        let mut terminal = Self {
+        let mut terminal = Self::from_raw(
             raw,
-            callback_state: Box::new(TerminalCallbackState {
-                size_report: ffi::GhosttySizeReportSize {
-                    rows,
-                    columns: cols,
-                    ..Default::default()
-                },
+            ffi::GhosttySizeReportSize {
+                rows,
+                columns: cols,
                 ..Default::default()
-            }),
-            kitty_fingerprints: Mutex::new(HashMap::new()),
-            kitty_empty_generation: Cell::new(None),
-        };
-        let userdata = (&mut *terminal.callback_state as *mut TerminalCallbackState).cast();
-        let glyph_protocol = false;
+            },
+        );
+        terminal.install_callbacks()?;
+        // `max_scrollback` is a byte budget: every caller passes
+        // `scrollback_limit_bytes`, and zero disables scrollback.
+        terminal.set_scrollback_max_bytes(max_scrollback)?;
         // Gobby renders cells directly, so grapheme clustering (DEC mode 2027)
         // must survive RIS. MODE_DEFAULT sets both the current value and the
         // value a full reset restores.
@@ -31,56 +28,71 @@ impl Terminal {
         unsafe {
             ffi::ghostty_terminal_set(
                 terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_USERDATA,
-                userdata,
-            )
-            .into_result()?;
-            ffi::ghostty_terminal_set(
-                terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SIZE,
-                (size_trampoline as *const ()).cast(),
-            )
-            .into_result()?;
-            ffi::ghostty_terminal_set(
-                terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
-                (pwd_changed_trampoline as *const ()).cast(),
-            )
-            .into_result()?;
-            ffi::ghostty_terminal_set(
-                terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
-                (clipboard_write_trampoline as *const ()).cast(),
-            )
-            .into_result()?;
-            ffi::ghostty_terminal_set(
-                terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
-                (color_scheme_trampoline as *const ()).cast(),
-            )
-            .into_result()?;
-            ffi::ghostty_terminal_set(
-                terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL,
-                (&glyph_protocol as *const bool).cast(),
-            )
-            .into_result()?;
-            // `max_scrollback` is a byte budget: every caller passes
-            // `scrollback_limit_bytes`, and zero disables scrollback.
-            ffi::ghostty_terminal_set(
-                terminal.raw,
-                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
-                (&max_scrollback as *const usize).cast(),
-            )
-            .into_result()?;
-            ffi::ghostty_terminal_set(
-                terminal.raw,
                 ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_MODE_DEFAULT,
                 (&grapheme_default as *const ffi::GhosttyTerminalModeConfig).cast(),
             )
             .into_result()?;
         }
         Ok(terminal)
+    }
+
+    /// Takes ownership of a live handle; dropping the result frees it.
+    fn from_raw(raw: ffi::GhosttyTerminal, size_report: ffi::GhosttySizeReportSize) -> Self {
+        Self {
+            raw,
+            callback_state: Box::new(TerminalCallbackState {
+                size_report,
+                ..Default::default()
+            }),
+            kitty_fingerprints: Mutex::new(HashMap::new()),
+            kitty_empty_generation: Cell::new(None),
+        }
+    }
+
+    /// Points the handle's callbacks at this wrapper's callback state and
+    /// disables the glyph protocol. A snapshot carries neither.
+    fn install_callbacks(&mut self) -> Result<(), Error> {
+        let userdata = (&mut *self.callback_state as *mut TerminalCallbackState).cast();
+        let glyph_protocol = false;
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_USERDATA,
+                userdata,
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SIZE,
+                (size_trampoline as *const ()).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_PWD_CHANGED,
+                (pwd_changed_trampoline as *const ()).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CLIPBOARD_WRITE,
+                (clipboard_write_trampoline as *const ()).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_COLOR_SCHEME,
+                (color_scheme_trampoline as *const ()).cast(),
+            )
+            .into_result()?;
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_GLYPH_PROTOCOL,
+                (&glyph_protocol as *const bool).cast(),
+            )
+            .into_result()?;
+        }
+        Ok(())
     }
 
     pub fn write(&mut self, bytes: &[u8]) {
@@ -208,6 +220,115 @@ impl Terminal {
 
     pub fn set_color_scheme(&mut self, color_scheme: Option<ColorScheme>) -> Option<ColorScheme> {
         mem::replace(&mut self.callback_state.color_scheme, color_scheme)
+    }
+
+    pub fn color_scheme(&self) -> Option<ColorScheme> {
+        self.callback_state.color_scheme
+    }
+
+    /// Enables replay-safe continuation tracking up to `max_bytes`; zero
+    /// disables it. Tracking must be on before the input it should cover.
+    pub fn set_continuation_max_bytes(&mut self, max_bytes: usize) -> Result<(), Error> {
+        // SAFETY: self.raw is valid and the option reads one size_t.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_CONTINUATION_MAX_BYTES,
+                (&max_bytes as *const usize).cast(),
+            )
+            .into_result()
+        }
+    }
+
+    /// Encodes the complete terminal, both screens, history, and any
+    /// unfinished VT or UTF-8 input, as a ghostty snapshot.
+    pub fn encode_snapshot(&self) -> Result<Vec<u8>, Error> {
+        let mut out_ptr = ptr::null_mut();
+        let mut out_len = 0usize;
+        // SAFETY: self.raw is valid and both out pointers are live. The
+        // allocation is copied, then released with the default allocator and
+        // the returned length, as ghostty_free requires.
+        unsafe {
+            ffi::ghostty_snapshot_encode_alloc(self.raw, ptr::null(), &mut out_ptr, &mut out_len)
+                .into_result()?;
+            let bytes = if out_ptr.is_null() {
+                Vec::new()
+            } else {
+                slice::from_raw_parts(out_ptr, out_len).to_vec()
+            };
+            ffi::ghostty_free(ptr::null(), out_ptr, out_len);
+            Ok(bytes)
+        }
+    }
+
+    /// Decodes a snapshot into a new terminal whose continuation tracking
+    /// stays enabled at `max_continuation_bytes`.
+    pub fn decode_snapshot(bytes: &[u8], max_continuation_bytes: usize) -> Result<Self, Error> {
+        let mut decoder = ptr::null_mut();
+        // SAFETY: the out pointer is live and `bytes` outlives the decoder,
+        // which is freed below on every path.
+        unsafe {
+            ffi::ghostty_snapshot_decoder_new_buf(
+                ptr::null(),
+                &mut decoder,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+            .into_result()?;
+        }
+        let retain_continuation = true;
+        let decode = || -> Result<ffi::GhosttyTerminal, Error> {
+            let mut raw = ptr::null_mut();
+            // SAFETY: decoder is live, each option value has its documented
+            // type, and decode leaves `raw` null on every error.
+            unsafe {
+                ffi::ghostty_snapshot_decoder_set(
+                    decoder,
+                    ffi::GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_MAX_CONTINUATION_BYTES,
+                    (&max_continuation_bytes as *const usize).cast(),
+                )
+                .into_result()?;
+                ffi::ghostty_snapshot_decoder_set(
+                    decoder,
+                    ffi::GhosttySnapshotDecoderOption_GHOSTTY_SNAPSHOT_DECODER_OPT_RETAIN_CONTINUATION,
+                    (&retain_continuation as *const bool).cast(),
+                )
+                .into_result()?;
+                ffi::ghostty_snapshot_decoder_decode(decoder, &mut raw).into_result()?;
+            }
+            Ok(raw)
+        };
+        let decoded = decode();
+        // SAFETY: decode ran through FINISH or failed, so the decoder no
+        // longer borrows the terminal and may be freed.
+        unsafe {
+            ffi::ghostty_snapshot_decoder_free(decoder);
+        }
+        let mut terminal = Self::from_raw(decoded?, ffi::GhosttySizeReportSize::default());
+        let cols = terminal.cols()?;
+        let rows = terminal.rows()?;
+        terminal.callback_state.size_report = ffi::GhosttySizeReportSize {
+            rows,
+            columns: cols,
+            cell_width: terminal.width_px()? / u32::from(cols.max(1)),
+            cell_height: terminal.height_px()? / u32::from(rows.max(1)),
+        };
+        // The snapshot restores default modes, palette, dynamic colors, and
+        // scrollback policy, so only the Rust-side wiring is reinstalled.
+        terminal.install_callbacks()?;
+        Ok(terminal)
+    }
+
+    pub fn set_scrollback_max_bytes(&mut self, max_bytes: usize) -> Result<(), Error> {
+        // SAFETY: self.raw is valid and the option reads one size_t.
+        unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw,
+                ffi::GhosttyTerminalOption_GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_BYTES,
+                (&max_bytes as *const usize).cast(),
+            )
+            .into_result()
+        }
     }
 
     pub fn take_pwd_changes(&mut self) -> Vec<Vec<u8>> {

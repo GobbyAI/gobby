@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Generator
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -20,6 +21,8 @@ from gobby.cli.memory import memory
 from gobby.cli.memory.maintenance import _list_all_memories
 from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
+from gobby.storage.memories import Memory
+from gobby.storage.memories_models import MemoryType
 
 pytestmark = pytest.mark.unit
 
@@ -267,12 +270,12 @@ class TestDedupeMemories:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "same content"
-        mem1.created_at = "2024-01-01"
+        mem1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mem1.project_id = "proj-1"
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "same content"
-        mem2.created_at = "2024-01-02"
+        mem2.created_at = datetime(2024, 1, 2, tzinfo=UTC)
         mem2.project_id = "proj-1"
         mock_manager.list_memories.return_value = [mem1, mem2]
 
@@ -281,16 +284,45 @@ class TestDedupeMemories:
         assert "Duplicate content (2 copies)" in result.output
         assert "Found 1 duplicate" in result.output
 
+    def test_dedupe_dry_run_formats_stored_datetimes(
+        self, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        """Real memory rows carry datetime created_at, not strings."""
+
+        def _row(memory_id: str, created_at: datetime) -> Memory:
+            return Memory(
+                id=memory_id,
+                memory_type=MemoryType.FACT,
+                content="same content",
+                created_at=created_at,
+                updated_at=created_at,
+                project_id="proj-1",
+            )
+
+        mock_manager.list_memories.return_value = [
+            _row("mem-newer-row", datetime(2024, 1, 2, 9, 30, tzinfo=UTC)),
+            _row("mem-older-row", datetime(2024, 1, 1, 8, 15, 42, 123456, tzinfo=UTC)),
+        ]
+
+        result = runner.invoke(memory, ["dedupe", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert "Keep: mem-older-ro (created: 2024-01-01T08:15:42)" in result.output
+        assert "Delete: mem-newer-ro (created: 2024-01-02T09:30:00, project: proj-1)" in (
+            result.output
+        )
+        mock_manager.delete_memory.assert_not_called()
+
     def test_dedupe_requires_confirmation(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "dup"
-        mem1.created_at = "2024-01-01"
+        mem1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mem1.project_id = None
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "dup"
-        mem2.created_at = "2024-01-02"
+        mem2.created_at = datetime(2024, 1, 2, tzinfo=UTC)
         mem2.project_id = None
         mock_manager.list_memories.return_value = [mem1, mem2]
         mock_manager.delete_memory = AsyncMock(return_value=True)
@@ -306,12 +338,12 @@ class TestDedupeMemories:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "dup"
-        mem1.created_at = "2024-01-01"
+        mem1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mem1.project_id = None
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "dup"
-        mem2.created_at = "2024-01-02"
+        mem2.created_at = datetime(2024, 1, 2, tzinfo=UTC)
         mem2.project_id = None
         mock_manager.list_memories.return_value = [mem1, mem2]
         mock_manager.delete_memory = AsyncMock(return_value=True)
@@ -326,17 +358,17 @@ class TestDedupeMemories:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "dup"
-        mem1.created_at = "2024-01-01"
+        mem1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mem1.project_id = "proj-1"
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "dup"
-        mem2.created_at = "2024-01-02"
+        mem2.created_at = datetime(2024, 1, 2, tzinfo=UTC)
         mem2.project_id = "proj-2"
         mem3 = MagicMock()
         mem3.id = "mem-a3"
         mem3.content = "dup"
-        mem3.created_at = "2024-01-03"
+        mem3.created_at = datetime(2024, 1, 3, tzinfo=UTC)
         mem3.project_id = "proj-1"
         mock_manager.list_memories.return_value = [mem1, mem2, mem3]
         mock_manager.delete_memory = AsyncMock(return_value=True)
@@ -353,17 +385,17 @@ class TestDedupeMemories:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "dup"
-        mem1.created_at = "2024-01-01"
+        mem1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mem1.project_id = "proj-1"
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "dup"
-        mem2.created_at = "2024-01-02"
+        mem2.created_at = datetime(2024, 1, 2, tzinfo=UTC)
         mem2.project_id = "proj-2"
         mem3 = MagicMock()
         mem3.id = "mem-a3"
         mem3.content = "dup"
-        mem3.created_at = "2024-01-03"
+        mem3.created_at = datetime(2024, 1, 3, tzinfo=UTC)
         mem3.project_id = "proj-1"
         mock_manager.list_memories.return_value = [mem1, mem2, mem3]
         mock_manager.delete_memory = AsyncMock(return_value=True)
@@ -378,7 +410,7 @@ class TestDedupeMemories:
         mem1 = MagicMock()
         mem1.id = "mem-a"
         mem1.content = "unique1"
-        mem1.created_at = "2024-01-01"
+        mem1.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         mem1.project_id = None
         mock_manager.list_memories.return_value = [mem1]
 

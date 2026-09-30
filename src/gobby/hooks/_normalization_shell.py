@@ -59,6 +59,9 @@ _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
 # `$` opening a variable (`$VAR`, `${VAR}`), command substitution (`$(cmd)`),
 # positional parameter (`$1`), or special parameter — anything expanded at runtime.
 _UNEXPANDED_SHELL_REFERENCE = re.compile(r"\$[\w{(@*?#$!-]")
+# `$(cmd)` (but not arithmetic `$((`) or a backtick substitution: commands that run.
+_COMMAND_SUBSTITUTION = re.compile(r"\$\((?!\()|`")
+_MAX_SUBSTITUTION_DEPTH = 24
 _KNOWN_NAVIGATION_SHELL_REFERENCE = re.compile(
     r"(?<![\\$])\$(?:\{(?P<braced>HOME|PWD|TMPDIR)\}|(?P<bare>HOME|PWD|TMPDIR)(?!\w))"
 )
@@ -140,6 +143,9 @@ def scan_shell_command(command: str) -> ShellScan:
     pending_heredocs: list[_PendingHeredoc] = []
     heredoc_operator: str | None = None
     logical_continuation = False
+    comparison_operators: set[int] = set()
+    # Output redirects of substitutions inside the current double-quoted word.
+    quoted_substitution_redirects: list[tuple[ShellToken, tuple[int, int]]] = []
 
     def begin(index: int) -> None:
         nonlocal token_start
@@ -165,6 +171,12 @@ def scan_shell_command(command: str) -> ShellScan:
                     )
                 )
                 heredoc_operator = None
+            # Follow the word with its substitutions' redirects so the segment
+            # reports their targets while the word itself stays whole.
+            for token, span in quoted_substitution_redirects:
+                tokens.append(token)
+                spans.append(span)
+            quoted_substitution_redirects.clear()
             current.clear()
             quoted = False
         token_start = None
@@ -190,6 +202,16 @@ def scan_shell_command(command: str) -> ShellScan:
                 escaped = True
             elif char == '"':
                 in_double_quote = False
+            elif (close := _quoted_substitution_close(command, index)) is not None:
+                # Bash runs a substitution inside double quotes too; its body is
+                # scanned on its own so heredocs and newlines keep the word whole.
+                body_start = index + (1 if char == "`" else 2)
+                quoted_substitution_redirects.extend(
+                    _substitution_output_redirects(command, body_start, close)
+                )
+                current.append(command[index : close + 1])
+                index = close + 1
+                continue
             else:
                 current.append(char)
             index += 1
@@ -225,6 +247,31 @@ def scan_shell_command(command: str) -> ShellScan:
             index += 1
             continue
 
+        # Arithmetic ``((``/``$((`` and a ``[[`` test are one word, so their
+        # ``<``, ``>``, ``&&`` and ``||`` stay comparisons, never operators.
+        # A compound holding a command substitution is scanned normally, so the
+        # substitution's redirects stay writes; only its own comparisons are masked.
+        if index in comparison_operators:
+            begin(index)
+            quoted = True
+            current.append(char)
+            index += 1
+            continue
+        compound_end = _compound_word_end(command, index, word_start=not current and not quoted)
+        if compound_end is not None:
+            if _COMMAND_SUBSTITUTION.search(command, index + 1, compound_end):
+                comparison_operators |= _compound_comparison_operators(command, index, compound_end)
+            else:
+                begin(index)
+                current.append(command[index:compound_end])
+                index = compound_end
+                continue
+
+        # Bash ends a word at an unquoted ``)`` or closing backtick; a redirect
+        # target inside ``$(...)``, ``( ... )`` or `` `...` `` must not keep it.
+        if char in ")`" and current and tokens and is_shell_output_redirection_token(tokens[-1]):
+            flush(index)
+
         operator = _scan_unquoted_shell_operator(command, index)
         if operator:
             flush(index)
@@ -256,6 +303,210 @@ def scan_shell_command(command: str) -> ShellScan:
 
     flush(len(command))
     return ShellScan(tokens, spans, heredocs)
+
+
+def _compound_word_end(command: str, index: int, *, word_start: bool) -> int | None:
+    """Return the end of an arithmetic or ``[[`` compound word starting at ``index``.
+
+    ``$((`` may open anywhere in a word; ``((`` and ``[[ `` only at a word start.
+    Returns None when nothing opens here or the construct never closes, so the
+    caller falls back to ordinary word scanning.
+    """
+    if command.startswith("$((", index):
+        return _balanced_parens_end(command, index + 1)
+    if not word_start:
+        return None
+    if command.startswith("((", index):
+        return _balanced_parens_end(command, index)
+    if command.startswith("[[", index) and command[index + 2 : index + 3].isspace():
+        return _double_bracket_end(command, index + 2)
+    return None
+
+
+def _compound_comparison_operators(command: str, start: int, end: int) -> set[int]:
+    """Indexes of ``<``, ``>``, ``&`` and ``|`` in a compound word outside quotes
+    and command substitutions: the compound's own comparisons, never redirects.
+    """
+    positions: set[int] = set()
+    quote = ""
+    depth = 0
+    in_backtick = False
+    position = start
+    while position < end:
+        char = command[position]
+        if char == "\\" and quote != "'":
+            position += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "`":
+            in_backtick = not in_backtick
+        elif depth or in_backtick:
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+        elif command.startswith("$(", position) and not command.startswith("$((", position):
+            depth = 1
+            position += 2
+            continue
+        elif char in "<>&|":
+            positions.add(position)
+        position += 1
+    return positions
+
+
+def _balanced_parens_end(command: str, index: int) -> int | None:
+    depth = 0
+    quote = ""
+    position = index
+    while position < len(command):
+        char = command[position]
+        if char == "\\" and quote != "'":
+            position += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return position + 1
+        position += 1
+    return None
+
+
+def _quoted_substitution_close(command: str, index: int) -> int | None:
+    """Index of the ``)`` or backtick closing a command substitution at ``index``.
+
+    Arithmetic ``$((`` is not a substitution. Returns None when nothing opens
+    here or the substitution never closes; Bash would not run it either.
+    """
+    if not _COMMAND_SUBSTITUTION.match(command, index):
+        return None
+    backtick = command[index] == "`"
+    try:
+        return _substitution_end(command, index + (1 if backtick else 2), backtick, 0)
+    except ValueError:
+        return None
+
+
+def _substitution_output_redirects(
+    command: str, start: int, end: int
+) -> list[tuple[ShellToken, tuple[int, int]]]:
+    """Output redirect operators and targets of ``command[start:end]``, spans rebased."""
+    try:
+        scan = scan_shell_command(command[start:end])
+    except ValueError:
+        return []
+    redirects: list[tuple[ShellToken, tuple[int, int]]] = []
+    for position, token in enumerate(scan.tokens[:-1]):
+        if is_shell_output_redirection_token(token):
+            for offset in (position, position + 1):
+                span_start, span_end = scan.spans[offset]
+                redirects.append((scan.tokens[offset], (start + span_start, start + span_end)))
+    return redirects
+
+
+def _substitution_end(text: str, start: int, backtick: bool, depth: int) -> int:
+    """Find the end of a literal substitution, respecting nested shell quotes.
+
+    Heredoc bodies are data, so their quotes and parentheses never close it.
+    """
+    if depth > _MAX_SUBSTITUTION_DEPTH:
+        raise ValueError("Shell nesting limit")
+    quote = ""
+    level = 1
+    # In arithmetic $((...)) ``<<`` is a shift, and a newline never starts a body.
+    arithmetic = not backtick and text.startswith("(", start)
+    # The current logical line, masked like _prepare output, so the newline that
+    # ends it can find the heredocs it opens.
+    line: list[str] = []
+    index = start
+    while index < len(text):
+        char = text[index]
+        if char == "\\" and quote != "'":
+            line.append(text[index : index + 2])
+            index += 2
+            continue
+        if backtick and char == "`":
+            return index
+        if quote == "'":
+            if char == quote:
+                quote = ""
+        elif text.startswith("$(", index) or char == "`":
+            tick = char == "`"
+            index = _substitution_end(text, index + (1 if tick else 2), tick, depth + 1) + 1
+            line.append("__gobby_expansion__")
+            continue
+        elif char in "\"'":
+            if not quote:
+                quote = char
+            elif quote == char:
+                quote = ""
+        elif not quote and not arithmetic and char == "\n":
+            tokens = scan_shell_command("".join(line)).tokens
+            if not tokens or tokens[-1].value not in {"|", "&&", "||"}:
+                index = _skip_heredocs(text, tokens, index + 1)
+                line = []
+                continue
+            char = " "
+        elif not quote and not backtick and char in "()":
+            level += 1 if char == "(" else -1
+            if level == 0:
+                return index
+            char = ";"
+        line.append(char)
+        index += 1
+    raise ValueError("Unclosed shell substitution")
+
+
+def _skip_heredocs(command: str, tokens: list[ShellToken], index: int) -> int:
+    """Return the index past the bodies of the heredocs ``tokens`` open, starting at ``index``."""
+    for offset, token in enumerate(tokens[:-1]):
+        if token.quoted or token.value not in {"<<", "<<-"}:
+            continue
+        delimiter = tokens[offset + 1].value
+        while index < len(command):
+            end = command.find("\n", index)
+            end = len(command) if end < 0 else end + 1
+            body_line = command[index:end].rstrip("\n")
+            index = end
+            if token.value == "<<-":
+                body_line = body_line.lstrip("\t")
+            if body_line == delimiter:
+                break
+    return index
+
+
+def _double_bracket_end(command: str, index: int) -> int | None:
+    quote = ""
+    position = index
+    while position < len(command):
+        char = command[position]
+        if char == "\\" and quote != "'":
+            position += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = ""
+        elif char in "\"'":
+            quote = char
+        elif (
+            command.startswith("]]", position)
+            and command[position - 1].isspace()
+            and (position + 2 == len(command) or command[position + 2] in " \t\n;&|)")
+        ):
+            return position + 2
+        position += 1
+    return None
 
 
 def _skip_heredoc_bodies(
@@ -371,141 +622,6 @@ def _is_env_assignment(part: str) -> bool:
         and (name[0].isalpha() or name[0] == "_")
         and all(char.isalnum() or char == "_" for char in name)
     )
-
-
-_BASH_LOOP_BINDING_UNSTABLE_PARAMETERS = frozenset(
-    """RANDOM SRANDOM SECONDS LINENO BASHPID BASH_COMMAND BASH_SUBSHELL BASH_ARGV
-    BASH_ARGC BASH_ARGV0 BASH_SOURCE BASH_LINENO BASH_VERSINFO BASH_VERSION
-    BASH_ALIASES BASH_CMDS BASH_EXECUTION_STRING BASH_REMATCH FUNCNAME HISTCMD
-    EPOCHSECONDS EPOCHREALTIME PIPESTATUS DIRSTACK GROUPS UID EUID PPID SHELLOPTS
-    BASHOPTS OPTIND OPTARG OPTERR REPLY COMP_WORDS COMP_CWORD COMP_LINE COMP_POINT
-    COMP_KEY COMP_TYPE COMPREPLY IFS PATH HOME PWD OLDPWD SHLVL _""".split()
-)
-_SHELL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_]\w*$")
-
-
-def _loop_binding_variable_is_stable(variable: str) -> bool:
-    """Return whether Bash gives ``variable`` ordinary scalar expansion semantics."""
-    return bool(
-        _SHELL_IDENTIFIER_RE.fullmatch(variable)
-        and variable not in _BASH_LOOP_BINDING_UNSTABLE_PARAMETERS
-    )
-
-
-def _raw_shell_word_is_literal(raw_word: str) -> bool:
-    """Prove a source word contains no active Bash expansion or glob syntax."""
-    in_single_quote = False
-    in_double_quote = False
-    escaped = False
-    for index, char in enumerate(raw_word):
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\" and not in_single_quote:
-            escaped = True
-            continue
-        if char == "'" and not in_double_quote:
-            in_single_quote = not in_single_quote
-            continue
-        if char == '"' and not in_single_quote:
-            in_double_quote = not in_double_quote
-            continue
-        if in_single_quote:
-            continue
-        if char in "$`":
-            return False
-        if not in_double_quote and (char in "*?[{}" or (index == 0 and char == "~")):
-            return False
-    return not escaped and not in_single_quote and not in_double_quote
-
-
-def _loop_header_words_are_literal(
-    words: tuple[str, ...],
-    raw_words: tuple[str, ...],
-) -> bool:
-    """Prove every word in a ``for <var> in ...`` header is a literal path."""
-    if not words or not raw_words or len(words) != len(raw_words):
-        return not words and not raw_words
-    try:
-        for_index = words.index("for")
-    except ValueError:
-        return False
-    if len(words) <= for_index + 3 or words[for_index + 2] != "in":
-        return False
-    return all(
-        _looks_path_target(value) and _raw_shell_word_is_literal(raw)
-        for value, raw in zip(words[for_index + 3 :], raw_words[for_index + 3 :], strict=True)
-    )
-
-
-def _shell_loop_binding_disqualifications(words: tuple[str, ...]) -> frozenset[str]:
-    """Return variables whose command-local attributes make loop binding unsafe."""
-    disqualified: set[str] = set()
-    cursor = 0
-    if words[:1] == ("env",):
-        cursor = 1
-    while cursor < len(words) and _is_env_assignment(words[cursor]):
-        disqualified.add(words[cursor].partition("=")[0])
-        cursor += 1
-
-    parts = _strip_shell_wrappers(list(words))
-    if not parts:
-        return frozenset(disqualified)
-    command = parts[0].rsplit("/", 1)[-1]
-    declares_attributes = command in {"readonly", "export"}
-    if command in {"declare", "local", "typeset"}:
-        option_letters = "".join(part[1:] for part in parts[1:] if part.startswith("-"))
-        declares_attributes = any(flag in option_letters for flag in "inr")
-    if declares_attributes:
-        for part in parts[1:]:
-            if part.startswith(("-", "+")):
-                continue
-            name = part.partition("=")[0].partition("[")[0]
-            if _SHELL_IDENTIFIER_RE.fullmatch(name):
-                disqualified.add(name)
-    return frozenset(disqualified)
-
-
-def _plain_loop_binding_reference(
-    path: str,
-    words: tuple[str, ...],
-    raw_words: tuple[str, ...],
-) -> str | None:
-    """Return the referenced variable only for one exact double-quoted expansion."""
-    match = re.fullmatch(r"\$(?:\{(?P<braced>[A-Za-z_]\w*)\}|(?P<bare>[A-Za-z_]\w*))", path)
-    if not match or not raw_words:
-        return None
-    variable = match.group("braced") or match.group("bare")
-    raw_matches = [raw for word, raw in zip(words, raw_words, strict=True) if word == path]
-    allowed = {f'"${variable}"', f'"${{{variable}}}"'}
-    return variable if raw_matches and all(raw in allowed for raw in raw_matches) else None
-
-
-_LOOP_BINDING_UNSAFE_COMMANDS = frozenset(
-    {".", "declare", "eval", "getopts", "mapfile", "read", "readarray", "source", "unset"}
-)
-
-
-def _shell_segment_preserves_loop_binding(
-    words: tuple[str, ...],
-    variable: str,
-    *,
-    command_is_known: bool,
-) -> bool:
-    """Prove that one simple shell segment cannot rebind ``variable``."""
-    assignment = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(variable)}(?:\[[^]]*\])?\+?=")
-    if any("$(" in word or "`" in word or assignment.search(word) for word in words):
-        return False
-
-    parts = _strip_shell_wrappers(list(words))
-    if not parts:
-        return True
-    command = parts[0].rsplit("/", 1)[-1]
-    if command in _LOOP_BINDING_UNSAFE_COMMANDS:
-        return False
-    if command == "printf" and "-v" in parts[1:]:
-        return False
-    return command_is_known
 
 
 def _strip_shell_wrappers(parts: list[str]) -> list[str]:

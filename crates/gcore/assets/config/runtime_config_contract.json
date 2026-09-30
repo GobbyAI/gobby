@@ -1996,17 +1996,6 @@
     },
     {
       "activation": "live",
-      "default": 3,
-      "description": "Maximum launching, running, or finalizing close reviewers per project.",
-      "key": "gobby-tasks.validation.close_review_max_concurrency_per_project",
-      "machineExport": false,
-      "namespace": "gobby-tasks",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": "low",
       "description": "Minimum close-review code-finding severity that blocks closure. Criterion gaps always block regardless of this setting.",
       "key": "gobby-tasks.validation.close_review_min_severity",
@@ -3180,20 +3169,6 @@
     },
     {
       "activation": "live",
-      "default": null,
-      "description": "Override path for the recall refit gate decision record JSON. None resolves to ~/.gobby/recall_refit_decision.json. '~' is expanded.",
-      "key": "memory.fitted_recall_decision_path",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": [
-        "string",
-        "null"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": false,
       "description": "Apply edge-recency decay during knowledge-graph traversal candidate selection (reshapes which neighbors survive the traversal cap). Default off.",
       "key": "memory.graph_edge_decay",
@@ -3223,6 +3198,17 @@
       "namespace": "memory",
       "secrecy": "none",
       "type": "number",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
+      "default": 5,
+      "description": "Memory-index injections in a session before an already-shown, unread memory may appear in the index again",
+      "key": "memory.index_reshow_after_injections",
+      "machineExport": false,
+      "namespace": "memory",
+      "secrecy": "none",
+      "type": "integer",
       "visibility": "public"
     },
     {
@@ -3282,115 +3268,13 @@
     },
     {
       "activation": "live",
-      "default": 0.05,
-      "description": "Alarm threshold: live pairwise accuracy this far below the recorded holdout baseline accuracy raises the drift alarm.",
-      "key": "memory.recall_drift_accuracy_drop",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 24.0,
-      "description": "Hours between recall-drift monitor checks in the daemon.",
-      "key": "memory.recall_drift_interval_hours",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": true,
-      "description": "Run the periodic recall-quality drift monitor (#17201). It replays recent labeled recall signals under the effective constants and alarms when live pairwise accuracy regresses beyond recall_drift_accuracy_drop below the recorded holdout baseline.",
-      "key": "memory.recall_drift_monitor_enabled",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": false,
-      "description": "Mirror recall-signal events into the Postgres hub tables (recall_signal_requests/recall_signal_hits) and record durable injection outcomes (recall_injection_outcomes) at delivery time. Purely observational; independent of recall_signal_logging (#17196).",
-      "key": "memory.recall_signal_hub",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 50,
-      "description": "Rotate the recall-signal JSONL when the live file reaches this many megabytes: '.1' shifts to '.2' and the live file becomes '.1', bounding retained size to roughly three times the cap (#18196).",
-      "key": "memory.recall_signal_log_max_mb",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": null,
-      "description": "Override path for the recall-signal JSONL log. None resolves to ~/.gobby/logs/recall_signal.jsonl. '~' is expanded.",
-      "key": "memory.recall_signal_log_path",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": [
-        "string",
-        "null"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": false,
-      "description": "Append observational recall/search ranking signal events to a dedicated JSONL file (default ~/.gobby/logs/recall_signal.jsonl). Purely observational; search, recall, and injection behavior are unchanged.",
-      "key": "memory.recall_signal_logging",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": false,
-      "description": "Judge the complete returned recall candidate set during the digest pass and persist label_source='digest_shadow' evidence. Requires recall_signal_hub so every judged request and candidate is durable.",
-      "key": "memory.shadow_relevance_judging",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": 30.0,
-      "description": "Half-life in days for temporal decay scoring in memory search. Memories lose half their score boost after this many days since last update. Set to 0 to disable temporal decay.",
+      "description": "Half-life in days for temporal decay scoring in memory search. Memories lose half their score boost after this many days since the later of last update and last access. Set to 0 to disable temporal decay.",
       "key": "memory.temporal_decay_half_life_days",
       "machineExport": false,
       "namespace": "memory",
       "secrecy": "none",
       "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": false,
-      "description": "Apply the pooled fitted recall ranking constants from a shipped #17198 gate decision record as the daemon-global defaults. The static constants remain the one-flag rollback floor: a missing, malformed, or non-shipping (reject) record keeps static behavior even when enabled (#17200).",
-      "key": "memory.use_fitted_recall_constants",
-      "machineExport": false,
-      "namespace": "memory",
-      "secrecy": "none",
-      "type": "boolean",
       "visibility": "public"
     },
     {
@@ -3413,50 +3297,6 @@
       "namespace": "memory_backup",
       "secrecy": "none",
       "type": "boolean",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": [
-        {
-          "candidate": "codex/gpt-5.6-luna",
-          "reasoning_effort": null
-        },
-        {
-          "candidate": "claude/haiku",
-          "reasoning_effort": null
-        }
-      ],
-      "description": "Ordered provider/model candidates with optional reasoning pins, for example [{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, {'candidate': 'claude/haiku'}].",
-      "key": "memory_usefulness.candidates",
-      "machineExport": false,
-      "namespace": "memory_usefulness",
-      "secrecy": "none",
-      "type": [
-        "string"
-      ],
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": "feature_low",
-      "description": "Provider-agnostic capability profile requested by this feature.",
-      "key": "memory_usefulness.profile",
-      "machineExport": false,
-      "namespace": "memory_usefulness",
-      "secrecy": "none",
-      "type": "string",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 30,
-      "description": "Timeout in seconds for usefulness-judge LLM calls (default 30s).",
-      "key": "memory_usefulness.timeout",
-      "machineExport": false,
-      "namespace": "memory_usefulness",
-      "secrecy": "none",
-      "type": "integer",
       "visibility": "public"
     },
     {
@@ -4688,17 +4528,6 @@
       "namespace": "tmux",
       "secrecy": "none",
       "type": "integer",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
-      "default": 5.0,
-      "description": "Seconds of session activity allowed during initialization before the agent is considered initialized.",
-      "key": "tmux.init_activity_grace_seconds",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
       "visibility": "public"
     },
     {

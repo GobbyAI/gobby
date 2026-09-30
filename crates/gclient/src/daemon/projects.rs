@@ -60,6 +60,9 @@ pub struct SessionRow {
     #[serde(rename = "ref")]
     pub reference: Option<String>,
     pub title: Option<String>,
+    /// `manual` when a person named the session; the automatic titles
+    /// (`task`, `provisional`) only restate the ref, task, and provider.
+    pub title_source: Option<String>,
     pub source: Option<String>,
     pub status: String,
     pub git_branch: Option<String>,
@@ -69,6 +72,9 @@ pub struct SessionRow {
     pub reasoning_effort: Option<String>,
     /// The session that spawned this one, for a child session of an agent run.
     pub parent_session_id: Option<String>,
+    /// Whether an OS sandbox wraps the session's process; absent when the
+    /// daemon has no evidence either way.
+    pub sandbox_enabled: Option<bool>,
 }
 
 impl SessionRow {
@@ -76,6 +82,33 @@ impl SessionRow {
         self.reasoning_effort
             .as_deref()
             .filter(|effort| !effort.is_empty())
+    }
+
+    /// The name a person gave the session, verbatim but for a leading
+    /// `<ref>:` or `<project>#<seq>:` naming this very session, which the
+    /// ref already shows; `None` for an automatic, blank, or ref-only title.
+    pub fn manual_title(&self, project_name: &str) -> Option<&str> {
+        if self.title_source.as_deref() != Some("manual") {
+            return None;
+        }
+        let title = self.title.as_deref()?.trim();
+        let name = self
+            .reference
+            .as_deref()
+            .and_then(|reference| {
+                [reference.to_owned(), format!("{project_name}{reference}")]
+                    .iter()
+                    .find_map(|prefix| {
+                        let rest = title.strip_prefix(prefix.as_str())?;
+                        if rest.is_empty() {
+                            Some(rest)
+                        } else {
+                            rest.strip_prefix(':').map(str::trim)
+                        }
+                    })
+            })
+            .unwrap_or(title);
+        (!name.is_empty()).then_some(name)
     }
 }
 
@@ -97,6 +130,14 @@ pub struct RunRow {
     pub child_session_id: Option<String>,
     pub effective_reasoning_effort: Option<String>,
     pub requested_reasoning_effort: Option<String>,
+    /// The launch sandbox record; `enforced` says whether it wrapped the run.
+    pub sandbox: Option<RunSandbox>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RunSandbox {
+    pub enforced: Option<bool>,
 }
 
 impl RunRow {

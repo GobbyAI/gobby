@@ -498,7 +498,7 @@ class AgyCLITextGenerateAdapter:
     def build_command(self, request: TextGenerationRequest) -> list[str]:
         path = self._command_path or shutil.which("agy")
         if not path:
-            raise FileNotFoundError("AGY CLI not found in PATH")
+            raise FileNotFoundError("Antigravity CLI not found in PATH")
 
         command = [
             path,
@@ -512,7 +512,7 @@ class AgyCLITextGenerateAdapter:
         )
         if request.model is not None:
             if model is None:
-                raise RuntimeError("AGY model normalization returned no model")
+                raise RuntimeError("Antigravity model normalization returned no model")
             command.extend(["--model", resolve_agy_display(model, reasoning_effort)])
         command.extend(["--print", _compose_prompt(request)])
         return command
@@ -521,7 +521,7 @@ class AgyCLITextGenerateAdapter:
         request = _with_one_shot_directive(request)
         with neutral_textgen_cwd() as cwd:
             stdout = await _run_cli_text_generation_command(
-                "AGY",
+                "Antigravity",
                 self.build_command(request),
                 neutral_cwd=cwd,
                 timeout_seconds=self._timeout_seconds,
@@ -535,14 +535,14 @@ class AgyCLITextGenerateAdapter:
 
 def _agy_go_duration(timeout_seconds: float) -> str:
     if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
-        raise ValueError("AGY timeout_seconds must be finite and positive")
+        raise ValueError("Antigravity timeout_seconds must be finite and positive")
     return f"{timeout_seconds:g}s"
 
 
 def _validate_agy_stdout(stdout: str) -> str:
     text = stdout.strip()
     if not text:
-        raise RuntimeError("AGY CLI returned empty stdout")
+        raise RuntimeError("Antigravity CLI returned empty stdout")
     return text
 
 

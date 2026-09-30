@@ -6,10 +6,9 @@ import asyncio
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any
-from uuid import uuid4
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.storage.session_resolution import resolve_session_reference
+from gobby.mcp_proxy.tools.memory_session import resolve_session
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._id import resolve_task_reference
 from gobby.workflows.memory_review_conditions import (
@@ -69,22 +68,6 @@ def _record_review(
 
 def _enum_value(value: Any) -> Any:
     return value.value if isinstance(value, Enum) else value
-
-
-def _resolve_session(
-    session_manager: SessionManager,
-    session_id: str,
-) -> tuple[str, Any] | None:
-    session = session_manager.get(session_id)
-    if session is not None:
-        return str(session.id), session
-
-    try:
-        resolved_id = resolve_session_reference(session_manager.db, session_id)
-    except ValueError:
-        return None
-    session = session_manager.get(resolved_id)
-    return (resolved_id, session) if session is not None else None
 
 
 def _resolve_task(
@@ -148,7 +131,7 @@ def register_memory_review_tools(
                 "Task and session identity services are unavailable.",
             )
 
-        resolved_session = await asyncio.to_thread(_resolve_session, session_manager, session_id)
+        resolved_session = await asyncio.to_thread(resolve_session, session_manager, session_id)
         if resolved_session is None:
             return _error(
                 "missing_session_identity",
@@ -186,12 +169,6 @@ def register_memory_review_tools(
             )
 
         query = f"{task.title}\n\n{summary}"
-        # Joinable correlation id, minted per call as memory.py does for
-        # search_memories. Without it insert_signal_event drops the event before
-        # the INSERT, which is why this caller had never produced a single
-        # recall_signal_requests row despite being listed in
-        # SHADOW_ELIGIBLE_CALLERS (#21412).
-        recall_request_id = str(uuid4())
         try:
             candidates = await memory_manager().search_memories(
                 # The search service embeds the query verbatim, so the whole
@@ -203,7 +180,6 @@ def register_memory_review_tools(
                 project_id=project_id,
                 limit=_CANDIDATE_LIMIT,
                 session_id=resolved_session_id,
-                recall_request_id=recall_request_id,
                 caller="mcp_proxy.memory.review_task_memories",
                 include_global=True,
             )

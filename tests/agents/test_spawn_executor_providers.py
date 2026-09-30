@@ -1,12 +1,18 @@
 import logging
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents import spawn_executor_codex
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
-from gobby.agents.spawn_executor_providers import _prepare_provider_sandbox, prepare_codex_spawn
+from gobby.agents.spawn_executor_providers import (
+    ProviderSpawnPlan,
+    _prepare_provider_sandbox,
+    prepare_codex_spawn,
+)
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError
 from tests.agents.prepared_spawn import prepared_spawn
@@ -69,10 +75,94 @@ async def test_codex_close_reviewer_launch_hides_execution_wrappers(
 
     overrides = build_command.call_args.kwargs["config_overrides"]
     assert "mcp_servers.gobby.required=true" in overrides
+    assert ("features.plugins=false" in overrides) is plugin_disabled
+    assert ("features.remote_plugin=false" in overrides) is plugin_disabled
     assert (
         'plugins."unified-computer-use@openai-bundled".enabled=false' in overrides
     ) is plugin_disabled
     assert ("mcp_servers.node_repl.enabled=false" in overrides) is plugin_disabled
+
+
+@pytest.mark.asyncio
+async def test_srt_codex_close_reviewer_launches_headless_with_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, _, _ = _sandbox_request()
+    request = replace(
+        request,
+        agent_name="task-close-reviewer",
+        prompt="Review task close",
+        session_manager=MagicMock(),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_managed_code_index",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._prepare_provider_sandbox",
+        AsyncMock(return_value=SandboxLaunch(backend="srt", enforced=True)),
+    )
+    monkeypatch.setattr(
+        "gobby.agents.spawn_executor_providers._record_resume_launch_details", MagicMock()
+    )
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.pre_approve_directory", MagicMock())
+    build_command = MagicMock(return_value=(["codex", "exec"], {}))
+    monkeypatch.setattr("gobby.agents.spawn_executor_providers.build_cli_command", build_command)
+
+    plan = await prepare_codex_spawn(request)
+
+    assert not isinstance(plan, SpawnResult)
+    assert plan.command == ["codex", "exec"]
+    assert plan.codex_prompt is None
+    assert build_command.call_args.kwargs["mode"] == "headless"
+    assert build_command.call_args.kwargs["prompt"] == "Review task close"
+    assert 'sandbox_mode="danger-full-access"' in build_command.call_args.kwargs["config_overrides"]
+    assert build_command.call_args.kwargs["external_sandbox_enforced"] is True
+
+
+@pytest.mark.asyncio
+async def test_headless_codex_persona_is_marked_before_runtime_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    request, _, _ = _sandbox_request()
+    request = replace(request, session_manager=MagicMock())
+    plan = ProviderSpawnPlan(
+        command=["codex", "exec", "Review"],
+        env={},
+        launch=SandboxLaunch(backend="srt", enforced=True),
+        auth_cli="codex",
+        child_session_id="child",
+        agent_run_id="actual-run",
+        codex_prompt=None,
+        inject_persona=True,
+    )
+    events: list[tuple[str, object]] = []
+
+    def mark_persona(child_session_id: str, values: dict[str, bool]) -> None:
+        events.append(("mark", (child_session_id, values)))
+
+    monkeypatch.setattr(
+        "gobby.workflows.state_manager.SessionVariableManager",
+        lambda _db: SimpleNamespace(merge_variables=mark_persona),
+    )
+    monkeypatch.setattr(spawn_executor_codex, "prepare_codex_spawn", AsyncMock(return_value=plan))
+    result = SpawnResult(
+        success=True, run_id="actual-run", child_session_id="child", status="running"
+    )
+
+    async def runtime_spawn(_request: SpawnRequest, _plan: ProviderSpawnPlan) -> SpawnResult:
+        events.append(("spawn", (_request, _plan)))
+        return result
+
+    monkeypatch.setattr("gobby.agents.spawn_executor._runtime_spawn", runtime_spawn)
+
+    spawned = await spawn_executor_codex._spawn_codex_terminal(request)
+    assert spawned is result
+    assert spawned.success is True
+    assert events == [
+        ("mark", ("child", {"_agent_context_injected": True})),
+        ("spawn", (request, plan)),
+    ]
 
 
 @pytest.mark.parametrize(

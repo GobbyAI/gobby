@@ -5,6 +5,7 @@ use gobby_terminal::protocol::{
     ServerMessage, SnapshotMode, TerminalFrame, TmuxClientIdentity, MAX_CELLS, MAX_COLS,
     MAX_FRAME_SIZE, MAX_ROWS, MIN_COLS, MIN_ROWS, PROTOCOL_VERSION, WORST_CELL_BYTES,
 };
+use gobby_terminal::terminal_theme::{RgbColor, ThemeDeclaration};
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
@@ -129,6 +130,19 @@ fn golden_corpus_bytes_and_fragmented_reads() {
             end_col: 17,
         },
     );
+    // Appended last (tag 12), so every earlier tag keeps its byte.
+    let rgb = |r, g, b| RgbColor { r, g, b };
+    let theme = write_bin(
+        "set_terminal_theme.bin",
+        &ClientMessage::SetTerminalTheme {
+            theme: ThemeDeclaration {
+                foreground: Some(rgb(0x20, 0x21, 0x22)),
+                background: Some(rgb(0xfa, 0xfb, 0xfc)),
+                palette: vec![(1, rgb(0xc0, 0x10, 0x20))],
+            },
+        },
+    );
+    assert_eq!(theme[4], 12, "SetTerminalTheme tag after the u32 length");
     write_bin(
         "frame_input_refused.bin",
         &ServerMessage::InputRefused {

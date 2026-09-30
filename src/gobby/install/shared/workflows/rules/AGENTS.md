@@ -12,7 +12,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `task-enforcement` | `task-enforcement/` | 18 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, and enforce valid task transitions |
 | `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |
 | `plan-mode` | `plan-mode/` | 7 | Track plan-mode entry and exit, block edits, teach plan navigation, and reset state |
-| `memory-lifecycle` | `memory-lifecycle/` | 12 | Shadow relevance judging, initial-load recovery, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
+| `memory-lifecycle` | `memory-lifecycle/` | 14 | Initial-load recovery gated on MCP proxy readiness, memory surfacing at turn start, agent spawn, task claim, and handoff, post-close review, plan-memory guards, turn sequencing, and tracking reset |
 | `session-feedback` | `session-feedback/` | 3 | Bounded Gobby-experience survey through feedback, once per epoch for task closures no submission has covered |
 | `context-handoff` | `context-handoff/` | 14 | Compact/resume handoffs, task context, user profile, and pressure nudges |
 | `auto-task` | `auto-task/` | 3 | Autonomous task execution context, task continuation, notify tree complete |
@@ -28,6 +28,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `development-discipline` | `development-discipline/` | 1 | Block the first checkout-touching tool call under a claimed code/refactor/test task until developer test and structural guidance is loaded |
 | `review-learning` | `review-learning/` | 5 | Inject confirmed planning and review lessons into matching work |
 | `reviewer-lifecycle` | `reviewer-lifecycle/` | 3 | Track reviewer validation and require a terminal review verdict |
+| `roles` | `roles/` | 2 | Inject the shared seat guidance once per context epoch for catalogue seats (persona or spawned), and re-arm it after context loss |
 
 Experiments that belong to one project are not bundled. They live in that
 repository's `.gobby/workflows/rules/`, which `gobby install`/`gobby sync` syncs

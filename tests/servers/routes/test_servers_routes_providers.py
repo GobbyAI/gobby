@@ -217,7 +217,7 @@ class TestProviderRoutes:
             installed_version="1.1.18",
             required_version="1.1.18",
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         with (
             patch(
@@ -270,7 +270,7 @@ class TestProviderRoutes:
             installed_version="1.1.18",
             required_version="1.1.18",
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         unsupported = SimpleNamespace(
             installed_version="1.1.17",
@@ -712,7 +712,7 @@ class TestProviderModelsRoute:
             installed_version="1.1.18",
             required_version="1.1.18",
             supported=True,
-            reason="AGY 1.1.18 meets required version 1.1.18.",
+            reason="Antigravity 1.1.18 meets required version 1.1.18.",
         )
         app = FastAPI()
         app.include_router(

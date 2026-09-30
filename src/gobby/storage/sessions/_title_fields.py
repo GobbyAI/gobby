@@ -35,7 +35,7 @@ class _TitleFieldHost(Protocol):
 
 class _TitleFieldMixin:
     def normalize_automatic_title_refs(self: _TitleFieldHost) -> int:
-        """Refresh automatic prefixes and rewrite legacy heuristic titles as provisional."""
+        """Refresh automatic prefixes; rebuild heuristic and provisional titles from the labels."""
         rows = self.db.fetchall(
             """
             SELECT s.id, s.title, s.title_source, s.source, s.seq_num, s.project_id,
@@ -50,7 +50,7 @@ class _TitleFieldMixin:
             title = row["title"] or ""
             project = str(row["project_name"] or "").strip() or str(row["project_id"])
             source = row["title_source"]
-            if source == "heuristic":
+            if source in ("heuristic", PROVISIONAL_TITLE_SOURCE):
                 target = format_provisional_session_title(
                     project, row["seq_num"], str(row["source"] or "")
                 )

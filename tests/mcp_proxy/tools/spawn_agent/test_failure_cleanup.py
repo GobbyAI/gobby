@@ -1,17 +1,32 @@
-"""Tests for start_run_or_cleanup lost-CAS tolerance on the fresh-spawn path."""
+"""Spawn failure cleanup: lost-CAS tolerance, kill truth, one attempt, cancellation."""
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import signal
+from collections.abc import Awaitable, Callable, Coroutine
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
+from datetime import datetime
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
+from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
+from gobby.storage.terminals import Terminal
+from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.worktrees.git import WorktreeGitManager
+from tests.terminals.fakes import (
+    FakeRuntime,
+    MemoryTerminalStore,
+    make_memory_terminal,
+    runtime_registry,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -149,6 +164,7 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         backend="none",
         pid=None,
         retryable_infrastructure=False,
+        prior_attempt=None,
     )
     isolation_context = SimpleNamespace(
         worktree_id="worktree-123",
@@ -215,6 +231,9 @@ async def test_finalize_failure_envelope_includes_isolation_identity() -> None:
         child_session_id="child-123",
         pid=None,
         terminal_id=None,
+        prior_attempt=None,
+        cleanup_once=None,
+        attempt_terminal_known=True,
     )
 
 
@@ -238,15 +257,16 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
         terminalize_arguments.update(kwargs)
         return True
 
-    async def cleanup_isolation(*_args: Any, **_kwargs: Any) -> None:
-        events.append("cleanup-isolation")
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            events.append("cleanup-isolation")
 
     def delete_child(*_args: Any, **_kwargs: Any) -> None:
         events.append("delete-child")
 
     run_storage = RunStorage()
     runner = SimpleNamespace(run_storage=run_storage, agent_lifecycle_monitor=None)
-    handler = SimpleNamespace()
+    handler = Handler()
     completion_registry = object()
     task_manager = object()
     with (
@@ -254,7 +274,6 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
             "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
             terminalize,
         ),
-        patch.object(_failure_cleanup, "cleanup_created_isolation", cleanup_isolation),
         patch.object(_failure_cleanup, "_delete_child_session", delete_child),
     ):
         await _failure_cleanup.cleanup_failed_spawn(
@@ -264,7 +283,7 @@ async def test_spawn_rollback_uses_shared_cancelled_terminalization() -> None:
             handler,
             SimpleNamespace(),
             completion_registry=completion_registry,
-            cleanup_isolation=False,
+            cleanup_isolation=True,
             task_manager=task_manager,
         )
 
@@ -360,6 +379,8 @@ async def test_lost_cas_with_non_running_run_cleans_up_and_reports_error() -> No
         "child_session_id": "child-1",
         "pid": 4242,
         "terminal_id": "terminal-1",
+        "cleanup_once": None,
+        "attempt_terminal_known": True,
     }
 
 
@@ -615,6 +636,9 @@ class _RecordingTerminalRuntime:
     async def terminate(self, row: object, grace_seconds: float) -> None:
         self.terminations.append((row, grace_seconds))
 
+    async def session_present(self, row: object) -> bool:
+        return all(terminated is not row for terminated, _ in self.terminations)
+
 
 class _RecordingRuntimeRegistry:
     def __init__(self, runtime: _RecordingTerminalRuntime) -> None:
@@ -626,15 +650,21 @@ class _RecordingRuntimeRegistry:
         return self.runtime
 
 
+_ATTEMPT: dict[str, Any] = {
+    "attempt_generation": 3,
+    "attempt_started_at": datetime(2026, 9, 29, 12, 0),
+}
+
+
 class _RecordingTerminalManager:
     def __init__(self) -> None:
-        self.transitions: list[tuple[str, str]] = []
+        self.transitions: list[tuple[str, str, dict[str, Any]]] = []
 
-    def fail_pending(self, terminal_id: str) -> None:
-        self.transitions.append(("fail_pending", terminal_id))
+    def fail_pending_attempt(self, terminal_id: str, **attempt: Any) -> None:
+        self.transitions.append(("fail_pending_attempt", terminal_id, attempt))
 
-    def mark_exited(self, terminal_id: str) -> None:
-        self.transitions.append(("mark_exited", terminal_id))
+    def mark_exited_attempt(self, terminal_id: str, **attempt: Any) -> None:
+        self.transitions.append(("mark_exited_attempt", terminal_id, attempt))
 
 
 @pytest.mark.asyncio
@@ -647,6 +677,7 @@ async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
         backend="tmux",
         state="pending",
         spawn_key="gobby-rollback",
+        **_ATTEMPT,
     )
     runtime = MagicMock()
     runtime.is_live = AsyncMock(return_value=True)
@@ -660,6 +691,7 @@ async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
 
     runtime.snapshot_full = capture
     runtime.terminate = terminate
+    runtime.session_present = AsyncMock(return_value=False)
     runtime_registry = MagicMock()
     runtime_registry.resolve.return_value = runtime
     terminal_manager = MagicMock()
@@ -678,7 +710,7 @@ async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
     assert run.capture_id is not None
     assert "provider refused the lease" in (run.result or "")
     assert run.status == "pending"
-    terminal_manager.fail_pending.assert_called_once_with(terminal.id)
+    terminal_manager.fail_pending_attempt.assert_called_once_with(terminal.id, **_ATTEMPT)
 
 
 @pytest.mark.asyncio
@@ -688,6 +720,7 @@ async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None
         backend="native",
         state="live",
         spawn_key="native-orphan",
+        **_ATTEMPT,
     )
     runtime = _RecordingTerminalRuntime()
     runtime_registry = _RecordingRuntimeRegistry(runtime)
@@ -704,17 +737,18 @@ async def test_spawn_rollback_without_run_row_still_terminates_runtime() -> None
 
     assert runtime_registry.resolved_backends == ["native"]
     assert runtime.terminations == [(terminal, 0.2)]
-    assert terminal_manager.transitions == [("mark_exited", terminal.id)]
+    assert terminal_manager.transitions == [("mark_exited_attempt", terminal.id, _ATTEMPT)]
 
 
 @pytest.mark.asyncio
 async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
-    for state, transition in (("pending", "fail_pending"), ("live", "mark_exited")):
+    for state, transition in (("pending", "fail_pending_attempt"), ("live", "mark_exited_attempt")):
         terminal = SimpleNamespace(
             id=f"terminal-{state}",
             backend="native",
             state=state,
             spawn_key=f"spawn-{state}",
+            **_ATTEMPT,
         )
         runtime = _RecordingTerminalRuntime()
         runtime_registry = _RecordingRuntimeRegistry(runtime)
@@ -731,4 +765,452 @@ async def test_cleanup_terminates_via_runtime_and_settles_row() -> None:
 
         assert runtime_registry.resolved_backends == ["native"]
         assert runtime.terminations == [(terminal, 0.2)]
-        assert terminal_manager.transitions == [(transition, terminal.id)]
+        assert terminal_manager.transitions == [(transition, terminal.id, _ATTEMPT)]
+
+
+_SECRET = "sk-synthetic-secret-marker"
+
+
+class _Runs:
+    """Run storage whose row is already gone, so cleanup terminates the runtime directly."""
+
+    def __init__(self, db: object | None = None) -> None:
+        self.db = db
+        self.errors: list[str] = []
+
+    def record_spawn_error(self, _run_id: str, error: str) -> None:
+        self.errors.append(error)
+
+    def get(self, _run_id: str) -> None:
+        return None
+
+
+class _Isolation:
+    def __init__(self) -> None:
+        self.removed = 0
+
+    async def cleanup_environment(self, _spawn_config: object) -> None:
+        self.removed += 1
+
+
+@dataclass
+class _StickyRuntime(FakeRuntime):
+    """A runtime whose terminate returns while the session stays present."""
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        del grace_seconds
+        self.terminate_started.set()
+        self.killed.append(terminal.id)
+
+
+@dataclass
+class _UnprovableRuntime(FakeRuntime):
+    """A native runtime that cannot prove a pid-less pending terminal dead."""
+
+    backend: Literal["tmux", "native"] = "native"
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        del grace_seconds
+        self.terminate_started.set()
+        raise RuntimeError(f"no recorded process to prove {_SECRET}")
+
+
+def _row(state: str, backend: Literal["tmux", "native"] = "tmux") -> Terminal:
+    row = make_memory_terminal(backend=backend)
+    if state == "pending":
+        return replace(row, state="pending", locator=None, locator_key=None)
+    return replace(row, state=state)
+
+
+async def _cleanup(
+    store: MemoryTerminalStore,
+    runtime: FakeRuntime,
+    terminal_id: str,
+    handler: _Isolation,
+    *,
+    cleanup_isolation: bool = True,
+    prior_attempt: tuple[int, datetime] | None = None,
+    terminalize: Callable[..., Awaitable[bool]] | None = None,
+) -> None:
+    runner = SimpleNamespace(
+        run_storage=_Runs(),
+        terminal_manager=store,
+        terminal_runtime_registry=runtime_registry(runtime),
+        agent_lifecycle_monitor=None,
+    )
+    with patch(
+        "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+        terminalize or AsyncMock(return_value=True),
+    ):
+        await _failure_cleanup.cleanup_failed_spawn(
+            runner,
+            "run-1",
+            "spawn failed",
+            handler,
+            SimpleNamespace(),
+            completion_registry=None,
+            cleanup_isolation=cleanup_isolation,
+            task_manager=None,
+            terminal_id=terminal_id,
+            prior_attempt=prior_attempt,
+        )
+
+
+async def test_failed_kill_orphans_and_keeps_isolation() -> None:
+    native_pending = _row("pending", backend="native")
+    store = MemoryTerminalStore(native_pending)
+    unprovable = _UnprovableRuntime()
+    handler = _Isolation()
+    await _cleanup(store, unprovable, native_pending.id, handler)
+    assert unprovable.terminate_started.is_set()
+    assert store.rows[native_pending.id].state == "pending"
+    assert handler.removed == 0
+
+    tmux_pending = _row("pending")
+    store = MemoryTerminalStore(tmux_pending)
+    sticky = _StickyRuntime(live_keys={str(tmux_pending.spawn_key)})
+    await _cleanup(store, sticky, tmux_pending.id, handler)
+    assert sticky.killed == [tmux_pending.id]
+    assert store.rows[tmux_pending.id].state == "pending"
+    assert handler.removed == 0
+
+    held = _row("pending")
+    store = MemoryTerminalStore(held)
+    untouched = FakeRuntime()
+    in_doubt_spawns.claim(held.id)
+    try:
+        await _cleanup(store, untouched, held.id, handler)
+    finally:
+        in_doubt_spawns.release(held.id)
+    assert not untouched.terminate_started.is_set()
+    assert store.rows[held.id].state == "pending"
+    assert handler.removed == 0
+
+    live = _row("live")
+    store = MemoryTerminalStore(live)
+    sticky = _StickyRuntime(live_keys={str(live.spawn_key)})
+    await _cleanup(store, sticky, live.id, handler)
+    orphan = store.get(live.id)
+    assert orphan is not None
+    assert orphan.state == "orphaned"
+    assert handler.removed == 0
+
+    for state in ("pending", "live"):
+        proven = _row(state)
+        store = MemoryTerminalStore(proven)
+        await _cleanup(store, FakeRuntime(), proven.id, handler)
+        assert store.rows[proven.id].state == "exited"
+    assert handler.removed == 2
+
+
+async def test_held_terminal_defers_isolation_to_owner() -> None:
+    held = _row("pending")
+    store = MemoryTerminalStore(held)
+    handler = _Isolation()
+    in_doubt_spawns.claim(held.id)
+    try:
+        await _cleanup(store, FakeRuntime(), held.id, handler)
+        assert handler.removed == 0
+    finally:
+        deferred = in_doubt_spawns.release(held.id)
+    assert len(deferred) == 1
+    for step in deferred:
+        await step()
+    assert handler.removed == 1
+
+    reused = _row("pending")
+    in_doubt_spawns.claim(reused.id)
+    try:
+        await _cleanup(
+            MemoryTerminalStore(reused), FakeRuntime(), reused.id, handler, cleanup_isolation=False
+        )
+    finally:
+        assert in_doubt_spawns.release(reused.id) == []
+    assert handler.removed == 1
+
+    # The owner settles and releases while cleanup is still running, so the
+    # late isolation step finds no claim and decides from the row it left.
+    # (label, the row the owner leaves or None for no row, whether the failed
+    # result's prior_attempt is the row's pair, whether isolation is removed)
+    cases: list[tuple[str, str | None, bool, bool]] = [
+        ("exited", "exited", False, True),
+        ("no row", None, False, True),
+        ("rolled-back bump", "pending", True, True),
+        ("pending under another pair", "pending", False, False),
+        ("live under another pair", "live", False, False),
+        ("orphaned under another pair", "orphaned", False, False),
+    ]
+    for label, settled_state, carries_prior, removes in cases:
+        row = _row("pending")
+        store = MemoryTerminalStore(row)
+        handler = _Isolation()
+        prior_generation = row.attempt_generation if carries_prior else row.attempt_generation - 1
+        prior = (prior_generation, row.attempt_started_at)
+
+        async def owner_settles(
+            *_args: Any,
+            _store: MemoryTerminalStore = store,
+            _row: Terminal = row,
+            _state: str | None = settled_state,
+            **_kwargs: Any,
+        ) -> bool:
+            in_doubt_spawns.release(_row.id)
+            if _state is None:
+                _store.rows.pop(_row.id)
+            else:
+                _store.rows[_row.id] = replace(_row, state=_state)
+            return True
+
+        in_doubt_spawns.claim(row.id)
+        try:
+            await _cleanup(
+                store,
+                FakeRuntime(),
+                row.id,
+                handler,
+                prior_attempt=prior,
+                terminalize=owner_settles,
+            )
+        finally:
+            in_doubt_spawns.release(row.id)
+        assert handler.removed == int(removes), label
+
+
+_CLEANUP_PHASES = (
+    "read_run",
+    "record_error",
+    "terminate",
+    "forget_run",
+    "terminalize_run",
+    "runtime_state",
+    "isolation",
+    "delete_child_session",
+)
+
+
+@pytest.mark.parametrize("failing", _CLEANUP_PHASES)
+async def test_cleanup_steps_are_independent(
+    failing: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    ran: list[str] = []
+
+    def step(phase: str) -> None:
+        ran.append(phase)
+        if phase == failing:
+            raise RuntimeError(f"{phase} leaked {_SECRET}")
+
+    class Runs(_Runs):
+        def record_spawn_error(self, _run_id: str, _error: str) -> None:
+            step("record_error")
+
+        def get(self, _run_id: str) -> None:
+            step("read_run")
+
+    async def terminate(**_kwargs: Any) -> bool:
+        step("terminate")
+        return True
+
+    def forget(_run_id: str | None) -> None:
+        step("forget_run")
+
+    async def terminalize(**_kwargs: Any) -> bool:
+        step("terminalize_run")
+        return True
+
+    def runtime_state(*_args: Any, **_kwargs: Any) -> None:
+        step("runtime_state")
+
+    # The isolation handler and the session storage fail inside the real helpers.
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            step("isolation")
+
+    class Sessions:
+        def delete(self, _child_session_id: str) -> None:
+            step("delete_child_session")
+
+    connection = SimpleNamespace(execute=lambda *_args: None)
+    db = SimpleNamespace(transaction=lambda: nullcontext(connection))
+    runner = SimpleNamespace(
+        run_storage=Runs(db=db),
+        agent_lifecycle_monitor=None,
+        child_session_manager=SimpleNamespace(_storage=Sessions()),
+    )
+    caplog.set_level(logging.WARNING, logger=_failure_cleanup.__name__)
+    with (
+        patch.object(_failure_cleanup, "_terminate_spawn_process", terminate),
+        patch.object(_failure_cleanup, "_forget_spawn_run", forget),
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            terminalize,
+        ),
+        patch("gobby.agents.runtime_cleanup.cleanup_agent_runtime_state", runtime_state),
+    ):
+        await _failure_cleanup.cleanup_failed_spawn(
+            runner,
+            "run-7",
+            "spawn failed",
+            Handler(),
+            SimpleNamespace(),
+            completion_registry=None,
+            cleanup_isolation=True,
+            task_manager=None,
+            child_session_id="child-7",
+        )
+
+    # A failed terminate proves nothing, so isolation is kept for it.
+    expected = [
+        phase for phase in _CLEANUP_PHASES if failing != "terminate" or phase != "isolation"
+    ]
+    assert ran == expected
+    failures = [record for record in caplog.records if "RuntimeError" in record.getMessage()]
+    assert len(failures) == 1
+    message = failures[0].getMessage()
+    assert failing in message
+    assert "run-7" in message
+    assert _SECRET not in caplog.text
+
+
+@pytest.mark.parametrize("run_id", ["run-9", None])
+async def test_created_isolation_cleanup_failure_logs_phase_run_and_terminal(
+    run_id: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            raise RuntimeError(f"isolation leaked {_SECRET}")
+
+    caplog.set_level(logging.WARNING, logger=_failure_cleanup.__name__)
+    await _failure_cleanup.cleanup_created_isolation(
+        Handler(), SimpleNamespace(), cleanup=True, run_id=run_id
+    )
+
+    assert [record.getMessage() for record in caplog.records] == [
+        f"Spawn cleanup step isolation failed for run {run_id} (terminal None): RuntimeError"
+    ]
+    assert _SECRET not in caplog.text
+
+
+async def test_cleanup_survives_cancellation() -> None:
+    ran: list[str] = []
+    terminalize_entered = asyncio.Event()
+    terminalize_go = asyncio.Event()
+    isolation_entered = asyncio.Event()
+    isolation_go = asyncio.Event()
+
+    async def terminalize(**_kwargs: Any) -> bool:
+        ran.append("terminalize_run")
+        terminalize_entered.set()
+        await terminalize_go.wait()
+        return True
+
+    class Handler:
+        async def cleanup_environment(self, _spawn_config: object) -> None:
+            ran.append("isolation")
+            isolation_entered.set()
+            await isolation_go.wait()
+
+    def delete_child(*_args: Any, **_kwargs: Any) -> None:
+        ran.append("delete_child_session")
+
+    once = _failure_cleanup.SpawnCleanupOnce()
+    runs = _Runs()
+
+    def cleanup() -> Coroutine[Any, Any, None]:
+        return _failure_cleanup.cleanup_failed_spawn(
+            SimpleNamespace(run_storage=runs, agent_lifecycle_monitor=None),
+            "run-1",
+            "spawn failed",
+            Handler(),
+            SimpleNamespace(),
+            completion_registry=None,
+            cleanup_isolation=True,
+            task_manager=None,
+            cleanup_once=once,
+        )
+
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            terminalize,
+        ),
+        patch.object(_failure_cleanup, "_delete_child_session", delete_child),
+    ):
+        caller = asyncio.create_task(cleanup())
+        await asyncio.wait_for(terminalize_entered.wait(), 5)
+        caller.cancel("first")
+        await asyncio.sleep(0)
+        terminalize_go.set()
+        await asyncio.wait_for(isolation_entered.wait(), 5)
+        caller.cancel("second")
+        await asyncio.sleep(0)
+        isolation_go.set()
+        with pytest.raises(asyncio.CancelledError) as raised:
+            await caller
+        assert raised.value.args == ("first",)
+        assert ran == ["terminalize_run", "isolation", "delete_child_session"]
+        assert runs.errors == ["spawn failed"]
+
+        late = asyncio.create_task(cleanup())
+        late.cancel("late")
+        with pytest.raises(asyncio.CancelledError):
+            await late
+        await cleanup()
+    assert ran == ["terminalize_run", "isolation", "delete_child_session"]
+    assert runs.errors == ["spawn failed"]
+
+
+async def test_cleanup_runs_once_per_attempt() -> None:
+    for raised_after_cleanup in (RuntimeError("finalize broke"), asyncio.CancelledError()):
+        runs = _Runs()
+        terminalize = AsyncMock(return_value=True)
+        once = _failure_cleanup.SpawnCleanupOnce()
+        runner = SimpleNamespace(run_storage=runs, agent_lifecycle_monitor=None)
+
+        async def finalize(
+            *,
+            spawn_result: object,
+            _runner: SimpleNamespace = runner,
+            _once: _failure_cleanup.SpawnCleanupOnce = once,
+            _error: BaseException = raised_after_cleanup,
+        ) -> dict[str, Any]:
+            await _failure_cleanup.cleanup_failed_spawn(
+                _runner,
+                "run-1",
+                "liveness failed",
+                SimpleNamespace(),
+                SimpleNamespace(),
+                completion_registry=None,
+                cleanup_isolation=False,
+                task_manager=None,
+                cleanup_once=_once,
+            )
+            raise _error
+
+        phase = SpawnPhase(
+            runner=runner,
+            run_id="run-1",
+            spawn_request=SimpleNamespace(),
+            execute=AsyncMock(return_value=SimpleNamespace(pid=None)),
+            finalize=finalize,
+            handler=SimpleNamespace(),
+            spawn_config=SimpleNamespace(),
+            completion_registry=None,
+            cleanup_isolation=False,
+            task_manager=None,
+            child_session_id=None,
+            spawn_identity={"run_id": "run-1"},
+            reasoning=SimpleNamespace(to_dict=dict),
+            cleanup_once=once,
+        )
+        with patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            terminalize,
+        ):
+            if isinstance(raised_after_cleanup, asyncio.CancelledError):
+                with pytest.raises(asyncio.CancelledError):
+                    await phase.execute_phase()
+            else:
+                result = await phase.execute_phase()
+                assert result["success"] is False
+        assert terminalize.await_count == 1
+        assert runs.errors == ["liveness failed"]

@@ -320,12 +320,12 @@ def test_observability_commands_read_config_without_applying_schema() -> None:
     assert health_accessors["health"] == {"read_only_operational_config"}
 
 
-def test_start_still_applies_schema_before_running() -> None:
-    source = Path("src/gobby/cli/daemon.py").read_text(encoding="utf-8")
+def test_start_preflight_tolerates_retired_config_before_runner_reconciles_it() -> None:
+    source = Path("src/gobby/cli/daemon_start.py").read_text(encoding="utf-8")
 
     accessors = _config_accessors_by_function(source)
 
-    assert accessors["start"] == {"operational_config"}
+    assert accessors["start"] == {"read_only_operational_config"}
 
 
 @pytest.mark.parametrize(

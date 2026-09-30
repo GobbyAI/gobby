@@ -9,6 +9,7 @@ rules:
     when: >
       not skill_loaded('c')
       and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_repo_mutation')
       and (
         event.data.get('canonical_write_file_path', '').endswith(('.c', '.h', '.c.in', '.h.in', '.pc', '.pc.in'))
         or event.data.get('canonical_write_file_path', '').rpartition('/')[2] in ('Makefile', 'makefile', 'GNUmakefile', 'CMakeLists.txt', 'meson.build', 'meson_options.txt')

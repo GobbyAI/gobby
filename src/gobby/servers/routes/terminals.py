@@ -80,15 +80,9 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
             if created_at is None and cursor_id is None
             else None
         )
-        # The same bounded tmux sweep that fronts the WS list, so a tmux
-        # row reports its pane's command and directory here too. It never
-        # fails the list; the page work after it runs off the loop.
-        sweep = getattr(_websocket_server(), "sweep_tmux_panes", None)
-        panes = {} if sweep is None else await sweep(manager, machine_id)
         return await asyncio.to_thread(
             _serve_page,
             manager,
-            panes,
             [project_id],
             machine_id=machine_id,
             states=parsed_states,
@@ -101,7 +95,6 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
 
     def _serve_page(
         manager: TerminalManager,
-        panes: dict[str, Any],
         project_ids: list[str],
         *,
         snapshot: Any,
@@ -114,15 +107,12 @@ def create_terminals_router(server: HTTPServer) -> APIRouter:
         registry = _lease_registry()
         serialized = []
         for row in items:
-            # A native row is probed from its shell pid; a tmux row reads
-            # its pane from the sweep.
-            pane = panes.get(row.locator_key or "")
             serialized.append(
                 _row_json(
                     row,
                     _attach(server, manager, row),
-                    commands.get(row.id) or (pane.pane_command if pane else None),
-                    cwds.get(row.id) or (pane.pane_path if pane else None),
+                    commands.get(row.id),
+                    cwds.get(row.id),
                     registry.holder_info(row.id),
                 )
             )
@@ -189,6 +179,8 @@ def _socket_dir(server: HTTPServer) -> Path:
 
 
 def _attach(server: HTTPServer, manager: TerminalManager, row: Terminal) -> AttachLocator | None:
+    if row.backend != "native" or row.state not in {"pending", "live"}:
+        return None
     try:
         return manager.attach_locator(
             row.id,

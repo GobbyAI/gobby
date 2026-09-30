@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import _commit_close, _evaluat
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration import (
     active_review_response,
     launch_close_review,
+    project_busy_review_response,
     promote_close_reviews,
     supersede_close_retry_wait,
 )
@@ -65,7 +66,12 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             run_close_review=not preview,
         )
         if preview:
-            return evaluation.response(preview=True)
+            response = evaluation.response(preview=True)
+            if evaluation.error == "close_review_required":
+                busy = await asyncio.to_thread(project_busy_review_response, ctx, evaluation)
+                if busy is not None:
+                    response.update(busy)
+            return response
         if evaluation.error == "close_review_required":
             return await launch_close_review(
                 ctx,

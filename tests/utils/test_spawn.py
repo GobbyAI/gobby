@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from collections.abc import KeysView
 from pathlib import Path
 from typing import Any
@@ -83,8 +84,11 @@ _NOT_DAEMON = (
 # the CLI-only functions of modules the daemon imports. A key the scan no longer
 # finds fails the lint.
 _MUST_FORK = {
-    "cli/daemon.py::_launch_direct_runner": (
+    "cli/daemon_start.py::_launch_direct_runner": (
         "own session and pass_fds for the runner claim; `gobby start` only"
+    ),
+    "runner_front_door.py::FrontDoorChild._popen": (
+        "own session and pass_fds for the gdaemon liveness pipe; once per start or respawn"
     ),
     "cli/install_setup_impeccable.py::_detect_node": (
         "`gobby install` only; the daemon calls just inspect_impeccable_installation"
@@ -494,3 +498,39 @@ def test_a_session_leader_that_is_not_installed_fails_to_start(tmp_path: Path) -
         asyncio.run(spawn.create_session_exec(missing, cwd=tmp_path))
 
     assert raised.value.filename == missing
+
+
+def test_a_thread_deadline_caps_the_callers_run_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    timeouts: list[float] = []
+
+    def record(*_args: Any, **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        timeouts.append(kwargs["timeout"])
+        return subprocess.CompletedProcess([], 0, b"", b"")
+
+    monkeypatch.setattr(subprocess, "run", record)
+    with spawn.thread_deadline(time.monotonic() + 2):
+        spawn.run([sys.executable, "--version"], timeout=10)
+        spawn.run([sys.executable, "--version"])
+        spawn.run([sys.executable, "--version"], timeout=0.5)
+    spawn.run([sys.executable, "--version"], timeout=10)
+
+    capped, uncapped_default, shorter, outside = timeouts
+    assert 0 < capped <= 2
+    assert 0 < uncapped_default <= 2
+    assert shorter == 0.5
+    assert outside == 10
+
+
+def test_a_run_after_its_thread_deadline_raises_without_starting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started: list[object] = []
+    monkeypatch.setattr(subprocess, "run", lambda *args, **_kwargs: started.append(args))
+
+    with (
+        spawn.thread_deadline(time.monotonic() - 1),
+        pytest.raises(subprocess.TimeoutExpired),
+    ):
+        spawn.run([sys.executable, "--version"], timeout=10)
+
+    assert started == []

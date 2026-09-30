@@ -371,3 +371,55 @@ async def test_close_cancels_the_pump() -> None:
     assert client._pump_task is None
     client.start_pump()
     assert client._pump_task is None, "a closed client never starts a pump"
+
+
+GOLDEN_THEME = {
+    "foreground": {"r": 0x20, "g": 0x21, "b": 0x22},
+    "background": {"r": 0xFA, "g": 0xFB, "b": 0xFC},
+    "palette": [[1, {"r": 0xC0, "g": 0x10, "b": 0x20}]],
+}
+
+
+async def test_declare_terminal_theme_binds_then_declares_in_gterm_bytes() -> None:
+    writer = _RecordingWriter()
+    client = FrameClient(asyncio.StreamReader(), cast(Any, writer))
+
+    await client.declare_terminal_theme("att-1", GOLDEN_THEME)
+
+    assert writer.writes == [
+        _golden("frame_bind_attachment.bin"),
+        _golden("set_terminal_theme.bin"),
+    ]
+
+
+def test_a_theme_without_colours_encodes_empty_options() -> None:
+    frame = encode_frame(
+        {
+            "type": "set_terminal_theme",
+            "theme": {"foreground": None, "background": None, "palette": []},
+        }
+    )
+
+    assert frame == b"\x04\x00\x00\x00\x0c\x00\x00\x00"
+
+
+@pytest.mark.parametrize(
+    "theme",
+    [
+        "dark",
+        {"foreground": {"r": 256, "g": 0, "b": 0}},
+        {"foreground": {"r": True, "g": 0, "b": 0}},
+        {"background": {"r": 1, "g": 2}},
+        {"palette": [[300, {"r": 0, "g": 0, "b": 0}]]},
+        {"palette": [[1]]},
+        {"palette": {"1": {"r": 0, "g": 0, "b": 0}}},
+    ],
+)
+async def test_an_invalid_theme_is_refused_before_anything_is_written(theme: object) -> None:
+    writer = _RecordingWriter()
+    client = FrameClient(asyncio.StreamReader(), cast(Any, writer))
+
+    with pytest.raises(FrameProtocolError):
+        await client.declare_terminal_theme("att-1", theme)
+
+    assert writer.writes == []

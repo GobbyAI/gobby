@@ -27,7 +27,12 @@ from gobby.storage.terminals import (
 )
 from gobby.terminals import TerminalRuntime, TerminalRuntimeRegistry
 from gobby.terminals.dimensions import MAX_CELLS, MAX_FRAME_SIZE
-from gobby.terminals.frame_client import FrameLagError, FrameProtocolError, decode_frame
+from gobby.terminals.frame_client import (
+    FrameLagError,
+    FrameProtocolError,
+    decode_frame,
+    encode_frame,
+)
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import (
     Delivered,
@@ -43,7 +48,7 @@ from gobby.terminals.ws_protocol import (
     TERMINAL_WS_SAFE_INTEGER_MAX,
     decode_message,
 )
-from tests.servers.test_tmux_mixin import MockWebSocket
+from tests.servers.terminal_fakes import MockWebSocket
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -104,6 +109,7 @@ class FakeProxyFrame:
     reservation_ids: list[str | None] = field(default_factory=list)
     viewports: list[tuple[int, int]] = field(default_factory=list)
     scrolls: list[int] = field(default_factory=list)
+    themes: list[tuple[str, object]] = field(default_factory=list)
     writes: list[object] = field(default_factory=list)
     handshake_epochs: list[str] = field(default_factory=list)
     closed: bool = False
@@ -141,6 +147,11 @@ class FakeProxyFrame:
 
     async def set_scroll_offset(self, rows_from_live_edge: int) -> None:
         self.scrolls.append(rows_from_live_edge)
+
+    async def declare_terminal_theme(self, attachment_id: str, theme: object) -> None:
+        # The production codec validates, so a theme it refuses is never sent.
+        encode_frame({"type": "set_terminal_theme", "theme": theme})
+        self.themes.append((attachment_id, theme))
 
     async def detach(self) -> None:
         self.detached = True
@@ -362,6 +373,15 @@ def _harness(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Harness:
         frames=frames,
         frame_list=frame_list,
     )
+
+
+class _ThemedHost:
+    """A gterm host that advertised the `terminal_theme` capability."""
+
+    capabilities = ("terminal_theme",)
+
+    async def wait_startup_settled(self, timeout: float) -> bool:
+        return True
 
 
 def _frame_for(harness: _Harness, row: Terminal) -> FakeProxyFrame:
@@ -617,7 +637,7 @@ async def test_disconnect_releases_lease(
     attachment = await _attach(harness, ws, harness.native_row)
     await _take(harness, ws, harness.native_row, attachment)
     frame = _frame_for(harness, harness.native_row)
-    await harness.server._cleanup_tmux_client(ws)
+    await harness.server._cleanup_terminal_client(ws)
     assert harness.server.lease_registry.get(attachment) is None
     assert frame.closed or frame.detached
 
@@ -682,21 +702,6 @@ async def test_web_read_only_until_explicit_takeover(
         == gclient.messages_of_type("terminal_control_result")[-1]["lease_generation"]
     )
     frame = _frame_for(harness, harness.native_row)
-    tmux_att = await _attach(harness, web, harness.tmux_row, request_id="tmux")
-    await _take(harness, web, harness.tmux_row, tmux_att)
-    await _send(
-        harness.server,
-        web,
-        {
-            "type": "terminal_input",
-            "terminal_id": harness.tmux_row.id,
-            "attachment_id": tmux_att,
-            "data": "y",
-            "client_write_seq": 2,
-        },
-    )
-    await _until(lambda: harness.tmux_rt.write_log)
-    assert harness.tmux_rt.tmux_commands
     assert not frame.writes
     native_frame = _frame_for(harness, harness.native_row)
     assert not native_frame.writes
@@ -806,21 +811,9 @@ async def test_viewport_independent_of_resize_and_only_paste_is_leased(
     assert not any(kind == "paste" for kind, _ in harness.native_rt.write_log)
 
     ext_ws = MockWebSocket()
-    ext_att = await _attach(harness, ext_ws, harness.external_row, request_id="ext")
-    await _take(harness, ext_ws, harness.external_row, ext_att)
-    await _send(
-        harness.server,
-        ext_ws,
-        {
-            "type": "terminal_resize",
-            "terminal_id": harness.external_row.id,
-            "attachment_id": ext_att,
-            "rows": 12,
-            "cols": 40,
-        },
-    )
-    await _until(lambda: harness.tmux_rt.resize_calls == [(12, 40)])
-    assert harness.tmux_rt.tmux_commands[-1] == ["resize-pane", "12", "40"]
+    refused = await _attach_result(harness, ext_ws, harness.external_row, request_id="ext")
+    assert refused["code"] == "unsupported_terminal_backend"
+    assert harness.tmux_rt.resize_calls == []
 
 
 @pytest.mark.asyncio
@@ -1037,7 +1030,7 @@ async def test_scroll_offset_and_wrapped_attach_history(
 
 
 @pytest.mark.asyncio
-async def test_write_outcome_indeterminate_tmux_and_native(
+async def test_write_outcome_indeterminate_native(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
@@ -1072,26 +1065,6 @@ async def test_write_outcome_indeterminate_tmux_and_native(
     lost = ws.messages_of_type("terminal_write_outcome")[-1]
     assert lost["outcome"] == "indeterminate"
     assert lost["client_write_seq"] == 2
-    tmux_att = await _attach(harness, ws, harness.tmux_row, request_id="t")
-    await _take(harness, ws, harness.tmux_row, tmux_att)
-    harness.tmux_rt.drop_next = True
-    await _send(
-        harness.server,
-        ws,
-        {
-            "type": "terminal_paste",
-            "terminal_id": harness.tmux_row.id,
-            "attachment_id": tmux_att,
-            "text": "p",
-            "client_write_seq": 3,
-        },
-    )
-    tmux_lost = [
-        item
-        for item in ws.messages_of_type("terminal_write_outcome")
-        if item.get("client_write_seq") == 3
-    ][-1]
-    assert tmux_lost["outcome"] == "indeterminate"
 
 
 @pytest.mark.asyncio
@@ -1265,7 +1238,7 @@ async def test_semantic_frame_proxy_relays_bincode_payloads(
         await _until(lambda attached_ws=ws: attached_ws.messages_of_type("terminal_output"))
         output = ws.messages_of_type("terminal_output")[-1]
         assert output["data"] == expected_ansi
-        await harness.server._cleanup_tmux_client(ws)
+        await harness.server._cleanup_terminal_client(ws)
 
     invalid_ws = MockWebSocket()
     harness.server.clients[invalid_ws] = {"subscriptions": {"*"}}
@@ -1286,7 +1259,7 @@ async def test_semantic_frame_proxy_relays_bincode_payloads(
         "code": "invalid_encoding",
     }
     assert not invalid_ws.messages_of_type("terminal_attach_result")
-    await harness.server._cleanup_tmux_client(semantic_ws)
+    await harness.server._cleanup_terminal_client(semantic_ws)
 
 
 @pytest.mark.asyncio
@@ -1306,21 +1279,18 @@ async def test_direct_attach_result_carries_locator(
         "host_terminal_id": cast(dict[str, Any], harness.native_row.locator)["host_terminal_id"],
         "pane": None,
     }
+    assert native["host_capabilities"] == []
+
+    harness.server.terminal_host_manager = _ThemedHost()
+    themed_ws = MockWebSocket()
+    themed = await _attach_result(harness, themed_ws, harness.native_row, request_id="themed")
+    assert themed["host_capabilities"] == ["terminal_theme"]
+    await harness.server._cleanup_terminal_client(themed_ws)
 
     tmux_ws = MockWebSocket()
     tmux = await _attach_result(harness, tmux_ws, harness.tmux_row, request_id="direct-tmux")
-    assert tmux["success"] is True
-    assert tmux["direct"] == {
-        "host_epoch": "epoch-1",
-        "frame_socket_path": _FRAME_SOCKET,
-        "host_terminal_id": "%9",
-        "pane": {
-            "socket_path": _SOCKET,
-            "pane_id": "%9",
-            "server_pid": 9,
-            "server_start_time": 9,
-        },
-    }
+    assert tmux["success"] is False
+    assert tmux["code"] == "unsupported_terminal_backend"
 
     proxy_ws = MockWebSocket()
     proxy = await _attach_result(
@@ -1332,6 +1302,8 @@ async def test_direct_attach_result_carries_locator(
     )
     assert proxy["success"] is True
     assert proxy["direct"] is None
+    # No direct stream: only what the daemon relays for a native pane.
+    assert proxy["host_capabilities"] == ["terminal_theme"]
 
     harness.native_rt.locator_error = RuntimeError("locator failed")
     failed_ws = MockWebSocket()
@@ -1381,17 +1353,7 @@ async def test_direct_attach_result_carries_locator(
             server_start_time=9,
         ),
     ]
-    partial_tmux = AttachLocator(
-        backend="tmux",
-        frame_host_epoch="epoch-1",
-        host_socket=_FRAME_SOCKET,
-        host_terminal_id="%9",
-        socket_path=_SOCKET,
-        pane_id="%9",
-        server_pid=9,
-    )
     cases = [(harness.native_row, harness.native_rt, locator) for locator in malformed]
-    cases.append((harness.tmux_row, harness.tmux_rt, partial_tmux))
     for index, (row, runtime, locator) in enumerate(cases):
         runtime.locator_result = locator
         ws = MockWebSocket()
@@ -1401,58 +1363,29 @@ async def test_direct_attach_result_carries_locator(
         assert harness.server.lease_registry.get(result["attachment_id"]) is None
         runtime.locator_result = None
 
-    await harness.server._cleanup_tmux_client(native_ws)
-    await harness.server._cleanup_tmux_client(tmux_ws)
-    await harness.server._cleanup_tmux_client(proxy_ws)
+    await harness.server._cleanup_terminal_client(native_ws)
+    await harness.server._cleanup_terminal_client(tmux_ws)
+    await harness.server._cleanup_terminal_client(proxy_ws)
 
 
 @pytest.mark.asyncio
-async def test_tmux_semantic_proxy_uses_host_frames(
+async def test_legacy_tmux_attach_is_refused_without_opening_a_frame(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
-    semantic_ws = MockWebSocket()
-    semantic = await _attach_result(
-        harness,
-        semantic_ws,
-        harness.tmux_row,
-        request_id="tmux-semantic",
-        frame_delivery="proxy",
-        encoding="semantic_frame",
-    )
-    frame = _frame_for(harness, harness.tmux_row)
-    raw = (_WIRE_GOLDEN / "frame.bin").read_bytes()[4:]
-    assert semantic["direct"] is None
-    assert frame.encoding == "semantic_frame"
-    assert semantic["attachment_id"] in harness.server._proxy().attachments
-    assert semantic["attachment_id"] not in harness.server._tmux_pending
-    await frame.queue.put({"type": "frame", "raw": raw})
-    await _until(
-        lambda: semantic_ws.messages_of_type("terminal_frame")
-        or semantic_ws.messages_of_type("terminal_ws_fragment")
-    )
-    assert _reassemble(semantic_ws.all_messages())["payload"] == base64.b64encode(raw).decode(
-        "ascii"
-    )
-
-    frame_count = len(harness.frame_list)
-    for suffix, encoding in (("omitted", None), ("explicit", "terminal_ansi")):
+    for suffix, encoding in (("semantic", "semantic_frame"), ("ansi", "terminal_ansi")):
         ws = MockWebSocket()
         result = await _attach_result(
             harness,
             ws,
             harness.tmux_row,
-            request_id=f"tmux-ansi-{suffix}",
+            request_id=f"tmux-{suffix}",
             frame_delivery="proxy",
             encoding=encoding,
         )
-        assert result["direct"] is None
-        assert result["attachment_id"] in harness.server._tmux_pending
-        assert result["attachment_id"] not in harness.server._proxy().attachments
-        assert len(harness.frame_list) == frame_count
-        await harness.server._cleanup_tmux_client(ws)
-
-    await harness.server._cleanup_tmux_client(semantic_ws)
+        assert result["success"] is False
+        assert result["code"] == "unsupported_terminal_backend"
+    assert harness.frame_list == []
 
 
 @pytest.mark.asyncio
@@ -1498,3 +1431,123 @@ async def test_resize_moves_only_the_resizing_attachment_viewport(
     assert leases.viewport(att_a) == (30, 90)
     assert frame_b.viewports == [(40, 120)]
     assert leases.viewport(att_b) == (40, 120)
+
+
+_THEME = {
+    "foreground": {"r": 0x20, "g": 0x21, "b": 0x22},
+    "background": {"r": 0xFA, "g": 0xFB, "b": 0xFC},
+    "palette": [[1, {"r": 0xC0, "g": 0x10, "b": 0x20}]],
+}
+
+
+def _set_theme(row: Terminal, attachment: str, theme: object = _THEME) -> dict[str, Any]:
+    return {
+        "type": "terminal_set_theme",
+        "terminal_id": row.id,
+        "attachment_id": attachment,
+        "theme": theme,
+    }
+
+
+def _theme_errors(ws: MockWebSocket) -> list[str | None]:
+    return [message.get("code") for message in ws.messages_of_type("terminal_error")]
+
+
+@pytest.mark.asyncio
+async def test_a_proxied_theme_is_declared_as_the_senders_own_attachment(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    harness.server.terminal_host_manager = _ThemedHost()
+    ws_a = MockWebSocket()
+    ws_b = MockWebSocket()
+    att_a = await _attach(harness, ws_a, harness.native_row, request_id="a")
+    att_b = await _attach(harness, ws_b, harness.native_row, request_id="b")
+    frame_a, frame_b = harness.frame_list
+
+    await _send(harness.server, ws_b, _set_theme(harness.native_row, att_b))
+    # A socket cannot declare through another socket's attachment, so an
+    # observer never borrows the grant holder's binding.
+    await _send(harness.server, ws_b, _set_theme(harness.native_row, att_a))
+
+    # The daemon binds each stream to its own lease; the host applies only
+    # the grant holder's declaration (gterminal terminal_theme tests).
+    assert frame_b.themes == [(att_b, _THEME)]
+    assert frame_a.themes == []
+    assert _theme_errors(ws_b) == ["theme_not_relayed"]
+    assert _theme_errors(ws_a) == []
+
+
+@pytest.mark.asyncio
+async def test_a_proxied_theme_is_refused_without_a_theming_native_host(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    harness = _harness(temp_db, sample_project)
+    ws = MockWebSocket()
+    native = await _attach(harness, ws, harness.native_row, request_id="native")
+
+    await _send(harness.server, ws, _set_theme(harness.native_row, native))
+    harness.server.terminal_host_manager = _ThemedHost()
+    await _send(harness.server, ws, _set_theme(harness.native_row, "no-such-attachment"))
+    bad_theme = {"foreground": {"r": 256, "g": 0, "b": 0}}
+    await _send(harness.server, ws, _set_theme(harness.native_row, native, bad_theme))
+
+    assert _theme_errors(ws) == [
+        "theme_not_relayed",
+        "theme_not_relayed",
+        "invalid_terminal_theme",
+    ]
+    # gclient would take an attachment's terminal_error as the answer to a
+    # pending take/release control, so the refusal names no attachment.
+    assert all("attachment_id" not in m for m in ws.messages_of_type("terminal_error"))
+    assert all(frame.themes == [] for frame in harness.frame_list)
+
+
+_OBSERVER_THEME = {
+    "foreground": {"r": 1, "g": 2, "b": 3},
+    "background": {"r": 4, "g": 5, "b": 6},
+}
+
+
+@pytest.mark.asyncio
+async def test_an_observer_theme_waits_until_the_observer_holds_the_lease(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    # A web holder has no gterm input grant, so the host would apply any
+    # stream's theme; the daemon's lease check keeps the holder's colours.
+    harness = _harness(temp_db, sample_project)
+    harness.server.terminal_host_manager = _ThemedHost()
+    row = harness.native_row
+    ws_a = MockWebSocket()
+    ws_b = MockWebSocket()
+    att_a = await _attach(harness, ws_a, row, request_id="a")
+    att_b = await _attach(harness, ws_b, row, request_id="b")
+    frame_a, frame_b = harness.frame_list
+    await _take(harness, ws_a, row, att_a)
+    await _until(lambda: ws_a.messages_of_type("terminal_control_result"))
+
+    await _send(harness.server, ws_a, _set_theme(row, att_a))
+    await _send(harness.server, ws_b, _set_theme(row, att_b, _OBSERVER_THEME))
+    await _send(harness.server, ws_b, _set_theme(row, att_b, {"foreground": {"r": 256}}))
+
+    assert frame_a.themes == [(att_a, _THEME)]
+    assert frame_b.themes == []
+    assert _theme_errors(ws_a) == []
+    assert _theme_errors(ws_b) == ["theme_not_relayed", "invalid_terminal_theme"]
+
+    # gclient sends a pane's theme once, so taking control declares the
+    # theme the observer was refused.
+    await _send(
+        harness.server,
+        ws_b,
+        {
+            "type": "terminal_take_control",
+            "terminal_id": row.id,
+            "attachment_id": att_b,
+            "takeover": True,
+        },
+    )
+    await _until(lambda: frame_b.themes != [])
+
+    assert frame_b.themes == [(att_b, _OBSERVER_THEME)]
+    assert frame_a.themes == [(att_a, _THEME)]

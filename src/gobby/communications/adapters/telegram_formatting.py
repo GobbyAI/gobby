@@ -26,6 +26,7 @@ class _CloseTag:
 
 type _Token = _Text | _OpenTag | _CloseTag
 
+TELEGRAM_MAX_MESSAGE_LENGTH = 4096
 _SAFE_LINK_SCHEMES = frozenset({"http", "https", "mailto", "tg"})
 _MAX_INLINE_NESTING = 16
 

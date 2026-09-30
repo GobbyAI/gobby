@@ -6,10 +6,12 @@ Thin router aggregation layer that composes endpoints from:
 - endpoints/execution.py - Tool calls and schema retrieval
 - endpoints/server.py - Server management
 - endpoints/registry.py - Embedding, status, and refresh
+- endpoints/bridge.py - Stdio bridge readiness reports
 """
 
 from fastapi import APIRouter
 
+from gobby.servers.routes.mcp.endpoints.bridge import report_bridge_ready
 from gobby.servers.routes.mcp.endpoints.discovery import (
     list_all_mcp_tools,
     recommend_mcp_tools,
@@ -51,6 +53,9 @@ def create_mcp_router() -> APIRouter:
     router.post("/tools/schema")(get_tool_schema)
     router.post("/tools/call")(call_mcp_tool)
     router.post("/{server_name}/tools/{tool_name}")(mcp_proxy)
+
+    # Stdio bridge lifecycle from endpoints/bridge.py
+    router.post("/bridge/ready")(report_bridge_ready)
 
     # Server management endpoints from endpoints/server.py
     router.get("/servers")(list_mcp_servers)

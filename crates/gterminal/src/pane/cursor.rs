@@ -5,13 +5,13 @@ use super::terminal::TerminalCursorState;
 pub(crate) const CURSOR_POSITION_SETTLE: Duration = Duration::from_millis(20);
 const CURSOR_POSITION_MAX_HOLD: Duration = Duration::from_millis(100);
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub(crate) struct DecscusrTracker {
     state: DecscusrParseState,
     cursor_shape_overridden: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 enum DecscusrParseState {
     #[default]
     Ground,

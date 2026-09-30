@@ -28,7 +28,6 @@ KILL_ERROR_NO_TARGET_PID = "no_target_pid"
 
 # Validation patterns for terminal context values passed to subprocess calls
 _TERMINAL_CTX_PATTERNS: dict[str, re.Pattern[str]] = {
-    "tmux_pane": re.compile(r"^%\d+$"),
     "parent_pid": re.compile(r"^\d+$"),
     "session_id": re.compile(r"^[a-zA-Z0-9_\-]+$"),
 }
@@ -71,12 +70,6 @@ def _signal_process_group(pid: int, sig: int) -> None:
         os.kill(pid, sig)
         return
     os.killpg(os.getpgid(pid), sig)
-
-
-def _configured_tmux_command_prefix() -> list[str]:
-    from gobby.agents.tmux import get_configured_tmux_command_prefix
-
-    return get_configured_tmux_command_prefix()
 
 
 async def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
@@ -230,10 +223,7 @@ async def _close_terminal_window(
     timeout: float = 5.0,
     provider: str | None = None,
 ) -> dict[str, Any]:
-    """Close the terminal window/pane for an agent session.
-
-    Uses the session's terminal_context to find tmux pane or parent PID.
-    """
+    """Close a session's recorded process group after verifying its identity."""
     is_windows = sys.platform == "win32"
 
     ctx: dict[str, Any] = {}
@@ -246,39 +236,13 @@ async def _close_terminal_window(
         logger.debug("Failed to get terminal context: %s", e)
 
     # Validate terminal context values
-    for _key in ("tmux_pane", "parent_pid"):
+    for _key in ("parent_pid",):
         _val = ctx.get(_key)
         if _val is not None and not _validate_terminal_value(_key, str(_val)):
             logger.warning("Invalid %s format: %r, ignoring", _key, _val)
             ctx.pop(_key, None)
 
-    # Strategy 1: tmux kill-pane (primary — all agents use tmux)
-    if ctx.get("tmux_pane"):
-        try:
-            rc, stdout, _ = await _run_subprocess(
-                *_configured_tmux_command_prefix(),
-                "display-message",
-                "-t",
-                ctx["tmux_pane"],
-                "-p",
-                "#{pane_id}",
-                timeout=timeout,
-            )
-            if rc == 0 and stdout.strip():
-                await _run_subprocess(
-                    *_configured_tmux_command_prefix(),
-                    "kill-pane",
-                    "-t",
-                    ctx["tmux_pane"],
-                    timeout=timeout,
-                )
-                return {"success": True, "method": "tmux_kill_pane", "pane": ctx["tmux_pane"]}
-            else:
-                logger.debug("tmux pane %s not found, skipping", ctx["tmux_pane"])
-        except Exception as e:
-            logger.debug("tmux kill-pane failed: %s", e)
-
-    # Strategy 2: Windows taskkill
+    # Windows taskkill uses the recorded parent process.
     if is_windows:
         parent_pid = ctx.get("parent_pid")
         if parent_pid:
@@ -306,7 +270,7 @@ async def _close_terminal_window(
             except Exception as e:
                 logger.debug("taskkill failed: %s", e)
 
-    # Strategy 3: Kill parent_pid directly (fallback)
+    # Kill parent_pid directly where no managed terminal close was possible.
     parent_pid = ctx.get("parent_pid")
     if parent_pid:
         try:
@@ -339,7 +303,7 @@ async def _close_terminal_window(
     return {"success": False, "error": "No terminal close method available"}
 
 
-async def _close_tmux_session(
+async def _close_managed_terminal(
     run: AgentRun,
     db: HubDatabase,
     *,
@@ -366,10 +330,17 @@ async def _close_tmux_session(
             )
         return {"success": False, "error": "agent run has no terminal"}
     terminal = active_terminal_for_run(services.manager, run)
+    row = None if run.terminal_id is None else services.manager.get(run.terminal_id)
+    if row is not None and row.backend != "native" and row.state != "exited":
+        return {
+            "success": False,
+            "error": f"Unsupported live terminal backend: {row.backend}",
+            "error_code": "unsupported_terminal_backend",
+            "terminal_id": row.id,
+        }
     if terminal is None:
         # agent_runs.terminal_id outlives the row's live state, so a run whose
         # terminal already exited has nothing left to close.
-        row = None if run.terminal_id is None else services.manager.get(run.terminal_id)
         if row is not None and row.state == "exited":
             return {
                 "success": True,
@@ -424,7 +395,7 @@ async def kill_agent(
 ) -> dict[str, Any]:
     """Kill an agent process using DB records.
 
-    Works entirely from the AgentRun DB model. All agents run via tmux.
+    Works from the AgentRun DB model and the managed terminal runtime.
 
     Args:
         run: Agent run DB record.
@@ -443,7 +414,7 @@ async def kill_agent(
 
     # Try terminal-specific close
     if close_terminal and run.terminal_id:
-        result = await _close_tmux_session(
+        result = await _close_managed_terminal(
             run,
             db,
             terminal_action=terminal_action,
@@ -464,6 +435,8 @@ async def kill_agent(
             if result.get("already_dead"):
                 response["already_dead"] = True
             return response
+        if result.get("error_code") == "unsupported_terminal_backend":
+            return result
 
     if close_terminal and session_id and terminal_close_result is None:
         result = await _close_terminal_window(

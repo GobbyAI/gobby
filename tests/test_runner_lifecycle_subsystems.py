@@ -36,7 +36,6 @@ def _patch_init_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
         "_cleanup_stale_expansion_runs_on_startup",
         "_initialize_vector_store",
         "_start_core_services",
-        "_check_tmux_health",
         "_start_terminal_host",
         "_start_agent_lifecycle_monitor",
         "_start_cron_scheduler",

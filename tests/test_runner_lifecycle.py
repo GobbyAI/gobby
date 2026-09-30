@@ -18,13 +18,13 @@ import gobby.ai._text_generation_adapters as text_generation_adapters
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_agents as runner_lifecycle_agents
 import gobby.runner_lifecycle_processes as runner_lifecycle_processes
-import gobby.runner_lifecycle_reconcile as runner_lifecycle_reconcile
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
 import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
@@ -385,6 +385,138 @@ class TestGobbyRunnerRun:
         ]
 
 
+def _init_servers_runner(
+    config: DaemonConfig, bootstrap: BootstrapConfig, text_generation_service: object
+) -> SimpleNamespace:
+    """A runner stub carrying every attribute init_servers reads."""
+
+    class RunnerStub(SimpleNamespace):
+        pass
+
+    runner = RunnerStub()
+    runner.startup_config = config
+    runner.bootstrap_config = bootstrap
+    runner.machine_id = "machine-1"
+    runner.codex_client = None
+    runner.text_generation_service = text_generation_service
+    runner.database = object()
+    runner.db_executor = None
+    runner.worktree_delete_executor = None
+    runner.coverage_executor = None
+    runner.database_concurrency = None
+    runner.database_watchdog = None
+    runner.session_manager = None
+    runner.task_manager = object()
+    runner.span_storage = None
+    runner.managed_credential_manager = None
+    runner.memory_backup_manager = None
+    runner.memory_manager = None
+    runner.memory_dream_coordinator = None
+    runner.feedback_review_service = None
+    runner.llm_service = None
+    runner.vector_store = None
+    runner.mcp_proxy = None
+    runner.mcp_db_manager = None
+    runner.metrics_manager = None
+    runner.agent_runner = None
+    runner.message_processor = None
+    runner.task_validator = None
+    runner.worktree_storage = None
+    runner.clone_storage = None
+    runner.git_manager = None
+    runner.project_id = "project-1"
+    runner.pipeline_executor = None
+    runner.workflow_loader = None
+    runner.pipeline_execution_manager = None
+    runner.completion_registry = None
+    runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
+    runner.agent_lifecycle_monitor = None
+    runner.attention_manager = None
+    runner.detection_registry = None
+    runner.communications_manager = None
+    runner.code_indexer = None
+    runner.cron_storage = None
+    runner.cron_scheduler = None
+    runner.system_automation_loop = None
+    runner.skill_manager = None
+    runner.hub_manager = None
+    runner.config_store = None
+    runner.config_runtime = SimpleNamespace(
+        ready=False,
+        capture=static_runtime_capture(config),
+        register_revision_publisher=MagicMock(),
+    )
+    runner.prompt_manager = None
+    runner.tool_chat_service = None
+    runner._dev_mode = False
+    return runner
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("front_door", "expected"),
+    [
+        (True, ("127.0.0.1", 60987, 60988)),
+        (False, ("0.0.0.0", 60887, 60888)),  # nosec B104 # asserted, never bound
+    ],
+)
+async def test_backend_ports_behind_front_door(
+    mock_config: MagicMock, front_door: bool, expected: tuple[str, int, int]
+) -> None:
+    """Behind the front door the runner binds the +100 pair on loopback; off, the public pair."""
+    from gobby.ai import build_daemon_text_generation_service
+    from gobby.runner_init.servers import init_servers
+
+    bootstrap = BootstrapConfig(
+        bind_host="0.0.0.0",  # nosec B104 # the public host gdaemon would take
+        daemon_port=60887,
+        websocket_port=60888,
+        front_door=FrontDoorConfig(enabled=front_door),
+    )
+    host, http_port, ws_port = expected
+    config = DaemonConfig(websocket={"enabled": True})
+    runner = cast(
+        GobbyRunner,
+        _init_servers_runner(config, bootstrap, build_daemon_text_generation_service(config)),
+    )
+    with (
+        patch("gobby.runner_init.servers.HTTPServer") as http_server_cls,
+        patch("gobby.runner_init.servers.WebSocketServer") as websocket_server_cls,
+        patch("gobby.runner_init.servers.WebChatRuntimeManager"),
+        patch("gobby.runner_init.servers.ModelMetadataCoverageAuditor"),
+        patch("gobby.runner_init.servers.CapabilityRefreshCoordinator"),
+        patch("gobby.runner_init.servers.ProviderCapacityService.create_default"),
+        patch("gobby.runner_init.servers.LocalContextStore"),
+        patch("gobby.runner_init.servers.LocalContextService"),
+        patch("gobby.runner_init.servers.configured_local_routes", return_value=()),
+        patch("gobby.runner_init.servers.set_app_context"),
+        patch(
+            "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
+            return_value=False,
+        ),
+    ):
+        init_servers(runner)
+
+    assert http_server_cls.call_args.kwargs["port"] == http_port
+    websocket_config = websocket_server_cls.call_args.kwargs["config"]
+    assert (websocket_config.host, websocket_config.port) == (host, ws_port)
+
+    with ExitStack() as stack:
+        for active_patch in create_base_patches(mock_config=mock_config):
+            stack.enter_context(active_patch)
+        daemon = _runner_with_static_runtime()
+        daemon.bootstrap_config = bootstrap
+        daemon._shutdown_requested = True
+        uvicorn_config = stack.enter_context(patch("uvicorn.Config"))
+        server = AsyncMock()
+        server.serve = _serve_mock_until_should_exit(server)
+        stack.enter_context(patch("uvicorn.Server", return_value=server))
+        stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+        await daemon.run(ownership_resolution=FailOpenPidOwnership("test"))
+
+    assert uvicorn_config.call_args.kwargs["host"] == host
+
+
 class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
 
@@ -481,69 +613,15 @@ class TestInitSubsystems:
             ]
         )
 
-        class RunnerStub(SimpleNamespace):
-            pass
-
-        runner = RunnerStub()
-        runner.startup_config = config
-        runner.bootstrap_config = config
-        runner.machine_id = "machine-1"
-        runner.codex_client = None
         text_generation_service = build_daemon_text_generation_service(
             config,
             registry=registry,
         )
-        runner.text_generation_service = text_generation_service
-        runner.database = object()
-        runner.db_executor = None
-        runner.worktree_delete_executor = None
-        runner.coverage_executor = None
-        runner.database_concurrency = None
-        runner.database_watchdog = None
-        runner.session_manager = None
-        runner.task_manager = object()
-        runner.span_storage = None
-        runner.managed_credential_manager = None
-        runner.memory_backup_manager = None
-        runner.memory_manager = None
-        runner.memory_dream_coordinator = None
-        runner.feedback_review_service = None
-        runner.llm_service = None
-        runner.vector_store = None
-        runner.mcp_proxy = None
-        runner.mcp_db_manager = None
-        runner.metrics_manager = None
-        runner.agent_runner = None
-        runner.message_processor = None
-        runner.task_validator = None
-        runner.worktree_storage = None
-        runner.clone_storage = None
-        runner.git_manager = None
-        runner.project_id = "project-1"
-        runner.pipeline_executor = None
-        runner.workflow_loader = None
-        runner.pipeline_execution_manager = None
-        runner.completion_registry = None
-        runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
-        runner.agent_lifecycle_monitor = None
-        runner.attention_manager = None
-        runner.detection_registry = None
-        runner.communications_manager = None
-        runner.code_indexer = None
-        runner.cron_storage = None
-        runner.cron_scheduler = None
-        runner.system_automation_loop = None
-        runner.skill_manager = None
-        runner.hub_manager = None
-        runner.config_store = None
-        runner.config_runtime = SimpleNamespace(
-            ready=False,
-            capture=static_runtime_capture(config),
-            register_revision_publisher=MagicMock(),
+        runner = _init_servers_runner(
+            config,
+            BootstrapConfig(front_door=FrontDoorConfig(enabled=False)),
+            text_generation_service,
         )
-        runner.prompt_manager = None
-        runner.tool_chat_service = None
-        runner._dev_mode = False
         capability_service = MagicMock()
         coverage_auditor = MagicMock()
         capacity_service = MagicMock()
@@ -913,7 +991,6 @@ class TestInitSubsystems:
             patch.object(runner_lifecycle_subsystems, "_check_embedding_service", async_noop),
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
             patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
-            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_agent_lifecycle_monitor",
@@ -1076,7 +1153,6 @@ class TestShutdownDaemonServices:
             patch.object(runner_lifecycle_subsystems, "_cleanup_metrics_on_startup"),
             patch.object(runner_lifecycle_subsystems, "_initialize_vector_store", async_noop),
             patch.object(runner_lifecycle_subsystems, "_start_core_services", async_noop),
-            patch.object(runner_lifecycle_subsystems, "_check_tmux_health", async_noop),
             patch.object(
                 runner_lifecycle_subsystems,
                 "_start_agent_lifecycle_monitor",
@@ -2500,7 +2576,7 @@ class TestShutdownDaemonServices:
         assert provider_task.cancelled()
         assert events == ["provider-cleanup", "reap"]
 
-    async def test_restart_preserve_set_paginates_every_active_tmux_run(self) -> None:
+    async def test_restart_preserve_set_paginates_every_active_run(self) -> None:
         run_count = 1_005
         runs = [
             SimpleNamespace(
@@ -2525,34 +2601,9 @@ class TestShutdownDaemonServices:
             ),
             db_executor=SimpleNamespace(run=run_db),
         )
-        tmux_manager = SimpleNamespace(
-            config=SimpleNamespace(socket_name="gobby", socket_path=None),
-            list_sessions=AsyncMock(
-                return_value=[
-                    SimpleNamespace(
-                        name=f"agent-{index}",
-                        pane_pid=20_000 + index,
-                        pane_dead=False,
-                    )
-                    for index in range(run_count)
-                ]
-            ),
-        )
+        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
 
-        with (
-            patch.object(
-                runner_lifecycle_processes,
-                "_live_terminal_session_names",
-                return_value={f"run-{index}": f"agent-{index}" for index in range(run_count)},
-            ),
-            patch(
-                "gobby.agents.tmux.get_tmux_session_manager",
-                return_value=tmux_manager,
-            ),
-        ):
-            preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(runner)
-
-        assert preserved_pids == {20_000 + index for index in range(run_count)}
+        assert preserved_pids == {10_000 + index for index in range(run_count)}
         assert db_calls == [
             (
                 cast(Any, runner_lifecycle_processes)._list_active_agent_runs_once,
@@ -2576,10 +2627,11 @@ class TestRunGobbyFunction:
     @pytest.mark.asyncio
     async def test_run_gobby_creates_runner(self):
         """Test that run_gobby creates and runs GobbyRunner."""
-        bootstrap = SimpleNamespace(
+        bootstrap = BootstrapConfig(
             database_url="postgresql://test",
             bind_host="127.0.0.1",
             daemon_port=60887,
+            front_door=FrontDoorConfig(enabled=False),
         )
         lease = MagicMock()
         lease.try_acquire.return_value = True
@@ -2783,10 +2835,7 @@ class TestAgentEventBroadcasting:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             assert rb._agent_event_callback is not None
@@ -3409,7 +3458,7 @@ class TestAgentEventBroadcastingCallback:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("event_type", "expected_task_count"),
-        [("agent_started", 3), ("agent_completed", 4)],
+        [("agent_started", 2), ("agent_completed", 3)],
     )
     async def test_broadcast_tasks_retained_until_completion(
         self,
@@ -3428,31 +3477,16 @@ class TestAgentEventBroadcastingCallback:
         mock_ws_server = MagicMock()
         mock_ws_server.broadcast_agent_event = AsyncMock(side_effect=wait_for_release)
         mock_ws_server.broadcast_tmux_session_event = AsyncMock(side_effect=wait_for_release)
-        # The reader attaches by the terminal row's session name, resolved
-        # through the websocket server's terminal manager.
-        mock_ws_server.terminal_manager.get.return_value = SimpleNamespace(
-            session_name="agent-run-123", spawn_key=None
-        )
-
         mock_pty_manager = MagicMock()
         mock_pty_manager.stop_reader = AsyncMock(side_effect=wait_for_release)
-        mock_tmux_reader = MagicMock()
-        mock_tmux_reader.start_reader = AsyncMock(side_effect=wait_for_release)
-        mock_tmux_reader.stop_reader = AsyncMock(side_effect=wait_for_release)
 
         old_callback = rb._agent_event_callback
         tasks_before = set(rb._agent_broadcast_tasks)
         scheduled_tasks: set[asyncio.Task[None]] = set()
         try:
-            with (
-                patch(
-                    "gobby.agents.pty_reader.get_pty_reader_manager",
-                    return_value=mock_pty_manager,
-                ),
-                patch(
-                    "gobby.agents.tmux.get_tmux_output_reader",
-                    return_value=mock_tmux_reader,
-                ),
+            with patch(
+                "gobby.agents.pty_reader.get_pty_reader_manager",
+                return_value=mock_pty_manager,
             ):
                 setup_agent_event_broadcasting(mock_ws_server)
 
@@ -3461,9 +3495,7 @@ class TestAgentEventBroadcastingCallback:
                 "run-123",
                 {"terminal_id": "terminal-123"},
             )
-            # Only a start resolves the attach name; a kill broadcasts by terminal id.
-            expected_lookups = [call("terminal-123")] if event_type == "agent_started" else []
-            assert mock_ws_server.terminal_manager.get.call_args_list == expected_lookups
+            mock_ws_server.terminal_manager.get.assert_not_called()
 
             scheduled_tasks = rb._agent_broadcast_tasks - tasks_before
             assert len(scheduled_tasks) == expected_task_count
@@ -3496,10 +3528,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3539,10 +3568,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3575,10 +3601,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3610,10 +3633,7 @@ class TestAgentEventBroadcastingCallback:
 
         old_callback = rb._agent_event_callback
         try:
-            with (
-                patch("gobby.agents.pty_reader.get_pty_reader_manager"),
-                patch("gobby.agents.tmux.get_tmux_output_reader"),
-            ):
+            with patch("gobby.agents.pty_reader.get_pty_reader_manager"):
                 setup_agent_event_broadcasting(mock_ws_server)
 
             fire_agent_event(
@@ -3989,7 +4009,8 @@ class TestShutdownLoop:
             request_shutdown=MagicMock(),
             _shutdown_requested=False,
             config=mock_config,
-            bootstrap_config=mock_config,
+            bootstrap_config=BootstrapConfig(front_door=FrontDoorConfig(enabled=False)),
+            front_door_child=None,
             http_server=SimpleNamespace(
                 app=MagicMock(),
                 port=8765,
@@ -5045,40 +5066,6 @@ class TestAgentRestartRecoveryHelpers:
         # false cancellation redelivery at startup.
         subscriber_manager.get_completion_subscribers.assert_called_once_with("genuine-run")
 
-    def test_find_live_tmux_by_planned_name_prefers_exact_then_sorted_prefix(self) -> None:
-        exact = SimpleNamespace(name="wf-agent")
-        suffixed_a = SimpleNamespace(name="wf-agent-aaaa1111")
-        suffixed_b = SimpleNamespace(name="wf-agent-bbbb2222")
-
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"wf-agent": exact, "wf-agent-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is exact
-        )
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"wf-agent-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is suffixed_a
-        )
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"wf-agent-bbbb2222": suffixed_b, "wf-agent-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is suffixed_a
-        )
-        assert (
-            runner_lifecycle_reconcile._find_live_tmux_by_planned_name(
-                {"other-session": exact, "wf-agent2-aaaa1111": suffixed_a},
-                "wf-agent",
-            )
-            is None
-        )
-
     @pytest.mark.asyncio
     async def test_retry_parked_non_task_resumes_honors_failure_budget(self) -> None:
         missing_metadata = SimpleNamespace(id="run-missing-metadata", resume_metadata_json=None)
@@ -5288,113 +5275,28 @@ class TestAgentRestartRecoveryHelpers:
         assert events[-1] == "executor"
 
 
-async def test_restart_preserve_set_uses_and_caches_persisted_tmux_socket() -> None:
+async def test_restart_preserve_set_keeps_host_and_active_run_pids() -> None:
     runs = [
-        SimpleNamespace(
-            id=f"run-{index}",
-            pid=1_000 + index,
-            resume_metadata_json={
-                "tmux_socket_name": "persisted",
-                "tmux_socket_path": "/tmp/persisted.sock",
-            },
-        )
-        for index in range(2)
-    ]
-    run_db = AsyncMock(return_value=runs)
-    runner = SimpleNamespace(
-        agent_runner=SimpleNamespace(run_storage=object()),
-        db_executor=SimpleNamespace(run=run_db),
-    )
-    persisted_config = object()
-    default_config = SimpleNamespace(
-        socket_name="gobby",
-        socket_path=None,
-        model_copy=MagicMock(return_value=persisted_config),
-    )
-    default_manager = SimpleNamespace(config=default_config)
-    persisted_manager = SimpleNamespace(
-        list_sessions=AsyncMock(
-            return_value=[
-                SimpleNamespace(name=f"agent-{index}", pane_pid=2_000 + index) for index in range(2)
-            ]
-        )
-    )
-
-    with (
-        patch.object(
-            runner_lifecycle_processes,
-            "_live_terminal_session_names",
-            return_value={f"run-{index}": f"agent-{index}" for index in range(2)},
-        ),
-        patch(
-            "gobby.agents.tmux.get_tmux_session_manager",
-            return_value=default_manager,
-        ),
-        patch(
-            "gobby.agents.tmux.session_manager.TmuxSessionManager",
-            return_value=persisted_manager,
-        ) as manager_type,
-    ):
-        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
-            cast(GobbyRunner, runner)
-        )
-
-    assert preserved_pids == {2_000, 2_001}
-    assert default_config.model_copy.call_count == 1
-    assert default_config.model_copy.call_args == call(
-        update={
-            "socket_name": "persisted",
-            "socket_path": "/tmp/persisted.sock",
-        }
-    )
-    assert manager_type.call_args_list == [call(persisted_config)]
-    assert persisted_manager.list_sessions.await_count == 1
-
-
-async def test_restart_preserve_set_falls_back_to_stored_pids() -> None:
-    runs = [
-        SimpleNamespace(
-            id="lookup-failed",
-            pid=1_001,
-            resume_metadata_json={"tmux_socket_name": "failed"},
-        ),
-        SimpleNamespace(
-            id="pane-pid-unusable",
-            pid=1_002,
-            resume_metadata_json={"tmux_socket_name": "unusable"},
-        ),
+        SimpleNamespace(id="native-run", pid=1_001),
+        SimpleNamespace(id="headless-run", pid=1_002),
+        SimpleNamespace(id="unspawned-run", pid=None),
     ]
     runner = SimpleNamespace(
         agent_runner=SimpleNamespace(run_storage=object()),
         db_executor=SimpleNamespace(run=AsyncMock(return_value=runs)),
+        terminal_host_manager=SimpleNamespace(preserved_host_pid=lambda: 2_000),
     )
 
-    with (
-        patch.object(
-            runner_lifecycle_processes,
-            "_live_terminal_session_names",
-            return_value={
-                "lookup-failed": "lookup-failed",
-                "pane-pid-unusable": "pane-pid-unusable",
-            },
-        ),
-        patch.object(
-            runner_lifecycle_processes,
-            "_agent_live_sessions_by_name",
-            AsyncMock(
-                side_effect=[
-                    None,
-                    {"pane-pid-unusable": SimpleNamespace(pane_pid=0)},
-                ]
-            ),
-        ) as live_sessions,
-    ):
-        preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
-            cast(GobbyRunner, runner)
-        )
+    preserved_pids = await runner_lifecycle_processes._preserved_agent_terminal_pids(
+        cast(GobbyRunner, runner)
+    )
 
-    assert preserved_pids == {1_001, 1_002}
-    assert live_sessions.await_args_list == [call("failed", None), call("unusable", None)]
+    assert preserved_pids == {1_001, 1_002, 2_000}
+    runner.db_executor.run.assert_awaited_once()
+    args, kwargs = runner.db_executor.run.await_args
+    assert args[0].__name__ == "_list_active_agent_runs_once"
+    assert args[1] is runner
+    assert kwargs == {"include_fenced": True}
 
 
 async def test_restart_preserve_set_returns_none_when_run_enumeration_fails() -> None:
@@ -5646,26 +5548,18 @@ class TestAgentOutputReaderShutdown:
         assert cleanup_pid_file.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_shutdown_drains_both_readers_and_propagates_failures(self) -> None:
+    async def test_shutdown_drains_pty_reader_and_propagates_failures(self) -> None:
         import gobby.runner_broadcasting as rb
 
         mock_ws_server = MagicMock()
         pty_reader = MagicMock()
         pty_reader.stop_all = AsyncMock(side_effect=RuntimeError("PTY drain failed"))
-        tmux_reader = MagicMock()
-        tmux_reader.stop_all = AsyncMock()
         old_callback = rb._agent_event_callback
         old_readers = rb._agent_output_readers
         try:
-            with (
-                patch(
-                    "gobby.agents.pty_reader.get_pty_reader_manager",
-                    return_value=pty_reader,
-                ),
-                patch(
-                    "gobby.agents.tmux.get_tmux_output_reader",
-                    return_value=tmux_reader,
-                ),
+            with patch(
+                "gobby.agents.pty_reader.get_pty_reader_manager",
+                return_value=pty_reader,
             ):
                 rb.setup_agent_event_broadcasting(mock_ws_server)
 
@@ -5674,9 +5568,7 @@ class TestAgentOutputReaderShutdown:
 
             assert str(exc_info.value.exceptions[0]) == "PTY drain failed"
             pty_reader.stop_all.assert_awaited_once_with()
-            tmux_reader.stop_all.assert_awaited_once_with()
             pty_reader.set_output_callback.assert_called_with(None)
-            tmux_reader.set_output_callback.assert_called_with(None)
             assert rb._agent_event_callback is None
             assert rb._agent_output_readers is None
         finally:

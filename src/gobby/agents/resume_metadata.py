@@ -32,6 +32,8 @@ _RESUME_CONFIG_OVERRIDE_KEYS = frozenset(
         "model_provider",
         "shell_environment_policy.exclude",
         "features.shell_snapshot",
+        "features.plugins",
+        "features.remote_plugin",
         'plugins."unified-computer-use@openai-bundled".enabled',
         "mcp_servers.node_repl.enabled",
     }

@@ -1,6 +1,8 @@
 use std::borrow::Cow;
 use std::path::PathBuf;
 
+use serde::{Deserialize, Serialize};
+
 #[cfg(test)]
 use tracing::info;
 
@@ -41,13 +43,13 @@ pub(super) struct DefaultColorTrackedEvent {
     pub(super) event: DefaultColorEvent,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub(crate) struct DefaultColorOscTracker {
     state: DefaultColorOscTrackerState,
     body: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 enum DefaultColorOscTrackerState {
     #[default]
     Ground,
@@ -152,10 +154,13 @@ fn is_default_color_set_osc(body: &[u8]) -> bool {
         .any(|event| matches!(event, DefaultColorEvent::Set(_)))
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub(crate) struct DefaultColorEventTracker {
     state: DefaultColorOscTrackerState,
     body: Vec<u8>,
+    // Offsets are relative to one observed chunk, and process_pty_bytes drains
+    // them under the core lock, so a handover never carries pending events.
+    #[serde(skip)]
     pending: Vec<DefaultColorTrackedEvent>,
 }
 
@@ -328,13 +333,13 @@ pub(super) fn parse_reported_cwd(value: &[u8]) -> Option<PathBuf> {
 
 /// Collects complete OSC bodies from a raw byte stream. Consumers receive only
 /// bodies, keeping the framing state machine independent from OSC commands.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 struct OscStreamCollector {
     state: OscStreamState,
     body: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 enum OscStreamState {
     #[default]
     Ground,
@@ -458,7 +463,7 @@ const AGENT_OSC_MAX_CHARS: usize = 256;
 ///   payload (e.g. `\x1b]0;\x07`) clears the stored value.
 /// - `latest_progress` — last OSC 9 payload (the part after `9;`), stored
 ///   as-is after sanitization. E.g. `"4;3;"` or `"4;0;"`.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub(crate) struct AgentOscStateTracker {
     collector: OscStreamCollector,
     latest_title: Option<String>,

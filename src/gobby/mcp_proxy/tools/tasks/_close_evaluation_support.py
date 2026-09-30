@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Iterable
 from dataclasses import dataclass, fields, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from gobby.code_index.storage import CodeIndexStorage
@@ -16,6 +17,7 @@ from gobby.config.validation_detection import (
     resolve_validation_detection_config,
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._task_scope import collect_commit_paths_async
 from gobby.storage.session_models import Session
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -55,6 +57,7 @@ class CloseAttributionSnapshot:
     clean_proof_paths: frozenset[str]
     had_attributed_edits: bool
     claim_started_at: str | None
+    used_commit_fallback: bool = False
 
 
 @dataclass(frozen=True)
@@ -149,6 +152,7 @@ async def _derive_session_evidence_at_sync_point(
     detection: ValidationDetectionConfig,
     task_edited_files: set[str],
     repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]],
     *,
     archive_dir: str | None,
 ) -> TranscriptEvidence:
@@ -170,6 +174,7 @@ async def _derive_session_evidence_at_sync_point(
             detection,
             task_edited_files,
             repo_path,
+            task_checkout_paths=task_checkout_paths,
             archive_dir=archive_dir,
         )
         if sync_point is None:
@@ -198,6 +203,7 @@ async def derive_close_transcript_evidence(
     task_edited_files: set[str],
     repo_path: str,
     require_task_link: bool = False,
+    owner_used_commit_fallback: bool = False,
 ) -> TranscriptEvidence:
     """Parse and merge every session transcript that worked the task.
 
@@ -228,6 +234,11 @@ async def derive_close_transcript_evidence(
         windows = {session_id: start for session_id, start in windows.items() if start is not None}
         required = required.intersection(windows)
     evidence: list[TranscriptEvidence] = []
+    from gobby.workflows.task_claim_state import (
+        other_task_edited_checkout_paths,
+        task_edited_checkout_paths,
+    )
+
     for session_id, window_start in windows.items():
         session = ctx.session_manager.get(session_id)
         if session is None:
@@ -242,15 +253,68 @@ async def derive_close_transcript_evidence(
         effective_window: str | datetime | None = window_start
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
+        variables = ctx.session_var_manager.get_variables(session_id)
+        task_checkout_paths = task_edited_checkout_paths(variables, task_id)
+        task_links: list[dict[str, Any]] | None = None
+        window_end: float | None = None
+        if session_id not in required:
+            task_links = await asyncio.to_thread(
+                ctx.session_task_manager.get_session_tasks, session_id
+            )
+            window_end = _moved_on_epoch(task_links, task_id, effective_window)
+        if (
+            not task_checkout_paths
+            and session_id == owner_session_id
+            and owner_used_commit_fallback
+        ):
+            # Only the owner's commit-recovery attribution proves these task files
+            # in the closing checkout. A ledger-empty linked session may have edited
+            # the same path later for a different task.
+            root = os.path.realpath(repo_path)
+            task_checkout_paths = frozenset((root, path) for path in task_edited_files)
+        if task_checkout_paths:
+            if task_links is None:
+                task_links = await asyncio.to_thread(
+                    ctx.session_task_manager.get_session_tasks, session_id
+                )
+            completed_other_tasks = _closed_before_window_task_ids(
+                task_links, task_id, effective_window
+            )
+            other_task_paths = other_task_edited_checkout_paths(
+                variables, task_id, completed_other_tasks
+            )
+            # A live or overlapping historical pair cannot identify which
+            # transcript edit belongs to this close.
+            task_checkout_paths -= other_task_paths
+            legacy_closed_tasks = _legacy_closed_other_tasks(
+                task_links,
+                task_id,
+                effective_window,
+                variables.get("task_edited_file_checkouts_history_started_at"),
+            )
+            if task_checkout_paths and legacy_closed_tasks:
+                # A close before path history began dropped that task's ledger, so
+                # its commits are the proof of which paths it owned.
+                task_checkout_paths = await _without_closed_task_paths(
+                    task_checkout_paths, legacy_closed_tasks, repo_path
+                )
+        session_task_files = task_edited_files
+        if session_id != owner_session_id:
+            # A linked session's own proven pairs attribute its edits; a reclaiming
+            # owner's ledger can hold only what it touched afterwards (#23017).
+            session_task_files = task_edited_files | {path for _, path in task_checkout_paths}
         try:
             session_evidence = await _derive_session_evidence_at_sync_point(
                 session,
                 effective_window,
                 detection,
-                task_edited_files,
+                session_task_files,
                 repo_path,
+                task_checkout_paths,
                 archive_dir=archive_dir,
             )
+            if window_end is not None:
+                session_evidence = _before_epoch(session_evidence, window_end)
             try:
                 excluded = await derive_prelink_runs(
                     session, effective_window, detection, repo_path, archive_dir=archive_dir
@@ -273,6 +337,142 @@ async def derive_close_transcript_evidence(
 
 
 _EVIDENCE_LINK_ACTIONS = frozenset({"claimed", "worked_on"})
+
+
+def _evidence_epoch(value: str | datetime | None) -> float | None:
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=UTC)).timestamp()
+    return None
+
+
+def _moved_on_epoch(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+) -> float | None:
+    """When a linked session first claimed a different task after joining this one.
+
+    Its later shell runs and edits belong to that work, so a failing validation
+    there must not count against this task's close (#22884 found work, #23017).
+    """
+    start = _evidence_epoch(window_start)
+    if start is None:
+        return None
+    later_claims = [
+        epoch
+        for row in task_links
+        if (row.get("action") or row.get("session_action")) == "claimed"
+        and getattr(row.get("task"), "id", None) != task_id
+        and (epoch := _evidence_epoch(row.get("link_created_at"))) is not None
+        and epoch > start
+    ]
+    return min(later_claims, default=None)
+
+
+def _before_epoch(evidence: TranscriptEvidence, end: float) -> TranscriptEvidence:
+    """Keep only the runs and edits a linked session made before it moved on."""
+
+    def before(value: datetime) -> bool:
+        epoch = _evidence_epoch(value)
+        return epoch is not None and epoch < end
+
+    return replace(
+        evidence,
+        validation_runs=tuple(r for r in evidence.validation_runs if before(r.started_at)),
+        command_runs=tuple(r for r in evidence.command_runs if before(r.started_at)),
+        edits=tuple(e for e in evidence.edits if before(e.timestamp)),
+    )
+
+
+def _closed_before_window_task_ids(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+) -> frozenset[str]:
+    """Identify other tasks whose links and closure predate this evidence window."""
+    window_epoch = _evidence_epoch(window_start)
+    if window_epoch is None:
+        return frozenset()
+    completed: set[str] = set()
+    ambiguous: set[str] = set()
+    for row in task_links:
+        if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
+            continue
+        task = row.get("task")
+        other_id = getattr(task, "id", None)
+        if not isinstance(other_id, str) or other_id == task_id:
+            continue
+        closed_epoch = _evidence_epoch(getattr(task, "closed_at", None))
+        link_epoch = _evidence_epoch(row.get("link_created_at"))
+        if (
+            closed_epoch is not None
+            and link_epoch is not None
+            and link_epoch <= closed_epoch < window_epoch
+        ):
+            completed.add(other_id)
+        else:
+            ambiguous.add(other_id)
+    return frozenset(completed - ambiguous)
+
+
+def _legacy_closed_other_tasks(
+    task_links: Iterable[dict[str, Any]],
+    task_id: str,
+    window_start: str | datetime | None,
+    history_started_at: Any,
+) -> tuple[Any, ...]:
+    """Return closed other tasks whose edits may predate durable path history.
+
+    Closing a task drops its live ledger, so the history ledger is the only record
+    of its paths, and it holds nothing a task linked before history began edited
+    first. An open task keeps its live ledger, which the caller already
+    subtracts, so only these closes need other proof.
+    """
+    window_epoch = _evidence_epoch(window_start)
+    history_epoch = (
+        float(history_started_at)
+        if isinstance(history_started_at, (int, float)) and not isinstance(history_started_at, bool)
+        else None
+    )
+    closed: dict[str, Any] = {}
+    for row in task_links:
+        if (row.get("action") or row.get("session_action")) not in _EVIDENCE_LINK_ACTIONS:
+            continue
+        task = row.get("task")
+        other_id = getattr(task, "id", None)
+        if not isinstance(other_id, str) or other_id == task_id:
+            continue
+        closed_epoch = _evidence_epoch(getattr(task, "closed_at", None))
+        if closed_epoch is None:
+            continue
+        if window_epoch is not None and closed_epoch < window_epoch:
+            continue
+        link_epoch = _evidence_epoch(row.get("link_created_at"))
+        if history_epoch is None or link_epoch is None or link_epoch <= history_epoch:
+            closed[other_id] = task
+    return tuple(closed.values())
+
+
+async def _without_closed_task_paths(
+    task_checkout_paths: frozenset[tuple[str, str]],
+    closed_tasks: Iterable[Any],
+    repo_path: str,
+) -> frozenset[tuple[str, str]]:
+    """Drop target paths that a closed task's own commits also touched."""
+    commit_shas = [sha for task in closed_tasks for sha in (getattr(task, "commits", None) or ())]
+    try:
+        owned = await collect_commit_paths_async(commit_shas, repo_path)
+    except RuntimeError as exc:
+        # Without the closed task's paths no edit is provably the target's own.
+        # Independent validation runs remain admissible with no credited edits.
+        logger.warning("Closed-task path ownership is unavailable: %s", exc)
+        return frozenset()
+    return frozenset(pair for pair in task_checkout_paths if pair[1] not in owned)
 
 
 def _linked_session_windows(ctx: RegistryContext, task_id: str) -> dict[str, str | None]:

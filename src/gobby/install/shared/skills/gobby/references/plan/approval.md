@@ -10,24 +10,17 @@ Before manifest handoff, verify a real nonblank `**Plan ID:** <id>` outside fenc
 Use the complete canonical approved result, never reconstructed fields:
 1. apply_plan_review_manifest compares reviewed sections, re-derives/validates the manifest and atomically records approval intent and manifest checkpoint.
 2. append_plan_changelog_round appends prose plus the daemon-rendered canonical V1 fence.
-3. finalize_plan_review_evidence persists the result and pending lesson-mint state.
-4. Review proven prior-round lessons and checkpoint_plan_review_lesson_mint with minted IDs, none when unproven, or failed with the recorder error. Approval completes only after pending clears.
-5. Run `uv run gobby plans validate <plan-file> -p <project-root> --mode expansion`.
+3. finalize_plan_review_evidence persists the result.
+4. Run `uv run gobby plans validate <plan-file> -p <project-root> --mode expansion`.
 
 Use render_plan_changelog_round only to inspect canonical rendering; never hand-edit fences. Preserve V1 as one kind: verification section with bold round labels, not noncanonical round headings.
 
 ## Handoff-manifest route
-Used when adversarial review is skipped, and by the Plan Adversary seat on plan council consensus after Josh's approval. The applying session supplies complete routing decisions to derive_plan_handoff_manifest and passes its exact source_plan_hash, rendered_plan_hash and manifest_digest to apply_plan_handoff_manifest. Apply re-derives and rejects drift before atomic write; exact rendered-hash retries are idempotent. Run expansion-mode validation afterward. Never synthesize reviewer verdicts, attestation, or evidence, and never invoke a stub manifest emitter.
+Used when adversarial review is skipped, and by the Plan Adversary seat on plan council consensus, before the Program Director's review and Josh's approval; that approval gates expansion. The applying session supplies complete routing decisions to derive_plan_handoff_manifest and passes its exact source_plan_hash, rendered_plan_hash and manifest_digest to apply_plan_handoff_manifest. Apply re-derives and rejects drift before atomic write; exact rendered-hash retries are idempotent. Run expansion-mode validation afterward. Never synthesize reviewer verdicts, attestation, or evidence, and never invoke a stub manifest emitter.
 
-## Lessons and boundaries
-Reviewer-miss requires every participating section hash unchanged since an earlier finalized round. Fixer-induced-defect requires changed causal section hashes, causal_finding_id and introduced_in_round. A dual-class lesson needs both proof bundles; each independently proven class remains recordable even if the other is unproven. Use review-learning's class-scoped identity, source_kind plan_review, guardrail_target checklist, rule_id plan-review:<category>; a plan-file path is not a promotion anchor. Mint at most five proven lessons per plan, reserving a slot per present class and using its deterministic ranking. Rank reviewer misses by completed rounds missed and fixer-induced defects by
-causal occurrences, descending within each class; then severity, `check_key`
-ascending, and `finding_id` ascending. Reserve one slot for each present class
-before filling the remaining slots in that order. No proof means no lesson.
+## Boundaries
 If implementation handoff is requested while an enhancer or reviewer is active, mark it pending, finish the run, votes, accepted edits and checkpoints before handing off; launch no new optional round.
 After approval, choose manual [expansion](expansion.md) or authorized build with planning_seed_state approved and only finalized completed_plan_review_rounds. A file edit that changes reviewed scope requires renewed evidence; interrupted checkpoint recovery follows [repair](repair.md).
-
-For an already-approved autonomous planning-stage review whose lesson mint failed, use gobby-tasks-ops:backfill_plan_review_lessons to retry its durable checkpoint; it does not rerun approval.
 
 See [Manifest-on-approval contract](../../../../../../../../docs/contracts/plan-coverage.md#manifest-on-approval-contract).
 

@@ -24,13 +24,18 @@ import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._transitions import claim_task
+from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
+from tests.storage.tasks._stage_test_helpers import set_stage_state
 
 pytestmark = pytest.mark.unit
 
@@ -970,18 +975,21 @@ class TestVariablePersistence:
         self,
         db: HubDatabase,
         session_var_manager: SessionVariableManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Observer variable changes (e.g. task_claimed) should be persisted to DB."""
-        mock_task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.id = "task-uuid-observer"
-        mock_task.seq_num = 99
-        mock_task_manager.get_task.return_value = mock_task
+        task_manager = LocalTaskManager(db)
+        task = task_manager.create_task(
+            sample_project["id"],
+            title="Persist the observed claim",
+            validation_criteria="The observer persists this session's canonical claim.",
+        )
+        claim_task(db, task.id, SESSION_ID)
 
         rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(
             rule_engine=rule_engine,
-            task_manager=mock_task_manager,
+            task_manager=task_manager,
         )
 
         event = HookEvent(
@@ -994,11 +1002,11 @@ class TestVariablePersistence:
                 "tool_input": {
                     "server_name": "gobby-tasks",
                     "tool_name": "claim_task",
-                    "arguments": {"task_id": "#99"},
+                    "arguments": {"task_id": task.id},
                 },
                 "tool_output": {
                     "success": True,
-                    "result": {"id": "task-uuid-observer", "status": "in_progress"},
+                    "result": {"id": task.id},
                 },
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
@@ -1010,8 +1018,8 @@ class TestVariablePersistence:
 
         variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("task_claimed") is True
-        assert "task-uuid-observer" in variables.get("claimed_tasks", {})
-        assert variables.get("claimed_tasks", {}).get("task-uuid-observer") == "#99"
+        assert task.id in variables.get("claimed_tasks", {})
+        assert variables.get("claimed_tasks", {}).get(task.id) == f"#{task.seq_num}"
 
     @pytest.mark.asyncio
     async def test_observer_failure_does_not_drop_later_changes(
@@ -1087,20 +1095,23 @@ class TestVariablePersistence:
         self,
         db: HubDatabase,
         session_var_manager: SessionVariableManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """AFTER_AGENT should rebuild claimed review work from DB assignment state."""
-        mock_task_manager = MagicMock()
-        review_task = MagicMock()
-        review_task.id = "task-uuid-review"
-        review_task.seq_num = 123
-        review_task.status = "needs_review"
-        review_task.claimed_by_session_id = SESSION_ID
-        mock_task_manager.list_tasks.return_value = [review_task]
+        task_manager = LocalTaskManager(db)
+        review_task = task_manager.create_task(
+            sample_project["id"],
+            title="Hydrate a real owned review claim",
+            validation_criteria="AFTER_AGENT preserves canonical review-stage ownership.",
+        )
+        set_stage_state(db, review_task.id, "development", "needs_review")
+        claim_task(db, review_task.id, SESSION_ID)
+        assert current_stage_state(task_manager.get_task(review_task.id)) == "needs_review"
 
         rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(
             rule_engine=rule_engine,
-            task_manager=mock_task_manager,
+            task_manager=task_manager,
         )
 
         session_var_manager.merge_variables(
@@ -1116,7 +1127,8 @@ class TestVariablePersistence:
 
         variables = session_var_manager.get_variables(SESSION_ID)
         assert variables.get("task_claimed") is True
-        assert variables.get("claimed_tasks") == {"task-uuid-review": "#123"}
+        assert variables.get("claimed_tasks") == {review_task.id: f"#{review_task.seq_num}"}
+        assert task_manager.get_task(review_task.id).claimed_by_session_id == SESSION_ID
 
     @pytest.mark.asyncio
     async def test_codex_schema_lookup_rehydrates_without_task_skill_block(
@@ -1189,17 +1201,21 @@ class TestVariablePersistence:
         self,
         db: HubDatabase,
         session_var_manager: SessionVariableManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Both observer changes and rule set_variable effects should persist."""
-        mock_task_manager = MagicMock()
-        mock_task = MagicMock()
-        mock_task.id = "task-uuid-both"
-        mock_task_manager.get_task.return_value = mock_task
+        task_manager = LocalTaskManager(db)
+        task = task_manager.create_task(
+            sample_project["id"],
+            title="Persist the observed claim and rule changes",
+            validation_criteria="Both the canonical claim and rule counter persist.",
+        )
+        claim_task(db, task.id, SESSION_ID)
 
         rule_engine = RuleEngine(db=db)
         handler = WorkflowHookHandler(
             rule_engine=rule_engine,
-            task_manager=mock_task_manager,
+            task_manager=task_manager,
         )
 
         # Insert a rule that fires on after_tool and sets a counter
@@ -1221,11 +1237,11 @@ class TestVariablePersistence:
                 "tool_input": {
                     "server_name": "gobby-tasks",
                     "tool_name": "claim_task",
-                    "arguments": {"task_id": "#99"},
+                    "arguments": {"task_id": task.id},
                 },
                 "tool_output": {
                     "success": True,
-                    "result": {"id": "task-uuid-both", "status": "in_progress"},
+                    "result": {"id": task.id},
                 },
                 "mcp_server": "gobby-tasks",
                 "mcp_tool": "claim_task",
@@ -2044,7 +2060,15 @@ class TestHookBlockingWorkOffload:
                 "session_dirty_files": [],
             }
 
-        def merge_variables(_session_id: str, _updates: dict[str, object]) -> None:
+        def merge_variables(
+            _session_id: str,
+            _updates: dict[str, object],
+            *,
+            observed_claim_task_id: str | None = None,
+            reconcile_claims: bool = False,
+        ) -> None:
+            assert observed_claim_task_id is None
+            assert reconcile_claims is False
             collaborator_threads["merge_variables"] = threading.get_ident()
 
         session_var_manager.get_variables.side_effect = get_variables
@@ -2088,7 +2112,9 @@ class TestHookBlockingWorkOffload:
             metadata={"_platform_session_id": SESSION_ID},
         )
 
+        timings = HookPhaseTimings()
         with (
+            hook_phase_timing_scope(timings),
             patch.object(handler, "_resolve_project_path", side_effect=resolve_project),
             patch.object(handler, "_run_observers", side_effect=run_observers),
             patch.object(daemon_git, "status", side_effect=git_status),
@@ -2096,6 +2122,12 @@ class TestHookBlockingWorkOffload:
             response = await handler._evaluate_rules(event)
 
         assert response.decision == "allow"
+        breakdown = timings.breakdown()
+        assert {
+            "rule_persist_variables",
+            "rule_persist_variables_queue",
+            "rule_persist_variables_work",
+        } <= set(breakdown)
         assert set(collaborator_threads) == {
             "get_variables",
             "merge_variables",

@@ -1,4 +1,5 @@
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +8,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.communications.adapters.slack import SlackAdapter
-from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.models import (
+    ChannelConfig,
+    ChannelNotFoundError,
+    CommsAttachment,
+    CommsMessage,
+)
+from gobby.communications.redaction import MAX_LOG_ATTACHMENT_BYTES
 from gobby.config.app import DaemonConfig
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
@@ -195,14 +202,34 @@ def test_send_message_reports_adapter_failure(
 
 
 def test_send_message_unknown_channel(client: TestClient, comms_manager: MagicMock) -> None:
-    comms_manager.send_message = AsyncMock(
-        side_effect=ValueError("Channel 'missing' not found or not active")
-    )
+    comms_manager.send_message = AsyncMock(side_effect=ChannelNotFoundError("missing"))
 
     response = client.post("/api/comms/send", json={"channel_name": "missing", "content": "hello"})
 
     assert response.status_code == 404
     assert response.json() == {"detail": "Channel 'missing' not found or not active"}
+
+
+def test_send_message_invalid_caller_input_is_400(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
+    detail = "Telegram callback_ttl_seconds must be between 1 and 3600 (got 86400)"
+    comms_manager.send_message = AsyncMock(side_effect=ValueError(detail))
+
+    response = client.post(
+        "/api/comms/send",
+        json={
+            "channel_name": "telegram",
+            "content": "Pick one",
+            "metadata": {
+                "inline_keyboard": [[{"text": "A", "value": "a"}]],
+                "callback_ttl_seconds": 86400,
+            },
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": detail}
 
 
 def test_list_channels(client: TestClient, comms_manager: MagicMock) -> None:
@@ -462,3 +489,126 @@ def test_list_messages(client: TestClient, comms_manager: MagicMock) -> None:
     comms_manager.list_messages.assert_called_once_with(
         channel_id="ch1", session_id=None, direction=None, limit=50, offset=0
     )
+
+
+def _attachment_pair(status: str = "sent") -> tuple[CommsMessage, CommsAttachment]:
+    message = CommsMessage(
+        id="msg-doc",
+        channel_id="ch1",
+        direction="outbound",
+        content="errors.log new lines",
+        content_type="attachment",
+        status=status,
+        error=None if status == "sent" else "sendDocument failed",
+        created_at=datetime(2023, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="att-1",
+        message_id="msg-doc",
+        filename="errors-new.txt",
+        content_type="text/plain",
+        size_bytes=5,
+        machine_id="machine-1",
+    )
+    return message, attachment
+
+
+def test_send_attachment_writes_content_to_temp_document(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
+    seen: dict[str, Any] = {}
+
+    async def capture(channel_name: str, path: Path, **kwargs: Any) -> Any:
+        seen["channel"] = channel_name
+        seen["path"] = path
+        seen["bytes"] = path.read_bytes()
+        seen["kwargs"] = kwargs
+        return _attachment_pair()
+
+    comms_manager.send_attachment = AsyncMock(side_effect=capture)
+
+    response = client.post(
+        "/api/comms/attachment",
+        json={
+            "channel_name": "gobby-telegram",
+            "filename": "errors-new.txt",
+            "content": "boom ✓\n",
+            "caption": "errors.log new lines",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["attachment"]["filename"] == "errors-new.txt"
+    assert seen["channel"] == "gobby-telegram"
+    assert seen["bytes"] == "boom ✓\n".encode()
+    assert seen["path"].name == "errors-new.txt"
+    assert not seen["path"].exists()
+    assert seen["kwargs"] == {
+        "filename": "errors-new.txt",
+        "content_type": "text/plain",
+        "content": "errors.log new lines",
+    }
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["../etc/passwd", "a/b.txt", ".hidden.txt", "", "x" * 61 + ".txt", "payload.sh", "notes"],
+)
+def test_send_attachment_rejects_non_bare_filename(
+    client: TestClient, comms_manager: MagicMock, filename: str
+) -> None:
+    comms_manager.send_attachment = AsyncMock()
+
+    response = client.post(
+        "/api/comms/attachment",
+        json={"channel_name": "gobby-telegram", "filename": filename, "content": "x"},
+    )
+
+    assert response.status_code == 400
+    comms_manager.send_attachment.assert_not_awaited()
+
+
+def test_send_attachment_rejects_content_over_cap(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
+    comms_manager.send_attachment = AsyncMock()
+
+    response = client.post(
+        "/api/comms/attachment",
+        json={
+            "channel_name": "gobby-telegram",
+            "filename": "errors-new.txt",
+            "content": "x" * (MAX_LOG_ATTACHMENT_BYTES + 1),
+        },
+    )
+
+    assert response.status_code == 413
+    comms_manager.send_attachment.assert_not_awaited()
+
+
+def test_send_attachment_unknown_channel_is_404(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
+    comms_manager.send_attachment = AsyncMock(side_effect=ChannelNotFoundError("missing"))
+
+    response = client.post(
+        "/api/comms/attachment",
+        json={"channel_name": "missing", "filename": "errors-new.txt", "content": "x"},
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Channel 'missing' not found or not active"}
+
+
+def test_send_attachment_reports_adapter_failure(
+    client: TestClient, comms_manager: MagicMock
+) -> None:
+    comms_manager.send_attachment = AsyncMock(return_value=_attachment_pair(status="failed"))
+
+    response = client.post(
+        "/api/comms/attachment",
+        json={"channel_name": "gobby-telegram", "filename": "errors-new.txt", "content": "x"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "sendDocument failed"}

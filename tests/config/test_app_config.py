@@ -644,6 +644,13 @@ class TestDaemonConfig:
             DaemonConfig(memory_sync={"enabled": True})
 
 
+def test_memory_usefulness_section_rejected() -> None:
+    """The retired usefulness-judge section fails loudly and is no longer mounted."""
+    assert "memory_usefulness" not in DaemonConfig.model_fields
+    with pytest.raises(ValidationError, match="memory_usefulness config has been removed"):
+        DaemonConfig.model_validate({"memory_usefulness": {"timeout": 30}})
+
+
 class TestLoadYaml:
     """Tests for load_yaml function."""
 
@@ -1237,6 +1244,7 @@ class TestMemoryConfig:
         assert config.backend == "local"
         assert config.crossref_threshold == 0.3
         assert config.access_debounce_seconds == 60
+        assert config.index_reshow_after_injections == 5
         assert config.kg.profile == FeatureProfile.LOW
         assert "claude/haiku" in candidate_labels(config.kg.candidates)
 

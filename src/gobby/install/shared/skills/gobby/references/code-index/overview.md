@@ -2,9 +2,8 @@
 
 Load when locating implementation, retrieving source, assessing change impact,
 or diagnosing index freshness. Use the native `gcode` CLI through the shell.
-Ordinary index navigation uses native commands. The `gobby-ask` MCP service
-handles direct interactive evidence, durable source-bound questions, and assigned worker evidence;
-the daemon's HTTP routes also serve UI and integration clients.
+Ordinary index navigation and direct evidence retrieval use native `gcode`
+commands. The daemon's index routes serve UI and integration clients.
 
 Start with the query shape, then retrieve the smallest useful source body.
 Direct `gcode` navigation does not require loading this reference. Reference
@@ -27,7 +26,6 @@ reports no containing symbol for a range no symbol covers.
 | [search](search.md) | Choosing search lanes or interpreting ranked matches |
 | [retrieval](retrieval.md) | Reading source by file location or stored symbol ID |
 | [evidence](evidence.md) | Citing source lines, callers, or commits in findings and reviews |
-| [ask](ask.md) | Running durable questions or handling immutable evidence |
 | [navigation](navigation.md) | Exploring structure, paths, identities, or pages |
 | [impact](impact.md) | Finding callers, dependencies, and change impact |
 | [graphs](graphs.md) | Inspecting graph views, reports, or projections |

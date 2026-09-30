@@ -57,6 +57,11 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "delete": "(self, session_id: 'str') -> 'bool'",
     "expire_empty_sessions": "(self, timeout_hours: 'int' = 2) -> 'int'",
     "expire_if_active": "(self, session_id: 'str') -> 'Session | None'",
+    "expire_if_paused_terminal_exited": (
+        "(self, session_id: 'str', *, terminal_id: 'str', machine_id: 'str', "
+        "observed_updated_at: 'datetime', live_host_epoch: 'str | None' = None) "
+        "-> 'Session | None'"
+    ),
     "expire_orphaned_handoff_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "expire_stale_sessions": "(self, timeout_hours: 'int' = 24) -> 'int'",
     "prune_stale_compact_workflow_instances": "(self, retention_hours: 'int' = 24) -> 'int'",

@@ -43,7 +43,6 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
     from gobby.terminals.services import TerminalServices
     from gobby.terminals.sync_bridge import TerminalEffectBridge
-    from gobby.terminals.tmux_runtime import configured_tmux_runtime
     from gobby.terminals.write_coordinator import WriteCoordinator
     from gobby.utils.machine_id import require_machine_id
 
@@ -64,9 +63,6 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     )
 
     terminal_runtime_registry = TerminalRuntimeRegistry()
-    terminal_runtime_registry.register(
-        configured_tmux_runtime(HostManagerControl(runner.terminal_host_manager))
-    )
     native_runtime = NativeTerminalRuntime(
         HostManagerControl(runner.terminal_host_manager),
         terminal_manager=runner.terminal_manager,

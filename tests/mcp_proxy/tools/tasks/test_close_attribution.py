@@ -116,6 +116,7 @@ async def test_linked_commit_paths_stand_in_for_lost_session_attribution(
     assert snapshot.edited_paths == COMMITTED_PATHS
     assert snapshot.attributed is True
     assert snapshot.had_attributed_edits is True
+    assert snapshot.used_commit_fallback is True
 
 
 @pytest.mark.asyncio
@@ -213,6 +214,7 @@ async def test_session_attribution_wins_and_a_commitless_task_is_still_no_edit(
 
     assert live.raw_paths == frozenset({"src/gobby/memory/recall.py"})
     assert live.had_attributed_edits is True
+    assert live.used_commit_fallback is False
 
     no_edit = await capture_attribution(
         _ctx({"task_edited_files": {}}),

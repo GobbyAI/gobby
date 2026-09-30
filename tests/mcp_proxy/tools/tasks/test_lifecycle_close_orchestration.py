@@ -26,6 +26,8 @@ from fastapi import FastAPI
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_orchestration as orchestration
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_tool as close_tool
 from gobby.config.tasks import TaskValidationConfig
+from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._factory import create_task_registry
@@ -46,6 +48,7 @@ from gobby.storage.task_close_reviews import (
     REVIEWER_RUN_ENDED_SUCCESS_ERROR,
     QueuedAgentRunSpec,
     TaskCloseReview,
+    TaskCloseReviewBusyError,
     TaskCloseReviewStatus,
     TaskCloseReviewStore,
 )
@@ -64,6 +67,137 @@ _REQUIRED_EVIDENCE = "Run the real close adapter and capture its MCP response re
 _OVERSIZED_TRANSCRIPT_BYTES = 10 * 1024 * 1024
 _SUBMIT_DEADLINE_SECONDS = 10.0
 _STDIO_DEFAULT_PREFLIGHT_PATH = "/api/health"
+
+
+@pytest.mark.asyncio
+async def test_other_task_busy_response_never_launches_a_reviewer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = replace(_review(status="running", run_id=_FIRST_REVIEW_RUN_ID), task_id="other")
+    store = _Store(active)
+    registry = SimpleNamespace(call=AsyncMock())
+    _patch_store(monkeypatch, store)
+
+    def busy_create(**_kwargs: Any) -> tuple[TaskCloseReview, bool]:
+        raise TaskCloseReviewBusyError(active)
+
+    monkeypatch.setattr(store, "create_or_get_active", busy_create)
+    evaluation = _evaluation()
+
+    result = await launch_close_review(
+        _ctx(registry=registry),
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    assert result["error"] == "close_review_busy"
+    assert result["error_class"] == "retryable_capacity"
+    assert result["required_actions"] == [
+        "Wait for the active project close review, then retry close_task."
+    ]
+    assert result["active_review_id"] == active.id
+    assert result["closed"] is False
+    registry.call.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_another_task_busy_without_directing_real_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = replace(_review(status="running", run_id=_FIRST_REVIEW_RUN_ID), task_id="other")
+    store = _Store(active)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    evaluation.message = "Deterministic gates passed; a real close requires independent review."
+    evaluation.action = "Call close_task with preview=false to queue the close reviewer."
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx(validation_config=_capacity(1)))
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert store.admission_checks == [("task", 1)]
+    assert result["preview"] is True
+    assert result["error"] == "close_review_busy"
+    assert result["required_actions"] == [
+        "Wait for the active project close review, then retry close_task."
+    ]
+    assert result["active_task_ref"] == active.task_ref
+    assert store.created_arguments is None
+
+
+@pytest.mark.asyncio
+async def test_preview_reports_same_task_terminal_review_with_live_run_busy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    terminal = _review(status="invalid", run_id=_FIRST_REVIEW_RUN_ID)
+    store = _Store(terminal)
+    monkeypatch.setattr(
+        store,
+        "get_admission_blocker",
+        lambda _project_id, *, task_id, max_concurrency: terminal,
+    )
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx())
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert result["preview"] is True
+    assert result["error"] == "close_review_busy"
+    assert result["active_review_status"] == "invalid"
+    assert store.created_arguments is None
+
+
+@pytest.mark.asyncio
+async def test_preview_admits_beside_another_task_review_below_configured_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    active = replace(_review(status="running", run_id=_FIRST_REVIEW_RUN_ID), task_id="other")
+    store = _Store(active)
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+    monkeypatch.setattr(close_tool, "_evaluate_close", AsyncMock(return_value=evaluation))
+    registry = InternalToolRegistry("tasks")
+    close_tool.register_close_task(registry, _ctx(validation_config=_capacity(2)))
+
+    result = await registry.call("close_task", {"task_id": "task", "preview": True})
+
+    assert store.admission_checks == [("task", 2)]
+    assert result["error"] == "close_review_required"
+    assert "active_task_ref" not in result
+
+
+@pytest.mark.asyncio
+async def test_launch_passes_configured_capacity_to_admission_and_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    _patch_store(monkeypatch, store)
+    evaluation = _evaluation()
+
+    result = await launch_close_review(
+        _ctx(registry=registry, validation_config=_capacity(4)),
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    assert result["reviewer_run_id"] == _FIRST_REVIEW_RUN_ID
+    assert store.capacities[:2] == [4, 4]
+
+
+def _capacity(max_concurrency: int) -> TaskValidationConfig:
+    return TaskValidationConfig(
+        candidates=["codex/gpt-5.6-terra"],
+        close_review_max_concurrency_per_project=max_concurrency,
+    )
 
 
 @pytest.mark.asyncio
@@ -140,6 +274,40 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
     assert result["criterion_indexes"] == [1, 2, 3]
     assert "criterion_count=3" in launch_args["prompt"]
     assert "criterion_indexes=[1, 2, 3]" in launch_args["prompt"]
+
+
+@pytest.mark.asyncio
+async def test_launch_prompt_carries_close_receipts(monkeypatch: pytest.MonkeyPatch) -> None:
+    store = _Store(_review(status="queued", run_id=None))
+    registry = SimpleNamespace(
+        call=AsyncMock(return_value={"success": True, "run_id": _FIRST_REVIEW_RUN_ID})
+    )
+    ctx = _ctx(
+        registry=registry,
+        validation_config=TaskValidationConfig(candidates=["codex/gpt-5.6-terra"]),
+    )
+    _patch_store(monkeypatch, store)
+    receipt = {
+        "kind": "activation",
+        "commit_sha": "f" * 40,
+        "matches_linked_commit": True,
+        "author_session": "#14737",
+        "author_role": "task_creator",
+        "facts": {"daemon_pid": 26253, "binary_sha256": "c" * 64},
+    }
+    evaluation = _evaluation()
+    evaluation.extra["close_receipts"] = [receipt, "not-a-receipt"]
+
+    await launch_close_review(
+        ctx,
+        evaluation=evaluation,
+        close_arguments=_arguments(),
+        evaluate_close=_revalidate(evaluation),
+    )
+
+    prompt = registry.call.call_args.args[1]["prompt"]
+    rendered = prompt.split("close_receipts=", 1)[1].split(". close_receipts are", 1)[0]
+    assert json.loads(rendered) == [receipt]
 
 
 @pytest.mark.asyncio
@@ -800,6 +968,7 @@ async def test_launch_after_rejected_verdict_does_not_carry_cross_fingerprint_re
     assert terminal.result_payload["validation_status"] == "invalid"
     # The wake payload references the rejection; it does not re-carry the verdict.
     assert "verdict" not in terminal.result_payload
+    assert LocalAgentRunManager(temp_db).fail(first_review.agent_run_id, "review ended")
 
     registry = _successful_registry()
     evaluation.extra.update(
@@ -1250,9 +1419,14 @@ async def test_submit_close_review_claims_before_heavy_work(
     async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
         return await asyncio.to_thread(function, *args, **kwargs)
 
+    # An agent's stdio call is workflow-enforced, which only the proxy performs (#22961).
+    tool_proxy = ToolProxyService(
+        mcp_manager=cast(MCPClientManager, SimpleNamespace(session_manager=session_manager)),
+        internal_manager=internal_manager,
+    )
     http_server = SimpleNamespace(
         _internal_manager=internal_manager,
-        tool_proxy=None,
+        tool_proxy=tool_proxy,
         mcp_manager=None,
         session_manager=session_manager,
         services=SimpleNamespace(database=temp_db),
@@ -1418,6 +1592,8 @@ async def test_late_submission_yields_to_newer_active_review(
         )
         is not None
     )
+    assert old_review.agent_run_id is not None
+    assert LocalAgentRunManager(temp_db).fail(old_review.agent_run_id, "run ended")
     newer, created = store.create_or_get_active(
         **{
             **_persisted_review_intent(task, caller_session_id=caller.id),
@@ -1599,9 +1775,20 @@ class _Store:
         self.extra_queued: list[TaskCloseReview] = []
         self.reusable_rejection = reusable_rejection
         self.reuse_lookup: tuple[str, str] | None = None
+        self.capacities: list[int] = []
+        self.admission_checks: list[tuple[str, int]] = []
 
     def count_unjudged_attempts(self, _task_id: str) -> int:
         return self.unjudged_attempts
+
+    def get_admission_blocker(
+        self, _project_id: str, *, task_id: str, max_concurrency: int
+    ) -> TaskCloseReview | None:
+        # The fake holds one review, so another task's live review fills one slot.
+        self.admission_checks.append((task_id, max_concurrency))
+        review = self.review
+        blocks = review.task_id != task_id and review.active and max_concurrency <= 1
+        return review if blocks else None
 
     def get_delivered_rejected_verdict(
         self,
@@ -1619,6 +1806,7 @@ class _Store:
         return self.reusable_rejection
 
     def create_or_get_active(self, **kwargs: Any) -> tuple[TaskCloseReview, bool]:
+        self.capacities.append(kwargs["max_concurrency"])
         self.created_arguments = dict(kwargs["close_arguments"])
         self.expected_task_updated_at = kwargs["expected_task_updated_at"]
         if self.created:
@@ -1639,7 +1827,7 @@ class _Store:
 
     def claim_queued(self, *, project_id: str, max_concurrency: int) -> list[TaskCloseReview]:
         assert project_id == "project"
-        assert max_concurrency > 0
+        self.capacities.append(max_concurrency)
         extra = self.extra_queued
         self.extra_queued = []
         if self.review.status != "queued" or self.queue_claimed:
@@ -1838,7 +2026,7 @@ def _promote_persisted(
     task: Task,
     review: TaskCloseReview,
 ) -> TaskCloseReview:
-    promoted = store.claim_queued(project_id=str(task.project_id), max_concurrency=3)
+    promoted = store.claim_queued(project_id=str(task.project_id), max_concurrency=1)
     match = next((item for item in promoted if item.id == review.id), None)
     assert match is not None
     return match

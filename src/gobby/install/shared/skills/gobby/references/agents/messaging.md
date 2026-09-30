@@ -15,7 +15,10 @@ broadcasts derive project scope from the sender; do not override it. System send
 must supply project scope. Preserve the returned message IDs and inspect partial
 broadcast/wake failures before retrying.
 
-Content never implies wake. Set `wake=true` only for intended immediate processing;
+Content never implies wake. Omitting `wake` requests immediate processing for direct
+`session`, `parent`, and `agent` targets. `project`, `global`, and `build` fanout
+stays queued without live wakes unless `wake=true` is explicit. Set `wake=false`
+to queue any target without a live wake. A requested wake may steer active work;
 interrupted or input/approval/handoff-waiting sessions retain the message without
 unsafe daemon input. A successful send is durable queuing, not evidence that the
 recipient read or acted on it. Use `get_inter_session_message` for a message ID

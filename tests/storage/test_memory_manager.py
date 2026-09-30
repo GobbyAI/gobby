@@ -124,56 +124,46 @@ async def test_get_stats(memory_manager):
 
 
 @pytest.mark.asyncio
-async def test_access_tracking_increments_count(memory_manager):
-    """Test that search_memories increments access_count."""
-    memory = await memory_manager.create_memory("Track my access")
+async def test_surfacing_search_increments_surfaced_count(memory_manager):
+    """A surfacing search counts hits as surfaced and leaves access_count alone."""
+    memory = await memory_manager.create_memory("Track my surfacing")
+    assert (memory.surfaced_count, memory.access_count) == (0, 0)
 
-    # Initial access_count should be 0
-    assert memory.access_count == 0
+    await memory_manager.search_memories(query="Track", caller="memory.surface")
 
-    # search_memories should update access stats
-    await memory_manager.search_memories(query="Track")
-
-    # Fetch fresh from storage
     updated = memory_manager.get_memory(memory.id)
-    assert updated.access_count == 1
-    assert updated.last_accessed_at is not None
+    assert (updated.surfaced_count, updated.access_count) == (1, 0)
+    assert updated.last_surfaced_at is not None
+    assert updated.last_accessed_at is None
 
 
 @pytest.mark.asyncio
-async def test_access_tracking_updates_timestamp(memory_manager):
-    """Test that search_memories updates last_accessed_at."""
+async def test_default_search_is_a_probe(memory_manager):
+    """The `memory.search` default caller increments neither counter."""
     memory = await memory_manager.create_memory("Timestamp test")
 
-    # Initial last_accessed_at should be None
-    assert memory.last_accessed_at is None
-
-    # search_memories triggers access update
     await memory_manager.search_memories(query="Timestamp")
 
     updated = memory_manager.get_memory(memory.id)
-    assert updated.last_accessed_at is not None
+    assert (updated.surfaced_count, updated.access_count) == (0, 0)
+    assert updated.last_surfaced_at is None
 
 
 @pytest.mark.asyncio
-async def test_access_tracking_debounce(db):
-    """Test that rapid accesses are debounced."""
-
-    # Use very short debounce for testing
-    config = MemoryConfig(access_debounce_seconds=3600)  # 1 hour debounce
+async def test_surfaced_tracking_debounce(db):
+    """Rapid surfacing searches are debounced by access_debounce_seconds."""
+    config = MemoryConfig(access_debounce_seconds=3600)
     manager = MemoryManager(db, config)
 
     memory = await manager.create_memory("Debounce test")
 
-    # First search - should update
-    await manager.search_memories(query="Debounce")
-    first_access = manager.get_memory(memory.id)
-    assert first_access.access_count == 1
+    await manager.search_memories(query="Debounce", caller="memory.surface")
+    first = manager.get_memory(memory.id)
+    assert first.surfaced_count == 1
 
-    # Second search immediately - should be debounced
-    await manager.search_memories(query="Debounce")
-    second_access = manager.get_memory(memory.id)
-    assert second_access.access_count == 1  # Still 1, debounced
+    await manager.search_memories(query="Debounce", caller="memory.surface")
+    second = manager.get_memory(memory.id)
+    assert second.surfaced_count == 1
 
 
 @pytest.mark.asyncio
@@ -187,7 +177,7 @@ async def test_access_tracking_independent_memories(memory_manager):
     memory2 = await memory_manager.create_memory("Beta memory")
 
     # Access only the first memory directly
-    await memory_manager._update_access_stats([memory_manager.get_memory(memory1.id)])
+    await memory_manager.record_memory_access(memory1.id)
 
     updated1 = memory_manager.get_memory(memory1.id)
     updated2 = memory_manager.get_memory(memory2.id)

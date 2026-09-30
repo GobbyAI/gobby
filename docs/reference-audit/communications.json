@@ -329,6 +329,21 @@
     },
     {
       "surface": "cli",
+      "command": "gobby comms attach",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
+      "implementation": {
+        "path": "src/gobby/cli/communications.py",
+        "symbol": "attach_cmd"
+      },
+      "verification": [
+        "inventory",
+        "source-workflows",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "cli",
       "command": "gobby comms channels list",
       "audience": "operator",
       "reference": "src/gobby/install/shared/skills/gobby/references/communications/channels.md",
@@ -416,6 +431,22 @@
       "implementation": {
         "path": "src/gobby/servers/routes/communications.py",
         "symbol": "create_communications_router.send_message"
+      },
+      "verification": [
+        "inventory",
+        "source-workflows",
+        "focused-current"
+      ]
+    },
+    {
+      "surface": "http",
+      "method": "POST",
+      "route": "/api/comms/attachment",
+      "audience": "operator",
+      "reference": "src/gobby/install/shared/skills/gobby/references/communications/attachments.md",
+      "implementation": {
+        "path": "src/gobby/servers/routes/communications.py",
+        "symbol": "create_communications_router.send_attachment"
       },
       "verification": [
         "inventory",

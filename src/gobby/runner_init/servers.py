@@ -28,6 +28,7 @@ from gobby.providers.capabilities.refresh import CapabilityRefreshCoordinator
 from gobby.providers.capabilities.resolve import CapabilityResolver
 from gobby.providers.capabilities.store import ProviderCapabilityStore
 from gobby.providers.capacity_service import ProviderCapacityService
+from gobby.runner_front_door import backend_bind
 from gobby.servers.generation_endpoint_health import GenerationEndpointHealthCoordinator
 from gobby.servers.http import HTTPServer
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -211,33 +212,6 @@ def init_servers(runner: GobbyRunner) -> None:
         tool_proxy_getter=tool_proxy_getter,
     )
 
-    from gobby.ask.composition import build_ask_service
-    from gobby.ask.runtime_validation import (
-        AskRuntimeValidationArtifact,
-        load_ask_runtime_validation_artifacts,
-    )
-    from gobby.paths import get_gobby_home
-
-    # A probe attestation pins each Ask profile to one supervised observation and is
-    # used when present. It is optional: without it Ask derives the same provider and
-    # SRT identity live at spawn, so a missing manifest narrows the evidence rather
-    # than taking the feature offline.
-    validation_manifest = get_gobby_home() / "ask" / "runtime-validation" / "manifest.json"
-    runtime_validation_artifacts: dict[str, AskRuntimeValidationArtifact] = {}
-    try:
-        runtime_validation_artifacts = load_ask_runtime_validation_artifacts(validation_manifest)
-    except FileNotFoundError:
-        logger.info("Ask runtime validation is derived live; no probe manifest is pinned")
-    except (OSError, ValueError) as error:
-        logger.warning("Ask probe manifest is unusable, deriving runtime validation: %s", error)
-    services.ask_service_factory = lambda project_id: build_ask_service(
-        services,
-        project_id,
-        runtime_validation_artifacts=runtime_validation_artifacts,
-    )
-    if runner.project_id:
-        services.ask_service = services.get_ask_service(runner.project_id)
-
     set_app_context(services)
     if runner.cron_scheduler and getattr(runner.cron_scheduler, "executor", None):
         runner.cron_scheduler.executor.services = services
@@ -283,10 +257,11 @@ def init_servers(runner: GobbyRunner) -> None:
         ),
     )
 
+    backend = backend_bind(runner.bootstrap_config)
     runner.http_server = HTTPServer(
         services=services,
         startup_config=config,
-        port=runner.bootstrap_config.daemon_port,
+        port=backend.http_port,
         test_mode=config.test_mode,
         codex_client=codex_client,
         bootstrap_config=runner.bootstrap_config,
@@ -320,8 +295,8 @@ def init_servers(runner: GobbyRunner) -> None:
     runner.websocket_server = None
     if config.websocket.enabled:
         websocket_config = WebSocketConfig(
-            host=runner.bootstrap_config.bind_host,
-            port=runner.bootstrap_config.websocket_port,
+            host=backend.host,
+            port=backend.ws_port,
             ping_interval=config.websocket.ping_interval,
             ping_timeout=config.websocket.ping_timeout,
         )

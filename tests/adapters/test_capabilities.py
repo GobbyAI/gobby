@@ -20,7 +20,7 @@ from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
 from gobby.adapters.grok import GrokAdapter
 from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
-from gobby.servers.routes.mcp.hooks import _graceful_error_response
+from gobby.servers.routes.mcp.hook_responses import _graceful_error_response
 
 pytestmark = pytest.mark.unit
 

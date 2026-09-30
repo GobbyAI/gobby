@@ -4,52 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from gobby.memory.services._search_constants import _GRAPH_SYNTHETIC_SIM_DISCOUNT
-
-
-@dataclass(frozen=True)
-class SearchDebugHit:
-    """Returned hit features captured for observational search telemetry."""
-
-    memory_id: str
-    rank: int
-    search_via: str | None
-    similarity: float | None
-    raw_semantic_score: float | None
-    temporal_decay_factor: float | None
-    ranking_score: float | None
-    ranking_mode: str | None
-    graph_score: float | None
-    content_hash: str
-    rationale_hash: str | None = None
-
-
-@dataclass(frozen=True)
-class SearchDebugSnapshot:
-    """Diagnostic ranking snapshot emitted after a search path materializes results."""
-
-    merged_ids: list[str]
-    returned_ids: list[str]
-    ranking_score_map: dict[str, float]
-    rrf_applied: bool
-    query: str = ""
-    # The BM25 term bag, recorded only when it differs from ``query``. Once a
-    # caller splits the two representations, the term bag is not recoverable from
-    # an enriched query, so a hybrid replay needs both legs stored.
-    bm25_query: str | None = None
-    project_id: str | None = None
-    session_id: str | None = None
-    recall_request_id: str | None = None
-    caller: str = "memory.search"
-    constants_provenance: str = "static"
-    graph_score_map: dict[str, float] = field(default_factory=dict)
-    # Edge-weight component breakdown per memory_id (contract §3.2):
-    # edge_cosine, edge_support_norm, edge_weight_blend, edge_decay_factor.
-    # Only populated for hits admitted through weighted graph traversal.
-    graph_component_map: dict[str, dict[str, float | None]] = field(default_factory=dict)
-    returned_hits: list[SearchDebugHit] = field(default_factory=list)
-    graph_synthetic_similarity_discount: float = _GRAPH_SYNTHETIC_SIM_DISCOUNT
-
 
 @dataclass
 class _Candidates:

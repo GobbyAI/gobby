@@ -3,6 +3,7 @@ Task commit linking MCP tools module.
 
 Provides tools for linking git commits to tasks:
 - link_commit: Link a git commit to a task
+- record_close_receipt: Attest another session's close evidence for a task
 - unlink_commit: Unlink a git commit from a task
 - auto_link_commits: Auto-detect and link commits mentioning task IDs
 - get_task_diff: Page a task's commit and working-tree diff
@@ -22,6 +23,7 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 )
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.workspace_machine_scope import require_local_machine_id
+from gobby.tasks import close_receipts
 from gobby.tasks.diff_paging import (
     DEFAULT_GIT_TIMEOUT_SECONDS,
     MAX_COMMITS_LIMIT,
@@ -187,6 +189,94 @@ def create_commit_registry(
             "required": ["task_id", "commit_sha"],
         },
         func=link_commit,
+    )
+
+    # --- record_close_receipt ---
+
+    async def record_close_receipt(
+        task_id: str,
+        kind: str,
+        commit_sha: str,
+        facts: dict[str, Any] | None = None,
+        project_path: str | None = None,
+    ) -> dict[str, Any]:
+        """Attest another session's close evidence as the calling session."""
+        author_session_id = get_current_session_id()
+        if not author_session_id:
+            return {"error": "No session context available; a receipt needs a calling session."}
+        try:
+            resolved_task_id = resolve_task_id_for_mcp(task_manager, task_id)
+        except (TaskNotFoundError, ValueError) as e:
+            return {"error": f"Invalid task_id: {e}"}
+        task_and_repo_path = _get_task_and_repo_path(resolved_task_id, task_id, project_path)
+        if isinstance(task_and_repo_path, dict):
+            return task_and_repo_path
+        current_task, repo_path = task_and_repo_path
+        if await normalize_commit_sha(commit_sha, cwd=repo_path) is None:
+            return {"error": f"Invalid or unresolved commit SHA: {commit_sha}"}
+        try:
+            receipt, created = close_receipts.record_close_receipt(
+                task_manager.db,
+                task=current_task,
+                author_session_id=author_session_id,
+                kind=kind,
+                commit_sha=commit_sha,
+                facts=facts,
+            )
+        except close_receipts.CloseReceiptError as e:
+            return {"error": str(e)}
+        return {
+            "receipt_id": receipt.id,
+            "created": created,
+            "task_id": current_task.id,
+            "kind": receipt.kind,
+            "commit_sha": receipt.commit_sha,
+            "facts": receipt.facts,
+        }
+
+    registry.register(
+        name="record_close_receipt",
+        description=(
+            "Record a daemon-attested close receipt for another session's task: an "
+            "independent_review_approval (LAND) of an exact commit, or an activation of a "
+            "landed commit by the task's creator or delegator. The calling session is the "
+            "author; the task's claimant and task-close reviewers are refused. Idempotent per "
+            "author, kind, and commit."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task reference: #N, N (seq_num), path (1.2.3), or UUID",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": sorted(close_receipts.CLOSE_RECEIPT_KINDS),
+                },
+                "commit_sha": {
+                    "type": "string",
+                    "description": "Full 40-character SHA of the approved or activated commit",
+                },
+                "facts": {
+                    "type": "object",
+                    "description": (
+                        "Up to 16 string, integer, or boolean facts the close reviewer judges "
+                        "against live state, e.g. daemon_pid, health, schema_version, or a "
+                        "promoted binary's version, sha256, inode, and signature."
+                    ),
+                },
+                "project_path": {
+                    "type": "string",
+                    "description": (
+                        "Repository path that contains the commit. Optional; defaults to the "
+                        "current task project repository."
+                    ),
+                },
+            },
+            "required": ["task_id", "kind", "commit_sha"],
+        },
+        func=record_close_receipt,
     )
 
     # --- unlink_commit ---

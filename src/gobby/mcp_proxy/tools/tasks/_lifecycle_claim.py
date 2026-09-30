@@ -364,12 +364,23 @@ def register_claim_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         try:
             from gobby.workflows.task_claim_state import add_claimed_task
 
-            session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
-            ref = f"#{task.seq_num}" if task.seq_num else resolved_id
-            merge_dict = add_claimed_task(session_vars, resolved_id, ref)
-            current_vars = {**session_vars, **merge_dict}
-            merge_dict.update(build_claimed_task_extra_skill_state(current_vars, ctx.task_manager))
-            ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
+            with ctx.task_manager.db.transaction() as conn:
+                owner = conn.execute(
+                    "SELECT claimed_by_session_id FROM tasks WHERE id = %s FOR UPDATE",
+                    (resolved_id,),
+                ).fetchone()
+                # A later force-claim may have finished while session linking
+                # ran. Retain the task lock through this write so its result
+                # cannot re-add a claim after the new owner's cleanup.
+                if owner is not None and str(owner["claimed_by_session_id"]) == resolved_session_id:
+                    session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+                    ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+                    merge_dict = add_claimed_task(session_vars, resolved_id, ref)
+                    current_vars = {**session_vars, **merge_dict}
+                    merge_dict.update(
+                        build_claimed_task_extra_skill_state(current_vars, ctx.task_manager)
+                    )
+                    ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
         except Exception as e:
             logger.debug("Best-effort session variable setting failed: %s", e)
 

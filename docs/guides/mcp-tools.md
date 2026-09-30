@@ -1,8 +1,8 @@
 # Gobby MCP Tools
 
 Use the proxy to discover only the tool schemas needed for the current task.
-The current runtime has 22 internal registries, including `gobby-ask`, plus
-explicitly installed external server instances. The live inventory and selected
+The runtime has internal registries and explicitly installed external server
+instances. The live inventory and selected
 tool schema own names and parameters. Behavioral contracts remain normative;
 a discrepancy needs investigation, not a blanket assumption that either an old
 example or a successful call proves correct behavior.
@@ -241,7 +241,6 @@ capability guides and agent reference library.
 | `gobby-memory` | Persistent knowledge |
 | `gobby-review-learning` | Review lesson recall and capture |
 | `gobby-workflows` | Rules, variables, definitions, and pipelines |
-| `gobby-ask` | Durable source-bound questions and assigned worker evidence |
 | `gobby-metrics` | Usage and observability |
 | `gobby-agents` | Agent lifecycle and inter-session messaging |
 | `gobby-worktrees` | Worktree isolation lifecycle |

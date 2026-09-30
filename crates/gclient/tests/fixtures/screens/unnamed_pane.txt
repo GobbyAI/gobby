@@ -2,14 +2,14 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*120
+01 |                                                                                                                        |
+01 : text/panel_bg*120
 02 | alpha       +                                                                                                          |
-02 : text/panel_bg+b*12 overlay1/surface0*3 text/surface0*105
-03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-03 : line/panel_bg*120
-04 |┌ ○ zsh · Focused ─────────────────────────────────────────────────────────────────────────────────────────────────────┐|
-04 : accent/panel_bg*1 accent/panel_bg+b*17 accent/panel_bg*102
+02 : text/surface1+b*12 overlay1/surface0*3 text/surface0*105
+03 |┌ ○ zsh · Focused ─────────────────────────────────────────────────────────────────────────────────────────────────────┐|
+03 : accent/panel_bg*1 accent/panel_bg+b*17 accent/panel_bg*102
+04 |│                                                                                                                      │|
+04 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 05 |│                                                                                                                      │|
 05 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 06 |│                                                                                                                      │|
@@ -40,10 +40,10 @@
 18 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 19 |│                                                                                                                      │|
 19 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-20 |│                                                                                                                      │|
-20 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-21 |│                                                 waiting for frames                                                   │|
-21 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
+20 |│                                                 waiting for frames                                                   │|
+20 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
+21 |│                                                                                                                      │|
+21 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 22 |│                                                                                                                      │|
 22 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 23 |│                                                                                                                      │|

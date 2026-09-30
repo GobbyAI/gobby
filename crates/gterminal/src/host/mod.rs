@@ -20,13 +20,17 @@ mod events;
 mod frames;
 #[cfg(all(unix, feature = "vt-engine"))]
 pub(crate) mod gate;
+#[cfg(all(unix, feature = "vt-engine"))]
+pub mod handover;
 mod helpers;
+pub mod image;
 mod ledger;
 mod native_ops;
 pub mod poll;
 #[cfg(all(unix, feature = "vt-engine"))]
 mod spawn;
 mod state;
+mod theme;
 mod write;
 
 pub use backpressure::{FrameMailbox, PushResult};
@@ -43,61 +47,157 @@ const PID_FILE: &str = "gterm.pid";
 const TOKEN_FILE: &str = "gterm-control.token";
 const LOCAL_CLI_TOKEN_FILE: &str = "local_cli_token";
 
+/// Commit steps a restore leaves for after the listeners accept. A build
+/// without the vt engine never restores, so it has none.
+#[cfg(all(unix, feature = "vt-engine"))]
+type PendingRestore = handover::restore::PendingCommit;
+#[cfg(not(all(unix, feature = "vt-engine")))]
+type PendingRestore = std::convert::Infallible;
+
+/// The handover state format versions this build can restore.
+#[cfg(all(unix, feature = "vt-engine"))]
+const RESUMABLE_FORMATS: &[u32] = handover::SUPPORTED_FORMAT_VERSIONS;
+#[cfg(not(all(unix, feature = "vt-engine")))]
+const RESUMABLE_FORMATS: &[u32] = &[];
+
 pub async fn run() -> io::Result<()> {
     let args = HostArgs::parse();
     init_tracing(&args.log_file);
     crate::platform::watch_terminal_resize_signal();
 
-    let token = fs::read_to_string(&args.token_file)
-        .map_err(|err| io::Error::new(err.kind(), format!("control token: {err}")))?
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "control token file is empty",
-        ));
-    }
+    // A restore runs from the pin the earlier image exec'd and adopts its
+    // sockets and pidfile as they are. From here to Commit, an error or a
+    // panic ends in the fallback.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    let restoring = args.resume.as_ref().map(|resume| {
+        let (carried, fallback) = handover::fallback::begin(&resume.state, resume.fallback);
+        let panic_guard = fallback.arm();
+        (resume, carried, fallback, panic_guard)
+    });
+    #[cfg(not(all(unix, feature = "vt-engine")))]
+    let restoring: Option<std::convert::Infallible> = match &args.resume {
+        Some(Resume { state, fallback }) => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!(
+                    "cannot restore {}{}: this gterm has no vt engine",
+                    state.display(),
+                    if *fallback { " as a fallback" } else { "" }
+                ),
+            ))
+        }
+        None => None,
+    };
 
-    let host_config = args
-        .host_config
-        .validate()
-        .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
+    let setup = (|| {
+        let token = fs::read_to_string(&args.token_file)
+            .map_err(|err| io::Error::new(err.kind(), format!("control token: {err}")))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "control token file is empty",
+            ));
+        }
+        let host_config = args
+            .host_config
+            .validate()
+            .map_err(|err| io::Error::new(err.kind(), format!("gterm host config: {err}")))?;
+        Ok((token, host_config))
+    })();
+    #[cfg(all(unix, feature = "vt-engine"))]
+    let setup = match (setup, &restoring) {
+        (Err(err), Some((_, _, fallback, _))) => fallback.fail(&err),
+        (setup, _) => setup,
+    };
+    let (token, host_config) = setup?;
+    let images_dir = args.socket_dir.join(image::IMAGES_DIR);
     let local_token = read_local_token(&args.socket_dir);
-    let host_epoch = uuid::Uuid::new_v4().to_string();
-    let version = env!("CARGO_PKG_VERSION").to_string();
     let host_pid = std::process::id();
-
     let control_path = args.socket_dir.join(CONTROL_SOCKET);
     let frames_path = args.socket_dir.join(FRAMES_SOCKET);
-    prepare_socket_path(&control_path, |path| {
-        format!("gterm control socket busy at {}", path.display())
-    })?;
-    prepare_socket_path(&frames_path, |path| {
-        format!("gterm frames socket busy at {}", path.display())
-    })?;
-
-    let control_listener = UnixListener::bind(&control_path)?;
-    restrict_socket_permissions(&control_path, 0o600)?;
-    let frames_listener = UnixListener::bind(&frames_path)?;
-    restrict_socket_permissions(&frames_path, 0o600)?;
-    // Only a host that owns both sockets may publish its pid: a second host
-    // losing the busy check above must leave the live host's pidfile alone.
-    write_pidfile(&args.pid_file, host_pid)?;
-
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
-    let state = HostState::new(
-        host_config,
-        token,
-        local_token,
-        host_epoch.clone(),
-        version,
-        host_pid,
-        shutdown_tx.clone(),
-    );
+
+    let (state, control_listener, frames_listener, running_image, pending) = match restoring {
+        #[cfg(not(all(unix, feature = "vt-engine")))]
+        Some(never) => match never {},
+        #[cfg(all(unix, feature = "vt-engine"))]
+        Some((resume, carried, fallback, panic_guard)) => {
+            let staged = (|| {
+                let exe = std::env::current_exe()?;
+                let running_image = image::pinned_image(&images_dir, &exe)?.ok_or_else(|| {
+                    io::Error::other(format!("{} is not a pinned gterm image", exe.display()))
+                })?;
+                let staged = handover::restore::stage(
+                    carried,
+                    &resume.state,
+                    &args.pid_file,
+                    host_config.native_scrollback_max_bytes as usize,
+                    host_config.event_queue_bytes as usize,
+                    resume.fallback,
+                )?;
+                io::Result::Ok((running_image, staged))
+            })();
+            let (running_image, staged) = staged.unwrap_or_else(|err| fallback.fail(&err));
+            let state = HostState::restored(
+                host_config,
+                token,
+                local_token,
+                running_image.clone(),
+                host_pid,
+                shutdown_tx.clone(),
+                staged.host,
+            );
+            panic_guard.disarm();
+            let mut commit = staged.commit;
+            commit.take_ownership(&state).await;
+            (
+                state,
+                staged.control,
+                staged.frames,
+                running_image,
+                Some(commit),
+            )
+        }
+        None => {
+            let running_image = run_from_pin(&images_dir)
+                .map_err(|err| io::Error::new(err.kind(), format!("gterm image pin: {err}")))?;
+            prepare_socket_path(&control_path, |path| {
+                format!("gterm control socket busy at {}", path.display())
+            })?;
+            prepare_socket_path(&frames_path, |path| {
+                format!("gterm frames socket busy at {}", path.display())
+            })?;
+
+            let control_listener = UnixListener::bind(&control_path)?;
+            restrict_socket_permissions(&control_path, 0o600)?;
+            let frames_listener = UnixListener::bind(&frames_path)?;
+            restrict_socket_permissions(&frames_path, 0o600)?;
+            // Only a host that owns both sockets may publish its pid: a second host
+            // losing the busy check above must leave the live host's pidfile alone.
+            write_pidfile(&args.pid_file, host_pid)?;
+            let state = HostState::new(
+                host_config,
+                token,
+                local_token,
+                uuid::Uuid::new_v4().to_string(),
+                running_image.clone(),
+                host_pid,
+                shutdown_tx.clone(),
+            );
+            (
+                state,
+                control_listener,
+                frames_listener,
+                running_image,
+                None::<PendingRestore>,
+            )
+        }
+    };
 
     info!(
-        epoch = %host_epoch,
+        epoch = %state.host_epoch,
         pid = host_pid,
         "gterm host listening"
     );
@@ -125,6 +225,17 @@ pub async fn run() -> io::Result<()> {
             }
         })
     };
+    if let Some(commit) = pending {
+        #[cfg(all(unix, feature = "vt-engine"))]
+        commit.finish(&state).await;
+        #[cfg(not(all(unix, feature = "vt-engine")))]
+        match commit {}
+    }
+    // Pruning belongs to the socket owner: a start that lost the busy check
+    // returned before binding, and a restore reaches here only once committed.
+    if let Err(err) = image::prune_images(&images_dir, &running_image) {
+        tracing::warn!(error = %err, "gterm image prune failed");
+    }
 
     let ticker = {
         let state = Arc::clone(&state);
@@ -187,6 +298,36 @@ struct HostArgs {
     log_file: PathBuf,
     shutdown_grace_ms: u64,
     host_config: HostConfig,
+    /// Restore from a handover instead of binding fresh.
+    resume: Option<Resume>,
+    /// Report whether this build restores that state format, then exit.
+    probe_resume: Option<u32>,
+}
+
+/// `--resume-state PATH`, with `--resume-fallback` when this restore is the
+/// fallback into the earlier image.
+#[derive(Debug)]
+struct Resume {
+    state: PathBuf,
+    fallback: bool,
+}
+
+impl Resume {
+    /// The resume flags in an argv that does not otherwise parse.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    fn scan(argv: impl IntoIterator<Item = String>) -> Option<Self> {
+        let mut state = None;
+        let mut fallback = false;
+        let mut args = argv.into_iter();
+        while let Some(arg) = args.next() {
+            match arg.as_str() {
+                "--resume-state" => state = args.next().map(PathBuf::from),
+                "--resume-fallback" => fallback = true,
+                _ => {}
+            }
+        }
+        state.map(|state| Self { state, fallback })
+    }
 }
 
 impl HostArgs {
@@ -194,6 +335,19 @@ impl HostArgs {
     /// bad argument) before anything touches the socket dir (#22425).
     fn parse() -> Self {
         match Self::from_args(std::env::args().skip(2)) {
+            // Before tracing, the token, or pinning: a probe touches nothing.
+            Ok(Self {
+                probe_resume: Some(version),
+                ..
+            }) => {
+                let formats: Vec<String> = RESUMABLE_FORMATS.iter().map(u32::to_string).collect();
+                println!("{}", formats.join(","));
+                std::process::exit(if RESUMABLE_FORMATS.contains(&version) {
+                    0
+                } else {
+                    3
+                });
+            }
             Ok(args) => args,
             Err(ArgError::Help) => {
                 print!("{HOST_USAGE}");
@@ -201,6 +355,13 @@ impl HostArgs {
             }
             Err(ArgError::Invalid(message)) => {
                 eprintln!("gterm host: {message}");
+                // An argv this image rejects may still carry a restore: the
+                // earlier image, which wrote that argv, takes it back.
+                #[cfg(all(unix, feature = "vt-engine"))]
+                if let Some(resume) = Resume::scan(std::env::args().skip(2)) {
+                    let (_, fallback) = handover::fallback::begin(&resume.state, resume.fallback);
+                    fallback.fail(&io::Error::new(io::ErrorKind::InvalidInput, message));
+                }
                 eprint!("{HOST_USAGE}");
                 std::process::exit(2);
             }
@@ -217,12 +378,25 @@ impl HostArgs {
                     .unwrap_or_else(|| PathBuf::from("."))
             });
         let mut host_config = HostConfig::default();
+        let mut resume_state = None;
+        let mut resume_fallback = false;
+        let mut probe_resume = None;
         let mut args = argv.into_iter();
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--help" | "-h" => return Err(ArgError::Help),
                 "--socket-dir" => {
                     socket_dir = PathBuf::from(value_for(&arg, &mut args)?);
+                }
+                "--resume-state" => {
+                    resume_state = Some(PathBuf::from(value_for(&arg, &mut args)?));
+                }
+                "--resume-fallback" => resume_fallback = true,
+                "--probe-resume" => {
+                    let value = value_for(&arg, &mut args)?;
+                    probe_resume = Some(value.parse().map_err(|_| {
+                        ArgError::Invalid(format!("`{arg}` needs a format version, got `{value}`"))
+                    })?);
                 }
                 "--max-attachments-per-terminal" => {
                     host_config.max_attachments_per_terminal =
@@ -276,6 +450,10 @@ impl HostArgs {
             .ok()
             .map(PathBuf::from)
             .unwrap_or_else(|| socket_dir.join("logs").join("gterm.log"));
+        let resume = resume_state.map(|state| Resume {
+            state,
+            fallback: resume_fallback,
+        });
         Ok(Self {
             token_file: socket_dir.join(TOKEN_FILE),
             pid_file: socket_dir.join(PID_FILE),
@@ -283,6 +461,8 @@ impl HostArgs {
             socket_dir,
             shutdown_grace_ms: 150,
             host_config,
+            resume,
+            probe_resume,
         })
     }
 }
@@ -313,6 +493,9 @@ Options:
       --control-deadline-ms N            control delivery deadline in milliseconds
       --control-queue-entries N          control queue entry ceiling
       --event-queue-bytes N              event queue byte ceiling
+      --resume-state PATH                restore from a handover state file
+      --resume-fallback                  the restore is a fallback into the earlier image
+      --probe-resume N                   print the restorable state formats; exit 0 if N is one, else 3
   -h, --help                             print this help and exit
 
 Environment: GTERM_SOCKET_DIR overrides the default socket dir, GTERM_LOG_FILE
@@ -365,6 +548,34 @@ fn gobby_home() -> Option<PathBuf> {
         }
     }
     dirs_home().map(|home| home.join(".gobby"))
+}
+
+/// Returns the pin this host runs from. A host launched from any other path
+/// pins that binary and re-execs the pin with the same argv and environment,
+/// before any socket is touched, so promotion never replaces its bytes.
+fn run_from_pin(images_dir: &Path) -> io::Result<image::PinnedImage> {
+    use std::os::unix::process::CommandExt;
+
+    let exe = std::env::current_exe()?;
+    if let Some(pin) = image::pinned_image(images_dir, &exe)? {
+        return Ok(pin);
+    }
+    let pin = image::pin_image(images_dir, &exe)?;
+    pin.verify()?;
+    if fs::canonicalize(&exe)? == fs::canonicalize(&pin.path)? {
+        return Err(io::Error::other(format!(
+            "{} is the pin but does not verify as one",
+            pin.path.display()
+        )));
+    }
+    let mut argv = std::env::args_os();
+    let arg0 = argv
+        .next()
+        .unwrap_or_else(|| pin.path.clone().into_os_string());
+    Err(std::process::Command::new(&pin.path)
+        .arg0(arg0)
+        .args(argv)
+        .exec())
 }
 
 fn write_pidfile(path: &Path, pid: u32) -> io::Result<()> {

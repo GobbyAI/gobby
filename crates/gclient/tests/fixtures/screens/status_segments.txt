@@ -2,14 +2,14 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*120
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*120
-02 | alpha        ⍾ beta      +                                                                                             |
-02 : text/panel_bg+b*12 text/surface0*1 overlay1/surface0*1 yellow/surface0*1 overlay1/surface0*13 text/surface0*92
-03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-03 : line/panel_bg*120
-04 |┌ ○ Claude · Focused ──────────────────────────────────────────────────────────────────────────────────────────────────┐|
-04 : accent/panel_bg*1 accent/panel_bg+b*20 accent/panel_bg*99
+01 |                                                                                                                        |
+01 : text/panel_bg*120
+02 | alpha      │ ⍾ beta      +                                                                                             |
+02 : text/surface1+b*12 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 overlay1/surface0*3 text/surface0*92
+03 |┌ ○ Claude · Focused ──────────────────────────────────────────────────────────────────────────────────────────────────┐|
+03 : accent/panel_bg*1 accent/panel_bg+b*20 accent/panel_bg*99
+04 |│                                                                                                                      │|
+04 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 05 |│                                                                                                                      │|
 05 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 06 |│                                                                                                                      │|
@@ -40,10 +40,10 @@
 18 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 19 |│                                                                                                                      │|
 19 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-20 |│                                                                                                                      │|
-20 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-21 |│                                                 waiting for frames                                                   │|
-21 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
+20 |│                                                 waiting for frames                                                   │|
+20 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
+21 |│                                                                                                                      │|
+21 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 22 |│                                                                                                                      │|
 22 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 23 |│                                                                                                                      │|
@@ -78,5 +78,5 @@
 37 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 38 |└───────────────────────────────────────────────────────────────────────────────────────────────────────────── gclient ┘|
 38 : accent/panel_bg*110 accent/panel_bg+b*9 accent/panel_bg*1
-39 | ⍾ 1 needs you │ 1 idle · claude-fable-5.1-xhigh                                           63% · 12,345 │ prefix ctrl+b |
-39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*46 text/surface0*43 subtext0/surface0*28 text/surface0*1
+39 | ⍾ 1 needs you │ 1 idle · unrestricted                                                     63% · 12,345 │ prefix ctrl+b |
+39 : text/surface0*1 yellow/surface0*1 subtext0/surface0*36 text/surface0*53 subtext0/surface0*28 text/surface0*1

@@ -5,7 +5,6 @@ Extracted from tools.py as part of Phase 2 Strangler Fig decomposition.
 These endpoints handle tool listing, schema retrieval, and tool execution.
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -22,12 +21,7 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_protocol_mismatch_result,
 )
 from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_manager, get_server
-from gobby.servers.routes.mcp.endpoints import ask_policy, request_context
-from gobby.servers.routes.mcp.endpoints.ask_policy import (
-    fallback_denial as _ask_fallback_denial,
-)
-from gobby.servers.routes.mcp.endpoints.ask_policy import filter_tools as _filter_ask_tools
-from gobby.servers.routes.mcp.endpoints.ask_policy import schema_denial as _ask_schema_denial
+from gobby.servers.routes.mcp.endpoints import request_context
 from gobby.servers.routes.mcp.endpoints.discovery import _mcp_call_timeout
 from gobby.servers.routes.mcp.endpoints.request_context import (
     is_mcp_wrapper_request,
@@ -276,23 +270,11 @@ async def list_mcp_tools(
 
     try:
         enforce_workflow = await _enforce_workflow_for_request(request, server)
-        allowed = await asyncio.to_thread(
-            ask_policy.current_allowed_tools,
-            server,
-        )
-        if allowed is not None and not any(name == server_name for name, _ in allowed):
-            return {
-                "success": True,
-                "tools": [],
-                "tool_count": 0,
-                "response_time_ms": (time.perf_counter() - start_time) * 1000,
-            }
         # Check internal registries first (gobby-tasks, gobby-memory, etc.)
         if internal_manager and internal_manager.is_internal(server_name):
             registry = internal_manager.get_registry(server_name)
             if registry:
                 tools = registry.list_tools()
-                tools = _filter_ask_tools(server_name, tools, allowed)
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 observe_histogram("list_mcp_tools", response_time_ms / 1000)
                 if enforce_workflow and server.tool_proxy is not None:
@@ -362,7 +344,6 @@ async def list_mcp_tools(
                     "inputSchema": tool.input_schema,
                 }
                 tools.append(tool_dict)
-            tools = _filter_ask_tools(server_name, tools, allowed)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -486,14 +467,6 @@ async def get_tool_schema(
 
         try:
             enforce_workflow = await _enforce_workflow_for_request(request, server)
-            if (
-                isinstance(server_name, str)
-                and server._internal_manager
-                and server._internal_manager.is_internal(server_name)
-            ):
-                ask_denial = await _ask_schema_denial(server, server_name, str(tool_name))
-                if ask_denial is not None:
-                    return ask_denial
             # Check internal first
             if server._internal_manager and server._internal_manager.is_internal(server_name):
                 registry = server._internal_manager.get_registry(server_name)
@@ -553,9 +526,6 @@ async def get_tool_schema(
                     "error": f"Unknown MCP server: '{server_id or server_name}'",
                     "response_time_ms": response_time_ms,
                 }
-            ask_denial = await _ask_schema_denial(server, str(server_name), str(tool_name))
-            if ask_denial is not None:
-                return ask_denial
             if server.tool_proxy is not None:
                 proxied = await server.tool_proxy.get_tool_schema(
                     server_name, tool_name, project_id=scope_project
@@ -740,11 +710,6 @@ async def call_mcp_tool(
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 
             # Fallback: no tool_proxy available, use direct registry calls
-            ask_denial = await _ask_fallback_denial(
-                server, str(server_name), str(tool_name), arguments
-            )
-            if ask_denial is not None:
-                return ask_denial
             # Check internal first
             if server._internal_manager and server._internal_manager.is_internal(server_name):
                 registry = server._internal_manager.get_registry(server_name)
@@ -855,11 +820,6 @@ async def mcp_proxy(
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
 
             # Fallback: no tool_proxy available, use direct registry calls
-            ask_denial = await _ask_fallback_denial(
-                server, str(server_name), str(tool_name), arguments
-            )
-            if ask_denial is not None:
-                return ask_denial
             # Check internal registries first (gobby-tasks, gobby-memory, etc.)
             if server._internal_manager and server._internal_manager.is_internal(server_name):
                 registry = server._internal_manager.get_registry(server_name)

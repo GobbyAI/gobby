@@ -338,12 +338,6 @@
           "when": "Citing code in findings, reviews, or reports, or checking a code claim first"
         },
         {
-          "name": "ask",
-          "description": "Run durable source-bound questions and verify evidence",
-          "path": "references/code-index/ask.md",
-          "when": "Starting or recovering Ask runs or handling assigned evidence work"
-        },
-        {
           "name": "navigation",
           "description": "Survey structure and preserve scope and pagination",
           "path": "references/code-index/navigation.md",
@@ -994,7 +988,7 @@
         {
           "name": "gclient-commands",
           "description": "Use gclient command-mode verbs and pane refs",
-          "path": "references/gclient/commands.md",
+          "path": "references/admin/gclient-commands.md",
           "when": "Inspecting or operating gclient workspaces from shell command mode"
         }
       ]

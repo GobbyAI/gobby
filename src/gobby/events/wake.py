@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 from gobby.events.live_wake import (
     ActivityProbe,
     composer_occupied_result,
+    handoff_delivery_skip,
     normalize_live_wake_result,
     wake_debounced_result,
     wake_failure,
@@ -37,6 +38,7 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
@@ -293,8 +295,8 @@ class WakeDispatcher:
 
         task.add_done_callback(forget)
 
-    async def _pause_idle_prompt(self, session_id: str) -> None:
-        """Drop active when a composer-capable terminal is idle at an empty prompt.
+    async def _pause_idle_prompt(self, session_id: str) -> str:
+        """Drop active at an idle empty prompt; return the reconcile outcome.
 
         ``lifecycle_refresh`` only flushes the transcript. A provider turn can
         end on screen while the row stays active, and the retry would then
@@ -303,12 +305,12 @@ class WakeDispatcher:
         """
         probe = self._activity_probe
         if probe is None:
-            return
+            return "no_probe"
         observed = await self._run_db(self._session_manager.get, session_id)
         if observed is None:
-            return
+            return "no_session"
         route = await self._terminal_route_for_session(observed)
-        await reconcile_idle_prompt_session(
+        return await reconcile_idle_prompt_session(
             session_manager=self._session_manager,
             observed=observed,
             terminal=route.managed_terminal,
@@ -318,6 +320,8 @@ class WakeDispatcher:
 
     async def _refresh_and_retry_wake(self, session_id: str, *, priority: str) -> None:
         assert self._lifecycle_refresh is not None
+        # Phase marks: refresh, idle-prompt reconcile, lock wait, dispatch. The
+        # four phases tile the span, so their sum is duration_ms.
         started = time.monotonic()
         try:
             await self._lifecycle_refresh(session_id)
@@ -330,35 +334,51 @@ class WakeDispatcher:
                 exc_info=True,
             )
             return
+        refreshed = time.monotonic()
         try:
-            await self._pause_idle_prompt(session_id)
+            idle = await self._pause_idle_prompt(session_id)
         except asyncio.CancelledError:
             raise
         except Exception:
+            idle = "error"
             logger.warning(
                 "Idle-prompt reconcile failed before retrying wake for session %s",
                 session_id,
                 exc_info=True,
             )
+        reconciled = time.monotonic()
         lock = self._live_wake_locks.get(session_id)
         if lock is None:
             lock = asyncio.Lock()
             self._live_wake_locks[session_id] = lock
         try:
             async with lock:
+                locked = time.monotonic()
                 result = await self._dispatch_live_wake_unlocked(session_id, priority=priority)
         except asyncio.CancelledError:
             raise
         except Exception:
             logger.warning("Deferred wake failed for session %s", session_id, exc_info=True)
             return
-        logger.info(
-            "Deferred wake for session %s: delivered=%s method=%s skipped=%s duration_ms=%.1f",
+        finished = time.monotonic()
+        skipped = result.get("skipped")
+        # A debounced skip is routine; session_active stays at INFO because it is
+        # the only trace of a session stranded as active (#22887).
+        logger.log(
+            logging.DEBUG if skipped == "debounced" else logging.INFO,
+            "Deferred wake for session %s: delivered=%s method=%s skipped=%s idle=%s "
+            "duration_ms=%.1f refresh_ms=%.1f reconcile_ms=%.1f lock_wait_ms=%.1f "
+            "dispatch_ms=%.1f",
             session_id,
             result.get("delivered"),
             result.get("method"),
-            result.get("skipped"),
-            (time.monotonic() - started) * 1000,
+            skipped,
+            idle,
+            (finished - started) * 1000,
+            (refreshed - started) * 1000,
+            (reconciled - refreshed) * 1000,
+            (locked - reconciled) * 1000,
+            (finished - locked) * 1000,
         )
 
     async def _dispatch_live_wake_unlocked(
@@ -552,7 +572,14 @@ class WakeDispatcher:
                 "skipped": "session_active",
                 "ism_persisted": True,
             }
-        return session, wake_state_failure(session_id, status)
+        state_failure = wake_state_failure(session_id, status)
+        if state_failure is not None:
+            return session, state_failure
+
+        def read_variables() -> dict[str, Any]:
+            return SessionVariableManager(self._session_manager.db).get_variables(session_id)
+
+        return session, handoff_delivery_skip(session_id, await self._run_db(read_variables))
 
     async def _composer_blocks_wake(
         self,

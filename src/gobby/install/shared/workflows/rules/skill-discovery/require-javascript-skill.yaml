@@ -9,6 +9,7 @@ rules:
     when: >
       not skill_loaded('javascript')
       and event.data.get('canonical_tool_kind') == 'write'
+      and event.data.get('canonical_repo_mutation')
       and (
         event.data.get('canonical_write_file_path', '').endswith(('.js', '.jsx', '.mjs', '.cjs'))
         or event.data.get('canonical_write_file_path', '').rpartition('/')[2] == 'package.json'

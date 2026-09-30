@@ -15,6 +15,7 @@ from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.terminal_context import (
     enrich_terminal_context_with_cwd,
     hook_cwd,
+    hook_sandbox_enabled,
     is_gobby_acp_child,
 )
 from gobby.storage.session_activity import (
@@ -324,8 +325,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             agent_depth_val = int(agent_depth)
         except (ValueError, TypeError):
             pass
-    sandbox_enabled = input_data.get("sandbox_enabled")
-    sandbox_enabled_val = sandbox_enabled if isinstance(sandbox_enabled, bool) else None
+    sandbox_enabled_val = hook_sandbox_enabled(input_data)
 
     session_id = None
     if handler._session_manager and session_source == "compact" and resolution.session is not None:

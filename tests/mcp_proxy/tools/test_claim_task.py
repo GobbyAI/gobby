@@ -29,6 +29,9 @@ def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
+    manager.db.transaction.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = {
+        "claimed_by_session_id": "my-session-id"
+    }
     return manager
 
 

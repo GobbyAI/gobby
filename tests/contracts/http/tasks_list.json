@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "name": "tasks_list",
+  "family": "tasks",
+  "credential": "operator",
+  "request": {
+    "method": "GET",
+    "path": "/api/tasks",
+    "query": {
+      "project_id": "00000000-0000-0000-0000-000000000e2e"
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "tasks": [],
+      "total": 0,
+      "stats": {},
+      "limit": 50,
+      "offset": 0
+    }
+  },
+  "mask": []
+}

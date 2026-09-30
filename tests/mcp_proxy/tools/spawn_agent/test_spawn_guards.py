@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import threading
+from typing import Literal
 
 import pytest
 
@@ -121,6 +123,48 @@ async def test_reserve_agent_slot_counts_active_agents_off_event_loop(
     assert count_threads[0] is not calling_thread
 
 
+@pytest.mark.asyncio
+async def test_reserve_agent_slot_cancellation_waits_then_cleans_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    committed = threading.Event()
+    cleaned = asyncio.Event()
+
+    def blocking_refusal(*_args: object, **_kwargs: object) -> None:
+        entered.set()
+        assert release.wait(timeout=5)
+        committed.set()
+
+    async def cleanup() -> None:
+        assert committed.is_set()
+        cleaned.set()
+
+    monkeypatch.setattr(_spawn_guards, "agent_slot_cap_refusal", blocking_refusal)
+
+    async def reserve() -> None:
+        async with _spawn_guards.reserve_agent_slot(
+            db=object(),
+            project_id="project-cancelled-slot",
+            project_path="/tmp/project-cancelled-slot",
+            on_entry_cancel=cleanup,
+        ):
+            pytest.fail("cancelled entry must not yield a slot")
+
+    task = asyncio.create_task(reserve())
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert cleaned.is_set()
+
+
 def _claim_step_agent(first_step: str = "claim") -> AgentDefinitionBody:
     return make_agent_definition(
         name="planner",
@@ -195,7 +239,7 @@ def test_task_spawn_lease_releases_mutex_when_enter_raises(
             exc_type: type[BaseException] | None,
             exc: BaseException | None,
             _traceback: object,
-        ) -> bool:
+        ) -> Literal[False]:
             events.append(("exit", exc_type, str(exc)))
             return False
 

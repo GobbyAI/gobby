@@ -16,7 +16,7 @@ use super::gate::{errno_name, GATE_FD, PTY_FD, STATUS_FD};
 #[cfg(debug_assertions)]
 use crate::pane::ChildExitWatch;
 use crate::pane::PaneRuntime;
-use crate::terminal_theme::TerminalTheme;
+use crate::terminal_theme::ThemeDeclaration;
 
 const MIN_INHERITED_FD: RawFd = 10;
 const MAX_STATUS_BYTES: usize = 4096;
@@ -68,6 +68,21 @@ pub struct PreparedCommit {
 }
 
 impl PreparedChild {
+    /// A child carried across a host upgrade, in the state `spawn_commit`
+    /// leaves a committed child: no gate to release and no status to read.
+    pub fn from_restored(runtime: PaneRuntime, pid: u32, pgid: i32, start_time: f64) -> Self {
+        Self {
+            runtime,
+            pid,
+            pgid,
+            start_time,
+            gate_writer: None,
+            status_reader: None,
+            #[cfg(debug_assertions)]
+            wait_for_child_exit_before_status: false,
+        }
+    }
+
     /// Release the gate. A failed gate write still reads the status pipe in
     /// `finish`: a child that failed before commit reported its stage there
     /// and exited, which is exactly what closes the gate and fails the write.
@@ -123,16 +138,7 @@ impl PreparedCommit {
 #[cfg(test)]
 impl PreparedChild {
     pub(crate) fn from_test_runtime(runtime: PaneRuntime) -> Self {
-        Self {
-            runtime,
-            pid: 0,
-            pgid: 0,
-            start_time: 0.0,
-            gate_writer: None,
-            status_reader: None,
-            #[cfg(debug_assertions)]
-            wait_for_child_exit_before_status: false,
-        }
+        Self::from_restored(runtime, 0, 0, 0.0)
     }
 }
 
@@ -151,6 +157,7 @@ pub fn spawn_prepared(
     argv: &[String],
     env: &[(String, String)],
     scrollback_limit_bytes: usize,
+    theme: Option<&ThemeDeclaration>,
 ) -> io::Result<PreparedChild> {
     if argv.is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "argv empty"));
@@ -223,8 +230,10 @@ pub fn spawn_prepared(
         rows,
         cols,
         scrollback_limit_bytes,
-        TerminalTheme::default(),
-        None,
+        theme
+            .map(ThemeDeclaration::terminal_theme)
+            .unwrap_or_default(),
+        theme.and_then(ThemeDeclaration::appearance),
         master,
         pid,
     ) {

@@ -328,31 +328,30 @@ def _forward_http(upstream: str, handler: BaseHTTPRequestHandler) -> None:
 
 
 @dataclass
-class _HandshakeRaceProxy:
+class _SharedHandshakeProxy:
     proxy: _LoopbackProxy
-    older_waiting: threading.Event
-    newer_waiting: threading.Event
-    release_older: threading.Event
+    first_waiting: threading.Event
+    unexpected_second: threading.Event
+    release_first: threading.Event
 
     @property
     def url(self) -> str:
         return self.proxy.url
 
     def close(self) -> None:
-        self.release_older.set()
+        self.release_first.set()
         self.proxy.close()
 
 
-def _start_handshake_race_proxy(
+def _start_shared_handshake_proxy(
     upstream: str,
     *,
-    older: GrantBundle,
-    newer: GrantBundle,
-) -> _HandshakeRaceProxy:
+    grant: GrantBundle,
+) -> _SharedHandshakeProxy:
     lock = threading.Lock()
-    older_waiting = threading.Event()
-    newer_waiting = threading.Event()
-    release_older = threading.Event()
+    first_waiting = threading.Event()
+    unexpected_second = threading.Event()
+    release_first = threading.Event()
     arrivals = 0
 
     class Handler(BaseHTTPRequestHandler):
@@ -370,18 +369,14 @@ def _start_handshake_race_proxy(
             with lock:
                 position = arrivals
                 arrivals += 1
-            if position > 1:
-                self.send_error(500, "only two scripted handshakes are allowed")
+            if position > 0:
+                unexpected_second.set()
+                self.send_error(500, "concurrent acquisition issued another handshake")
                 return
-            if position == 0:
-                older_waiting.set()
-                if not release_older.wait(timeout=20):
-                    self.send_error(504, "older handshake was never released")
-                    return
-                grant = older
-            else:
-                newer_waiting.set()
-                grant = newer
+            first_waiting.set()
+            if not release_first.wait(timeout=20):
+                self.send_error(504, "first handshake was never released")
+                return
             body = json.dumps({"grant": grant.model_dump(mode="json")}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
@@ -389,11 +384,11 @@ def _start_handshake_race_proxy(
             self.end_headers()
             self.wfile.write(body)
 
-    return _HandshakeRaceProxy(
+    return _SharedHandshakeProxy(
         proxy=_start_loopback_proxy(Handler),
-        older_waiting=older_waiting,
-        newer_waiting=newer_waiting,
-        release_older=release_older,
+        first_waiting=first_waiting,
+        unexpected_second=unexpected_second,
+        release_first=release_first,
     )
 
 
@@ -1051,7 +1046,7 @@ def test_modality_identity_binding(boundary: BoundaryHarness) -> None:
             assert (forged.json().get("code") or forged.json().get("error")) == "forged_identity"
 
 
-def test_concurrent_renewal_race(boundary: BoundaryHarness, postgres_db: Any) -> None:
+def test_concurrent_renewal_shares_handshake(boundary: BoundaryHarness, postgres_db: Any) -> None:
     older = boundary.grant
     older_generation = _postgres_generation(older)
     rotated = _rotate_interactive(postgres_db, boundary.home, older)
@@ -1061,26 +1056,26 @@ def test_concurrent_renewal_race(boundary: BoundaryHarness, postgres_db: Any) ->
     assert newer_generation > older_generation
     expired = _rechecksum(older.model_copy(update={"expires_at": int(time.time()) - 5}))
     write_grant_file(boundary.grant_path, expired)
-    proxy = _start_handshake_race_proxy(
+    proxy = _start_shared_handshake_proxy(
         boundary.daemon.http_url,
-        older=older,
-        newer=newer,
+        grant=newer,
     )
     processes: list[subprocess.Popen[str]] = []
     try:
         assert not _binding_path(boundary.home, proxy.url).exists()
         env = boundary.command_env({"GOBBY_DAEMON_URL": proxy.url})
-        processes = [
-            boundary.spawn("gcode", "--allow-stale", "search", "fixture", env=env) for _ in range(2)
-        ]
-        assert proxy.older_waiting.wait(timeout=15), "older handshake did not reach its barrier"
-        assert proxy.newer_waiting.wait(timeout=15), "newer handshake did not overlap the older one"
+        processes.append(boundary.spawn("gcode", "--allow-stale", "search", "fixture", env=env))
+        assert proxy.first_waiting.wait(timeout=15), "first handshake did not reach its barrier"
+        processes.append(boundary.spawn("gcode", "--allow-stale", "search", "fixture", env=env))
+        assert not proxy.unexpected_second.wait(timeout=1), (
+            "concurrent acquire duplicated handshake"
+        )
+        assert all(process.poll() is None for process in processes)
+        proxy.release_first.set()
         _wait_for_cache_generation(boundary.grant_path, newer_generation)
-        assert any(process.poll() is None for process in processes)
-        proxy.release_older.set()
         outputs = [process.communicate(timeout=30) for process in processes]
     finally:
-        proxy.release_older.set()
+        proxy.release_first.set()
         for process in processes:
             if process.poll() is None:
                 process.terminate()
@@ -1089,6 +1084,7 @@ def test_concurrent_renewal_race(boundary: BoundaryHarness, postgres_db: Any) ->
 
     for process, (stdout, stderr) in zip(processes, outputs, strict=True):
         assert process.returncode == 0, stderr or stdout
+    assert not proxy.unexpected_second.is_set()
     cached = _load_cached_grant(boundary.grant_path)
     issued_generations = {_postgres_generation(grant) for grant in (older, newer)}
     assert _postgres_generation(cached) == max(issued_generations)
@@ -1353,11 +1349,24 @@ def test_takeover_fencing(
                         headers=boundary.grant_headers(),
                         json={"project_id": E2E_PROJECT_ID},
                     )
-                assert refused.status_code == 409, refused.text
+                # A draining backend refuses with 503 shutdown_in_progress. In front-door
+                # mode gdaemon then answers for it: 503 once it refuses connections and
+                # 502 when it closes an accepted socket.
+                if refused.status_code == 503:
+                    body = refused.json()
+                    assert (
+                        body.get("code") == "shutdown_in_progress"
+                        or body.get("backend", {}).get("state") == "down"
+                    ), refused.text
+                elif refused.status_code == 502:
+                    assert refused.json()["status"] == "bad_gateway", refused.text
+                else:
+                    assert refused.status_code == 409, refused.text
             except (httpx.ConnectError, httpx.RemoteProtocolError):
                 # Lease-loss drain also shuts the displaced listener down: the
                 # connect is refused, or an accepted socket closes before any
-                # response. Either 409 or a dropped socket proves it cannot mutate.
+                # response. A 409, a down backend, or a dropped socket proves it
+                # cannot mutate.
                 pass
         finally:
             release_path.write_text("1")

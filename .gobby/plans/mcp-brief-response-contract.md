@@ -64,7 +64,7 @@ Josh confirmed these on 2026-09-25:
      `progress_age_seconds` stay);
    - sub-checks that passed (a count replaces them);
    - echoes of the caller's input;
-   - diagnostics (`score_range`, `threshold_axis`, `recall_request_id`, ranking internals);
+   - diagnostics (`score_range`, `threshold_axis`, ranking internals);
    - retrieval instructions the agent already knows (one pointer stays when content was cut);
    - the same data sent twice;
    - full bodies of secondary items (an index line instead).
@@ -187,21 +187,18 @@ Consumers unchanged:
 **Research context:**
 - `search_memories` (`memory.py`, `create_memory_registry.search_memories`) takes
   `query, limit=10, min_score, memory_type, tags_all, tags_any, tags_none`. It returns
-  `{success, memories[], recall_request_id, project_id, diagnostics}`, where each hit has 20
+  `{success, memories[], project_id, diagnostics}`, where each hit has 20
   fields (`id, content, rationale, type, created_at, updated_at, tags, project_id, is_global,
   source_task_id, created_by_agent, similarity, undecayed_similarity, search_via, ranking_score,
   raw_semantic_score, temporal_decay_factor, graph_confidence, ranking_mode,
   collapsed_duplicates`).
-- `memory.py::_record_delivered_hits` reads only `hit["id"]` and list position; keeping `id`
-  keeps delivered-outcome telemetry correct.
 - `get_memory` returns `{success, memory{id, content, rationale, type, created_at, updated_at,
   project_id, is_global, source_type, source_task_id, created_by_agent, access_count, tags}}`.
 - `references/memory/scope.md:4` says to inspect `get_memory` and the caller project before
   mutation, so `is_global` stays in brief.
 - `references/memory/search.md` lines 12–13 and 19–21 tell agents to inspect content, rationale,
-  similarity, diagnostics, and ranking provenance on search hits. Lines 31–33 keep
-  `recall_request_id` for diagnostics only. That guidance moves to "use `get_memory` for text,
-  and `brief=false` only when debugging ranking".
+  similarity, diagnostics, and ranking provenance on search hits. That guidance moves to
+  "use `get_memory` for text, and `brief=false` only when debugging ranking".
 - `references/memory/overview.md` and the `<memory-index>` fetch instruction already assume
   `get_memory` returns full text; brief `get_memory` keeps `content` and `rationale`.
 - `surface_format._lead` collapses whitespace and truncates on a word boundary at
@@ -214,7 +211,6 @@ Consumers unchanged:
   lead(rationale)}`, which reads attributes or keys.
 - `search_memories(..., brief: bool = True)`: brief returns
   `{success, memories: [memory_index_line(hit)]}`. Full returns today's dict.
-  `_record_delivered_hits` runs in both modes.
 - `get_memory(memory_id, brief: bool = True)`: brief returns
   `{success, memory{id, type, content, rationale, tags, is_global}}`.
 - Both descriptions end with the Decision Record 3 sentence.
@@ -772,7 +768,7 @@ Targets:
   `max_ratio`.
 - `NEVER_IN_BRIEF`: `seq_num`, `path_cache`, `created_by_agent`, `access_count`,
   `source_type`, `policy_hash`, `transcript_path`, `score_range`, `threshold_axis`,
-  `recall_request_id`, `reviewer_provider`, `reviewer_model`, `notification_registered`,
+  `reviewer_provider`, `reviewer_model`, `notification_registered`,
   `notification_session_id`, `checklist`, `transcript_evidence`, `validation_feedback`,
   `sandbox`, `external_write_grant`.
 - Measurement envelope: each side is the dict the tool function returns, serialized as

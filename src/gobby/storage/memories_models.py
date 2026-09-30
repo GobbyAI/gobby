@@ -93,6 +93,7 @@ class MemoryCrossRef:
     ),
     optional=(
         "last_accessed_at",
+        "last_surfaced_at",
         "deleted_at",
         "last_dreamed_at",
     ),
@@ -113,6 +114,8 @@ class Memory:
     created_by_agent: str | None = None  # agent definition name or interactive CLI source
     access_count: int = 0
     last_accessed_at: datetime | None = None
+    surfaced_count: int = 0
+    last_surfaced_at: datetime | None = None
     graph_processed: bool = True
     graph_attempts: int = 0
     graph_status: Literal["pending", "completed", "failed"] = "completed"
@@ -174,6 +177,8 @@ class Memory:
             created_by_agent=row.get("created_by_agent"),
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
+            surfaced_count=int(row.get("surfaced_count") or 0),
+            last_surfaced_at=row.get("last_surfaced_at"),
             graph_processed=bool(row.get("graph_processed", True)),
             graph_attempts=int(row.get("graph_attempts", 0)),
             graph_status=cast(
@@ -204,6 +209,8 @@ class Memory:
             "created_by_agent": self.created_by_agent,
             "access_count": self.access_count,
             "last_accessed_at": self.last_accessed_at,
+            "surfaced_count": self.surfaced_count,
+            "last_surfaced_at": self.last_surfaced_at,
             "graph_processed": self.graph_processed,
             "graph_attempts": self.graph_attempts,
             "graph_status": self.graph_status,

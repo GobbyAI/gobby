@@ -16,6 +16,10 @@ from typing import TYPE_CHECKING, Any
 from gobby.adapters.capabilities import hook_supports_model_context
 from gobby.hooks import grok_pending_context
 from gobby.hooks.events import ContextPart, HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.pending_message_reservations import (
+    release_pending_messages,
+    reserve_pending_messages,
+)
 from gobby.hooks.pending_messages import PendingMessageRenderResult, render_pending_messages
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.skills.capability_routing import gobby_help_prefix
@@ -186,29 +190,45 @@ class EventEnricher:
             return
 
         undelivered = self._inter_session_msg_manager.get_undelivered_messages(platform_session_id)
+        # A concurrent hook for this session may already be delivering some of
+        # these; its receipt acknowledges them, so this hook skips them.
+        reserved = reserve_pending_messages(
+            platform_session_id, [message.id for message in undelivered]
+        )
+        undelivered = [message for message in undelivered if message.id in reserved.message_ids]
         if not undelivered:
             return
 
-        resolve_sender = partial(self._resolve_sender_label, recipient_project_id=event.project_id)
-        rendered = render_pending_messages(
-            undelivered,
-            resolve_sender=resolve_sender,
-        )
-        if event.source == SessionSource.GROK:
-            grok_pending_context.enqueue_pending_messages(
-                self._session_manager,
-                platform_session_id,
-                undelivered,
-                resolve_sender,
+        staged_ids: tuple[str, ...] = ()
+        try:
+            resolve_sender = partial(
+                self._resolve_sender_label, recipient_project_id=event.project_id
             )
-            self._stage_pending_messages(response, rendered, platform_session_id)
-            return
+            rendered = render_pending_messages(
+                undelivered,
+                resolve_sender=resolve_sender,
+            )
+            if event.source == SessionSource.GROK:
+                grok_pending_context.enqueue_pending_messages(
+                    self._session_manager,
+                    platform_session_id,
+                    undelivered,
+                    resolve_sender,
+                )
+                self._stage_pending_messages(response, rendered, platform_session_id)
+                staged_ids = rendered.represented_message_ids
+                return
 
-        pending_context = rendered.context
-        if not pending_context:
-            return
-        response.add_context(("pending_messages", pending_context), prepend=True)
-        self._stage_pending_messages(response, rendered, platform_session_id)
+            pending_context = rendered.context
+            if not pending_context:
+                return
+            response.add_context(("pending_messages", pending_context), prepend=True)
+            self._stage_pending_messages(response, rendered, platform_session_id)
+            staged_ids = rendered.represented_message_ids
+        finally:
+            release_pending_messages(
+                platform_session_id, reserved, reserved.message_ids.difference(staged_ids)
+            )
 
     @staticmethod
     def _stage_pending_messages(

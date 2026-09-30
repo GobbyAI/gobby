@@ -673,6 +673,20 @@ def _stable_machine_identity(_session_machine_identity: str | None) -> Iterator[
 
 
 @pytest.fixture(autouse=True)
+def _clear_pending_message_reservations() -> Iterator[None]:
+    """Clear in-flight pending-message reservations around every test.
+
+    Reservations are process-wide and outlive a test's enricher, so a message
+    id reused by a later test would otherwise read as held by a concurrent hook.
+    """
+    from gobby.hooks.pending_message_reservations import clear_pending_message_reservations
+
+    clear_pending_message_reservations()
+    yield
+    clear_pending_message_reservations()
+
+
+@pytest.fixture(autouse=True)
 def _clear_worker_staging() -> Iterator[None]:
     """Clear receipt staging around every test.
 

@@ -13,12 +13,14 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.sessions.transcripts.base import RawLine
-from gobby.tasks import transcript_evidence, transcript_evidence_cache
-from gobby.tasks.transcript_evidence import (
-    clear_evidence_snapshots,
-    derive_transcript_evidence,
+from gobby.tasks import (
+    transcript_evidence,
+    transcript_evidence_cache,
+    transcript_evidence_snapshots,
 )
+from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence
+from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots
 from tests.tasks.test_transcript_evidence import (
     BASE_TIME,
     LOCAL_MACHINE_ID,
@@ -120,7 +122,7 @@ async def test_second_derivation_parses_only_appended_lines(
     session = _session("claude", transcript)
 
     first = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    stored = transcript_evidence._load_snapshot(session.id)
+    stored = transcript_evidence_snapshots.load_snapshot(session.id)
     assert stored is not None
     assert stored.watermark == transcript.stat().st_size
 
@@ -137,7 +139,7 @@ async def test_second_derivation_parses_only_appended_lines(
     # The second derivation parsed only the appended suffix, and its watermark
     # advanced past the untouched prefix to the new end of file.
     assert parse_counts == [len(initial), len(appended)]
-    advanced = transcript_evidence._load_snapshot(session.id)
+    advanced = transcript_evidence_snapshots.load_snapshot(session.id)
     assert advanced is not None
     assert advanced.watermark == transcript.stat().st_size
     assert advanced.watermark > stored.watermark
@@ -167,8 +169,8 @@ async def test_restart_resumes_from_durable_checkpoint(
     assert first.validation_runs[0].outcome == "failure"
 
     # A daemon restart loses only the in-memory LRU, not the private checkpoint.
-    with transcript_evidence._snapshot_lock:
-        transcript_evidence._evidence_snapshots.clear()
+    with transcript_evidence_snapshots._snapshot_lock:
+        transcript_evidence_snapshots._evidence_snapshots.clear()
     appended = _claude_tool_pair(
         command="uv run pytest tests/tasks/test_a.py",
         call_id="run-2",
@@ -211,8 +213,8 @@ async def test_invalid_durable_checkpoint_reparses_safely(
         else:
             payload["tail_sha256"] = "0" * 64
         checkpoint.write_text(json.dumps(payload))
-    with transcript_evidence._snapshot_lock:
-        transcript_evidence._evidence_snapshots.clear()
+    with transcript_evidence_snapshots._snapshot_lock:
+        transcript_evidence_snapshots._evidence_snapshots.clear()
 
     evidence = await _derive(session, BASE_TIME, set(), tmp_path)
 
@@ -220,8 +222,8 @@ async def test_invalid_durable_checkpoint_reparses_safely(
     assert [run.command for run in evidence.validation_runs] == [
         "uv run pytest tests/tasks/test_a.py"
     ]
-    with transcript_evidence._snapshot_lock:
-        transcript_evidence._evidence_snapshots.clear()
+    with transcript_evidence_snapshots._snapshot_lock:
+        transcript_evidence_snapshots._evidence_snapshots.clear()
     await _derive(session, BASE_TIME, set(), tmp_path)
     assert parse_counts == [len(records), len(records), 0]
 
@@ -258,7 +260,7 @@ async def test_pooled_derivation_keeps_snapshot_resume(
     session = _session("claude", transcript)
 
     first = await _derive(session, BASE_TIME, set(), tmp_path)
-    stored = transcript_evidence._load_snapshot(session.id)
+    stored = transcript_evidence_snapshots.load_snapshot(session.id)
     assert stored is not None
     assert stored.parsed_from_offset == 0
 
@@ -271,7 +273,7 @@ async def test_pooled_derivation_keeps_snapshot_resume(
     _append_jsonl(transcript, appended)
     second = await _derive(session, BASE_TIME, set(), tmp_path)
 
-    advanced = transcript_evidence._load_snapshot(session.id)
+    advanced = transcript_evidence_snapshots.load_snapshot(session.id)
     assert advanced is not None
     assert advanced.parsed_from_offset == stored.watermark
     assert advanced.watermark == transcript.stat().st_size
@@ -304,7 +306,7 @@ async def test_repeat_derivation_of_an_unchanged_file_parses_nothing(
 
 
 @pytest.mark.asyncio
-async def test_supplemental_transcripts_bypass_primary_resume_snapshot(
+async def test_supplemental_transcripts_resume_from_the_session_snapshot(
     tmp_path: Path, parse_counts: list[int]
 ) -> None:
     transcript = tmp_path / "transcript-evidence-claude-1.jsonl"
@@ -329,11 +331,31 @@ async def test_supplemental_transcripts_bypass_primary_resume_snapshot(
     first = await _derive(session, BASE_TIME, set(), tmp_path)
     second = await _derive(session, BASE_TIME, set(), tmp_path)
 
-    assert parse_counts == [len(primary_records), len(subagent_records), 0, len(subagent_records)]
+    assert parse_counts == [len(primary_records), len(subagent_records), 0, 0]
     assert second == first
-    snapshot = transcript_evidence._load_snapshot(session.id)
+    snapshot = transcript_evidence_snapshots.load_snapshot(session.id)
     assert snapshot is not None
     assert snapshot.transcript_path == str(transcript)
+    assert list(snapshot.supplemental) == [str(subagent)]
+
+    # After a restart the durable checkpoint still carries the subagent watermark.
+    with transcript_evidence_snapshots._snapshot_lock:
+        transcript_evidence_snapshots._evidence_snapshots.clear()
+    appended = _claude_tool_pair(
+        command="uv run pytest tests/tasks/test_b.py",
+        call_id="subagent-run-2",
+        start=BASE_TIME + timedelta(seconds=20),
+        result={"exit_code": 0, "stdout": "passed"},
+    )
+    _append_jsonl(subagent, appended)
+    parse_counts.clear()
+    resumed = await _derive(session, BASE_TIME, set(), tmp_path)
+
+    assert parse_counts == [0, len(appended)]
+    clear_evidence_snapshots()
+    parse_counts.clear()
+    assert await _derive(session, BASE_TIME, set(), tmp_path) == resumed
+    assert parse_counts == [len(primary_records), len(subagent_records) + len(appended)]
 
 
 async def test_incremental_derivation_matches_a_full_window_parse(
@@ -504,8 +526,8 @@ async def test_codex_execution_chain_survives_restart_and_matches_full_parse(
     session = _session("codex", transcript)
 
     await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    with transcript_evidence._snapshot_lock:
-        transcript_evidence._evidence_snapshots.clear()
+    with transcript_evidence_snapshots._snapshot_lock:
+        transcript_evidence_snapshots._evidence_snapshots.clear()
     _append_jsonl(transcript, suffix)
     incremental = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
     assert parse_counts == [len(prefix), len(suffix)]
@@ -555,7 +577,7 @@ async def test_truncated_transcript_falls_back_to_a_full_parse(
     assert [run.command for run in evidence.validation_runs] == [
         "uv run pytest tests/tasks/test_a.py"
     ]
-    stored = transcript_evidence._load_snapshot(session.id)
+    stored = transcript_evidence_snapshots.load_snapshot(session.id)
     assert stored is not None
     assert stored.watermark == transcript.stat().st_size
 
@@ -638,7 +660,7 @@ async def test_archived_transcript_falls_back_to_a_full_parse(
     assert parse_counts == [len(records), len(records)]
     assert archived.validation_runs == live.validation_runs
     assert archived.attempted_paths[-1] == str(archive)
-    stored = transcript_evidence._load_snapshot(session.id)
+    stored = transcript_evidence_snapshots.load_snapshot(session.id)
     assert stored is not None
     assert stored.transcript_path == str(transcript)
 
@@ -691,7 +713,7 @@ async def test_partial_trailing_line_is_parsed_but_never_persisted(
 
     first = await _derive(session, BASE_TIME, set(), tmp_path)
     assert [run.outcome for run in first.validation_runs] == ["success"]
-    assert transcript_evidence._load_snapshot(session.id) is None
+    assert transcript_evidence_snapshots.load_snapshot(session.id) is None
 
     with transcript.open("a", encoding="utf-8") as handle:
         handle.write("\n")
@@ -712,13 +734,13 @@ async def test_partial_trailing_line_is_parsed_but_never_persisted(
         "uv run pytest tests/tasks/test_a.py",
         "uv run ruff check src/",
     ]
-    stored = transcript_evidence._load_snapshot(session.id)
+    stored = transcript_evidence_snapshots.load_snapshot(session.id)
     assert stored is not None
     assert stored.watermark == transcript.stat().st_size
 
 
 def test_snapshot_store_is_bounded() -> None:
-    base = transcript_evidence._EvidenceSnapshot(
+    base = transcript_evidence_snapshots.EvidenceSnapshot(
         fingerprint="f",
         transcript_path="/tmp/x.jsonl",
         watermark=0,
@@ -731,9 +753,12 @@ def test_snapshot_store_is_bounded() -> None:
         edits=(),
         degraded=(),
     )
-    for index in range(transcript_evidence._SNAPSHOT_LIMIT + 3):
-        transcript_evidence._store_snapshot(f"session-{index}", base)
+    for index in range(transcript_evidence_snapshots._SNAPSHOT_LIMIT + 3):
+        transcript_evidence_snapshots.store_snapshot(f"session-{index}", base)
 
-    assert len(transcript_evidence._evidence_snapshots) == transcript_evidence._SNAPSHOT_LIMIT
-    assert transcript_evidence._load_snapshot("session-0") is None
-    assert transcript_evidence._load_snapshot("session-3") is base
+    assert (
+        len(transcript_evidence_snapshots._evidence_snapshots)
+        == transcript_evidence_snapshots._SNAPSHOT_LIMIT
+    )
+    assert transcript_evidence_snapshots.load_snapshot("session-0") is None
+    assert transcript_evidence_snapshots.load_snapshot("session-3") is base

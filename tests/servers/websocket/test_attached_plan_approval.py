@@ -1,14 +1,11 @@
-"""Tests for the attached (proxy-terminal) plan-approval keystroke path.
-
-Path B: a CLI running in a tmux pane has no in-memory ChatSession, so plan
-approval drives the native TUI menu via keystrokes sent to the pane. These
-tests use a synthetic ``example`` source with a registered sequence -- not any
-real CLI's keystrokes.
-"""
+"""Tests for attached native CLI plan approval through the managed terminal."""
 
 from __future__ import annotations
 
+import asyncio
 import json
+from contextlib import contextmanager
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,20 +23,43 @@ from gobby.servers.websocket.handlers.plan_approval import (
     handle_plan_approval_response,
 )
 from gobby.servers.websocket.session_control import SessionControlMixin
+from gobby.terminals.runtime import Delivered, IndeterminateWrite, Suppressed
+from gobby.terminals.write_coordinator import SequenceDelay
 
-_TMUX_PATCH = "gobby.servers.websocket.handlers.plan_approval.manager_for_terminal_context"
 
+@contextmanager
+def _wire_native(server: ConcreteSessionControl, probe: MagicMock) -> Any:
+    terminal = SimpleNamespace(id="native-1", backend="native")
+    server.terminal_manager = MagicMock()
+    server.terminal_manager.resolve_live_for_session.return_value = terminal
 
-def _wire_tmux(tmux: MagicMock) -> MagicMock:
-    async def dispatch_keys(*args: Any, **kwargs: Any) -> Any:
-        return await tmux.send_keys(*args, **kwargs)
+    async def snapshot(_terminal: Any, *, lines: int) -> Any:
+        text = await probe.capture_pane("native-1", lines=lines)
+        return SimpleNamespace(text=text)
 
-    async def snapshot_lines(*args: Any, **kwargs: Any) -> Any:
-        return await tmux.capture_pane(*args, **kwargs)
+    runtime = MagicMock()
+    runtime.snapshot = AsyncMock(side_effect=snapshot)
+    server.terminal_runtime_registry = MagicMock()
+    server.terminal_runtime_registry.resolve.return_value = runtime
 
-    tmux.dispatch_keys = dispatch_keys
-    tmux.snapshot_lines = snapshot_lines
-    return tmux
+    async def run_sequence(_terminal_id: str, *, steps: Any, **_kwargs: Any) -> Any:
+        for step in steps:
+            if isinstance(step, SequenceDelay):
+                continue
+            if step.kind == "key":
+                key = {"enter": "Enter", "escape": "Escape"}.get(step.payload, step.payload)
+                literal = False
+            elif step.payload == "\x12":
+                key, literal = "C-r", False
+            else:
+                key, literal = step.payload, True
+            if not await probe.send_keys("native-1", key, literal=literal):
+                return Suppressed(action_key="plan-approval")
+        return Delivered()
+
+    server.write_coordinator = MagicMock()
+    server.write_coordinator.run_sequence = AsyncMock(side_effect=run_sequence)
+    yield server.terminal_manager.resolve_live_for_session
 
 
 # Trimmed verbatim Claude Code v2.1.169 captures (full plan menu vs. bare confirm).
@@ -113,7 +133,9 @@ class TestAttachedPlanApprovalDispatch:
     async def test_approve_dispatches_registered_keystrokes(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            tmux_pane=None
+        )
 
         registry = _registry_with(
             "example",
@@ -126,7 +148,7 @@ class TestAttachedPlanApprovalDispatch:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)) as get_tmux:
+        with _wire_native(server, tmux_manager) as resolve_terminal:
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -135,10 +157,13 @@ class TestAttachedPlanApprovalDispatch:
                 registry=registry,
             )
 
-        get_tmux.assert_called_once_with({"tmux_pane": "%11"})
-        assert tmux_manager.send_keys.await_args_list[0].args == ("%11", "1")
+        resolve_terminal.assert_called_once_with(
+            cast(MagicMock, server.session_manager).get.return_value
+        )
+        server.write_coordinator.run_sequence.assert_awaited_once()
+        assert tmux_manager.send_keys.await_args_list[0].args == ("native-1", "1")
         assert tmux_manager.send_keys.await_args_list[0].kwargs == {"literal": True}
-        assert tmux_manager.send_keys.await_args_list[1].args == ("%11", "Enter")
+        assert tmux_manager.send_keys.await_args_list[1].args == ("native-1", "Enter")
         assert tmux_manager.send_keys.await_args_list[1].kwargs == {"literal": False}
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
@@ -148,13 +173,13 @@ class TestAttachedPlanApprovalDispatch:
             "option_id": "approve_yolo",
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_request_changes_dispatches_keep_planning(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session()
 
         registry = _registry_with(
             "example",
@@ -164,7 +189,7 @@ class TestAttachedPlanApprovalDispatch:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -173,35 +198,43 @@ class TestAttachedPlanApprovalDispatch:
                 registry=registry,
             )
 
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "3", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["decision"] == "request_changes"
         assert msg["option_id"] == REQUEST_CHANGES_OPTION_ID
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_unmapped_source_errors(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="claude")
-
-        await handle_attached_plan_approval(
-            server,
-            ws,
-            "term-1",
-            {"decision": "approve", "option_id": "approve_yolo"},
-            registry=PlanKeystrokeRegistry(),
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="claude"
         )
 
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "PLAN_KEYSTROKES_UNMAPPED"
+        with _wire_native(server, MagicMock()):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=PlanKeystrokeRegistry(),
+            )
+
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "PLAN_KEYSTROKES_UNMAPPED"
+        )
         ws.send.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_non_terminal_session_errors(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(session_type="web_chat")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            session_type="web_chat"
+        )
 
         await handle_attached_plan_approval(
             server,
@@ -211,14 +244,19 @@ class TestAttachedPlanApprovalDispatch:
             registry=PlanKeystrokeRegistry(),
         )
 
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "UNSUPPORTED_SESSION_TYPE"
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "UNSUPPORTED_SESSION_TYPE"
+        )
 
     @pytest.mark.asyncio
-    async def test_missing_pane_errors(self) -> None:
+    async def test_missing_managed_terminal_errors(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(tmux_pane=None)
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            tmux_pane=None
+        )
 
         await handle_attached_plan_approval(
             server,
@@ -228,14 +266,115 @@ class TestAttachedPlanApprovalDispatch:
             registry=PlanKeystrokeRegistry(),
         )
 
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "NO_TERMINAL_TARGET"
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "NO_TERMINAL_TARGET"
+        )
+
+    @pytest.mark.asyncio
+    async def test_live_legacy_terminal_is_fenced(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session()
+        probe = MagicMock()
+
+        with _wire_native(server, probe):
+            server.terminal_manager.resolve_live_for_session.return_value.backend = "tmux"
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=_registry_with(
+                    "example",
+                    "approve_yolo",
+                    PlanKeystrokeSequence(strokes=(PlanKeystroke("1", literal=True),)),
+                ),
+            )
+
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs["code"]
+            == "UNSUPPORTED_TERMINAL_BACKEND"
+        )
+        server.write_coordinator.run_sequence.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_indeterminate_native_write_is_not_reported_dispatched(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            tmux_pane=None
+        )
+
+        with _wire_native(server, MagicMock()):
+            server.write_coordinator.run_sequence = AsyncMock(
+                return_value=IndeterminateWrite("lost response")
+            )
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=_registry_with(
+                    "example",
+                    "approve_yolo",
+                    PlanKeystrokeSequence(strokes=(PlanKeystroke("1", literal=True),)),
+                ),
+            )
+
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs["code"]
+            == "PLAN_DISPATCH_UNCONFIRMED"
+        )
+        ws.send.assert_not_awaited()
+
+    async def test_in_flight_dispatch_timeout_is_unconfirmed(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            tmux_pane=None
+        )
+        started = asyncio.Event()
+
+        async def dispatch_in_flight(*_args: Any, **_kwargs: Any) -> Delivered:
+            started.set()
+            await asyncio.Event().wait()
+            return Delivered()
+
+        with (
+            _wire_native(server, MagicMock()),
+            patch(
+                "gobby.servers.websocket.handlers.plan_approval."
+                "_PLAN_TERMINAL_OPERATION_TIMEOUT_SECONDS",
+                0.01,
+            ),
+        ):
+            server.write_coordinator.run_sequence = AsyncMock(side_effect=dispatch_in_flight)
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=_registry_with(
+                    "example",
+                    "approve_yolo",
+                    PlanKeystrokeSequence(strokes=(PlanKeystroke("1", literal=True),)),
+                ),
+            )
+
+        assert started.is_set()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs["code"]
+            == "PLAN_DISPATCH_UNCONFIRMED"
+        )
+        ws.send.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_invalid_decision_errors(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session()
 
         # approve without an option_id cannot resolve which menu item to select.
         await handle_attached_plan_approval(
@@ -246,14 +385,17 @@ class TestAttachedPlanApprovalDispatch:
             registry=PlanKeystrokeRegistry(),
         )
 
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "INVALID_PLAN_DECISION"
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "INVALID_PLAN_DECISION"
+        )
 
     @pytest.mark.asyncio
     async def test_session_not_found_errors(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = None
+        cast(MagicMock, server.session_manager).get.return_value = None
 
         await handle_attached_plan_approval(
             server,
@@ -263,14 +405,14 @@ class TestAttachedPlanApprovalDispatch:
             registry=PlanKeystrokeRegistry(),
         )
 
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "NOT_FOUND"
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert cast(AsyncMock, server._send_error).await_args.kwargs.get("code") == "NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_failed_send_reports_error(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session()
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session()
 
         registry = _registry_with(
             "example",
@@ -280,7 +422,7 @@ class TestAttachedPlanApprovalDispatch:
         tmux_manager = MagicMock()
         tmux_manager.send_keys = AsyncMock(return_value=False)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -289,10 +431,10 @@ class TestAttachedPlanApprovalDispatch:
                 registry=registry,
             )
 
-        server._send_error.assert_awaited_once()
+        cast(AsyncMock, server._send_error).assert_awaited_once()
         # The surfaced error names the keystroke-send failure, and no
         # confirmation frame is emitted when the dispatch did not complete.
-        assert "keystrokes" in server._send_error.await_args.args[1]
+        assert "keystrokes" in cast(AsyncMock, server._send_error).await_args.args[1]
         ws.send.assert_not_awaited()
 
 
@@ -303,13 +445,15 @@ class TestAttachedPlanApprovalClaude:
     async def test_full_menu_approve_yolo_captures_and_dispatches(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="claude")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="claude"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_CLAUDE_FULL_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -320,28 +464,30 @@ class TestAttachedPlanApprovalClaude:
 
         # Live pane was captured to disambiguate the menu shape.
         tmux_manager.capture_pane.assert_awaited_once()
-        assert tmux_manager.capture_pane.await_args.args[0] == "%11"
+        assert tmux_manager.capture_pane.await_args.args[0] == "native-1"
         # Full menu: digit '1' then Enter to activate.
-        assert tmux_manager.send_keys.await_args_list[0].args == ("%11", "1")
+        assert tmux_manager.send_keys.await_args_list[0].args == ("native-1", "1")
         assert tmux_manager.send_keys.await_args_list[0].kwargs == {"literal": True}
-        assert tmux_manager.send_keys.await_args_list[1].args == ("%11", "Enter")
+        assert tmux_manager.send_keys.await_args_list[1].args == ("native-1", "Enter")
         assert tmux_manager.send_keys.await_args_list[1].kwargs == {"literal": False}
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_yolo"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_confirm_menu_request_changes_sends_digit_only(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="claude")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="claude"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_CLAUDE_CONFIRM_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -353,7 +499,7 @@ class TestAttachedPlanApprovalClaude:
         # The live pane was read to pick the confirm-menu mapping.
         tmux_manager.capture_pane.assert_awaited_once()
         # Bare confirm menu activates on the digit alone -- no trailing Enter.
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "2", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "2", literal=True)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
@@ -363,19 +509,21 @@ class TestAttachedPlanApprovalClaude:
             "option_id": REQUEST_CHANGES_OPTION_ID,
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_menu_on_pane_reports_unmapped(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="claude")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="claude"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value="just a shell prompt, no menu\n")
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -386,10 +534,13 @@ class TestAttachedPlanApprovalClaude:
 
         # The pane was captured, found no menu, and no keystrokes were guessed.
         tmux_manager.capture_pane.assert_awaited_once()
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "PLAN_KEYSTROKES_UNMAPPED"
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "PLAN_KEYSTROKES_UNMAPPED"
+        )
         # The surfaced error names the source and the unmapped option.
-        error_message = server._send_error.await_args.args[1]
+        error_message = cast(AsyncMock, server._send_error).await_args.args[1]
         assert "claude" in error_message
         assert "approve_yolo" in error_message
         tmux_manager.send_keys.assert_not_awaited()
@@ -403,13 +554,15 @@ class TestAttachedPlanApprovalCodex:
     async def test_approve_dispatches_digit_only_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="codex")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="codex"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_CODEX_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -420,23 +573,25 @@ class TestAttachedPlanApprovalCodex:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # Codex plan menu activates on the digit alone; approve maps to "1".
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_act"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_request_changes_dispatches_stay_in_plan_mode(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="codex")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="codex"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_CODEX_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -447,7 +602,7 @@ class TestAttachedPlanApprovalCodex:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes maps to "3" (No, stay in Plan mode), digit only.
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "3", literal=True)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
@@ -462,13 +617,15 @@ class TestAttachedPlanApprovalCodex:
     async def test_stale_approval_click_without_menu_sends_no_keystrokes(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="codex")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="codex"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value="agent is still generating\n")
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -479,9 +636,12 @@ class TestAttachedPlanApprovalCodex:
 
         tmux_manager.capture_pane.assert_awaited_once()
         tmux_manager.send_keys.assert_not_awaited()
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "PLAN_KEYSTROKES_UNMAPPED"
-        error_message = server._send_error.await_args.args[1]
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "PLAN_KEYSTROKES_UNMAPPED"
+        )
+        error_message = cast(AsyncMock, server._send_error).await_args.args[1]
         assert "codex" in error_message
         assert "approve_act" in error_message
         ws.send.assert_not_awaited()
@@ -494,13 +654,15 @@ class TestAttachedPlanApprovalDroid:
     async def test_approve_dispatches_digit_only_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="droid")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="droid"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_DROID_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -511,23 +673,25 @@ class TestAttachedPlanApprovalDroid:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # Droid spec menu activates on the digit alone; approve maps to "1".
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_act"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_request_changes_dispatches_no_and_explain(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="droid")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="droid"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_DROID_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -538,7 +702,7 @@ class TestAttachedPlanApprovalDroid:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes maps to "4" (No and explain why), digit only.
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "4", literal=True)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
@@ -548,7 +712,7 @@ class TestAttachedPlanApprovalDroid:
             "option_id": REQUEST_CHANGES_OPTION_ID,
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
 
 class TestAttachedPlanApprovalUnsupported:
@@ -558,18 +722,24 @@ class TestAttachedPlanApprovalUnsupported:
     async def test_unsupported_source_is_unmapped(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="unsupported")
-
-        await handle_attached_plan_approval(
-            server,
-            ws,
-            "term-1",
-            {"decision": "approve", "option_id": "approve_yolo"},
-            registry=build_default_plan_keystroke_registry(),
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="unsupported"
         )
 
-        server._send_error.assert_awaited_once()
-        assert server._send_error.await_args.kwargs.get("code") == "PLAN_KEYSTROKES_UNMAPPED"
+        with _wire_native(server, MagicMock()):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_yolo"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        cast(AsyncMock, server._send_error).assert_awaited_once()
+        assert (
+            cast(AsyncMock, server._send_error).await_args.kwargs.get("code")
+            == "PLAN_KEYSTROKES_UNMAPPED"
+        )
         ws.send.assert_not_awaited()
 
 
@@ -582,13 +752,15 @@ class TestAttachedPlanApprovalGrok:
     async def test_approve_act_dispatches_digit_three_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="grok")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="grok"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -599,23 +771,25 @@ class TestAttachedPlanApprovalGrok:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # approve_act ("Yes, proceed"/"Yes", single approval) maps to "3".
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "3", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_act"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_approve_yolo_dispatches_digit_one_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="grok")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="grok"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -626,23 +800,25 @@ class TestAttachedPlanApprovalGrok:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # approve_yolo ("always-approve mode", bypass) maps to "1".
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_yolo"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_request_changes_dispatches_reject_digit_four(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="grok")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="grok"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -654,7 +830,7 @@ class TestAttachedPlanApprovalGrok:
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes is the stable reject digit "4" (literal) -- grok's "No,
         # reject" item is identical across menu shapes; Esc only unselects.
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "4", literal=True)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
@@ -664,7 +840,7 @@ class TestAttachedPlanApprovalGrok:
             "option_id": REQUEST_CHANGES_OPTION_ID,
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
 
 class TestAttachedPlanApprovalQwen:
@@ -675,13 +851,15 @@ class TestAttachedPlanApprovalQwen:
     async def test_approve_act_dispatches_digit_one_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="qwen")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="qwen"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -692,23 +870,25 @@ class TestAttachedPlanApprovalQwen:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # approve_act ("Yes, allow once", single approval) maps to "1", digit only.
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_act"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_approve_yolo_dispatches_digit_two_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="qwen")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="qwen"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -719,23 +899,25 @@ class TestAttachedPlanApprovalQwen:
 
         tmux_manager.capture_pane.assert_awaited_once()
         # approve_yolo ("Yes, allow always", bypass) maps to "2".
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "2", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "2", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
         assert msg["option_id"] == "approve_yolo"
         assert msg["ok"] is True
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_request_changes_dispatches_named_escape_key(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="qwen")
+        cast(MagicMock, server.session_manager).get.return_value = _make_terminal_session(
+            source="qwen"
+        )
 
         tmux_manager = MagicMock()
         tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -747,7 +929,7 @@ class TestAttachedPlanApprovalQwen:
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes is the named Esc key (literal=False) -- the reject digit
         # varies by tool type, and "(esc)" always rejects.
-        tmux_manager.send_keys.assert_awaited_once_with("%11", "Escape", literal=False)
+        tmux_manager.send_keys.assert_awaited_once_with("native-1", "Escape", literal=False)
         assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
@@ -757,7 +939,7 @@ class TestAttachedPlanApprovalQwen:
             "option_id": REQUEST_CHANGES_OPTION_ID,
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
+        cast(AsyncMock, server._send_error).assert_not_awaited()
 
 
 class TestPlanApprovalRouting:
@@ -781,6 +963,7 @@ class TestPlanApprovalRouting:
             )
 
         attached.assert_awaited_once()
+        assert attached.await_args is not None
         assert attached.await_args.args[2] == "term-1"
 
     @pytest.mark.asyncio
@@ -806,6 +989,7 @@ class TestPlanApprovalRouting:
 
         # Routing went to the conversation/recovery branch, not the attached one.
         recovered.assert_awaited_once()
+        assert recovered.await_args is not None
         assert recovered.await_args.args[2] == "conv-1"
         assert ws.send.await_count == 0
         attached.assert_not_awaited()
@@ -826,7 +1010,7 @@ class TestAttachedPlanApprovalAgy:
         tmux_manager.capture_pane = AsyncMock(return_value=_AGY_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -836,8 +1020,8 @@ class TestAttachedPlanApprovalAgy:
             )
 
         assert [call.args for call in tmux_manager.send_keys.await_args_list] == [
-            ("%11", "C-r"),
-            ("%11", "y"),
+            ("native-1", "C-r"),
+            ("native-1", "y"),
         ]
         assert [call.kwargs["literal"] for call in tmux_manager.send_keys.await_args_list] == [
             False,
@@ -862,7 +1046,7 @@ class TestAttachedPlanApprovalAgy:
         tmux_manager.capture_pane = AsyncMock(return_value=_AGY_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
-        with patch(_TMUX_PATCH, return_value=_wire_tmux(tmux_manager)):
+        with _wire_native(server, tmux_manager):
             await handle_attached_plan_approval(
                 server,
                 ws,
@@ -872,8 +1056,8 @@ class TestAttachedPlanApprovalAgy:
             )
 
         assert [call.args for call in tmux_manager.send_keys.await_args_list] == [
-            ("%11", "C-r"),
-            ("%11", "n"),
+            ("native-1", "C-r"),
+            ("native-1", "n"),
         ]
         assert [call.kwargs["literal"] for call in tmux_manager.send_keys.await_args_list] == [
             False,

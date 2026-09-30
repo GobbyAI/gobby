@@ -60,7 +60,7 @@ _PROVIDERS: tuple[ProviderMetadata, ...] = (
     ProviderMetadata(
         "agy",
         "agy",
-        "AGY",
+        "Antigravity",
         # AGY retains the upstream CLI's historical config-directory name.
         ".gemini",
     ),

@@ -21,6 +21,7 @@ from gobby.storage.memories_scope import (
     memory_matches_scope,
     memory_scope_predicate,
 )
+from gobby.storage.memories_vector_reindex import MemoryVectorReindexMixin
 
 __all__ = [
     "Memory",
@@ -46,5 +47,6 @@ class LocalMemoryManager(
     MemoryGraphMixin,
     MemoryQueryMixin,
     MemoryCrossRefMixin,
+    MemoryVectorReindexMixin,
 ):
     """PostgreSQL-backed local memory storage facade."""

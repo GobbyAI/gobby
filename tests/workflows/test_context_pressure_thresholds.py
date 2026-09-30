@@ -272,6 +272,33 @@ def test_missing_usage_writes_none_band() -> None:
     assert variables[BLOCK_MESSAGE_VARIABLE] == ""
 
 
+class _FailingSessionManager(_SessionManager):
+    def get(self, _session_id: str) -> _Session:
+        raise ConnectionError("hub unavailable")
+
+
+@pytest.mark.parametrize(("used", "band"), [(250_000, "warn"), (300_000, "block")])
+def test_failed_session_read_keeps_last_known_band(
+    used: int, band: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#22884: an unreadable session must not fall back to the "none" band."""
+    variables = _variables()
+    _turn_start(variables, _SessionManager(used, 1_000_000))
+    _after_tool(variables, _SessionManager(used, 1_000_000))
+    assert variables[PRESSURE_BAND_VARIABLE] == band
+    kept = (PRESSURE_BAND_VARIABLE, BLOCK_MESSAGE_VARIABLE, TOOL_CALLS_SINCE_NUDGE_VARIABLE)
+    before = {name: variables[name] for name in kept}
+    failing = _FailingSessionManager(None)
+
+    with caplog.at_level("WARNING", logger="gobby.workflows.observer_context_usage"):
+        _after_tool(variables, failing)
+        _turn_start(variables, failing)
+
+    # The block rule keys on the band; only the per-event nudge text is cleared.
+    assert {name: variables[name] for name in kept} == before
+    assert "keeping its pressure band" in caplog.text
+
+
 # A headless spawned run can never receive a compaction command, so its refusal
 # must lift the handoff requirement instead of driving a re-stage loop (#22364).
 @pytest.mark.parametrize("error_code", ["terminal_target_unavailable", "headless_agent_run"])

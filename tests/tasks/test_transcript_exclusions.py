@@ -15,9 +15,14 @@ from gobby.config.validation_detection import default_validation_detection_confi
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence,
 )
-from gobby.tasks import transcript_evidence, transcript_evidence_models, transcript_evidence_pool
+from gobby.tasks import (
+    transcript_evidence_models,
+    transcript_evidence_pool,
+    transcript_evidence_snapshots,
+)
 from gobby.tasks.close_checklist import evaluate_validation_commands
-from gobby.tasks.transcript_evidence import clear_evidence_snapshots, derive_transcript_evidence
+from gobby.tasks.transcript_evidence import derive_transcript_evidence
+from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_outcomes import (
     ValidationCommandEquivalence,
@@ -110,12 +115,12 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
     prelink_key = f"{session.id}:prelink"
 
     credited = await derive_transcript_evidence(session, start, config, set(), str(tmp_path))
-    window_snapshot = transcript_evidence._evidence_snapshots[session.id]
+    window_snapshot = transcript_evidence_snapshots._evidence_snapshots[session.id]
     first = await derive_prelink_runs(session, start, config, str(tmp_path))
     assert [run.command for run in first] == ["pytest tests/old.py"]
-    prelink_snapshot = transcript_evidence._evidence_snapshots[prelink_key]
+    prelink_snapshot = transcript_evidence_snapshots._evidence_snapshots[prelink_key]
     assert prelink_snapshot.parsed_from_offset == 0
-    assert transcript_evidence._evidence_snapshots[session.id] is window_snapshot
+    assert transcript_evidence_snapshots._evidence_snapshots[session.id] is window_snapshot
 
     with transcript.open("a") as handle:
         appended = _claude_tool_pair(
@@ -128,9 +133,9 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
 
     second = await derive_prelink_runs(session, start, config, str(tmp_path))
     assert [run.command for run in second] == ["pytest tests/old.py", "ruff check src/"]
-    advanced = transcript_evidence._evidence_snapshots[prelink_key]
+    advanced = transcript_evidence_snapshots._evidence_snapshots[prelink_key]
     assert advanced.parsed_from_offset == prelink_snapshot.watermark
-    assert transcript_evidence._evidence_snapshots[session.id] is window_snapshot
+    assert transcript_evidence_snapshots._evidence_snapshots[session.id] is window_snapshot
     assert (
         await derive_transcript_evidence(session, start, config, set(), str(tmp_path)) == credited
     )

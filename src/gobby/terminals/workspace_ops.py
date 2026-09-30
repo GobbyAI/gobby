@@ -44,6 +44,7 @@ from gobby.storage.workspaces import (
     WorkspaceTarget,
     mint_pane_id,
 )
+from gobby.telemetry.query_timing import observe_queries
 from gobby.terminals.key_bytes import normalize_named_key
 from gobby.terminals.runtime import (
     InputPayloadTooLargeError,
@@ -97,6 +98,7 @@ PANE_ROWS, PANE_COLS = 24, 80
 PANE_SPAWN_TIMEOUT_SECONDS = 30.0
 WAIT_CAPTURE_LINES = 200
 WAIT_CAPTURE_FAILURE_LIMIT = 3
+SLOW_WORKSPACE_SNAPSHOT_SECONDS = 1.0
 IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
 _ACTIVE_STATES = frozenset({"pending", "live"})
 
@@ -220,24 +222,73 @@ class WorkspaceOps:
         before the fence opens, and ``lifecycle_seq`` is that last removal so a
         workspace publish waiting on the fence stays above the watermark.
         """
-        if workspace is None and project_id is None:
-            workspace = (await self.workspace_create(actor, node=node)).id
-        elif workspace is None:
-            machine = await self._db(self._workspaces.resolve_node, node)
-            _require_local(machine)
-            resolved, created = await self._db_guarded(
-                resolve_launch_workspace,
-                self._workspaces,
-                machine.id,
-                workspace=None,
-                project_id=project_id,
+        started = time.monotonic()
+        query_seconds = pool_seconds = 0.0
+        query_count = pool_acquires = 0
+
+        def observe_query(seconds: float) -> None:
+            nonlocal query_seconds, query_count
+            query_seconds += seconds
+            query_count += 1
+
+        def observe_pool_acquire(seconds: float) -> None:
+            nonlocal pool_seconds, pool_acquires
+            pool_seconds += seconds
+            pool_acquires += 1
+
+        with observe_queries(observe_query, pool_acquire_observer=observe_pool_acquire):
+            if workspace is None and project_id is None:
+                workspace = (await self.workspace_create(actor, node=node)).id
+            elif workspace is None:
+                machine = await self._db(self._workspaces.resolve_node, node)
+                _require_local(machine)
+                resolved, created = await self._db_guarded(
+                    resolve_launch_workspace,
+                    self._workspaces,
+                    machine.id,
+                    workspace=None,
+                    project_id=project_id,
+                )
+                if created:
+                    await self._emit("workspace.created", resolved.id, workspace=resolved)
+                workspace = resolved.id
+            fence_start = time.monotonic()
+            storage_timing: dict[str, float] = {}
+            async with self._publish_fence:
+                fence_acquired = time.monotonic()
+                snapshot, change = await self._db(
+                    self._snapshot_storage, workspace, node, storage_timing
+                )
+                storage_done = time.monotonic()
+                seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+                published = time.monotonic()
+        if published - started >= SLOW_WORKSPACE_SNAPSHOT_SECONDS:
+            worker_started = storage_timing["worker_started"]
+            worker_finished = storage_timing["worker_finished"]
+            logger.warning(
+                "Slow workspace snapshot | workspace_id=%s total_ms=%.1f resolve_ms=%.1f "
+                "fence_wait_ms=%.1f worker_wait_ms=%.1f worker_ms=%.1f "
+                "worker_return_ms=%.1f target_ms=%.1f sweep_ms=%.1f "
+                "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d "
+                "query_ms=%.1f query_count=%d pool_wait_ms=%.1f pool_acquires=%d",
+                snapshot.workspace.id,
+                (published - started) * 1000,
+                (fence_start - started) * 1000,
+                (fence_acquired - fence_start) * 1000,
+                (worker_started - fence_acquired) * 1000,
+                (worker_finished - worker_started) * 1000,
+                (storage_done - worker_finished) * 1000,
+                storage_timing["target"],
+                storage_timing["sweep"],
+                storage_timing["tabs"],
+                storage_timing["panes"],
+                (published - storage_done) * 1000,
+                len(change.removed_panes),
+                query_seconds * 1000,
+                query_count,
+                pool_seconds * 1000,
+                pool_acquires,
             )
-            if created:
-                await self._emit("workspace.created", resolved.id, workspace=resolved)
-            workspace = resolved.id
-        async with self._publish_fence:
-            snapshot, change = await self._db(self._snapshot_storage, workspace, node)
-            seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
         if seq is None:
             return snapshot
         return WorkspaceSnapshot(
@@ -261,8 +312,12 @@ class WorkspaceOps:
         terminal_id: str | None = None,
         cwd: str | None = None,
         node: str | None = None,
+        terminal_theme: dict[str, object] | None = None,
     ) -> LayoutChange:
-        """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``."""
+        """Make a tab whose first pane spawns a shell in the checkout or adopts ``terminal_id``.
+
+        ``terminal_theme`` is the requesting client's colours for a spawned shell.
+        """
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         source = await self._db(
@@ -279,7 +334,9 @@ class WorkspaceOps:
                 worktree_id=worktree_id,
                 title=title,
             )
-            pane = await self._fill(target.node, home, change.tabs[0], change.panes[0], source)
+            pane = await self._fill(
+                target.node, home, change.tabs[0], change.panes[0], source, terminal_theme
+            )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)
         await self._emit("tab.created", home.id, tabs=change.tabs, panes=(pane,))
@@ -352,6 +409,7 @@ class WorkspaceOps:
         terminal_id: str | None = None,
         cwd: str | None = None,
         node: str | None = None,
+        terminal_theme: dict[str, object] | None = None,
     ) -> LayoutChange:
         """Split ``pane`` with a new pane that spawns a shell or adopts ``terminal_id``.
 
@@ -376,7 +434,12 @@ class WorkspaceOps:
                 self._workspaces.add_pane, pane_id, beside=beside.id, axis=axis
             )
             added = await self._fill(
-                target.node, target.workspace, change.tabs[0], change.panes[0], source
+                target.node,
+                target.workspace,
+                change.tabs[0],
+                change.panes[0],
+                source,
+                terminal_theme,
             )
         finally:
             await self._db(self._workspaces.clear_spawn_in_flight, pane_id)
@@ -630,21 +693,39 @@ class WorkspaceOps:
             return self._workspaces.sweep_dead_panes(workspace_id)
 
     def _snapshot_storage(
-        self, reference: str, node: str | None
+        self, reference: str, node: str | None, timing: dict[str, float]
     ) -> tuple[WorkspaceSnapshot, LayoutChange]:
-        """Sweep and read rows on one thread so the watermark matches the rows."""
-        target = self._resolve(reference, node)
-        change = self._sweep_storage(target.workspace.id)
-        if change.removed_panes:
+        """Reuse one connection and hold sweep locks through the snapshot reads."""
+        started = time.monotonic()
+        with storage_errors(), self._workspaces.db.transaction():
             target = self._resolve(reference, node)
-        home = _workspace_of(target, reference)
-        with storage_errors():
+            resolved = time.monotonic()
+            change = self._sweep_storage(target.workspace.id)
+            swept = time.monotonic()
+            if change.removed_panes:
+                target = self._resolve(reference, node)
+            home = self._workspaces.get(_workspace_of(target, reference).id)
+            if home is None:
+                raise WorkspaceNotFoundError(f"Workspace {reference!r} not found")
+            target_done = time.monotonic()
+            tabs = tuple(self._workspaces.list_tabs(home.id))
+            tabs_done = time.monotonic()
+            panes = tuple(self._workspaces.list_panes(home.id))
+            panes_done = time.monotonic()
             snapshot = WorkspaceSnapshot(
                 node=target.node,
                 workspace=home,
-                tabs=tuple(self._workspaces.list_tabs(home.id)),
-                panes=tuple(self._workspaces.list_panes(home.id)),
+                tabs=tabs,
+                panes=panes,
             )
+        timing.update(
+            worker_started=started,
+            target=(resolved - started + target_done - swept) * 1000,
+            sweep=(swept - resolved) * 1000,
+            tabs=(tabs_done - target_done) * 1000,
+            panes=(panes_done - tabs_done) * 1000,
+        )
+        timing["worker_finished"] = time.monotonic()
         return snapshot, change
 
     async def _publish_removal(
@@ -708,6 +789,7 @@ class WorkspaceOps:
         tab: WorkspaceTab,
         pane: WorkspacePane,
         source: ShellSpawn | Terminal,
+        terminal_theme: dict[str, object] | None = None,
     ) -> WorkspacePane:
         """Bind a freshly inserted pane to its adopted or newly spawned terminal."""
         if isinstance(source, Terminal):
@@ -736,6 +818,7 @@ class WorkspaceOps:
                     # Bounds the host spawn, so a wedged host cannot hold the pane
                     # in flight (and every close of its workspace busy) forever.
                     timeout_seconds=PANE_SPAWN_TIMEOUT_SECONDS,
+                    terminal_theme=terminal_theme,
                 )
             except Exception as exc:
                 await self._roll_back(pane.id)

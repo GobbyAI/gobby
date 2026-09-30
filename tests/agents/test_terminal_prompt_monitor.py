@@ -71,7 +71,6 @@ async def test_prompt_callback_failure_preserves_successful_injection(
     callback = AsyncMock(side_effect=RuntimeError("callback failed"))
     monitor = TerminalPromptMonitor(
         get_active_terminal_runs=lambda: [run],
-        get_tmux=lambda: MagicMock(),
         prompt_detector=prompt_detector,
         idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),
@@ -110,7 +109,6 @@ def _monitor_with_probe_error(error: Exception) -> TerminalPromptMonitor:
     prompt_detector.for_provider.return_value = detector
     return TerminalPromptMonitor(
         get_active_terminal_runs=lambda: [_run()],
-        get_tmux=lambda: MagicMock(),
         prompt_detector=prompt_detector,
         idle_detector=IdleDetector(BundledDetectionRegistry()),
         loop_tracker=MagicMock(),

@@ -161,6 +161,8 @@ class MemoryRecord:
         source_session_id: Session that created the memory
         access_count: Number of times memory was accessed
         last_accessed_at: When memory was last accessed
+        surfaced_count: Number of times memory was surfaced in search results
+        last_surfaced_at: When memory was last surfaced
         metadata: Additional backend-specific metadata
 
     Example:
@@ -189,6 +191,8 @@ class MemoryRecord:
     created_by_agent: str | None = None
     access_count: int = 0
     last_accessed_at: datetime | None = None
+    surfaced_count: int = 0
+    last_surfaced_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
     deleted_at: datetime | None = None
     dream_action: str | None = None
@@ -220,6 +224,10 @@ class MemoryRecord:
             "last_accessed_at": (
                 self.last_accessed_at.isoformat() if self.last_accessed_at else None
             ),
+            "surfaced_count": self.surfaced_count,
+            "last_surfaced_at": (
+                self.last_surfaced_at.isoformat() if self.last_surfaced_at else None
+            ),
             "metadata": self.metadata,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "dream_action": self.dream_action,
@@ -245,6 +253,10 @@ class MemoryRecord:
         last_accessed_at = data.get("last_accessed_at")
         if isinstance(last_accessed_at, str):
             last_accessed_at = datetime.fromisoformat(last_accessed_at)
+
+        last_surfaced_at = data.get("last_surfaced_at")
+        if isinstance(last_surfaced_at, str):
+            last_surfaced_at = datetime.fromisoformat(last_surfaced_at)
 
         deleted_at = data.get("deleted_at")
         if isinstance(deleted_at, str):
@@ -273,6 +285,8 @@ class MemoryRecord:
             created_by_agent=data.get("created_by_agent"),
             access_count=data.get("access_count", 0),
             last_accessed_at=last_accessed_at,
+            surfaced_count=data.get("surfaced_count", 0),
+            last_surfaced_at=last_surfaced_at,
             metadata=data.get("metadata", {}),
             deleted_at=deleted_at,
             dream_action=data.get("dream_action"),

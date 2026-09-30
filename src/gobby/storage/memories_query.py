@@ -123,6 +123,30 @@ class MemoryQueryMixin(MemoryStoreBase):
             if cursor.rowcount == 0:
                 raise ValueError(f"Memory not found: {memory_id}")
 
+    def update_surfaced_stats(self, memory_id: str, surfaced_at: datetime | str) -> None:
+        """
+        Update surfaced count and last surfaced timestamp for a memory.
+
+        Args:
+            memory_id: Memory ID to update
+            surfaced_at: Timestamp the memory was surfaced
+        """
+        surfaced_at_dt = parse_stored_datetime(surfaced_at)
+        if surfaced_at_dt is None:
+            raise ValueError("surfaced_at is required")
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE memories
+                SET surfaced_count = surfaced_count + 1,
+                    last_surfaced_at = %s
+                WHERE id = %s
+                """,
+                (surfaced_at_dt, memory_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Memory not found: {memory_id}")
+
     def search_memories(
         self,
         query_text: str,

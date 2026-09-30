@@ -10,12 +10,22 @@ Tests verify:
 """
 
 import os
+import shutil
 import signal
+import subprocess
+import sys
+from pathlib import Path
 
 import httpx
 import psutil
 import pytest
 
+from gobby.cli.install_setup_impeccable import _publish_launcher, _publish_stamp
+from gobby.cli.utils_process import is_port_available
+from gobby.install.bin_set_coherence import IDENTITY_STAMP_NAME, probe_set_member_identity
+from gobby.storage.schema_identity_pin import stamp_bytes
+from gobby.utils.dependency_requirements import IMPECCABLE_RELEASE
+from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -129,12 +139,14 @@ class TestDaemonStop:
         # Wait for any child processes to exit as well. psutil.wait_procs treats
         # zombies as gone, which matches what we want here.
         _, alive = psutil.wait_procs(children_before, timeout=10.0)
+        # The `gterm host` outlives the daemon by design (#22002): the next start
+        # adopts it, and the e2e fixture teardown reaps the isolated one.
         still_running = [
-            c.pid for c in alive if c.is_running() and c.status() != psutil.STATUS_ZOMBIE
+            (c.pid, c.cmdline())
+            for c in alive
+            if c.is_running() and c.status() != psutil.STATUS_ZOMBIE and not _is_terminal_host(c)
         ]
         assert still_running == []
-        if still_running:
-            pytest.fail(f"Orphan child processes still running: {still_running}")
 
     def test_stop_is_idempotent_on_non_running_daemon(self, e2e_project_dir) -> None:
         """Verify stopping a non-running daemon doesn't error."""
@@ -383,3 +395,212 @@ class TestDaemonMultipleInstances:
             daemon_instance.gobby_home,
         )
         assert response.status_code == 200
+
+
+def _daemon_env(config_path: Path) -> dict[str, str]:
+    gobby_home = config_path.parent
+    env = prepare_daemon_env(home_dir=gobby_home)
+    env["GOBBY_CONFIG"] = str(config_path)
+    env["GOBBY_HOME"] = str(gobby_home)
+    return env
+
+
+# The real `gobby` CLI with one boundary faked: managed Docker services. Compose
+# from any home manages the production containers, and the test hub needs none.
+_CLI_WITHOUT_MANAGED_SERVICES = """
+import sys
+from unittest.mock import patch
+
+from gobby.cli import cli
+from gobby.cli._daemon_services import ServiceStartResult
+
+skipped = ServiceStartResult("skipped", "e2e: the isolated test hub needs no managed services")
+with patch("gobby.cli.daemon_start._services_start", return_value=skipped):
+    cli(sys.argv[1:], prog_name="gobby")
+"""
+
+
+def _stamped_bin_dir(source_dir: Path, gobby_home: Path) -> Path:
+    bin_dir = gobby_home / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    gdaemon = bin_dir / native_bin_name("gdaemon")
+    gdaemon.symlink_to(source_dir / native_bin_name("gdaemon"))
+    identity = probe_set_member_identity(gdaemon, "gdaemon")
+    (bin_dir / IDENTITY_STAMP_NAME).write_bytes(stamp_bytes(identity))
+    return bin_dir
+
+
+def _spawn_runner(e2e_project_dir: Path, config_path: Path) -> subprocess.Popen[bytes]:
+    gobby_home = config_path.parent
+    env = _daemon_env(config_path)
+    log_dir = gobby_home / "logs"
+    with (
+        open(log_dir / "daemon.log", "a") as log_f,
+        open(log_dir / "daemon_error.log", "a") as err_f,
+    ):
+        process = subprocess.Popen(
+            [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
+            stdout=log_f,
+            stderr=err_f,
+            stdin=subprocess.DEVNULL,
+            cwd=str(e2e_project_dir),
+            env=env,
+            start_new_session=True,
+        )
+    return process
+
+
+def _front_door_child(runner_pid: int) -> psutil.Process:
+    """The runner's `gdaemon serve` child, which owns the public ports."""
+    children: list[psutil.Process] = []
+
+    def find() -> bool:
+        children[:] = [
+            child
+            for child in psutil.Process(runner_pid).children()
+            if Path(child.cmdline()[0]).name == "gdaemon" and child.cmdline()[1:] == ["serve"]
+        ]
+        return len(children) == 1
+
+    wait_for_condition(find, timeout=10.0, description="gdaemon front door child")
+    return children[0]
+
+
+def _gone(process: psutil.Process) -> bool:
+    try:
+        return bool(process.status() == psutil.STATUS_ZOMBIE)
+    except psutil.NoSuchProcess:
+        return True
+
+
+def _label(process: psutil.Process) -> str:
+    try:
+        return f"{process.pid} {' '.join(process.cmdline())[:160]}"
+    except psutil.Error:
+        return str(process.pid)
+
+
+def _ports_free(*ports: int) -> bool:
+    return all(is_port_available(port, "127.0.0.1") for port in ports)
+
+
+class TestFrontDoor:
+    """The runner owns a gdaemon front door on the public ports."""
+
+    def test_daemon_starts_behind_front_door(self, daemon_instance: DaemonInstance) -> None:
+        child = _front_door_child(daemon_instance.pid)
+        backend_http = daemon_instance.http_port + 100
+
+        public = httpx.get(f"http://127.0.0.1:{daemon_instance.http_port}/api/auth/status")
+        backend = httpx.get(f"http://127.0.0.1:{backend_http}/api/auth/status")
+
+        assert child.is_running()
+        assert (public.status_code, backend.status_code) == (200, 200)
+
+    def test_stop_and_restart_free_public_ports(
+        self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
+    ) -> None:
+        config_path, http_port, ws_port = e2e_config
+        gobby_home = config_path.parent
+        pid_file = gobby_home / "gobby.pid"
+        env = _daemon_env(config_path)
+        # The real CLI may stop this isolated home's pid-file runner and nothing else.
+        env["GOBBY_E2E_ISOLATED_HOME"] = str(gobby_home)
+        env["GOBBY_ALLOW_WORKTREE_DAEMON"] = "1"
+        # Restart proves the installed set first, so install the test gdaemon as a
+        # stamped one-member set, the shape promotion leaves behind.
+        env[NATIVE_BIN_DIR_ENV] = str(_stamped_bin_dir(Path(env[NATIVE_BIN_DIR_ENV]), gobby_home))
+        # `gobby start` requires the managed SRT and Impeccable installs under its home.
+        managed_tools = Path.home() / ".gobby" / "tools"
+        if not managed_tools.is_dir():
+            pytest.skip("gobby start needs the managed SRT and Impeccable installs")
+        shutil.copytree(managed_tools, gobby_home / "tools", symlinks=True)
+        # Impeccable's launcher embeds its home, so activate the copy for this one.
+        impeccable = gobby_home / "tools" / "impeccable" / IMPECCABLE_RELEASE.version
+        _publish_launcher(gobby_home, impeccable)
+        _publish_stamp(gobby_home)
+
+        def gobby(*args: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                [sys.executable, "-c", _CLI_WITHOUT_MANAGED_SERVICES, *args],
+                env=env,
+                cwd=str(e2e_project_dir),
+                capture_output=True,
+                text=True,
+                timeout=240,
+            )
+
+        runner = _spawn_runner(e2e_project_dir, config_path)
+        runners: list[psutil.Process] = [psutil.Process(runner.pid)]
+        children: list[psutil.Process] = []
+        try:
+            wait_for_daemon_health(http_port, log_file=gobby_home / "logs" / "daemon.log")
+            children.append(_front_door_child(runner.pid))
+            for _round in range(2):
+                restarted = gobby("restart")
+                assert restarted.returncode == 0, restarted.stdout + restarted.stderr
+                # The previous runner and its gdaemon child are gone; a new pair serves.
+                assert _gone(runners[-1]) and _gone(children[-1])
+                runners.append(psutil.Process(int(pid_file.read_text().strip())))
+                children.append(_front_door_child(runners[-1].pid))
+                assert httpx.get(f"http://localhost:{http_port}/api/health").status_code == 200
+            stopped = gobby("stop")
+            assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+            # `gobby stop` returns with the pair stopped, not eventually after.
+            assert _gone(runners[-1]) and _gone(children[-1])
+            assert _ports_free(http_port, ws_port, http_port + 100, ws_port + 100)
+        finally:
+            if runner.poll() is None:
+                terminate_process_tree(runner.pid)
+            for process in [*runners, *children]:
+                if not _gone(process):
+                    process.kill()
+
+    def test_runner_sigkill_frees_public_ports(
+        self, e2e_project_dir: Path, e2e_config: tuple[Path, int, int]
+    ) -> None:
+        config_path, http_port, ws_port = e2e_config
+        runner = _spawn_runner(e2e_project_dir, config_path)
+        child: psutil.Process | None = None
+        descendants: list[psutil.Process] = []
+        try:
+            wait_for_daemon_health(http_port, log_file=config_path.parent / "logs" / "daemon.log")
+            child = _front_door_child(runner.pid)
+            descendants = psutil.Process(runner.pid).children(recursive=True)
+            labels = {p.pid: _label(p) for p in descendants}
+            # gdaemon, the transcript evidence pool, and the rest may not outlive a SIGKILL.
+            # The gterm host is exempt: it survives by design for the next daemon to adopt.
+            mortal = [p for p in descendants if "gterm host" not in labels[p.pid]]
+            os.kill(runner.pid, signal.SIGKILL)
+            front_door = child
+            # One 5 s budget from the kill covers every descendant exit and both ports.
+            try:
+                wait_for_condition(
+                    lambda: all(_gone(p) for p in mortal) and _ports_free(http_port, ws_port),
+                    timeout=5.0,
+                    interval=0.1,
+                    description="runner descendants exit and public ports free after SIGKILL",
+                )
+            except AssertionError as timed_out:
+                survivors = [labels[p.pid] for p in mortal if not _gone(p)]
+                raise AssertionError(
+                    f"survived SIGKILL: {survivors}; "
+                    f"public ports free: {_ports_free(http_port, ws_port)}"
+                ) from timed_out
+            runner.wait(timeout=5)
+            # The liveness pipe and the pool's parent watch, not runner cleanup, did it.
+            assert runner.returncode == -signal.SIGKILL
+            assert _gone(front_door)
+        finally:
+            if runner.poll() is None:
+                terminate_process_tree(runner.pid)
+            for process in descendants:
+                if not _gone(process):
+                    process.kill()
+            if child is not None and not _gone(child):
+                child.kill()
+
+
+def _is_terminal_host(process: psutil.Process) -> bool:
+    argv = process.cmdline()
+    return bool(argv) and Path(argv[0]).name == "gterm" and argv[1:2] == ["host"]

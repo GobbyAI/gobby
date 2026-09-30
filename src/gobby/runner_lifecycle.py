@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import uvicorn
 
 from gobby.app_context import clear_app_context
+from gobby.runner_front_door import backend_bind
 from gobby.runner_gate import acquire_runner_gate
 from gobby.runner_lifecycle_agents import _recover_agent_runs_after_restart
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -109,6 +110,7 @@ async def run_daemon(
     ``ownership_resolution`` proves singleton ownership was resolved before construction.
     """
     bootstrap_config = runner.bootstrap_config
+    backend = backend_bind(bootstrap_config)
     from gobby.runner_maintenance import (
         bin_freshness_loop,
         cleanup_chat_attachments_loop,
@@ -133,6 +135,9 @@ async def run_daemon(
 
     def cleanup_owned_pid_file() -> None:
         try:
+            # The public ports must be free before the claim admits another runner.
+            if runner.front_door_child is not None:
+                runner.front_door_child.stop()
             cleanup_pid_file()
         finally:
             ownership_resolution.release()
@@ -218,7 +223,7 @@ async def run_daemon(
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,
-            host=bootstrap_config.bind_host,
+            host=backend.host,
             port=runner.http_server.port,
             log_level="warning",
             access_log=False,
@@ -297,6 +302,9 @@ async def run_daemon(
 
             while not runner._shutdown_requested:
                 await asyncio.sleep(0.5)
+            # Every shutdown path passes here; the child reap below must not respawn it.
+            if runner.front_door_child is not None:
+                runner.front_door_child.disarm()
 
             server_failure = server_task.result() if unexpected_server_exit.is_set() else None
 
@@ -314,7 +322,7 @@ async def run_daemon(
             if unexpected_server_exit.is_set():
                 from gobby.runner import _healthy_daemon_running
 
-                if _healthy_daemon_running(runner.http_server.port, bootstrap_config.bind_host):
+                if _healthy_daemon_running(runner.http_server.port, backend.host):
                     logger.info("Lost the HTTP bind race to a healthy daemon; exiting cleanly")
                     return
                 logger.error("HTTP server exited unexpectedly: %s", server_failure)

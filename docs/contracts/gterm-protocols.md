@@ -33,6 +33,12 @@ Client → host:
 - `Paste { text }` — bracketed by the host, granted attachments only
 - `ReadText { start_rows_from_live_edge, start_col, end_rows_from_live_edge,
   end_col }` — plain text from a native pane's retained screen
+- `SetTerminalTheme { theme }` — the client's foreground, background and sparse
+  palette, which the host uses for the child's OSC 10/11 answers and mode-2031
+  reports; the control `spawn` takes the same `terminal_theme` object.
+  Only on a host advertising `terminal_theme`. It applies to a granted pane only
+  from the stream bound to the grant holder, and a spawn with no theme of its
+  own starts from the host's last applied declaration
 - `Detach`
 
 Host → client:
@@ -173,12 +179,13 @@ unavailable. Golden messages live in `tests/fixtures/terminal_ws_golden/`.
 | Message | Direction | Fields and behavior |
 | --- | --- | --- |
 | `terminal_attach` | Client → daemon | `request_id`, `terminal_id`, `frame_delivery` (`proxy` by default, or `direct`), and `encoding`. Encoding defaults to `terminal_ansi`; `semantic_frame` selects semantic frames for the proxy. Other encodings receive `terminal_error` with `code: "invalid_encoding"`. |
-| `terminal_attach_result` | Daemon → client | Correlates `request_id`; success carries `terminal_id`, `attachment_id`, `backend`, `rows`, `cols`, `frame_delivery`, `lease_generation`, and `direct`. Failure carries `success: false` and a typed `code`. |
+| `terminal_attach_result` | Daemon → client | Correlates `request_id`; success carries `terminal_id`, `attachment_id`, `backend`, `rows`, `cols`, `frame_delivery`, `lease_generation`, `direct`, and `host_capabilities` — what the host accepts beyond the base protocol on that route: the host's full list for direct delivery, `terminal_theme` alone for a proxied native pane whose host has it, else empty. Failure carries `success: false` and a typed `code`. |
 | `terminal_frame` | Daemon → client | Semantic proxy envelope: `terminal_id`, `attachment_id`, `encoding: "bincode-b64"`, and `payload` containing a base64-encoded bincode host message. Decode with the host wire codec; it is not ANSI text. |
 | `terminal_output` | Daemon → client | ANSI/text proxy envelope: `terminal_id`, `attachment_id`, and `data`. Browsers use the default `terminal_ansi` encoding. |
 | `terminal_list` | Client ↔ daemon | A request supplies `request_id` and optional filters/cursor: `project_id`, `limit`, and `states` (a list drawn from `pending`, `live`, `exited`, `orphaned`; default `pending` + `live`; anything else is a `terminal_error` with code `invalid_states`). A response carries `items`, `next_cursor`, and `snapshot: {daemon_epoch, seq}` (nullable in the wire shape). Each item carries `state`, `ownership`, `backend`, and `updated_at`; a row the tmux sweep matched also carries `name`, `socket`, `attached_clients` (`#{session_attached}`), and the `pane_*` fields. The first page's snapshot pins the lifecycle watermark for roster reconciliation. |
 | `terminal_event`, `terminal_lease_lost`, `terminal_attachment_finalized` | Daemon → client | Lifecycle messages carry `daemon_epoch` and `seq`. Apply events newer than the pinned snapshot in the same epoch; reconcile on an epoch change. |
 | `terminal_set_scroll_offset` | Client → daemon | `terminal_id`, `attachment_id`, `rows_from_live_edge`, and `max_rows` — the client's own ceiling belief, where 0 means "not known yet" and the daemon applies what was asked. Native only: the daemon clamps, forwards `SetScrollOffset` to the host, and gterm re-renders frames from the offset. A tmux attachment scrolls through the mouse reports its renderer already writes to the attach client, and must not send this. Both `gclient` and the web terminal drive it: `crates/gclient/src/app/live_loop/control.rs` and `web/src/components/activity/terminal/scrollOffset.ts`. |
+| `terminal_set_theme` | Client → daemon | `terminal_id`, `attachment_id`, and `theme` (`{foreground, background, palette}` as `ThemeDeclaration` JSON). Proxied native attachments only, after the attach result advertised `terminal_theme`. The daemon checks the socket owns the attachment, binds its host stream to that attachment, and sends `SetTerminalTheme`, so the host's input grant still decides whether it applies. Refusals are `terminal_error` with `theme_not_relayed` or `invalid_terminal_theme`. `gclient` sends it from `crates/gclient/src/app/theme_sync.rs`. |
 | `terminal_take_control`, `terminal_release_control` | Client → daemon | `terminal_id` and `attachment_id`; a take also accepts `takeover` to displace the current holder. |
 | `terminal_control_result` | Daemon → client | `attachment_id`, `granted`, `reason`, `lease_generation`, and `host_input_granted`. The last is `true` when the host accepted the matching `grant_input`, `false` when it refused or could not be reached, and `null` when no grant applies — a tmux or web backend, a proxied holder, or a release. A direct native client that holds the lease without `host_input_granted: true` has nowhere to type and offers take-back rather than falling back to the daemon. |
 | `terminal_scroll_offset_applied` | Daemon → client | `terminal_id`, `attachment_id`, `applied_rows`, and `max_rows`. A proxied attachment sees it twice — the daemon's own clamp against the proposed ceiling, then the host's, relayed, which owns the real scrollback depth. Clients mirror the offset optimistically and reconcile to `applied_rows`, clamping later requests to `max_rows`. |

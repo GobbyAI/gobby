@@ -246,6 +246,9 @@ class TestStopAttemptsPlumbing:
             "step_workflow_complete": False,
             "stop_attempts": 0,
             "max_stop_attempts": 1,
+            # The initial memory gate is the blocking stop rule under test; it
+            # only fires on a turn that had the Gobby MCP proxy.
+            "_mcp_proxy_ready_this_turn": True,
         }
         event = _make_event(HookEventType.AFTER_AGENT, source=SessionSource.QWEN)
 

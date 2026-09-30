@@ -2,14 +2,14 @@
 # 120x40, dark theme, colours normalised to theme::Palette roles
 00 | Gobby  File  Edit  View  Window  Agent  Help                                                                           |
 00 : bar_ink/bar+b*19 surface_dim/bar_ink+b*6 bar_ink/bar+b*95
-01 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀┌──────────────────┐▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-01 : line/panel_bg*19 surface0/panel_bg*20 line/panel_bg*81
+01 |                   ┌──────────────────┐                                                                                 |
+01 : text/panel_bg*19 surface0/panel_bg*20 text/panel_bg*81
 02 | 1: Untitled    +  │ ✓ This project   │                                                                                 |
-02 : text/panel_bg+b*15 overlay1/surface0*3 text/surface0*1 surface0/panel_bg*1 overlay0/panel_bg+dv*18 surface0/panel_bg*1 text/surface0*81
-03 |▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│   All projects   │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀|
-03 : line/panel_bg*19 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 line/panel_bg*81
-04 |┌ ○ term-alpha · Fo│ ✓ Grouped        │────────────────────────────────────────────────────────────────────────────────┐|
-04 : accent/panel_bg*1 accent/panel_bg+b*18 surface0/panel_bg*1 overlay0/panel_bg+d*18 surface0/panel_bg*1 accent/panel_bg*81
+02 : text/surface1+b*15 overlay1/surface0*3 text/surface0*1 surface0/panel_bg*1 overlay0/panel_bg+dv*18 surface0/panel_bg*1 text/surface0*81
+03 |┌ ○ term-alpha · Fo│   All projects   │────────────────────────────────────────────────────────────────────────────────┐|
+03 : accent/panel_bg*1 accent/panel_bg+b*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 accent/panel_bg*81
+04 |│                  │ ✓ Grouped        │                                                                                │|
+04 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 overlay0/panel_bg+d*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
 05 |│                  │   Priority       │                                                                                │|
 05 : accent/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*18 surface0/panel_bg*1 text/panel_bg*80 accent/panel_bg*1
 06 |│                  │ Working projects │                                                                                │|
@@ -40,10 +40,10 @@
 18 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 19 |│                                                                                                                      │|
 19 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-20 |│                                                                                                                      │|
-20 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
-21 |│                                                 waiting for frames                                                   │|
-21 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
+20 |│                                                 waiting for frames                                                   │|
+20 : accent/panel_bg*1 text/panel_bg*49 overlay0/panel_bg*18 text/panel_bg*51 accent/panel_bg*1
+21 |│                                                                                                                      │|
+21 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 22 |│                                                                                                                      │|
 22 : accent/panel_bg*1 text/panel_bg*118 accent/panel_bg*1
 23 |│                                                                                                                      │|

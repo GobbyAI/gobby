@@ -137,8 +137,10 @@ second after the section scrolls or while the navigate cursor is in it.
   with a live session, run, or terminal on the current machine filter, plus the
   focused one) and `[all]`.
 - *Agents* lists active agents and sessions with their state, reference, name,
-  task title, and model. A provider name identifies a row when no agent
-  definition names it; it is not repeated beside the title. Runs can nest under their
+  task title, and model. A session named by hand shows that name where the
+  definition goes (`#14069: Assistant`). Otherwise the agent definition names
+  the row, or the provider when there is none; the provider is not repeated
+  beside the title. Runs can nest under their
   parent session. Selecting one in another workspace switches to that workspace
   and focuses its existing pane. If the
   terminal has gone away, the row refreshes and a warning explains that it is
@@ -202,7 +204,9 @@ settings.
 **Panes.** A tab holds one or more terminals in nested splits; each pane is a
 workspace row with a ref such as `0:0:1:2`, and its name is that row's label.
 A pane's top-left corner names who sits in it: the agent's state glyph, its
-session reference, and its definition, as in `○ #1742: Codex`. The project
+session reference, and its definition, as in `○ #1742: Codex`. A session named
+by hand shows that name in the definition's place, as in `○ #14069: Assistant`,
+without repeating the `project#seq:` prefix the title carries. The project
 leads the reference (`○ gobby#1742: Codex`) only in the all-projects priority
 view. A seat with no definition names its provider, such as `○ Claude Code`,
 and a bare shell shows its name, such as `○ zsh`. The focused pane appends
@@ -211,10 +215,21 @@ unfocused panes carry no condition word. The focused title is bold in the
 accent, a seat that needs you reads in the warning hue, and a read-only or
 uncertain focused pane is dimmed. The task title stays on the Agents row.
 Over-long pane titles share the Agents ticker. The bottom-left corner is
-empty. The bottom-right corner names the pane's address: its workspace ref
-such as `0:0:1:2`, `tmux %16` for a tmux pane, or the backend alone
+empty. The bottom-right corner reads the sandbox lock on an SRT pane, then
+`tmux` for a tmux pane, then its address, joined by ` · `: `0:0:1:2` for a
+workspace pane, `tmux · %16` for a tmux pane, or the backend alone
 (`gclient`, `tmux`) until the address is known (see
-[Attach and control](#attach-and-control)). With `pane gaps` off, a pane above
+[Attach and control](#attach-and-control)). A red closed lock
+(`` U+F023, in the destructive hue) leads the address only when Gobby
+launched the pane under its SRT sandbox, meaning the agent run records the
+sandbox as enforced or the managed session's launch contract enabled it.
+Every other pane (a seat you start yourself, a bare shell, or a pane with no
+agent row) shows no mark, so the lock's presence carries the state in any
+colour setting. A provider's own sandbox settings never lock a pane. The lock
+is a Nerd Font symbol, which Ghostty's default font includes; set
+`nerd_glyphs = false` under `[ui]` in `~/.gobby/client/prefs.toml` to draw
+`sbx` instead. Add `sandbox` to `[status] left` or `right` to name the
+focused pane's state in words: `sandboxed` or `unrestricted`. With `pane gaps` off, a pane above
 another shares that pane's top line and has no bottom edge of its own; its
 address moves to the top-right of its own title row, unless that would leave the
 title fewer than four cells. A pane that has not yet received

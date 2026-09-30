@@ -195,6 +195,9 @@ class ProxyAttachment:
     backend: str
     terminal: Any = None
     task: asyncio.Task[None] | None = None
+    # The newest valid theme this attachment declared; it reaches the host
+    # while the attachment holds the writer lease (or nobody does).
+    theme: Any = None
 
 
 class ProxyHub:

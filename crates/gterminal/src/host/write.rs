@@ -96,6 +96,8 @@ impl HostState {
             Err(code) => return err(code),
         };
         let previous = slot.input_grant.replace(attachment_id);
+        let host_terminal_id = slot.host_terminal_id.clone();
+        super::theme::apply_holder_theme(&mut inner, &host_terminal_id);
         json!({"ok": true, "granted": true, "previous": previous})
     }
 
@@ -511,7 +513,7 @@ mod tests {
             "control".to_string(),
             "local".to_string(),
             "epoch".to_string(),
-            "version".to_string(),
+            crate::host::image::PinnedImage::for_tests(),
             1,
             shutdown,
         )

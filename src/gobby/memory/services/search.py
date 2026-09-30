@@ -6,14 +6,15 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.memory.recall_constants import RecallConstants, resolve_recall_constants
-from gobby.memory.services._search_access import update_access_stats as update_memory_access_stats
+from gobby.memory.services._search_access import SURFACED_CALLERS
+from gobby.memory.services._search_access import (
+    update_surfaced_stats as update_memory_surfaced_stats,
+)
 from gobby.memory.services._search_backfill import collect_active_results
 from gobby.memory.services._search_constants import DEFAULT_SEARCH_LIMIT
-from gobby.memory.services._search_debug import emit_search_debug
 from gobby.memory.services._search_graph import GraphScoredResult, search_graph_scored
 from gobby.memory.services._search_keyword import KeywordSearch, keyword_fallback, keyword_ranked
-from gobby.memory.services._search_models import SearchDebugHit, SearchDebugSnapshot, _Candidates
+from gobby.memory.services._search_models import _Candidates
 from gobby.memory.services._search_paths import search_qdrant_keyword, search_with_graph
 from gobby.memory.services._search_results import build_results
 from gobby.memory.services._search_rrf import rrf_merge, rrf_scores
@@ -33,8 +34,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_SEARCH_LIMIT",
-    "SearchDebugHit",
-    "SearchDebugSnapshot",
+    "SURFACED_CALLERS",
     "SearchService",
 ]
 
@@ -57,8 +57,6 @@ class SearchService:
         falkordb_rrf_k: int,
         vector_store_failure_logger: Callable[[str, BaseException], None],
         run_db: Callable[..., Awaitable[Any]] | None = None,
-        search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
-        recall_constants: RecallConstants | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
@@ -72,10 +70,6 @@ class SearchService:
         self._falkordb_rrf_k = falkordb_rrf_k
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
-        self._search_debug_sink = search_debug_sink
-        self._recall_constants = (
-            recall_constants if recall_constants is not None else resolve_recall_constants(config)
-        )
 
     async def _run_storage[T](self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         if self._run_db is None:
@@ -124,7 +118,6 @@ class SearchService:
         *,
         embed_text: str | None = None,
         session_id: str | None = None,
-        recall_request_id: str | None = None,
         caller: str = "memory.search",
         include_global: bool = True,
     ) -> list[Memory]:
@@ -150,7 +143,7 @@ class SearchService:
             # fall back rather than embed "" and hand the vector leg a
             # meaningless vector while discarding the query we do have.
             query_embedding = await self._embed_fn(embed_text or query, is_query=True)
-            half_life = self._recall_constants.half_life_days
+            half_life = float(self._config.temporal_decay_half_life_days)
             effective_min_score = min_score if min_score is not None else 0.0
             filters = memory_scope_filter(scope, memory_type)
             use_graph = self._kg_service is not None and self._falkordb_graph_search
@@ -170,7 +163,6 @@ class SearchService:
                     half_life=half_life,
                     effective_min_score=effective_min_score,
                     session_id=session_id,
-                    recall_request_id=recall_request_id,
                     caller=caller,
                     include_global=include_global,
                 )
@@ -189,7 +181,6 @@ class SearchService:
                     half_life=half_life,
                     effective_min_score=effective_min_score,
                     session_id=session_id,
-                    recall_request_id=recall_request_id,
                     caller=caller,
                     include_global=include_global,
                 )
@@ -204,7 +195,6 @@ class SearchService:
                 tags_none,
                 embed_text=embed_text,
                 session_id=session_id,
-                recall_request_id=recall_request_id,
                 caller=caller,
                 include_global=include_global,
             )
@@ -219,7 +209,8 @@ class SearchService:
                 tags_none=tags_none,
             )
 
-        await self.update_access_stats(memories)
+        if caller in SURFACED_CALLERS:
+            await self.update_surfaced_stats(memories)
         return memories
 
     async def _search_with_graph(
@@ -238,7 +229,6 @@ class SearchService:
         effective_min_score: float,
         embed_text: str | None = None,
         session_id: str | None = None,
-        recall_request_id: str | None = None,
         caller: str = "memory.search",
         include_global: bool = True,
     ) -> list[Memory]:
@@ -259,7 +249,6 @@ class SearchService:
             graph_min_score=self._falkordb_graph_min_score,
             rrf_k=self._falkordb_rrf_k,
             session_id=session_id,
-            recall_request_id=recall_request_id,
             caller=caller,
             include_global=include_global,
         )
@@ -280,7 +269,6 @@ class SearchService:
         effective_min_score: float,
         embed_text: str | None = None,
         session_id: str | None = None,
-        recall_request_id: str | None = None,
         caller: str = "memory.search",
         include_global: bool = True,
     ) -> list[Memory]:
@@ -300,7 +288,6 @@ class SearchService:
             effective_min_score=effective_min_score,
             rrf_k=self._rrf_k,
             session_id=session_id,
-            recall_request_id=recall_request_id,
             caller=caller,
             include_global=include_global,
         )
@@ -319,46 +306,6 @@ class SearchService:
             limit=limit,
             collect=collect,
             build=_build_with_storage_runner,
-        )
-
-    async def _emit_search_debug(
-        self,
-        *,
-        query: str,
-        project_id: str | None,
-        session_id: str | None,
-        recall_request_id: str | None,
-        caller: str,
-        merged_ids: list[str],
-        returned: list[Memory],
-        ranking_score_map: dict[str, float],
-        rrf_applied: bool,
-        embed_text: str | None = None,
-        graph_score_map: dict[str, float] | None = None,
-        graph_component_map: dict[str, dict[str, float | None]] | None = None,
-    ) -> None:
-        # The logged query is the text retrieval was actually driven by, because the
-        # shadow judge renders it as the user's question. When the caller split the
-        # two representations, the term bag is kept beside it — nothing recovers it
-        # from an enriched embed text.
-        logged_query = embed_text or query
-        await self._run_storage(
-            emit_search_debug,
-            search_debug_sink=self._search_debug_sink,
-            query=logged_query,
-            bm25_query=query if logged_query != query else None,
-            project_id=project_id,
-            session_id=session_id,
-            recall_request_id=recall_request_id,
-            caller=caller,
-            merged_ids=merged_ids,
-            returned=returned,
-            ranking_score_map=ranking_score_map,
-            rrf_applied=rrf_applied,
-            graph_score_map=graph_score_map,
-            graph_component_map=graph_component_map,
-            graph_synthetic_similarity_discount=(self._recall_constants.graph_synthetic_discount),
-            constants_provenance=self._recall_constants.provenance,
         )
 
     def _build_results(
@@ -400,7 +347,6 @@ class SearchService:
             half_life=half_life,
             effective_min_score=effective_min_score,
             limit=limit,
-            graph_synthetic_discount=self._recall_constants.graph_synthetic_discount,
             candidate_vectors=candidate_vectors,
         )
 
@@ -467,11 +413,10 @@ class SearchService:
         *,
         embed_text: str | None = None,
         session_id: str | None = None,
-        recall_request_id: str | None = None,
         caller: str = "memory.search",
         include_global: bool = True,
     ) -> list[Memory]:
-        memories = await keyword_fallback(
+        return await keyword_fallback(
             run_storage=self._run_storage,
             storage=self._storage,
             keyword_search=self._keyword_search,
@@ -484,27 +429,11 @@ class SearchService:
             tags_none=tags_none,
             include_global=include_global,
         )
-        # One event per completed search — fallback searches must not be silent.
-        await self._emit_search_debug(
-            query=query,
-            embed_text=embed_text,
-            project_id=project_id,
-            session_id=session_id,
-            recall_request_id=recall_request_id,
-            caller=caller,
-            merged_ids=[mem.id for mem in memories],
-            returned=memories,
-            ranking_score_map={
-                mem.id: mem.ranking_score for mem in memories if mem.ranking_score is not None
-            },
-            rrf_applied=False,
-        )
-        return memories
 
-    async def update_access_stats(self, memories: list[Memory]) -> None:
-        """Update access count and time for memories (debounced)."""
+    async def update_surfaced_stats(self, memories: list[Memory]) -> None:
+        """Count delivered hits as surfaced (debounced)."""
         await self._run_storage(
-            update_memory_access_stats,
+            update_memory_surfaced_stats,
             storage=self._storage,
             config=self._config,
             memories=memories,

@@ -186,7 +186,7 @@ async def test_terminate_agent_run_commits_requested_outcome_at_terminal_close(
         )
         return {"success": True, "method": "runtime_terminate"}
 
-    monkeypatch.setattr("gobby.agents.kill._close_tmux_session", close_managed_terminal)
+    monkeypatch.setattr("gobby.agents.kill._close_managed_terminal", close_managed_terminal)
     runner = SimpleNamespace(
         run_storage=storage,
         get_run=storage.get,

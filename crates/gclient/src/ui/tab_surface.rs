@@ -10,35 +10,26 @@ use ratatui::Frame;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TabSurfaceLayout {
     pub tabs: Rect,
-    /// The one-row line under the tab row; empty without a tab bar.
-    pub line: Rect,
     pub body: Rect,
 }
 
-/// Split `area` into the tab bar row, the line under it and the body (herdr
-/// `compute_tab_surface`, plus the line). Without a tab bar, `tabs` and
-/// `line` are empty rects on the top edge.
+/// Split `area` into the tab bar row and the body under it (herdr
+/// `compute_tab_surface`). Without a tab bar, `tabs` is an empty rect on
+/// the top edge.
 pub fn compute_tab_surface(area: Rect, show_tab_bar: bool) -> TabSurfaceLayout {
     if !show_tab_bar || area.height == 0 {
         return TabSurfaceLayout {
             tabs: Rect::new(area.x, area.y, area.width, 0),
-            line: Rect::new(area.x, area.y, area.width, 0),
             body: area,
         };
     }
     TabSurfaceLayout {
         tabs: Rect::new(area.x, area.y, area.width, 1),
-        line: Rect::new(
+        body: Rect::new(
             area.x,
             area.y.saturating_add(1),
             area.width,
-            area.height.saturating_sub(1).min(1),
-        ),
-        body: Rect::new(
-            area.x,
-            area.y.saturating_add(2),
-            area.width,
-            area.height.saturating_sub(2),
+            area.height.saturating_sub(1),
         ),
     }
 }
@@ -72,16 +63,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tab_bar_and_its_line_take_the_top_rows_only_when_shown() {
+    fn tab_bar_takes_the_top_row_only_when_shown() {
         let area = Rect::new(2, 3, 40, 10);
         let shown = compute_tab_surface(area, true);
         assert_eq!(shown.tabs, Rect::new(2, 3, 40, 1));
-        assert_eq!(shown.line, Rect::new(2, 4, 40, 1));
-        assert_eq!(shown.body, Rect::new(2, 5, 40, 8));
+        assert_eq!(shown.body, Rect::new(2, 4, 40, 9));
 
         let hidden = compute_tab_surface(area, false);
         assert_eq!(hidden.tabs.height, 0);
-        assert_eq!(hidden.line.height, 0);
         assert_eq!(hidden.body, area);
     }
 
@@ -89,12 +78,10 @@ mod tests {
     fn short_areas_never_yield_rows_they_lack() {
         let surface = compute_tab_surface(Rect::new(0, 0, 40, 0), true);
         assert_eq!(surface.tabs.height, 0);
-        assert_eq!(surface.line.height, 0);
         assert_eq!(surface.body.height, 0);
 
         let one_row = compute_tab_surface(Rect::new(0, 0, 40, 1), true);
         assert_eq!(one_row.tabs, Rect::new(0, 0, 40, 1));
-        assert_eq!(one_row.line.height, 0);
         assert_eq!(one_row.body.height, 0);
     }
 }

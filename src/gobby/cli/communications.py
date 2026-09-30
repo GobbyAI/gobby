@@ -93,9 +93,23 @@ def status_cmd(ctx: click.Context) -> None:
 @comms.command(name="send")
 @click.argument("channel_name")
 @click.argument("message")
+@click.option(
+    "--redact",
+    is_flag=True,
+    help="Scrub secrets and home paths, then cut the message to Telegram's "
+    "message-length limit. For alerts that quote log lines.",
+)
 @click.pass_context
-def send_cmd(ctx: click.Context, channel_name: str, message: str) -> None:
+def send_cmd(ctx: click.Context, channel_name: str, message: str, redact: bool) -> None:
     """Send a message to a specific channel."""
+    if redact:
+        # Deferred: the communications package imports the channel manager.
+        from gobby.communications.adapters.telegram_formatting import (
+            TELEGRAM_MAX_MESSAGE_LENGTH,
+        )
+        from gobby.communications.redaction import redact_and_bound
+
+        message = redact_and_bound(message, TELEGRAM_MAX_MESSAGE_LENGTH)
     client = get_daemon_client(ctx)
 
     try:
@@ -109,6 +123,54 @@ def send_cmd(ctx: click.Context, channel_name: str, message: str) -> None:
         else:
             print_error(f"Failed to send message: {response.text}")
             ctx.exit(1)
+
+    except httpx.RequestError as e:
+        print_error(f"Daemon connection failed: {e}")
+        ctx.exit(1)
+
+
+@comms.command(name="attach")
+@click.argument("channel_name")
+@click.argument("filename")
+@click.option("--caption", default="", help="Short caption for the document.")
+@click.pass_context
+def attach_cmd(ctx: click.Context, channel_name: str, filename: str, caption: str) -> None:
+    """Send stdin as a redacted text document, or a short omission note when it is too big.
+
+    Secrets and home paths are scrubbed first. Content over 64 KiB after redaction
+    is not sent; the channel gets a one-line note instead.
+    """
+    # Deferred: the communications package imports the channel manager.
+    from gobby.communications.redaction import MAX_LOG_ATTACHMENT_BYTES, redact_for_attachment
+
+    content = redact_for_attachment(click.get_text_stream("stdin").read())
+    if content is None:
+        endpoint = "/api/comms/send"
+        # Fixed text: the caller's filename may be a host path and must not leave the machine.
+        payload: dict[str, Any] = {
+            "channel_name": channel_name,
+            "content": f"Log attachment omitted: over the {MAX_LOG_ATTACHMENT_BYTES // 1024} KiB "
+            "cap.",
+        }
+    else:
+        endpoint = "/api/comms/attachment"
+        payload = {
+            "channel_name": channel_name,
+            "filename": filename,
+            "content": content,
+            "caption": caption,
+        }
+    client = get_daemon_client(ctx)
+
+    try:
+        response = client.call_http_api(endpoint, method="POST", json_data=payload)
+        if response.status_code != 200:
+            print_error(f"Failed to send {filename}: {response.text}")
+            ctx.exit(1)
+        elif content is None:
+            print_success(f"{filename} over the attachment cap; omission note sent")
+        else:
+            print_success(f"{filename} attached to {channel_name}")
 
     except httpx.RequestError as e:
         print_error(f"Daemon connection failed: {e}")

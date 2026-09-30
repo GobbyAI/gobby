@@ -44,6 +44,7 @@ from gobby.terminals.runtime import (
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
+    DaemonHealthTimeoutError,
     DaemonInstance,
     _postgres_url_for_schema,
     _seed_e2e_runtime_state,
@@ -635,7 +636,13 @@ def _start_isolated_daemon(
     """
     with ExitStack() as cleanup:
         home = _short_dir("gobby-rt-home")
-        cleanup.callback(shutil.rmtree, home)
+        preserve_home = False
+
+        def cleanup_home() -> None:
+            if not preserve_home:
+                shutil.rmtree(home)
+
+        cleanup.callback(cleanup_home)
         socket_dir = _short_dir("gobby-rt-host")
         cleanup.callback(_stop_host, socket_dir)
         binary = gterm_binary()
@@ -699,7 +706,12 @@ def _start_isolated_daemon(
             command=command,
             env=env,
         )
-        wait_for_daemon_health(http_port, log_file=log_file)
+        try:
+            wait_for_daemon_health(http_port, log_file=log_file, process=process)
+        except DaemonHealthTimeoutError as exc:
+            preserve_home = True
+            exc.add_note(f"Isolated daemon home preserved for diagnosis: {home}")
+            raise
         if not wait_for_daemon_websocket(ws_port, home, timeout=20.0):
             terminate_process_tree(process.pid)
             pytest.fail("contract daemon websocket was not ready")
@@ -843,6 +855,8 @@ def _list_live(client: httpx.Client, terminal_id: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
+# The daemon registers only the native runtime, so web terminal_create has no tmux cell.
+@pytest.mark.parametrize("contract_backend", ["native"])
 async def test_daemon_restart_continuity(
     contract_backend: str,
     postgres_db: HubDatabase,

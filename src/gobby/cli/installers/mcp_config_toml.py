@@ -1,5 +1,6 @@
 """TOML MCP config operations."""
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -8,10 +9,10 @@ from .mcp_config_shared import (
     _CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE,
     _CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC,
     _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
-    _GOBBY_MCP_COMMAND,
     _facade_time,
     _remove_toml_table_block,
     _repair_stale_gobby_mcp_server_toml,
+    _resolved_gobby_mcp_command,
 )
 
 
@@ -94,14 +95,18 @@ def configure_mcp_server_toml(config_path: Path, server_name: str = "gobby") -> 
             result["error"] = f"Failed to create backup: {e}"
             return result
 
-    # Add MCP server config. Codex should launch gobby from the caller's project
-    # environment so the stdio wrapper can derive the correct project scope.
+    # Add MCP server config. The stdio wrapper derives project scope from the
+    # working directory Codex launches it in.
     # Gobby's tools are pre-approved so seats running with approval_policy never
     # are not denied when Codex applies a sandboxed permission profile.
+    # ``required`` makes Codex wait for the server before the first turn; an
+    # optional server can be left out of that turn's tool catalog. The command is
+    # absolute so a launch whose PATH lacks gobby still starts it.
     mcp_config = f"""
 [mcp_servers.{server_name}]
-command = "{_GOBBY_MCP_COMMAND}"
+command = {json.dumps(_resolved_gobby_mcp_command())}
 args = ["mcp-server"]
+required = true
 startup_timeout_sec = {_CODEX_GOBBY_MCP_STARTUP_TIMEOUT_SEC}
 tool_timeout_sec = {_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC}
 default_tools_approval_mode = "{_CODEX_GOBBY_MCP_DEFAULT_TOOLS_APPROVAL_MODE}"

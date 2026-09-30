@@ -179,3 +179,41 @@ def test_composer_region_falls_back_to_the_last_prompt_box() -> None:
 def test_composer_region_is_empty_without_a_complete_frame() -> None:
     assert matcher.composer_region("❯ \n────────────────────\n status") == ""
     assert matcher.composer_region("") == ""
+
+
+def test_codex_bare_composer_requires_current_footer() -> None:
+    footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
+    assert matcher.composer_region(f"done\n› \n\n{footer}") == "› "
+    assert matcher.composer_region(f"done\n› draft\n\n{footer}") == "› draft"
+    assert matcher.composer_region(f"› old prompt\nWorking...\n\n{footer}") == ""
+    assert matcher.composer_region(f"{_CLAUDE_FRAME}\n› \n\n{footer}") == "› "
+
+
+@pytest.mark.parametrize(
+    "footer_line",
+    [
+        "  ? for shortcuts",
+        "  ? for shortcuts                                     ⚠ 2 warnings · f2 to view",
+        "  ? for shortcuts                                      ⚠ 1 warning · f2 to view",
+        "  ← for agents · ? for shortcuts        ⚠ 3 warnings · f2 to view",
+    ],
+    ids=["bare", "warnings", "one-warning", "agents-and-warnings"],
+)
+def test_codex_bare_composer_reads_current_footer_variants(footer_line: str) -> None:
+    """Live Codex footers from the #23102 audit; the strict form stranded every seat."""
+    model = "  GPT-6.1-Sol xhigh · ~/Projects/gobby · 0.5.0 · Context 25% used · 258K window"
+    assert matcher.composer_region(f"done\n› \n\n{model}\n{footer_line}") == "› "
+
+
+@pytest.mark.parametrize(
+    "footer_line",
+    [
+        "  ? for shortcuts                  gemini-2.5-flash",
+        "  ? for shortcuts   esc to interrupt",
+        "  ? for shortcuts · ⚠ 2 warnings · f2 to view",
+    ],
+    ids=["agy-model-suffix", "unknown-status", "unspaced-warnings"],
+)
+def test_codex_bare_composer_rejects_other_footers(footer_line: str) -> None:
+    model = "  GPT-6.1-Sol xhigh · ~/Projects/gobby · 0.5.0"
+    assert matcher.composer_region(f"done\n› \n\n{model}\n{footer_line}") == ""

@@ -82,6 +82,19 @@ async def _invoke(run: Any | None, tmux: MagicMock, **kwargs: Any) -> dict[str, 
 
 
 @pytest.mark.asyncio
+async def test_wait_for_output_requires_managed_runtime_registry() -> None:
+    run = SimpleNamespace(id="run-1", terminal_id="terminal-1", status="running")
+    runner = _runner(run)
+    runner.terminal_runtime_registry = None
+    wait_for_output = create_agents_registry(runner)._tools["wait_for_output"].func
+
+    result = await wait_for_output("run-1", pattern="READY")
+
+    assert result["success"] is False
+    assert result["error"] == "runtime_unavailable"
+
+
+@pytest.mark.asyncio
 async def test_wait_for_output_returns_bounded_matching_excerpt() -> None:
     match_tmux = MagicMock()
     pane_output = f"{'a' * 3_000}\nREADY: port 60887\n{'b' * 3_000}"

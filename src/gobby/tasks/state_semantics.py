@@ -171,6 +171,11 @@ def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
     return session_id is not None and owner == session_id
 
 
+def is_task_claimed_by_session(task: Any, session_id: str) -> bool:
+    """Ownership includes an escalated task claimed by its close reviewer."""
+    return not is_task_closed(task) and get_claimed_session_id(task) == session_id
+
+
 def _current_stage_payload(task: Any) -> dict[str, str] | None:
     stage = current_stage(task)
     if stage is None:

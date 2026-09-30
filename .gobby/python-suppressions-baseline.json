@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "site_count": 202,
+  "site_count": 194,
   "sites": [
     {
       "fingerprint": "0f66536411482f1a325ea75a3b12fe585163203aa948bb885f30281b874362a0",
@@ -573,16 +573,6 @@
       "statement": "def do_POST ( self ) -> None :"
     },
     {
-      "fingerprint": "bb40af065b49e8f65a0ada40b12cf6f650fb4c155298d5b90b77b288302790c3",
-      "path": "tests/e2e/test_build_dispatcher_autonomy.py",
-      "symbol": "MiniBuildHarness.assert_clean_final_state",
-      "directive": "noqa",
-      "codes": [
-        "SLF001"
-      ],
-      "statement": "await wait_for_async_condition ( lambda : not self . loop . _project_tasks , timeout = 2.0 , description = \"scheduled dispatcher tasks drained\" , )"
-    },
-    {
       "fingerprint": "2cc2bff1e987c33fb412a28eae4a5846cd7c7e621e34a897a70c40f7b33f30fc",
       "path": "tests/e2e/test_plan_coverage_responsiveness.py",
       "symbol": "test_http_plane_responsive_during_coverage_regeneration._update",
@@ -953,16 +943,6 @@
       "statement": "service . _extractor = _StubExtractor ( by_content )"
     },
     {
-      "fingerprint": "cb88596f98600a9640c1f49ac69eb64fd17d586ccdb70f2ba0015bce6590e59e",
-      "path": "tests/memory/test_recall_benchmark_e2e.py",
-      "symbol": "_build_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "search_service = SearchService ( storage = _MemoryStorage ( corpus , id_map ) , vector_store = vector_store , embed_fn = embed_fn , kg_service = service , keyword_search = lambda query , limit , project_id , * , include_global = True : [ ] , config = MemoryConfig ( cluster_recall_expansion = arm . cluster_recall_expansion , cluster_expansion_per_entity = arm . cluster_expansion_per_entity , ) , falkordb_graph_search = arm . falkordb_graph_search , falkordb_graph_min_score = _GRAPH_MIN_SCORE , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = snapshots . append , )"
-    },
-    {
       "fingerprint": "e4c8851c9e2d0c98e348fc0adbb6134365280654bcdb5cfc4c9540abbabc56ef",
       "path": "tests/memory/test_recall_benchmark_e2e.py",
       "symbol": "_build_service",
@@ -981,66 +961,6 @@
         "misc"
       ],
       "statement": "query_embedding = await search_service . _embed_fn ( query , is_query = True )"
-    },
-    {
-      "fingerprint": "1306c08caa7d2598432446dc9e84219fbe8f238b64eff79c211f3d2d7e693d41",
-      "path": "tests/memory/test_recall_fit.py",
-      "symbol": "TestReplayParamsValidation.test_rejects_out_of_range_params",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "ReplayParams ( ** kwargs )"
-    },
-    {
-      "fingerprint": "68c6c030a3a8a276db738f78b603b572658cac2ce5afadfd17b30e9f9e20a601",
-      "path": "tests/memory/test_recall_fit.py",
-      "symbol": "_semantic_row",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return _row ( similarity = raw * boost * decay , raw_semantic_score = raw , temporal_decay_factor = decay , ranking_mode = \"semantic_only\" , ranking_score = ranking_score , ** kwargs , )"
-    },
-    {
-      "fingerprint": "e8a9945ba12a56247a20429f74515415931d236d2b6f347f1e46d1745b891f08",
-      "path": "tests/memory/test_search_ranking.py",
-      "symbol": "_fallback_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return SearchService ( storage = _Storage ( memory_ids ) , vector_store = None , embed_fn = None , kg_service = None , keyword_search = lambda query , limit , project_id , * , include_global = True : keyword_results , config = MemoryConfig ( ) , falkordb_graph_search = False , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , )"
-    },
-    {
-      "fingerprint": "eb6f2dd988b868ec6b9301a72a3aa7f70dfbcb74359a614970dcf0c0351b5bdb",
-      "path": "tests/memory/test_search_ranking.py",
-      "symbol": "_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return SearchService ( storage = storage or _Storage ( memory_ids ) , vector_store = vector_store or _VectorStore ( vector_results or [ ] ) , embed_fn = embed_fn or _embed , kg_service = object ( ) if falkordb_graph_search else None , keyword_search = keyword_search or ( lambda query , limit , project_id , * , include_global = True : [ ] ) , config = MemoryConfig ( ) , falkordb_graph_search = falkordb_graph_search , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , recall_constants = recall_constants , )"
-    },
-    {
-      "fingerprint": "eb6f2dd988b868ec6b9301a72a3aa7f70dfbcb74359a614970dcf0c0351b5bdb",
-      "path": "tests/memory/test_search_ranking.py",
-      "symbol": "_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return SearchService ( storage = storage or _Storage ( memory_ids ) , vector_store = vector_store or _VectorStore ( vector_results or [ ] ) , embed_fn = embed_fn or _embed , kg_service = object ( ) if falkordb_graph_search else None , keyword_search = keyword_search or ( lambda query , limit , project_id , * , include_global = True : [ ] ) , config = MemoryConfig ( ) , falkordb_graph_search = falkordb_graph_search , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , recall_constants = recall_constants , )"
-    },
-    {
-      "fingerprint": "eb6f2dd988b868ec6b9301a72a3aa7f70dfbcb74359a614970dcf0c0351b5bdb",
-      "path": "tests/memory/test_search_ranking.py",
-      "symbol": "_service",
-      "directive": "type: ignore",
-      "codes": [
-        "arg-type"
-      ],
-      "statement": "return SearchService ( storage = storage or _Storage ( memory_ids ) , vector_store = vector_store or _VectorStore ( vector_results or [ ] ) , embed_fn = embed_fn or _embed , kg_service = object ( ) if falkordb_graph_search else None , keyword_search = keyword_search or ( lambda query , limit , project_id , * , include_global = True : [ ] ) , config = MemoryConfig ( ) , falkordb_graph_search = falkordb_graph_search , falkordb_graph_min_score = 0.0 , rrf_k = 60 , falkordb_rrf_k = 60 , vector_store_failure_logger = lambda message , error : None , run_db = None , search_debug_sink = search_debug_sink , recall_constants = recall_constants , )"
     },
     {
       "fingerprint": "d6a71dff0a2fa5d968a4b2a94fff825ab94f7a8350c968e25df5ae668340b4c6",

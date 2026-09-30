@@ -199,7 +199,7 @@ async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
     websocket.close = AsyncMock()
     caplog.set_level(logging.DEBUG, logger="gobby.servers.websocket.server")
 
-    with patch.object(cast(Any, websocket_server), "_cleanup_tmux_client", cleanup_tmux_client):
+    with patch.object(cast(Any, websocket_server), "_cleanup_terminal_client", cleanup_tmux_client):
         await route.endpoint(websocket)
 
     assert websocket_server.clients == {}

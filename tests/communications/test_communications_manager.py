@@ -519,6 +519,65 @@ async def test_edit_message_persists_final_content(temp_db: HubDatabase) -> None
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_send_message_out_of_range_callback_ttl_rejects_before_send(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An out-of-range callback TTL is caller input: no send, stored row or error log."""
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    mock_adapter = make_adapter()
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+    metadata = {
+        "inline_keyboard": [[{"text": "A", "value": "a"}]],
+        "callback_ttl_seconds": 86400,
+    }
+
+    with (
+        caplog.at_level(logging.ERROR),
+        pytest.raises(ValueError, match=r"between 1 and 3600 \(got 86400\)"),
+    ):
+        await manager.send_message("test-channel", "Pick one", metadata=metadata)
+
+    mock_adapter.send_message.assert_not_awaited()
+    store.create_message.assert_not_called()
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_send_message_max_callback_ttl_sends_buttons() -> None:
+    """The largest allowed callback TTL reaches the adapter with the keyboard intact."""
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    mock_adapter = make_adapter()
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+    keyboard = [[{"text": "A", "value": "a"}]]
+
+    msg = await manager.send_message(
+        "test-channel",
+        "Pick one",
+        metadata={"inline_keyboard": keyboard, "callback_ttl_seconds": 3600},
+    )
+
+    assert msg.status == "sent"
+    sent = mock_adapter.send_message.await_args.args[0]
+    assert sent.metadata_json["inline_keyboard"] == keyboard
+    assert sent.metadata_json["callback_ttl_seconds"] == 3600
+    store.create_message.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_send_message_unknown_channel_raises() -> None:
     """send_message() raises ValueError for unknown channel."""
     store = make_store()
@@ -598,6 +657,29 @@ async def test_send_message_adapter_failure_marks_failed() -> None:
     assert msg.status == "failed"
     assert "network error" in (msg.error or "")
     store.create_message.assert_called_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_send_message_failure_with_empty_exception_text_names_the_type() -> None:
+    """An exception with empty str() (httpx.ConnectError) still leaves a usable error."""
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter.send_message = AsyncMock(side_effect=httpx.ConnectError(""))
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    msg = await manager.send_message("test-channel", "Hello!")
+
+    stored_message = store.create_message.call_args.args[0]
+    assert msg.status == "failed"
+    assert msg.error == "ConnectError"
+    assert stored_message.error == "ConnectError"
 
 
 @pytest.mark.unit
@@ -2878,3 +2960,35 @@ async def test_telegram_edit_supersedes_or_replaces_decision_keyboard(
     withdrawn = store.get_message(decision_id)
     assert withdrawn is not None
     assert withdrawn.metadata_json["callback_state"] == "superseded"
+
+
+@pytest.mark.unit
+async def test_send_attachment_telegram_ok_false_is_failed_not_sent(tmp_path: Path) -> None:
+    """A sendDocument reply with ok=false stores a failed message, never a sent one."""
+    channel = make_channel(channel_type="telegram")
+    manager = CommunicationsManager(make_config(), make_store(), make_secret_store(), MagicMock())
+    adapter = TelegramAdapter()
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", f"{adapter._api_base}/sendDocument"),
+        json={"ok": False, "description": "Bad Request: chat not found"},
+    )
+    client = MagicMock()
+    client.post = AsyncMock(return_value=response)
+    adapter._client = client
+    manager._adapters[channel.name] = adapter
+    manager._channel_by_name[channel.name] = channel
+    file_path = tmp_path / "errors-new.txt"
+    file_path.write_text("boom\n", encoding="utf-8")
+
+    with patch.object(
+        manager._outbound, "enrich_metadata", return_value={"platform_destination": "chat999"}
+    ):
+        message, _ = await manager.send_attachment(
+            channel.name, file_path, content_type="text/plain"
+        )
+
+    assert message.status == "failed"
+    assert message.platform_message_id is None
+    assert message.error == "Telegram sendDocument failed: Bad Request: chat not found"

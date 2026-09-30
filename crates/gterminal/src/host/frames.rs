@@ -243,6 +243,19 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                             refuse_input(&mut writer, code).await;
                         }
                     }
+                    ClientMessage::SetTerminalTheme { theme } => {
+                        if let Err(code) = state.declare_terminal_theme(attachment_id, theme).await
+                        {
+                            let _ = write_frame(
+                                &mut writer,
+                                &ServerMessage::Error {
+                                    code: code.into(),
+                                    message: None,
+                                },
+                            )
+                            .await;
+                        }
+                    }
                     ClientMessage::Input { data } => {
                         if let Err(code) = state
                             .frame_input(attachment_id, NativeInput::Bytes(data))

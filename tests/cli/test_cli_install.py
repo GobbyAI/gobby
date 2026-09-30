@@ -449,7 +449,7 @@ class TestInstallCommand:
             ),
             (
                 "agy",
-                "AGY CLI",
+                "Antigravity CLI",
                 {
                     "success": True,
                     "hooks_installed": ["PreInvocation"],
@@ -713,7 +713,7 @@ class TestUninstallCommand:
             ),
             (
                 "agy",
-                "AGY CLI",
+                "Antigravity CLI",
                 {"success": True, "hooks_removed": ["PreInvocation"], "files_removed": []},
                 ("Removed 1 hooks",),
             ),

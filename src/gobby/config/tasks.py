@@ -192,7 +192,10 @@ class TaskValidationConfig(FeatureDefaultConfig):
     )
     close_review_max_concurrency_per_project: int = Field(
         default=3,
-        description="Maximum launching, running, or finalizing close reviewers per project.",
+        description=(
+            "Maximum active close reviewers per project. Other tasks' reviews count against "
+            "it at admission and promotion; a task never runs two reviews at once."
+        ),
     )
     # Escalation settings
     escalation_enabled: bool = Field(

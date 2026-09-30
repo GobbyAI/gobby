@@ -20,7 +20,7 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | CLI | Native Format | Session Field | Integration |
 | --- | --- | --- | --- |
 | Claude Code | Settings hook names with Gobby kebab-case `ghook --type` values | `session_id` | HTTP hook command |
-| AGY CLI | PascalCase (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`) | `session_id` | HTTP hook command |
+| Antigravity CLI | PascalCase (`PreInvocation`, `PreToolUse`, `PostToolUse`, `PostInvocation`, `Stop`) | `session_id` | HTTP hook command |
 | Qwen CLI | Current PascalCase (`SessionStart`, `PreToolUse`, `Stop`) | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
@@ -106,11 +106,11 @@ closed:
 | `grok` | `stop` | Fail open; non-critical transport failure |
 
 Non-critical transport failures use `ghook`'s fail-open path (exit 1 with an
-error JSON for most CLIs; AGY exits 0 with per-event skip JSON). Critical
+error JSON for most CLIs; Antigravity exits 0 with per-event skip JSON). Critical
 transport failures use exit 2 and do not emit a continue response. The
 critical set is session-lifecycle only: Claude `session-start`, `session-end`,
 and `pre-compact`; Codex, Qwen, and Droid `SessionStart`, `SessionEnd`, and
-`PreCompact`; Grok `session_start`, `session_end`, and `pre_compact`. AGY has
+`PreCompact`; Grok `session_start`, `session_end`, and `pre_compact`. Antigravity has
 no critical native event: PreInvocation, PreToolUse, PostToolUse,
 PostInvocation, and Stop are all non-critical.
 
@@ -197,12 +197,12 @@ passes kebab-case hook types to the daemon.
 | `elicitation` | `Elicitation` | `elicitation` | `elicitation` |
 | `elicitation-result` | `ElicitationResult` | `elicitation_result` | `elicitation_result` |
 
-### AGY
+### Antigravity
 
-AGY hooks are installed to `~/.gemini/config/hooks.json`, which is the AGY
-vendor config path. These are the only five native events; AGY does not expose
+Antigravity hooks are installed to `~/.gemini/config/hooks.json`, which is the Antigravity
+vendor config path. These are the only five native events; Antigravity does not expose
 `SessionStart` or `UserPromptSubmit`. Gobby separately supports managed spawning
-and web chat through AGY's custom stream-json subprocess transport on 1.1.18+.
+and web chat through Antigravity's custom stream-json subprocess transport on 1.1.18+.
 
 | Native Hook | Raw Workflow Event | Semantic Event |
 | --- | --- | --- |
@@ -371,7 +371,7 @@ Hook input models set `extra="allow"` and emit no unknown-field warning, so a
 field the models do not declare still reaches `HookEvent.data` silently. Treat
 this table, not a model definition, as the statement of what arrives.
 
-Shell-like tools normalize to `Bash`. Common Qwen/AGY tool names also map to
+Shell-like tools normalize to `Bash`. Common Qwen/Antigravity tool names also map to
 Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 
 ## Provider Payload Examples
@@ -443,7 +443,7 @@ scoping per-agent state across a `Task` subagent's tool calls.
 }
 ```
 
-### AGY
+### Antigravity
 
 ```json
 {
@@ -637,7 +637,7 @@ Adapters translate these fields into the native response schema for each CLI.
 
 ### Context Fields
 
-| HookResponse Field | Claude Code | Qwen | AGY | Codex | Droid |
+| HookResponse Field | Claude Code | Qwen | Antigravity | Codex | Droid |
 | --- | --- | --- | --- | --- | --- |
 | `context` | `hookSpecificOutput.additionalContext` when supported | `hookSpecificOutput.additionalContext` when supported | `injectSteps.ephemeralMessage` on `PreInvocation` and `PostInvocation` | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
 | `system_message` | Top-level `systemMessage`, except startup context is injected once | Top-level `systemMessage`, except startup context is injected once | `injectSteps.userMessage` on `PreInvocation` and `PostInvocation` | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
@@ -658,7 +658,7 @@ Adapters translate these fields into the native response schema for each CLI.
 | `display_content` | Claude `MessageDisplay` replacement delta |
 | `modify_args` | ACP adapter `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig`; not Qwen's native terminal hook surface |
 
-For AGY `PreToolUse`, the supported decisions are `allow`, `deny`, `ask`, and
+For Antigravity `PreToolUse`, the supported decisions are `allow`, `deny`, `ask`, and
 `deny_unless_prior_grant`; `modified_input` maps to `overwrite`.
 `PostInvocation` can return `terminationBehavior`, while Stop blocking maps to
 `decision: continue`. Gobby never emits schema-present `force_ask` because it is

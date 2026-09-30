@@ -8,8 +8,29 @@ from datetime import UTC, datetime
 from gobby.utils.datetime import parse_stored_datetime
 
 
+def recency_anchor(
+    updated_at: datetime | str | None,
+    last_accessed_at: datetime | str | None,
+) -> datetime | None:
+    """Return the later of a memory's last update and its last direct fetch.
+
+    A fetch is evidence the memory is still in use, so decay counts from
+    whichever happened last. Missing or unparseable timestamps are ignored;
+    ``None`` means neither is known.
+    """
+    anchors: list[datetime] = []
+    for value in (updated_at, last_accessed_at):
+        try:
+            parsed = parse_stored_datetime(value)
+        except ValueError:
+            continue
+        if parsed is not None:
+            anchors.append(parsed)
+    return max(anchors, default=None)
+
+
 def temporal_decay(
-    updated_at: datetime | str,
+    updated_at: datetime | str | None,
     half_life_days: float,
     now: datetime | None = None,
 ) -> float:

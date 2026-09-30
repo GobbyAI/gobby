@@ -25,6 +25,7 @@ rules:
       and (
         (
           event.data.get('canonical_tool_kind') == 'write'
+          and event.data.get('canonical_repo_mutation')
           and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
         )
         or (

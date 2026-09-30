@@ -86,7 +86,7 @@ class RelatedMemoryEvidence:
         "created_at",
         "updated_at",
     ),
-    optional=("last_accessed_at",),
+    optional=("last_accessed_at", "last_surfaced_at"),
 )
 @dataclass(frozen=True)
 class DreamCandidate:
@@ -106,6 +106,8 @@ class DreamCandidate:
     updated_at: datetime
     last_accessed_at: datetime | None
     dream_due_version: int = 0
+    surfaced_count: int = 0
+    last_surfaced_at: datetime | None = None
     reasons: list[str] = field(default_factory=list)
     related: tuple[RelatedMemoryEvidence, ...] = ()
     rationale: str | None = None
@@ -131,6 +133,8 @@ class DreamCandidate:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "last_accessed_at": self.last_accessed_at,
+            "surfaced_count": self.surfaced_count,
+            "last_surfaced_at": self.last_surfaced_at,
             "reasons": self.reasons,
         }
         if self.related:

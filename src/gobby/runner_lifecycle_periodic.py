@@ -51,7 +51,6 @@ def _default_loops() -> dict[str, Any]:
         metrics_archive_loop,
         metrics_cleanup_loop,
         purge_deleted_skills_loop,
-        recall_drift_monitor_loop,
         span_cleanup_loop,
         sweep_test_schemas_loop,
         tmux_window_name_repair_loop,
@@ -77,7 +76,6 @@ def _default_loops() -> dict[str, Any]:
         "cleanup_chat_attachments_loop": cleanup_chat_attachments_loop,
         "cleanup_expired_isolation_loop": cleanup_expired_isolation_loop,
         "metric_snapshot_loop": metric_snapshot_loop,
-        "recall_drift_monitor_loop": recall_drift_monitor_loop,
         "bin_freshness_loop": bin_freshness_loop,
         "drain_hook_inbox_loop": drain_hook_inbox_loop,
         "hook_quarantine_retention_loop": hook_quarantine_retention_loop,
@@ -213,17 +211,6 @@ def start_periodic_tasks(
             name="memory-reconcile",
         )
 
-    runner._recall_drift_task = None
-    if memory_manager:
-        runner._recall_drift_task = asyncio.create_task(
-            loops["recall_drift_monitor_loop"](
-                runner.database,
-                lambda: runner._shutdown_requested,
-                capture_bundle=runner.config_runtime.capture,
-            ),
-            name="recall-drift-monitor",
-        )
-
     runner._zombie_messages_task = asyncio.create_task(
         loops["cleanup_zombie_messages_loop"](runner.database, lambda: runner._shutdown_requested),
         name="zombie-message-cleanup",
@@ -349,7 +336,6 @@ def start_periodic_tasks(
             runner._unmodeled_observations_cleanup_task,
             runner._loop_progress_cleanup_task,
             getattr(runner, "_memory_reconcile_task", None),
-            getattr(runner, "_recall_drift_task", None),
             runner._zombie_messages_task,
             runner._comms_messages_task,
             runner._skill_purge_task,

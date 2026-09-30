@@ -408,10 +408,12 @@ async def test_stale_human_wait_marker_does_not_yield_or_suppress_attempts(
     assert first_stop.decision == "block"
     assert variables["stop_attempts"] == 5
 
+    # The turn start after a blocked stop is that block's feedback turn, which
+    # keeps the attempt count (#22726).
     await engine.evaluate(_make_event(HookEventType.BEFORE_AGENT), session_id, variables)
     assert variables["waiting_on_user_input"] is True
-    assert variables["stop_attempts"] == 0
+    assert variables["stop_attempts"] == 5
 
     repeated_stop = await engine.evaluate(_make_event(), session_id, variables)
     assert repeated_stop.decision == "block"
-    assert variables["stop_attempts"] == 1
+    assert variables["stop_attempts"] == 6

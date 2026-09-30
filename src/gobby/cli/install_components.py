@@ -8,6 +8,7 @@ the named components against an existing install.
 from __future__ import annotations
 
 import logging
+import tomllib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -95,7 +96,7 @@ COMPONENT_LABELS: dict[str, str] = {
     "grok": "Grok CLI",
     "qwen": "Qwen CLI",
     "droid": "Droid CLI",
-    "agy": "AGY CLI",
+    "agy": "Antigravity CLI",
     "git-hooks": "Git hooks",
     "rtk": "RTK",
     "impeccable": "Impeccable",
@@ -185,6 +186,19 @@ def reconcile_rtk_step(
     return rtk_status
 
 
+def _workspace_client_version(name: str) -> str:
+    crate_dir = {"gclient": "gclient", "gterm": "gterminal"}[name]
+    for root in Path(__file__).resolve().parents:
+        manifest = root / "crates" / crate_dir / "Cargo.toml"
+        if (root / "Cargo.toml").is_file() and manifest.is_file():
+            with manifest.open("rb") as source:
+                version = tomllib.load(source)["package"]["version"]
+            if isinstance(version, str) and version:
+                return version
+            raise ValueError(f"Invalid {name} version in {manifest}")
+    raise FileNotFoundError(f"No local {name} crate manifest found")
+
+
 def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
     """Install one client binary without claiming the daemon singleton.
 
@@ -200,6 +214,12 @@ def promote_client_binary(name: str, bin_dir: Path) -> dict[str, Any]:
         "gterm": install_setup._install_gterm_from_submodule,
     }[name]
     outcome = installer(bin_dir)
+    if outcome:
+        version = _workspace_client_version(name)
+        if name == "gclient":
+            install_setup._write_gclient_version_stamp(bin_dir, version)
+        else:
+            install_setup._write_gterm_version_stamp(bin_dir, version)
     return {"success": bool(outcome), "outcome": outcome}
 
 

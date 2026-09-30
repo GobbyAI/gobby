@@ -6,35 +6,42 @@
       "cpu_count": 4,
       "capacity": {"max_connections": 100, "superuser_reserved_connections": 3, "reserved_connections": 0},
       "config": {"pool_max_size": "auto", "executor_max_workers": "auto", "coverage_max_concurrency": "auto"},
-      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 64, "executor_max_workers": 8, "coverage_max_concurrency": 1, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": true}
+      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 64, "native_pool_max_size": 8, "executor_max_workers": 8, "coverage_max_concurrency": 1, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": true}
     },
     {
       "name": "eight-core-host",
       "cpu_count": 8,
       "capacity": {"max_connections": 100, "superuser_reserved_connections": 3, "reserved_connections": 0},
       "config": {"pool_max_size": "auto", "executor_max_workers": "auto", "coverage_max_concurrency": "auto"},
-      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 64, "executor_max_workers": 16, "coverage_max_concurrency": 2, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": false}
+      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 64, "native_pool_max_size": 8, "executor_max_workers": 16, "coverage_max_concurrency": 2, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": false}
     },
     {
       "name": "eighteen-core-host",
       "cpu_count": 18,
       "capacity": {"max_connections": 100, "superuser_reserved_connections": 3, "reserved_connections": 0},
       "config": {"pool_max_size": "auto", "executor_max_workers": "auto", "coverage_max_concurrency": "auto"},
-      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 64, "executor_max_workers": 32, "coverage_max_concurrency": 4, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": false}
+      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 64, "native_pool_max_size": 8, "executor_max_workers": 32, "coverage_max_concurrency": 4, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": false}
     },
     {
       "name": "smaller-server-budget",
       "cpu_count": 8,
       "capacity": {"max_connections": 50, "superuser_reserved_connections": 3, "reserved_connections": 0},
       "config": {"pool_max_size": "auto", "executor_max_workers": "auto", "coverage_max_concurrency": "auto"},
-      "expected": {"usable_connections": 47, "pool_budget": 32, "pool_max_size": 32, "executor_max_workers": 16, "coverage_max_concurrency": 2, "direct_connection_reserve": 8, "bootstrap_pool_size": 2, "hardware_warning": false}
+      "expected": {"usable_connections": 47, "pool_budget": 32, "pool_max_size": 32, "native_pool_max_size": 0, "executor_max_workers": 16, "coverage_max_concurrency": 2, "direct_connection_reserve": 8, "bootstrap_pool_size": 2, "hardware_warning": false}
     },
     {
       "name": "explicit-values-may-exceed-auto-caps",
       "cpu_count": 18,
       "capacity": {"max_connections": 100, "superuser_reserved_connections": 3, "reserved_connections": 0},
       "config": {"pool_max_size": 72, "executor_max_workers": 40, "coverage_max_concurrency": 8},
-      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 72, "executor_max_workers": 40, "coverage_max_concurrency": 8, "direct_connection_reserve": 18, "bootstrap_pool_size": 2, "hardware_warning": false}
+      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 72, "native_pool_max_size": 0, "executor_max_workers": 40, "coverage_max_concurrency": 8, "direct_connection_reserve": 18, "bootstrap_pool_size": 2, "hardware_warning": false}
+    },
+    {
+      "name": "explicit-pool-leaves-six-native-connections",
+      "cpu_count": 18,
+      "capacity": {"max_connections": 100, "superuser_reserved_connections": 3, "reserved_connections": 0},
+      "config": {"pool_max_size": 66, "executor_max_workers": "auto", "coverage_max_concurrency": "auto"},
+      "expected": {"usable_connections": 97, "pool_budget": 72, "pool_max_size": 66, "native_pool_max_size": 6, "executor_max_workers": 32, "coverage_max_concurrency": 4, "direct_connection_reserve": 16, "bootstrap_pool_size": 2, "hardware_warning": false}
     },
     {
       "name": "server-too-small-for-supported-pool",

@@ -24,6 +24,7 @@ RUN_CACHE_ENV_VARS = (
     "HEX_HOME",
     "MIX_HOME",
     "XDG_CACHE_HOME",
+    "ZIG_GLOBAL_CACHE_DIR",
 )
 
 
@@ -35,6 +36,8 @@ class SandboxRunPaths:
     hooks: Path
     logs: Path
     cache: Path
+    # Complete `zig build --system` package dir; None leaves libghostty-vt fetching.
+    zig_system_dir: Path | None = None
 
     @property
     def writable(self) -> tuple[Path, Path, Path, Path]:
@@ -57,4 +60,6 @@ class SandboxRunPaths:
         # zsh uses TMPPREFIX for heredocs independently of TMPDIR.
         values["TMPPREFIX"] = str(self.tmp / "zsh")
         values["GOBBY_LOG_DIR"] = str(self.logs)
+        if self.zig_system_dir is not None:
+            values["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(self.zig_system_dir)
         return values

@@ -448,6 +448,18 @@ class FakeInternalManager:
         return len(self._registries)
 
 
+def _wire_workflow_proxy(server: HTTPServer) -> None:
+    """Dispatch through ToolProxyService; wrapper requests fail closed without it (#22961)."""
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = None
+    mcp_manager.session_manager = None
+    server._tools_handler = MagicMock(
+        tool_proxy=ToolProxyService(
+            mcp_manager, internal_manager=server._internal_manager, validate_arguments=False
+        )
+    )
+
+
 # ============================================================================
 # list_mcp_tools Endpoint Tests
 # ============================================================================
@@ -1611,6 +1623,7 @@ class TestCallMCPTool:
         )
         registry_call = AsyncMock(wraps=registry.call)
         server._internal_manager = cast(Any, FakeInternalManager([registry]))
+        _wire_workflow_proxy(server)
 
         with patch.object(registry, "call", registry_call), TestClient(server.app) as client:
             response = client.post(
@@ -2902,6 +2915,7 @@ class TestMCPProxy:
                 ),
             ]
         )
+        _wire_workflow_proxy(server)
 
         with TestClient(server.app) as client:
             response = client.post(
@@ -3499,9 +3513,22 @@ class TestHooksEndpoints:
         assert len(slow_warnings) == 1
         extra = slow_warnings[0].kwargs["extra"]
         assert extra["dominant_phase"] in extra["hook_phase_durations_seconds"]
-        # The mock hook manager evaluates no rules, so there is no session or sub-phase.
+        # The mock hook manager evaluates no rules, so there is no session or rule sub-phase;
+        # the route's own hops still split executor queue from work, and the adapter worker
+        # and loop resume are attributed apart from the `response` residual (#23063).
         assert extra["session_id"] is None
-        assert extra["rule_evaluation_breakdown_seconds"] == {}
+        assert set(extra["rule_evaluation_breakdown_seconds"]) == {
+            "request_body",
+            "adapter_worker",
+            "adapter_worker_cpu",
+            "adapter_resume",
+            "persistence_consume_receipts",
+            "persistence_consume_receipts_queue",
+            "persistence_consume_receipts_work",
+            "persistence_receipt",
+            "persistence_receipt_queue",
+            "persistence_receipt_work",
+        }
         assert extra["dominant_phase_seconds"] >= 0
 
     def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
@@ -3929,6 +3956,69 @@ class TestHooksEndpoints:
         assert peak_workers <= worker_limit
         assert active_workers == 0
         assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
+
+    @pytest.mark.asyncio
+    async def test_adapter_worker_cpu_separates_waiting_from_work(self) -> None:
+        """A worker that only waits reports its wall time with almost no CPU (#23063)."""
+        from gobby.hooks.adapter_execution import run_adapter_hook
+        from gobby.hooks.phase_timing import HookPhaseTimings
+
+        wait_seconds = 0.2
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = lambda *_args: time.sleep(wait_seconds) or {}
+        timings = HookPhaseTimings()
+
+        await run_adapter_hook(
+            adapter, {}, MagicMock(), timeout_seconds=None, phase_timings=timings
+        )
+
+        breakdown = timings.breakdown()
+        assert breakdown["adapter_worker"] >= wait_seconds
+        assert breakdown["adapter_worker_cpu"] < wait_seconds / 4
+
+    @pytest.mark.asyncio
+    async def test_adapter_executor_runs_sixteen_sessions_concurrently(self) -> None:
+        from gobby.hooks.adapter_execution import run_adapter_hook
+        from gobby.hooks.phase_timing import HookPhaseTimings
+        from gobby.servers.routes.mcp import hooks as hook_routes
+
+        worker_limit = hook_routes.HOOK_ADAPTER_MAX_WORKERS
+        # Every session's worker parks until all sixteen are inside the adapter at once.
+        all_admitted = threading.Barrier(worker_limit, timeout=2)
+        release_late = threading.Event()
+
+        def handle_native(payload: dict[str, Any], _hook_manager: object) -> dict[str, Any]:
+            if payload["seq"] < worker_limit:
+                all_admitted.wait()
+            else:
+                assert release_late.wait(timeout=5)
+            return {"continue": True, "seq": payload["seq"]}
+
+        adapter = MagicMock()
+        adapter.handle_native.side_effect = handle_native
+        timings = [HookPhaseTimings() for _ in range(worker_limit + 1)]
+        hooks = [
+            asyncio.create_task(
+                run_adapter_hook(
+                    adapter,
+                    {"_platform_session_id": f"session-{seq}", "seq": seq},
+                    MagicMock(),
+                    timeout_seconds=5.0,
+                    phase_timings=timings[seq],
+                )
+            )
+            for seq in range(worker_limit + 1)
+        ]
+        try:
+            first_wave = await asyncio.wait_for(asyncio.gather(*hooks[:worker_limit]), 3.0)
+        finally:
+            release_late.set()
+        late = await hooks[worker_limit]
+
+        assert worker_limit == 16
+        assert [result["seq"] for result in first_wave] == list(range(worker_limit))
+        assert late == {"continue": True, "seq": worker_limit}
+        assert timings[worker_limit].snapshot()["executor_queue"] > 0
 
     @pytest.mark.asyncio
     async def test_adapter_executor_propagates_phase_collector_to_worker(self) -> None:

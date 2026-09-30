@@ -16,8 +16,11 @@ use unicode_width::UnicodeWidthStr;
 use crate::layout::PaneId;
 use crate::protocol::CellData;
 
+mod handover;
 #[cfg(windows)]
 mod windows_recent_fallback;
+
+pub use self::handover::{PaneCoreHandover, PANE_CONTINUATION_MAX_BYTES};
 
 use super::cursor::{CursorPositionSettleState, DecscusrTracker, CURSOR_POSITION_SETTLE};
 use super::{
@@ -137,7 +140,7 @@ impl InputState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ProcessBytesResult {
+pub struct ProcessBytesResult {
     pub request_render: bool,
     pub render_delay: Option<Duration>,
     pub clipboard_writes: Vec<Vec<u8>>,
@@ -151,8 +154,8 @@ pub(crate) struct TerminalReadSnapshot {
     pub truncated: bool,
 }
 
-pub(crate) struct GhosttyPaneTerminal {
-    pub core: Mutex<GhosttyPaneCore>,
+pub struct GhosttyPaneTerminal {
+    pub(crate) core: Mutex<GhosttyPaneCore>,
     key_encoder: Mutex<crate::ghostty::KeyEncoder>,
     pending_pty_responses: Arc<Mutex<Vec<Bytes>>>,
 }

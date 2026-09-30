@@ -19,6 +19,7 @@ class FakeHello:
     host_epoch: str
     version: str = "0.1.0"
     protocol_version: int = 1
+    capabilities: tuple[str, ...] = ()
 
 
 @dataclass
@@ -43,6 +44,7 @@ class FakeControlClient:
     host_pid: int = 4242
     version: str = "0.1.0"
     protocol_version: int = 1
+    capabilities: tuple[str, ...] = ()
     token: str = "control-token"
     terminals: list[FakeListRow] = field(default_factory=list)
     hello_error: str | None = None
@@ -80,6 +82,7 @@ class FakeControlClient:
             host_epoch=self.host_epoch,
             version=self.version,
             protocol_version=self.protocol_version,
+            capabilities=self.capabilities,
         )
 
     async def ping(self) -> FakePing:

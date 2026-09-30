@@ -5,6 +5,11 @@
 > **Owner epic:** #19379.19654
 >
 > **Policy task:** #19655
+>
+> **Scope note (2026-09-27):** #22837 (retire the recall-signal stack) removed the
+> recall-signal, shadow-judge, and recall-gate code under the `memory-access-semantics`
+> plan. The recall ledger and cohort rows below are historical; nothing writes those tables,
+> and that plan's later schema leaf removes them. The policy text is preserved as written.
 
 ## Context
 `kind: framing`

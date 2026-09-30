@@ -130,6 +130,7 @@ class MiniBuildHarness:
         self.pipeline_started: asyncio.Event | None = None
         self.pipeline_release: asyncio.Event | None = None
         self.pipeline_execution_ids: list[str] = []
+        self.pipeline_tasks: list[asyncio.Task[Any]] = []
         self.root_id = ""
         self.child_id = ""
         self.stage_registry = create_stage_ops_registry(
@@ -221,19 +222,10 @@ class MiniBuildHarness:
         stage_name: str,
         stage_state: str,
     ) -> None:
-        run = await wait_for_async_condition(
-            lambda: self._active_run(agent_name, stage_name, stage_state),
-            timeout=2.0,
-            description=f"{agent_name} {stage_name}:{stage_state} spawn",
-        )
-        assert run is not None
-        await wait_for_async_condition(
-            lambda: (
-                self.project_id not in self.loop._project_tasks
-                and self.project_id not in self.loop._pending_project_dispatches
-            ),
-            timeout=2.0,
-            description=f"{agent_name} dispatch handoff",
+        await self._settle_dispatch()
+        run = self._active_run(agent_name, stage_name, stage_state)
+        assert run is not None, (
+            f"dispatcher settled without {agent_name} {stage_name}:{stage_state}"
         )
         task_id = cast(str, run["task_id"])
         session_id = cast(str, run["child_session_id"])
@@ -298,20 +290,30 @@ class MiniBuildHarness:
                 services=self.services,
             )
 
+    async def _settle_dispatch(self) -> None:
+        """Wait until the dispatch work already scheduled has finished.
+
+        The wait ends when the dispatcher's own tasks do, so a slow machine only
+        makes it longer. A hung dispatch still ends at the loop's own deadline.
+        """
+        while True:
+            # Scheduling goes through call_soon_threadsafe; let it land first.
+            await asyncio.sleep(0)
+            busy = {task for task in self.pipeline_tasks if not task.done()}
+            dispatch = self.loop._project_tasks.get(self.project_id)
+            if dispatch is not None and not dispatch.done():
+                busy.add(dispatch)
+            if not busy:
+                assert self.project_id not in self.loop._pending_project_dispatches
+                return
+            await asyncio.wait(busy)
+
     async def assert_clean_final_state(self) -> None:
-        await wait_for_async_condition(
-            lambda: (
-                (root := self.task_manager.get_task(self.root_id)) is not None
-                and root.closed_at is not None
-            ),
-            timeout=3.0,
-            description="root task closed",
-        )
-        await wait_for_async_condition(
-            lambda: not self.loop._project_tasks,  # noqa: SLF001 - dispatcher drain assertion
-            timeout=2.0,
-            description="scheduled dispatcher tasks drained",
-        )
+        await self._settle_dispatch()
+        root = self.task_manager.get_task(self.root_id)
+        assert root is not None
+        assert root.closed_at is not None
+        assert not self.loop._project_tasks
 
         rows = self.db.fetchall(
             """
@@ -434,6 +436,7 @@ class MiniBuildHarness:
         session_id: str | None = None,
     ) -> None:
         del session_id
+        self.pipeline_tasks.append(cast(asyncio.Task[Any], asyncio.current_task()))
         self.pipeline_execution_ids.append(execution_id)
         if self.pipeline_started is not None:
             self.pipeline_started.set()

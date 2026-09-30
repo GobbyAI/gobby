@@ -64,11 +64,16 @@ The CLI surface is:
 
 ```bash
 gobby comms status
-gobby comms send CHANNEL_NAME MESSAGE
+gobby comms send [--redact] CHANNEL_NAME MESSAGE
 gobby comms channels list
 gobby comms channels add CHANNEL_TYPE NAME
 gobby comms channels remove NAME
 ```
+
+Alerts that quote log lines should pass `--redact`. It scrubs secrets, URL
+credentials, and the home-directory path, then cuts the message to Telegram's
+4,096-character limit. Redaction runs before the cut, so a truncated line never
+exposes part of a secret. Without the flag, the message is sent unchanged.
 
 `channels add` prompts for adapter-specific credentials and configuration.
 The optional Slack channel ID, Telegram chat ID, and Discord channel ID are
@@ -85,6 +90,7 @@ The router is mounted at `/api/comms` when communications are enabled.
 | `POST` | `/api/comms/webhooks/{channel_name}` | Receive and verify an inbound webhook. |
 | `GET` | `/api/comms/webhooks/{channel_name}` | Echo `validationToken` or `challenge` during provider setup. |
 | `POST` | `/api/comms/send` | Send through a named active channel. |
+| `POST` | `/api/comms/attachment` | Send caller-supplied text as a `text/plain` document. |
 | `GET` | `/api/comms/channels` | List channels with `active` and `init_error` state. |
 | `POST` | `/api/comms/channels` | Create and initialize a channel. |
 | `PUT` | `/api/comms/channels/{channel_id}` | Rename, replace non-secret config, update secrets, and/or change `enabled`. |
@@ -94,8 +100,20 @@ The router is mounted at `/api/comms` when communications are enabled.
 
 `POST /api/comms/send` accepts `channel_name`, `content`, optional
 `session_id`, and optional `metadata`. It returns the stored message on
-success, `404` for an unknown or inactive channel, and `502` when the adapter
-reports a delivery failure.
+success, `404` for an unknown or inactive channel, `400` for invalid input,
+and `502` when the adapter reports a delivery failure.
+
+`POST /api/comms/attachment` accepts `channel_name`, `filename`, `content`, and
+an optional `caption`:
+
+- `filename` is a bare `.txt` or `.log` name of up to 64 characters with no
+  separator or leading dot.
+- `content` is at most 64 KiB of UTF-8 text. It is sent as a `text/plain`
+  document through a private temporary file, so the daemon reads no caller path.
+- Status codes match `/send`, plus `413` for oversized content.
+
+`gobby comms attach CHANNEL_NAME FILENAME` feeds this route from stdin after
+redacting it. Over the cap, it sends a one-line omission note instead.
 
 Example with an explicit destination:
 
@@ -149,8 +167,10 @@ when adapter-specific metadata is required. `thread_id` is copied to the
 platform reply/thread field and overrides a thread remembered for the session.
 
 `send_attachment` requires an existing regular file inside the resolved
-workspace. Paths are expanded and resolved before the containment check, so
-symlinks cannot select a file outside that workspace. An unavailable workspace,
+workspace: the project checkout or one of the project's active or stale
+registered worktrees on this machine. Merged, abandoned, and other projects'
+worktrees are excluded. Paths are expanded and resolved before the containment
+check, so symlinks cannot select a file outside that workspace. An unavailable workspace,
 missing file, directory, or out-of-workspace file returns `success: false`
 before delivery. The manager also checks the adapter's attachment-size limit;
 inspect the returned message status and error to confirm delivery.

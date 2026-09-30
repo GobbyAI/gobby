@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 from fastapi import FastAPI
@@ -28,6 +28,9 @@ pytestmark = pytest.mark.unit
 
 
 def _client(server: Any) -> TestClient:
+    # The routes resolve the caller before workflow enforcement; this one is anonymous.
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    server.auth_service.request_principal = Mock(return_value=None)
     app = FastAPI()
     app.include_router(create_mcp_router())
 

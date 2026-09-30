@@ -747,12 +747,12 @@ def _agy_unavailable_bindings() -> tuple[CapabilityBinding, ...]:
         for capability, reason in (
             (
                 AICapability.TOOL_CHAT,
-                "AGY configures MCP servers only globally; a per-request controlled-tool set "
+                "Antigravity configures MCP servers only globally; a per-request controlled-tool set "
                 "cannot be confined to one process",
             ),
             (
                 AICapability.VISION_EXTRACT,
-                "AGY accepts no image input; vision requires the model to open a file path itself",
+                "Antigravity accepts no image input; vision requires the model to open a file path itself",
             ),
         )
     )

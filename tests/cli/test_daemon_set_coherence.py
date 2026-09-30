@@ -86,8 +86,8 @@ def test_start_refuses_mixed_installed_binary_set_before_services(
 ) -> None:
     _mixed_install(tmp_path, monkeypatch)
     dependencies = Mock(side_effect=AssertionError("dependency checks must not run"))
-    monkeypatch.setattr("gobby.cli.daemon.worktree_daemon_refusal", lambda: None)
-    monkeypatch.setattr("gobby.cli.daemon._start_dependency_errors", dependencies)
+    monkeypatch.setattr("gobby.cli.daemon_start.worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr("gobby.cli.daemon_start._start_dependency_errors", dependencies)
 
     result = CliRunner().invoke(cli, ["start"])
 

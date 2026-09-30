@@ -76,10 +76,17 @@ fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Ch
         return;
     };
     let stamp = (project.clone(), model.generation());
-    if chrome.viewer.applied.as_ref() == Some(&stamp) {
+    // Opening a pane does not bump the generation, so a terminal that had no
+    // pane at the last projection forces another one once it resolves (#22972).
+    let resolved = chrome
+        .viewer
+        .unresolved
+        .iter()
+        .any(|terminal_id| workspace.pane_for_terminal(terminal_id).is_some());
+    if chrome.viewer.applied.as_ref() == Some(&stamp) && !resolved {
         return;
     }
-    chrome.project_workspace(workspace, &project);
+    chrome.viewer.unresolved = chrome.project_workspace(workspace, &project);
     chrome.viewer.applied = Some(stamp);
     let mut labels = Vec::new();
     for tab in chrome.tabs().tabs.iter().filter(|tab| !tab.is_local()) {

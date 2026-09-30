@@ -253,6 +253,7 @@ impl Daemon for LiveDaemon {
         if let Some(project_id) = request.project_id {
             message["project_id"] = Value::String(project_id);
         }
+        self.theme_request(&mut message);
         let reply = self.request(message).await?;
         if reply.get("success").and_then(Value::as_bool) != Some(true) {
             return Ok(SpawnOutcome::Refused {

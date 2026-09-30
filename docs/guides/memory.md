@@ -187,14 +187,20 @@ hard-deletes later copies after confirmation (or `--yes`). Preview with
 lessons; it does not transfer project ownership. `invalidate` rebuilds secondary
 indices rather than deleting authoritative hub memories.
 
-Recall telemetry maintenance lives under `gobby memory recall-signals`:
-`backfill-events`, `backfill-labels`, `gate`, `audit-labels`,
-`supersede-legacy-cohort`, `drift`, and `replay-candidate-filter`. Use each
-subcommand's `--help` for required input paths, cohort selectors, and output
-options. Backfills and cohort supersession mutate telemetry. Filter by caller,
-label provenance, and dates when evaluating results; historical automatic recall
-(`memory.recall`) and rule-driven surfacing (`memory.surface`) are separate
-cohorts from explicit agent search.
+The recall-signal stack is retired (#22837): the search sink, shadow judge,
+drift monitor, fitted constants, ship gate, and the `gobby memory recall-signals`
+command group are gone. Search ranks with the configured
+`temporal_decay_half_life_days` and the static graph discount, and no search
+emits telemetry rows or a `recall_request_id`. Its config keys are gone too
+(#22839): `memory.recall_signal_*`, `memory.shadow_relevance_judging`,
+`memory.use_fitted_recall_constants`, `memory.fitted_recall_decision_path`,
+`memory.recall_drift_*`, and the `memory_usefulness` section fail validation when
+named, and daemon startup deletes their persisted `config_store` rows.
+
+The temporal-decay half-life counts from the later of a memory's last update
+and last access. `index_reshow_after_injections` (default 5, minimum 1) is the
+memory-index re-show horizon: the number of index injections in a session
+before an already-shown, unread memory may be listed again (epic #22641).
 
 ## MCP Tools
 
@@ -229,7 +235,6 @@ for the authoritative signature before calling a tool.
 | `memory_dream_status` | Return status and summary for a memory dream run. |
 | `memory_dream_decisions` | Page proposed and effective actions, outcomes, and historical snapshots by run ID. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
-| `judge_shadow_relevance` | System lifecycle tool for independent turn-end shadow-relevance judging. |
 
 MCP content updates require a fresh rationale. The operator CLI update
 exposes content/tags; HTTP also accepts memory type. Both preserve existing rationale. This is a
@@ -449,7 +454,9 @@ similarity first: undecayed similarity, and the fused score (`ranking_score`).
 Each hit keeps the earlier of its two slots, so the best semantic match stays
 first, the hit the searches most agree on comes second, and a memory that
 several searches confirm can outrank one with higher similarity. Temporal decay
-only breaks ties between otherwise equal hits. Hits no search could score come
+only breaks ties between otherwise equal hits, and it counts from the later of
+`updated_at` and `last_accessed_at`, so an older memory that is still being
+fetched outranks a newer one nobody reads. Hits no search could score come
 last. A graded cohort of 24 queries
 (`tests/memory/fixtures/ranking_cohort.json`) selected this order over
 similarity alone, the fused score alone, and three weighted blends;
@@ -461,13 +468,22 @@ differently at different limits.
 `search_memories` supports an explicit `min_score` threshold. Agents search on
 demand; `surface_memories` is the automated path, called by rules. The tool
 returns
-`memories`, `recall_request_id`, `project_id`, and `diagnostics`; each hit
+`memories`, `project_id`, and `diagnostics`; each hit
 includes its content, rationale, type, provenance, ranking fields, and duplicate
 fold information. Live-corpus raw cosine score bands are p10 `0.62`, p50
 `0.69`, and p90 `0.75`. Compare hits within the returned set and judge their
 content and rationale instead of treating one score as a universal relevance
 boundary. `min_score` filters the reported `undecayed_similarity` axis;
 `similarity` includes temporal decay.
+
+A search counts its hits as surfaced only when it shows them to an agent or a
+person: `surface_memories` (`memory.surface`), `search_memories`,
+`review_task_memories`, the HTTP search route, and `gobby memory recall`. Each
+such hit gains one `surfaced_count` and a new `last_surfaced_at`, at most once per
+`access_debounce_seconds`. Probe searches — the `memory.search` default, the
+`create_memory` similarity check, and review-lesson lookups — change neither
+counter. Search never touches `access_count`, which counts deliberate reads of
+the full memory.
 
 ### Knowledge Graph
 
@@ -490,6 +506,7 @@ memory:
   crossref_threshold: 0.3
   crossref_max_links: 5
   access_debounce_seconds: 60
+  index_reshow_after_injections: 5
   temporal_decay_half_life_days: 30.0
   code_link_min_score: 0.82
   kg:
@@ -567,7 +584,6 @@ sequenceDiagram
     Agent->>Memory: search_memories(query) when the work needs prior knowledge
     Agent-->>User: response
     RuleEngine-->>Agent: post-close review request on turn_end or before set_handoff (when tasks closed)
-    RuleEngine->>Memory: judge_shadow_relevance on turn_end
 ```
 
 The installed `bootstrap-default-agent-core-skills` rule requests memory guidance
@@ -582,10 +598,12 @@ Current bundled memory rules:
 
 | Rule | Event | Behavior |
 | --- | --- | --- |
-| `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end once until `gobby:references/memory/overview.md` is loaded or its fetch failed. |
+| `check-memory-guidance-on-initial-stop` | `turn_end` | Blocks the first turn end that started with the Gobby MCP proxy connected, once, until `gobby:references/memory/overview.md` is loaded or its fetch failed. A turn that started before the proxy connected leaves the gate armed for the next one. |
+| `snapshot-mcp-proxy-ready-on-turn-start` | `turn_start` | Copies `_mcp_proxy_ready`, which the stdio bridge sets through `POST /api/mcp/bridge/ready` once the CLI lists its tools, into `_mcp_proxy_ready_this_turn`. A `/clear` successor inherits its predecessor's `_mcp_proxy_ready` when the clear binds, since it runs in the same CLI process. |
+| `note-mcp-proxy-missed-turn` | `turn_end` | Marks a turn that started before the proxy connected. |
+| `retry-gobby-tools-after-proxy-connects` | `turn_start` | After such a turn, once the proxy has connected, tells the agent once that the Gobby MCP proxy was not yet connected and to retry instead of treating them as absent. A proxy that never reports gets no retry text. |
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
-| `judge-shadow-relevance-on-response` | `turn_end` | Judges pending shadow-memory recall candidates in the background. |
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
 | `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |

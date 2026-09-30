@@ -70,6 +70,11 @@ meaningful `override_justification`; it skips only close review, not the other
 gates. Do not escalate merely to get a close exception. `submit_close_review` is
 reviewer-only and is never a shortcut for the implementing session.
 
+Peer evidence a close depends on is recorded by the peer, not the closer:
+`record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
+`independent_review_approval` (LAND of an exact commit) or `activation` receipt
+on another session's task, authorized against the locked task row.
+
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
 _Last verified: 2026-09-19_

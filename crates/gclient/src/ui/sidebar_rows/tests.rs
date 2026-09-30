@@ -357,7 +357,7 @@ fn agent_lines_carry_needs_you_and_nest_under_their_session() {
 }
 
 #[test]
-fn marquee_shares_one_period_and_parks_shorter_titles() {
+fn marquee_shares_one_period_and_rests_shorter_titles_at_the_start() {
     assert_eq!(
         ticker_window("abcdefghij", 12, 500, 0, TitleScrolling::Left),
         "abcdefghij"
@@ -375,8 +375,8 @@ fn marquee_shares_one_period_and_parks_shorter_titles() {
     assert_eq!(at(TICKER_PAUSE + 4), "efghij");
     assert_eq!(at(2 * TICKER_PAUSE + 3), "efghij");
     assert_eq!(at(2 * TICKER_PAUSE + 4), "abcdef");
-    // Beside a ten-cell overrun it parks until that one has arrived, so
-    // both restart together (D7).
+    // Beside a ten-cell overrun it rests back at the start once its own
+    // pass ends, and both restart together (D7).
     let beside = |step: u64| {
         ticker_window(
             "abcdefghij",
@@ -387,8 +387,10 @@ fn marquee_shares_one_period_and_parks_shorter_titles() {
         )
     };
     assert_eq!(beside(TICKER_PAUSE + 4), "efghij");
-    assert_eq!(beside(2 * TICKER_PAUSE + 9), "efghij");
+    assert_eq!(beside(2 * TICKER_PAUSE + 3), "efghij");
+    assert_eq!(beside(2 * TICKER_PAUSE + 4), "abcdef");
     assert_eq!(beside(2 * TICKER_PAUSE + 10), "abcdef");
+    assert_eq!(beside(3 * TICKER_PAUSE + 12), "cdefgh");
 }
 
 #[test]
@@ -535,4 +537,98 @@ fn a_terminal_row_puts_its_address_at_the_right_edge_while_the_name_leaves_room(
         line_text(&row_line(&long, 20, &chrome, 0)),
         " ○ cargo-nextest-run"
     );
+}
+
+#[test]
+fn a_manual_session_title_takes_the_definition_slot_on_line_one() {
+    let mut ws = Workspace::scripted();
+    let session = |id: &str, reference: &str, title: &str, source: Option<&str>| SessionRow {
+        id: id.to_string(),
+        reference: Some(reference.to_string()),
+        title: Some(title.to_string()),
+        title_source: source.map(str::to_string),
+        ..SessionRow::default()
+    };
+    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+        projects: vec![ProjectRow {
+            id: "proj-alpha".to_string(),
+            name: "alpha".to_string(),
+            display_name: "alpha".to_string(),
+            ..ProjectRow::default()
+        }],
+        sessions: [(
+            "proj-alpha".to_string(),
+            vec![
+                session("sess-named", "#77", "Assistant", Some("manual")),
+                session("sess-bare-ref", "#78", "alpha#78", Some("manual")),
+                session("sess-auto", "#79", "alpha#79: Codex", Some("provisional")),
+                session("sess-suffix", "#80", "Release #80", Some("manual")),
+                session("sess-other", "#81", "other#81: Handoff", Some("manual")),
+                session("sess-ref", "#82", "#82: Ship", Some("manual")),
+            ],
+        )]
+        .into_iter()
+        .collect(),
+        ..SidebarRows::default()
+    });
+    let ids = [
+        "sess-named",
+        "sess-bare-ref",
+        "sess-auto",
+        "sess-suffix",
+        "sess-other",
+        "sess-ref",
+    ];
+    let seat = |id: &str| {
+        json!({
+            "entry_id": format!("session:{id}"),
+            "session_id": id,
+            "provider": "codex",
+            "terminal": {"terminal_id": format!("term-{id}"), "backend": "native"}
+        })
+    };
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "e1",
+        "seq": 1,
+        "entries": ids.map(seat)
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().unwrap();
+    for id in ids {
+        ws.open_terminal(&format!("term-{id}"), "native", "epoch")
+            .unwrap();
+    }
+
+    let chrome = Chrome::dark();
+    let rows = agent_rows(&ws, &chrome);
+    let line_one = |id: &str| {
+        let row = rows
+            .iter()
+            .find(|row| row.id == format!("session:{id}"))
+            .expect("agent row");
+        line_text(&row_line(row, 34, &chrome, 0))
+    };
+
+    assert_eq!(line_one("sess-named"), " ○ #77: Assistant");
+    assert_eq!(
+        line_one("sess-bare-ref"),
+        " ○ #78: Codex",
+        "a manual title that is only the ref names nothing"
+    );
+    assert_eq!(
+        line_one("sess-auto"),
+        " ○ #79: Codex",
+        "an automatic title keeps the provider"
+    );
+    assert_eq!(
+        line_one("sess-suffix"),
+        " ○ #80: Release #80",
+        "a ref inside the title is part of the name"
+    );
+    assert_eq!(
+        line_one("sess-other"),
+        " ○ #81: other#81: Handoff",
+        "another project's prefix is not this session's ref"
+    );
+    assert_eq!(line_one("sess-ref"), " ○ #82: Ship");
 }

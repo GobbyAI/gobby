@@ -36,24 +36,6 @@ def _observe_facade() -> Any:
     return session_observe
 
 
-def _tmux_context_and_pane(session: Any) -> tuple[dict[str, Any], Any | None]:
-    context = (
-        session.terminal_context
-        if hasattr(session, "terminal_context") and isinstance(session.terminal_context, dict)
-        else {}
-    )
-    pane = context.get("tmux_pane")
-    if pane:
-        return context, pane
-
-    metadata = (
-        session.metadata
-        if hasattr(session, "metadata") and isinstance(session.metadata, dict)
-        else {}
-    )
-    return context, metadata.get("terminal_tmux_pane")
-
-
 async def _resolve_agent_name_for_session(
     mixin: SessionControlMixin,
     session_id: str,
@@ -225,9 +207,7 @@ async def handle_send_to_cli_session(
 ) -> None:
     """Send a message from the web UI to a CLI session.
 
-    Uses two delivery paths:
-    - Idle (at prompt): tmux send-keys injects text directly
-    - Mid-execution: message persists in DB; hook piggyback picks it up
+    Persist for delivery by the target session's next hook boundary.
 
     Message format:
     {
@@ -335,44 +315,24 @@ async def handle_send_to_cli_session(
         )
         return
 
-    msg_id: str | None = None
-    if inter_msg_manager:
-        try:
-            msg = await run_db(
-                mixin,
-                inter_msg_manager.create_message,
-                from_session=from_session_id,
-                to_session=session_id,
-                content=content,
-                message_type="web_chat",
-            )
-            msg_id = msg.id
-        except Exception as e:
-            logger.warning("Failed to persist inter-session message: %s", e)
-
-    # Try tmux delivery for idle sessions
-    delivered_via_tmux = False
-    ctx, tmux_pane = _tmux_context_and_pane(session)
-
-    if tmux_pane:
-        try:
-            tmux_manager = _observe_facade().manager_for_terminal_context(ctx)
-            ok = await tmux_manager.dispatch_keys(tmux_pane, content + "\n")
-            if ok:
-                delivered_via_tmux = True
-                # Mark as delivered
-                if inter_msg_manager and msg_id:
-                    try:
-                        await run_db(
-                            mixin,
-                            inter_msg_manager.mark_delivered,
-                            msg_id,
-                            session_id,
-                        )
-                    except Exception as e:
-                        logger.warning("Failed to mark message %s as delivered: %s", msg_id, e)
-        except Exception as e:
-            logger.warning("tmux send_keys failed for %s: %s", tmux_pane, e)
+    if inter_msg_manager is None:
+        await mixin._send_error(
+            websocket, "Message storage is unavailable", code="MESSAGE_STORE_ERROR"
+        )
+        return
+    try:
+        msg = await run_db(
+            mixin,
+            inter_msg_manager.create_message,
+            from_session=from_session_id,
+            to_session=session_id,
+            content=content,
+            message_type="web_chat",
+        )
+    except Exception as exc:
+        logger.warning("Failed to persist inter-session message: %s", exc)
+        await mixin._send_error(websocket, "Failed to queue message", code="MESSAGE_STORE_ERROR")
+        return
 
     # Respond to the client
     await websocket.send(
@@ -380,17 +340,18 @@ async def handle_send_to_cli_session(
             {
                 "type": "send_to_cli_session_result",
                 "session_id": session_id,
-                "delivered": delivered_via_tmux,
-                "delivery_method": "tmux" if delivered_via_tmux else "hook_piggyback",
-                "message_id": msg_id,
+                "delivered": False,
+                "delivery_method": "hook_piggyback",
+                "status": "queued",
+                "message_id": msg.id,
                 "client_message_id": client_message_id,
             }
         )
     )
     logger.info(
-        "Message sent to CLI session %s: delivered=%s",
+        "Message queued for CLI session %s: delivery=%s",
         session_id[:8],
-        "tmux" if delivered_via_tmux else "queued for hook piggyback",
+        "hook piggyback",
     )
 
 

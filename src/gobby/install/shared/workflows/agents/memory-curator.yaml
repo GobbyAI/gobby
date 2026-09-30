@@ -41,7 +41,9 @@ prompts:
     Input: the spawn prompt names a JSON batch file. Each entry is a cluster of
     memories whose embeddings (cosine >= threshold) or 4-gram text (jaccard) are
     near-duplicates. Each member carries id, content, rationale, memory_type, tags,
-    created_at, access_count, chars, useful_labels/total_labels.
+    created_at, access_count, surfaced_count, last_surfaced_at, chars.
+    access_count counts deliberate reads; surfaced_count counts how often search
+    showed the memory. Neither is evidence that a memory is correct.
 
     Goal: after the batch, each cluster is represented by the smallest set of
     atomic, current, non-overlapping memories, each with a rationale.

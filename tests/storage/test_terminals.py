@@ -19,6 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.terminal_settlement import OrphanIdentity
 from gobby.storage.terminals import (
     ALLOWED_EDGES,
     TERMINAL_STATES,
@@ -119,6 +120,49 @@ def test_get_many_fetches_any_number_of_terminals_in_one_query(
     assert fetchall.call_count == 1
     assert "id = ANY(%s)" in fetchall.call_args.args[0]
     assert len(fetchall.call_args.args[1][0]) == 3
+
+
+def test_latest_for_session_includes_orphaned_terminal_evidence(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+) -> None:
+    manager = _manager(temp_db)
+    session_id = session_manager.register(
+        external_id="orphaned-evidence-session",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+    ).id
+    terminal_id = str(uuid.uuid4())
+    pending = manager.create_pending(
+        terminal_id=terminal_id,
+        project_id=sample_project["id"],
+        backend="native",
+        ownership="gobby",
+        spawn_key=terminal_id,
+        session_id=session_id,
+    )
+    host_terminal_id = str(uuid.uuid4())
+    epoch = str(uuid.uuid4())
+    live = manager.promote_to_live(
+        pending.id,
+        locator={"host_terminal_id": host_terminal_id},
+        locator_key=native_locator_key(epoch, host_terminal_id),
+        host_epoch=epoch,
+    )
+    assert live is not None
+    orphaned = manager.mark_orphaned(live.id)
+    assert orphaned is not None
+
+    assert manager.get_live_for_session(session_id) is None
+    rows = manager.list_for_session(session_id)
+    assert len(rows) == 1
+    assert (rows[0].id, rows[0].session_id, rows[0].state) == (
+        terminal_id,
+        session_id,
+        "orphaned",
+    )
 
 
 def test_failed_spawn_leaves_reapable_pending_row(
@@ -573,6 +617,15 @@ def _apply_allowed_edge(
         return
     if (from_state, to_state) == ("pending", "exited"):
         assert manager.fail_pending(row.id)
+        return
+    if (from_state, to_state) == ("pending", "orphaned"):
+        locator = _tmux_locator(pane_id=f"%{uuid.uuid4().hex[:6]}")
+        assert manager.mark_kill_failed(
+            row.id,
+            attempt_generation=row.attempt_generation,
+            attempt_started_at=row.attempt_started_at,
+            identity=OrphanIdentity(locator=locator, locator_key=_tmux_key(locator)),
+        )
         return
     if (from_state, to_state) == ("live", "exited"):
         assert manager.mark_exited(row.id)

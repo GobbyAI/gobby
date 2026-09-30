@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from gobby.memory.scoring import temporal_decay, undecay
+from gobby.memory.scoring import recency_anchor, temporal_decay, undecay
 from gobby.memory.services._search_constants import (
     _GRAPH_CONFIDENCE_SEARCH_FLOOR,
     _GRAPH_SYNTHETIC_SIM_DISCOUNT,
@@ -74,18 +74,21 @@ def build_results(
         graph_confidence: float | None = (
             None if memory_id in qdrant_set else (graph_score_map or {}).get(memory_id)
         )
+        # Age counts from the later of the last update and the last direct fetch,
+        # so a memory still being read does not decay as if abandoned.
+        anchor = recency_anchor(mem.updated_at, mem.last_accessed_at)
         if raw_semantic_score is not None:
             similarity = raw_semantic_score
             if mem.source_type == "user":
                 similarity *= _USER_SOURCE_BOOST
-            decay_factor = temporal_decay(mem.updated_at, half_life)
+            decay_factor = temporal_decay(anchor, half_life)
             similarity *= decay_factor
         elif graph_confidence is not None:
             # Recall expander (#17104): a graph hit the collection could not score
             # at all still needs a place on the similarity axis, so it enters at a
             # discounted entity-match cosine and cannot outrank a real semantic
             # match. Its admission is decided on the confidence below either way.
-            decay_factor = temporal_decay(mem.updated_at, half_life)
+            decay_factor = temporal_decay(anchor, half_life)
             similarity = graph_confidence * graph_synthetic_discount * decay_factor
             synthetic_similarity = True
 

@@ -667,7 +667,18 @@ fn render_pane_address(frame: &mut Frame, chrome: &Chrome, info: &PaneInfo, corn
         tone => tone,
     };
     let style = corner_style(chrome, info, tone);
-    buf.set_string(rect.x, rect.y, format!(" {} ", corners.address), style);
+    buf.set_string(
+        rect.x,
+        rect.y,
+        format!(" {} ", corners.address_label()),
+        style,
+    );
+    // Only an SRT pane has a mark, and it leads the label; it draws in the
+    // destructive token (hue 350, deutan-safe red) so the lock stands out
+    // while the address keeps the corner's tone (#23096).
+    if let Some(mark) = corners.sandbox_mark {
+        buf.set_string(rect.x + 1, rect.y, mark, style.fg(chrome.palette.red));
+    }
 }
 
 fn line_cell_symbol(line: LineCell) -> &'static str {

@@ -12,18 +12,19 @@ use crate::ui::status::focused_overflow;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StatusSegment {
     Focus,
-    Model,
     Context,
     Tokens,
+    /// The focused pane's sandbox mark, in words.
+    Sandbox,
 }
 
 impl StatusSegment {
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "focus" => Some(Self::Focus),
-            "model" => Some(Self::Model),
             "context" => Some(Self::Context),
             "tokens" => Some(Self::Tokens),
+            "sandbox" => Some(Self::Sandbox),
             _ => None,
         }
     }
@@ -68,23 +69,23 @@ pub fn segment_text<W: WorkspaceView>(
         return focused_overflow(ws, chrome).map(|pane| pane_corners(ws, chrome, pane, true).title);
     }
     let pane = ws.pane(chrome.focused_pane()?);
+    if segment == StatusSegment::Sandbox {
+        let corners = pane_corners(ws, chrome, pane, true);
+        return Some(corners.sandbox.label().to_owned());
+    }
     let agent = ws
         .sidebar()
         .agents
         .iter()
         .find(|agent| agent.terminal_id == pane.terminal_id);
     match segment {
-        StatusSegment::Model => agent
-            .filter(|agent| agent.model_display_name.is_some() || agent.model.is_some())
-            .map(|agent| agent.model_slug())
-            .filter(|model| !model.is_empty()),
         StatusSegment::Context => agent
             .and_then(|agent| agent.context_percent)
             .map(|percent| format!("{percent}%")),
         StatusSegment::Tokens => agent
             .and_then(|agent| agent.tokens_used)
             .map(grouped_tokens),
-        StatusSegment::Focus => unreachable!("handled above"),
+        StatusSegment::Focus | StatusSegment::Sandbox => unreachable!("handled above"),
     }
 }
 
@@ -105,12 +106,17 @@ mod tests {
     #[test]
     fn segment_names_and_token_groups() {
         assert_eq!(StatusSegment::parse("focus"), Some(StatusSegment::Focus));
-        assert_eq!(StatusSegment::parse("model"), Some(StatusSegment::Model));
+        // The provider and model live on the Agents row, not the status line.
+        assert_eq!(StatusSegment::parse("model"), None);
         assert_eq!(
             StatusSegment::parse("context"),
             Some(StatusSegment::Context)
         );
         assert_eq!(StatusSegment::parse("tokens"), Some(StatusSegment::Tokens));
+        assert_eq!(
+            StatusSegment::parse("sandbox"),
+            Some(StatusSegment::Sandbox)
+        );
         assert_eq!(StatusSegment::parse("cost"), None);
         assert_eq!(StatusSegment::parse("MODEL"), None);
         assert_eq!(grouped_tokens(0), "0");

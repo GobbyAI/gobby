@@ -16,6 +16,10 @@ use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
 
 pub const PROTOCOL_VERSION: u32 = 1;
+/// Additive features a client may use only when the hello lists them.
+/// `terminal_theme`: frame streams accept `ClientMessage::SetTerminalTheme`,
+/// and `spawn` accepts a `terminal_theme` field.
+pub const HOST_CAPABILITIES: &[&str] = &["terminal_theme"];
 const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 const MAX_INFLIGHT_PER_CONNECTION: usize = 64;
 
@@ -206,6 +210,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                         "host_epoch": state.host_epoch.as_str(),
                         "version": state.version.as_str(),
                         "protocol_version": PROTOCOL_VERSION,
+                        "capabilities": HOST_CAPABILITIES,
                     }),
                     &request.id,
                 ),
@@ -409,7 +414,7 @@ async fn dispatch(
         "release_observer" => state.release_observer(&request.extra).await,
         "spawn" => state.spawn(conn_id, &request.extra).await,
         "spawn_commit" => state.spawn_commit(&request.extra).await,
-        "kill" => state.kill(&request.extra).await,
+        "kill" => state.kill(&request.extra, request.grace_ms).await,
         "resize" => state.resize(&request.extra).await,
         "write" => state.write(&request.extra).await,
         "write_batch" => state.write_batch(&request.extra).await,

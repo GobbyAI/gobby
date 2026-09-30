@@ -27,6 +27,9 @@ from gobby.utils.session_context import SessionContext, session_context_for_test
 
 pytestmark = pytest.mark.unit
 
+# The registry under test has no session manager, so fetches record access only.
+SESSION_ID = "11111111-1111-4111-8111-111111110042"
+
 _VALID_RATIONALE = (
     "Durable convention: future sessions should reuse this so they do not rediscover it."
 )
@@ -41,6 +44,7 @@ class MockMemory:
     created_by_agent: str | None = None
     graph_confidence: float | None = None
     collapsed_duplicates: list[str] | None = None
+    surfaced_count: int = 0
 
     def __init__(
         self,
@@ -97,6 +101,7 @@ def mock_memory_manager() -> MagicMock:
     manager.delete_memory_scoped = AsyncMock(return_value=True)
     manager.list_memories = MagicMock(return_value=[MockMemory()])
     manager.get_memory = MagicMock(return_value=MockMemory())
+    manager.record_memory_access = AsyncMock(return_value=None)
     # Identity resolution passes refs through unchanged unless a test overrides it.
     manager.resolve_memory_id = MagicMock(side_effect=lambda ref, project_id=None: ref)
     manager.get_related = AsyncMock(return_value=[MockMemory()])
@@ -107,7 +112,6 @@ def mock_memory_manager() -> MagicMock:
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
     manager.config = MagicMock()
-    manager.injection_outcome_recorder = None
     return manager
 
 
@@ -990,20 +994,26 @@ class TestGetMemory:
             tags=["tag1"],
         )
 
-        result = await memory_registry.call("get_memory", {"memory_id": "mem-123"})
+        result = await memory_registry.call(
+            "get_memory", {"memory_id": "mem-123", "session_id": SESSION_ID}
+        )
 
         assert result["success"] is True
         assert result["memory"]["id"] == "mem-123"
         assert result["memory"]["content"] == "Test content"
         assert result["memory"]["access_count"] == 5
+        assert result["memory"]["surfaced_count"] == 0
         assert result["memory"]["tags"] == ["tag1"]
+        mock_memory_manager.record_memory_access.assert_awaited_once_with("mem-123")
 
     @pytest.mark.asyncio
     async def test_get_memory_not_found(self, memory_registry, mock_memory_manager):
         """Test retrieval when memory not found."""
         mock_memory_manager.get_memory.return_value = None
 
-        result = await memory_registry.call("get_memory", {"memory_id": "nonexistent"})
+        result = await memory_registry.call(
+            "get_memory", {"memory_id": "nonexistent", "session_id": SESSION_ID}
+        )
 
         assert result["success"] is False
         assert "not found" in result["error"]
@@ -1013,7 +1023,9 @@ class TestGetMemory:
         """Test retrieval with ValueError."""
         mock_memory_manager.get_memory.side_effect = ValueError("Invalid ID format")
 
-        result = await memory_registry.call("get_memory", {"memory_id": "invalid"})
+        result = await memory_registry.call(
+            "get_memory", {"memory_id": "invalid", "session_id": SESSION_ID}
+        )
 
         assert result["success"] is False
         assert "Invalid ID format" in result["error"]
@@ -1023,7 +1035,9 @@ class TestGetMemory:
         """Test retrieval error handling."""
         mock_memory_manager.get_memory.side_effect = Exception("Get error")
 
-        result = await memory_registry.call("get_memory", {"memory_id": "mem-123"})
+        result = await memory_registry.call(
+            "get_memory", {"memory_id": "mem-123", "session_id": SESSION_ID}
+        )
 
         assert result["success"] is False
         assert "Get error" in result["error"]
@@ -1059,7 +1073,9 @@ class TestMemoryRefResolution:
 
         with patch("gobby.utils.project_context.get_project_context") as mock_ctx:
             mock_ctx.return_value = {"id": _PROJECT_ID, "name": "Project"}
-            result = await memory_registry.call("get_memory", {"memory_id": "c12fce9e"})
+            result = await memory_registry.call(
+                "get_memory", {"memory_id": "c12fce9e", "session_id": SESSION_ID}
+            )
 
         assert result["success"] is True
         assert result["memory"]["id"] == _FULL_ID
@@ -1078,7 +1094,9 @@ class TestMemoryRefResolution:
             "c12f", [_FULL_ID, _SIBLING_ID]
         )
 
-        result = await memory_registry.call("get_memory", {"memory_id": "c12f"})
+        result = await memory_registry.call(
+            "get_memory", {"memory_id": "c12f", "session_id": SESSION_ID}
+        )
 
         assert result["success"] is False
         assert _FULL_ID in result["error"]
@@ -1092,7 +1110,9 @@ class TestMemoryRefResolution:
         mock_memory_manager.resolve_memory_id.side_effect = None
         mock_memory_manager.resolve_memory_id.return_value = None
 
-        result = await memory_registry.call("get_memory", {"memory_id": "not-a-uuid"})
+        result = await memory_registry.call(
+            "get_memory", {"memory_id": "not-a-uuid", "session_id": SESSION_ID}
+        )
 
         assert result == {"success": False, "error": "Memory not-a-uuid not found"}
         assert "invalid input syntax" not in result["error"]
@@ -1350,17 +1370,6 @@ class TestRegistryCreation:
             assert tool is not None
             assert expected_path in tool.description
 
-    def test_registry_with_llm_service(self, mock_memory_manager) -> None:
-        """Test registry creation with LLM service (optional parameter)."""
-        mock_llm = MagicMock()
-        registry = create_memory_registry(
-            lambda: mock_memory_manager, llm_service_resolver=lambda: mock_llm
-        )
-
-        # Should still work even though llm_service isn't used in current implementation
-        assert registry is not None
-        assert len(registry.list_tools()) > 0
-
 
 class TestSearchMemoriesToolRegistration:
     """Tests for search_memories tool registration."""
@@ -1492,7 +1501,9 @@ class TestListAndGetMemoryShape:
             "gobby.utils.project_context.get_project_context",
             return_value={"id": "11111111-1111-4111-8111-111111110001"},
         ):
-            result = await memory_registry.call("get_memory", {"memory_id": "mem-9"})
+            result = await memory_registry.call(
+                "get_memory", {"memory_id": "mem-9", "session_id": SESSION_ID}
+            )
 
         memory = result["memory"]
         assert memory["rationale"] == "Durable claim."
@@ -1563,72 +1574,3 @@ class TestUpdateMemoryRationale:
         assert result["success"] is False
         assert "Invalid memory_type" in result["error"]
         mock_memory_manager.update_memory_scoped.assert_not_awaited()
-
-
-class TestSearchMemoriesDeliveryOutcomes:
-    """The tool result is the delivery point of the search cohort (#21011, contract §5.1)."""
-
-    _PROJECT = {"id": "11111111-1111-4111-8111-111111110001"}
-
-    @pytest.mark.asyncio
-    async def test_returned_hits_record_injected_outcomes_at_list_position(
-        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
-    ) -> None:
-        mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="m1", similarity=0.9, temporal_decay_factor=1.0),
-            MockMemory(id="m2", similarity=0.4, temporal_decay_factor=1.0),
-            MockMemory(id="m3", similarity=0.8, temporal_decay_factor=1.0),
-        ]
-        recorded: list[list[dict[str, Any]]] = []
-        mock_memory_manager.injection_outcome_recorder = recorded.append
-
-        with (
-            patch("gobby.utils.project_context.get_project_context", return_value=self._PROJECT),
-            patch("gobby.utils.session_context.get_current_session_id", return_value="sess-1"),
-        ):
-            result = await memory_registry.call(
-                "search_memories", {"query": "dispatch", "min_score": 0.5}
-            )
-
-        assert [hit["id"] for hit in result["memories"]] == ["m1", "m3"]
-        assert recorded == [
-            [
-                {
-                    "session_id": "sess-1",
-                    "recall_request_id": result["recall_request_id"],
-                    "memory_id": memory_id,
-                    "project_id": result["project_id"],
-                    "outcome": "injected",
-                    "injection_position": position,
-                    "caller": "mcp_proxy.memory.search_memories",
-                }
-                for position, memory_id in enumerate(["m1", "m3"])
-            ]
-        ]
-
-    @pytest.mark.asyncio
-    async def test_no_outcome_rows_without_a_session_or_a_recorder(
-        self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
-    ) -> None:
-        recorded: list[list[dict[str, Any]]] = []
-        mock_memory_manager.injection_outcome_recorder = recorded.append
-
-        with (
-            patch("gobby.utils.project_context.get_project_context", return_value=self._PROJECT),
-            patch("gobby.utils.session_context.get_current_session_id", return_value=None),
-        ):
-            sessionless = await memory_registry.call("search_memories", {"query": "dispatch"})
-
-        assert sessionless["success"] is True
-        assert sessionless["memories"]
-        assert recorded == []
-
-        mock_memory_manager.injection_outcome_recorder = None
-        with (
-            patch("gobby.utils.project_context.get_project_context", return_value=self._PROJECT),
-            patch("gobby.utils.session_context.get_current_session_id", return_value="sess-1"),
-        ):
-            hub_off = await memory_registry.call("search_memories", {"query": "dispatch"})
-
-        assert hub_off["success"] is True
-        assert hub_off["memories"]

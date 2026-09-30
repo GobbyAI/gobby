@@ -176,6 +176,38 @@ def _encode_attach(payload: dict[str, Any]) -> bytes:
     )
 
 
+def _byte(value: object) -> bytes:
+    if type(value) is not int or not 0 <= value <= 255:
+        raise FrameProtocolError(f"theme value {value!r} is not a byte")
+    return bytes((value,))
+
+
+def _encode_rgb(color: object) -> bytes:
+    if not isinstance(color, dict):
+        raise FrameProtocolError("theme colour must be an object")
+    return b"".join(_byte(color.get(channel)) for channel in ("r", "g", "b"))
+
+
+def _encode_theme(theme: object) -> bytes:
+    """Encode a JSON ``ThemeDeclaration`` in gterm's bincode layout."""
+    if not isinstance(theme, dict):
+        raise FrameProtocolError("terminal theme must be an object")
+    palette = theme.get("palette", [])
+    if not isinstance(palette, list):
+        raise FrameProtocolError("theme palette must be a list")
+    entries = []
+    for entry in palette:
+        if not isinstance(entry, list) or len(entry) != 2:
+            raise FrameProtocolError("theme palette entry must be [index, colour]")
+        entries.append(_byte(entry[0]) + _encode_rgb(entry[1]))
+    return (
+        _option(theme.get("foreground"), _encode_rgb)
+        + _option(theme.get("background"), _encode_rgb)
+        + _uvarint(len(entries))
+        + b"".join(entries)
+    )
+
+
 def _encode_payload(payload: dict[str, Any]) -> bytes:
     kind = payload["type"]
     if kind == "hello":
@@ -188,6 +220,10 @@ def _encode_payload(payload: dict[str, Any]) -> bytes:
         return b"\x06" + _uvarint(int(payload["rows"])) + _uvarint(int(payload["cols"]))
     if kind == "set_scroll_offset":
         return b"\x07" + _uvarint(int(payload["rows_from_live_edge"]))
+    if kind == "bind_attachment":
+        return b"\x08" + _string(str(payload["attachment_id"]))
+    if kind == "set_terminal_theme":
+        return b"\x0c" + _encode_theme(payload["theme"])
     raise FrameProtocolError(f"cannot encode {kind}")
 
 
@@ -572,6 +608,19 @@ class FrameClient:
 
     async def set_viewport(self, rows: int, cols: int) -> None:
         await self._send({"type": "set_viewport", "rows": rows, "cols": cols})
+
+    async def declare_terminal_theme(self, attachment_id: str, theme: object) -> None:
+        """Declare ``theme`` as daemon attachment ``attachment_id``'s colours.
+
+        Binding first lets the host check the declaration against the pane's
+        input grant, so a relayed theme applies only for the grant holder.
+        """
+        theme_frame = encode_frame({"type": "set_terminal_theme", "theme": theme})
+        self._writer.write(
+            encode_frame({"type": "bind_attachment", "attachment_id": attachment_id})
+        )
+        self._writer.write(theme_frame)
+        await self._writer.drain()
 
     async def set_scroll_offset(self, rows_from_live_edge: int) -> None:
         await self._send({"type": "set_scroll_offset", "rows_from_live_edge": rows_from_live_edge})

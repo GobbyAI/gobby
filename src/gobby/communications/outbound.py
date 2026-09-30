@@ -9,7 +9,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
+from gobby.communications.models import (
+    ChannelConfig,
+    ChannelNotFoundError,
+    CommsAttachment,
+    CommsMessage,
+)
+from gobby.communications.telegram_callbacks import bounded_callback_ttl
 
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
@@ -85,7 +91,7 @@ class OutboundCommunications:
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
 
@@ -98,6 +104,9 @@ class OutboundCommunications:
             session_id,
             metadata,
         )
+        if "callback_ttl_seconds" in effective_metadata:
+            # Caller input: reject before a failed row or daemon error is recorded.
+            bounded_callback_ttl(effective_metadata["callback_ttl_seconds"])
         explicit_thread_id = effective_metadata.get("thread_id")
         if isinstance(explicit_thread_id, str) and explicit_thread_id.strip():
             platform_thread_id = explicit_thread_id.strip()
@@ -121,7 +130,7 @@ class OutboundCommunications:
             message.status = "sent"
         except Exception as e:
             message.status = "failed"
-            message.error = str(e)
+            message.error = str(e) or type(e).__name__
             logger.exception("Failed to send message to %r: %s", channel_name, e)
 
         try:
@@ -155,7 +164,7 @@ class OutboundCommunications:
 
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
         size_bytes = file_path.stat().st_size
@@ -205,7 +214,7 @@ class OutboundCommunications:
             logger.error("Adapter %r does not support attachments", channel_name)
         except Exception as e:
             message.status = "failed"
-            message.error = str(e)
+            message.error = str(e) or type(e).__name__
             logger.exception("Failed to send attachment to %r: %s", channel_name, e)
 
         try:
@@ -231,7 +240,7 @@ class OutboundCommunications:
         manager = self._manager
         adapter = manager._adapters.get(channel_name)
         if adapter is None:
-            raise ValueError(f"Channel {channel_name!r} not found or not active")
+            raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
         message = CommsMessage(
@@ -257,7 +266,7 @@ class OutboundCommunications:
             ) from exc
         except Exception as exc:
             message.status = "failed"
-            message.error = str(exc)
+            message.error = str(exc) or type(exc).__name__
             logger.exception("Failed to send proactive message to %r: %s", channel_name, exc)
 
         try:

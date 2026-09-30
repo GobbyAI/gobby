@@ -134,6 +134,7 @@ class FakeHostClient:
         rows: int,
         cols: int,
         commit_deadline_ms: int = 30000,
+        terminal_theme: dict[str, object] | None = None,
     ) -> dict[str, Any]:
         await self.ensure_connected()
         if self.reservation_error is not None:
@@ -153,6 +154,7 @@ class FakeHostClient:
             "rows": rows,
             "cols": cols,
             "commit_deadline_ms": commit_deadline_ms,
+            "terminal_theme": terminal_theme,
         }
         self.spawns.append(request)
         self.next_seq += 1
@@ -800,6 +802,41 @@ async def test_spawn_env_carries_terminal_id() -> None:
     assert caller_env == {GOBBY_TERMINAL_ID: "caller-shadow", "EDITOR": "vi"}, (
         "caller env is copied"
     )
+
+
+async def test_prepare_spawn_forwards_the_client_theme() -> None:
+    """The host receives the requesting client's colours, or null for its own default."""
+    recorded: list[object] = []
+
+    class _ThemeClient:
+        host_epoch = "epoch-theme"
+
+        async def ensure_connected(self) -> None:
+            return None
+
+        async def spawn(self, **fields: Any) -> dict[str, Any]:
+            recorded.append(fields["terminal_theme"])
+            return {"ok": True, "host_terminal_id": "ht-theme", "pgid": 1, "start_time": 1}
+
+    runtime = NativeTerminalRuntime(_ThemeClient(), frame_host_epoch="epoch-theme")
+    theme: dict[str, object] = {
+        "foreground": None,
+        "background": {"r": 250, "g": 251, "b": 252},
+        "palette": [],
+    }
+    for requested in (theme, None):
+        await runtime.prepare_spawn(
+            TerminalSpawnRequest(
+                terminal_id=uuid4(),
+                spawn_key="gobby-native",
+                command=["/bin/sh"],
+                reservation_id="rsv",
+                reserve_key="rk",
+                terminal_theme=requested,
+            )
+        )
+
+    assert recorded == [theme, None]
 
 
 async def test_prepare_spawn_forwards_requested_cwd() -> None:

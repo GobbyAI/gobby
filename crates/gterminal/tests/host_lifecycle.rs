@@ -10,6 +10,7 @@ use host_support::{
 };
 use serde_json::json;
 use std::collections::BTreeMap;
+use std::io::{BufRead, BufReader};
 use std::os::unix::net::UnixListener;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -376,6 +377,184 @@ fn commit_returns_after_exec() {
     );
     let killed = recv_json(&mut stream);
     assert_eq!(killed["ok"], true, "{killed}");
+}
+
+#[test]
+fn kill_acks_only_after_group_exit() {
+    let (_dir, mut host, mut stream) = test_host("control-token-kill-proof");
+    let (terminal_id, spawn_key, host_terminal_id, pgid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "kill-proof",
+        &["sh", "-c", "trap '' TERM; exec sleep 30"],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    // The leader ignores SIGTERM only once the trap ran and exec replaced sh.
+    wait_until("TERM-ignoring sleep leader", || {
+        process_name(pgid).as_deref() == Some("sleep")
+    });
+    // Longer than the host's 100ms default, so an ignored grace_ms shows.
+    let grace = Duration::from_millis(400);
+    let started = Instant::now();
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": grace.as_millis() as u64,
+        }),
+    );
+    let killed = recv_json(&mut stream);
+    // SAFETY: signal 0 only probes whether the group still has members.
+    let probe = unsafe { libc::killpg(pgid as i32, 0) };
+    let probe_errno = std::io::Error::last_os_error().raw_os_error();
+    assert_eq!(killed["ok"], true, "{killed}");
+    assert_eq!(killed["killed"], true, "{killed}");
+    assert_eq!(probe, -1, "group {pgid} is alive after the kill ack");
+    assert_eq!(probe_errno, Some(libc::ESRCH));
+    assert!(
+        started.elapsed() >= grace,
+        "kill acked after {:?}, before the requested grace ran out",
+        started.elapsed()
+    );
+    assert_no_terminals(&mut stream);
+}
+
+#[test]
+fn kill_in_flight_stays_listed() {
+    let (_dir, mut host, mut stream) = test_host("control-token-kill-listed");
+    let (terminal_id, spawn_key, host_terminal_id, pgid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "kill-listed",
+        &["sh", "-c", "trap '' TERM; exec sleep 30"],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    wait_until("TERM-ignoring sleep leader", || {
+        process_name(pgid).as_deref() == Some("sleep")
+    });
+    let grace = Duration::from_millis(600);
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": grace.as_millis() as u64,
+        }),
+    );
+    // Every listing answered before the kill ack, across the whole grace
+    // window, must still see the live group. The kill removes the slot once
+    // it has proven the group gone and acks after, so a listing between the
+    // two may miss the slot, but only for a dead group.
+    let started = Instant::now();
+    let mut listings = 0;
+    let killed = loop {
+        send_json(&mut stream, &json!({"method": "list"}));
+        let reply = recv_json(&mut stream);
+        if reply.get("terminals").is_none() {
+            // The kill ack overtook this list; drain the list reply.
+            recv_json(&mut stream);
+            break reply;
+        }
+        let listed = reply["terminals"]
+            .as_array()
+            .expect("terminal rows")
+            .iter()
+            .any(|row| row["host_terminal_id"] == host_terminal_id);
+        if !listed {
+            // SAFETY: signal 0 only probes the group; it delivers nothing.
+            let group_alive = unsafe { libc::kill(-(pgid as i32), 0) } == 0;
+            assert!(
+                !group_alive,
+                "in-flight kill listed a live group as absent: {reply}"
+            );
+            break recv_json(&mut stream);
+        }
+        listings += 1;
+    };
+    assert_eq!(killed["killed"], true, "{killed}");
+    assert!(
+        started.elapsed() >= grace,
+        "kill acked inside the grace window"
+    );
+    assert!(listings > 0, "no listing landed inside the grace window");
+    assert_no_terminals(&mut stream);
+}
+
+#[test]
+fn leader_exit_under_kill_emits_no_terminal_exited() {
+    let token = "control-token-kill-exit-event";
+    let (dir, mut host, mut stream) = test_host(token);
+    let mut events = connect(&dir.path().join(CONTROL_SOCKET));
+    assert_eq!(hello(&mut events, token)["ok"], true);
+    send_json(&mut events, &json!({"method": "subscribe_events"}));
+    assert_eq!(recv_json(&mut events)["gap"], false);
+    // The leader dies on SIGTERM; the background sleep ignores it and keeps
+    // the group alive until the kill escalates.
+    let (terminal_id, spawn_key, host_terminal_id, pgid) = prepare_terminal(
+        &mut stream,
+        &mut host,
+        1,
+        "kill-exit-event",
+        &["sh", "-c", "(trap '' TERM; exec sleep 30) & exec sleep 30"],
+        BTreeMap::from([("PATH", "/bin:/usr/bin")]),
+    );
+    let response = commit_terminal(&mut stream, &terminal_id, &spawn_key, 1_000);
+    assert_eq!(response["ok"], true, "{response}");
+    wait_until("both sleeps in the group", || {
+        let listed = std::process::Command::new("pgrep")
+            .args(["-g", &pgid.to_string(), "sleep"])
+            .output()
+            .expect("pgrep");
+        String::from_utf8_lossy(&listed.stdout).lines().count() == 2
+    });
+    send_json(
+        &mut stream,
+        &json!({
+            "method": "kill",
+            "operation_seq": 2,
+            "host_terminal_id": host_terminal_id,
+            "grace_ms": 400,
+        }),
+    );
+    let killed = recv_json(&mut stream);
+    assert_eq!(killed["killed"], true, "{killed}");
+
+    // The kill ack is the settlement; no exit event may race ahead of it.
+    events
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .expect("read timeout");
+    let mut reader = BufReader::with_capacity(1, &events);
+    let mut seen = Vec::new();
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => seen.push(line),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break
+            }
+            Err(err) => panic!("event stream failed: {err}"),
+        }
+    }
+    assert!(
+        !seen.iter().any(|line| line.contains("\"terminal_exited\"")),
+        "exit event raced the kill proof: {seen:?}"
+    );
+    assert_no_terminals(&mut stream);
 }
 
 #[test]

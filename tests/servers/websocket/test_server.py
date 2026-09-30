@@ -314,7 +314,7 @@ class _AttachThenInputSocket(_ScriptedSocket):
 
 
 def _quiet_disconnect(server: WebSocketServer) -> None:
-    object.__setattr__(server, "_cleanup_tmux_client", AsyncMock())
+    object.__setattr__(server, "_cleanup_terminal_client", AsyncMock())
     object.__setattr__(server, "_cleanup_attached_tts", AsyncMock())
 
 

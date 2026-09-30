@@ -45,6 +45,10 @@ _AGENT_MESSAGE_CHUNK = "agent_message_chunk"
 class GrokTranscriptParser(BaseTranscriptParser):
     """Parse Grok ACP update JSONL into normalized transcript messages."""
 
+    # Stateless across lines: the empty base snapshot is complete, so a sidecar
+    # whose prefix still matches resumes after the transcript grows.
+    supports_incremental_state = True
+
     def __init__(
         self,
         session_id: str | None = None,

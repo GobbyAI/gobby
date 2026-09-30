@@ -293,7 +293,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     });
     let line = &rect_rows(&healthy, Rect::new(0, 0, 100, 1))[0];
     // The defaults: this machine's agents by class, then the prefix and the
-    // mode. The model, context and token segments are opt-in.
+    // mode. The context, token and sandbox segments are opt-in.
     assert!(line.starts_with(" ⍾ 1 needs you │ 1 idle  "), "{line:?}");
     assert!(!line.contains("gpt"), "{line:?}");
     assert!(line.ends_with("  prefix ctrl+b │ navigate "), "{line:?}");
@@ -327,7 +327,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
             .is_some(),
         "attention pane is visible"
     );
-    chrome.prefs.status_left = vec!["model".to_string()];
+    chrome.prefs.status_left = vec!["tokens".to_string()];
     chrome.prefs.status_right = vec!["context".to_string(), "tokens".to_string()];
     chrome.compute_view(&ws, Rect::new(0, 0, 100, 20));
     let mut hits = None;
@@ -346,7 +346,7 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
     assert!(hits.expect("status hits").count.is_some());
 
     chrome.activate_tab(0);
-    chrome.prefs.status_left = vec!["focus".to_string(), "model".to_string()];
+    chrome.prefs.status_left = vec!["focus".to_string(), "tokens".to_string()];
     chrome.prefs.status_right = vec!["context".to_string(), "tokens".to_string()];
     chrome.compute_view(&ws, Rect::new(0, 0, 100, 20));
 
@@ -362,7 +362,10 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         line.starts_with(" × Daemon unreachable · retrying │ ⍾ 1 needs you"),
         "{line:?}"
     );
-    assert!(!line.contains("gpt"), "the model drops whole: {line:?}");
+    assert!(
+        !line.contains("12,") || line.contains("12,345"),
+        "the tokens draw whole or drop whole: {line:?}"
+    );
     assert!(line.ends_with("prefix ctrl+b │ navigate "), "{line:?}");
 
     chrome.prefs.status_left = vec![
@@ -383,12 +386,22 @@ fn status_bar_orders_fixed_slots_and_configured_segments() {
         line.ends_with("63% │ prefix ctrl+b │ navigate "),
         "{line:?}"
     );
-    assert!(
-        !line.contains("gpt") || line.contains("gpt-6-sol-xhigh"),
-        "optional model must render whole or disappear: {line:?}"
-    );
-    assert!(!line.contains("xhigh63%"), "{line:?}");
+    // #23049: the model left the status line; a prefs file that still names
+    // it draws nothing for it.
+    assert!(!line.contains("gpt"), "no model segment: {line:?}");
     assert!(!line.contains("unknown"), "{line:?}");
+
+    // #23049: the sandbox segment names the focused pane's mark in words;
+    // a pane with no SRT launch record says unrestricted (option A).
+    chrome.prefs.status_right = vec!["sandbox".to_string()];
+    let sandbox = render(100, 1, |frame| {
+        render_status_line(frame, frame.area(), &ws, &chrome);
+    });
+    let line = &rect_rows(&sandbox, Rect::new(0, 0, 100, 1))[0];
+    assert!(
+        line.ends_with("unrestricted │ prefix ctrl+b │ navigate "),
+        "{line:?}"
+    );
 }
 
 /// Point 11: the status line counts every agent on this machine by legend

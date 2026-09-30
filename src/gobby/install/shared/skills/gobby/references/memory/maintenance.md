@@ -20,7 +20,6 @@ For infrastructure maintenance, inspect each schema and requested scope:
 | `reindex_embeddings` | Regenerate stored memory vectors; no MCP project selector |
 | `recluster_knowledge_graph_entities` | Offline entity clustering; requires graph service and clustering dependencies |
 | `densify_knowledge_graph_cooccurrence` | Materialize derived co-occurrence support edges |
-| `judge_shadow_relevance` | Lifecycle judging of pending recall candidates, not user knowledge capture |
 
 Cross-reference and graph rebuilds accept an explicit project and default limit
 500; omitted project is not guaranteed to mean the caller project. Clustering and
@@ -32,16 +31,10 @@ Operator-only `gobby memory` commands include Markdown `export`, JSONL
 `backup`/`restore`, exact-content `dedupe`, `backfill-unscoped-lessons`, graph
 `graph-counts`/`clear-graph`/`rebuild-graph`, `reconcile`, `reindex-embeddings`,
 `rebuild-crossrefs`, and `invalidate`. Read command help before execution.
-`dedupe --dry-run` previews same-project duplicates and keeps the earliest row;
-apply hard-deletes duplicates. `invalidate` clears and rebuilds secondary indices;
+`dedupe --dry-run` previews same-project exact-content duplicates and keeps the
+earliest-created row regardless of access or surfaced counts; apply hard-deletes
+the later copies. `invalidate` clears and rebuilds secondary indices;
 it is broader than correcting one memory. Use isolated fixtures for verification.
-
-Recall diagnostics are operator commands under `gobby memory recall-signals`:
-`backfill-events`, `backfill-labels`, `gate`, `audit-labels`,
-`supersede-legacy-cohort`, `drift`, and `replay-candidate-filter`. Inspect cohort,
-caller, label provenance, and dates; historic automatic-recall data is not current
-agent search traffic. Backfills and supersession mutate telemetry. They do not
-repair memory content or justify changing ranking from one weak example.
 
 If a backup is missing, create an explicit backup of the intended scope. If a
 service is unavailable, recover its configuration/connectivity before retrying.

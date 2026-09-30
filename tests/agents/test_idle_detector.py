@@ -237,8 +237,7 @@ class TestClearState:
         assert state.reprompt_count == 0
 
     def test_clear_nonexistent_is_noop(self) -> None:
-        result = self.detector.clear_state("no-such-run")
-        assert result is None
+        self.detector.clear_state("no-such-run")
         assert "no-such-run" not in self.detector._states
 
 
@@ -535,6 +534,46 @@ class TestComposerRead:
     def test_framed_prompt_is_idle_under_an_unrecognised_status_bar(self) -> None:
         assert self.detector.detect(_framed("❯\xa0")) == "idle"
         assert self.detector.detect(_framed("❯ typed but unsent")) == "idle"
+
+    def test_codex_bare_prompt_uses_faint_placeholder_and_preserves_draft(self) -> None:
+        codex = IdleDetector(BundledDetectionRegistry(), "codex")
+        footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
+        placeholder = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m"
+        assert codex.composer_read(f"done\n{placeholder}\n\n{footer}") == ComposerRead("empty")
+        assert codex.composer_read(f"done\n› drafted command\n\n{footer}") == ComposerRead(
+            "draft", "drafted command"
+        )
+        assert codex.composer_read(f"› old prompt\nWorking...\n\n{footer}").state == "unknown"
+
+    @pytest.mark.parametrize(
+        "footer",
+        [
+            "? for shortcuts",
+            "← for agents · ? for shortcuts",
+            "? for shortcuts                                     ⚠ 2 warnings · f2 to view",
+        ],
+        ids=["bare", "agents", "warnings"],
+    )
+    def test_codex_ansi_pane_reads_empty_placeholder_and_typed_draft(self, footer: str) -> None:
+        """ANSI shaped like a live Codex pane: blended-colour footer, faint placeholder (#23102)."""
+        codex = IdleDetector(BundledDetectionRegistry(), "codex")
+        secondary = "\x1b[38;2;150;150;150m"
+        tail = (
+            f"\n\n  {secondary}GPT-6.1-Sol xhigh · ~/Projects/gobby · 0.5.0\x1b[0m"
+            f"\n  {secondary}{footer}\x1b[0m"
+        )
+        placeholder = "\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m"
+        assert codex.composer_read(f"done\n{placeholder}{tail}") == ComposerRead("empty")
+        assert codex.composer_read(f"done\n\x1b[1m›\x1b[0m half-typed reply{tail}") == (
+            ComposerRead("draft", "half-typed reply")
+        )
+
+    def test_codex_active_turn_marker_remains_visible(self) -> None:
+        codex = IdleDetector(BundledDetectionRegistry(), "codex")
+        footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
+        active = f"• Working (4m 58s • esc to interrupt)\n› \n\n{footer}"
+        assert codex.composer_read(active).state == "empty"
+        assert codex.has_turn_in_flight(active)
 
 
 class TestComposerText:

@@ -191,6 +191,14 @@ the separate feedback submission. A staging failure can be retried without
 resubmitting feedback. Compact dispatch probes the composer first: a positively read operator draft refuses
 the delivery with `error_code: "composer_occupied"` before any key is sent, and the
 retry guidance tells the agent to wait for the operator to send or clear the draft.
+A session whose recorded CLI process no longer owns its terminal gets no keys.
+Ownership is re-read immediately before every key and text write of compact and
+`/clear` dispatch, so a CLI that exits during a settle wait, an interrupt
+observation, or the submit ladder leaves its shell untouched. The
+delivery settles with `error_code: "no_terminal_target"`, does not count toward
+abandonment, and keeps the payload recoverable through `get_handoff(failed_attempt_id)`.
+Codex receives a single interrupt press observed across the whole window, because a
+Ctrl+C that lands on its idle composer escalates toward quitting the CLI.
 Otherwise it interrupts the provider, clears its composer, submits `/compact` for
 Claude, Codex, and Grok or `/compress` for Qwen and Droid, and continues on the same
 session row. Droid answers `/compress` with a confirm modal, and dispatch presses Enter
@@ -298,7 +306,3 @@ Staged, compact-only, malformed, imported-without-receipt, and absent handoffs r
 full-transcript/LLM fallback. Missing transcripts may therefore still leave
 `summary_markdown` empty. Rolling digest state, digest watermarks, delta summaries, and
 digest-derived titles do not exist.
-
-Shadow-memory relevance judging runs from its own background `turn_end` rule through
-`gobby-memory:judge_shadow_relevance`; it is independent of archival summaries and
-handoffs.

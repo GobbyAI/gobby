@@ -38,7 +38,7 @@ fn test_state(config: HostConfig) -> Arc<HostState> {
         CONTROL_TOKEN.to_string(),
         "local-token".to_string(),
         "test-epoch".to_string(),
-        "0.0.0-test".to_string(),
+        crate::host::image::PinnedImage::for_tests(),
         std::process::id(),
         watch::channel(false).0,
     )

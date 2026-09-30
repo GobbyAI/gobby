@@ -15,7 +15,6 @@ from gobby.agents.run_completion import (
     cooperative_close_handoff_pending,
     ended_caller_close_review_outcome,
 )
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.storage.agents import (
     AgentRun,
@@ -61,7 +60,6 @@ class LifecycleReconciliation:
         *,
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
-        tmux: TmuxSessionManager | None = None,
         cleanup_handler: AgentCleanupHandler,
         run_db: Callable[..., Awaitable[Any]],
         terminal_manager: Any | None = None,
@@ -72,7 +70,6 @@ class LifecycleReconciliation:
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
-        self._tmux = tmux
         self._cleanup_handler = cleanup_handler
         self._run_db = run_db
         self._dispatch_refresh_cursor = 0
@@ -97,6 +94,33 @@ class LifecycleReconciliation:
                     "Cannot reconcile termination for run %s without a terminal",
                     run.id,
                 )
+                continue
+
+            row = (
+                None
+                if self._terminal_manager is None
+                else await self._run_db(self._terminal_manager.get, run.terminal_id)
+            )
+            if row is not None and row.backend != "native" and row.state != "exited":
+                reason = f"unsupported_terminal_backend:{row.backend}:{row.state}"
+                metadata = getattr(run, "resume_metadata_json", None) or {}
+                if metadata.get("reconciliation_blocked_reason") != reason:
+                    await self._run_db(
+                        self._agent_run_manager.merge_resume_metadata,
+                        run.id,
+                        {
+                            "reconciliation_pending": True,
+                            "reconciliation_blocked_reason": reason,
+                        },
+                    )
+                    logger.warning(
+                        "Termination reconciliation fenced for run %s: terminal %s has "
+                        "unsupported %s backend in %s state",
+                        run.id,
+                        row.id,
+                        row.backend,
+                        row.state,
+                    )
                 continue
 
             tool_calls_count, turns_used = await resolve_completion_stats(
@@ -284,17 +308,16 @@ class LifecycleReconciliation:
         return bool(await self._run_db(cooperative_close_handoff_pending, self._db, run))
 
     async def reap_stale_pending(self) -> int:
-        """Fail pending terminals older than the 2.3 in-doubt deadline."""
+        """Reap pending terminals past the in-doubt deadline through the strict reaper."""
+        from gobby.agents.spawn_executor import reap_stale_pending_terminals
+
         manager = self._terminal_manager
-        if manager is None:
+        if manager is None or self._runtime_registry is None:
             return 0
-        stale = manager.list_stale_pending(self._spawn_in_doubt_seconds)
-        reaped = 0
-        for row in stale:
-            failed = manager.fail_pending(row.id)
-            if failed is not None:
-                reaped += 1
-        return reaped
+        reaped = await reap_stale_pending_terminals(
+            manager, self._runtime_registry, in_doubt_seconds=self._spawn_in_doubt_seconds
+        )
+        return len(reaped)
 
     async def refresh_active_run_dispatch_mutexes(self, *, machine_id: str) -> int:
         """Extend or restore dispatch mutex leases for local active runs."""

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, field
+from datetime import datetime
 from subprocess import SubprocessError
-from typing import TYPE_CHECKING, Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.terminals import TerminalConfig
@@ -40,50 +41,6 @@ def resolve_terminal_backend(
     raise ValueError(f"invalid terminal_backend: {requested}")
 
 
-class ManagedRuntimeProfile(Protocol):
-    """Internal launch restrictions supplied by a durable managed workflow."""
-
-    @property
-    def provider(self) -> str: ...
-
-    @property
-    def provider_args(self) -> tuple[str, ...]: ...
-
-    @property
-    def auto_approve(self) -> bool: ...
-
-    @property
-    def sandbox_config(self) -> SandboxConfig: ...
-
-    @property
-    def scratch_root(self) -> str: ...
-
-    @property
-    def model(self) -> str: ...
-
-    def validate_selection(
-        self,
-        *,
-        provider: str,
-        model: str | None,
-        reasoning_effort: str | None,
-        api_base: str | None,
-    ) -> None: ...
-
-    def validate_launch(
-        self,
-        *,
-        backend: str,
-        enforced: bool,
-        provider_executable: str | None,
-        runtime_version: str | None,
-        policy_schema_version: int | None,
-        policy_hash: str | None,
-        policy_path: str | None,
-        environment: Mapping[str, str],
-    ) -> None: ...
-
-
 @dataclass
 class SpawnRequest:
     """Request for spawning an agent."""
@@ -96,7 +53,6 @@ class SpawnRequest:
     parent_session_id: str
     project_id: str
     _: KW_ONLY
-    managed_runtime_profile: ManagedRuntimeProfile | None = None
     project_path: str | None = None
     agent_run_id: str | None = None
     workflow: str | None = None
@@ -146,6 +102,9 @@ class SpawnRequest:
     droid_mode: Literal["exec", "interactive"] = "exec"
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None
+    # Binds the reserved pane to the terminal id after ``create_pending`` and
+    # before exec; set only for a placed spawn.
+    placement_binder: Callable[[str], Awaitable[None]] | None = None
 
 
 @dataclass
@@ -165,6 +124,9 @@ class SpawnResult:
     terminal_id: str | None = None
     locator: AttachLocator | None = None
     retryable_infrastructure: bool = False
+    # A failed retry's pre-bump attempt pair (None for a create); failure cleanup
+    # uses it to recognize a rolled-back bump.
+    prior_attempt: tuple[int, datetime] | None = None
 
 
 def is_infrastructure_spawn_error(error: BaseException) -> bool:

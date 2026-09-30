@@ -14,13 +14,16 @@ from gobby.agents.terminal_delivery import (
 from gobby.mcp_proxy.tools.sessions._terminal import (
     _INTERRUPT_OBSERVATION_UNAVAILABLE_ERROR_CODE,
     _authorize_send_keys_target,
-    _backfill_tmux_context_from_sibling,
     _interrupt_observer,
     _resolve_pane_io,
     _resolve_session_for_compaction,
     _send_terminal_compaction_command,
+    _turn_settled_observer,
 )
-from gobby.mcp_proxy.tools.sessions._terminal_compaction import composer_reader
+from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
+    NO_TERMINAL_TARGET_ERROR_CODE,
+    composer_reader,
+)
 from gobby.mcp_proxy.tools.sessions._terminal_webchat import (
     _clear_live_web_chat_fallback,
     _find_live_web_chat_session,
@@ -40,11 +43,8 @@ from gobby.sessions.handoff import (
     staged_handoff_tool_result,
 )
 from gobby.sessions.handoff_records import HandoffPayload
-from gobby.terminal_context import (
-    parse_terminal_context_value,
-    terminal_context_has_tmux_target,
-)
-from gobby.terminal_ownership import terminal_session_identity
+from gobby.terminal_context import parse_terminal_context_value
+from gobby.terminal_ownership import recorded_seat_left, terminal_session_identity
 from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -401,21 +401,6 @@ async def prepare_clear_session(
         terminal_manager=terminal_manager,
         terminal_runtime_registry=terminal_runtime_registry,
     )
-    if error and not terminal_context_has_tmux_target(session.terminal_context):
-        recovered_session = _backfill_tmux_context_from_sibling(
-            resolved_session_id,
-            session,
-            session_manager,
-        )
-        if recovered_session is not None:
-            session = recovered_session
-            pane, error = _resolve_pane_io(
-                resolved_session_id,
-                session_manager,
-                agent_run_manager,
-                terminal_manager=terminal_manager,
-                terminal_runtime_registry=terminal_runtime_registry,
-            )
     if error:
         return _error(error, "terminal_target_unavailable")
     assert pane is not None
@@ -507,6 +492,11 @@ async def deliver_staged_clear_session(
         return _error(error or f"Session {session_id} not found", "session_not_found")
     source = getattr(session, "source", None)
     cli_source = source if isinstance(source, str) else None
+    if recorded_seat_left(session):
+        return failed(
+            "the recorded CLI process no longer owns its terminal",
+            NO_TERMINAL_TARGET_ERROR_CODE,
+        )
     pane, error = _resolve_pane_io(
         resolved_session_id,
         session_manager,
@@ -543,7 +533,11 @@ async def deliver_staged_clear_session(
             mark_continuation_pending=lambda: True,
             clear_continuation_pending=lambda: True,
             observe_interrupt=observe_interrupt,
+            # Without it a turn that ends under the first press gets pressed again,
+            # and a second Ctrl+C on an idle Codex composer quits the CLI.
+            turn_settled=_turn_settled_observer(source, session),
             composer_read=composer_reader(db, cli_source),
+            seat_left=lambda: recorded_seat_left(session),
         )
     except Exception as exc:
         logger.warning("Failed sending /clear for session %s", resolved_session_id, exc_info=True)

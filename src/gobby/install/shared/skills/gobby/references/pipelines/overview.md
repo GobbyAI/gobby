@@ -26,7 +26,7 @@ it and yield. Menus, validation and history inspection do not authorize executio
 
 For missing definitions, check scope and installation. For active work, inspect
 its execution ID before retrying. Use the capability owning a child operation
-(agents, plan, source-control or code-index Ask) for its independent lifecycle.
+(agents, plan or source-control) for its independent lifecycle.
 
 Verified guide: [pipelines.md](../../../../../../../../docs/guides/pipelines.md).
 

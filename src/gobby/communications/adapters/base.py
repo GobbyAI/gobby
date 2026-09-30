@@ -23,6 +23,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_RETRY_AFTER_DELAY_SECONDS = 120.0
+# Transport failures raised before any request bytes leave the client, so a retry
+# cannot deliver the message twice. Read, write and protocol errors can follow a
+# delivered request and are never retried.
+_UNSENT_REQUEST_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
 class BaseChannelAdapter(ABC):
@@ -258,7 +262,8 @@ class BaseChannelAdapter(ABC):
         max_retries: int = 3,
         backoff_base: float = 1.0,
     ) -> httpx.Response:
-        """Execute an HTTP request with retry logic for 429 and 5xx responses.
+        """Execute an HTTP request with retry logic for 429 and 5xx responses and for
+        connection failures raised before the request was sent.
 
         Args:
             coro_factory: Zero-arg callable that returns a new awaitable for each attempt.
@@ -274,7 +279,22 @@ class BaseChannelAdapter(ABC):
         max_retries = max(0, max_retries)
         last_response: httpx.Response | None = None
         for attempt in range(max_retries + 1):
-            response = await coro_factory()
+            try:
+                response = await coro_factory()
+            except _UNSENT_REQUEST_ERRORS as exc:
+                if attempt >= max_retries:
+                    raise
+                delay = backoff_base * (2**attempt)
+                logger.warning(
+                    "%s %s before the request was sent, retrying in %.1fs (attempt %d/%d)",
+                    self.channel_type,
+                    type(exc).__name__,
+                    delay,
+                    attempt + 1,
+                    max_retries + 1,
+                )
+                await asyncio.sleep(delay)
+                continue
             last_response = response
 
             if response.status_code == 429:

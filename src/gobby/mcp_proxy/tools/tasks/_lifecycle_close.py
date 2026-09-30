@@ -58,6 +58,9 @@ from gobby.mcp_proxy.tools.tasks._task_scope import (
     collect_commit_paths_async as collect_commit_paths,
 )
 from gobby.mcp_proxy.tools.tasks._task_scope import (
+    collect_deleted_commit_paths_async as collect_deleted_commit_paths,
+)
+from gobby.mcp_proxy.tools.tasks._task_scope import (
     evaluate_task_scope_async as evaluate_task_scope,
 )
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
@@ -71,6 +74,8 @@ from gobby.tasks.acceptance_artifacts import (
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_receipts import close_receipt_facts
+from gobby.tasks.close_test_coverage import changed_python_test_paths
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.commits import collect_commit_rename_aliases_async
 from gobby.tasks.criteria_contract import operational_actions_from_command
@@ -519,6 +524,11 @@ async def _evaluate_close(
 
     try:
         committed_paths = await collect_commit_paths(commit_shas, repo_path)
+        deleted_paths = (
+            await collect_deleted_commit_paths(commit_shas, repo_path)
+            if changed_python_test_paths(committed_paths)
+            else set()
+        )
     except RuntimeError as exc:
         return evaluation.fail(
             10,
@@ -561,6 +571,7 @@ async def _evaluate_close(
                 task_edited_files=evaluation.edited_paths,
                 repo_path=repo_path,
                 require_task_link=not evaluation.had_attributed_edits,
+                owner_used_commit_fallback=attribution.used_commit_fallback,
             )
         except (TranscriptEvidenceUnavailable, RemoteSessionOwnershipError) as exc:
             if commands_required and isinstance(exc, RemoteSessionOwnershipError):
@@ -608,6 +619,7 @@ async def _evaluate_close(
                 has_attributed_edits=evaluation.had_attributed_edits,
                 validation_criteria=task.validation_criteria or "",
                 changed_paths=validation_paths,
+                deleted_paths=deleted_paths,
             ),
             item=10,
         )
@@ -795,6 +807,7 @@ async def _evaluate_close(
             extra=infra.extra,
         )
 
+    receipt_facts = close_receipt_facts(ctx.task_manager.db, task, commit_shas)
     review_started = perf_counter()
     llm_result = await evaluate_close_review(
         task=evaluation_task,
@@ -820,6 +833,9 @@ async def _evaluate_close(
             ),
             "acceptance_artifacts": acceptance_details,
             "tdd_evidence": tdd_details,
+            # Absent rather than empty, so tasks without receipts keep their
+            # existing review fingerprints.
+            **({"close_receipts": receipt_facts} if receipt_facts else {}),
         },
         validation_config=ctx.validation_config,
         reason=reason,

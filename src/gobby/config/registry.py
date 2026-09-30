@@ -30,6 +30,7 @@ from gobby.config.embedding_keys import (
     RUNTIME_EMBEDDINGS_CONFIG_PREFIX,
     runtime_embedding_key,
 )
+from gobby.config.persistence import REMOVED_MEMORY_CONFIG_KEYS
 from gobby.config.registry_key_encoding import decode_dynamic_segment, encode_dynamic_segment
 
 
@@ -580,6 +581,16 @@ def _flatten_mapping(value: Mapping[str, object], prefix: str = "") -> Iterator[
 
 BOOTSTRAP_RUNTIME_PATHS = frozenset(_flatten_mapping(BootstrapConfig().to_config_dict()))
 _REMOVED_RUNTIME_PATHS = frozenset({"hub_backend", "postgres_pool"})
+_REMOVED_STORED_KEYS = frozenset(f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS)
+_REMOVED_STORED_SECTIONS = ("memory_usefulness",)
+
+
+def is_removed_config_store_key(key: str) -> bool:
+    """Return true for persisted keys of retired config that startup deletes."""
+    return key in _REMOVED_STORED_KEYS or any(
+        key == section or key.startswith(f"{section}.") for section in _REMOVED_STORED_SECTIONS
+    )
+
 
 _RESTART_PATHS = frozenset({"cors_origins", "test_mode", "memory.backend"})
 _RESTART_PREFIXES = (

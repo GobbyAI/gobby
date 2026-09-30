@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
@@ -86,7 +85,6 @@ def setup_internal_registries(
     terminal_manager: Any | None = None,
     terminal_runtime_registry: Any | None = None,
     write_coordinator: Any | None = None,
-    ask_service_resolver: Callable[[str], Any | None] | None = None,
     workspace_manager: WorkspaceManager | None = None,
     workspace_ops_resolver: Callable[[], WorkspaceOps | None] | None = None,
 ) -> InternalRegistryManager:
@@ -257,11 +255,8 @@ def setup_internal_registries(
 
         memory_registry = create_memory_registry(
             memory_manager_resolver=memory_manager_resolver,
-            llm_service_resolver=llm_service_resolver,
             memory_backup_manager_resolver=memory_backup_manager_resolver,
             session_manager=session_manager,
-            startup_config=initial_config,
-            config_resolver=config_resolver,
             dream_coordinator_resolver=dream_coordinator_resolver,
             task_manager=task_manager,
         )
@@ -292,32 +287,6 @@ def setup_internal_registries(
     )
     manager.add_registry(workflows_registry)
     logger.debug("Workflows registry initialized")
-
-    if ask_service_resolver is not None and db is not None:
-        from gobby.mcp_proxy.tools.ask import create_ask_registry
-        from gobby.storage.project_checkouts import require_root, resolve_operation_root
-        from gobby.storage.workspace_machine_scope import require_local_machine_id
-
-        def resolve_ask_project_root(target_project_id: str, project_path: str | None) -> Path:
-            machine_id = require_local_machine_id(
-                None,
-                resource_kind="project_checkout",
-                resource_id=target_project_id,
-            )
-            primary = Path(require_root(db, target_project_id, machine_id))
-            if project_path is None or Path(project_path).resolve() == primary.resolve():
-                return primary
-            return Path(
-                resolve_operation_root(db, target_project_id, machine_id, overlay_path=project_path)
-            )
-
-        manager.add_registry(
-            create_ask_registry(
-                ask_service_resolver,
-                project_root_resolver=resolve_ask_project_root,
-            )
-        )
-        logger.debug("Ask registry initialized")
 
     # Initialize metrics registry if metrics_manager is available
     if metrics_manager is not None:

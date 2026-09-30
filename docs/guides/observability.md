@@ -138,7 +138,8 @@ The reference collector intentionally excludes these adjacent diagnostic
 surfaces:
 
 - `code-index-maintenance.log`, the code-index maintenance event log.
-- `recall_signal.jsonl`, which is structured recall data rather than a log.
+- `recall_signal.jsonl`, recall data from the retired recall-signal stack
+  (#22837); older installs may still hold the file, and nothing writes it now.
 - Standalone `ghook` stderr outside the daemon-managed hook surface.
 
 Add separate receivers only after choosing parsing, access, and retention rules
@@ -372,7 +373,7 @@ Follow progressive discovery before each new tool family.
 ## Provider Capacity
 
 `gobby-metrics:get_provider_capacity` returns a machine/provider snapshot without
-starting an agent turn. The default service has an AGY reporter. Other supported
+starting an agent turn. The default service has an Antigravity reporter. Other supported
 agent providers need not have capacity reporters. Read the observation timestamp,
 windows, support flag, and reason alongside its four-state result:
 

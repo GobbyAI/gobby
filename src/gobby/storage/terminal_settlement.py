@@ -22,6 +22,8 @@ from gobby.utils.datetime import utc_now
 UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES = 256
 UNRESOLVED_WRITE_MAX_ENTRIES = 32
 UNRESOLVED_WRITE_MAX_SERIALIZED_BYTES = 65536
+# Process keys owned by the host that listed the terminal, replaced as a set.
+HOST_PROCESS_KEYS = ("host_terminal_id", "pgid", "start_time")
 
 if TYPE_CHECKING:
     from gobby.storage.terminals import Terminal
@@ -36,11 +38,26 @@ ALLOWED_EDGES: frozenset[tuple[str, str]] = frozenset(
     {
         ("pending", "live"),
         ("pending", "exited"),
+        ("pending", "orphaned"),
         ("live", "exited"),
         ("live", "orphaned"),
         ("orphaned", "exited"),
     }
 )
+
+
+@dataclass(frozen=True)
+class OrphanIdentity:
+    """The physical identity a ``pending`` row gains when its kill is unproven.
+
+    ``locator`` must already be the normalized native locator for a native row.
+    ``host_epoch`` and ``process`` are native-only and stay ``None`` for tmux.
+    """
+
+    locator: Mapping[str, object]
+    locator_key: str
+    host_epoch: str | None = None
+    process: Mapping[str, object] | None = None
 
 
 class IllegalTerminalTransitionError(RuntimeError):
@@ -269,6 +286,123 @@ class TerminalSettlementMixin:
             terminal_id,
             expected=("live", "orphaned"),
             new_state="exited",
+        )
+
+    def mark_exited_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        """CAS live or orphaned to exited only while the captured attempt owns the row."""
+        return self._cas(
+            terminal_id,
+            expected=("live", "orphaned"),
+            new_state="exited",
+            predicate_sql="""
+                AND attempt_generation = %s
+                AND attempt_started_at = %s
+            """,
+            predicate_params=(attempt_generation, attempt_started_at),
+        )
+
+    def record_orphan_identity(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        locator: Mapping[str, object],
+        locator_key: str,
+        host_epoch: str,
+        process: Mapping[str, object] | None,
+    ) -> Terminal | None:
+        """Record the current host identity of an orphan the host still lists.
+
+        ``locator`` must already be the normalized native locator. The captured
+        attempt pair guards against a row that moved on since it was reread.
+        The prior host's process keys are dropped first, so a listing without a
+        pgid cannot inherit a stale group as kill proof.
+        """
+        row = self.db.fetchone(
+            """
+            UPDATE terminals
+            SET locator = %s,
+                locator_key = %s,
+                host_epoch = %s,
+                process = (COALESCE(process, '{}'::jsonb) - %s::text[]) || %s,
+                updated_at = now()
+            WHERE id = %s
+              AND state = 'orphaned'
+              AND attempt_generation = %s
+              AND attempt_started_at = %s
+            RETURNING *
+            """,
+            (
+                Jsonb(dict(locator)),
+                locator_key,
+                host_epoch,
+                list(HOST_PROCESS_KEYS),
+                Jsonb(dict(process or {})),
+                str(UUID(terminal_id)),
+                attempt_generation,
+                attempt_started_at,
+            ),
+        )
+        return _terminal(row)
+
+    def mark_kill_failed(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        identity: OrphanIdentity | None = None,
+    ) -> Terminal | None:
+        """CAS a row whose kill was not proven to ``orphaned`` for the captured attempt.
+
+        ``live`` already carries its identity. ``pending`` becomes ``orphaned``
+        only with ``identity``, written in the same statement because the schema
+        forbids a ``pending`` row with identity and an ``orphaned`` row without
+        it. A ``pending`` row without ``identity`` stays ``pending``, holding its
+        seat for a strict reaper or reconcile, and the call returns ``None``.
+        """
+        attempt = """
+            AND attempt_generation = %s
+            AND attempt_started_at = %s
+        """
+        attempt_params = (attempt_generation, attempt_started_at)
+        orphaned = self._cas(
+            terminal_id,
+            expected="live",
+            new_state="orphaned",
+            predicate_sql=attempt,
+            predicate_params=attempt_params,
+        )
+        if orphaned is not None or identity is None:
+            return orphaned
+        extra = """
+            , locator = %s
+            , locator_key = %s
+            , host_epoch = %s
+        """
+        extra_params: tuple[object, ...] = (
+            Jsonb(dict(identity.locator)),
+            identity.locator_key,
+            identity.host_epoch,
+        )
+        if identity.process is not None:
+            extra += ", process = (COALESCE(process, '{}'::jsonb) - %s::text[]) || %s"
+            extra_params += (list(HOST_PROCESS_KEYS), Jsonb(dict(identity.process)))
+        return self._cas(
+            terminal_id,
+            expected="pending",
+            new_state="orphaned",
+            extra=extra,
+            extra_params=extra_params,
+            predicate_sql=attempt,
+            predicate_params=attempt_params,
         )
 
     def mark_orphaned(self, terminal_id: str) -> Terminal | None:

@@ -10,6 +10,26 @@ from pathlib import Path
 
 CHROME_EXECUTABLE_PATH_HOOK = "chrome_executable_path"
 
+# Playwright's own browser cache (``npx playwright install chromium``). The
+# bundled MCP template must launch this Chromium when no system Chrome exists.
+_MS_PLAYWRIGHT_DARWIN_CHROMIUM_GLOB = (
+    "Library/Caches/ms-playwright/chromium-*/chrome-mac*/"
+    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing"
+)
+_MS_PLAYWRIGHT_DARWIN_HEADLESS_SHELL_GLOB = (
+    "Library/Caches/ms-playwright/chromium_headless_shell-*/"
+    "chrome-headless-shell-mac*/chrome-headless-shell"
+)
+_MS_PLAYWRIGHT_LINUX_CHROMIUM_GLOB = ".cache/ms-playwright/chromium-*/chrome-linux*/chrome"
+_MS_PLAYWRIGHT_LINUX_HEADLESS_SHELL_GLOB = ".cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux*/chrome-headless-shell"
+_MS_PLAYWRIGHT_WINDOWS_CHROMIUM_GLOB = (
+    "AppData/Local/ms-playwright/chromium-*/chrome-win*/chrome.exe"
+)
+_MS_PLAYWRIGHT_WINDOWS_HEADLESS_SHELL_GLOB = (
+    "AppData/Local/ms-playwright/chromium_headless_shell-*/"
+    "chrome-headless-shell-win*/chrome-headless-shell.exe"
+)
+
 
 def prefers_offline_npx(command: str | None) -> bool:
     """Return True when an npx launch should prefer the local npm cache."""
@@ -72,6 +92,8 @@ def resolve_chrome_devtools_executable_path() -> str | None:
             [
                 ".cache/puppeteer-browsers/chrome/*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
                 "Library/Caches/puppeteer/chrome/*/chrome-mac*/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+                _MS_PLAYWRIGHT_DARWIN_CHROMIUM_GLOB,
+                _MS_PLAYWRIGHT_DARWIN_HEADLESS_SHELL_GLOB,
             ]
         )
     elif system == "Windows":
@@ -89,7 +111,13 @@ def resolve_chrome_devtools_executable_path() -> str | None:
                     Path(root) / "Microsoft/Edge/Application/msedge.exe",
                 ]
             )
-        glob_patterns.append(".cache/puppeteer-browsers/chrome/*/chrome-win*/chrome.exe")
+        glob_patterns.extend(
+            [
+                ".cache/puppeteer-browsers/chrome/*/chrome-win*/chrome.exe",
+                _MS_PLAYWRIGHT_WINDOWS_CHROMIUM_GLOB,
+                _MS_PLAYWRIGHT_WINDOWS_HEADLESS_SHELL_GLOB,
+            ]
+        )
     else:
         path_candidates.extend(
             [
@@ -104,6 +132,8 @@ def resolve_chrome_devtools_executable_path() -> str | None:
             [
                 ".cache/puppeteer-browsers/chrome/*/chrome-linux*/chrome",
                 ".cache/puppeteer/chrome/*/chrome-linux*/chrome",
+                _MS_PLAYWRIGHT_LINUX_CHROMIUM_GLOB,
+                _MS_PLAYWRIGHT_LINUX_HEADLESS_SHELL_GLOB,
             ]
         )
 

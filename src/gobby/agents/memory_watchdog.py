@@ -1,6 +1,6 @@
 """Memory watchdog for agent process trees and system memory pressure.
 
-Enforcement is polling-based (psutil RSS of tmux pane process trees) because
+Enforcement is polling-based (psutil RSS of recorded native process trees) because
 RLIMIT_AS/RLIMIT_DATA are not enforced for Mach VM allocations on Darwin.
 Incident #18196: two agent-coalition python processes reached 175GB/169GB RSS
 and OOM-crashed the host with no guard anywhere in the stack.
@@ -8,6 +8,7 @@ and OOM-crashed the host with no guard anywhere in the stack.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
@@ -24,7 +25,6 @@ from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.hub.protocol import HubDatabase
@@ -81,7 +81,6 @@ class MemoryWatchdogHandler:
         *,
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
-        tmux: TmuxSessionManager,
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
@@ -93,7 +92,6 @@ class MemoryWatchdogHandler:
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
-        self._tmux = tmux
         self._terminal_services = terminal_services
         self._cleanup_handler = cleanup_handler
         self._config = tmux_config
@@ -121,9 +119,11 @@ class MemoryWatchdogHandler:
             return 0
         return total // 2
 
-    def _measure_tree(self, pane_pid: int) -> tuple[int, list[_ProcessSample]]:
+    def _measure_tree(self, root_pid: int, start_time: float) -> tuple[int, list[_ProcessSample]]:
         try:
-            root = self._process_factory(pane_pid)
+            root = self._process_factory(root_pid)
+            if abs(float(root.create_time()) - start_time) > 1.0:
+                return 0, []
             candidates = [root, *root.children(recursive=True)]
         except (psutil.NoSuchProcess, psutil.AccessDenied, OSError):
             return 0, []
@@ -240,16 +240,22 @@ class MemoryWatchdogHandler:
                 if self._terminal_services is None
                 else self._terminal_services.terminal_for(run)
             )
-            if terminal is None or not terminal.session_name:
+            if terminal is None or terminal.backend != "native":
                 continue
-            try:
-                pane_pid = await self._tmux.get_pane_pid(terminal.session_name)
-            except Exception:
-                pane_pid = None
-            if pane_pid is None:
+            process = terminal.process or {}
+            root_pid = process.get("pgid")
+            start_time = process.get("start_time")
+            if (
+                not isinstance(root_pid, int)
+                or root_pid <= 0
+                or not isinstance(start_time, (int, float))
+                or (run.pid is not None and run.pid != root_pid)
+            ):
                 self._breach_counts.pop(run.id, None)
                 continue
-            total_rss, processes = self._measure_tree(pane_pid)
+            total_rss, processes = await asyncio.to_thread(
+                self._measure_tree, root_pid, float(start_time)
+            )
             if not processes:
                 self._breach_counts.pop(run.id, None)
                 continue

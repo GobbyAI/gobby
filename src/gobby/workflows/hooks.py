@@ -287,6 +287,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
         Must run BEFORE rule evaluation so conditions have current data.
         """
+        event.metadata.pop("_observed_claim_task_id", None)
         from .observer_context_usage import (
             detect_context_compact_guidance,
             detect_mid_turn_context_compact_guidance,
@@ -614,6 +615,31 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 variables["target_task_has_edits"] = target_task_has_edits(
                     variables, target_task_id
                 )
+                variables["target_task_has_commits"] = False
+                if (
+                    event.event_type == HookEventType.BEFORE_TOOL
+                    and variables["target_task_has_edits"]
+                    and target_task_id
+                    and self._task_manager
+                    and _get_tool_identity(event_data)
+                    in {
+                        "gobby-tasks:close_task",
+                        "gobby-tasks:de_escalate_task",
+                        "gobby-tasks-ops:submit_for_review",
+                        "gobby-tasks-ops:approve_review",
+                        "gobby-tasks-ops:reject_review",
+                    }
+                ):
+                    try:
+                        task = await timed_to_thread(
+                            "prelude_target_task_commits",
+                            self._task_manager.get_task,
+                            target_task_id,
+                        )
+                    except ValueError:
+                        logger.debug("Commit gate target task no longer exists: %s", target_task_id)
+                    else:
+                        variables["target_task_has_commits"] = bool(task.commits)
 
                 eval_context: dict[str, Any] = {
                     "foreign_dirty_edit_conflict": "",
@@ -838,10 +864,14 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         if k not in staged_keys and (k not in pre_eval or pre_eval[k] != v)
                     }
                     if changed:
-                        await asyncio.to_thread(
+                        await timed_to_thread(
+                            "rule_persist_variables",
                             self._session_var_manager.merge_variables,
                             session_id,
                             changed,
+                            observed_claim_task_id=event.metadata.get("_observed_claim_task_id"),
+                            reconcile_claims=event.event_type == HookEventType.SESSION_START
+                            or _is_turn_end_event(event.event_type),
                         )
 
                 return response

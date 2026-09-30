@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from gobby.memory.dream.coordinator import MemoryDreamCoordinator
     from gobby.memory.manager import MemoryManager
     from gobby.memory.vectorstore import VectorStore
+    from gobby.runner_front_door import FrontDoorChild
     from gobby.runner_pid_file import PidOwnershipResolution
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.servers.http import HTTPServer
@@ -172,7 +173,6 @@ class GobbyRunner:
     daemon_lease: ActiveDaemonLease
 
     _memory_reconcile_task: asyncio.Task[None] | None
-    _recall_drift_task: asyncio.Task[None] | None
     _approval_timeout_task: asyncio.Task[None] | None
     _expired_isolation_task: asyncio.Task[None] | None
     _tmux_window_repair_task: asyncio.Task[None] | None
@@ -255,6 +255,8 @@ class GobbyRunner:
     codex_client: CodexAppServerClient | None
     http_server: HTTPServer
     websocket_server: WebSocketServer | None
+    # Set by run_gobby when front_door.enabled; stopped before the claim is released.
+    front_door_child: FrontDoorChild | None
 
     def __init__(self, config_path: Path | None = None, verbose: bool = False):
         self._prepare_base_state()
@@ -314,6 +316,7 @@ class GobbyRunner:
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
         self.http_bound_at_ms: int | None = None
+        self.front_door_child = None
 
     def _initialize_storage(self, config_path: Path | None, verbose: bool) -> None:
         from gobby.runner_init import init_storage_and_config
@@ -386,6 +389,7 @@ async def run_gobby(
         serve_standby_until_promotion,
     )
     from gobby.deployment import deployment_token
+    from gobby.runner_front_door import FrontDoorChild, backend_bind
     from gobby.runner_pid_file import (
         SERVICE_LAUNCH_ENV,
         ProbeState,
@@ -439,8 +443,19 @@ async def run_gobby(
         deployment_token=deployment_token(),
     )
     runner: GobbyRunner | None = None
+    front_door: FrontDoorChild | None = None
     try:
         await asyncio.to_thread(verify_schema, database_url)
+        # gdaemon takes the public ports before this runner binds the backend pair
+        # (standby included), so either launch path gets the same child.
+        front_door = FrontDoorChild.from_bootstrap(
+            bootstrap,
+            Path(config_path).expanduser().parent if config_path is not None else get_gobby_home(),
+        )
+        if front_door is not None:
+            await asyncio.to_thread(front_door.start)
+            front_door.arm_respawn()
+        backend = backend_bind(bootstrap)
         if not await asyncio.to_thread(lease.try_acquire):
             promotion_requested = asyncio.Event()
             control = StandbyLeaseControl(
@@ -452,8 +467,8 @@ async def run_gobby(
             )
             promoted = await serve_standby_until_promotion(
                 control,
-                host=bootstrap.bind_host,
-                port=bootstrap.daemon_port,
+                host=backend.host,
+                port=backend.http_port,
             )
             if not promoted:
                 return
@@ -464,6 +479,7 @@ async def run_gobby(
         runner = await GobbyRunner.create(config_path=config_path, verbose=verbose)
         active = runner
         active.daemon_lease = lease
+        active.front_door_child = front_door
         from gobby.runner_init.servers import _bind_runtime_grants
         from gobby.servers.lease_fence import drain_effect_fence
 
@@ -500,6 +516,8 @@ async def run_gobby(
             from gobby.servers.lease_fence import drain_effect_fence
 
             drain_effect_fence(getattr(runner.http_server, "effect_fence", None))
+        if front_door is not None:
+            front_door.stop()
         lease.release()
         ownership_resolution.release()
 

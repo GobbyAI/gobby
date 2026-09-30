@@ -235,10 +235,33 @@ def targets_not_found_for_request(
 
 async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     """Return normalized paths changed by each prospective linked commit."""
+    return await _diff_tree_paths(commit_shas, repo_path)
+
+
+async def collect_deleted_commit_paths_async(
+    commit_shas: Iterable[str], repo_path: str
+) -> set[str]:
+    """Return paths a linked commit deleted that ``HEAD`` in ``repo_path`` no longer tracks.
+
+    Deletion is Git's record alone: a file tracked at HEAD but missing from the
+    worktree is never reported.
+    """
+    deleted = await _diff_tree_paths(commit_shas, repo_path, "--diff-filter=D")
+    if not deleted:
+        return deleted
+    tree = await daemon_git.run(
+        ["ls-tree", "-r", "--name-only", "-z", "HEAD"], cwd=repo_path, timeout=10
+    )
+    if not isinstance(tree, GitOk):
+        raise RuntimeError("Cannot list the paths tracked at HEAD.")
+    return deleted - set(tree.stdout.split("\0"))
+
+
+async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str, *flags: str) -> set[str]:
     paths: set[str] = set()
     for sha in commit_shas:
         result = await daemon_git.run(
-            ["diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r", sha],
+            ["diff-tree", "--root", "--no-commit-id", *flags, "--name-only", "-z", "-r", sha],
             cwd=repo_path,
             timeout=10,
         )

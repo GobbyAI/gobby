@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.hooks.background_tasks import create_background_task
+from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
 from gobby.runner_hook_replay import _run_agent_hook_replay_barrier
 from gobby.runner_lifecycle_agents import (
     _reap_orphaned_srt_runners_on_startup,
@@ -24,6 +25,8 @@ from gobby.runner_lifecycle_reconcile import (
 )
 from gobby.runner_lifecycle_startup import StartupTracker, timed_startup_phase
 from gobby.runner_startup_code_index import _repair_code_index_bm25, _start_code_index_tasks
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -252,20 +255,6 @@ async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | No
     )
 
 
-async def _check_tmux_health(tracker: StartupTracker | None) -> None:
-    try:
-        from gobby.agents.tmux import get_tmux_session_manager
-
-        tmux_mgr = get_tmux_session_manager()
-        await tmux_mgr.health_check()
-        if tracker:
-            tracker.complete("tmux healthy")
-    except Exception as e:
-        logger.warning("tmux health check failed on startup: %s", e)
-        if tracker:
-            tracker.error("tmux", str(e))
-
-
 async def _start_terminal_host(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     from gobby.runner_init.services import mark_service_degraded
 
@@ -342,7 +331,6 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         return
 
     try:
-        from gobby.app_context import get_app_context
         from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
             resume_interrupted_pipelines,
         )
@@ -350,7 +338,6 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
         discovery_manager = LocalPipelineExecutionManager(runner.database, project_id=None)
-        services = get_app_context()
         after_project_id: str | None = None
         failed_projects = 0
         while True:
@@ -390,7 +377,6 @@ async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None
                             *args,
                             **kwargs,
                         ),
-                        ask_service_resolver=(services.get_ask_service if services else None),
                     )
                     if resumed_ids:
                         logger.info(
@@ -518,6 +504,28 @@ def _record_websocket_startup_result(
         tracker.error("WebSocket server", str(error))
 
 
+async def _resume_dead_handoff_dispatches(runner: GobbyRunner) -> None:
+    """Redeliver staged handoffs whose dispatch died with the previous daemon."""
+    hook_manager = getattr(getattr(runner, "http_server", None), "_hook_manager", None)
+    handlers = getattr(hook_manager, "event_handlers", None)
+    if handlers is None or handlers._session_manager is None:
+        return
+    if handlers._agent_run_manager is None:
+        return
+    try:
+        await asyncio.to_thread(
+            resume_dead_handoff_dispatches,
+            require_machine_id(),
+            session_manager=cast(SessionManager, handlers._session_manager),
+            agent_run_manager=handlers._agent_run_manager,
+            event_loop=asyncio.get_running_loop(),
+            terminal_manager=getattr(handlers, "terminal_manager", None),
+            terminal_runtime_registry=handlers._terminal_runtime_registry,
+        )
+    except Exception:
+        logger.warning("Failed resuming dead handoff dispatches", exc_info=True)
+
+
 def _schedule_workflow_skill_prewarm(runner: GobbyRunner) -> None:
     server = getattr(runner, "http_server", None)
     services = getattr(server, "services", None)
@@ -641,6 +649,7 @@ async def init_subsystems(
             "Reconciled %d restart-stale active session(s)",
             len(paused_sessions),
         )
+    await _resume_dead_handoff_dispatches(runner)
     wake_replay_coordinator = getattr(runner, "wake_replay_coordinator", None)
     if wake_replay_coordinator is not None:
         await timed_startup_phase("wake_replay_open", wake_replay_coordinator.open())
@@ -682,7 +691,6 @@ async def init_subsystems(
         "vector_store", _initialize_vector_store(runner, rebuild_vector_store, tracker)
     )
     await timed_startup_phase("core_services", _start_core_services(runner, tracker))
-    await timed_startup_phase("tmux_health", _check_tmux_health(tracker))
     await timed_startup_phase(
         "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
     )

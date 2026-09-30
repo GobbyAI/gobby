@@ -23,7 +23,9 @@ from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.stdio_results import (
     DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS,
     DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+    DAEMON_UNAVAILABLE_ERROR_CODE,
     REMOVED_WORKFLOW_WAIT_TOOL,
+    REQUEST_TIMEOUT_ERROR_CODE,
     _daemon_unavailable_result,
     _removed_wait_for_completion_result,
     _request_timeout_result,
@@ -64,6 +66,16 @@ class DaemonProxyDependencies:
 
 
 _MAX_INTENT_QUERY_CHARS = 1_024
+# Waits between readiness reports while the CLI's session registration lags or
+# the daemon restarts; the sleeps total about 90s.
+BRIDGE_READY_RETRY_DELAYS_SECONDS = (0.5, 1.0, 2.0, 4.0, 8.0, 15.0, 30.0, 30.0)
+_BRIDGE_READY_RETRYABLE_ERROR_CODES = frozenset(
+    {
+        ToolProxyErrorCode.SESSION_REQUIRED.value,
+        DAEMON_UNAVAILABLE_ERROR_CODE,
+        REQUEST_TIMEOUT_ERROR_CODE,
+    }
+)
 
 
 def read_project_id() -> str | None:
@@ -287,6 +299,34 @@ class DaemonProxy:
         except Exception as e:
             error_msg = str(e) or f"{type(e).__name__}: (no message)"
             return {"success": False, "error": error_msg}
+
+    async def report_bridge_ready(self) -> None:
+        """Tell the daemon this CLI session has listed the Gobby tools.
+
+        A CLI can list tools before its hook registers the session, and the
+        daemon can be restarting, so SESSION_REQUIRED, DAEMON_UNAVAILABLE and
+        REQUEST_TIMEOUT answers are retried with bounded backoff.
+        """
+        logger = self._deps_factory().logger
+        result: dict[str, Any] = {}
+        for attempt, delay in enumerate((0.0, *BRIDGE_READY_RETRY_DELAYS_SECONDS)):
+            await asyncio.sleep(delay)
+            result = await self._request("POST", "/api/mcp/bridge/ready", json={})
+            if result.get("error_code") in _BRIDGE_READY_RETRYABLE_ERROR_CODES:
+                continue
+            if not result.get("success"):
+                logger.warning("Bridge readiness report failed: %s", result.get("error"))
+            elif attempt:
+                logger.info("Bridge readiness reported after %d retries", attempt)
+            return
+        # A client without Gobby hooks never registers a session; that is expected.
+        no_session = result.get("error_code") == ToolProxyErrorCode.SESSION_REQUIRED.value
+        logger.log(
+            logging.DEBUG if no_session else logging.WARNING,
+            "Bridge readiness report gave up after %d retries: %s",
+            len(BRIDGE_READY_RETRY_DELAYS_SECONDS),
+            result.get("error"),
+        )
 
     async def get_status(self, session_id: str | None = None) -> dict[str, Any]:
         """Get daemon status."""

@@ -70,7 +70,7 @@ inbox and HTTP transport:
 |--------|----------------|
 | `lib.rs` | Crate-level documentation anchor so release-time doctest validation is available; runtime code stays in the binary target. |
 | `main.rs` | Arg parsing (clap), mode dispatch (`--gobby-owned`/`--diagnose`/`--version`), orchestrates the dispatch flow. |
-| `cli_config.rs` | Per-CLI registry (claude/codex/qwen/droid/grok/agy). Lifecycle start/end/precompact hooks are critical except for AGY, which declares none. Stop is noncritical; host-visible failure output is provider-specific in `action.rs`. |
+| `cli_config.rs` | Per-CLI registry (claude/codex/qwen/droid/grok/agy). Lifecycle start/end/precompact hooks are critical except for Antigravity, which declares none. Stop is noncritical; host-visible failure output is provider-specific in `action.rs`. |
 | `envelope.rs` | `Envelope` struct + `SCHEMA_VERSION = 1`. Serializes to the inbox JSON shape. |
 | `planned_shutdown.rs` | Stop-only planned shutdown markers, daemon health preflight, and post-enqueue daemon-death suppression. |
 | `transport.rs` | Inbox path resolution, atomic write, enqueue, POST + cleanup, quarantine for malformed stdin. |

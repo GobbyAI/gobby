@@ -23,7 +23,7 @@ from gobby.agents.constants import (
     MCP_TIMEOUT,
     MCP_TIMEOUT_VALUE,
 )
-from gobby.agents.external_write_grants import GRANT_KEY, revalidate_write_grant
+from gobby.agents.external_write_grants import revalidate_write_grant
 from gobby.agents.local_model import (
     LocalModelError,
     ensure_local_model,
@@ -56,12 +56,6 @@ from gobby.ai.codex_endpoint import (
     codex_endpoint_env,
 )
 from gobby.ai.endpoints import resolve_generation_endpoint_selector
-from gobby.ask.permissions import (
-    ASK_PIPELINE_NAME,
-    AskPermissionDenied,
-    AskPermissionStore,
-    UnsupportedAskRuntime,
-)
 from gobby.providers.version_gate import ensure_agy_support
 from gobby.sessions.context_usage import local_context_variable_updates
 from gobby.storage import daemon_resume_keys
@@ -133,32 +127,7 @@ async def resume_agent_run(
         session_manager: Session lookup used to recover provider-native IDs.
         daemon_config: Optional daemon config used for tmux spawn settings.
     """
-    ask_permissions = AskPermissionStore(runner.run_storage.db)
-    try:
-        ask_principal = await asyncio.to_thread(ask_permissions.find, original_run.id)
-    except (AskPermissionDenied, psycopg.Error) as exc:
-        return ResumeAgentResult(False, error=f"ask_resume_authority_invalid:{exc}")
-    is_managed_ask = original_run.workflow_name == ASK_PIPELINE_NAME
-    if is_managed_ask and ask_principal is None:
-        return ResumeAgentResult(
-            False,
-            error="ask_resume_authority_invalid:Ask managed agent authority is missing",
-        )
-    if ask_principal is not None and not is_managed_ask:
-        return ResumeAgentResult(
-            False,
-            error=(
-                "ask_resume_authority_invalid:Ask authority is bound to an invalid managed agent"
-            ),
-        )
-    managed_runtime_profile = ask_principal.runtime_profile if ask_principal is not None else None
-    if managed_runtime_profile is not None and resume_metadata.get(GRANT_KEY) is not None:
-        return ResumeAgentResult(False, error="ask_resume_external_write_grant_forbidden")
-    provider = (
-        managed_runtime_profile.provider
-        if managed_runtime_profile is not None
-        else _metadata_str(resume_metadata, "provider") or original_run.provider
-    )
+    provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     try:
         await asyncio.to_thread(revalidate_write_grant, resume_metadata)
     except ValueError as exc:
@@ -173,23 +142,6 @@ async def resume_agent_run(
         return ResumeAgentResult(False, error="droid CLI not found in PATH")
 
     model_selector = _metadata_str(resume_metadata, "model")
-    if managed_runtime_profile is not None:
-        try:
-            managed_runtime_profile.validate_selection(
-                provider=provider,
-                model=model_selector,
-                reasoning_effort=_metadata_str(
-                    resume_metadata,
-                    "requested_reasoning_effort",
-                ),
-                api_base=_resume_api_base(
-                    provider,
-                    merge_resume_metadata_env(resume_metadata.get("env")),
-                ),
-            )
-        except (ValueError, UnsupportedAskRuntime) as exc:
-            return ResumeAgentResult(False, error=f"ask_resume_runtime_drift:{exc}")
-        model_selector = managed_runtime_profile.model
     resume_model = model_selector
     endpoint_config_overrides: tuple[str, ...] = ()
     endpoint_env: dict[str, str] = {}
@@ -269,10 +221,6 @@ async def resume_agent_run(
     cwd = _metadata_str(resume_metadata, "cwd") or _metadata_str(resume_metadata, "workspace_path")
     project_id = _metadata_str(resume_metadata, "project_id")
     parent_session_id = _metadata_str(resume_metadata, "parent_session_id")
-    if ask_principal is not None:
-        cwd = ask_principal.runtime_profile.scratch_root
-        project_id = ask_principal.project_id
-        parent_session_id = original_run.parent_session_id
     if not cwd or not project_id or not parent_session_id:
         return ResumeAgentResult(False, error="resume_metadata_incomplete")
     cwd_path = Path(cwd).expanduser()
@@ -296,17 +244,6 @@ async def resume_agent_run(
         local_context_observation,
     )
     metadata.update(local_context_updates)
-    if managed_runtime_profile is not None:
-        metadata.update(
-            {
-                "provider": managed_runtime_profile.provider,
-                "cwd": managed_runtime_profile.scratch_root,
-                "project_id": project_id,
-                "parent_session_id": parent_session_id,
-                "auto_approve": managed_runtime_profile.auto_approve,
-                "sandbox_config": managed_runtime_profile.sandbox_config.model_dump(mode="json"),
-            }
-        )
     for stale_key in _INHERITED_PROTOCOL_KEYS:
         metadata.pop(stale_key, None)
     metadata[daemon_resume_keys.RESUMED_FROM_RUN_ID_KEY] = original_run.id
@@ -331,11 +268,7 @@ async def resume_agent_run(
             parent_session_id=parent_session_id,
             project_id=project_id,
             source=provider,
-            workflow_name=(
-                ASK_PIPELINE_NAME
-                if ask_principal is not None
-                else _metadata_str(resume_metadata, "workflow")
-            ),
+            workflow_name=_metadata_str(resume_metadata, "workflow"),
             agent_name=_metadata_str(resume_metadata, "agent_slug") or original_run.agent_name,
             initial_variables=initial_variables,
             git_branch=_metadata_str(resume_metadata, "branch_name"),
@@ -388,11 +321,7 @@ async def resume_agent_run(
         env["GOBBY_MACHINE_ID"] = ""
     if not env["GOBBY_MACHINE_ID"]:
         env.pop("GOBBY_MACHINE_ID")
-    sandbox_config = (
-        managed_runtime_profile.sandbox_config
-        if managed_runtime_profile is not None
-        else coerce_sandbox_config(resume_metadata.get("sandbox_config"))
-    )
+    sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
     launch = SandboxLaunch(backend="provider-native", enforced=False)
     if sandbox_config is not None:
         resolver = None
@@ -433,31 +362,6 @@ async def resume_agent_run(
                 child_session_id=spawn_context.session_id,
             )
             return ResumeAgentResult(False, run_id=run_id, error=error)
-    if managed_runtime_profile is not None:
-        try:
-            await asyncio.to_thread(
-                managed_runtime_profile.validate_launch,
-                backend=launch.backend,
-                enforced=launch.enforced,
-                provider_executable=launch.provider_executable,
-                runtime_version=launch.runtime_version,
-                policy_schema_version=launch.policy_schema_version,
-                policy_hash=launch.policy_hash,
-                policy_path=launch.policy_path,
-                environment={**env, **launch.provider_env},
-            )
-        except (OSError, ValueError, UnsupportedAskRuntime) as exc:
-            await _rollback_prepared_resume(
-                runner,
-                original_run_id=original_run.id,
-                successor_run_id=run_id,
-                child_session_id=spawn_context.session_id,
-            )
-            return ResumeAgentResult(
-                False,
-                run_id=run_id,
-                error=f"ask_resume_runtime_validation_failed:{type(exc).__name__}:{exc}",
-            )
     env.update(launch.provider_env)
     update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
     if callable(update_sandbox_enabled):
@@ -499,25 +403,31 @@ async def resume_agent_run(
         config_overrides.extend(
             _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
         )
+    headless_reviewer = (
+        provider == "codex"
+        and original_run.agent_name == "task-close-reviewer"
+        and launch.enforced
+        and launch.backend == "srt"
+    )
     command, _cmd_env = build_cli_command(
         cli=provider,
-        # Claude appends its prompt after the MCP flags below; Codex receives
-        # its prompt as a post-launch composer paste because a CLI-argument
-        # prompt cancels its in-flight MCP client startup
-        # (schedule_codex_prompt_delivery).
-        prompt=None if provider in {"claude", "codex"} else prompt,
-        resume_session_id=native_session_id,
-        auto_approve=(
-            managed_runtime_profile.auto_approve
-            if managed_runtime_profile is not None
-            else bool(resume_metadata.get("auto_approve", True))
+        # Claude appends its prompt after MCP flags below. Codex TUI receives
+        # a post-launch composer paste; headless exec takes a positional prompt.
+        prompt=(
+            None
+            if provider == "claude" or (provider == "codex" and not headless_reviewer)
+            else prompt
         ),
+        resume_session_id=native_session_id,
+        auto_approve=bool(resume_metadata.get("auto_approve", True)),
         working_directory=cwd if provider in {"agy", "codex", "droid", "grok"} else None,
         sandbox_args=None if provider == "claude" else sandbox_args,
         model=resume_model,
         codex_oss_provider=codex_oss_provider,
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=config_overrides,
+        mode="headless" if headless_reviewer else "agent",
+        external_sandbox_enforced=headless_reviewer,
     )
     launch_updates: dict[str, Any] = {}
     if provider == "claude":
@@ -535,11 +445,9 @@ async def resume_agent_run(
         if claude_mcp_path:
             env[MCP_CONNECT_TIMEOUT_MS] = MCP_CONNECT_TIMEOUT_MS_VALUE
             command.extend(["--mcp-config", claude_mcp_path])
-            if strict_mcp and managed_runtime_profile is None:
+            if strict_mcp:
                 command.append("--strict-mcp-config")
         command.extend(sandbox_args)
-        if managed_runtime_profile is not None:
-            command.extend(managed_runtime_profile.provider_args)
         command.append(prompt)
     # Merge only the launch-snapshot keys refreshed above. The full local
     # metadata dict carries protocol keys from a stale read (phase, native
@@ -574,29 +482,7 @@ async def resume_agent_run(
         )
         return ResumeAgentResult(False, run_id=run_id, error="resume_launch_phase_cas_failed")
 
-    if ask_principal is not None:
-        try:
-            await asyncio.to_thread(
-                ask_permissions.replace_for_resume,
-                original_agent_run_id=original_run.id,
-                successor_agent_run_id=run_id,
-            )
-        except (AskPermissionDenied, psycopg.Error) as exc:
-            await _park_unlaunched_successor(
-                runner,
-                original_run=original_run,
-                successor_run_id=run_id,
-                child_session_id=spawn_context.session_id,
-                completion_registry=completion_registry,
-            )
-            return ResumeAgentResult(
-                False,
-                run_id=run_id,
-                error=f"ask_resume_authority_transfer_failed:{exc}",
-            )
-
-    if managed_runtime_profile is None:
-        pre_approve_directory(provider, cwd)
+    pre_approve_directory(provider, cwd)
     from gobby.agents.spawn_executor import _runtime_spawn
     from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
     from gobby.agents.spawn_models import SpawnRequest
@@ -609,7 +495,7 @@ async def resume_agent_run(
         child_session_id=spawn_context.session_id,
         agent_run_id=run_id,
         title=f"gobby-resume-{run_id}",
-        codex_prompt=prompt if provider == "codex" else None,
+        codex_prompt=prompt if provider == "codex" and not headless_reviewer else None,
     )
     spawn_request = SpawnRequest(
         prompt=prompt,
@@ -619,18 +505,11 @@ async def resume_agent_run(
         run_id=run_id,
         parent_session_id=parent_session_id,
         project_id=project_id,
-        managed_runtime_profile=managed_runtime_profile,
         agent_run_id=run_id,
         session_manager=runner.child_session_manager,
         run_manager=runner.run_storage,
-        auto_approve=(
-            managed_runtime_profile.auto_approve
-            if managed_runtime_profile is not None
-            else bool(resume_metadata.get("auto_approve", True))
-        ),
-        provider_args=(
-            managed_runtime_profile.provider_args if managed_runtime_profile is not None else ()
-        ),
+        auto_approve=bool(resume_metadata.get("auto_approve", True)),
+        provider_args=(),
         sandbox_config=sandbox_config,
         daemon_config=daemon_config,
         prepared_spawn=spawn_context,
@@ -666,7 +545,7 @@ async def resume_agent_run(
         if manager is not None:
             terminal = await asyncio.to_thread(manager.get, terminal_result.terminal_id)
 
-    if provider == "codex" and terminal is not None:
+    if provider == "codex" and not headless_reviewer and terminal is not None:
         coordinator = getattr(runner, "write_coordinator", None)
         if coordinator is not None:
             schedule_codex_prompt_delivery(

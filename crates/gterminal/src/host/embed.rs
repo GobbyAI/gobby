@@ -140,6 +140,8 @@ async fn attach_tmux(
             reserve_generation: 0,
             observer_bind: ObserverBind::None,
             commit_deadline: None,
+            killing: false,
+            kill_unproven: false,
             #[cfg(feature = "vt-engine")]
             child: None,
             #[cfg(feature = "vt-engine")]
@@ -196,6 +198,7 @@ async fn attach_tmux(
             delta_bytes: 0,
             last_semantic_frame: None,
             encoder: crate::protocol::render_ansi::BlitEncoder::new(),
+            declared_theme: None,
         },
     );
     let mut replay = None;

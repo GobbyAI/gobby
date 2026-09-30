@@ -9,7 +9,7 @@ rules:
     when: >
       variables.get('require_commit_before_status') and
       tool_input.get('reason', '') not in ['already_implemented', 'obsolete', 'duplicate', 'wont_fix', 'out_of_repo'] and
-      not variables.get('task_has_commits') and not tool_input.get('commit_sha') and
+      not variables.get('target_task_has_commits') and not tool_input.get('commit_sha') and
       variables.get('target_task_has_edits')
     effects:
       - type: block

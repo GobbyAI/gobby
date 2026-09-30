@@ -3,30 +3,20 @@
 import json
 import logging
 from collections.abc import Mapping
-from datetime import timedelta
 from typing import Any
 
-from gobby.sessions.compact_markers import (
-    HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
-    HANDOFF_COMPACT_CONTINUE_VARIABLE,
-)
-from gobby.sessions.contested_expiry import (
-    CONTESTED_EXPIRY_CAUSES,
-    CONTESTED_EXPIRY_STAMP_PATTERN,
-    CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-    contested_expiry_stamp,
-)
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sessions._constants import (
-    LIVE_SESSION_STATUS_ORDER,
-    SESSION_REVIVAL_HORIZON_HOURS,
-)
+from gobby.storage.sessions._constants import LIVE_SESSION_STATUS_ORDER
 from gobby.storage.sql_dialect import json_array_contains_condition
 from gobby.storage.task_close_reviews import ACTIVE_TASK_CLOSE_REVIEW_STATUSES
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
 from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
 from gobby.storage.tasks._models import Task
+from gobby.storage.tasks._owner_shield import (
+    OWNER_MAY_RESUME_GUARD_SQL,
+    owner_may_resume_guard_params,
+)
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.utils.datetime import utc_now
 
@@ -159,30 +149,9 @@ def release_task_claim(
         "tasks.labels",
         "live-session",
     )
-    compact_cutoff = now - timedelta(seconds=HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS)
-    revival_cutoff = now - timedelta(hours=SESSION_REVIVAL_HORIZON_HOURS)
     params: list[Any] = [now, task_id, expected_owner_session_id]
     params.extend(live_session_params)
-    params.append(list(LIVE_SESSION_STATUS_ORDER))
-    params.extend(
-        (
-            HANDOFF_COMPACT_CONTINUE_VARIABLE,
-            HANDOFF_COMPACT_CONTINUE_VARIABLE,
-            HANDOFF_COMPACT_CONTINUE_VARIABLE,
-            compact_cutoff.isoformat(),
-            HANDOFF_COMPACT_CONTINUE_VARIABLE,
-            now.isoformat(),
-            CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            sorted(CONTESTED_EXPIRY_CAUSES),
-            CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            CONTESTED_EXPIRY_STAMP_PATTERN,
-            CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            contested_expiry_stamp(revival_cutoff),
-            CONTESTED_TERMINAL_EXPIRY_VARIABLE,
-            contested_expiry_stamp(now),
-        )
-    )
+    params.extend(owner_may_resume_guard_params(now))
 
     with db.transaction() as conn:
         cursor = conn.execute(
@@ -196,60 +165,7 @@ def release_task_claim(
                AND escalated_at IS NULL
                AND COALESCE(is_escalated, FALSE) IS FALSE
                AND NOT COALESCE(({live_session_clause}), FALSE)
-               AND NOT EXISTS (
-                   SELECT 1 FROM sessions s
-                    WHERE s.id = tasks.claimed_by_session_id
-              AND s.status = ANY(%s)
-               )
-               AND NOT EXISTS (
-                   -- A fresh compact-continue marker means the owner is
-                   -- mid-compaction and will resume; its lifecycle status can be
-                   -- transiently stale, so marker age (not claim age) decides
-                   -- eligibility here.
-                   SELECT 1
-                     FROM session_variables sv
-                    WHERE sv.session_id = tasks.claimed_by_session_id
-                      AND jsonb_typeof(
-                          sv.variables -> %s
-                      ) = 'object'
-                      AND jsonb_typeof(
-                          sv.variables -> %s -> 'created_at'
-                      ) = 'string'
-                      AND sv.variables -> %s ->> 'created_at' >= %s
-                      AND sv.variables -> %s ->> 'created_at' <= %s
-               )
-               AND NOT EXISTS (
-                   -- SessionStart expires every terminal session sharing a
-                   -- reused terminal context before anything validates who owns
-                   -- the terminal; revive_expired_terminal_session settles that
-                   -- afterwards and routinely reverses it. That writer records
-                   -- the cause on the way out, so the owner's status is
-                   -- transiently stale in the same way a mid-compaction owner's
-                   -- is, and the claim outlives it. An expiry that left no
-                   -- marker -- inactivity, a killed tmux server, an explicit
-                   -- close -- is final and keeps the ordinary schedule, which
-                   -- is what stops this from shadowing the marker grace above
-                   -- for every other expired terminal session. session_variables
-                   -- is a shared store, so the cause has to name one of the two
-                   -- speculative writers: a fresh created_at left under this key
-                   -- by anything else is not a contest.
-                   SELECT 1
-                     FROM sessions s
-                     JOIN session_variables sv ON sv.session_id = s.id
-                    WHERE s.id = tasks.claimed_by_session_id
-                      AND s.session_type = 'terminal'
-                      AND s.status = 'expired'
-                      AND jsonb_typeof(sv.variables -> %s) = 'object'
-                      AND sv.variables -> %s ->> 'cause' = ANY(%s)
-                      -- Casting an arbitrary jsonb string to timestamptz raises
-                      -- out of the sweep, so the stamp is compared as text and
-                      -- the pattern is what makes that comparison chronological:
-                      -- fixed-width UTC only, the same set the Python shield
-                      -- parses. Anything else reads as no marker on both sides.
-                      AND sv.variables -> %s ->> 'created_at' ~ %s
-                      AND sv.variables -> %s ->> 'created_at' >= %s
-                      AND sv.variables -> %s ->> 'created_at' <= %s
-               )
+               AND {OWNER_MAY_RESUME_GUARD_SQL}
             """,
             tuple(params),
         )

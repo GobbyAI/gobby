@@ -12,6 +12,7 @@ Extracted from app.py using Strangler Fig pattern for code decomposition.
 
 import logging
 from pathlib import Path
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -27,6 +28,7 @@ __all__ = [
     "MemoryDreamConfig",
     "MemoryConfig",
     "MemoryBackupConfig",
+    "REMOVED_MEMORY_CONFIG_KEYS",
     "FalkorConfig",
     "QdrantConfig",
     "is_falkordb_enabled",
@@ -434,6 +436,24 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         return v
 
 
+# Retired with the recall-signal stack (#22641). MemoryConfig rejects them and the
+# config registry sweeps their persisted config_store rows at startup.
+REMOVED_MEMORY_CONFIG_KEYS = frozenset(
+    {
+        "recall_signal_logging",
+        "recall_signal_log_path",
+        "recall_signal_log_max_mb",
+        "recall_signal_hub",
+        "shadow_relevance_judging",
+        "use_fitted_recall_constants",
+        "fitted_recall_decision_path",
+        "recall_drift_monitor_enabled",
+        "recall_drift_interval_hours",
+        "recall_drift_accuracy_drop",
+    }
+)
+
+
 class MemoryConfig(BaseModel):
     """Memory system configuration.
 
@@ -472,6 +492,14 @@ class MemoryConfig(BaseModel):
         default=60,
         description="Minimum seconds between access stat updates for the same memory",
     )
+    index_reshow_after_injections: int = Field(
+        default=5,
+        ge=1,
+        description=(
+            "Memory-index injections in a session before an already-shown, unread "
+            "memory may appear in the index again"
+        ),
+    )
     kg: MemoryKnowledgeGraphConfig = Field(
         default_factory=MemoryKnowledgeGraphConfig,
         description="LLM feature routing configuration for knowledge graph extraction",
@@ -488,7 +516,8 @@ class MemoryConfig(BaseModel):
         default=30.0,
         description=(
             "Half-life in days for temporal decay scoring in memory search. "
-            "Memories lose half their score boost after this many days since last update. "
+            "Memories lose half their score boost after this many days since the later "
+            "of last update and last access. "
             "Set to 0 to disable temporal decay."
         ),
     )
@@ -557,108 +586,19 @@ class MemoryConfig(BaseModel):
             "None delegates to HDBSCAN's min_cluster_size behavior."
         ),
     )
-    recall_signal_logging: bool = Field(
-        default=False,
-        description=(
-            "Append observational recall/search ranking signal events to a dedicated "
-            "JSONL file (default ~/.gobby/logs/recall_signal.jsonl). Purely "
-            "observational; search, recall, and injection behavior are unchanged."
-        ),
-    )
-    recall_signal_log_path: str | None = Field(
-        default=None,
-        description=(
-            "Override path for the recall-signal JSONL log. None resolves to "
-            "~/.gobby/logs/recall_signal.jsonl. '~' is expanded."
-        ),
-    )
-    recall_signal_log_max_mb: int = Field(
-        default=50,
-        ge=1,
-        description=(
-            "Rotate the recall-signal JSONL when the live file reaches this many "
-            "megabytes: '.1' shifts to '.2' and the live file becomes '.1', "
-            "bounding retained size to roughly three times the cap (#18196)."
-        ),
-    )
-    recall_signal_hub: bool = Field(
-        default=False,
-        description=(
-            "Mirror recall-signal events into the Postgres hub tables "
-            "(recall_signal_requests/recall_signal_hits) and record durable "
-            "injection outcomes (recall_injection_outcomes) at delivery time. "
-            "Purely observational; independent of recall_signal_logging (#17196)."
-        ),
-    )
-    shadow_relevance_judging: bool = Field(
-        default=False,
-        description=(
-            "Judge the complete returned recall candidate set during the digest pass "
-            "and persist label_source='digest_shadow' evidence. Requires "
-            "recall_signal_hub so every judged request and candidate is durable."
-        ),
-    )
 
-    use_fitted_recall_constants: bool = Field(
-        default=False,
-        description=(
-            "Apply the pooled fitted recall ranking constants from a shipped "
-            "#17198 gate decision record as the daemon-global defaults. The "
-            "static constants remain the one-flag rollback floor: a missing, "
-            "malformed, or non-shipping (reject) record keeps static behavior "
-            "even when enabled (#17200)."
-        ),
-    )
-    fitted_recall_decision_path: str | None = Field(
-        default=None,
-        description=(
-            "Override path for the recall refit gate decision record JSON. None "
-            "resolves to ~/.gobby/recall_refit_decision.json. '~' is expanded."
-        ),
-    )
-    recall_drift_monitor_enabled: bool = Field(
-        default=True,
-        description=(
-            "Run the periodic recall-quality drift monitor (#17201). It replays "
-            "recent labeled recall signals under the effective constants and "
-            "alarms when live pairwise accuracy regresses beyond "
-            "recall_drift_accuracy_drop below the recorded holdout baseline."
-        ),
-    )
-    recall_drift_interval_hours: float = Field(
-        default=24.0,
-        description="Hours between recall-drift monitor checks in the daemon.",
-    )
-    recall_drift_accuracy_drop: float = Field(
-        default=0.05,
-        description=(
-            "Alarm threshold: live pairwise accuracy this far below the recorded "
-            "holdout baseline accuracy raises the drift alarm."
-        ),
-    )
-
-    @model_validator(mode="after")
-    def validate_digest_shadow_signal_hub(self) -> "MemoryConfig":
-        """Require the durable signal hub whenever shadow judging is enabled."""
-        if self.shadow_relevance_judging and not self.recall_signal_hub:
-            raise ValueError("shadow_relevance_judging requires recall_signal_hub=true")
-        return self
-
-    @field_validator("recall_drift_interval_hours")
+    @model_validator(mode="before")
     @classmethod
-    def validate_drift_positive(cls, v: float) -> float:
-        """Validate the drift-monitor cadence is positive."""
-        if v <= 0:
-            raise ValueError("Value must be > 0")
-        return v
-
-    @field_validator("recall_drift_accuracy_drop")
-    @classmethod
-    def validate_drift_accuracy_drop(cls, v: float) -> float:
-        """Validate the drift alarm threshold is a meaningful accuracy delta."""
-        if not (0.0 < v < 1.0):
-            raise ValueError("recall_drift_accuracy_drop must be in (0.0, 1.0)")
-        return v
+    def reject_removed_keys(cls, data: Any) -> Any:
+        """Reject retired recall-signal stack keys instead of silently ignoring them."""
+        if isinstance(data, dict):
+            removed = sorted(REMOVED_MEMORY_CONFIG_KEYS.intersection(data))
+            if removed:
+                raise ValueError(
+                    f"memory.{removed[0]} config has been removed with the recall-signal "
+                    f"stack. Remove: {', '.join(f'memory.{key}' for key in removed)}"
+                )
+        return data
 
     @field_validator("crossref_threshold", "code_link_min_score")
     @classmethod

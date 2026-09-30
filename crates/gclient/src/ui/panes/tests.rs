@@ -297,12 +297,15 @@ fn header_titles_share_the_sidebar_period() {
         let terminal = draw(&ws, chrome, 100, 20);
         cells(&terminal, info.rect.y, info.rect.x, info.rect.right())
     };
-    // Past its own period the header is still parked at its tail, waiting
-    // for the sidebar row; both jump home together.
-    chrome.ticker = (2 * TICKER_PAUSE + own as u64) * TICKER_STEP;
+    // The header rests at its tail, then back at its start while the
+    // sidebar row finishes; both set out again together.
+    chrome.ticker = (2 * TICKER_PAUSE + own as u64 - 1) * TICKER_STEP;
     assert!(header(&chrome).contains(&slice(title.len() - budget..title.len())));
-    chrome.ticker = (2 * TICKER_PAUSE + side as u64) * TICKER_STEP;
+    chrome.ticker = (2 * TICKER_PAUSE + own as u64) * TICKER_STEP;
     assert!(header(&chrome).contains(&slice(0..budget)));
+    let period = (2 * TICKER_PAUSE + side as u64) * TICKER_STEP;
+    chrome.ticker = period + (TICKER_PAUSE + 1) * TICKER_STEP;
+    assert!(header(&chrome).contains(&slice(1..budget + 1)));
 }
 
 #[test]
@@ -405,4 +408,119 @@ fn empty_state_truncates_all_rows_in_a_narrow_area() {
     assert_eq!(cells(&terminal, 4, 0, 8), "ctrl+b …");
     assert_eq!(cells(&terminal, 5, 0, 8), "File › …");
     assert_eq!(cells(&terminal, 6, 0, 8), "ctrl+b …");
+}
+
+/// #23096: the SRT pane's lock draws in the destructive (red-family, hue
+/// 350) token in both themes while its address keeps the corner's tone; an
+/// unrestricted pane's bottom edge carries no padlock of either shape.
+#[test]
+fn srt_lock_draws_red_and_unrestricted_addresses_draw_no_mark() {
+    use crate::daemon::{ProjectRow, RunRow, RunSandbox, SessionRow, SidebarRows};
+    use crate::theme::{Theme, ThemeKind};
+
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let mut ws = Workspace::scripted();
+        ws.daemon_mut().set_sidebar_rows(SidebarRows {
+            projects: vec![ProjectRow {
+                id: "proj-alpha".to_owned(),
+                name: "gobby".to_owned(),
+                display_name: "gobby".to_owned(),
+                ..ProjectRow::default()
+            }],
+            sessions: [(
+                "proj-alpha".to_owned(),
+                vec![
+                    SessionRow {
+                        id: "sess-run".to_owned(),
+                        sandbox_enabled: Some(true),
+                        ..SessionRow::default()
+                    },
+                    SessionRow {
+                        id: "sess-seat".to_owned(),
+                        ..SessionRow::default()
+                    },
+                ],
+            )]
+            .into_iter()
+            .collect(),
+            runs: [(
+                "proj-alpha".to_owned(),
+                vec![RunRow {
+                    run_id: "run-srt".to_owned(),
+                    sandbox: Some(RunSandbox {
+                        enforced: Some(true),
+                    }),
+                    ..RunRow::default()
+                }],
+            )]
+            .into_iter()
+            .collect(),
+            ..SidebarRows::default()
+        });
+        ws.daemon_mut().set_roster(json!({
+            "epoch": "e1",
+            "seq": 1,
+            "entries": [
+                {
+                    "entry_id": "run:run-srt",
+                    "run_id": "run-srt",
+                    "session_id": "sess-run",
+                    "terminal": {"terminal_id": "term-srt", "backend": "native"}
+                },
+                {
+                    "entry_id": "session:sess-seat",
+                    "session_id": "sess-seat",
+                    "terminal": {"terminal_id": "term-seat", "backend": "native"}
+                }
+            ]
+        }));
+        ws.select_project("proj-alpha");
+        ws.reconcile_subscribe_first().unwrap();
+        ws.open_terminal("term-srt", "native", "epoch").unwrap();
+        ws.open_terminal("term-seat", "native", "epoch").unwrap();
+        let mut chrome = Chrome::new(Theme::new(kind));
+        for terminal in ["term-srt", "term-seat"] {
+            let pane_id = ws.pane_for_terminal(terminal).unwrap();
+            chrome.open_pane(pane_id, "alpha");
+            ws.pane_mut(pane_id).address = Some("0:0:1:2".to_owned());
+        }
+        chrome.compute_view(&ws, Rect::new(0, 0, 120, 20));
+        let terminal = draw(&ws, &chrome, 120, 20);
+        let buffer = terminal.backend().buffer();
+
+        let srt = info_of(&ws, &chrome, "term-srt");
+        let seat = info_of(&ws, &chrome, "term-seat");
+        let edge = |info: &PaneInfo| {
+            cells(
+                &terminal,
+                info.rect.bottom() - 1,
+                info.rect.x + 1,
+                info.rect.right() - 1,
+            )
+        };
+        assert!(
+            edge(&srt).ends_with(" \u{f023} · 0:0:1:2 "),
+            "{kind:?}: SRT edge {:?}",
+            edge(&srt)
+        );
+        let seat_edge = edge(&seat);
+        assert!(
+            seat_edge.ends_with("─ 0:0:1:2 ")
+                && !seat_edge.contains('\u{f023}')
+                && !seat_edge.contains('\u{f09c}'),
+            "{kind:?}: unrestricted edge {seat_edge:?}"
+        );
+
+        let y = srt.rect.bottom() - 1;
+        let lock_x = (srt.rect.x..srt.rect.right())
+            .find(|&x| buffer[(x, y)].symbol() == "\u{f023}")
+            .unwrap();
+        assert_eq!(buffer[(lock_x, y)].fg, chrome.palette.red, "{kind:?} lock");
+        let digit = buffer[(srt.rect.right() - 3, y)].clone();
+        assert_eq!(digit.symbol(), "2");
+        assert_ne!(
+            digit.fg, chrome.palette.red,
+            "{kind:?}: the address keeps its tone"
+        );
+    }
 }

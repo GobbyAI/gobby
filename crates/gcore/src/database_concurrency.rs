@@ -3,6 +3,7 @@ use thiserror::Error;
 
 pub const BOOTSTRAP_POOL_SIZE: u32 = 2;
 pub const MIN_POOL_SIZE: u32 = 32;
+pub const NATIVE_POOL_MAX_SIZE: u32 = 8;
 pub const MIN_EXECUTOR_WORKERS: u32 = 8;
 pub const MIN_SUPPORTED_CPUS: u32 = 8;
 
@@ -55,6 +56,7 @@ pub struct DatabaseConcurrencyResolution {
     pub usable_connections: u32,
     pub pool_budget: u32,
     pub pool_max_size: u32,
+    pub native_pool_max_size: u32,
     pub executor_max_workers: u32,
     pub coverage_max_concurrency: u32,
     pub direct_connection_reserve: u32,
@@ -131,6 +133,7 @@ pub fn resolve_database_concurrency(
             usable,
         });
     }
+    let native_pool_max_size = NATIVE_POOL_MAX_SIZE.min(pool_budget - pool);
 
     let coverage = configured_or_auto(
         "database_concurrency.coverage_max_concurrency",
@@ -184,6 +187,7 @@ pub fn resolve_database_concurrency(
         usable_connections: usable,
         pool_budget,
         pool_max_size: pool,
+        native_pool_max_size,
         executor_max_workers: workers,
         coverage_max_concurrency: coverage,
         direct_connection_reserve: direct_reserve,
@@ -235,6 +239,7 @@ mod tests {
         usable_connections: u32,
         pool_budget: u32,
         pool_max_size: u32,
+        native_pool_max_size: u32,
         executor_max_workers: u32,
         coverage_max_concurrency: u32,
         direct_connection_reserve: u32,
@@ -266,6 +271,11 @@ mod tests {
                 assert_eq!(resolved.pool_budget, expected.pool_budget, "{}", case.name);
                 assert_eq!(
                     resolved.pool_max_size, expected.pool_max_size,
+                    "{}",
+                    case.name
+                );
+                assert_eq!(
+                    resolved.native_pool_max_size, expected.native_pool_max_size,
                     "{}",
                     case.name
                 );

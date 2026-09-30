@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
+from gobby.storage.terminal_settlement import HOST_PROCESS_KEYS, OrphanIdentity
 from gobby.storage.terminals import (
     UNRESOLVED_WRITE_ACTION_KEY_MAX_BYTES,
     UNRESOLVED_WRITE_MAX_ENTRIES,
@@ -226,6 +227,25 @@ class MemoryTerminalStore:
         self.attempt_settled.set()
         return current
 
+    def mark_exited_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.state not in {"live", "orphaned"}
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        current.state = "exited"
+        current.updated_at = datetime.now(UTC)
+        return current
+
     @asynccontextmanager
     async def settle_lock(self, terminal_id: str) -> AsyncIterator[None]:
         lock, references = self._settlement_locks.get(terminal_id, (asyncio.Lock(), 0))
@@ -306,6 +326,68 @@ class MemoryTerminalStore:
         if current is None or current.state != "pending" or current.backend != "native":
             return None
         current.process = {**(current.process or {}), "pgid": pgid, "start_time": start_time}
+        return current
+
+    def record_orphan_identity(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        locator: Mapping[str, object],
+        locator_key: str,
+        host_epoch: str,
+        process: Mapping[str, object] | None,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.state != "orphaned"
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        current.locator = dict(locator)
+        current.locator_key = locator_key
+        current.host_epoch = host_epoch
+        kept = {
+            key: value
+            for key, value in (current.process or {}).items()
+            if key not in HOST_PROCESS_KEYS
+        }
+        current.process = {**kept, **(process or {})}
+        return current
+
+    def mark_kill_failed(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+        identity: OrphanIdentity | None = None,
+    ) -> Terminal | None:
+        current = self.rows.get(terminal_id)
+        if (
+            current is None
+            or current.attempt_generation != attempt_generation
+            or current.attempt_started_at != attempt_started_at
+        ):
+            return None
+        if current.state == "pending" and identity is not None:
+            current.locator = dict(identity.locator)
+            current.locator_key = identity.locator_key
+            current.host_epoch = identity.host_epoch
+            if identity.process is not None:
+                kept = {
+                    key: value
+                    for key, value in (current.process or {}).items()
+                    if key not in HOST_PROCESS_KEYS
+                }
+                current.process = {**kept, **identity.process}
+        elif current.state != "live":
+            return None
+        current.state = "orphaned"
+        current.updated_at = datetime.now(UTC)
         return current
 
     def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
@@ -496,6 +578,8 @@ class FakeRuntime:
     terminate_host_hold: asyncio.Event | None = None
     terminate_host_started: asyncio.Event = field(default_factory=asyncio.Event)
     terminate_started: asyncio.Event = field(default_factory=asyncio.Event)
+    # Raised, in order, by the strict host listing before it answers.
+    find_host_failures: list[BaseException] = field(default_factory=list)
 
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
         self.create_calls += 1
@@ -638,7 +722,12 @@ class FakeRuntime:
             process = terminal.process or terminal.locator or {}
             host_terminal_id = process.get("host_terminal_id")
             if isinstance(host_terminal_id, str):
-                await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
+                mismatch = await self.terminate_host_id(host_terminal_id, terminal.host_epoch)
+                if mismatch is not None:
+                    # The native runtime kills a stale-epoch row this host still
+                    # lists through the host id its strict listing returns.
+                    self.killed_host_ids.append(host_terminal_id)
+                self.killed_ids.add(terminal.id)
             return
         self.killed_ids.add(terminal.id)
         name = terminal.session_name or terminal.spawn_key
@@ -661,6 +750,14 @@ class FakeRuntime:
             return HostEpochMismatch(host_epoch, self.host_epoch)
         self.killed_host_ids.append(host_terminal_id)
         return None
+
+    async def find_host_terminal(self, terminal_id: str, spawn_key: str) -> str | None:
+        """Strict listing: the host id while the spawn key runs, raising on a failure."""
+        if self.find_host_failures:
+            raise self.find_host_failures.pop(0)
+        if terminal_id in self.killed_ids or spawn_key not in self.live_keys:
+            return None
+        return "ht-1"
 
     async def attach_locator(self, terminal: Terminal) -> AttachLocator:
         return AttachLocator(backend=self.backend, frame_host_epoch="epoch")

@@ -550,10 +550,8 @@ class TestSessionRegistration:
         assert processor._byte_offsets["sid"] == initial_stat.st_size
         await processor._process_session("sid", str(transcript))
         assert processor._stats["sid"]["last_assistant_content"] == "second"
-        assert (
-            processor._stats["sid"]["message_count"]
-            == (index.session_stats or {}).get("message_count", 0) + 1
-        )
+        assert index.session_stats is not None
+        assert processor._stats["sid"]["message_count"] == index.session_stats["message_count"] + 1
 
     def test_register_session_rejects_replaced_append_candidate(
         self, mock_db: MagicMock, tmp_path: Path
@@ -696,7 +694,7 @@ class TestProcessingLoop:
         # Mock _process_session to fail for session-1 but succeed for session-2
         original_process = processor._process_session
 
-        async def mock_process(session_id: str, path: str) -> None:
+        async def mock_process(session_id: str, path: str) -> bool:
             if session_id == "session-1":
                 raise Exception("Session 1 error")
             return await original_process(session_id, path)
@@ -901,10 +899,12 @@ class TestProcessSession:
         original_process_batch = processor._process_parsed_batch
 
         async def recording_process_batch(
-            session_id: str, messages: list[ParsedMessage]
+            session_id: str, messages: list[ParsedMessage], *, publish_occupancy: bool = True
         ) -> MessageStats:
             batch_loops.append(asyncio.get_running_loop())
-            return await original_process_batch(session_id, messages)
+            return await original_process_batch(
+                session_id, messages, publish_occupancy=publish_occupancy
+            )
 
         with (
             patch.object(processor, "_loop", new=AsyncMock()),
@@ -950,7 +950,7 @@ class TestProcessSession:
         batch_count = 0
 
         async def blocked_process_batch(
-            session_id: str, messages: list[ParsedMessage]
+            session_id: str, messages: list[ParsedMessage], *, publish_occupancy: bool = True
         ) -> MessageStats:
             nonlocal batch_count
             batch_count += 1
@@ -958,7 +958,9 @@ class TestProcessSession:
                 second_batch_entered.set()
             batch_entered.set()
             await asyncio.wait_for(release_batch.wait(), timeout=1)
-            return await original_process_batch(session_id, messages)
+            return await original_process_batch(
+                session_id, messages, publish_occupancy=publish_occupancy
+            )
 
         with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
             async with asyncio.TaskGroup() as tasks:
@@ -1043,7 +1045,7 @@ class TestProcessSession:
         batch_count = 0
 
         async def blocked_process_batch(
-            session_id: str, messages: list[ParsedMessage]
+            session_id: str, messages: list[ParsedMessage], *, publish_occupancy: bool = True
         ) -> MessageStats:
             nonlocal batch_count
             batch_count += 1
@@ -1051,7 +1053,9 @@ class TestProcessSession:
                 second_batch_entered.set()
             batch_entered.set()
             await asyncio.wait_for(release_batch.wait(), timeout=1)
-            return await original_process_batch(session_id, messages)
+            return await original_process_batch(
+                session_id, messages, publish_occupancy=publish_occupancy
+            )
 
         with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
             async with asyncio.TaskGroup() as tasks:
@@ -1080,11 +1084,13 @@ class TestProcessSession:
         original_process_batch = processor._process_parsed_batch
 
         async def blocked_process_batch(
-            session_id: str, messages: list[ParsedMessage]
+            session_id: str, messages: list[ParsedMessage], *, publish_occupancy: bool = True
         ) -> MessageStats:
             batch_entered.set()
             await asyncio.wait_for(release_batch.wait(), timeout=1)
-            return await original_process_batch(session_id, messages)
+            return await original_process_batch(
+                session_id, messages, publish_occupancy=publish_occupancy
+            )
 
         with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
             processing_task = asyncio.create_task(processor._process_all_sessions())

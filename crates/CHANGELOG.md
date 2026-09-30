@@ -32,6 +32,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `graph_analytics::centrality` reject malformed input with
   `GraphInputError` instead of sanitizing it. Version: `0.10.0`.
 
+#### gobby-terminal
+
+- **Client terminal themes for native panes** (#22851) — the control hello
+  advertises the `terminal_theme` capability. Spawn accepts an optional
+  `terminal_theme`, and a pane without one starts with the host's latest
+  applied declaration. Frame streams accept `SetTerminalTheme` (bincode tag 12). The
+  slot's input-grant holder decides, and an ungranted slot takes any
+  declaration. So OSC 10/11 answers and the mode-2031 report follow the
+  client's dark or light colours without a respawn. With no theme known, OSC
+  10/11 stays unanswered. Version: `0.1.2`.
+
+#### gobby-client
+
+- **Theme sync to native panes** (#22851) — gclient declares its active
+  terminal theme to direct panes whose host advertises `terminal_theme`. It
+  binds the attachment first and re-declares on every theme change. A proxied
+  pane whose attach result advertises `terminal_theme` gets the same
+  declaration through the daemon's `terminal_set_theme` relay. It also
+  sends the theme with `terminal_create`, `tab.create` and `pane.split`, so new
+  shells start themed. The daemon must support the `terminal_theme` field
+  first. Version: `0.1.7`.
+
 ### Removed
 
 #### gcode

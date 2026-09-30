@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
@@ -24,6 +24,11 @@ _SEAT_RESCAN_INTERVAL_SECONDS = 30.0
 # A fresh seat mints its thread within a second or two of starting; the window covers a
 # slow start without reaching back to an unrelated TUI.
 _FRESH_SEAT_WINDOW_SECONDS = 60.0
+
+# Whether no Gobby session owns the seat TUI with this pid and create time. A new
+# thread's registration supplies it from the database so a seat that sat at a login
+# prompt past the fresh window can still be adopted when it is the only unowned one.
+SeatAvailable = Callable[[int, float], bool]
 
 # Every key ghook derives from its own process and environment. Under a shared Codex
 # app-server host those values describe the host, never the seat that fired the hook.
@@ -75,11 +80,13 @@ def enrich_terminal_context_with_cwd(
     cwd: Any,
     *,
     external_id: str | None = None,
+    seat_available: SeatAvailable | None = None,
 ) -> dict[str, Any] | None:
     """Copy terminal context and add cwd and parent-process identity.
 
     ``external_id`` is the CLI's own session handle (the Codex thread id). A hook fired
-    by a shared Codex app-server host is re-identified from that thread's seat process.
+    by a shared Codex app-server host is re-identified from that thread's seat process;
+    ``seat_available`` widens a fresh thread's search to the one seat no session owns.
     """
     cwd_text = _non_empty_str(cwd)
     if terminal_context is None:
@@ -92,6 +99,7 @@ def enrich_terminal_context_with_cwd(
         enriched,
         external_id=_non_empty_str(external_id),
         cwd=_non_empty_str(enriched.get("cwd")),
+        seat_available=seat_available,
     )
     return enriched
 
@@ -101,6 +109,7 @@ def _record_parent_process_identity(
     *,
     external_id: str | None,
     cwd: str | None,
+    seat_available: SeatAvailable | None,
 ) -> None:
     terminal_context.pop("parent_create_time", None)
     terminal_context.pop("parent_name", None)
@@ -118,7 +127,9 @@ def _record_parent_process_identity(
     try:
         hook_parent = psutil.Process(pid)
         if _is_codex_shared_host(hook_parent):
-            _replace_with_codex_seat_identity(terminal_context, hook_parent, external_id, cwd)
+            _replace_with_codex_seat_identity(
+                terminal_context, hook_parent, external_id, cwd, seat_available
+            )
             return
         process = _stable_cli_process(hook_parent)
         if process is not hook_parent:
@@ -170,11 +181,12 @@ def _replace_with_codex_seat_identity(
     host: psutil.Process,
     external_id: str | None,
     cwd: str | None,
+    seat_available: SeatAvailable | None,
 ) -> None:
     """Swap the shared host's identity for the seat TUI that owns ``external_id``."""
     for key in _PROCESS_IDENTITY_KEYS:
         terminal_context.pop(key, None)
-    seat = _SEAT_INDEX.resolve(external_id, cwd) if external_id else None
+    seat = _SEAT_INDEX.resolve(external_id, cwd, seat_available) if external_id else None
     if seat is None:
         logger.warning(
             "Codex shared app-server host pid %s: no seat process resumes thread %s or "
@@ -236,18 +248,27 @@ class _CodexSeatIndex:
         self._adopted = {}
         self._missed_at = {}
 
-    def resolve(self, thread_id: str, cwd: str | None) -> psutil.Process | None:
+    def resolve(
+        self, thread_id: str, cwd: str | None, seat_available: SeatAvailable | None = None
+    ) -> psutil.Process | None:
         seat = self._cached(thread_id)
         if seat is not None:
             return seat
         now = time.monotonic()
         missed_at = self._missed_at.get(thread_id)
-        if missed_at is not None and now - missed_at < _SEAT_RESCAN_INTERVAL_SECONDS:
+        # Registration runs once per thread, so its wider search is never rate-limited.
+        if (
+            seat_available is None
+            and missed_at is not None
+            and now - missed_at < _SEAT_RESCAN_INTERVAL_SECONDS
+        ):
             return None
         self._rescan()
         seat = self._cached(thread_id)
         if seat is None:
             seat = self._adopt(thread_id, cwd)
+        if seat is None and seat_available is not None:
+            seat = self._adopt_unowned(thread_id, cwd, seat_available)
         if seat is None:
             self._missed_at[thread_id] = now
         else:
@@ -294,6 +315,36 @@ class _CodexSeatIndex:
             self._adopted[thread_id] = (pid, create_time)
             return process
         return None
+
+    def _adopt_unowned(
+        self, thread_id: str, cwd: str | None, seat_available: SeatAvailable
+    ) -> psutil.Process | None:
+        """Adopt the only fresh seat TUI in ``cwd``, started before the thread, that no
+        session owns.
+
+        A seat can wait at a login prompt well past the fresh window before its first
+        thread. Any second candidate refuses: a guess could type into another pane.
+        """
+        minted_at = _thread_minted_at(thread_id)
+        if minted_at is None or cwd is None:
+            return None
+        candidates: list[tuple[psutil.Process, int, float]] = []
+        for pid, create_time, cmdline in self._seats:
+            if create_time > minted_at or _CODEX_RESUME_ARG in cmdline:
+                continue
+            try:
+                process = psutil.Process(pid)
+                if not _is_fresh_seat_tui(process, cwd):
+                    continue
+            except _PSUTIL_ERRORS:
+                continue
+            if seat_available(pid, create_time):
+                candidates.append((process, pid, create_time))
+        if len(candidates) != 1:
+            return None
+        process, pid, create_time = candidates[0]
+        self._adopted[thread_id] = (pid, create_time)
+        return process
 
     def _rescan(self) -> None:
         seats: list[tuple[int, float, tuple[str, ...]]] = []
@@ -369,3 +420,14 @@ def _non_empty_str(value: Any) -> str | None:
         stripped = value.strip()
         return stripped if stripped else None
     return None
+
+
+def hook_sandbox_enabled(input_data: Mapping[str, Any]) -> bool | None:
+    """The launcher-supplied sandbox a session-start hook records, else None.
+
+    Only a Gobby launcher's explicit bool counts. A pane is locked only under
+    Gobby's SRT, whose launch and run records carry that boundary; a provider's
+    own command-line sandbox never reads as locked.
+    """
+    raw = input_data.get("sandbox_enabled")
+    return raw if isinstance(raw, bool) else None

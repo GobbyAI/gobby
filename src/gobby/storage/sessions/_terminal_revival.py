@@ -10,6 +10,7 @@ from gobby.storage.terminals import TerminalManager
 from gobby.terminal_ownership import (
     TERMINAL_OWNER_STATUSES,
     is_interactive_terminal_claim,
+    recorded_process_exited,
     resolve_pane_ownership,
     terminal_session_creation_order,
     terminal_session_identity,
@@ -22,6 +23,7 @@ from ._contested_expiry import (
     read_session_variables,
     session_has_active_native_subagent,
 )
+from ._operator_claim_hold import clear_operator_claim_hold
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -73,6 +75,18 @@ class _TerminalRevivalMixin:
             )
             return current
 
+        if current.status == "expired" and recorded_process_exited(current):
+            # Activity from a hook that names no seat, such as a shared Codex
+            # app-server, cannot bring back a row whose CLI exited; the live row
+            # would only draw wakes and handoffs into its old pane. A CLI that
+            # merely lost the foreground, as under a nested CLI, still revives.
+            get_logger().info(
+                "Suppressed revival of terminal session %s; its recorded CLI process exited",
+                session_id,
+                extra={"event": "terminal_session_revival_suppressed_process_exited"},
+            )
+            return current
+
         past_horizon = past_terminal_revival_horizon(current)
         identity = terminal_session_identity(current)
         if identity is None:
@@ -97,6 +111,8 @@ class _TerminalRevivalMixin:
             updated = self.get(session_id)
             if updated is not None and updated.status == "active":
                 clear_contested_terminal_expiry(self.db, session_id)
+                # The parked seat is back, so the operator hold has done its job.
+                clear_operator_claim_hold(self.db, session_id)
                 # Expiry released the gterm pane, and a surviving CLI sends no
                 # SessionStart to bind it again, so revival rebinds it here.
                 context = updated.terminal_context or {}
@@ -250,6 +266,7 @@ class _TerminalRevivalMixin:
                 # This candidate just won the contest its marker recorded, so
                 # the marker has nothing left to shield (#20837).
                 clear_contested_terminal_expiry(self.db, candidate.id)
+                clear_operator_claim_hold(self.db, candidate.id)
 
         if owner is None:
             if inconclusive_reason is not None:

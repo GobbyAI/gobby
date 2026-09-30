@@ -1341,8 +1341,8 @@ class TestStepTransitions:
             data={
                 "tool_name": "mcp__gobby__call_tool",
                 "tool_input": {
-                    "server_name": "gobby-ask",
-                    "tool_name": "query_evidence",
+                    "server_name": "gobby-tasks",
+                    "tool_name": "get_task",
                 },
             },
         )
@@ -3157,7 +3157,7 @@ class TestProviderToolNameNormalization:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mcp_key",
-    ["gobby-sessions:set_handoff", "gobby-sessions:feedback"],
+    ["gobby-sessions:set_handoff", "gobby-sessions:feedback", "gobby-memory:get_memory"],
 )
 async def test_capability_neutral_tools_pass_step_allowlist(
     db: "HubDatabase",

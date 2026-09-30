@@ -385,8 +385,8 @@ fn status_segments() -> (Workspace, Chrome) {
     chrome.open_tab(alpha, "alpha");
     chrome.open_tab(beta, "beta");
     chrome.activate_tab(0);
-    // The model, context and token segments are opt-in.
-    chrome.prefs.status_left = vec!["focus".to_string(), "model".to_string()];
+    // The sandbox, context and token segments are opt-in.
+    chrome.prefs.status_left = vec!["focus".to_string(), "sandbox".to_string()];
     chrome.prefs.status_right = vec!["context".to_string(), "tokens".to_string()];
     (ws, chrome)
 }
@@ -756,7 +756,9 @@ fn status_segments_golden() {
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
     assert!(status.contains("⍾ 1 needs you │ 1 idle"), "{status:?}");
-    assert!(status.contains("claude-fable-5.1-xhigh"), "{status:?}");
+    // #23049: the sandbox state in words; the model stays on the Agents row.
+    assert!(status.contains("1 idle · unrestricted"), "{status:?}");
+    assert!(!status.contains("claude-fable"), "{status:?}");
     assert!(status.contains("63% · 12,345"), "{status:?}");
     assert!(status.contains("prefix ctrl+b"), "{status:?}");
 }

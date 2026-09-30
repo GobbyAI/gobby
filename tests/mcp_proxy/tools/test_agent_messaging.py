@@ -213,6 +213,7 @@ class TestSendMessage:
                 "target": "session",
                 "target_id": "s-to",
                 "content": "private body",
+                "wake": False,
             },
         )
 
@@ -243,6 +244,7 @@ class TestSendMessage:
                 "target": "session",
                 "target_id": "s-to",
                 "content": "diagnostic body",
+                "wake": False,
                 "brief": False,
             },
         )
@@ -387,6 +389,9 @@ class TestSendMessage:
         assert "project reaches that population in the sender's project" in description
         assert "global reaches every live non-system session" in description
         assert "wake=true requests immediate processing" in description
+        assert "Omitting wake requests immediate processing" in description
+        assert "build fanout remains queued without live wakes" in description
+        assert "wake=false queues without a live wake" in description
         assert "target" in schema["inputSchema"]["properties"]
         assert "target_id" in schema["inputSchema"]["properties"]
         assert "from_session" in schema["inputSchema"]["properties"]
@@ -408,7 +413,7 @@ class TestSendMessage:
             "agent",
             "build",
         ]
-        assert schema["inputSchema"]["properties"]["wake"]["default"] is False
+        assert "default" not in schema["inputSchema"]["properties"]["wake"]
         assert schema["inputSchema"]["properties"]["brief"]["default"] is True
         assert "brief=false" in description
         assert "include_wakeup" not in schema["inputSchema"]["properties"]
@@ -592,11 +597,14 @@ class TestSendMessage:
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("wake, expected_calls", [(None, []), (True, ["s-child"])])
     async def test_send_message_project_target_fans_out_and_wakes(
         self,
         mock_session_manager,
         mock_message_manager,
         mock_db,
+        wake: bool | None,
+        expected_calls: list[str],
     ) -> None:
         """Project target delegates fanout and optional wake to MailboxService."""
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
@@ -636,30 +644,34 @@ class TestSendMessage:
             metadata_json=kwargs["metadata_json"],
         )
 
-        result = await registry.call(
-            "send_message",
-            {
-                "from_session": "s-from",
-                "target": "project",
-                "wake": True,
-                "content": "hello agents",
-            },
-        )
+        args: dict[str, Any] = {
+            "from_session": "s-from",
+            "target": "project",
+            "content": "hello agents",
+        }
+        if wake is not None:
+            args["wake"] = wake
+        result = await registry.call("send_message", args)
 
         assert result["success"] is True
         assert result["recipient_count"] == 1
         assert result["broadcast_id"]
-        assert wake_dispatcher.calls == ["s-child"]
+        assert wake_dispatcher.calls == expected_calls
         assert "wake_results" not in result
 
     @pytest.mark.asyncio
-    async def test_normal_send_queues_without_live_wake(
+    @pytest.mark.parametrize(
+        "wake, expected_calls", [(None, ["s-to"]), (True, ["s-to"]), (False, [])]
+    )
+    async def test_direct_send_wake_intent(
         self,
         mock_session_manager: MagicMock,
         mock_message_manager: MagicMock,
         mock_db: MagicMock,
+        wake: bool | None,
+        expected_calls: list[str],
     ) -> None:
-        """Routine messages remain durable while active recipients continue working."""
+        """Direct sends wake by default and preserve explicit caller intent."""
         from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
 
         wake_dispatcher = FakeWakeDispatcher()
@@ -688,23 +700,26 @@ class TestSendMessage:
             metadata_json=kwargs["metadata_json"],
         )
 
-        result = await registry.call(
-            "send_message",
-            {
-                "from_session": "s-from",
-                "target": "session",
-                "target_id": "s-to",
-                "content": "routine update",
-            },
-        )
+        args: dict[str, Any] = {
+            "from_session": "s-from",
+            "target": "session",
+            "target_id": "s-to",
+            "content": "routine update",
+        }
+        if wake is not None:
+            args["wake"] = wake
+        result = await registry.call("send_message", args)
 
         assert result["success"] is True
         assert result["delivery_status"] == "sent"
         assert "wake_results" not in result
-        assert wake_dispatcher.calls == []
+        assert wake_dispatcher.calls == expected_calls
         call_kwargs = mock_message_manager.create_message.call_args.kwargs
         assert call_kwargs["priority"] == "normal"
         assert call_kwargs["content"] == "routine update"
+        assert (
+            f'"wake_requested": {str(bool(expected_calls)).lower()}' in call_kwargs["metadata_json"]
+        )
 
     @pytest.mark.asyncio
     async def test_normal_send_does_not_interrupt_long_running_recipient_work(
@@ -759,6 +774,7 @@ class TestSendMessage:
                     "target": "session",
                     "target_id": recipient.id,
                     "content": "routine update",
+                    "wake": False,
                 },
             )
 

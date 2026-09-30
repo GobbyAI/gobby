@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import json
+import re
+from collections import Counter
 from collections.abc import Mapping, Sequence
+from pathlib import Path
 from typing import Any
 
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents._sandbox_records import sandbox_record, trusted_live_violation_path
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_close_reviews import (
     REVIEWER_RUN_ENDED_SUCCESS_ERROR,
@@ -21,6 +26,53 @@ from gobby.tasks.agentic_close_review import (
 )
 from gobby.tasks.state_semantics import is_task_closed
 
+_DENIAL_OPERATION = re.compile(r"(?:^|\s)deny(?:\(\d+\))?\s+([a-z][a-z0-9*-]*)")
+
+
+def _review_sandbox_denials(run: AgentRun | None) -> dict[str, Any] | None:
+    """Summarize enforced denials from the live or retained reviewer log."""
+    if run is None:
+        return None
+    sandbox = sandbox_record(run.resume_metadata_json, include_events=False)
+    if sandbox is None or not (count := sandbox["violation_count"]):
+        return None
+    retained_path = sandbox.get("retained_violation_path")
+    raw_sandbox = (run.resume_metadata_json or {}).get("sandbox")
+    live_path = (
+        trusted_live_violation_path(raw_sandbox.get("violation_path"))
+        if isinstance(raw_sandbox, dict)
+        else None
+    )
+    source_path = live_path if live_path is not None and live_path.is_file() else retained_path
+    operations: Counter[str] = Counter()
+    if source_path:
+        try:
+            with Path(source_path).open(encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    event_line = event.get("line") if isinstance(event, dict) else None
+                    match = (
+                        _DENIAL_OPERATION.search(event_line)
+                        if isinstance(event_line, str)
+                        else None
+                    )
+                    operations[match.group(1) if match else "unclassified"] += 1
+                    if operations.total() >= count:
+                        break
+        except OSError:
+            pass
+    if operations.total() < count:
+        operations["unclassified"] += count - operations.total()
+    return {
+        "violation_count": count,
+        "operations": dict(sorted(operations.items(), key=lambda item: (-item[1], item[0]))),
+        "retained_violation_path": retained_path,
+        "retained_settings_path": sandbox.get("retained_settings_path"),
+    }
+
 
 def terminal_review_delivery(
     db: HubDatabase,
@@ -31,8 +83,8 @@ def terminal_review_delivery(
     review = store.get_by_run(run_id)
     if review is None:
         return None
+    run = LocalAgentRunManager(db).get(run_id)
     if review.active:
-        run = LocalAgentRunManager(db).get(run_id)
         task = LocalTaskManager(db).get_task(review.task_id)
         if review.status == "finalizing":
             if task is None or not is_task_closed(task):
@@ -79,9 +131,20 @@ def terminal_review_delivery(
             )
     if review.result_payload is None:
         return None
-    return review.result_payload, str(
-        review.result_payload.get("message") or "Background task-close review completed."
-    )
+    payload = dict(review.result_payload)
+    message = str(payload.get("message") or "Background task-close review completed.")
+    if sandbox_denials := _review_sandbox_denials(run):
+        payload["sandbox_denials"] = sandbox_denials
+        breakdown = ", ".join(
+            f"{operation} {count}" for operation, count in sandbox_denials["operations"].items()
+        )
+        count = sandbox_denials["violation_count"]
+        noun = "operation" if count == 1 else "operations"
+        message += (
+            f" SRT denied {count} {noun} ({breakdown})."
+            f" Inspect get_agent_result({run_id}) for retained diagnostics."
+        )
+    return payload, message
 
 
 def _run_ended_retry(run: AgentRun | None) -> tuple[TaskCloseReviewErrorClass, int]:
