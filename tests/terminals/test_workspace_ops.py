@@ -48,6 +48,7 @@ from gobby.storage.workspaces import (
     LayoutChange,
     WorkspaceManager,
     WorkspaceNotFoundError,
+    WorkspacePane,
     layout_pane_ids,
 )
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -1290,6 +1291,79 @@ async def test_workspace_rename_writes_storage_off_the_event_loop() -> None:
     await ops.workspace_rename("operator", "ws-1", "renamed")
     assert seen
     assert seen[0] != loop_thread
+
+
+def test_snapshot_uses_one_pool_acquisition_for_resolution_and_reads(harness: _Harness) -> None:
+    import time
+
+    from gobby.telemetry.query_timing import observe_queries
+
+    h = harness
+    workspace, _created = h.workspaces.create(LOCAL_MACHINE_ID, "snapshot")
+    change = h.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+    )
+    tab, pane = change.tabs[0], change.panes[0]
+    h.workspaces.mark_spawn_in_flight(pane.id)
+    queries: list[float] = []
+    acquisitions: list[float] = []
+    started = time.perf_counter()
+    with observe_queries(queries.append, pool_acquire_observer=acquisitions.append):
+        snapshot, swept = h.ops._snapshot_storage(workspace.id, None, {})
+    elapsed = time.perf_counter() - started
+    print(
+        f"snapshot elapsed_ms={elapsed * 1000:.1f} queries={len(queries)} "
+        f"pool_acquires={len(acquisitions)} pool_wait_ms={sum(acquisitions) * 1000:.1f}"
+    )
+    assert snapshot.workspace == workspace
+    assert snapshot.tabs == (tab,)
+    assert snapshot.panes == (pane,)
+    assert swept.removed_panes == ()
+    assert len(acquisitions) == 1
+
+
+def test_snapshot_holds_sweep_locks_until_both_row_lists_are_read(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from psycopg.errors import LockNotAvailable
+
+    h = harness
+    workspace, _created = h.workspaces.create(LOCAL_MACHINE_ID, "snapshot")
+    change = h.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+    )
+    tab, pane = change.tabs[0], change.panes[0]
+    h.workspaces.mark_spawn_in_flight(pane.id)
+    read_panes = h.workspaces.list_panes
+    updates: list[bool] = []
+
+    def update_layout() -> bool:
+        try:
+            with h.db.transaction() as conn:
+                conn.execute("SET LOCAL lock_timeout = '200ms'")
+                conn.execute(
+                    "UPDATE workspace_tabs SET title = 'concurrent' WHERE id = %s", (tab.id,)
+                )
+            return True
+        except LockNotAvailable:
+            return False
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        def list_panes(workspace_id: str) -> list[WorkspacePane]:
+            updates.append(executor.submit(update_layout).result(timeout=3))
+            return read_panes(workspace_id)
+
+        monkeypatch.setattr(h.workspaces, "list_panes", list_panes)
+        snapshot, _swept = h.ops._snapshot_storage(workspace.id, None, {})
+
+    assert updates == [False]
+    assert snapshot.tabs == (tab,)
+    assert snapshot.panes == (pane,)
+    assert update_layout() is True
+    assert h.workspaces.list_tabs(workspace.id)[0].title == "concurrent"
 
 
 def _storage_ops(workspaces: MagicMock) -> WorkspaceOps:

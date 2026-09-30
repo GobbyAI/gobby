@@ -695,17 +695,17 @@ class WorkspaceOps:
     def _snapshot_storage(
         self, reference: str, node: str | None, timing: dict[str, float]
     ) -> tuple[WorkspaceSnapshot, LayoutChange]:
-        """Sweep and read rows on one thread so the watermark matches the rows."""
+        """Reuse one connection and hold sweep locks through the snapshot reads."""
         started = time.monotonic()
-        target = self._resolve(reference, node)
-        resolved = time.monotonic()
-        change = self._sweep_storage(target.workspace.id)
-        swept = time.monotonic()
-        if change.removed_panes:
+        with storage_errors(), self._workspaces.db.transaction():
             target = self._resolve(reference, node)
-        home = _workspace_of(target, reference)
-        target_done = time.monotonic()
-        with storage_errors():
+            resolved = time.monotonic()
+            change = self._sweep_storage(target.workspace.id)
+            swept = time.monotonic()
+            if change.removed_panes:
+                target = self._resolve(reference, node)
+            home = _workspace_of(target, reference)
+            target_done = time.monotonic()
             tabs = tuple(self._workspaces.list_tabs(home.id))
             tabs_done = time.monotonic()
             panes = tuple(self._workspaces.list_panes(home.id))

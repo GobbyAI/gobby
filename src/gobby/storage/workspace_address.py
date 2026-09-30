@@ -48,9 +48,17 @@ def _ensure_project_workspace(
 ) -> tuple[Workspace, bool]:
     machine_id = _uuid(machine_id)
     project_id = _uuid(project_id)
-    base_name = _project_workspace_name(workspaces, project_id)
     with workspaces.db.transaction() as conn:
+        existing = conn.execute(
+            "SELECT * FROM workspaces WHERE machine_id = %s AND default_project_id = %s",
+            (machine_id, project_id),
+        ).fetchone()
+        if existing is not None:
+            return Workspace.from_row(existing), False
+        # Only creation needs the machine lock. Recheck after locking because
+        # another creator may have installed this project's default meanwhile.
         _lock_rows(conn, "machines", machine_id)
+        base_name = _project_workspace_name(workspaces, project_id)
         for _ in range(_INSERT_ATTEMPTS):
             existing = conn.execute(
                 """
