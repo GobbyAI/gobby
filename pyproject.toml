@@ -60,8 +60,8 @@ dependencies = [
     "cryptography>=50.0.0",
     "argon2-cffi>=23.1.0",
     "clawcare>=0.9.0",
-    # pyjwt <2.13.0 has 2026 advisories (transitive via mcp)
-    "pyjwt>=2.13.0",
+    # pyjwt <2.14.0 has 2026 advisories (transitive via mcp)
+    "pyjwt>=2.14.0",
     # Native SDK executors for autonomous mode
     "openai>=1.0.0",
     "opentelemetry-api>=1.28.0",
