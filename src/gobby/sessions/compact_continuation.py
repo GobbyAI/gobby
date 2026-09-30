@@ -27,6 +27,7 @@ from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
+from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
@@ -529,15 +530,18 @@ async def _send_handoff_compact_continuation(
     on_send_failure: Callable[[], None] | None = None,
     composer_read: ComposerReader | None = None,
 ) -> bool:
-    sent = await _type_handoff_compact_continuation(
-        pane,
-        prompt,
-        session_id,
-        delay_seconds=delay_seconds,
-        cli_source=cli_source,
-        composer_read=composer_read,
-        verify_seconds=SUBMIT_VERIFY_SECONDS,
-    )
+    # The pull prompt is typed into the same physical composer a wake drains and
+    # submits, so hold the shared lock across its whole clear/submit/verify run.
+    async with composer_action_lock(str(getattr(pane, "target", "") or "")):
+        sent = await _type_handoff_compact_continuation(
+            pane,
+            prompt,
+            session_id,
+            delay_seconds=delay_seconds,
+            cli_source=cli_source,
+            composer_read=composer_read,
+            verify_seconds=SUBMIT_VERIFY_SECONDS,
+        )
     if not sent and on_send_failure is not None:
         on_send_failure()
     return sent

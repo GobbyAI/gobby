@@ -973,6 +973,38 @@ async def _send_pull_prompt(
         )
 
 
+@pytest.mark.asyncio
+async def test_pull_prompt_waits_for_the_shared_composer_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rival composer writer blocks the pull prompt from interleaving."""
+    from gobby.terminals import composer_lock as composer_lock_module
+    from gobby.terminals.composer_lock import composer_action_lock
+
+    class _Coordinator:
+        def __init__(self) -> None:
+            self.locks: dict[str, asyncio.Lock] = {}
+
+        def logical_action_lock(self, terminal_id: str) -> asyncio.Lock:
+            return self.locks.setdefault(terminal_id, asyncio.Lock())
+
+    coordinator = _Coordinator()
+    monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)
+
+    tmux = _FakeTmux()
+    async with composer_action_lock("%12"):
+        send = asyncio.create_task(_send_pull_prompt(tmux))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        # The rival holds the lock, so the prompt has typed nothing yet.
+        assert tmux.sent_keys == []
+        assert coordinator.locks["%12"].locked()
+    assert await send is True
+    assert any(
+        text.startswith(_PULL_PROMPT[:12]) for _pane, text, literal in tmux.sent_keys if literal
+    )
+
+
 class TestPullPromptFallback:
     """The pull prompt survives a failed send and never submits an operator draft."""
 

@@ -649,8 +649,8 @@ async def test_urgent_wake_injects_an_empty_composer() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("probe", [_empty, _broken, None])
-async def test_anything_short_of_a_draft_keeps_the_blind_drain(
+@pytest.mark.parametrize("probe", [_empty, None])
+async def test_confirmed_empty_or_no_probe_keeps_the_blind_drain(
     probe: ActivityProbe | None,
 ) -> None:
     terminal_sender = AsyncMock()
@@ -666,6 +666,19 @@ async def test_anything_short_of_a_draft_keeps_the_blind_drain(
         clear_before_submit=True,
         cli_source=ANY,
     )
+
+
+@pytest.mark.asyncio
+async def test_probe_error_withholds_until_a_positive_empty_read() -> None:
+    terminal_sender = AsyncMock()
+    dispatcher = _managed_dispatcher(_broken, terminal_sender)
+
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+    assert result["skipped"] == "composer_unconfirmed"
+    assert result["delivered"] is False
+    assert result["ism_persisted"] is True
+    terminal_sender.assert_not_awaited()
 
 
 @pytest.mark.asyncio

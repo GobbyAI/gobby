@@ -20,7 +20,14 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.live_wake import TerminalActivity
-from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
+from gobby.events.wake import (
+    COMPOSER_RETRY_BASE_SECONDS,
+    COMPOSER_RETRY_MAX_ATTEMPTS,
+    COMPOSER_RETRY_MAX_SECONDS,
+    CONTINUE_WAKE_MESSAGE,
+    CONTINUE_WAKE_SIGNAL,
+    WakeDispatcher,
+)
 from gobby.events.wake_active_recovery import reconcile_idle_prompt_session
 from gobby.storage.session_models import Session
 from gobby.terminals.runtime import AutomaticWriteDeclined, AutomaticWriteQuarantined
@@ -1845,13 +1852,12 @@ class TestComposerGate:
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("state", ["empty", "unknown"])
-    async def test_non_draft_reads_drain_blind(self, state: str) -> None:
-        from gobby.agents.idle_detector import ComposerRead, ComposerState
+    async def test_confirmed_empty_read_drains(self) -> None:
+        from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity
 
         pane_sender = AsyncMock()
-        probe = AsyncMock(return_value=TerminalActivity(ComposerRead(cast(ComposerState, state))))
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("empty")))
         dispatcher = self._dispatcher(probe, pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -1866,11 +1872,157 @@ class TestComposerGate:
         )
 
     @pytest.mark.asyncio
-    async def test_probe_error_drains_blind(self) -> None:
+    async def test_unknown_read_only_withholds_when_the_provider_can_classify(
+        self,
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity, composer_unconfirmed_result
+
         pane_sender = AsyncMock()
-        dispatcher = self._dispatcher(AsyncMock(side_effect=RuntimeError("no pane")), pane_sender)
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("unknown")))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result == composer_unconfirmed_result(WAKE_SESSION_ID, method="terminal")
+        pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_read_drains_when_the_provider_cannot_classify(
+        self,
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(
+            return_value=TerminalActivity(ComposerRead("unknown"), composer_probeable=False)
+        )
+        dispatcher = self._dispatcher(probe, pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
         assert result["delivered"] is True
         pane_sender.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_probe_error_withholds_until_a_positive_empty_read(self) -> None:
+        from gobby.events.live_wake import composer_unconfirmed_result
+
+        pane_sender = AsyncMock()
+        dispatcher = self._dispatcher(AsyncMock(side_effect=RuntimeError("no pane")), pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result == composer_unconfirmed_result(WAKE_SESSION_ID, method="terminal")
+        pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_probe_and_send_hold_the_composer_lock_together(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rival writer cannot interleave between the empty probe and the send."""
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+        from gobby.terminals import composer_lock as composer_lock_module
+        from gobby.terminals.composer_lock import composer_action_lock
+
+        class _Coordinator:
+            def __init__(self) -> None:
+                self._locks: dict[str, asyncio.Lock] = {}
+
+            def logical_action_lock(self, terminal_id: str) -> asyncio.Lock:
+                return self._locks.setdefault(terminal_id, asyncio.Lock())
+
+        coordinator = _Coordinator()
+        monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)
+
+        order: list[str] = []
+        probe_entered = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            order.append("probe")
+            probe_entered.set()
+            return TerminalActivity(ComposerRead("empty"))
+
+        async def slow_send(*_args: object, **_kwargs: object) -> None:
+            order.append("send")
+            await release_send.wait()
+
+        dispatcher = self._dispatcher(probe, AsyncMock(side_effect=slow_send))
+        wake_task = asyncio.create_task(dispatcher.dispatch_live_wake(WAKE_SESSION_ID))
+        await asyncio.wait_for(probe_entered.wait(), timeout=5)
+        # The probe already ran, but the wake holds the lock through its send,
+        # so a rival composer writer cannot take the lock until the send ends.
+        assert coordinator.logical_action_lock("terminal-1").locked()
+
+        async def rival_wake() -> None:
+            async with composer_action_lock("terminal-1"):
+                order.append("rival")
+
+        rival = asyncio.create_task(rival_wake())
+        release_send.set()
+        await asyncio.wait_for(wake_task, timeout=5)
+        await rival
+        assert order == ["probe", "send", "rival"]
+
+
+class TestComposerRetry:
+    """A withheld wake retries with bounded exponential backoff until empty."""
+
+    @pytest.mark.asyncio
+    async def test_retry_redelivers_once_the_composer_confirms_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead, ComposerState
+        from gobby.events.live_wake import TerminalActivity
+
+        states: list[ComposerState] = ["draft", "draft", "empty"]
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return TerminalActivity(ComposerRead(states.pop(0), "operator text"))
+
+        pane_sender = AsyncMock()
+        dispatcher = TestComposerGate._dispatcher(probe, pane_sender)
+        delays: list[float] = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(dispatcher, "_composer_retry_wait", no_wait)
+
+        first = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        assert first["skipped"] == "composer_occupied"
+        await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
+
+        # Two backoffs before the third probe finally saw an empty composer.
+        assert delays == [COMPOSER_RETRY_BASE_SECONDS, COMPOSER_RETRY_BASE_SECONDS * 2]
+        pane_sender.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_backoff_is_bounded_when_the_draft_never_clears(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return TerminalActivity(ComposerRead("draft", "operator text"))
+
+        pane_sender = AsyncMock()
+        dispatcher = TestComposerGate._dispatcher(probe, pane_sender)
+        delays: list[float] = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(dispatcher, "_composer_retry_wait", no_wait)
+
+        await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
+
+        assert len(delays) == COMPOSER_RETRY_MAX_ATTEMPTS
+        assert delays[-1] == COMPOSER_RETRY_MAX_SECONDS
+        assert all(delay <= COMPOSER_RETRY_MAX_SECONDS for delay in delays)
+        pane_sender.assert_not_awaited()

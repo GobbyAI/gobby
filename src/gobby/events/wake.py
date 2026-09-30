@@ -19,8 +19,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.events.live_wake import (
+    RETRYABLE_WAKE_SKIPS,
     ActivityProbe,
     composer_occupied_result,
+    composer_unconfirmed_result,
     handoff_delivery_skip,
     normalize_live_wake_result,
     wake_debounced_result,
@@ -38,6 +40,7 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.terminals.composer_lock import composer_action_lock
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -59,6 +62,13 @@ PANE_WAKE_DEBOUNCE_SECONDS = 30.0
 # bounded (TmuxTextInjectionTimeout), and an outer cancellation can land
 # between paste-buffer and Enter, leaving pasted text unsubmitted.
 LIVE_WAKE_TIMEOUT_SECONDS = 5.0
+
+# Bounded exponential backoff for a wake withheld from a composer that is not
+# confirmed empty. The message stays durable, so retrying only shortens the
+# delay before the session sees it; giving up never loses it.
+COMPOSER_RETRY_BASE_SECONDS = 15.0
+COMPOSER_RETRY_MAX_SECONDS = 240.0
+COMPOSER_RETRY_MAX_ATTEMPTS = 6
 
 RunDb = Callable[..., Awaitable[Any]]
 LifecycleRefresh = Callable[[str], Awaitable[None]]
@@ -146,6 +156,7 @@ class WakeDispatcher:
             weakref.WeakValueDictionary()
         )
         self._deferred_refreshes: dict[str, asyncio.Task[None]] = {}
+        self._composer_retries: dict[str, asyncio.Task[None]] = {}
         self._owner_loop: asyncio.AbstractEventLoop | None = None
 
     async def reconcile_restart_active_sessions(
@@ -264,6 +275,8 @@ class WakeDispatcher:
             )
             if result.get("skipped") == "session_active":
                 self._schedule_deferred_refresh(session_id, priority=priority)
+            elif result.get("skipped") in RETRYABLE_WAKE_SKIPS:
+                self._schedule_composer_retry(session_id, priority=priority)
             return normalize_live_wake_result(result)
 
     async def dispatch_live_wakes(
@@ -280,6 +293,8 @@ class WakeDispatcher:
         for session_id, result in zip(session_ids, results, strict=True):
             if result.get("skipped") == "session_active":
                 self._schedule_deferred_refresh(session_id, priority=priority)
+            elif result.get("skipped") in RETRYABLE_WAKE_SKIPS:
+                self._schedule_composer_retry(session_id, priority=priority)
         return [normalize_live_wake_result(result) for result in results]
 
     def _schedule_deferred_refresh(self, session_id: str, *, priority: str) -> None:
@@ -294,6 +309,64 @@ class WakeDispatcher:
                 self._deferred_refreshes.pop(session_id, None)
 
         task.add_done_callback(forget)
+
+    def _schedule_composer_retry(self, session_id: str, *, priority: str) -> None:
+        """Retry a wake withheld from a composer that was not confirmed empty.
+
+        Bounded exponential backoff: each withheld attempt doubles the wait
+        until ``COMPOSER_RETRY_MAX_SECONDS``, and the loop stops after
+        ``COMPOSER_RETRY_MAX_ATTEMPTS``. The durable message is never lost; the
+        retries only shorten the delay before a cleared composer accepts it.
+        """
+        if session_id in self._composer_retries:
+            return
+        task = asyncio.create_task(self._retry_withheld_wake(session_id, priority=priority))
+        self._composer_retries[session_id] = task
+
+        def forget(completed: asyncio.Task[None]) -> None:
+            if self._composer_retries.get(session_id) is completed:
+                self._composer_retries.pop(session_id, None)
+
+        task.add_done_callback(forget)
+
+    async def _retry_withheld_wake(self, session_id: str, *, priority: str) -> None:
+        delay = COMPOSER_RETRY_BASE_SECONDS
+        for attempt in range(COMPOSER_RETRY_MAX_ATTEMPTS):
+            await self._composer_retry_wait(delay)
+            lock = self._live_wake_locks.get(session_id)
+            if lock is None:
+                lock = asyncio.Lock()
+                self._live_wake_locks[session_id] = lock
+            try:
+                async with lock:
+                    result = await self._dispatch_live_wake_unlocked(
+                        session_id, priority=priority, bypass_debounce=True
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Composer retry failed for session %s", session_id, exc_info=True)
+                return
+            skipped = result.get("skipped")
+            logger.log(
+                logging.DEBUG if skipped == "debounced" else logging.INFO,
+                "Composer retry for session %s: attempt=%d delivered=%s skipped=%s",
+                session_id,
+                attempt + 1,
+                result.get("delivered"),
+                skipped,
+            )
+            if skipped not in RETRYABLE_WAKE_SKIPS:
+                return
+            if skipped == "session_active":
+                # Active rows have their own lifecycle refresh path.
+                self._schedule_deferred_refresh(session_id, priority=priority)
+                return
+            delay = min(delay * 2, COMPOSER_RETRY_MAX_SECONDS)
+
+    async def _composer_retry_wait(self, delay: float) -> None:
+        """Sleep between composer retries; tests replace this to avoid real time."""
+        await asyncio.sleep(delay)
 
     async def _pause_idle_prompt(self, session_id: str) -> str:
         """Drop active at an idle empty prompt; return the reconcile outcome.
@@ -589,31 +662,54 @@ class WakeDispatcher:
         *,
         method: str,
     ) -> dict[str, Any] | None:
-        """Withhold the drain when the composer positively shows an operator draft.
+        """Withhold the drain unless a probe positively confirms an empty composer.
 
-        Only a ``draft`` read blocks; ``empty``, ``unknown``, a missing probe and
-        a probe error all fall through to the blind drain. Priority remains on the
-        durable notification; it never authorizes typing over a draft. No debounce
-        record is written, so the next wake probes again.
+        Only an ``empty`` read authorizes typing. A ``draft`` blocks, and an
+        ``unknown`` read blocks too when the provider can classify its composer
+        at all, because the frame may hold a draft the probe could not read. A
+        provider whose manifest has no composer rules answers ``unknown`` to
+        every probe, so withholding there would starve it forever; that case
+        keeps the pre-existing behavior. A missing probe has no safer read to
+        offer, so it stays on its existing path; a probe *error* is different:
+        the composer is unreadable, which is exactly the unconfirmed state, so
+        it withholds and retries rather than blinding typing into a composer it
+        could not read. Priority remains on the durable notification; it never
+        authorizes typing over a draft. No debounce record is written, so the
+        next wake probes again.
         """
         if self._activity_probe is None:
             return None
         try:
             activity = await self._activity_probe(session, terminal)
         except Exception:
-            logger.debug("activity probe failed for session %s", session_id, exc_info=True)
+            logger.warning(
+                "wake for session %s deferred: composer probe failed, so the "
+                "durable message waits for a positive empty read",
+                session_id,
+                exc_info=True,
+            )
+            return composer_unconfirmed_result(session_id, method=method)
+        state = activity.composer.state
+        if state == "empty":
             return None
-        if activity.composer.state != "draft":
+        if state == "draft":
+            excerpt = " ".join((activity.composer.line or "").split())
+            if len(excerpt) > 160:
+                excerpt = f"{excerpt[:157]}..."
+            logger.warning(
+                "wake for session %s deferred: composer holds an operator draft: %s",
+                session_id,
+                excerpt,
+            )
+            return composer_occupied_result(session_id, method=method)
+        if not activity.composer_probeable:
             return None
-        excerpt = " ".join((activity.composer.line or "").split())
-        if len(excerpt) > 160:
-            excerpt = f"{excerpt[:157]}..."
         logger.warning(
-            "wake for session %s deferred: composer holds an operator draft: %s",
+            "wake for session %s deferred: composer state unconfirmed, so the "
+            "durable message waits for a positive empty read",
             session_id,
-            excerpt,
         )
-        return composer_occupied_result(session_id, method=method)
+        return composer_unconfirmed_result(session_id, method=method)
 
     async def _send_managed_terminal_wake(
         self,
@@ -641,56 +737,62 @@ class WakeDispatcher:
             return state_failure
         if current is not None:
             session = current
-        blocked = await self._composer_blocks_wake(session_id, session, terminal, method="terminal")
-        if blocked is not None:
-            return blocked
-        try:
-            await send(
-                terminal_id,
-                prompt,
-                submit=True,
-                clear_before_submit=True,
-                cli_source=getattr(session, "source", None),
+        # Hold the shared composer lock across the probe and the write so the
+        # empty snapshot that authorizes typing cannot be overtaken by a handoff
+        # staging text in the gap between them.
+        async with composer_action_lock(terminal_id):
+            blocked = await self._composer_blocks_wake(
+                session_id, session, terminal, method="terminal"
             )
-        except IndeterminateWrite as exc:
-            # Bytes may already be on screen, so record no delivery and try no
-            # other route: a second wake would double-write the same terminal.
-            return {
-                "session_id": session_id,
-                "delivered": False,
-                "method": "terminal",
-                "indeterminate": True,
-                "error_message": exc.detail,
-            }
-        except AutomaticWriteDeclined as exc:
-            # The coordinator refused before dispatch, so nothing is on screen.
-            # A refusal is a designed outcome, not a failure worth a traceback.
-            logger.debug(
-                "terminal wake declined for session %s (terminal=%s): %s",
-                session_id,
-                terminal_id,
-                exc.reason,
-            )
-            return wake_failure(
-                session_id,
-                method="terminal",
-                error_code=exc.reason,
-                error_message=str(exc),
-            ) | {"decline_reason": exc.reason}
-        except Exception as exc:
-            detail = str(exc) or type(exc).__name__
-            logger.warning(
-                "terminal wake failed for session %s (terminal=%s)",
-                session_id,
-                terminal_id,
-                exc_info=True,
-            )
-            return wake_failure(
-                session_id,
-                method="terminal",
-                error_code="terminal_wake_failed",
-                error_message=detail,
-            )
+            if blocked is not None:
+                return blocked
+            try:
+                await send(
+                    terminal_id,
+                    prompt,
+                    submit=True,
+                    clear_before_submit=True,
+                    cli_source=getattr(session, "source", None),
+                )
+            except IndeterminateWrite as exc:
+                # Bytes may already be on screen, so record no delivery and try no
+                # other route: a second wake would double-write the same terminal.
+                return {
+                    "session_id": session_id,
+                    "delivered": False,
+                    "method": "terminal",
+                    "indeterminate": True,
+                    "error_message": exc.detail,
+                }
+            except AutomaticWriteDeclined as exc:
+                # The coordinator refused before dispatch, so nothing is on screen.
+                # A refusal is a designed outcome, not a failure worth a traceback.
+                logger.debug(
+                    "terminal wake declined for session %s (terminal=%s): %s",
+                    session_id,
+                    terminal_id,
+                    exc.reason,
+                )
+                return wake_failure(
+                    session_id,
+                    method="terminal",
+                    error_code=exc.reason,
+                    error_message=str(exc),
+                ) | {"decline_reason": exc.reason}
+            except Exception as exc:
+                detail = str(exc) or type(exc).__name__
+                logger.warning(
+                    "terminal wake failed for session %s (terminal=%s)",
+                    session_id,
+                    terminal_id,
+                    exc_info=True,
+                )
+                return wake_failure(
+                    session_id,
+                    method="terminal",
+                    error_code="terminal_wake_failed",
+                    error_message=detail,
+                )
         self._record_live_wake(session_id, session)
         return {
             "session_id": session_id,

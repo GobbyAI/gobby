@@ -104,6 +104,39 @@ async def _send(
 
 
 @pytest.mark.asyncio
+async def test_compaction_waits_for_the_shared_composer_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rival holder of the terminal composer lock blocks the whole ladder."""
+    from gobby.terminals import composer_lock as composer_lock_module
+    from gobby.terminals.composer_lock import composer_action_lock
+
+    class _Coordinator:
+        def __init__(self) -> None:
+            self._locks: dict[str, asyncio.Lock] = {}
+
+        def logical_action_lock(self, terminal_id: str) -> asyncio.Lock:
+            return self._locks.setdefault(terminal_id, asyncio.Lock())
+
+    monkeypatch.setattr(composer_lock_module, "_coordinator", _Coordinator())
+
+    pane = _GrokPane()
+    async with composer_action_lock("term-grok"):
+        ladder = asyncio.create_task(_send(pane, _always_settled))
+        for _ in range(5):
+            await asyncio.sleep(0)
+        # A rival holds the lock, so the ladder has written nothing yet.
+        assert pane.keys == []
+        assert pane.typed == []
+    await ladder
+    assert pane.typed and pane.typed[0].startswith(_COMMAND)
+
+
+def _always_settled() -> bool:
+    return True
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("observe", [None, lambda: True], ids=["blind", "observed"])
 async def test_grok_compaction_interrupt_uses_ctrl_c(
     observe: Callable[[], bool | None] | None,

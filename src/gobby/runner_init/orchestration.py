@@ -17,6 +17,7 @@ from gobby.runner_init.services import mark_service_degraded
 from gobby.runner_init.terminal_wiring import init_terminal_wiring, wake_write_services
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.sessions.lifecycle import SessionLifecycleManager
+from gobby.terminals.composer_lock import composer_action_lock
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -146,7 +147,10 @@ async def _send_tmux_session_wake(
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     action_key = f"wake:{terminal.id}"
-    async with coordinator.logical_action_lock(terminal.id):
+    # Reentrant acquisition: the wake dispatcher already holds this terminal's
+    # composer lock across its probe, and the raw asyncio.Lock would deadlock on
+    # a second same-task acquire.
+    async with composer_action_lock(terminal.id, coordinator=coordinator):
         steps: list[WriteRequest | SequenceDelay] = []
         if not submit:
             steps.append(

@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     DEFAULT_SNAPSHOT_LINES,
     ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
@@ -439,6 +440,53 @@ async def _wait_for_compaction_rejection(
 
 
 async def _send_terminal_compaction_command(
+    pane: PaneIO,
+    command: str,
+    session_id: str,
+    *,
+    cli_source: str | None,
+    mark_continuation_pending: Callable[[], bool],
+    clear_continuation_pending: Callable[[], bool],
+    schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
+    continuation_readiness_capture_lines: int | None = None,
+    observe_interrupt: Callable[[], bool | None] | None = None,
+    turn_settled: Callable[[], bool | None] | None = None,
+    settle_seconds: float | None = None,
+    interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
+    rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
+    composer_read: ComposerReader | None = None,
+    on_command_submitting: Callable[[], None] | None = None,
+    seat_left: Callable[[], bool] | None = None,
+) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
+    """Serialize the whole compaction ladder under the shared composer lock.
+
+    The composer probe, interrupt, drain, submit and verify are all separate
+    awaits against one physical composer, so a concurrent wake would otherwise
+    type into a staged command. Holding one lock across the ladder keeps it
+    atomic against every other composer writer (events/wake.py, wake_batch.py).
+    """
+    async with composer_action_lock(str(getattr(pane, "target", "") or "")):
+        return await _send_terminal_compaction_command_locked(
+            pane,
+            command,
+            session_id,
+            cli_source=cli_source,
+            mark_continuation_pending=mark_continuation_pending,
+            clear_continuation_pending=clear_continuation_pending,
+            schedule_continuation_readiness=schedule_continuation_readiness,
+            continuation_readiness_capture_lines=continuation_readiness_capture_lines,
+            observe_interrupt=observe_interrupt,
+            turn_settled=turn_settled,
+            settle_seconds=settle_seconds,
+            interrupt_settle_seconds=interrupt_settle_seconds,
+            rejection_settle_seconds=rejection_settle_seconds,
+            composer_read=composer_read,
+            on_command_submitting=on_command_submitting,
+            seat_left=seat_left,
+        )
+
+
+async def _send_terminal_compaction_command_locked(
     pane: PaneIO,
     command: str,
     session_id: str,

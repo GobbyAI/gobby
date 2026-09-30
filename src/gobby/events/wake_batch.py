@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.events.live_wake import wake_debounced_result, wake_failure
 from gobby.events.wake import NativeWakeTarget
+from gobby.terminals.composer_lock import composer_action_lock
 
 if TYPE_CHECKING:
     from gobby.events.wake import WakeDispatcher
@@ -91,6 +92,10 @@ async def dispatch_live_wakes(
             if not dispatcher._should_send_live_wake(session_id, session):
                 results[session_id] = wake_debounced_result(session_id, method="terminal")
                 continue
+            # Hold the shared composer lock across this terminal's probe and its
+            # batch send so a handoff cannot stage text between the empty read
+            # and the wake write. The stack releases it after the batch lands.
+            await stack.enter_async_context(composer_action_lock(str(terminal.id)))
             current, state_failure = await dispatcher._preflight_live_side_effect(
                 session_id, priority=priority
             )
