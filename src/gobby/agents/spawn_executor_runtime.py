@@ -78,7 +78,9 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
                 error="retry_terminal_not_pending",
             )
 
-    if request.placement_binder is not None:
+    if request.placement_binder is not None or existing is not None:
+        # Retrying an existing id must take the same claim as placement and reaping.
+        # Keep it through uncertain worker outcomes, even when no bind is requested.
         return await _placed_runtime_spawn(
             request,
             plan,
@@ -89,19 +91,14 @@ async def _runtime_spawn(request: SpawnRequest, plan: ProviderSpawnPlan) -> Spaw
             command=command,
             existing=existing,
         )
-    result = await _unplaced_runtime_spawn(
+    return await _unplaced_runtime_spawn(
         request,
         plan,
         manager=manager,
         runtime=runtime,
         backend=backend,
         command=command,
-        existing=existing,
     )
-    if existing is not None and not result.success:
-        # Failure cleanup recognizes a rolled-back bump by the pre-bump pair.
-        result.prior_attempt = (existing.attempt_generation, existing.attempt_started_at)
-    return result
 
 
 async def _unplaced_runtime_spawn(
@@ -112,50 +109,30 @@ async def _unplaced_runtime_spawn(
     runtime: TerminalRuntime,
     backend: str,
     command: list[str],
-    existing: Terminal | None,
 ) -> SpawnResult:
     from gobby.agents.spawn_executor import (
         _schedule_timeout_cleanup,
         _settle_native_spawn_failure,
-        _tmux_duplicate_session_error,
         derive_spawn_key,
-        kill_spawn_key,
     )
 
-    if existing is not None:
-        bumped = await asyncio.to_thread(
-            manager.retry_attempt_unsettled,
-            existing.id,
-            existing.attempt_generation,
-        )
-        if bumped is None:
-            return SpawnResult(
-                success=False,
-                run_id=plan.agent_run_id,
-                child_session_id=plan.child_session_id,
-                status="failed",
-                error="retry_generation_cas_failed",
-            )
-        terminal_id = existing.id
-        spawn_key = existing.spawn_key or derive_spawn_key(backend, terminal_id)
-    else:
-        terminal_id = mint_terminal_id()
-        spawn_key = derive_spawn_key(backend, terminal_id)
-        bumped = await asyncio.to_thread(
-            manager.create_pending,
-            terminal_id,
-            request.project_id,
-            backend,
-            "gobby",
-            spawn_key,
-            machine_id=request.machine_id,
-            session_id=plan.child_session_id,
-            agent_run_id=plan.agent_run_id,
-            title=plan.title,
-        )
+    terminal_id = mint_terminal_id()
+    spawn_key = derive_spawn_key(backend, terminal_id)
+    pending = await asyncio.to_thread(
+        manager.create_pending,
+        terminal_id,
+        request.project_id,
+        backend,
+        "gobby",
+        spawn_key,
+        machine_id=request.machine_id,
+        session_id=plan.child_session_id,
+        agent_run_id=plan.agent_run_id,
+        title=plan.title,
+    )
 
-    attempt_generation = bumped.attempt_generation
-    attempt_started_at = bumped.attempt_started_at
+    attempt_generation = pending.attempt_generation
+    attempt_started_at = pending.attempt_started_at
 
     if request.cancel_event is not None and request.cancel_event.is_set():
         await asyncio.to_thread(manager.fail_pending, terminal_id)
@@ -263,9 +240,6 @@ async def _unplaced_runtime_spawn(
                 exc=exc,
             )
         else:
-            if request.retry_terminal_id and _tmux_duplicate_session_error(exc):
-                pending = await asyncio.to_thread(manager.get, terminal_id)
-                await kill_spawn_key(runtime, spawn_key, pending=pending)
             await asyncio.to_thread(
                 manager.fail_pending_attempt,
                 terminal_id,
