@@ -16,7 +16,7 @@ from click.testing import CliRunner
 
 import gobby.cli.datastores as datastores
 import gobby.cli.installers.managed_services_lock as managed_services_lock_module
-from gobby.cli import cli, daemon
+from gobby.cli import cli, daemon, daemon_start
 from gobby.cli._daemon_services import ServiceStartResult
 from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.installers.managed_services_lock import managed_services_lock
@@ -117,7 +117,7 @@ def test_cold_start_reads_bind_from_bootstrap(
     services = tmp_path / "services"
     services.mkdir()
     (services / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(shutil, "which", lambda _name, **_kwargs: "/usr/bin/docker")
     monkeypatch.setattr(
         daemon,
         "resolve_compose_runtime",
@@ -131,9 +131,10 @@ def test_cold_start_reads_bind_from_bootstrap(
     assert daemon._services_stop(tmp_path) is True
 
     order: list[str] = []
-    monkeypatch.setattr(daemon, "get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr(daemon_start, "get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr("gobby.cli.get_gobby_home", lambda: tmp_path)
-    monkeypatch.setattr(daemon, "_start_dependency_errors", lambda: [])
+    monkeypatch.setattr(daemon_start, "_start_dependency_errors", lambda: [])
+    monkeypatch.setattr(daemon_start, "worktree_daemon_refusal", lambda: None)
 
     def start_services(home: Path) -> ServiceStartResult:
         bind = read_bootstrap_yaml(home / "bootstrap.yaml")["services_bind_address"]
@@ -142,15 +143,15 @@ def test_cold_start_reads_bind_from_bootstrap(
 
     class _Runtime:
         @property
-        def operational_config(self) -> object:
+        def read_only_operational_config(self) -> object:
             order.append("config")
             raise click.ClickException("stop after sequencing check")
 
         @property
         def config(self) -> object:
-            return self.operational_config
+            return self.read_only_operational_config
 
-    monkeypatch.setattr(daemon, "_services_start", start_services)
+    monkeypatch.setattr(daemon_start, "_services_start", start_services)
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda _ctx: _Runtime())
 
     result = CliRunner().invoke(cli, ["start"])
@@ -286,3 +287,35 @@ def test_managed_services_transitions_are_serialized(
     with managed_services_lock(tmp_path, operation="outer", timeout=2):
         with managed_services_lock(tmp_path, operation="reentrant", timeout=2):
             pass
+
+
+def test_expose_promotes_hub_and_rollback_restores_flag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """2.1.6: exposure makes the machine a hub; a failed exposure restores the flag."""
+    _write_local_bootstrap(tmp_path, "127.0.0.1")
+    monkeypatch.setattr(datastores, "_tailscale_ipv4_addresses", lambda: {"100.64.0.7"})
+    monkeypatch.setattr(datastores, "_snapshot_compose_running", lambda _home: True)
+    monkeypatch.setattr(datastores, "_start_managed_services", lambda _home: (True, "ready"))
+    monkeypatch.setattr(datastores, "_commit_shared_endpoints", lambda *_args: None)
+
+    assert read_bootstrap_yaml(tmp_path / "bootstrap.yaml").get("hub") is not True
+    datastores.expose_datastores(
+        tmp_path,
+        bind_address="100.64.0.7",
+        published_host="hub.tailnet.ts.net",
+    )
+    assert read_bootstrap_yaml(tmp_path / "bootstrap.yaml")["hub"] is True
+
+    _write_local_bootstrap(tmp_path, "127.0.0.1")
+    outcomes = iter([(False, "compose failed"), (True, "restored")])
+    monkeypatch.setattr(datastores, "_start_managed_services", lambda _home: next(outcomes))
+
+    with pytest.raises(datastores.DatastoreExposureError, match="compose failed"):
+        datastores.expose_datastores(
+            tmp_path,
+            bind_address="100.64.0.7",
+            published_host="hub.tailnet.ts.net",
+        )
+    assert read_bootstrap_yaml(tmp_path / "bootstrap.yaml").get("hub") is not True

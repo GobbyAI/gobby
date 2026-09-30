@@ -17,6 +17,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from gobby.storage.hub.async_ops import (
     RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS,
     BoundedDBTimeoutError,
+    CommittedCleanupError,
     IndeterminateCommitError,
     _result_or_raise,
     _RunState,
@@ -63,14 +64,19 @@ class _FakeConnection:
         *,
         block_first_set: bool = False,
         block_commit: bool = False,
+        fail_close: bool = False,
+        block_close: bool = False,
     ) -> None:
         self.activity: list[str] = []
         self.pgconn = _FakePGConn(self.activity)
         self._block_first_set = block_first_set
         self._block_commit = block_commit
+        self._fail_close = fail_close
+        self._block_close = block_close
         self._cancel_count = 0
         self.block_entered = asyncio.Event()
         self.commit_entered = asyncio.Event()
+        self.close_entered = asyncio.Event()
 
     async def execute(self, query: str | sql.Composable) -> None:
         query_text = query.as_string() if isinstance(query, sql.Composable) else query
@@ -91,6 +97,11 @@ class _FakeConnection:
 
     async def close(self) -> None:
         self.activity.append("close")
+        if self._block_close:
+            self.close_entered.set()
+            await self._stubborn_wait()
+        if self._fail_close:
+            raise RuntimeError("close failed after commit")
         self.pgconn.finish()
 
     async def _stubborn_wait(self) -> None:
@@ -637,6 +648,53 @@ async def test_supervisor_cancellation_during_commit_is_indeterminate(
     assert connection.activity.count("hard-close") == 1
 
 
+async def test_committed_cleanup_failure_is_not_rollback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An observed COMMIT whose connection close fails raises CommittedCleanupError."""
+    connection = _FakeConnection(fail_close=True)
+    _install_fake_connect(monkeypatch, connection)
+
+    async def committed_work(_conn: Any, _remaining: float) -> str:
+        return "committed-result"
+
+    with pytest.raises(CommittedCleanupError) as raised:
+        await run_bounded_db(
+            committed_work,
+            conninfo="postgresql://unused",
+            deadline_seconds=RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS + 2.0,
+        )
+
+    assert raised.value.result == "committed-result"
+    assert isinstance(raised.value.__cause__, RuntimeError)
+    assert "commit" in connection.activity
+
+
+async def test_cancellation_during_committed_cleanup_reports_committed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancellation while reaping an observed COMMIT classifies as committed cleanup."""
+    connection = _FakeConnection(block_close=True)
+    _install_fake_connect(monkeypatch, connection)
+
+    async def committed_work(_conn: Any, _remaining: float) -> None:
+        return None
+
+    supervisor = asyncio.create_task(
+        run_bounded_db(
+            committed_work,
+            conninfo="postgresql://unused",
+            deadline_seconds=RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS + 3.0,
+        )
+    )
+    await connection.close_entered.wait()
+    supervisor.cancel()
+
+    with pytest.raises(CommittedCleanupError):
+        await supervisor
+    assert connection.activity.count("cancel-1") >= 1
+
+
 @pytest.mark.integration
 @pytest.mark.slow
 async def test_lock_release_on_hard_close(
@@ -740,3 +798,19 @@ async def test_commit_phase_outcomes(
         ).fetchall()
 
     assert rows == [(1, "committed"), (3, "indeterminate")]
+
+
+async def test_result_or_raise_reports_committed_cleanup_failure() -> None:
+    """An observed COMMIT with a failing reap is a cleanup error, not rollback."""
+
+    async def fail() -> None:
+        raise RuntimeError("reap failed after commit")
+
+    child = asyncio.create_task(fail())
+    await asyncio.gather(child, return_exceptions=True)
+    state = _RunState(commit_submitted=True, commit_observed=True, result="committed")
+
+    with pytest.raises(CommittedCleanupError) as raised:
+        _result_or_raise(child, state)
+    assert raised.value.result == "committed"
+    assert raised.value.__cause__ is not None

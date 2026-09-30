@@ -7,6 +7,7 @@ import subprocess
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
@@ -19,9 +20,14 @@ import gobby.cli.datastores as datastores
 import gobby.cli.installers.falkor as falkor
 from gobby.cli import cli
 from gobby.config.bootstrap import BootstrapConfigError
-from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
+from gobby.config.bootstrap_io import (
+    read_bootstrap_yaml,
+    update_bootstrap_yaml,
+    write_bootstrap_yaml,
+)
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.config_repository import ConfigRepository
+from gobby.storage.hub.async_ops import IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
@@ -42,18 +48,47 @@ def _write_bootstrap(home: Path, *, datastore_mode: str = "local") -> None:
     write_bootstrap_yaml(home / "bootstrap.yaml", data)
 
 
+_FAKE_SCRAM = "SCRAM-SHA-256$4096:c2FsdA==$c3RvcmVka2V5:c2VydmVya2V5"
+
+
+class _FakePGConn:
+    """Minimal libpq handle exposing the SCRAM generator the ALTER path needs."""
+
+    def __init__(self, verifier: bytes) -> None:
+        self._verifier = verifier
+        self.encrypted_passwords: list[str] = []
+        self.finished = False
+
+    def encrypt_password(self, password: bytes, user: bytes, algorithm: bytes) -> bytes:
+        assert password and user
+        assert algorithm == b"scram-sha-256"
+        self.encrypted_passwords.append(password.decode("utf-8"))
+        return self._verifier
+
+    def finish(self) -> None:
+        self.finished = True
+
+
 class _FakeConnection:
-    def __init__(self) -> None:
+    """Async connection double for ``run_bounded_db``'s dedicated connection."""
+
+    def __init__(self, verifier: str = _FAKE_SCRAM, *, fail_close: bool = False) -> None:
         self.statements: list[str] = []
+        self.committed = False
+        self.closed = False
+        self._fail_close = fail_close
+        self.pgconn = _FakePGConn(verifier.encode("ascii"))
 
-    def __enter__(self) -> _FakeConnection:
-        return self
-
-    def __exit__(self, *_exc: object) -> None:
-        return None
-
-    def execute(self, query: Any) -> None:
+    async def execute(self, query: Any) -> None:
         self.statements.append(query.as_string(None))
+
+    async def commit(self) -> None:
+        self.committed = True
+
+    async def close(self) -> None:
+        if self._fail_close:
+            raise RuntimeError("close failed after commit")
+        self.closed = True
 
 
 class _NonClosingDb:
@@ -94,16 +129,27 @@ def rotation_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 def _patch_connect(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    fail_close: bool = False,
 ) -> tuple[_FakeConnection, list[tuple[str, dict[str, Any]]]]:
-    connection = _FakeConnection()
+    connection = _FakeConnection(fail_close=fail_close)
     connects: list[tuple[str, dict[str, Any]]] = []
 
-    def _connect(dsn: str, **kwargs: Any) -> _FakeConnection:
+    async def _connect(dsn: str, **kwargs: Any) -> _FakeConnection:
         connects.append((dsn, kwargs))
         return connection
 
-    monkeypatch.setattr(psycopg, "connect", _connect)
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
     return connection, connects
+
+
+def _assert_single_bounded_connect(connects: list[tuple[str, dict[str, Any]]]) -> None:
+    """The rotation dials the current DSN once on the bounded async helper."""
+    assert len(connects) == 1
+    dsn, kwargs = connects[0]
+    assert dsn == _CURRENT_DSN
+    assert kwargs["prepare_threshold"] is None
+    assert kwargs["connect_timeout"] >= 1
 
 
 def _new_password(home: Path) -> tuple[str, str]:
@@ -127,12 +173,16 @@ def test_postgres_rotation_alters_role_then_rewrites_bootstrap(
     result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
 
     assert result.exit_code == 0, result.output
-    assert connects == [(_CURRENT_DSN, {"connect_timeout": 5, "autocommit": True})]
+    _assert_single_bounded_connect(connects)
     _new_url, password = _new_password(rotation_home)
     assert password != "old-secret"
     assert len(password) >= 32
     assert _URL_SAFE.fullmatch(password)
-    assert connection.statements == [f"ALTER ROLE \"gobby\" PASSWORD '{password}'"]
+    # The statement carries the SCRAM verifier, never the plaintext password.
+    assert len(connection.statements) == 1
+    assert connection.statements[0] == f"ALTER ROLE \"gobby\" PASSWORD '{_FAKE_SCRAM}'"
+    assert password not in connection.statements[0]
+    assert connection.committed is True
     assert password not in result.output
     assert result.output.strip() == "Run `gobby restart` to apply the new postgres password."
 
@@ -140,16 +190,17 @@ def test_postgres_rotation_alters_role_then_rewrites_bootstrap(
 def test_postgres_rotation_keeps_bootstrap_when_alter_role_fails(
     monkeypatch: pytest.MonkeyPatch, rotation_home: Path
 ) -> None:
-    def _connect(*_args: object, **_kwargs: object) -> None:
+    async def _connect(*_args: object, **_kwargs: object) -> None:
         raise psycopg.OperationalError("connection refused")
 
-    monkeypatch.setattr(psycopg, "connect", _connect)
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
 
     result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
 
     assert result.exit_code == 1
-    assert "PostgreSQL password rotation failed: connection refused" in result.output
+    assert "PostgreSQL password rotation failed: OperationalError" in result.output
     assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] == _CURRENT_DSN
+    assert "credential_rotation" in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
 
 
 def test_postgres_rotation_reports_new_dsn_when_bootstrap_write_fails(
@@ -158,8 +209,14 @@ def test_postgres_rotation_reports_new_dsn_when_bootstrap_write_fails(
     connection, _connects = _patch_connect(monkeypatch)
     captured: dict[str, str] = {}
 
-    def _fail_write(*, gobby_home: Path, database_url: str) -> None:
+    def _fail_write(
+        *,
+        gobby_home: Path,
+        database_url: str,
+        clear_credential_rotation: bool = False,
+    ) -> None:
         _ = gobby_home
+        assert clear_credential_rotation is True
         captured["database_url"] = database_url
         raise BootstrapConfigError("disk full")
 
@@ -171,8 +228,11 @@ def test_postgres_rotation_reports_new_dsn_when_bootstrap_write_fails(
     assert len(connection.statements) == 1
     new_url = captured["database_url"]
     password = unquote(cast(str, urlsplit(new_url).password))
-    assert connection.statements[0].endswith(f"'{password}'")
-    assert f"Set database_url in {rotation_home / 'bootstrap.yaml'} to: {new_url}" in result.output
+    assert connection.statements[0].endswith(f"'{_FAKE_SCRAM}'")
+    # The repair DSN is emitted redacted; the raw password never reaches output.
+    assert password not in result.output
+    assert "Set database_url in" in result.output
+    assert "gobby:****@localhost:60891/gobby" in result.output
     assert "bootstrap.yaml update failed after the role changed" in result.output
     assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] == _CURRENT_DSN
 
@@ -274,3 +334,189 @@ def test_dsn_with_password_replaces_only_the_password(
 def test_dsn_with_password_requires_a_user() -> None:
     with pytest.raises(click.ClickException, match="names no user"):
         datastores._dsn_with_password("postgresql://localhost/gobby", "new")
+
+
+def test_postgres_rotation_publishes_pending_before_alter(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """A durable pending old/new pair exists before ALTER, and finalize clears it."""
+    connection, connects = _patch_connect(monkeypatch)
+    seen: list[dict[str, Any]] = []
+
+    original_execute = connection.execute
+
+    async def _observe(query: Any) -> None:
+        seen.append(dict(read_bootstrap_yaml(rotation_home / "bootstrap.yaml")))
+        await original_execute(query)
+
+    monkeypatch.setattr(connection, "execute", _observe)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 0, result.output
+    assert seen, "ALTER never ran"
+    pending = seen[0].get("credential_rotation")
+    assert isinstance(pending, dict), "no pending pair was durable before ALTER"
+    assert pending["role"] == "gobby"
+    _final_url, final_password = _new_password(rotation_home)
+    assert pending["pending_password"] == final_password
+    assert pending["previous_password"] == "old-secret"
+    assert "credential_rotation" not in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    _assert_single_bounded_connect(connects)
+
+
+def test_startup_never_mutates_credentials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A connect failure during startup leaves the bootstrap byte-identical."""
+    import logging
+
+    import gobby.storage.maintenance_epoch as maintenance_epoch
+    from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG
+    from gobby.runner_init import helpers
+
+    home = tmp_path / "home"
+    (home / "files").mkdir(parents=True)
+    monkeypatch.setattr(datastores, "get_gobby_home", lambda: home)
+    write_bootstrap_yaml(
+        home / "bootstrap.yaml",
+        {
+            "datastore_mode": "local",
+            "files_home": str(home / "files"),
+            "database_url": _CURRENT_DSN,
+        },
+    )
+    before = (home / "bootstrap.yaml").read_bytes()
+
+    def _fail(*_args: object, **_kwargs: object) -> None:
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(maintenance_epoch, "_connect", _fail)
+    config = SimpleNamespace(database_url=_CURRENT_DSN, postgres_pool=DEFAULT_POSTGRES_POOL_CONFIG)
+    with caplog.at_level(logging.ERROR):
+        with pytest.raises(psycopg.OperationalError, match="connection refused"):
+            helpers.init_hub_database(config)
+
+    assert (home / "bootstrap.yaml").read_bytes() == before
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("credentials were not modified" in message for message in messages)
+    assert any("rotate-password postgres" in message for message in messages)
+    assert all(_CURRENT_DSN not in message for message in messages)
+
+
+def test_postgres_rotation_resume_reapplies_the_same_password(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """A pending pair makes the next run converge on the SAME intended password."""
+    connection, connects = _patch_connect(monkeypatch)
+    pending_password = "resume-intended-password-0123456789"
+    update_bootstrap_yaml(
+        rotation_home / "bootstrap.yaml",
+        lambda data: data.__setitem__(
+            "credential_rotation",
+            {
+                "role": "gobby",
+                "pending_password": pending_password,
+                "previous_password": "old-secret",
+            },
+        ),
+    )
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 0, result.output
+    _assert_single_bounded_connect(connects)
+    assert connection.pgconn.encrypted_passwords == [pending_password]
+    assert "credential_rotation" not in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    _url, published = _new_password(rotation_home)
+    assert published == pending_password
+    assert pending_password not in result.output
+
+
+def test_postgres_rotation_preserves_pending_on_indeterminate_commit(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """An unobserved COMMIT never finalizes and never claims rollback."""
+
+    def _indeterminate(*_args: object, **_kwargs: object) -> None:
+        raise IndeterminateCommitError("COMMIT outcome unobserved")
+
+    monkeypatch.setattr(datastores, "_observe_hub_alter", _indeterminate)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1
+    assert "phase=alter" in result.output
+    assert "pending pair is preserved" in result.output
+    pending = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["credential_rotation"]
+    assert pending["role"] == "gobby"
+    assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] == _CURRENT_DSN
+    assert pending["pending_password"] not in result.output
+
+
+def test_postgres_rotation_tolerates_observed_commit_cleanup_failure(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """An observed COMMIT whose reap failed is durable, so finalize still runs."""
+    connection, _connects = _patch_connect(monkeypatch, fail_close=True)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 0, result.output
+    assert connection.committed is True
+    assert "credential_rotation" not in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] != _CURRENT_DSN
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "postgresql://gobby:old-secret@localhost:60891/gobby?user=evil",
+        "postgresql://gobby:old-secret@localhost:60891/gobby?dbname=evil",
+        "postgresql://gobby:old-secret@localhost:60891/gobby?host=evil.example",
+        "postgresql://gobby:old-secret@localhost:60891/gobby?service=evil",
+        "postgresql://gobby:old-secret@localhost:60891/gobby?passfile=evil",
+    ],
+)
+def test_postgres_rotation_rejects_query_indirection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, database_url: str
+) -> None:
+    """Connection-string aliases that redirect identity or endpoint are refused."""
+    monkeypatch.setattr(datastores, "get_gobby_home", lambda: tmp_path)
+    _write_bootstrap(tmp_path)
+    update_bootstrap_yaml(
+        tmp_path / "bootstrap.yaml",
+        lambda data: data.__setitem__("database_url", database_url),
+    )
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("no connection may be attempted for an indirect target")
+
+    monkeypatch.setattr(datastores, "_observe_hub_alter", _refuse)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1
+    assert "phase=validate" in result.output
+    assert "old-secret" not in result.output
+
+
+def test_postgres_rotation_preserves_unrelated_bootstrap_fields(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """Finalization preserves unrelated keys while dropping only the pending pair."""
+    _patch_connect(monkeypatch)
+
+    def _annotate(data: dict[str, Any]) -> None:
+        data["ui_expose"] = "tailscale"
+        data["cosmetic_note"] = "keep me"
+
+    update_bootstrap_yaml(rotation_home / "bootstrap.yaml", _annotate)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 0, result.output
+    persisted = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert persisted["cosmetic_note"] == "keep me"
+    assert persisted["ui_expose"] == "tailscale"
+    assert "credential_rotation" not in persisted

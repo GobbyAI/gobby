@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import ipaddress
 import re
 import secrets
@@ -18,8 +19,20 @@ from psycopg import sql
 from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import BootstrapConfigError
-from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
-from gobby.config.postgres_bootstrap import write_postgres_defaults
+from gobby.config.bootstrap_io import (
+    read_bootstrap_yaml,
+    update_bootstrap_yaml,
+    write_bootstrap_yaml,
+)
+from gobby.config.postgres_bootstrap import (
+    read_pending_credential_rotation,
+    write_postgres_defaults,
+)
+from gobby.storage.hub.async_ops import (
+    CommittedCleanupError,
+    IndeterminateCommitError,
+    run_bounded_db,
+)
 
 from .installers.falkor import rotate_falkordb_password
 from .installers.managed_services_lock import ManagedServicesLockError, managed_services_lock
@@ -40,8 +53,65 @@ def apply_hub_schema_contract(gobby_home: Path) -> None:
         pass
 
 
-_POSTGRES_CONNECT_TIMEOUT_SECONDS = 5
+# Bounded end-to-end budget for one hub ALTER: connect, execute, COMMIT, reap.
+_HUB_ALTER_DEADLINE_SECONDS = 10.0
 _ROTATABLE_SERVICES = ("postgres", "falkordb")
+
+# Query keys that redirect identity or endpoint away from the parsed userinfo/netloc.
+_INDIRECTING_QUERY_KEYS = frozenset(
+    {
+        "user",
+        "dbname",
+        "password",
+        "host",
+        "hostaddr",
+        "port",
+        "service",
+        "servicefile",
+        "passfile",
+    }
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _RotationTarget:
+    """The validated, directly-addressed role/database/endpoint of one rotation."""
+
+    role: str
+    database: str
+    host: str
+    port: int
+
+
+def _parse_rotation_target(database_url: str) -> _RotationTarget:
+    """Reject aliases/indirection and return the effective role, database and endpoint."""
+    parts = urlsplit(database_url)
+    if parts.scheme not in {"postgres", "postgresql"}:
+        raise click.ClickException("phase=validate database_url must use postgresql://")
+    aliases = sorted(
+        key
+        for key, _value in (pair.partition("=")[::2] for pair in parts.query.split("&"))
+        if key and key.lower() in _INDIRECTING_QUERY_KEYS
+    )
+    if aliases:
+        raise click.ClickException(
+            "phase=validate database_url uses indirection "
+            f"({', '.join(aliases)}); address the role, database and endpoint directly"
+        )
+    userinfo = parts.netloc.rpartition("@")[0]
+    role = userinfo.partition(":")[0]
+    database = parts.path.removeprefix("/")
+    if not role or not database:
+        raise click.ClickException(
+            "phase=validate database_url must name the role and database directly"
+        )
+    if not parts.hostname or parts.port is None:
+        raise click.ClickException(
+            "phase=validate database_url must name the endpoint host and port directly"
+        )
+    return _RotationTarget(
+        role=unquote(role), database=unquote(database), host=parts.hostname, port=parts.port
+    )
 
 
 class DatastoreExposureError(RuntimeError):
@@ -119,6 +189,7 @@ def expose_datastores(
             was_running = _snapshot_compose_running(gobby_home)
             candidate = dict(previous)
             candidate["services_bind_address"] = bind
+            candidate["hub"] = True
             write_bootstrap_yaml(bootstrap_path, candidate)
 
             ready, detail = _start_managed_services(gobby_home)
@@ -307,37 +378,154 @@ def _dsn_with_password(database_url: str, password: str) -> tuple[str, str]:
     return unquote(user), urlunsplit(parts._replace(netloc=netloc))
 
 
+_SCRAM_VERIFIER_PATTERN = re.compile(r"SCRAM-SHA-256\$[^\s'\"]+")
+
+
+def _redact_secrets(text: str, redaction_secrets: tuple[str, ...]) -> str:
+    """Remove every known secret and any SCRAM verifier from operator-facing text."""
+    for secret in redaction_secrets:
+        if secret:
+            text = text.replace(secret, "****")
+    return _SCRAM_VERIFIER_PATTERN.sub("****", text)
+
+
+def _rotation_failure_detail(exc: BaseException) -> str:
+    """Report only the exception class: phase codes, classes and guidance, never text."""
+    return type(exc).__name__
+
+
+def _observe_hub_alter(database_url: str, role: str, intended_password: str) -> None:
+    """Run the transactional ALTER on the bounded helper and observe its COMMIT."""
+
+    async def _work(connection: Any, _remaining: float) -> None:
+        # ALTER ROLE is a utility statement, so the verifier is a composed literal,
+        # never a bound parameter. Generate SCRAM explicitly rather than relying on
+        # the server's default password_encryption.
+        verifier = connection.pgconn.encrypt_password(
+            intended_password.encode(), role.encode(), b"scram-sha-256"
+        )
+        statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(
+            sql.Identifier(role), sql.Literal(verifier.decode("ascii"))
+        )
+        await connection.execute(statement)
+
+    try:
+        asyncio.run(
+            run_bounded_db(
+                _work,
+                conninfo=database_url,
+                deadline_seconds=_HUB_ALTER_DEADLINE_SECONDS,
+                statement_timeout_remaining=False,
+                lock_timeout=False,
+            )
+        )
+    except CommittedCleanupError:
+        # COMMIT was observed; only termination/reap failed, so the ALTER is durable
+        # and final publication must still proceed.
+        return
+
+
+def _finalize_postgres_rotation(
+    *,
+    gobby_home: Path,
+    bootstrap_file: Path,
+    role: str,
+    new_url: str,
+    redaction_secrets: tuple[str, ...],
+) -> None:
+    """Publish the new DSN and drop the pending pair as one compare-and-set."""
+    try:
+        write_postgres_defaults(
+            gobby_home=gobby_home,
+            database_url=new_url,
+            clear_credential_rotation=True,
+        )
+    except (BootstrapConfigError, OSError) as exc:
+        click.echo(
+            f"phase=finalize PostgreSQL role {role!r} now uses the new password but "
+            f"{bootstrap_file} was not updated: "
+            f"{_rotation_failure_detail(exc)}",
+            err=True,
+        )
+        click.echo(
+            f"Set database_url in {bootstrap_file} to: "
+            f"{_redact_secrets(new_url, redaction_secrets)}",
+            err=True,
+        )
+        click.echo(
+            "Resume with `gobby datastores rotate-password postgres`; the pending "
+            "credential pair is still on disk.",
+            err=True,
+        )
+        raise click.ClickException("bootstrap.yaml update failed after the role changed") from exc
+
+
 def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> None:
     bootstrap_file = gobby_home / "bootstrap.yaml"
     current_url = bootstrap.get("database_url")
     if not isinstance(current_url, str) or not current_url:
         raise click.ClickException(f"{bootstrap_file} has no database_url; run `gobby install`")
-    new_password = secrets.token_urlsafe(32)
-    role, new_url = _dsn_with_password(current_url, new_password)
-    # ALTER ROLE is a utility statement, so the password is a composed literal,
-    # never a bound parameter.
-    statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(
-        sql.Identifier(role), sql.Literal(new_password)
-    )
+    target = _parse_rotation_target(current_url)
+
+    pending = read_pending_credential_rotation(gobby_home)
+    if pending is not None:
+        # Resume: reapply the SAME intended password so a crash before COMMIT cannot
+        # strand the role on a password nobody recorded.
+        if pending.role != target.role:
+            raise click.ClickException(
+                "phase=validate bootstrap credential_rotation.role no longer matches "
+                "database_url; resolve the pending pair before rotating"
+            )
+        role = target.role
+        intended_password = pending.pending_password
+        redaction_secrets = (intended_password, pending.previous_password)
+    else:
+        new_password = secrets.token_urlsafe(32)
+        role = target.role
+        previous_password = unquote(urlsplit(current_url).password or "")
+        intended_password = new_password
+        redaction_secrets = (new_password, previous_password)
+
+        def _stage(data: dict[str, Any]) -> None:
+            data["credential_rotation"] = {
+                "role": role,
+                "pending_password": intended_password,
+                "previous_password": previous_password,
+            }
+
+        # Durable pending publication precedes ALTER: a crash between here and the
+        # COMMIT leaves recovery state on disk rather than a role nobody can open.
+        try:
+            update_bootstrap_yaml(bootstrap_file, _stage)
+        except (BootstrapConfigError, OSError) as exc:
+            raise click.ClickException(
+                f"phase=prepare could not publish the pending credential pair: "
+                f"{_rotation_failure_detail(exc)}"
+            ) from exc
+
+    new_url = _dsn_with_password(current_url, intended_password)[1]
     try:
-        with psycopg.connect(
-            current_url, connect_timeout=_POSTGRES_CONNECT_TIMEOUT_SECONDS, autocommit=True
-        ) as conn:
-            conn.execute(statement)
-    except psycopg.Error as exc:
-        raise click.ClickException(f"PostgreSQL password rotation failed: {exc}") from exc
+        _observe_hub_alter(current_url, role, intended_password)
+    except IndeterminateCommitError as exc:
+        raise click.ClickException(
+            f"phase=alter COMMIT outcome unobserved; the pending pair is preserved. "
+            f"Re-run `gobby datastores rotate-password postgres` to resume. "
+            f"({_rotation_failure_detail(exc)})"
+        ) from exc
+    except Exception as exc:
+        raise click.ClickException(
+            f"PostgreSQL password rotation failed: {_rotation_failure_detail(exc)}"
+        ) from exc
+
     # The role has already changed: a failed write below must hand the operator
     # the new DSN for manual repair before the command exits.
-    try:
-        write_postgres_defaults(gobby_home=gobby_home, database_url=new_url)
-    except (BootstrapConfigError, OSError) as exc:
-        click.echo(
-            f"PostgreSQL role {role!r} now uses the new password but {bootstrap_file} "
-            f"was not updated: {exc}",
-            err=True,
-        )
-        click.echo(f"Set database_url in {bootstrap_file} to: {new_url}", err=True)
-        raise click.ClickException("bootstrap.yaml update failed after the role changed") from exc
+    _finalize_postgres_rotation(
+        gobby_home=gobby_home,
+        bootstrap_file=bootstrap_file,
+        role=role,
+        new_url=new_url,
+        redaction_secrets=redaction_secrets,
+    )
 
 
 def _rotate_falkordb_password(gobby_home: Path) -> None:

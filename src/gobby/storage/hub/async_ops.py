@@ -26,6 +26,14 @@ class IndeterminateCommitError(RuntimeError):
     """COMMIT was submitted, but its final server outcome was not observed."""
 
 
+class CommittedCleanupError(RuntimeError):
+    """COMMIT was observed, but terminating or reaping the connection failed."""
+
+    def __init__(self, message: str = "", *, result: Any = None) -> None:
+        super().__init__(message)
+        self.result = result
+
+
 class _WorkBudgetExpired(Exception):
     """Internal signal raised before COMMIT when the work budget is exhausted."""
 
@@ -35,6 +43,7 @@ class _RunState:
     connection: psycopg.AsyncConnection[Any] | None = None
     commit_submitted: bool = False
     commit_observed: bool = False
+    result: Any = None
 
 
 def _remaining(cutoff: float) -> float:
@@ -88,6 +97,7 @@ async def _run_child[T](
         state.commit_submitted = True
         await connection.commit()
         state.commit_observed = True
+        state.result = result
         return result
     finally:
         if connection is not None:
@@ -159,6 +169,11 @@ def _result_or_raise[T](child: asyncio.Task[T], state: _RunState) -> T:
     except BaseException as exc:
         if state.commit_submitted and not state.commit_observed:
             _raise_indeterminate(exc)
+        if state.commit_observed:
+            raise CommittedCleanupError(
+                "COMMIT was observed, but cleanup failed; the change is durable",
+                result=state.result,
+            ) from exc
         raise
 
 
@@ -213,6 +228,11 @@ async def run_bounded_db[T](
         )
         if state.commit_submitted and not state.commit_observed:
             _raise_indeterminate(child_error or cancellation)
+        if state.commit_observed and child_error is not None:
+            raise CommittedCleanupError(
+                "COMMIT was observed, but cleanup failed; the change is durable",
+                result=state.result,
+            ) from child_error
         raise
 
     if done:
@@ -225,4 +245,9 @@ async def run_bounded_db[T](
     )
     if state.commit_submitted and not state.commit_observed:
         _raise_indeterminate(child_error)
+    if state.commit_observed and child_error is not None:
+        raise CommittedCleanupError(
+            "COMMIT was observed, but cleanup failed; the change is durable",
+            result=state.result,
+        ) from child_error
     _raise_timeout(child_error)

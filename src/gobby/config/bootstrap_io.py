@@ -67,6 +67,7 @@ def inject_local_files_home(path: Path, files_home: str | Path) -> None:
         data = read_bootstrap_yaml(path)
         data["files_home"] = str(validated)
         data.setdefault("datastore_mode", "local")
+        data.setdefault("hub", False)
         publish_bootstrap_yaml_locked(path, data)
 
 
@@ -99,6 +100,7 @@ def _merge_owner_fields(existing: dict[str, Any], incoming: dict[str, Any]) -> d
         ):
             merged["hub_daemon_url"] = existing["hub_daemon_url"]
         merged.pop("files_home", None)
+        merged.pop("hub", None)
         return merged
     if merged.get("files_home") in (None, "") and existing.get("files_home") not in (None, ""):
         merged["files_home"] = existing["files_home"]
