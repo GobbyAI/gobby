@@ -411,8 +411,10 @@ The completed plan's M1 is not edited. The PD records both substitutions in
 #22604's description and validation criteria at expansion, so the close
 reviewer checks the new anchors. This is one of the PD's disposition items.
 
-#22604 keeps its independent `enhancement` parking (Josh, 2026-09-23). This
-plan adds no dependency on it in either direction.
+#22604 keeps its independent `enhancement` parking (Josh, 2026-09-23). Its
+one dependency is the shared service in 1.2, added at expansion as above.
+There is no ordering edge between #22604 and tool rerank (3.1) in either
+direction.
 
 ## Activation Gate and #22075
 `kind: framing`
@@ -1070,9 +1072,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 2.1.1 - Shadow records are written `0600` under a `0700` directory, capped
   and rotated, and a write failure never raises. test:
   `tests/ai/test_decisions_shadow.py::test_shadow_record_permissions_cap_and_failure`.
-- 2.1.2 - The harness splits deterministically by id and computes accuracy,
-  Brier, ECE, selective accuracy, and order-flip rate on a synthetic set with
-  known answers. test:
+- 2.1.2 - The harness splits deterministically by `content_hash` and
+  computes accuracy, Brier, ECE, selective accuracy, and order-flip rate on a
+  synthetic set with known answers. Two records with identical content and
+  different ids land in the same split, while cohort selection still orders
+  by `sha256(id)`. test:
   `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
 - 2.1.3 - The report names the configured model, the one evaluated backend
   identity and response model, the dataset hash, both splits, and the
@@ -1146,8 +1150,8 @@ Consumer: state is `{"request": task_description}`, with one proposition per
 candidate, "Tool `<server>/<tool>` (`<description>`) materially applies to the
 request."
 
-One logical rerank has one budget, `ai.decisions.timeout_seconds`, and one
-complete result or none:
+One logical classifier rerank has one budget, `ai.decisions.timeout_seconds`,
+covering its batches only, and one complete result or none:
 - Batching packs candidates in semantic order, greedily, into requests that
   each fit the ceiling.
 - If the state plus one candidate alone exceeds the ceiling, the whole
@@ -1171,11 +1175,18 @@ complete result or none:
 By `tool_rerank.mode`:
 - `off`: today's path, unchanged.
 - `shadow`: today's path decides and returns its result or its fallback,
-  unchanged. The classifier runs concurrently with it under `asyncio.gather`
-  within the rerank budget, and the request waits for both, so no task
-  outlives the request. A wrapper converts every classifier `Exception` into
-  an unavailable result. A shadow record pairs its probabilities with the LLM
-  rerank order.
+  unchanged. The LLM rerank keeps its existing feature config, budget, result,
+  and failure behavior, with no decision deadline applied to it.
+  - The classifier runs as a concurrent task under its own classifier
+    budget.
+  - When the incumbent returns or raises, a classifier still running is
+    cancelled and awaited and recorded as unavailable. Caller cancellation
+    also cancels and awaits it, then propagates. No task outlives the
+    request.
+  - A wrapper converts every classifier `Exception` into an unavailable
+    result.
+  - A shadow record pairs the classifier's probabilities with the LLM rerank
+    order.
 - `enforce`, with a matching `evaluated_model` and `evaluated_backend`
   (Decision 10): candidates at or above
   `min_probability` come back in probability order (`search_mode="decide"`),
@@ -1201,7 +1212,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `docs/evidence/decisions/systemone-wire.md`. test:
   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 - 3.1.2 - Shadow mode returns today's result unchanged and writes one shadow
-  record. test:
+  record. An incumbent that succeeds after `timeout_seconds` still returns
+  its own result. A stalled classifier is cancelled and awaited when the
+  incumbent returns and is recorded unavailable. Caller cancellation
+  propagates with no pending task. test:
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
 - 3.1.3 - Enforce mode ranks by probability, drops candidates below
   `min_probability`, and can return none. An unavailable classifier invokes
@@ -1419,6 +1433,14 @@ the full pytest suite.
   live capture required before any consumer leaves `shadow` (Decision 7,
   Activation Gate item 4); Decision 14 stands as the PD's explicit
   assumption for whole-plan approval.
+- 2026-09-29: PD review of stamped 303a292 returned two repairs and one
+  wording fix, applied before a fresh consensus and M1: PD-DC-01, 2.1.2
+  splits by `content_hash` and keeps duplicate content with different ids in
+  one split; PD-DC-02, the 3.1 shadow incumbent keeps its own budget, result,
+  and failure behavior, and the classifier deadline covers classifier
+  batches only, with a still-running classifier cancelled and awaited when
+  the incumbent returns; Coordination With #22604 narrows the no-edge
+  statement to tool rerank (3.1) and keeps #22604's dependency on 1.2.
 
 ## M1 Task Manifest
 `kind: manifest`
