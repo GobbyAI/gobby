@@ -229,7 +229,7 @@ then `uv run ruff check` and `uv run mypy` on the changed files.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/config/bootstrap.py::*` — scope-reason: `FrontDoorConfig` gains `tls` (`mode`, `cert`, `key`) and `bootstrap_from_mapping` enforces the loopback default and the non-loopback refusal; `tls.mode` defaults to `off` so constructor sites need no edit
+- `src/gobby/config/bootstrap.py::*` — scope-reason: `FrontDoorConfig` gains `tls` (`mode`, `cert`, `key`, `sans`) and `bootstrap_from_mapping` enforces the loopback default and the non-loopback refusal; `tls.mode` defaults to `off` so constructor sites need no edit
 - `crates/gcore/src/bootstrap.rs::*` — scope-reason: `FrontDoorBootstrap`, its `Default`, `FRONT_DOOR_KEYS`, `parse_front_door`, and `parse_hub_database_bootstrap` change, and the in-file `tests` module gains the TLS default, refusal, and `off` cases
 - `crates/gcore/src/daemon_url.rs::*` — scope-reason: `dial_host` changes and the in-file `tests` module gains the loopback and explicit-`daemon_url` cases
 - `src/gobby/utils/daemon_url.py::normalize_dial_host`
@@ -264,6 +264,7 @@ front_door:
     mode: off | self-signed | files    # default off on a loopback bind_host; off refused otherwise
     cert: ~/.gobby/tls/front_door.crt  # files mode
     key: ~/.gobby/tls/front_door.key
+    sans: []                           # self-signed mode: extra DNS names or IP literals
 ```
 
 `bind_host` is loopback when it is `localhost` (the installer default,
@@ -271,7 +272,7 @@ front_door:
 bind with `mode` absent or `off` is a parse error naming `self-signed` and
 `files`. YAML writes `off` quoted (`mode: "off"`), because an unquoted `off` is
 a YAML 1.1 boolean; both parsers also accept boolean `false` as `off`.
-`FrontDoorBootstrap` gains `tls: TlsBootstrap { mode, cert, key }`, and
+`FrontDoorBootstrap` gains `tls: TlsBootstrap { mode, cert, key, sans }`, and
 `FrontDoorBootstrap::default` sets `mode: Off`.
 `parse_hub_database_bootstrap` today calls `parse_front_door(map.get("front_door"))`
 with only the mapping. It changes to parse `bind_host` first and pass it in as
@@ -287,8 +288,16 @@ gdaemon (`crates/gdaemon/src/front_door/tls.rs`, registered in
 crate):
 - `self-signed`: on first `serve` with neither `~/.gobby/tls/front_door.crt`
   nor `front_door.key` present, generate an ECDSA P-256 key pair and a
-  ten-year certificate, files 0600, SANs `localhost`, the hostname, and every
-  non-loopback address bound at generation. When both files exist, every later
+  ten-year certificate, files 0600. SAN policy: `localhost`, the hostname,
+  `127.0.0.1`, `::1`, `bind_host` itself when it is a concrete IP, and every
+  entry of `tls.sans` (DNS names or IP literals; both parsers reject an
+  unspecified address such as `0.0.0.0` or `::`). A wildcard bind adds no
+  enumerated interface addresses: an operator who reaches a wildcard-bound hub
+  by a numeric address lists it in `tls.sans`. The SAN set is fixed at
+  generation; `serve` warns, naming each entry, when a `tls.sans` entry is
+  missing from the existing certificate, and changing it means removing both
+  files, restarting, and re-running login on every node (new fingerprint).
+  When both files exist, every later
   start (including a `FrontDoorChild` respawn) loads and reuses them, so the
   fingerprint a node pinned stays valid. A missing half, an unparsable file, or
   a key that does not match the certificate fails `serve` with an error naming
@@ -408,6 +417,7 @@ Verification planned:
 - 4.1.1 - The Python parser defaults `tls.mode` to `off` on a loopback bind, whether `front_door` is absent or present, refuses `off` or an absent mode on a non-loopback bind, and reads quoted `"off"` and boolean `false` as `off`. test: `tests/config/test_bootstrap.py::test_front_door_tls_default_and_refusal`.
 - 4.1.9 - The Rust parser gives the same default, refusal, and `off` readings, with `bind_host` threaded from `parse_hub_database_bootstrap`. test: `crates/gcore/src/bootstrap.rs::tests::front_door_tls_default_and_refusal`.
 - 4.1.2 - First `serve` in `self-signed` mode generates key and certificate 0600 and prints the fingerprint; a second `serve` reuses the pair with the same fingerprint and a pinned request succeeds. test: `crates/gdaemon/tests/front_door.rs::self_signed_generated_once_and_reused`.
+- 4.1.14 - A generated certificate's SANs are exactly `localhost`, the hostname, `127.0.0.1`, `::1`, a concrete `bind_host` IP, and the `tls.sans` entries; a wildcard bind adds no other address; both parsers reject an unspecified address in `tls.sans`; and a `tls.sans` entry missing from an existing certificate draws the named warning. test: `crates/gdaemon/tests/front_door.rs::self_signed_san_policy`.
 - 4.1.10 - `serve` fails naming the path on a missing half, a corrupt file, or a mismatched key in `self-signed` mode and leaves the files untouched, and `files` mode serves a valid operator pair and refuses a mismatched one. test: `crates/gdaemon/tests/front_door.rs::tls_pair_load_or_refuse`.
 - 4.1.3 - HTTP passthrough, typed 503, and WS splice pass over TLS with the pinned client config. test: `crates/gdaemon/tests/front_door.rs::ws_splice_over_self_signed_tls`.
 - 4.1.4 - The pinned client config rejects a different certificate and consults no system roots. test: `crates/gdaemon/tests/front_door.rs::pinned_client_rejects_unpinned_cert`.
@@ -419,7 +429,7 @@ Verification planned:
 - 4.1.13 - With TLS on, a zero-byte connection and a partial-ClientHello connection are closed after `PREAUTH_DEADLINE` while a concurrent health request on the same listener succeeds. test: `crates/gdaemon/tests/front_door.rs::stalled_preauth_connections_expire_without_blocking`.
 - 4.1.8 - The e2e fixture serves `https` with `tls="self-signed"`, keeps its fingerprint across a restart, and the four parametrized lifecycle cases pass over it through the pinned shared clients. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls`.
 
-**Granularity:** thirteen items, one leaf. The TLS acceptor, the loopback gate, the
+**Granularity:** fourteen items, one leaf. The TLS acceptor, the loopback gate, the
 companion listener, and the dial-host contract are one behavior: a TLS-enabled
 front door that its own machine can still reach. Shipping the acceptor without
 the gate or the dial-host change leaves a hub whose local hooks and CLIs cannot
@@ -677,12 +687,26 @@ D1 removes it.
   password is sent. The approved PEM is staged at a private temporary path
   beside `~/.gobby/tls/hub.pem` (0600) and the POST goes over an httpx client
   pinned with `ssl.create_default_context(cafile=<staged pem>)` (Decision 4).
+  That context keeps hostname verification: the origin's host must be in the
+  certificate's SANs (4.1's SAN policy covers `localhost`, the hostname, both
+  loopback literals, a concrete bind IP, and `tls.sans`). A host outside the
+  SANs fails the TLS handshake before the request body, and so the password,
+  is sent; the error names `front_door.tls.sans` on the hub.
 - HTTP branch: no certificate fetch and no pin; the POST goes in plaintext.
 
 Enrollment commits only after the hub mints:
 1. Authenticate and mint with the staged pin (or plaintext). A rejected
    password, a network failure, or any non-2xx exits non-zero with the staged
    PEM removed and the prior `hub.pem` and bootstrap byte-identical.
+   A 2xx is validated in full before any publication: the body is a JSON
+   object; `key` passes 4.2's `api_key_format.parse`; `key_id`, `user_id`,
+   and `machine_id` are UUID strings; `machine_id` equals the requested
+   `require_machine_id()`; and `hint` equals `api_key_format.hint(key)`. On
+   any failure, nothing is published and no key or response body is printed.
+   When `key_id` is a valid UUID, the new key is revoked through the step-3
+   password-session cleanup and the id is reported; otherwise the error says
+   an unidentified key may exist and names `gobby auth key list` (D1) or the
+   hub UI for cleanup.
 2. Publish: read the prior `hub.pem` bytes into memory (if any), move the
    staged PEM over `hub.pem` with `durable_replace_text` (HTTPS only), then
    write `api_key`, `api_key_id`, and `hub_cert` (the `hub.pem` path, or
@@ -720,7 +744,9 @@ Verification planned:
 
 **Acceptance:**
 
-- 4.5.1 - `gobby auth login` pins by fingerprint against a self-signed hub, refuses a mismatch, and writes bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
+- 4.5.1 - `gobby auth login` pins by fingerprint against a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch, and writes bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
+- 4.5.7 - Against a `files`-mode hub whose certificate's SANs exclude the dialed host, login fails the handshake before sending the password and leaves the prior enrollment byte-identical. test: `tests/e2e/test_auth_login.py::test_login_refuses_host_outside_sans`.
+- 4.5.8 - A 2xx with malformed JSON, a missing field, a key failing `parse`, a mismatched hint, or a `machine_id` other than the requested one publishes nothing, prints no secret, and revokes the new key when its id is a valid UUID; a valid response still enrolls. test: `tests/cli/test_auth_login.py::test_login_validates_enrollment_response`.
 - 4.5.2 - Login refuses a `datastore_mode: local` bootstrap and a `--hub` that differs from `hub_daemon_url`, before any network call and with bootstrap byte-identical. test: `tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch`.
 - 4.5.3 - Login refuses an `http://` non-loopback hub without `--insecure` and `--fingerprint` with any `http://` hub, and enrolls over plain HTTP to a loopback hub and to a non-loopback hub with `--insecure`, fetching no certificate and writing no `hub_cert`. test: `tests/cli/test_auth_login.py::test_login_http_branches`.
 - 4.5.5 - A declined confirmation, a fingerprint mismatch, a rejected password, a network failure, and a certificate probe against a listener that accepts and never answers each exit non-zero before any bootstrap or `hub.pem` change, the first two and the stalled probe without sending the password. test: `tests/cli/test_auth_login.py::test_login_failures_preserve_prior_enrollment`.
@@ -998,6 +1024,13 @@ deferral:
   - P4-05: a legacy `config.yaml` with no sibling `bootstrap.yaml` skips
     adoption with a migration warning and writes nothing (4.2.13).
   - P4-06: `Cargo.lock` joins 4.1's Targets.
+- 2026-09-29: Adversary check of 3c2a388 raised P4-07 and P4-08, both accepted:
+  - P4-07: the self-signed SAN policy adds both loopback literals, a concrete
+    bind IP, and operator-listed `tls.sans` (no interface enumeration for
+    wildcard binds); login keeps hostname verification (4.1.14, 4.5.1,
+    4.5.7).
+  - P4-08: login validates the full 2xx enrollment response before any
+    publication and revokes an identifiable bad key (4.5.8).
 
 ## V2: Verification
 `kind: verification`
