@@ -17,6 +17,7 @@ from typing import Any
 from starlette.types import Receive, Scope, Send
 
 from gobby.adapters.agy_contract import AGY_FORCE_CONTINUE_LIMIT, strip_unbudgeted_force_continue
+from gobby.hooks.pending_message_reservations import release_pending_messages
 from gobby.hooks.receipt_effects import merge_staged_payloads
 from gobby.hooks.startup_claim_preflight import StartupClaimLease
 from gobby.servers.responses import JSONResponse
@@ -136,6 +137,14 @@ def attach_delivery_receipt(
     return attached
 
 
+def _release_staged_message_reservations(staged_payload: Mapping[str, Any]) -> None:
+    """Let the next hook redeliver a released receipt's messages without waiting."""
+    session_id = staged_payload.get("pending_message_session_id")
+    message_ids = staged_payload.get("pending_message_ids")
+    if isinstance(session_id, str) and isinstance(message_ids, list):
+        release_pending_messages(session_id, (str(message_id) for message_id in message_ids))
+
+
 def release_receipt_for_response(db: Any, response: Mapping[str, Any]) -> bool:
     """Release the receipt attached to a response whose emission failed."""
     receipt = response.get(DELIVERY_RECEIPT_FIELD)
@@ -152,6 +161,7 @@ def release_receipt_for_response(db: Any, response: Mapping[str, Any]) -> bool:
         logger.warning("Failed to release hook receipt %s", receipt_id, exc_info=True)
         return False
     if released is not None:
+        _release_staged_message_reservations(released.staged_payload)
         logger.warning(
             "Released hook receipt %s after the response could not be emitted",
             receipt_id,
