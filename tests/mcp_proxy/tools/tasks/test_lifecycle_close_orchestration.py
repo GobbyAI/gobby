@@ -219,7 +219,13 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
     _patch_store(monkeypatch, store)
     evaluation = _evaluation()
     evaluation.extra["coordinator_owned_pending"] = True
+    evaluation.candidate_commit_sha = "a" * 40
+    evaluation.commit_shas = ["a" * 10, "abc"]
+    assert evaluation.task is not None
+    persisted_task = replace(evaluation.task, commits=list(evaluation.commit_shas))
+    monkeypatch.setattr(ctx.task_manager, "get_task", lambda _task_id: persisted_task)
     arguments = _arguments()
+    arguments["commit_sha"] = "a" * 12
 
     result = await launch_close_review(
         ctx,
@@ -230,6 +236,7 @@ async def test_close_persists_and_launches_one_taskless_reviewer(
 
     assert store.created_arguments == {
         **arguments,
+        "commit_sha": "a" * 40,
         "_review_timeout_seconds": 900,
         "_criterion_count": 3,
         "_manifest_count": None,
@@ -1256,10 +1263,14 @@ async def test_concurrent_close_reuses_active_review(
 async def test_authenticated_valid_submission_closes_and_persists_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    store = _Store(_review(status="running", run_id="run"))
+    stored_review = _review(status="running", run_id="run")
+    stored_review.close_arguments["commit_sha"] = "a" * 40
+    store = _Store(stored_review)
     _authenticate(monkeypatch, store.review)
     monkeypatch.setattr(orchestration, "TaskCloseReviewStore", lambda _db: store)
     evaluation = _evaluation(ready=True)
+    evaluation.candidate_commit_sha = "a" * 40
+    evaluation.commit_shas = ["a" * 10, "abc"]
     evaluate = AsyncMock(return_value=evaluation)
     commit = AsyncMock(
         return_value={
@@ -1283,8 +1294,10 @@ async def test_authenticated_valid_submission_closes_and_persists_payload(
     assert result["terminal_payload"]["event"] == "task_close_review_completed"
     assert store.finished_status == "closed"
     assert evaluate.call_args.kwargs["closing_session_id"] == "parent"
+    assert evaluate.call_args.kwargs["commit_sha"] == "a" * 40
     assert evaluate.call_args.kwargs["submitted_review"].review_fingerprint == "close"
     commit.assert_awaited_once()
+    assert commit.call_args.kwargs["commit_sha"] == "a" * 40
 
 
 @pytest.mark.asyncio
@@ -1956,6 +1969,7 @@ def _evaluation(*, ready: bool = False) -> CloseEvaluation:
     evaluation.resolved_session_id = "parent"
     evaluation.repo_path = "/repo"
     evaluation.commit_shas = ["abc"]
+    evaluation.candidate_commit_sha = "abc"
     evaluation.extra.update(
         {
             "review_fingerprint": "close",

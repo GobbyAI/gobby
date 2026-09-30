@@ -11,6 +11,7 @@ Thin orchestration shim that delegates to focused submodules:
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._helpers import _is_uuid as _helpers_is_uuid
+from gobby.mcp_proxy.tools.tasks._lifecycle_candidate_repair import register_closed_candidate_repair
 from gobby.mcp_proxy.tools.tasks._lifecycle_claim import register_claim_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_delete import register_delete_task
@@ -47,6 +48,7 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     register_close_task(registry, ctx)
+    register_closed_candidate_repair(registry, ctx)
     register_reopen_task(registry, ctx)
     register_delete_task(registry, ctx)
     register_add_label(registry, ctx)

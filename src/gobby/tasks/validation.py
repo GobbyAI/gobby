@@ -37,6 +37,7 @@ STABLE_CHECKLIST_FACT_KEYS: frozenset[str] = frozenset(
     {
         "commit_count",
         "commit_shas",
+        "candidate_commit_sha",
         "had_attributed_edits",
         "attributed_paths",
         "close_receipts",

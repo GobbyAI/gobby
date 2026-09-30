@@ -63,6 +63,10 @@ _MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 @pytest.fixture(autouse=True)
 def _close_gates_are_quiet() -> Iterator[None]:
     with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
+            side_effect=lambda sha, **_kwargs: sha,
+        ),
         patch.object(lifecycle, "collect_commit_paths", return_value=set()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(
@@ -598,7 +602,7 @@ async def test_no_work_disposition_with_target_skips_agentic_review(
             task_id=task.id,
             reason="duplicate",
             changes_summary=summary,
-            commit_sha=None,
+            commit_sha=commit_shas[0] if commit_shas else None,
             project_path=None,
             response_detail="diagnostic",
         )
@@ -2710,6 +2714,7 @@ def _memory_review_close_context(
     evaluation = _ready_evaluation(task)
     evaluation.edit_session_id = task.claimed_by_session_id
     evaluation.commit_shas = ["abc1234"]
+    evaluation.candidate_commit_sha = "abc1234"
     root = SimpleNamespace(id="root", parent_session_id=None, agent_run_id=None, agent_depth=0)
     parent = SimpleNamespace(
         id="interactive", parent_session_id="root", agent_run_id=None, agent_depth=0

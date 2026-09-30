@@ -15,6 +15,7 @@ from gobby.storage.tasks._lifecycle import (
 from gobby.storage.tasks._lifecycle import (
     reopen_task as _reopen_task,
 )
+from gobby.storage.tasks._lifecycle import repair_closed_candidate as _repair_closed_candidate
 from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
 from gobby.storage.tasks._plan_enhancement import (
     record_plan_enhancement as _record_plan_enhancement,
@@ -49,6 +50,28 @@ from gobby.storage.tasks._transitions import (
 
 
 class TaskTransitionsMixin:
+    def repair_closed_candidate(
+        self,
+        task_id: str,
+        *,
+        review_id: str,
+        candidate_commit_sha: str,
+        expected_closed_commit_sha: str,
+        by_session_id: str,
+        reason: str,
+        preview: bool = True,
+    ) -> dict[str, object]:
+        return _repair_closed_candidate(
+            self.db,
+            task_id,
+            review_id=review_id,
+            candidate_commit_sha=candidate_commit_sha,
+            expected_closed_commit_sha=expected_closed_commit_sha,
+            by_session_id=by_session_id,
+            reason=reason,
+            preview=preview,
+        )
+
     db: HubDatabase
 
     def _notify_listeners(self) -> None:

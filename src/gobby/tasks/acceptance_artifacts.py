@@ -127,10 +127,11 @@ async def evaluate_acceptance_artifacts_async(
     criteria: str,
     repo_path: str,
     commit_shas: list[str],
+    candidate_commit_sha: str | None = None,
 ) -> AcceptanceArtifactResult:
     """Resolve named tests, reject placebo bodies, and verify local evidence provenance."""
     tests, resolution_findings = await resolve_acceptance_tests_async(
-        criteria, repo_path, commit_shas
+        criteria, repo_path, commit_shas, candidate_commit_sha=candidate_commit_sha
     )
     findings = list(resolution_findings)
     for test in tests:
@@ -153,7 +154,11 @@ async def evaluate_acceptance_artifacts_async(
 
 
 def evaluate_acceptance_artifacts(
-    *, criteria: str, repo_path: str, commit_shas: list[str]
+    *,
+    criteria: str,
+    repo_path: str,
+    commit_shas: list[str],
+    candidate_commit_sha: str | None = None,
 ) -> AcceptanceArtifactResult:
     """Offline synchronous facade for direct-library consumers."""
     return asyncio.run(
@@ -161,6 +166,7 @@ def evaluate_acceptance_artifacts(
             criteria=criteria,
             repo_path=repo_path,
             commit_shas=commit_shas,
+            candidate_commit_sha=candidate_commit_sha,
         )
     )
 
@@ -169,10 +175,15 @@ async def resolve_acceptance_tests_async(
     criteria: str,
     repo_path: str,
     commit_shas: list[str],
+    *,
+    candidate_commit_sha: str | None = None,
 ) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
-    """Resolve every named acceptance test from the last linked commit."""
+    """Resolve every named acceptance test from one authoritative close candidate."""
     tests: list[AcceptanceTest] = []
     findings = list(malformed_test_reference_findings(criteria))
+    candidate = candidate_commit_sha
+    if candidate is None and len(commit_shas) == 1:
+        candidate = commit_shas[0]
     for reference in extract_artifact_references(criteria, "test"):
         parsed = parse_test_reference(reference)
         if parsed is None:
@@ -185,8 +196,13 @@ async def resolve_acceptance_tests_async(
         if not commit_shas:
             findings.append(f"{reference}: a linked commit is required to resolve the test body")
             continue
+        if candidate is None or not any(
+            candidate == sha or candidate.startswith(sha) for sha in commit_shas
+        ):
+            findings.append(f"{reference}: an explicit linked close candidate is required")
+            continue
         try:
-            body = await _resolve_test_body(path, symbol, repo_path, commit_shas[-1])
+            body = await _resolve_test_body(path, symbol, repo_path, candidate)
         except (OSError, RuntimeError, ValueError) as exc:
             findings.append(f"{reference}: could not resolve the committed test body: {exc}")
             continue
@@ -195,17 +211,25 @@ async def resolve_acceptance_tests_async(
 
 
 def resolve_acceptance_tests(
-    criteria: str, repo_path: str, commit_shas: list[str]
+    criteria: str,
+    repo_path: str,
+    commit_shas: list[str],
+    *,
+    candidate_commit_sha: str | None = None,
 ) -> tuple[tuple[AcceptanceTest, ...], tuple[str, ...]]:
     """Offline synchronous facade for direct-library consumers."""
-    return asyncio.run(resolve_acceptance_tests_async(criteria, repo_path, commit_shas))
+    return asyncio.run(
+        resolve_acceptance_tests_async(
+            criteria, repo_path, commit_shas, candidate_commit_sha=candidate_commit_sha
+        )
+    )
 
 
 def render_acceptance_test_bodies(tests: tuple[AcceptanceTest, ...]) -> str:
     """Render exact named test bodies for criteria-review evidence."""
     if not tests:
         return "Named acceptance tests: none."
-    parts = ["Named acceptance tests (exact bodies from the last linked commit):"]
+    parts = ["Named acceptance tests (exact bodies from the reviewed close candidate):"]
     for test in tests:
         parts.append(f"\n### {test.reference}\n{test.body}")
     return "\n".join(parts)

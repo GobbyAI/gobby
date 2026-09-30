@@ -199,6 +199,9 @@ async def launch_close_review(
         evaluation.message = "Close-review queue infrastructure is unavailable."
         return evaluation.response(preview=False)
     persisted_arguments = dict(close_arguments)
+    # Freeze full candidate identity for queue promotion and background finalization.
+    # The complete linked set remains independent review input.
+    persisted_arguments["commit_sha"] = evaluation.candidate_commit_sha
     persisted_arguments.update(
         {
             "_review_timeout_seconds": validator_timeout_seconds,

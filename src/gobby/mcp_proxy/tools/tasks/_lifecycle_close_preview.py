@@ -12,7 +12,7 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
 )
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.close_checklist import CloseChecklist, CloseGateResult
-from gobby.utils.daemon_git import normalize_commit_sha
+from gobby.utils.daemon_git import GitOk, daemon_git, normalize_commit_sha
 
 # Internal carriers, never part of a close response: ``validation_commands`` travels
 # to the validator launch prompt and the checklist already owns gate 10's record,
@@ -52,6 +52,7 @@ class CloseEvaluation:
     edit_session_id: str | None = None
     claim_started_at: str | None = None
     commit_shas: list[str] = field(default_factory=list)
+    candidate_commit_sha: str | None = None
     edited_paths: set[str] = field(default_factory=set)
     had_attributed_edits: bool = False
     scope_snapshot: tuple[tuple[str, ...], ...] | None = None
@@ -244,6 +245,7 @@ class CloseEvaluation:
             "closed": closed,
             "task_id": self.task_id or self.requested_task_id,
             "commit_shas": list(self.commit_shas),
+            "candidate_commit_sha": self.candidate_commit_sha,
             # Every gate, so one call names every blocker instead of one per retry.
             "gates": self.checklist.summary(),
         }
@@ -348,15 +350,42 @@ async def resolve_close_commit_shas(
     if commit_sha:
         if cwd is None:
             return resolved, _repo_path_error()
-        normalized = await normalize_commit_sha(commit_sha, cwd=cwd)
+        normalized = await _canonical_commit_sha(commit_sha, cwd=cwd)
         if normalized is None:
             return resolved, {
                 "error": "invalid_commit_sha",
                 "message": f"Commit {commit_sha!r} could not be resolved in the task repository.",
             }
-        if normalized not in resolved:
+        if not any(normalized.startswith(sha) for sha in resolved):
             resolved.append(normalized)
     return resolved, None
+
+
+async def _canonical_commit_sha(sha: str, *, cwd: str) -> str | None:
+    """Use full object identity for close provenance; display normalization is short."""
+    normalized = await normalize_commit_sha(sha, cwd=cwd)
+    if normalized is None:
+        return None
+    if len(normalized) == 40:
+        return normalized
+    result = await daemon_git.run(("rev-parse", "--verify", normalized), cwd=cwd, timeout=5.0)
+    return result.stdout.strip() if isinstance(result, GitOk) else None
+
+
+async def select_close_candidate(
+    commit_shas: list[str], commit_sha: str | None, *, cwd: str | None
+) -> tuple[str | None, dict[str, Any] | None]:
+    """Select only an explicit candidate, never infer authority from link order or HEAD."""
+    if not commit_shas and commit_sha is None:
+        return None, None
+    if commit_sha:
+        candidate = await _canonical_commit_sha(commit_sha, cwd=cwd) if cwd else None
+        if candidate and any(candidate.startswith(sha) for sha in commit_shas):
+            return candidate, None
+    return None, {
+        "error": "close_candidate_required",
+        "message": "Supply an explicit commit_sha identifying the reviewed close candidate.",
+    }
 
 
 async def unlinked_tagged_commits(
