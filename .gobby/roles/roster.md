@@ -4,7 +4,7 @@
 | --- | --- |
 | assistant.md | gobby#14069 |
 | orchestrator.md | gobby#14737 |
-| merge-manager.md | Awaiting authorized launch |
+| merge-manager.md | gobby#14894 |
 | lane-1-gclient.md | gobby#14704 |
 | lane-2-stability.md | gobby#14828 |
 | lane-3-hooks.md | gobby#14820 |
