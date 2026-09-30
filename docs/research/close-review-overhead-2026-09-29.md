@@ -41,7 +41,8 @@ above 1, admitted under Josh's 5-minute load-below-24 rule. Lane2 already owns t
 | Launch source | `Spawn phase timings` log lines from `agents/spawn_executor.execute_spawn`. 1,551 spawns, 2026-09-13 16:57 to now. |
 
 Model mix is a confound. Most reviewers before 2026-09-29 were `gpt-5.6-terra`. The
-natural run studied here is `gpt-6.1-sol`, which is about 4x slower (§3).
+natural run studied here is `gpt-6.1-sol`. §3 gives the per-model medians as descriptive
+figures only.
 
 ## 1. Launch cost (VERIFIED)
 
@@ -129,10 +130,10 @@ Successful reviewer runs since serialization, by model:
 | codex `gpt-6.1-sol` | 3 | 746 s | 784 s | 55 |
 | claude `sonnet` | 1 | 72 s | 72 s | 22 |
 
-Over 7 days, 446 `gpt-5.6-terra` reviewer runs succeeded with a mean of 265 s. INFERRED:
-moving reviewers to `gpt-6.1-sol` roughly quadruples how long each review holds the
-slot. Validator candidate order matters more to close latency than any daemon cost
-measured here.
+Over 7 days, 446 `gpt-5.6-terra` reviewer runs succeeded with a mean of 265 s. These
+medians describe what happened and are not a model comparison. The `gpt-6.1-sol` sample
+is 3 runs, and the two models reviewed different task mixes and diff sizes. Any
+conclusion about model speed needs a like-for-like sample.
 
 ## 4. Per-call cost: reviewer against standing seats (VERIFIED)
 
@@ -227,7 +228,7 @@ Close reviews in project gobby, 24 hours either side of the change:
 | #22729: SRT verification dominates launch. | Supported: 78% of this launch, p50 about 2.8 s across the fleet. It is a small share of reviewer wall time. |
 | #22629: all-seat counting must include reviewers. | Supported as an accounting rule. Reviewers were exempt from the per-project cap. §5 shows reviewers add a load increment comparable to a seat, so count them like seats, with no separate penalty. |
 | The single slot is justified by measured load. | Unsupported. §5 and §6. |
-| Reviewer model choice drives close latency. | Supported: `gpt-6.1-sol` p50 746 s against `gpt-5.6-terra` 184 s. §3. |
+| Reviewer model choice drives close latency. | Unsupported by this data. The medians differ (746 s against 184 s), but the task mixes are unequal and the `gpt-6.1-sol` sample is 3 runs. §3. |
 | SRT denials slow reviews. | Unknown. The log captures only the first 100 main-run denials, all of them start-up probes. §2. |
 
 ## 8. Recommendation
@@ -238,18 +239,18 @@ Close reviews in project gobby, 24 hours either side of the change:
    refuses. Lane2 owns this under #23059.
 2. #22729 SRT verification caching stays worthwhile for spawn-heavy fanout. It does not
    change close throughput.
-3. Validator candidate order: place a faster model first when latency matters. This is
-   a product decision for Josh or the PD; the numbers are in §3.
+3. Reviewer model speed: no recommendation. §3 records the per-model medians without
+   comparing them.
 
 ## 9. Found work
 
-1. SRT violation capture stops after 100 main-run records (§2). Handed to Lane2
-   #14828 as the #23059 sandbox-reporting owner (msg b74f8284), with the PD copied.
+1. SRT violation capture stops after 100 main-run records (§2). Filed as #23118 and
+   delegated to L5 #14768 alongside #22729.
 2. `gobby-sessions:search_session_messages`
    (`src/gobby/mcp_proxy/tools/sessions/_messages.py:101-190`) scans rendered
    transcript windows linearly. Over 7 days: 56 calls, p50 14.4 s, p90 200 s,
-   max 1,397 s. A miss reads every window of every candidate session. It has no open
-   task. Handed to the PD for owner routing (msg f68d27c6).
+   max 1,397 s. A miss reads every window of every candidate session. Filed as #23117
+   (bounded transcript search) and delegated to L2 #14828 after #23113.
 
 ## 10. Unknowns
 
