@@ -425,6 +425,7 @@ class HookManager(HookManagerDispatchMixin):
                 platform_session_id = self._session_lookup.resolve(
                     event,
                     apply_session_mutations=not gated,
+                    cached_session=project_resolution.session,
                 )
             if event.metadata.get("_native_subagent_binding") and event.event_type in (
                 HookEventType.STOP,

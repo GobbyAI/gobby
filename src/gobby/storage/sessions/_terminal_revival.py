@@ -39,13 +39,19 @@ class _RevivalHost(Protocol):
 
 
 class _TerminalRevivalMixin:
-    def revive_expired_terminal_session(self: _RevivalHost, session_id: str) -> Session | None:
+    def revive_expired_terminal_session(
+        self: _RevivalHost,
+        session_id: str,
+        current: Session | None = None,
+    ) -> Session | None:
         """Reconcile terminal ownership when fresh activity arrives.
 
         Interactive claims require foreground-process validation when they
         compete. Spawned-only claims retain newest-created ownership.
+        ``current`` is this session's row when the caller already loaded it.
         """
-        current = self.get(session_id)
+        if current is None or current.id != session_id:
+            current = self.get(session_id)
         if current is None:
             return None
         if current.session_type != "terminal":
