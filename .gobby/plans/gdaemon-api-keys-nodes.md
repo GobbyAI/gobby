@@ -235,8 +235,10 @@ Targets:
 - `src/gobby/utils/daemon_url.py::normalize_dial_host`
 - `src/gobby/runner.py::_healthy_daemon_running`
 - `crates/gdaemon/Cargo.toml`
-- `crates/gdaemon/src/serve.rs::*` — scope-reason: `bind` adds the companion loopback listener, `accept` adds the first-byte peek and loopback gate, and `run` loads or generates the certificate
-- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: registers the new `tls` module; no existing symbol changes
+- `Cargo.lock`
+- `crates/gdaemon/src/serve.rs::*` — scope-reason: `bind` adds the companion loopback listener, `accept` keeps the peer and moves the first-byte peek, TLS handshake, and loopback gate into the per-connection task under a deadline, and `run` loads or generates the certificate
+- `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: registers the new `tls` module, and `FrontDoor::handle` takes the observed peer and rewrites the forwarding headers
+- `src/gobby/runner_lifecycle.py::*` — scope-reason: the backend `uvicorn.Config` pins `proxy_headers=True` and `forwarded_allow_ips="127.0.0.1,::1"`; its `_healthy_daemon_running(port, backend.host)` call keeps its signature and a `127.0.0.1` host
 - `crates/gdaemon/src/front_door/tls.rs`
 - `crates/gdaemon/tests/front_door.rs::*` — scope-reason: gains the TLS, loopback-gate, and companion-listener tests
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
@@ -297,11 +299,29 @@ crate):
 - Fingerprint format, shared by Rust `fingerprint` and Python login (4.5):
   `sha256:` followed by 64 lowercase hexadecimal digits of SHA-256 over the
   leaf certificate's DER bytes.
-- Acceptor (Decision 3): `serve.rs::accept` peeks one byte of each accepted
-  stream. `0x16` wraps the stream in the `tokio-rustls` acceptor; any other byte
-  is served in plaintext when `peer.ip().to_canonical().is_loopback()`, and
-  closed otherwise. With `mode: off` there is no acceptor and the P1 path is
-  unchanged. The 1.2 WS splice runs inside either stream unchanged.
+- Acceptor (Decision 3): `serve.rs::accept` keeps the accepted `peer`
+  (today it discards it) and spawns the per-connection task first; the accept
+  loop itself never reads. Inside the task, the one-byte peek and, for `0x16`,
+  the `tokio-rustls` handshake run under
+  `tokio::time::timeout(PREAUTH_DEADLINE)`, a private 10-second constant; on
+  expiry the connection is dropped. `0x16` wraps the stream in the acceptor;
+  any other byte is served in plaintext when
+  `peer.ip().to_canonical().is_loopback()`, and closed otherwise. With
+  `mode: off` there is no peek or acceptor and the P1 path is unchanged. The
+  1.2 WS splice runs inside either stream unchanged.
+- Transport identity: `FrontDoor::handle(request, peer)` removes every
+  client-supplied `Forwarded`, `X-Forwarded-For`, `X-Forwarded-Proto`,
+  `X-Forwarded-Host`, and `X-Real-IP` header and sets
+  `X-Forwarded-For: <peer ip>` and `X-Forwarded-Proto: https|http` before
+  either the WS splice or route dispatch, so every proxied and native path
+  carries only the observed peer, for every TLS mode. The backend's
+  `uvicorn.Config` (`src/gobby/runner_lifecycle.py`) pins
+  `proxy_headers=True, forwarded_allow_ips="127.0.0.1,::1"`, so
+  `request.client` in Python is the front door's observed peer and nothing
+  else. The login throttle (`src/gobby/servers/routes/auth.py::_login_client_id`,
+  reused by 4.2) therefore keys on the real peer. With the front door disabled,
+  Python binds `bind_host` directly and trusts forwarding headers only from a
+  loopback caller, which already holds operator access.
 - Companion listener (Decision 3): `serve::bind` today binds `bind_host` once per
   public port. When `bind_host` is a concrete non-loopback address, it also
   binds the same port on `127.0.0.1` (IPv4) or `::1` (IPv6). A wildcard bind
@@ -348,7 +368,6 @@ Consumers unchanged:
 - `src/gobby/hooks/hook_manager.py` — no-edit-reason: `HookManager` is built with `daemon_host="localhost"` (`src/gobby/servers/_app_lifecycle.py`), already loopback.
 - `src/gobby/runner_front_door.py` — no-edit-reason: `FrontDoorChild` readiness probes are TCP connects, which the first-byte peek does not affect.
 - `src/gobby/utils/daemon_client.py` — no-edit-reason: `DaemonClient.__init__` calls `normalize_dial_host` with an unchanged signature and inherits the loopback mapping.
-- `src/gobby/runner_lifecycle.py` — no-edit-reason: calls `_healthy_daemon_running(port, backend.host)`, whose host is already `127.0.0.1`; signature unchanged.
 - `tests/test_runner_env_scrub.py` — no-edit-reason: patches `gobby.runner._healthy_daemon_running` by name; verification only.
 - `tests/test_runner_lifecycle.py` — no-edit-reason: same.
 - `tests/test_runner_pid_file.py` — no-edit-reason: same.
@@ -396,9 +415,11 @@ Verification planned:
 - 4.1.6 - A wildcard bind serves loopback on its own listener, and a concrete non-loopback bind adds a same-port loopback listener of the same family. test: `crates/gdaemon/tests/front_door.rs::concrete_bind_adds_loopback_listener`.
 - 4.1.7 - Python local dial hosts are loopback for wildcard, named, concrete IPv4, and IPv6 binds, and an explicit `daemon_url` still wins. test: `tests/utils/test_daemon_url.py::test_dial_host_is_always_loopback`.
 - 4.1.11 - Rust `dial_host` and `endpoint_to_url` give the same loopback mapping and explicit-`daemon_url` precedence. test: `crates/gcore/src/daemon_url.rs::tests::dial_host_is_always_loopback`.
+- 4.1.12 - Forged `Forwarded`, `X-Forwarded-For`, and `X-Real-IP` request headers never reach the backend on the proxy, native-health, or WS paths; the backend receives `X-Forwarded-For` equal to the observed peer. test: `crates/gdaemon/tests/front_door.rs::forwarding_headers_carry_only_observed_peer`.
+- 4.1.13 - With TLS on, a zero-byte connection and a partial-ClientHello connection are closed after `PREAUTH_DEADLINE` while a concurrent health request on the same listener succeeds. test: `crates/gdaemon/tests/front_door.rs::stalled_preauth_connections_expire_without_blocking`.
 - 4.1.8 - The e2e fixture serves `https` with `tls="self-signed"`, keeps its fingerprint across a restart, and the four parametrized lifecycle cases pass over it through the pinned shared clients. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls`.
 
-**Granularity:** eleven items, one leaf. The TLS acceptor, the loopback gate, the
+**Granularity:** thirteen items, one leaf. The TLS acceptor, the loopback gate, the
 companion listener, and the dial-host contract are one behavior: a TLS-enabled
 front door that its own machine can still reach. Shipping the acceptor without
 the gate or the dial-host change leaves a hub whose local hooks and CLIs cannot
@@ -431,6 +452,7 @@ Targets:
 - `src/gobby/storage/auth.py::*` — scope-reason: `AuthStore` gains the method `session_user_id(token)`; no existing symbol changes
 - `tests/storage/test_storage_auth.py::*` — scope-reason: gains the `session_user_id` valid, expired, and unknown cases
 - `tests/e2e/test_local_api_key_adoption.py`
+- `tests/e2e/test_api_key_bootstrap_lockout.py`
 - `src/gobby/config/bootstrap_io.py::update_bootstrap_yaml`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
 - `tests/storage/test_api_keys.py`
@@ -489,16 +511,33 @@ placeholders): `mint(user_id, machine_id, label) -> (plaintext, ApiKey)`,
 in this leaf (the routes and adoption). Key resolution and `last_used_at`
 updates are D1's, in Rust against the indexed hash; no Python
 `resolve_hash` or `touch` is added. The module
-also holds `ensure_local_api_key(database, machine_id, bootstrap_path)`: when
-the bootstrap at that path is `datastore_mode: local` and has no `api_key`, mint
-for `LocalUserManager.require_sole_user()` and the given machine with label
-`local daemon`, then write `api_key` and `api_key_id` through
-`update_bootstrap_yaml(bootstrap_path, updater)`; if the write fails, revoke
-the new key and re-raise.
+also holds `ensure_local_api_key(database, machine_id, bootstrap_path)`, a
+single read-modify-write transaction:
+1. When `bootstrap_path.name` is not `bootstrap.yaml` (a legacy `config.yaml`
+   with no sibling `bootstrap.yaml`), return before minting and log a warning
+   naming the canonical `bootstrap_path()` and `gobby install` as the
+   migration. No legacy file is ever written.
+2. Take `exclusive_file_lock(bootstrap_path)` (the sidecar lock
+   `update_bootstrap_yaml` uses) and hold it through step 5, so startup and
+   `gobby install` serialize. Inside it, `read_bootstrap_yaml`; when the
+   mapping is not `datastore_mode: local` or already has `api_key`, return
+   (a contender that lost the race reuses the winner's key).
+3. Mint for `LocalUserManager.require_sole_user()` and the given machine with
+   label `local daemon`.
+4. Publish `api_key` and `api_key_id` with `publish_bootstrap_yaml_locked`,
+   which does not re-take the lock.
+5. On a publication exception, re-read the file. `durable_replace` renames
+   before its directory fsync and readback, so an exception does not prove the
+   file is unchanged. If the re-read shows the new `api_key_id`, the key is
+   committed: keep it live and re-raise. If it shows no new id, revoke the new
+   key and re-raise. If the re-read itself fails, leave the key live, log its
+   id, and re-raise. No bootstrap ever names a revoked key, and a later start
+   retries adoption only when no key was published.
 
 Routes (`src/gobby/servers/routes/api_keys.py`, mounted in `_app_routes.py`):
 - `POST /api/auth/keys/bootstrap` (public, behind the existing
-  `src/gobby/servers/routes/auth.py::_LoginRateLimiter` keyed by client id): body
+  `src/gobby/servers/routes/auth.py::_LoginRateLimiter` keyed by
+  `_login_client_id`, which after 4.1 is the front door's observed peer): body
   `{email, password, machine_id, hostname, os, label}`; verifies with
   `AuthService.verify_password`; upserts the machine under that user through
   `LocalMachineManager.upsert_seen` (`src/gobby/storage/machines.py`), whose
@@ -570,9 +609,9 @@ Verification planned:
 `cargo test -p gobby-core grant`,
 `cargo test -p gobby-daemon --test cli_contract`,
 `uv run python scripts/generate_runtime_config_contract.py`,
-`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_api_keys.py tests/utils/test_api_key_format.py tests/servers/routes/test_api_keys.py tests/cli/test_cli_install.py tests/cli/test_install_coverage.py tests/test_runner_init.py tests/runtime_grants/ tests/config/test_runtime_config_contract.py tests/config/test_bootstrap.py tests/storage/test_storage_auth.py tests/e2e/test_local_api_key_adoption.py -v`.
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_api_keys.py tests/utils/test_api_key_format.py tests/servers/routes/test_api_keys.py tests/cli/test_cli_install.py tests/cli/test_install_coverage.py tests/test_runner_init.py tests/runtime_grants/ tests/config/test_runtime_config_contract.py tests/config/test_bootstrap.py tests/storage/test_storage_auth.py tests/e2e/test_local_api_key_adoption.py tests/e2e/test_api_key_bootstrap_lockout.py -v`.
 
-**Granularity:** eleven items, one leaf. The migration, `ApiKeyManager`, the
+**Granularity:** fourteen items, one leaf. The migration, `ApiKeyManager`, the
 format helper, and the routes are one issuance path; none is observable without
 the others. Local-key adoption is the issuance path's second caller and D1's flag
 day requires every install to hold a key before it lands. The schema carriers
@@ -583,7 +622,10 @@ are regenerated outputs of the one migration.
 - 4.2.1 - Migration 456 creates `api_keys` and the two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_api_keys.sql`.
 - 4.2.2 - `generate`, `parse`, and `hash` match the shared vectors and `parse` rejects a bad checksum, bad alphabet, and wrong length. test: `tests/utils/test_api_key_format.py::test_shared_vectors_and_rejections`.
 - 4.2.3 - Through the full app and its middleware, the bootstrap route verifies the password, binds the machine, and returns the plaintext once with `no-store`; a foreign-owned machine gets 403; repeated bad passwords hit `_LoginRateLimiter` lockout keyed by `_login_client_id`, and a success resets it. test: `tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key`.
-- 4.2.4 - Startup adoption mints the local machine's key into bootstrap once, and revokes it when the bootstrap write fails. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_revokes_on_write_failure`.
+- 4.2.4 - Startup adoption mints the local machine's key into bootstrap once; a failure before the rename revokes the new key, and a failure injected after `os.replace` (at the directory fsync and at the readback) keeps the committed key live, so a retry mints nothing and bootstrap never names a revoked key. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_follows_publication_point`.
+- 4.2.12 - Two synchronized `ensure_local_api_key` callers on one bootstrap leave exactly one live key, matching the bootstrap `api_key` and `api_key_id`. test: `tests/storage/test_api_keys.py::test_concurrent_adoption_mints_one_key`.
+- 4.2.13 - A legacy `config.yaml` with no sibling `bootstrap.yaml` mints nothing, writes nothing, and logs the migration warning. test: `tests/storage/test_api_keys.py::test_legacy_config_path_skips_adoption`.
+- 4.2.14 - Through a real daemon behind gdaemon, repeated bad bootstrap passwords with varying forged `X-Forwarded-For` values cannot reset the caller's lockout from `127.0.0.1`, and a caller from `::1` (a distinct real peer) still has its own bucket. test: `tests/e2e/test_api_key_bootstrap_lockout.py::test_forged_forwarding_cannot_reset_lockout`.
 - 4.2.10 - Through the full app, the management routes answer 401 for an absent, invalid, expired-cookie, or managed-agent credential; a cookie and the operator token each resolve to their user and this machine; the operator token answers 403 when the install has two users; and a mint for a machine owned by another user answers 403. test: `tests/servers/routes/test_api_keys.py::test_management_routes_admit_only_resolved_principals`.
 - 4.2.11 - A real isolated daemon launched with `--config config.yaml` mints one key bound to its machine into the sibling `bootstrap.yaml`, leaves `config.yaml` byte-identical, and mints nothing on a second start. test: `tests/e2e/test_local_api_key_adoption.py::test_startup_adopts_local_key_once`.
 - 4.2.5 - `gobby install` with a reachable hub writes the minted key to bootstrap. test: `tests/cli/test_cli_install.py::test_install_mints_local_api_key`.
@@ -641,17 +683,34 @@ Enrollment commits only after the hub mints:
 1. Authenticate and mint with the staged pin (or plaintext). A rejected
    password, a network failure, or any non-2xx exits non-zero with the staged
    PEM removed and the prior `hub.pem` and bootstrap byte-identical.
-2. Publish: move the staged PEM over `hub.pem` with `durable_replace_text`
-   (HTTPS only), then write `api_key`, `api_key_id`, and `hub_cert` (the
-   `hub.pem` path, or absent for HTTP) through `update_bootstrap_yaml`.
-3. If either publication step fails, revoke only the key minted in step 1:
-   log in with the same email and password through `POST /api/auth/login` for
-   a browser session and `DELETE /api/auth/keys/{new id}` with it (the new API
-   key cannot authenticate until D1), restore the prior `hub.pem` if it was
-   replaced, and exit non-zero. If that cleanup fails, print the new key id
-   and the cleanup error. The prior enrollment's key is never revoked here.
+2. Publish: read the prior `hub.pem` bytes into memory (if any), move the
+   staged PEM over `hub.pem` with `durable_replace_text` (HTTPS only), then
+   write `api_key`, `api_key_id`, and `hub_cert` (the `hub.pem` path, or
+   absent for HTTP) through `update_bootstrap_yaml`.
+3. On any publication exception, decide by the actual publication point.
+   `durable_replace` renames before its directory fsync and readback, so an
+   exception does not prove a file is unchanged. Re-read bootstrap:
+   - It names the new `api_key_id`: the enrollment is committed (the PEM was
+     published first). Keep the new key, print the durability error, and exit
+     non-zero so the operator re-runs verification.
+   - It does not: restore the prior `hub.pem` bytes with
+     `durable_replace_text` (or remove `hub.pem` if there was none), then
+     revoke only the key minted in step 1 by logging in with the same email
+     and password through `POST /api/auth/login` for a browser session and
+     `DELETE /api/auth/keys/{new id}` with it (the new API key cannot
+     authenticate until D1). Exit non-zero.
+   - The re-read, the PEM restore, or the revoke fails: do not revoke
+     anything further; print the new key id, which files may have changed, and
+     the error, and exit non-zero.
+   The prior enrollment's key is never revoked here, and bootstrap never names
+   a revoked key.
 A successful re-login keeps the prior key live on the hub; revoking it is D1's
 verified rotate sequence.
+
+Network bounds: `ssl.get_server_certificate(..., timeout=10)`, and every httpx
+client (enrollment, login, cleanup) uses `httpx.Timeout(10.0)`. A timeout at
+any step before publication exits non-zero with the prior enrollment
+untouched.
 
 `gobby auth key --show` prints the bootstrap key's hint and id. Rotate, list,
 and revoke join D1 (Decision 6).
@@ -664,8 +723,8 @@ Verification planned:
 - 4.5.1 - `gobby auth login` pins by fingerprint against a self-signed hub, refuses a mismatch, and writes bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
 - 4.5.2 - Login refuses a `datastore_mode: local` bootstrap and a `--hub` that differs from `hub_daemon_url`, before any network call and with bootstrap byte-identical. test: `tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch`.
 - 4.5.3 - Login refuses an `http://` non-loopback hub without `--insecure` and `--fingerprint` with any `http://` hub, and enrolls over plain HTTP to a loopback hub and to a non-loopback hub with `--insecure`, fetching no certificate and writing no `hub_cert`. test: `tests/cli/test_auth_login.py::test_login_http_branches`.
-- 4.5.5 - A declined confirmation, a fingerprint mismatch, a rejected password, and a network failure each exit before any bootstrap or `hub.pem` change, the first two without sending the password. test: `tests/cli/test_auth_login.py::test_login_failures_preserve_prior_enrollment`.
-- 4.5.6 - A PEM publication failure or a bootstrap publication failure after a successful mint revokes only the new key through a password session, restores the prior `hub.pem` and bootstrap, and leaves the prior key live; a failed cleanup prints the new key id. test: `tests/cli/test_auth_login.py::test_login_publication_failure_revokes_new_key_only`.
+- 4.5.5 - A declined confirmation, a fingerprint mismatch, a rejected password, a network failure, and a certificate probe against a listener that accepts and never answers each exit non-zero before any bootstrap or `hub.pem` change, the first two and the stalled probe without sending the password. test: `tests/cli/test_auth_login.py::test_login_failures_preserve_prior_enrollment`.
+- 4.5.6 - A failure before the bootstrap rename restores the prior `hub.pem`, revokes only the new key through a password session, and leaves the prior key live and the prior bootstrap byte-identical; a failure injected after the bootstrap `os.replace` (at the directory fsync and at the readback) keeps the committed new key and revokes nothing; a failed restore or cleanup prints the new key id. test: `tests/cli/test_auth_login.py::test_login_compensation_follows_publication_point`.
 - 4.5.4 - `gobby auth key --show` prints the hint and id and never the key. test: `tests/cli/test_auth_login.py::test_key_show_prints_hint_only`.
 
 ## D1 Hub-side key validation, front-door identity, and shared-token cutover (depends: 4.2, 4.5)
@@ -923,6 +982,22 @@ deferral:
     mismatched pair fails; `files` mode gains acceptance (4.1.10).
   - E10: Python `resolve_hash` and `touch` are dropped.
   No deferred section became executable.
+- 2026-09-29: Adversary review of d776f83 raised P4-01 to P4-06, all accepted:
+  - P4-01: the front door keeps the observed peer, replaces every
+    client-supplied forwarding header with it, and the backend pins uvicorn's
+    loopback proxy trust, so the login throttle keys on the real peer (4.1.12,
+    4.2.14).
+  - P4-02: local-key adoption holds the bootstrap sidecar lock across recheck,
+    mint, and publication (4.2.12).
+  - P4-03: adoption and login compensation follow the actual publication
+    point after `os.replace`; bootstrap never names a revoked key (4.2.4,
+    4.5.6).
+  - P4-04: the peek and TLS handshake run in the per-connection task under a
+    10-second deadline (4.1.13); login's certificate probe and HTTP calls use
+    10-second timeouts (4.5.5).
+  - P4-05: a legacy `config.yaml` with no sibling `bootstrap.yaml` skips
+    adoption with a migration warning and writes nothing (4.2.13).
+  - P4-06: `Cargo.lock` joins 4.1's Targets.
 
 ## V2: Verification
 `kind: verification`
