@@ -118,27 +118,43 @@ async def _terminate_child[T](
     *,
     cleanup_deadline: float,
 ) -> BaseException | None:
+    termination_error: BaseException | None = None
     child.cancel()
     grace = min(_CANCEL_GRACE_SECONDS, _remaining(cleanup_deadline))
     if grace > 0.0:
-        done, _ = await asyncio.wait({child}, timeout=grace)
-        if done:
-            return _consume_child_result(child)
+        try:
+            done, _ = await asyncio.wait({child}, timeout=grace)
+            if done:
+                return _consume_child_result(child)
+        except BaseException as exc:
+            termination_error = exc
 
     connection = state.connection
     if connection is not None:
-        connection.pgconn.finish()
+        for _ in range(2):
+            try:
+                connection.pgconn.finish()
+            except BaseException as exc:
+                termination_error = termination_error or exc
+            else:
+                break
     child.cancel()
 
-    reap_budget = _remaining(cleanup_deadline)
-    if reap_budget > 0.0:
-        done, _ = await asyncio.wait({child}, timeout=reap_budget)
-        if done:
-            return _consume_child_result(child)
+    while not child.done() and (reap_budget := _remaining(cleanup_deadline)) > 0.0:
+        try:
+            await asyncio.wait({child}, timeout=reap_budget)
+        except BaseException as exc:
+            termination_error = termination_error or exc
+            child.cancel()
 
     if child.done():
-        return _consume_child_result(child)
-    raise RuntimeError("bounded PostgreSQL child ignored terminal cancellation")
+        child_error = _consume_child_result(child)
+        if termination_error is not None:
+            raise termination_error
+        return child_error
+    raise RuntimeError(
+        "bounded PostgreSQL child ignored terminal cancellation"
+    ) from termination_error
 
 
 def _raise_timeout(cause: BaseException | None = None) -> Never:
@@ -160,12 +176,6 @@ def _raise_indeterminate(cause: BaseException | None = None) -> Never:
 def _result_or_raise[T](child: asyncio.Task[T], state: _RunState) -> T:
     try:
         return child.result()
-    except _WorkBudgetExpired as exc:
-        _raise_timeout(exc)
-    except (psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable) as exc:
-        if state.commit_submitted and not state.commit_observed:
-            _raise_indeterminate(exc)
-        _raise_timeout(exc)
     except BaseException as exc:
         if state.commit_submitted and not state.commit_observed:
             _raise_indeterminate(exc)
@@ -174,6 +184,10 @@ def _result_or_raise[T](child: asyncio.Task[T], state: _RunState) -> T:
                 "COMMIT was observed, but cleanup failed; the change is durable",
                 result=state.result,
             ) from exc
+        if isinstance(
+            exc, (_WorkBudgetExpired, psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable)
+        ):
+            _raise_timeout(exc)
         raise
 
 
@@ -214,40 +228,35 @@ async def run_bounded_db[T](
         name="gobby-bounded-postgres-operation",
     )
 
+    cancellation: asyncio.CancelledError | None = None
     try:
         done, _ = await asyncio.wait({child}, timeout=_remaining(work_cutoff))
-    except asyncio.CancelledError as cancellation:
+    except asyncio.CancelledError as exc:
+        cancellation = exc
         cleanup_deadline = min(
             caller_deadline,
             loop.time() + RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS,
         )
-        child_error = await _terminate_child(
-            child,
-            state,
-            cleanup_deadline=cleanup_deadline,
-        )
-        if state.commit_submitted and not state.commit_observed:
-            _raise_indeterminate(child_error or cancellation)
-        if state.commit_observed and child_error is not None:
+    else:
+        if done:
+            return _result_or_raise(child, state)
+        cleanup_deadline = caller_deadline
+
+    try:
+        child_error = await _terminate_child(child, state, cleanup_deadline=cleanup_deadline)
+    except BaseException as exc:
+        if not state.commit_submitted:
+            raise
+        child_error = exc
+    if state.commit_submitted and not state.commit_observed:
+        _raise_indeterminate(child_error or cancellation)
+    if state.commit_observed:
+        if child_error is not None:
             raise CommittedCleanupError(
                 "COMMIT was observed, but cleanup failed; the change is durable",
                 result=state.result,
             ) from child_error
-        raise
-
-    if done:
-        return _result_or_raise(child, state)
-
-    child_error = await _terminate_child(
-        child,
-        state,
-        cleanup_deadline=caller_deadline,
-    )
-    if state.commit_submitted and not state.commit_observed:
-        _raise_indeterminate(child_error)
-    if state.commit_observed and child_error is not None:
-        raise CommittedCleanupError(
-            "COMMIT was observed, but cleanup failed; the change is durable",
-            result=state.result,
-        ) from child_error
+        return child.result()
+    if cancellation is not None:
+        raise cancellation
     _raise_timeout(child_error)

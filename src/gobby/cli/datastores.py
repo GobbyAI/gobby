@@ -437,10 +437,6 @@ def _observe_hub_alter(
                 )
             )
             return
-        except CommittedCleanupError:
-            # COMMIT was observed; only termination/reap failed, so the ALTER is durable
-            # and final publication must still proceed.
-            return
         except psycopg.OperationalError:
             # A psycopg connect refusal is the base OperationalError, not its SQLSTATE
             # subclass, so it cannot be told from a generic connection failure. Only on
@@ -536,6 +532,12 @@ def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> No
     resume_conninfo = new_url if pending is not None else None
     try:
         _observe_hub_alter(current_url, role, intended_password, resume_conninfo=resume_conninfo)
+    except CommittedCleanupError as exc:
+        raise click.ClickException(
+            "phase=cleanup COMMIT was observed, but cleanup failed; the pending pair "
+            "is preserved. Re-run `gobby datastores rotate-password postgres` to resume. "
+            f"({_rotation_failure_detail(exc)})"
+        ) from exc
     except IndeterminateCommitError as exc:
         raise click.ClickException(
             f"phase=alter COMMIT outcome unobserved; the pending pair is preserved. "

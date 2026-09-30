@@ -600,18 +600,28 @@ def test_postgres_rotation_resume_bounded_timeout_does_not_fall_back(
     assert pending["pending_password"] == pending_password
 
 
-def test_postgres_rotation_tolerates_observed_commit_cleanup_failure(
+def test_postgres_rotation_preserves_pending_on_observed_commit_cleanup_failure(
     monkeypatch: pytest.MonkeyPatch, rotation_home: Path
 ) -> None:
-    """An observed COMMIT whose reap failed is durable, so finalize still runs."""
+    """An observed COMMIT cleanup failure keeps the durable recovery pair."""
     connection, _connects = _patch_connect(monkeypatch, fail_close=True)
 
     result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 1, result.output
     assert connection.committed is True
-    assert "credential_rotation" not in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
-    assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] != _CURRENT_DSN
+    bootstrap = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert bootstrap["database_url"] == _CURRENT_DSN
+    pending = bootstrap["credential_rotation"]
+    assert pending["previous_password"] == "old-secret"
+    assert pending["pending_password"]
+    assert "phase=cleanup" in result.output
+    assert "COMMIT was observed" in result.output
+    assert "rotate-password postgres" in result.output
+    assert pending["pending_password"] not in result.output
+    assert "old-secret" not in result.output
+    assert _CURRENT_DSN not in result.output
+    assert _FAKE_SCRAM not in result.output
 
 
 @pytest.mark.parametrize(

@@ -14,6 +14,7 @@ import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+from gobby.storage.hub import async_ops
 from gobby.storage.hub.async_ops import (
     RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS,
     BoundedDBTimeoutError,
@@ -693,6 +694,189 @@ async def test_cancellation_during_committed_cleanup_reports_committed(
     with pytest.raises(CommittedCleanupError):
         await supervisor
     assert connection.activity.count("cancel-1") >= 1
+
+
+@pytest.mark.parametrize("observed", [False, True])
+@pytest.mark.parametrize("cancel_supervisor", [False, True])
+@pytest.mark.parametrize("error_type", [OSError, RuntimeError, asyncio.CancelledError])
+async def test_termination_failure_preserves_commit_classification(
+    monkeypatch: pytest.MonkeyPatch,
+    observed: bool,
+    cancel_supervisor: bool,
+    error_type: type[BaseException],
+) -> None:
+    connection = _FakeConnection(block_commit=not observed, block_close=observed)
+    _install_fake_connect(monkeypatch, connection)
+    terminal_error = error_type("terminal cleanup failed")
+    children: list[asyncio.Task[str]] = []
+
+    async def fail_termination(
+        child: asyncio.Task[str],
+        state: _RunState,
+        *,
+        cleanup_deadline: float,
+    ) -> BaseException | None:
+        children.append(child)
+        assert state.commit_submitted
+        assert state.commit_observed is observed
+        assert cleanup_deadline > 0
+        raise terminal_error
+
+    monkeypatch.setattr(async_ops, "_terminate_child", fail_termination)
+
+    async def work(_conn: Any, _remaining: float) -> str:
+        return "committed result"
+
+    supervisor = asyncio.create_task(
+        run_bounded_db(work, conninfo="postgresql://unused", deadline_seconds=_DEADLINE_SECONDS)
+    )
+    expected_error = CommittedCleanupError if observed else IndeterminateCommitError
+    try:
+        entered = connection.close_entered if observed else connection.commit_entered
+        await entered.wait()
+        if cancel_supervisor:
+            supervisor.cancel()
+        with pytest.raises(expected_error) as raised:
+            await supervisor
+        assert raised.value.__cause__ is terminal_error
+        if isinstance(raised.value, CommittedCleanupError):
+            assert raised.value.result == "committed result"
+    finally:
+        # The injected helper failure bypasses real reaping; own the fake child.
+        for child in children:
+            child.cancel()
+            await _wait_for_event_loop_callback()
+            child.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await child
+    assert all(child.done() for child in children)
+
+
+@pytest.mark.parametrize("observed", [False, True])
+@pytest.mark.parametrize("fault_kind", ["finish", "wait", "cancel"])
+async def test_termination_fault_reaps_child_and_preserves_commit_classification(
+    monkeypatch: pytest.MonkeyPatch, observed: bool, fault_kind: str
+) -> None:
+    connection = _FakeConnection(block_commit=not observed, block_close=observed)
+    _install_fake_connect(monkeypatch, connection)
+    original_wait = asyncio.wait
+    original_finish = connection.pgconn.finish
+    failures: list[BaseException] = []
+    children: set[asyncio.Task[Any]] = set()
+    wait_count = 0
+
+    def fail_finish_once() -> None:
+        if not failures:
+            error = RuntimeError("hard close failed")
+            failures.append(error)
+            raise error
+        original_finish()
+
+    async def faulted_wait(
+        tasks: set[asyncio.Task[Any]], *, timeout: float
+    ) -> tuple[set[asyncio.Task[Any]], set[asyncio.Task[Any]]]:
+        nonlocal wait_count
+        children.update(tasks)
+        wait_count += 1
+        if wait_count == 2 and fault_kind in {"wait", "cancel"}:
+            # Let the child process its first cancellation before interrupting reap.
+            await _wait_for_event_loop_callback()
+            if fault_kind == "wait":
+                error = RuntimeError("termination wait failed")
+                failures.append(error)
+                raise error
+            current = asyncio.current_task()
+            assert current is not None
+            current.cancel("termination interrupted")
+            try:
+                return await original_wait(tasks, timeout=timeout)
+            except asyncio.CancelledError as error:
+                failures.append(error)
+                raise
+        return await original_wait(tasks, timeout=timeout)
+
+    if fault_kind == "finish":
+        monkeypatch.setattr(connection.pgconn, "finish", fail_finish_once)
+    monkeypatch.setattr(asyncio, "wait", faulted_wait)
+
+    async def work(_conn: Any, _remaining: float) -> str:
+        return "committed result"
+
+    expected_error = CommittedCleanupError if observed else IndeterminateCommitError
+    try:
+        with pytest.raises(expected_error) as raised:
+            await run_bounded_db(
+                work, conninfo="postgresql://unused", deadline_seconds=_DEADLINE_SECONDS
+            )
+        assert raised.value.__cause__ is failures[0]
+        if isinstance(raised.value, CommittedCleanupError):
+            assert raised.value.result == "committed result"
+        assert all(child.done() for child in children)
+        assert connection._cancel_count >= 2
+        assert connection.pgconn.finished
+    finally:
+        for child in children:
+            if not child.done():
+                child.cancel()
+                await _wait_for_event_loop_callback()
+                child.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await child
+
+
+@pytest.mark.parametrize("cancel_supervisor", [False, True])
+async def test_observed_clean_commit_during_termination_returns_result(
+    monkeypatch: pytest.MonkeyPatch, cancel_supervisor: bool
+) -> None:
+    connection = _FakeConnection()
+    _install_fake_connect(monkeypatch, connection)
+
+    async def late_commit() -> None:
+        connection.activity.append("commit")
+        connection.commit_entered.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # COMMIT's successful response arrives while the supervisor stops.
+            return
+
+    monkeypatch.setattr(connection, "commit", late_commit)
+
+    async def work(_conn: Any, _remaining: float) -> str:
+        return "committed result"
+
+    supervisor = asyncio.create_task(
+        run_bounded_db(work, conninfo="postgresql://unused", deadline_seconds=_DEADLINE_SECONDS)
+    )
+    await connection.commit_entered.wait()
+    if cancel_supervisor:
+        supervisor.cancel()
+
+    assert await supervisor == "committed result"
+    assert connection.pgconn.finished
+    assert "rollback" not in connection.activity
+
+
+@pytest.mark.parametrize(
+    "error_type", [psycopg.errors.QueryCanceled, psycopg.errors.LockNotAvailable]
+)
+async def test_observed_commit_driver_cleanup_error_is_committed(
+    error_type: type[Exception],
+) -> None:
+    cleanup_error = error_type("cleanup failed")
+
+    async def fail() -> None:
+        raise cleanup_error
+
+    child = asyncio.create_task(fail())
+    await asyncio.wait({child})
+    state = _RunState(commit_submitted=True, commit_observed=True, result="committed result")
+
+    with pytest.raises(CommittedCleanupError) as raised:
+        _result_or_raise(child, state)
+
+    assert raised.value.__cause__ is cleanup_error
+    assert raised.value.result == "committed result"
 
 
 @pytest.mark.integration
