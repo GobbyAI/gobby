@@ -162,7 +162,8 @@ The plan also sets:
      propagates unchanged.
    - `get_decision_service(config)` keeps one cached service, identified by a
      fingerprint of every service-affecting field: `api_base`, `model`, a hash
-     of the resolved `api_key`, `timeout_seconds`, `max_input_tokens`, and
+     of the resolved `api_key`, `allow_remote`, `timeout_seconds`,
+     `max_input_tokens`, `backend_max_state_tokens`, and
      `failure_cooldown_seconds`. It is replaced whenever the fingerprint
      changes.
      - The cache exists only to share cooldown state.
@@ -182,7 +183,7 @@ The plan also sets:
 
     How `enforce` behaves:
     - It acts only when `evaluated_model == ai.decisions.model` and
-      `evaluated_backend` equals the service's current backend identity.
+      `evaluated_backend` equals the backend identity returned with that same decision.
       Otherwise the consumer runs as `shadow` and logs
       `evaluated_backend_mismatch` once per cooldown window.
     - Kev echoes the requested model name in `response.model` and accepts
@@ -192,15 +193,22 @@ The plan also sets:
     - Backend identity is `sha256:` plus the sha256 of the canonical JSON of
       the stable fields in the configured model's `GET {api_base}/v1/models`
       card: run path, base model, LoRA config, dtype, and calibration
-      temperature. Runtime statistics are excluded. The service fetches the
-      card when it is created and on the first call after each cooldown
-      expires. A failed fetch, or a card missing any of those fields, yields no
-      identity, and enforce then runs as shadow.
-    - Residual gap: Kev reports the run path as submitted, unresolved. A
-      checkpoint swapped in place at the same path, with an identical card,
-      is undetectable. The operator rule is that a new checkpoint gets a new
-      run path or a new evaluation. The plan claims detection only for what
-      the card reports.
+      temperature, plus the configured `backend_max_state_tokens`. Runtime
+      statistics are excluded.
+    - Identity is established for every logical decision. Each `choose` or
+      `noul` call fetches the card concurrently with the decision request,
+      under the same deadline, and returns the identity with the answers. A
+      server restarted onto a different checkpoint therefore shows up on the
+      very next decision. A failed fetch, or a card missing any of those
+      fields, yields no identity, and enforce then runs as shadow.
+    - Residual gap: Kev reports the run path as submitted, unresolved, and
+      the card carries no server source version. A checkpoint swapped in
+      place at the same path with an identical card, or a server code upgrade
+      that changes its state limit, is undetectable at runtime. The operator
+      rule is that a new checkpoint gets a new run path, and a new checkpoint
+      or server version gets a new live capture (Activation Gate item 4) and
+      evaluation before any consumer returns to `enforce`. The plan claims
+      detection only for what the card and config report.
     - Consumers read `mode` and thresholds from the resolver's current config
       on every call. The service fingerprint excludes consumer fields, so a
       policy-only reload takes effect on the next call without rebuilding the
@@ -404,7 +412,11 @@ when every one of these holds:
    - the server's source commit;
    - its `/v1/models` card and the Decision 10 backend identity;
    - one Choice and one Noul round trip that the service parses;
-   - the measured characters-per-token ratio on a path-heavy request.
+   - the measured characters-per-token ratio on a path-heavy request;
+   - the server's actual state limit, which must equal
+     `backend_max_state_tokens`, and confirmation from its source that
+     `usage.input_tokens` counts every encoded state token. If either is
+     unknown or mismatched, this item does not hold.
 
    No consumer leaves `shadow` before this item holds. Gobby does not start,
    stop, or install the server.
@@ -697,12 +709,25 @@ Module contents:
   propagates unchanged.
 - The service holds only transport fields and cooldown state. It reads no
   consumer mode or threshold.
-- `DecisionService.backend_identity: str | None`, the Decision 10 card hash.
+- `DecisionResult[A](answers: dict[str, A], backend_identity: str | None,
+  response_model: str)`.
 - `DecisionService`, holding the config and a cooldown deadline. Each call
   opens its own `httpx.AsyncClient`. Its method is `async choose(consumer: str, state:
   Mapping[str, Any], questions: Mapping[str, ChoiceQuestion], *,
-  timeout_seconds: float | None = None) -> dict[str, ChoiceAnswer]`. The
+  timeout_seconds: float | None = None) -> DecisionResult[ChoiceAnswer]`. The
   keyword is the caller budget from Decision 9.
+- Backend identity, per Decision 10:
+  - Each call runs `GET {api_base}/v1/models` concurrently with the decision
+    request, inside the same `asyncio.timeout(budget)`. There is no separate
+    fetch at service creation, so `get_decision_service` stays synchronous.
+  - The identity is `sha256:` plus the sha256 of the canonical JSON of the
+    card entry for the configured model: run path, base model, LoRA config,
+    dtype, temperature, and the configured `backend_max_state_tokens`.
+    Runtime statistics are excluded.
+  - A card fetch that fails, times out, or lacks any of those fields gives
+    `backend_identity=None`. It never fails the decision and never opens the
+    cooldown. If the decision request itself fails, the card task is
+    cancelled and awaited.
 - `estimate_tokens(body) -> int`, computed as `len(json.dumps(body)) // 4`.
 - `get_decision_service(config: DecisionsConfig) -> DecisionService`, which
   returns the one cached service while the Decision 9 fingerprint is
@@ -723,7 +748,10 @@ Transport, per Decisions 8 and 9:
   `asyncio.timeout(budget)` around the whole call;
 - responses are parsed strictly. Any violation raises `parse` before any
   consumer policy sees it:
-  - the response `model` must equal the requested model;
+  - the response `model` must be a non-empty string. It is returned as
+    `response_model` and never compared with the request, because the
+    documented API answers `jev-latest` with a resolved version such as
+    `jev-1.13.0`. Backend identity is Decision 10's job;
   - answer keys must match the question keys exactly;
   - each answer's `type` must equal its question's type;
   - probability keys must match the option keys;
@@ -732,8 +760,15 @@ Transport, per Decisions 8 and 9:
   - Choice probabilities must sum to 1 within `1e-3`;
   - `choice` must be an option whose probability is within `1e-6` of the
     maximum, so any tied maximum is accepted as returned;
-  - `usage.input_tokens` is optional and, when present, is logged as the
-    measured token count;
+  - `usage.input_tokens` is required: an `int` that is not a `bool` and is
+    at least 0. A missing or malformed value raises `truncated` under
+    Decision 8, before any policy sees the answers;
+  - the truncation guard is sound only for a backend whose
+    `usage.input_tokens` counts every encoded state token and whose actual
+    state limit equals `backend_max_state_tokens`. Kev at the pinned commit
+    satisfies both. The Activation Gate's live capture verifies both for the
+    configured server, and an unverified or mismatched server keeps every
+    consumer in `shadow`;
 - the Decision 9 cooldown rules apply exactly: remote failures open it, and
   local outcomes and cancellation never do.
 
@@ -751,12 +786,13 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 - 1.2.1 - `choose` posts `{model, state, questions}` to
   `{api_base}/v1/systemone`, parses the documented-schema fixture, and raises `parse`
-  for these responses: a mismatched model, a missing or extra answer key, a
+  for these responses: an empty or non-string model, a missing or extra answer key, a
   wrong answer type, a choice outside the offered options or below the
   maximum probability, mismatched probability keys, probabilities summing
   outside `1 ± 1e-3`, and any non-finite or out-of-range value. A tied maximum
-  is accepted. The request carries `type` and `instructions` on every
-  question. test:
+  is accepted, and a resolved model name such as `jev-1.13.0` for a
+  `jev-latest` request is accepted and returned as `response_model`. The
+  request carries `type` and `instructions` on every question. test:
   `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_documented_wire`.
 - 1.2.2 - With an ample budget, call counts are exact per status: 3xx, 401,
   403, 404, and 422 make one call each; 429, 529, 500, and transport errors
@@ -767,13 +803,18 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.7 - The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a
   redirect. test:
   `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.
-- 1.2.8 - A rotated secret or a changed timeout or ceiling yields a new
-  service, while identical config shares one cooldown. test:
+- 1.2.8 - A rotated secret, a changed timeout, ceiling, `allow_remote`, or
+  `backend_max_state_tokens` yields a new service, while identical config
+  shares one cooldown. test:
   `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.
-- 1.2.9 - `backend_identity` hashes only the stable card fields: a changed run
-  path, dtype, or temperature under the same alias changes it, a changed
-  statistic does not, and a failed or incomplete card yields `None`. The card
-  is refetched on the first call after a cooldown. test:
+- 1.2.9 - `backend_identity` is established on every call: two consecutive
+  calls on one cached service against a server whose card changes between
+  them (a restart onto another checkpoint) return different identities. A
+  changed run path, dtype, temperature, or configured
+  `backend_max_state_tokens` changes it under the same alias; a changed
+  statistic does not. A failed, slow, or incomplete card yields `None`
+  without failing the decision or opening the cooldown, and a failed decision
+  leaves no pending card task. test:
   `tests/ai/test_decisions_service.py::test_backend_identity_from_model_card`.
 - 1.2.3 - A request over `max_input_tokens` raises `oversize` without sending,
   for path-heavy state and for low characters-per-token state. A response
@@ -993,8 +1034,8 @@ cannot reject every candidate, which is why the tool consumer uses Noul
 (Decision 7).
 
 Add `async noul(consumer, state, propositions: Mapping[str, str], *,
-timeout_seconds: float | None = None) -> dict[str, NoulAnswer(probability:
-float)]` to `DecisionService`. Each proposition is serialized as `{"type":
+timeout_seconds: float | None = None) -> DecisionResult[NoulAnswer]`, with
+`NoulAnswer(probability: float)`, to `DecisionService`. Each proposition is serialized as `{"type":
 "noul", "instructions": <proposition>}`, and `probability` is read from the
 answer's `noul` field under the same strict parsing. It uses the same
 transport, ceiling, and cooldown. Its wire field names come from the Noul
