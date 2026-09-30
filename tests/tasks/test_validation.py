@@ -64,6 +64,21 @@ def test_preparer_has_no_one_shot_generation_path() -> None:
             },
             True,
         ),
+        (
+            {
+                "checklist_facts": {
+                    **_BASE["checklist_facts"],
+                    "close_receipts": [
+                        {
+                            "kind": "independent_review_approval",
+                            "commit_sha": "a" * 40,
+                            "verdict": "LAND",
+                        }
+                    ],
+                }
+            },
+            True,
+        ),
     ],
 )
 def test_structured_inputs_move_review_fingerprint(

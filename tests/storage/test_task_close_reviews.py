@@ -111,7 +111,10 @@ def test_project_admission_refuses_other_task_without_queued_run(
         store.create_or_get_active(**other_intent)
 
     assert raised.value.active_review.id == first.id
-    assert store.get_active_for_project(str(sample_project["id"])) == first
+    assert (
+        store.get_admission_blocker(str(sample_project["id"]), task_id=other.id, max_concurrency=1)
+        == first
+    )
     assert (
         temp_db.fetchone("SELECT id FROM agent_runs WHERE id = %s", (other_intent["run"].id,))
         is None
@@ -123,11 +126,53 @@ def test_project_admission_refuses_other_task_without_queued_run(
     with pytest.raises(TaskCloseReviewBusyError) as terminal_busy:
         store.create_or_get_active(**other_intent)
     assert terminal_busy.value.active_review.id == first.id
-    assert store.get_active_for_project(str(sample_project["id"])) == store.get(first.id)
+    assert store.get_admission_blocker(
+        str(sample_project["id"]), task_id=other.id, max_concurrency=1
+    ) == store.get(first.id)
     assert runs.complete(first.agent_run_id) is not None
     second, second_created = store.create_or_get_active(**other_intent)
     assert second_created is True
     assert second.task_id == other.id
+
+
+def test_configured_capacity_admits_other_tasks_until_full(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    tasks = LocalTaskManager(temp_db)
+    project_id = str(sample_project["id"])
+    first, _created = store.create_or_get_active(**_intent(), max_concurrency=2)
+    second_intent = _other_task_intent(tasks, project_id, "Second close candidate")
+    third_intent = _other_task_intent(tasks, project_id, "Third close candidate")
+
+    second, second_created = store.create_or_get_active(**second_intent, max_concurrency=2)
+    with pytest.raises(TaskCloseReviewBusyError) as raised:
+        store.create_or_get_active(**third_intent, max_concurrency=2)
+
+    assert second_created is True
+    assert raised.value.active_review.id == first.id
+    assert (
+        temp_db.fetchone("SELECT id FROM agent_runs WHERE id = %s", (third_intent["run"].id,))
+        is None
+    )
+    promoted = store.claim_queued(project_id=project_id, max_concurrency=2)
+    assert [review.id for review in promoted] == [first.id, second.id]
+
+
+def test_spare_capacity_never_admits_a_second_review_for_the_same_task(
+    temp_db: HubDatabase,
+) -> None:
+    store = TaskCloseReviewStore(temp_db)
+    runs = LocalAgentRunManager(temp_db)
+    first, _created = store.create_or_get_active(**_intent(), max_concurrency=3)
+    assert first.agent_run_id is not None
+    _activate_run(runs, first.agent_run_id)
+    store.finish(first.id, status="invalid", result_payload={"error": "done"})
+
+    with pytest.raises(TaskCloseReviewBusyError) as raised:
+        store.create_or_get_active(**_intent(), max_concurrency=3)
+
+    assert raised.value.active_review.id == first.id
 
 
 def test_concurrent_project_admissions_create_only_one_review(
@@ -591,6 +636,18 @@ def _intent(*, caller_session_id: str | None = None) -> dict[str, Any]:
             timeout_seconds=1200,
             requested_reasoning_effort=None,
         ),
+    }
+
+
+def _other_task_intent(tasks: LocalTaskManager, project_id: str, title: str) -> dict[str, Any]:
+    other = tasks.create_task(
+        project_id, title, validation_criteria="Close reviews share project capacity."
+    )
+    return {
+        **_intent(),
+        "task_id": other.id,
+        "task_ref": f"#{other.seq_num}",
+        "expected_task_updated_at": other.updated_at,
     }
 
 

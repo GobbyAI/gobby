@@ -57,6 +57,7 @@ INTERACTIVE_TASK_MUTATIONS = (
     "escalate_task",
     "link_commit",
     "link_task_to_session",
+    "record_close_receipt",
     "release_task_paths",
     "remove_dependency",
     "remove_label",
@@ -812,12 +813,16 @@ class TestRequireTaskBeforeEdit:
     async def test_block_reason_names_the_shell_indirection_that_caused_it(
         self, db: HubDatabase
     ) -> None:
-        """A scratchpad write addressed through a variable blocks, and the reason says why."""
+        """A scratchpad write addressed through a variable blocks, and the reason says why.
+
+        The variable comes from the environment: a leading literal assignment in the
+        same command resolves to its path (#22786), so it no longer counts as indirection.
+        """
         _sync_bundled(db)
         scratchpad = f"{tempfile.gettempdir()}/gobby-indirect-scratchpad"
         data: dict[str, object] = {
             "tool_name": "Bash",
-            "tool_input": {"command": f'SP={scratchpad}\nmkdir -p "$SP"'},
+            "tool_input": {"command": 'mkdir -p "$SP"'},
         }
         normalize_tool_fields(data)
         event = HookEvent(

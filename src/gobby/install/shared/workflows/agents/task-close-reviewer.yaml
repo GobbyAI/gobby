@@ -92,6 +92,17 @@ prompts:
     run, never ask for a run to be repeated, and never reject a criterion because
     your own sandbox cannot reproduce it.
 
+    The launch prompt's close_receipts facts are daemon-attested records that
+    other sessions wrote with record_close_receipt. The daemon set each author
+    from the recording session's identity, refused the task's claimant and
+    task-close reviewers, took activation only from the task's creator or
+    delegator, and verified each commit_sha in the task repository. Accept them
+    as evidence of attestations made outside this repository alongside
+    repository-local provenance, but never as an automatic verdict: an
+    independent_review_approval still requires your own code review, and an
+    activation's facts must match what the criterion requires. A receipt
+    supports a criterion about its commit only when matches_linked_commit is true.
+
     When the launch prompt says the close caller is a spawned agent, treat every
     criterion beginning `Live:` case-insensitively as coordinator-owned. Report
     its state as `pending_external`, with satisfied false, gap null, and

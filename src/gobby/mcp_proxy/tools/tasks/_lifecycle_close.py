@@ -74,6 +74,7 @@ from gobby.tasks.acceptance_artifacts import (
     render_acceptance_test_bodies,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.close_receipts import close_receipt_facts
 from gobby.tasks.close_test_coverage import changed_python_test_paths
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.commits import collect_commit_rename_aliases_async
@@ -806,6 +807,7 @@ async def _evaluate_close(
             extra=infra.extra,
         )
 
+    receipt_facts = close_receipt_facts(ctx.task_manager.db, task, commit_shas)
     review_started = perf_counter()
     llm_result = await evaluate_close_review(
         task=evaluation_task,
@@ -831,6 +833,9 @@ async def _evaluate_close(
             ),
             "acceptance_artifacts": acceptance_details,
             "tdd_evidence": tdd_details,
+            # Absent rather than empty, so tasks without receipts keep their
+            # existing review fingerprints.
+            **({"close_receipts": receipt_facts} if receipt_facts else {}),
         },
         validation_config=ctx.validation_config,
         reason=reason,
