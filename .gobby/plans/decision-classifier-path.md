@@ -36,6 +36,8 @@ The plan also sets:
 - a shadow-capture and evaluation harness, so every consumer is promoted on
   measured quality, calibration and latency;
 - two consumers: MCP tool reranking and found-work confirmation;
+- one agent-facing MCP tool, `gobby-decisions:evaluate`, over the same
+  service;
 - how #22604's community-label gate consumes the service;
 - the activation gate that #22075 waits on.
 
@@ -105,22 +107,46 @@ The plan also sets:
    capability, so no new route is needed. This supersedes the research doc's
    "no registry capability until an agent-facing need," per Josh's 2026-09-28
    clarification.
-6. **No MCP tool.** Every consumer is daemon-internal and calls the service
-   directly. `jev.md`'s `gobby-decisions:evaluate` tool has no caller.
-   Rejected under `restraint`. An agent-facing need reopens it.
+6. **MCP is required: one agent-facing tool, `gobby-decisions:evaluate`.**
+   On 2026-09-30 Josh added "MCP required for Jev" and clarified "As in the
+   classifier path", superseding this plan's earlier rejection of the tool.
+   The boundary is the one `docs/research/jev.md` draws: one internal MCP
+   tool for agents and pipelines, and direct service calls from daemon
+   consumers.
+   - Agents and pipelines call `gobby-decisions:evaluate` through the MCP
+     proxy (3.3). It takes `state`, questions of one primitive type, and an
+     optional caller budget. It returns typed answers with `response_model`
+     and `backend_identity`, or a typed unavailable reason. Existing pipeline
+     MCP steps branch on its result, so no pipeline step type is added.
+   - Daemon consumers call `DecisionService` directly and never go through
+     MCP: tool rerank, found-work, #22604's community labels, and #22075's
+     future outage classifier.
+   - Both surfaces share the one cached service, so the request ceiling,
+     truncation guard, cooldown, OpenRouter privacy flags, and log
+     redaction apply to both unchanged.
+   - Provider selection, credentials, thresholds, and policy stay
+     daemon-side. The tool has no `mode`, no `evaluated_*` check, and no
+     shadow record, because it takes no automated action; the calling agent
+     weighs the returned identity. The Decision 2 `enforce` rule and the
+     Decision 12 gates govern consumers only.
+   - The tool has no config switch. It is always registered and answers
+     whenever `decide` is available, and otherwise returns its typed
+     reason. A hosted `api_base` sends tool-call state off the machine by
+     the operator's choice, as for consumers (Decision 2).
 7. **Primitives: Choice first, then Noul, as a proposed build order.**
    Josh's 2026-09-24 ruling reads: Choice only until the second consumer adds
    Noul. This plan proposes, for Josh's approval, to apply it as build order:
    - 1.2 builds `choose`, the client that #22604's stamped 6.3.1 anchors.
    - 3.1 builds `noul` together with tool rerank, the in-plan consumer that
      needs it, and 3.2 reuses it.
-   - Score has no consumer and is not built.
+   - Score has no consumer and is not built, so `gobby-decisions:evaluate`
+     (Decision 6) exposes Choice and Noul only.
 
    No consumer is live today. #22604 keeps its own independent parking, and
    tool rerank ships in `shadow`. No ordering edge ties 3.1 to #22604 in
    either direction, and there is no rollout or activation order between
    community labels and tool rerank. In-plan sequencing stays
-   1.2, 2.1, 3.1, 3.2.
+   1.2, 2.1, 3.1, 3.2, and 3.3 follows 3.1.
 8. **Request ceiling and truncation guard.** At Kev commit `0fe8fc97c2bc` (2026-09-29), Kev trains on
    384 state tokens and serves up to 65,536 state tokens
    (`kev/model.py::SERVE_MAX_STATE`) and 73,728 branch tokens
@@ -385,6 +411,11 @@ The plan also sets:
     constructed at `workflows/hooks.py:133` with `config_resolver`.
 - `retry_async` is at `llm/claude_runtime.py:141-164`. The daemon already
   depends on `httpx`.
+- Internal MCP servers are `InternalToolRegistry` instances from a
+  `create_*_registry` factory, added in `setup_internal_registries`
+  (`mcp_proxy/registries.py:45`), which takes `config_resolver`.
+  `create_feedback_registry` (`mcp_proxy/tools/feedback.py:14-54`) is the
+  pattern. No `gobby-decisions` server exists.
 
 ## Constraints
 `kind: framing`
@@ -401,6 +432,7 @@ The plan also sets:
   | `config/app.py` | 535 | untouched |
   | `ai/registry.py` | 505 | |
   | `recommendation.py` | 270 | |
+  | `mcp_proxy/registries.py` | 580 | |
   | `config/code_index.py` | 209 | |
   | `ai/embeddings.py` | 1,017 | untouched; already over the ceiling |
 - No raw state in logs. The daemon log carries identifiers, counts, hashes,
@@ -454,7 +486,8 @@ direction.
 The decision classifier counts as **deployed**, beyond merely planned, only
 when every one of these holds:
 
-1. Leaves 1.1 and 1.2 are landed on `0.5.0`, and the PD has restarted the
+1. Leaves 1.1, 1.2, and 3.3 (the `gobby-decisions:evaluate` tool that
+   Decision 6 requires) are landed on `0.5.0`, and the PD has restarted the
    daemon from the main checkout.
 2. A decision endpoint is reachable, and `ai.decisions.wire_api`,
    `ai.decisions.api_base` and `ai.decisions.model` name it: a
@@ -504,8 +537,8 @@ candidate) stays blocked.
 
 #22075 also remains `deferred-by-josh` under his 2026-09-10 instruction.
 Closing #23024 does not unblock it.
-- At expansion, the PD moves #22075's `blocked_by` edge from #23024 to leaf
-  3.2, the last consumer leaf.
+- At expansion, the PD moves #22075's `blocked_by` edge from #23024 to
+  leaves 3.2, the last consumer leaf, and 3.3, the MCP tool leaf.
 - Gate items 2 to 5 are operational conditions, not leaves. The PD verifies
   them and records them on #22075 before lifting anything.
 - Josh lifting `deferred-by-josh` is the final hold.
@@ -1198,7 +1231,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 `kind: framing`
 
 **Goal:** Tool reranking and found-work confirmation consume the service in
-shadow mode, and each can be promoted by config once its gate passes.
+shadow mode, and each can be promoted by config once its gate passes. Agents
+and pipelines reach the same service through `gobby-decisions:evaluate`.
 
 ### 3.1 MCP tool reranking through Noul [category: code] (depends: 2.1)
 `kind: deliverable`
@@ -1438,18 +1472,142 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   test:
   `tests/workflows/test_found_work_confirm.py::test_budget_admission_and_cancellation`.
 
+### 3.3 Agent-facing `gobby-decisions:evaluate` MCP tool [category: code] (depends: 3.1)
+`kind: deliverable`
+
+Targets:
+- `src/gobby/mcp_proxy/tools/decisions.py`
+- `src/gobby/mcp_proxy/registries.py::setup_internal_registries`
+- `tests/mcp_proxy/tools/test_decisions_tools.py`
+- `docs/reference-audit/config.json::*` — scope-reason: append one `gobby-decisions:evaluate` MCP operation and its evidence entry
+- `src/gobby/install/shared/skills/gobby/references/config/models.md`
+
+**Granularity:** Five acceptance items, one outcome: an agent or pipeline
+reaches the shared decision service through one MCP tool that returns typed
+answers with provenance or a typed unavailable reason. The registry, its
+request validation, its registration, and its reference-audit mapping land
+together, because an unmapped public tool fails the reference contract
+test, and no subset is independently useful.
+
+**Research context:** Internal MCP servers are `InternalToolRegistry`
+instances built by a `create_*_registry` factory and added in
+`setup_internal_registries`. `create_feedback_registry`
+(`mcp_proxy/tools/feedback.py:14-54`) is the pattern, wired at
+`mcp_proxy/registries.py:208-210`. `setup_internal_registries` already takes
+`config_resolver: Callable[[], DaemonConfig | None]`
+(`mcp_proxy/registries.py:45-46`).
+
+Add `create_decisions_registry(config_resolver) -> InternalToolRegistry`,
+named `gobby-decisions` with description "Decision classifier over the
+configured decision wire", and add it in `setup_internal_registries` with
+the existing `config_resolver`.
+
+One tool, `evaluate(state: dict[str, Any], questions: dict[str, dict[str,
+Any]], timeout_seconds: float | None = None) -> dict[str, Any]`, registered
+with `read_only=True`, because it changes no Gobby state:
+- Each question takes the wire shape 1.2 and 3.1 serialize:
+  `{"type": "choice", "instructions": str, "criteria": {option: text}}` or
+  `{"type": "noul", "instructions": str}`.
+- Every question in one call has the same type. One type means one service
+  call per tool call, so an answer set never mixes backend identities, the
+  rule 3.1 applies across batches.
+- These requests return `{"success": false, "reason": "invalid_request",
+  "detail": ...}` without dialing: an empty question map, mixed types, an
+  unknown type, a missing or empty `instructions`, an empty `criteria` on a
+  Choice question, and a `timeout_seconds` that is not positive.
+- The tool reads `config_resolver()` on every call. A `None` config, or an
+  unset `api_base` or `model`, returns `reason: "unconfigured"` without
+  building a service.
+- Otherwise it calls `get_decision_service(config.ai.decisions)`, then
+  `choose` with `ChoiceQuestion(instructions, criteria)` values or `noul`
+  with the propositions, passing consumer `"mcp_evaluate"` and
+  `timeout_seconds` as the caller budget. Decision 9 already caps that
+  budget at the configured `timeout_seconds`.
+- Success returns `{"success": true, "type", "answers", "response_model",
+  "backend_identity"}`. A Choice answer is `{"choice", "probabilities",
+  "confidence"}`, and a Noul answer is `{"probability"}`, keyed by question.
+  `backend_identity` is `null` when unverified.
+- `DecisionsUnavailable` returns `{"success": false, "reason": exc.reason,
+  "detail": exc.detail}`. `asyncio.CancelledError` propagates unchanged.
+- The tool has no `mode`, no `evaluated_*` check, no shadow record, and no
+  config field (Decision 6).
+- The service's `decisions.call` event, with consumer `mcp_evaluate`, is the
+  tool's only log record. The tool logs no state or option text.
+
+Pipelines call the tool from existing MCP steps and branch on `success` and
+`answers` with ordinary conditions. No pipeline step type is added.
+`registries.py` grows by two lines and stays under the ceiling.
+
+Reference contract: `tests/skills/reference_library_helpers.py::coverage_errors`
+reports every registered public tool that no `docs/reference-audit/*.json`
+operation maps. The `config` audit owns AI configuration and
+`docs/guides/llm-features.md`, and its MCP operations point at
+`references/config/*.md`. So this leaf:
+- adds one operation to `docs/reference-audit/config.json`: `surface: mcp`,
+  `server: gobby-decisions`, `tool: evaluate`, `reference` the bundled
+  `references/config/models.md`, and `implementation`
+  `src/gobby/mcp_proxy/tools/decisions.py::create_decisions_registry`, with
+  `verification` naming one new evidence entry that records the fetched
+  `evaluate` schema and the passing focused test run;
+- adds one paragraph to `references/config/models.md` saying when to call
+  `gobby-decisions:evaluate`, its one-type rule, that it answers only while
+  `decide` is available, and that `backend_identity` is provenance for the
+  caller to weigh. The paragraph adds no guide link, so the audited-anchor
+  check is unaffected.
+
+Consumers unchanged:
+- `src/gobby/ai/embedding_switch_runner.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `src/gobby/servers/http.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/config/test_config_runtime_config_resolution.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/dispatch/test_bundled_agent_contract.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/mcp_proxy/test_merge_integration.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/mcp_proxy/test_registries.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/mcp_proxy/test_workspaces_registry.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/mcp_proxy/tools/test_review_learning.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/test_wiki_retirement_contract.py` — no-edit-reason: it calls `setup_internal_registries` with its existing arguments; the signature is unchanged, and the added `gobby-decisions` registry reads only the `config_resolver` every caller already passes.
+- `tests/skills/reference_library_helpers.py` — no-edit-reason: it builds the public tool inventory from `setup_internal_registries`, and this leaf maps the new `evaluate` tool in `docs/reference-audit/config.json` (3.3.5), so the inventory needs no change.
+
+Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/test_decisions_tools.py tests/ai/test_decisions_service.py tests/mcp_proxy/test_registries.py tests/skills/test_reference_library.py -q`
+(fake `httpx` transport, no live server); `uv run ruff check src/ && uv run mypy src/`.
+
+**Acceptance:**
+
+- 3.3.1 - A Choice call and a Noul call through the registry post the wire
+  request that 1.2 and 3.1 pin, under consumer `mcp_evaluate`, and return
+  answers keyed by question with `response_model` and `backend_identity`. A
+  `timeout_seconds` above the configured value is capped at it. test:
+  `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_choice_and_noul_round_trip`.
+- 3.3.2 - An empty question map, mixed types, an unknown type, a missing
+  `instructions`, an empty `criteria`, and a non-positive `timeout_seconds`
+  each return `invalid_request` with no request sent. test:
+  `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_rejects_invalid_requests_without_dialing`.
+- 3.3.3 - A `None` config and an unset `api_base` return `unconfigured`.
+  `cooldown`, `oversize`, and `http_status` return `success: false` with that
+  reason. A cooldown opened through the tool makes a consumer call on the
+  same config fail fast, and the reverse holds. Caller cancellation
+  propagates with no pending task. test:
+  `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_maps_unavailable_reasons`.
+- 3.3.4 - `setup_internal_registries` registers `gobby-decisions`, and its
+  `evaluate` tool is read-only. test:
+  `tests/mcp_proxy/tools/test_decisions_tools.py::test_decisions_registry_is_registered`.
+- 3.3.5 - `gobby-decisions:evaluate` is mapped in the `config` reference
+  audit with passing evidence, and `references/config/models.md` names it.
+  test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+
 ## P4: Documentation
 `kind: framing`
 
 **Goal:** The guides describe the capability, its config, and each consumer's
 modes.
 
-### 4.1 Decision capability guide rows [category: docs] (depends: 3.2)
+### 4.1 Decision capability guide rows [category: docs] (depends: 3.2, 3.3)
 `kind: deliverable`
 
 Targets:
 - `docs/guides/llm-features.md`
 - `docs/guides/configuration.md`
+- `docs/guides/mcp-tools.md`
 
 **Research context:** `docs/guides/llm-features.md` (191 lines) lists
 features by config path. The research doc (§6) records it as already missing
@@ -1465,6 +1623,9 @@ Edits:
   `ai.decisions.found_work`, with their modes and fallbacks.
 - Add a paragraph on shadow records, the 2.1 evaluation script, and the
   promotion gate.
+- Add a `gobby-decisions` row to the internal server table in
+  `mcp-tools.md` (`docs/guides/mcp-tools.md:234-255`), naming `evaluate`,
+  its one-type rule, and its typed unavailable reasons.
 
 **Acceptance:**
 
@@ -1474,6 +1635,8 @@ Edits:
   `docs/guides/configuration.md`.
 - 4.1.2 - The features guide lists both consumers with their modes and
   fallbacks. behavior: "found_work" in `docs/guides/llm-features.md`.
+- 4.1.3 - The MCP tools guide lists the `gobby-decisions` server. behavior:
+  "gobby-decisions" in `docs/guides/mcp-tools.md`.
 
 ## V2: Verification
 `kind: verification`
@@ -1484,7 +1647,7 @@ Run the combined command below after the last leaf (4.1) and again before the
 PD lands the branch:
 
 ```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/ai/test_capability_registry.py tests/ai/test_decisions_service.py tests/ai/test_decisions_shadow.py tests/scripts/test_decisions_eval.py tests/mcp_proxy/services tests/workflows/test_found_work_confirm.py -q
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_decisions_config.py tests/ai/test_capability_registry.py tests/ai/test_decisions_service.py tests/ai/test_decisions_shadow.py tests/scripts/test_decisions_eval.py tests/mcp_proxy/services tests/mcp_proxy/tools/test_decisions_tools.py tests/mcp_proxy/test_registries.py tests/skills/test_reference_library.py tests/workflows/test_found_work_confirm.py -q
 uv run ruff format --check src/ scripts/ && uv run ruff check src/ scripts/ && uv run mypy src/
 uv run gobby plans validate /Users/josh/.gobby/worktrees/gobby/task-23024-classifier-path-plan/.gobby/plans/decision-classifier-path.md -p /Users/josh/Projects/gobby
 ```
@@ -1495,8 +1658,9 @@ Plan validation takes the absolute worktree plan path, with the project root
 Live check after the PD-owned restart, with a decision endpoint of either
 wire configured: `GET /api/llm/status` lists `decide` as
 available with the configured model. With the server stopped, a
-`recommend_tools` call in `shadow` mode returns its usual result. Do not run
-the full pytest suite.
+`recommend_tools` call in `shadow` mode returns its usual result, and a
+`gobby-decisions:evaluate` call through the proxy returns `success: false`
+with a typed reason. Do not run the full pytest suite.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1557,307 +1721,10 @@ the full pytest suite.
 - 2026-09-29: Renewed consensus with Plan Adversary gobby#14579 on the 2.1.5
   repair, with the available fraction defined within the non-empty-gold
   Recall@k records.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: '`ai.decisions` config and the `decide` capability binding'
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: A loopback `api_base` and a hosted `https://openrouter.ai/api`
-    both load, a malformed URL is rejected by `validate_optional_endpoint_url`, and
-    no `allow_remote` field exists. test: `tests/config/test_decisions_config.py::test_api_base_accepts_local_and_hosted`.
-
-    1.1.2: `model` is required with `api_base`, `enforce` requires `evaluated_model`
-    and `evaluated_backend`, `accept_below < accept_above`, every threshold outside
-    [0,1] is rejected, and an empty `AIConfig` loads with every consumer `off`. test:
-    `tests/config/test_decisions_config.py::test_decisions_config_invariants`.
-
-    1.1.3: The five `code_index.community_label.decisions_*` keys no longer exist
-    on the model. symbol: `src/gobby/config/code_index.py::CodeIndexCommunityLabelConfig`.
-    test: `tests/config/test_decisions_config.py::test_community_label_decision_keys_removed`.
-
-    1.1.4: `decide` reports unavailable with its reason when unconfigured and available
-    with the model, `adapter_style` `llm_provider`, and provider `systemone` or `openrouter`
-    by `wire_api` when configured, and it appears in the registry status snapshot.
-    test: `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
-
-    1.1.5: `api_base` row: defaults to `None`, and the capability is unavailable while
-    it is unset. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.6: `api_key` row: defaults to `None`, a `$secret:` reference loads resolved,
-    and the value is never logged. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.7: `model` row: defaults to `None`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.8: `timeout_seconds` row: defaults to `2.0` and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.9: `max_input_tokens` row: defaults to `8192`, rejects `255`, and rejects
-    a value at or above the resolved `backend_max_state_tokens`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.10: `backend_max_state_tokens` row: defaults to `None`, resolves to `65536`
-    under `systemone` and `32000` under `openrouter-decisions`, keeps an explicit
-    value, and rejects `0`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.11: `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`. test:
-    `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.12: `community_label` row: defaults to `mode` `off`, `min_confidence` `0.5`,
-    and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce` without
-    both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-
-    1.1.13: `tool_rerank` row: defaults to `mode` `off`, `min_probability` `0.5`,
-    and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce` without
-    both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-
-    1.1.14: `found_work` row: defaults to `mode` `off`, `accept_below` `0.1`, `accept_above`
-    `0.9`, and unset `evaluated_model` and `evaluated_backend`, and rejects `enforce`
-    without both. test: `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
-
-    1.1.15: `wire_api` row: defaults to `systemone`, accepts `openrouter-decisions`,
-    and rejects any other value. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-
-    1.1.16: `identity_contract` row: defaults to `None`, accepts `response_version`
-    with either wire, and accepts `model_card` only with `systemone`. test: `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.'
-  labels:
-  - covers:decision-classifier-path:1.1:1.1.1
-  - covers:decision-classifier-path:1.1:1.1.2
-  - covers:decision-classifier-path:1.1:1.1.3
-  - covers:decision-classifier-path:1.1:1.1.4
-  - covers:decision-classifier-path:1.1:1.1.5
-  - covers:decision-classifier-path:1.1:1.1.6
-  - covers:decision-classifier-path:1.1:1.1.7
-  - covers:decision-classifier-path:1.1:1.1.8
-  - covers:decision-classifier-path:1.1:1.1.9
-  - covers:decision-classifier-path:1.1:1.1.10
-  - covers:decision-classifier-path:1.1:1.1.11
-  - covers:decision-classifier-path:1.1:1.1.12
-  - covers:decision-classifier-path:1.1:1.1.13
-  - covers:decision-classifier-path:1.1:1.1.14
-  - covers:decision-classifier-path:1.1:1.1.15
-  - covers:decision-classifier-path:1.1:1.1.16
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: backend
-- title: '`DecisionService` with Choice, request ceiling, and cooldown'
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.1'
-  validation_criteria: "1.2.1: `choose` posts `{model, state, questions}` to `{api_base}/v1/systemone`,\
-    \ parses the documented-schema fixture, and raises `parse` for these responses:\
-    \ an empty or non-string model, a missing or extra answer key, a wrong answer\
-    \ type, a choice outside the offered options or below the maximum probability,\
-    \ mismatched probability keys, probabilities summing outside `1 \xB1 1e-3`, and\
-    \ any non-finite or out-of-range value. A tied maximum is accepted, and a resolved\
-    \ model name such as `jev-1.13.0` for a `jev-latest` request is accepted and returned\
-    \ as `response_model`. The request carries `type` and `instructions` on every\
-    \ question. test: `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_documented_wire`.\n\
-    1.2.2: With an ample budget, call counts are exact per status: 3xx, 401, 403,\
-    \ 404, and 422 make one call each; 429, 529, 500, and transport errors make three.\
-    \ With a budget shorter than the backoff sequence, the call ends at the budget\
-    \ with fewer attempts and raises `timeout`. `retry_async` without a predicate\
-    \ keeps its current behavior. test: `tests/ai/test_decisions_service.py::test_retry_only_on_transient_status`.\n\
-    1.2.7: The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a redirect.\
-    \ test: `tests/ai/test_decisions_service.py::test_no_proxy_or_redirect_hop`.\n\
-    1.2.8: A rotated secret, a changed timeout, ceiling, `wire_api`, `identity_contract`\
-    \ (including `None` to `response_version` or `model_card` on an otherwise identical\
-    \ config), or resolved `backend_max_state_tokens` yields a new service, while\
-    \ identical config shares one cooldown. test: `tests/ai/test_decisions_service.py::test_service_identity_fingerprint`.\n\
-    1.2.9: `backend_identity` is established on every call: two consecutive calls\
-    \ on one cached service against a server whose card changes between them (a restart\
-    \ onto another checkpoint) return different identities. A changed run path, dtype,\
-    \ temperature, or configured `backend_max_state_tokens` changes it under the same\
-    \ alias; a changed statistic does not. A failed, slow, or incomplete card yields\
-    \ `None` without failing the decision or opening the cooldown, and a failed decision\
-    \ leaves no pending card task. test: `tests/ai/test_decisions_service.py::test_backend_identity_from_model_card`.\n\
-    1.2.10: Under `response_version`, a `jev-latest` request answered as `jev-1.13.0`\
-    \ yields identity `response:jev-1.13.0` with no card request, a later answer as\
-    \ `jev-1.14.0` yields a different identity, and with the contract unset the identity\
-    \ is `None`. test: `tests/ai/test_decisions_service.py::test_backend_identity_from_response_version`.\n\
-    1.2.3: A request over `max_input_tokens` raises `oversize` without sending, for\
-    \ path-heavy state and for low characters-per-token state. A response with `usage.input_tokens`\
-    \ at `backend_max_state_tokens - 1` or above, or with no `usage.input_tokens`,\
-    \ raises `truncated` without opening the cooldown; one token below passes. test:\
-    \ `tests/ai/test_decisions_service.py::test_oversize_request_never_dials`.\n1.2.4:\
-    \ Table-driven: transport error, exhausted 529, 401, `parse`, and a full-budget\
-    \ `timeout` each open the cooldown; `unconfigured`, `oversize`, a caller-budget\
-    \ `timeout`, and caller cancellation do not, and cancellation propagates. Inside\
-    \ the cooldown, calls raise `cooldown` without dialing, and the first call after\
-    \ it dials again. test: `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.\n\
-    1.2.5: Log records carry no state or option text. test: `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.\n\
-    1.2.6: The pinned contract record holds the documented TypeSafe Choice and Noul\
-    \ schemas, the Kev `0fe8fc97c2bc` reference facts (model names, state and branch\
-    \ limits, truncation, `usage`, and the `/v1/models` card fields), and OpenRouter's\
-    \ documented Decisions contract with its unverified items. behavior: \"/alpha/decisions\"\
-    \ in `docs/evidence/decisions/systemone-wire.md`.\n1.2.11: Under `openrouter-decisions`,\
-    \ `choose` posts to `{api_base}/alpha/decisions` with the bearer key and `provider:\
-    \ {\"zdr\": true, \"data_collection\": \"deny\"}`, parses the OpenRouter fixture\
-    \ while ignoring `id`, `provider`, `output_tokens` and `cost`, and under `response_version`\
-    \ returns identity `response:typesafe/jev-1.13-20260917`. 400, 402 and 413 make\
-    \ one call and raise `http_status`; 502, 503 and 524 retry. A `systemone` request\
-    \ carries no `provider` field. test: `tests/ai/test_decisions_service.py::test_openrouter_wire_posts_and_parses`."
-  labels:
-  - covers:decision-classifier-path:1.2:1.2.1
-  - covers:decision-classifier-path:1.2:1.2.2
-  - covers:decision-classifier-path:1.2:1.2.7
-  - covers:decision-classifier-path:1.2:1.2.8
-  - covers:decision-classifier-path:1.2:1.2.9
-  - covers:decision-classifier-path:1.2:1.2.10
-  - covers:decision-classifier-path:1.2:1.2.3
-  - covers:decision-classifier-path:1.2:1.2.4
-  - covers:decision-classifier-path:1.2:1.2.5
-  - covers:decision-classifier-path:1.2:1.2.6
-  - covers:decision-classifier-path:1.2:1.2.11
-  tdd: true
-  source_section: '1.2'
-  implementation_domain: backend
-- title: Shadow capture and the reproducible evaluation harness
-  category: code
-  task_type: feature
-  depends_on:
-  - '1.2'
-  validation_criteria: '2.1.1: Shadow records are written `0600` under a `0700` directory,
-    capped and rotated, and a write failure never raises. test: `tests/ai/test_decisions_shadow.py::test_shadow_record_permissions_cap_and_failure`.
-
-    2.1.2: The harness splits deterministically by `content_hash` and computes accuracy,
-    Brier, ECE, selective accuracy, and order-flip rate on a synthetic set with known
-    answers. Two records with identical content and different ids land in the same
-    split, while cohort selection still orders by `sha256(id)`. test: `tests/scripts/test_decisions_eval.py::test_metrics_on_known_dataset`.
-
-    2.1.3: The report names the configured model, the one evaluated backend identity
-    and response model, the dataset hash, both splits, and the consumer bar. test:
-    `tests/scripts/test_decisions_eval.py::test_report_identifies_run`.
-
-    2.1.4: Synthetic passing and failing datasets for `tool_rerank` and `found_work`
-    produce the expected metric values and gate verdicts. `PASS` requires ECE at most
-    0.10, order-flip rate at most 10%, p95 latency at most 1 s against the configured
-    backend, at least 20 records per gold class per split, and the consumer inequality
-    (deployed Recall@k at least the incumbent''s; cascade false-clear rate at most
-    the incumbent''s with escalation at most 50%). Each failing set breaches one constant
-    and yields `FAIL` naming it. Thresholds come from the development split only.
-    test: `tests/scripts/test_decisions_eval.py::test_gate_verdicts_on_synthetic_sets`.
-
-    2.1.5: Known-answer edge cases: an incumbent `null` verdict counts as an alert,
-    an unavailable classifier escalates, a cohort with the classifier unavailable
-    on some records scores those records with the incumbent''s recorded order and
-    yields a deployed-minus-incumbent Recall@k equal to the paired available-record
-    difference times the available fraction, taken within the same non-empty-gold
-    Recall@k records, a cohort where the classifier trails the incumbent on its available
-    records yields `FAIL` although most records fall back, the found-work pair and
-    `min_probability` selections match hand-computed values, a record whose `k` exceeds
-    its returned list length still scores Recall@k against `k`, short support or a
-    zero denominator yields `FAIL` with `insufficient support`, and a replay whose
-    backend identity or response model switches midway, or whose answers carry no
-    identity, yields `FAIL` with `mixed or unverified backend`. test: `tests/scripts/test_decisions_eval.py::test_metric_edge_cases_fail_closed`.
-
-    2.1.6: On a synthetic skewed mix with a 5% disagreement rate, the gate metrics
-    equal the cohort''s actual rates; audit records are excluded, and duplicate content
-    lands in one split. test: `tests/scripts/test_decisions_eval.py::test_gate_uses_representative_cohort`.'
-  labels:
-  - covers:decision-classifier-path:2.1:2.1.1
-  - covers:decision-classifier-path:2.1:2.1.2
-  - covers:decision-classifier-path:2.1:2.1.3
-  - covers:decision-classifier-path:2.1:2.1.4
-  - covers:decision-classifier-path:2.1:2.1.5
-  - covers:decision-classifier-path:2.1:2.1.6
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: MCP tool reranking through Noul
-  category: code
-  task_type: feature
-  depends_on:
-  - '2.1'
-  validation_criteria: '3.1.1: `noul` posts per-proposition questions on either wire,
-    parses both documented-schema Noul fixtures, and returns probabilities by key
-    under the same ceiling and cooldown. The fixture note is appended to `docs/evidence/decisions/systemone-wire.md`.
-    test: `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
-
-    3.1.2: Shadow mode returns today''s result unchanged and writes one shadow record.
-    An incumbent that succeeds after `timeout_seconds` still returns its own result.
-    A stalled classifier is cancelled and awaited when the incumbent returns and is
-    recorded unavailable. Caller cancellation propagates with no pending task. test:
-    `tests/mcp_proxy/services/test_recommendation_decisions.py::test_shadow_keeps_llm_rerank`.
-
-    3.1.3: Enforce mode ranks by probability, drops candidates below `min_probability`,
-    and can return none. An unavailable classifier invokes the LLM rerank; semantic
-    order is returned only when both the classifier and the LLM fail. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_enforce_ranks_rejects_and_falls_back`.
-
-    3.1.4: Enforce mode with a mismatched `evaluated_model`, a mismatched `evaluated_backend`,
-    or no backend identity behaves as shadow. A `mode` or `min_probability` change
-    reaches the next call through the same cached service. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
-
-    3.1.5: One rerank is bounded and complete: - more than `top_k` passing candidates
-    return exactly `top_k`; - equal probabilities keep semantic order; - a failed
-    second batch makes the whole result unavailable, so enforce falls back to the
-    LLM rerank; - two batches with different backend identities, with different response
-    models, or with one known and one unknown identity make the whole result unavailable,
-    so enforce falls back to the LLM rerank and shadow records the classifier as unavailable;
-    - an oversized singleton yields `oversize` without truncation; - a shadow classifier
-    exception leaves the incumbent''s result and failure semantics intact, with no
-    task pending after return. test: `tests/mcp_proxy/services/test_recommendation_decisions.py::test_rerank_batches_are_bounded_and_complete`.'
-  labels:
-  - covers:decision-classifier-path:3.1:3.1.1
-  - covers:decision-classifier-path:3.1:3.1.2
-  - covers:decision-classifier-path:3.1:3.1.3
-  - covers:decision-classifier-path:3.1:3.1.4
-  - covers:decision-classifier-path:3.1:3.1.5
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Found-work confirmation cascade
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '3.2.1: `found_work_gate.py` delegates confirmation to `found_work_confirm.confirm_shirk`,
-    ends below its starting line count, and keeps its existing found-work tests passing.
-    symbol: `src/gobby/workflows/found_work_confirm.py::confirm_shirk`.
-
-    3.2.2: In enforce mode a probability at or above `accept_above` confirms and one
-    at or below `accept_below` clears, both without an LLM call; the band between
-    escalates to the LLM. test: `tests/workflows/test_found_work_confirm.py::test_cascade_accepts_confident_and_escalates_uncertain`.
-
-    3.2.3: An unavailable classifier escalates to the LLM path and never returns `False`
-    by itself. The escalated call''s timeout is the configured cap minus the classifier''s
-    elapsed time, and an exhausted budget returns `None`. test: `tests/workflows/test_found_work_confirm.py::test_outage_never_clears_a_finding`.
-
-    3.2.4: Shadow mode returns the LLM verdict and writes one shadow record. An unexpected
-    classifier exception leaves the LLM verdict intact. test: `tests/workflows/test_found_work_confirm.py::test_shadow_returns_llm_verdict`.
-
-    3.2.5: Budget and admission: - a configured 1 s cap bounds the whole confirmation
-    in shadow and enforce; - `off` makes no classifier call and returns today''s result;
-    - `validation.enabled` false or a missing service returns `None` with no classifier
-    call; - caller cancellation propagates and leaves no pending task; - a mismatched
-    `evaluated_model` or `evaluated_backend` behaves as shadow; - a `mode` or threshold
-    change reaches the next call through the same cached service. test: `tests/workflows/test_found_work_confirm.py::test_budget_admission_and_cancellation`.'
-  labels:
-  - covers:decision-classifier-path:3.2:3.2.1
-  - covers:decision-classifier-path:3.2:3.2.2
-  - covers:decision-classifier-path:3.2:3.2.3
-  - covers:decision-classifier-path:3.2:3.2.4
-  - covers:decision-classifier-path:3.2:3.2.5
-  tdd: true
-  source_section: '3.2'
-  implementation_domain: backend
-- title: Decision capability guide rows
-  category: docs
-  task_type: chore
-  depends_on:
-  - '3.2'
-  validation_criteria: '4.1.1: The configuration guide documents `ai.decisions` with
-    both `wire_api` choices, a local and an OpenRouter example, and the identity contracts.
-    behavior: "openrouter-decisions" in `docs/guides/configuration.md`.
-
-    4.1.2: The features guide lists both consumers with their modes and fallbacks.
-    behavior: "found_work" in `docs/guides/llm-features.md`.'
-  labels:
-  - covers:decision-classifier-path:4.1:4.1.1
-  - covers:decision-classifier-path:4.1:4.1.2
-  tdd: false
-  source_section: '4.1'
-  assigned_agent: tech-writer
-```
+- 2026-09-30: Josh added "MCP required for Jev", clarified as "As in the
+  classifier path", through Assistant gobby#14069 and PD gobby#14737 before
+  approving f3cc2c4. Decision 6 now requires the agent-facing
+  `gobby-decisions:evaluate` tool on the `docs/research/jev.md` boundary,
+  with daemon consumers staying on direct service calls. Leaf 3.3 builds it
+  and maps it in the `config` reference audit, 4.1 documents it, and
+  Activation Gate item 1 and the #22075 edge include it. The superseded M1 was retired for re-derivation.
