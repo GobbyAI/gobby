@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shlex
 import subprocess
 from collections.abc import Collection, Iterator, Mapping
 from dataclasses import dataclass
@@ -1334,6 +1335,100 @@ async def test_git_c_worktree_commit_does_not_inspect_primary_index(
     assert set(_git(guard_harness.repo, "diff", "--cached", "--name-only").splitlines()) == {
         "foreign.txt"
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("separator", [" && ", ";", "\n"])
+@pytest.mark.parametrize("commit_foreign_checkout", [False, True])
+async def test_shell_cd_commit_inspects_actual_checkout(
+    guard_harness: GuardHarness,
+    tmp_path: Path,
+    separator: str,
+    commit_foreign_checkout: bool,
+) -> None:
+    worktree = tmp_path / "agent worktree"
+    _git(guard_harness.repo, "worktree", "add", "-q", "-b", "shell-cd", str(worktree))
+    variables = SessionVariableManager(guard_harness.db)
+    variables.merge_variables(
+        guard_harness.current_session.id,
+        {
+            "task_edited_files": {guard_harness.current_task.id: ["foreign.txt"]},
+            "task_edited_file_checkouts": {
+                guard_harness.current_task.id: {str(worktree): ["foreign.txt"]},
+            },
+        },
+    )
+    (guard_harness.repo / "foreign.txt").write_text("foreign shared content\n", encoding="utf-8")
+    (worktree / "foreign.txt").write_text("owned isolated content\n", encoding="utf-8")
+    _git(guard_harness.repo, "add", "--", "foreign.txt")
+    _git(worktree, "add", "--", "foreign.txt")
+    target = guard_harness.repo if commit_foreign_checkout else worktree
+    start = worktree if commit_foreign_checkout else guard_harness.repo
+    command = f"cd {shlex.quote(str(target))}{separator}git commit --only -m x -- foreign.txt"
+
+    response = await guard_harness.handler._evaluate_rules(
+        guard_harness.event(command, workdir=start)
+    )
+
+    assert response.decision == ("block" if commit_foreign_checkout else "allow")
+    if commit_foreign_checkout:
+        assert response.reason is not None
+        assert "foreign.txt" in response.reason
+    else:
+        _git(worktree, "commit", "-q", "--only", "-m", "isolated", "--", "foreign.txt")
+        assert _git(worktree, "show", "HEAD:foreign.txt") == "owned isolated content"
+    assert _git(guard_harness.repo, "diff", "--cached", "--name-only") == "foreign.txt"
+
+
+def test_shell_cd_combines_relative_navigation_with_git_c() -> None:
+    from gobby.workflows.commit_guard import resolve_commit_inspect_cwd
+
+    invocations = parse_git_commit_invocations(
+        "cd ../checkouts && cd 'agent tree'; git -C nested commit -m 'keep ; literal' -- file.txt"
+    )
+
+    assert len(invocations) == 1
+    assert invocations[0].pathspecs == ("file.txt",)
+    assert (
+        resolve_commit_inspect_cwd(
+            invocations[0], event_cwd="/repos/main", project_path="/repos/main"
+        )
+        == "/repos/checkouts/agent tree/nested"
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command",
+    [
+        'cd "$W" && git commit --only -m x -- foreign.txt',
+        'git -C "$W" commit --only -m x -- foreign.txt',
+    ],
+)
+async def test_dynamic_cwd_refuses_without_git_or_operational_warning(
+    guard_harness: GuardHarness,
+    caplog: pytest.LogCaptureFixture,
+    command: str,
+) -> None:
+    from gobby.workflows.commit_guard import foreign_staged_commit_conflict
+
+    git_run = AsyncMock(
+        return_value=GitTimeout(status="timeout", argv=("git", "rev-parse"), timeout=10.0)
+    )
+    with caplog.at_level("WARNING", logger="gobby.workflows.commit_guard"):
+        with patch.object(daemon_git, "run", git_run):
+            refusal = await foreign_staged_commit_conflict(
+                guard_harness.db,
+                guard_harness.event(command),
+                session_id=guard_harness.current_session.id,
+                project_id=guard_harness.project.id,
+                project_path=str(guard_harness.repo),
+            )
+
+    assert refusal.startswith("Commit blocked:")
+    assert "working directory" in refusal
+    git_run.assert_not_awaited()
+    assert not caplog.records
 
 
 @pytest.mark.parametrize("override", ["chdir", "work-tree"])
