@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -147,3 +149,16 @@ def test_current_runtime_stamp_is_compatible(tmp_path: Path) -> None:
 
 def test_supported_schema_uses_managed_ghook_version_floor() -> None:
     assert MINIMUM_GHOOK_VERSION_FOR_SUPPORTED_SCHEMA == MANAGED_BIN_VERSION_PINS["ghook"]
+
+
+def test_module_imports_first_in_a_fresh_interpreter() -> None:
+    # gobby.cli imports this module back, so reaching it through gobby.cli
+    # fails whenever this module is the first gobby import.
+    result = subprocess.run(
+        [sys.executable, "-c", "import gobby.hooks.runtime_compat"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
