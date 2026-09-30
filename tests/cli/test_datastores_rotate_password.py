@@ -78,6 +78,7 @@ class _FakeConnection:
         self.closed = False
         self._fail_close = fail_close
         self.pgconn = _FakePGConn(verifier.encode("ascii"))
+        self.info = SimpleNamespace(user="gobby", dbname="gobby", host="localhost", port=60891)
 
     async def execute(self, query: Any) -> None:
         self.statements.append(query.as_string(None))
@@ -654,6 +655,136 @@ def test_postgres_rotation_rejects_query_indirection(
 
     assert result.exit_code == 1
     assert "phase=validate" in result.output
+    assert "old-secret" not in result.output
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        _CURRENT_DSN + "?u%73er=other",
+        _CURRENT_DSN + "?%64bname=other",
+        _CURRENT_DSN + "?%68ost=other",
+        _CURRENT_DSN + "?%68ostaddr=127.0.0.1",
+        _CURRENT_DSN + "?%70ort=60892",
+        _CURRENT_DSN + "?%70assword=query-secret",
+        _CURRENT_DSN + "?%73ervice=other",
+        _CURRENT_DSN + "?%70assfile=/unused/credentials",
+        _CURRENT_DSN + "?options=-c%20role%3Dother",
+        _CURRENT_DSN + "?%6Fptions=-c%20role%3Dother",
+        _CURRENT_DSN.replace("localhost", "localhost,127.0.0.1"),
+        _CURRENT_DSN.replace("localhost", "localhost%2C127.0.0.1"),
+        _CURRENT_DSN.replace("localhost", "%2Funused%2Fsocket"),
+        _CURRENT_DSN.replace("localhost", "%40socket"),
+        _CURRENT_DSN.replace(":old-secret", ":"),
+        _CURRENT_DSN + "#other-database",
+        _CURRENT_DSN + "#",
+        _CURRENT_DSN.replace("/gobby", "/go\tbby"),
+        _CURRENT_DSN.replace("old-secret", "du?mmy"),
+        _CURRENT_DSN.replace(":60891", ":not-a-port"),
+    ],
+)
+def test_postgres_rotation_rejects_effective_libpq_indirection(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path, database_url: str
+) -> None:
+    """Validation precedes any pending publication or connection for unsafe targets."""
+    path = rotation_home / "bootstrap.yaml"
+    update_bootstrap_yaml(path, lambda data: data.__setitem__("database_url", database_url))
+    before = path.read_bytes()
+    connection, connects = _patch_connect(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1, result.output
+    assert "phase=validate" in result.output
+    assert path.read_bytes() == before
+    assert connects == []
+    assert connection.statements == []
+    assert connection.pgconn.encrypted_passwords == []
+    assert "old-secret" not in result.output
+    assert "query-secret" not in result.output
+    assert database_url not in result.output
+
+
+@pytest.mark.parametrize(
+    "variable,value",
+    [
+        ("PGHOSTADDR", "127.0.0.1"),
+        ("PGSERVICE", "unused-service"),
+        ("PGSERVICEFILE", "/unused/service.conf"),
+        ("PGPASSFILE", "/unused/credentials"),
+        ("PGOPTIONS", "-c role=other"),
+        ("PGSYSCONFDIR", "/unused/service-directory"),
+    ],
+)
+def test_postgres_rotation_rejects_environment_indirection(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path, variable: str, value: str
+) -> None:
+    """Ambient libpq selectors cannot redirect the explicitly validated rotation."""
+    path = rotation_home / "bootstrap.yaml"
+    before = path.read_bytes()
+    connection, connects = _patch_connect(monkeypatch)
+
+    with monkeypatch.context() as environment:
+        environment.setenv(variable, value)
+        result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1, result.output
+    assert "phase=validate" in result.output
+    assert path.read_bytes() == before
+    assert connects == []
+    assert connection.pgconn.encrypted_passwords == []
+    assert value not in result.output
+    assert "old-secret" not in result.output
+
+
+@pytest.mark.parametrize(
+    "field,value", [("user", "other"), ("dbname", "other"), ("host", "other"), ("port", 60892)]
+)
+def test_postgres_rotation_rejects_connected_target_mismatch(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path, field: str, value: str | int
+) -> None:
+    """The live connection identity is checked before generating or applying SCRAM."""
+    connection, connects = _patch_connect(monkeypatch)
+    setattr(connection.info, field, value)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1, result.output
+    assert "phase=validate" in result.output
+    assert "rotate-password postgres" in result.output
+    assert len(connects) == 1
+    assert connection.statements == []
+    assert connection.pgconn.encrypted_passwords == []
+    assert connection.committed is False
+    assert connection.closed is True
+    bootstrap = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert bootstrap["database_url"] == _CURRENT_DSN
+    pending = bootstrap["credential_rotation"]
+    assert pending["previous_password"] == "old-secret"
+    assert pending["pending_password"]
+    assert pending["pending_password"] not in result.output
+    assert "old-secret" not in result.output
+    assert _CURRENT_DSN not in result.output
+
+
+def test_postgres_rotation_uses_normalized_direct_target(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """Encoded direct URI components address the same libpq role and endpoint."""
+    dsn = "postgresql://g%6Fbby:old-secret@local%68ost:60891/g%6Fbby?sslmode=disable"
+    update_bootstrap_yaml(
+        rotation_home / "bootstrap.yaml", lambda data: data.__setitem__("database_url", dsn)
+    )
+    connection, connects = _patch_connect(monkeypatch)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 0, result.output
+    assert len(connects) == 1
+    assert connection.statements == [f"ALTER ROLE \"gobby\" PASSWORD '{_FAKE_SCRAM}'"]
+    bootstrap = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert "credential_rotation" not in bootstrap
+    assert "sslmode=disable" in bootstrap["database_url"]
     assert "old-secret" not in result.output
 
 

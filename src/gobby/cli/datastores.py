@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import os
 import re
 import secrets
 import shutil
@@ -11,11 +12,12 @@ import subprocess  # nosec B404 - fixed tailscale and Docker commands
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit, urlunsplit
 
 import click
 import psycopg
 from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
 from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import BootstrapConfigError
@@ -69,7 +71,16 @@ _INDIRECTING_QUERY_KEYS = frozenset(
         "service",
         "servicefile",
         "passfile",
+        "options",
     }
+)
+_INDIRECTING_ENVIRONMENT_KEYS = (
+    "PGHOSTADDR",
+    "PGSERVICE",
+    "PGSERVICEFILE",
+    "PGPASSFILE",
+    "PGOPTIONS",
+    "PGSYSCONFDIR",
 )
 
 
@@ -85,33 +96,72 @@ class _RotationTarget:
 
 def _parse_rotation_target(database_url: str) -> _RotationTarget:
     """Reject aliases/indirection and return the effective role, database and endpoint."""
-    parts = urlsplit(database_url)
+    if any(os.environ.get(key) for key in _INDIRECTING_ENVIRONMENT_KEYS):
+        raise click.ClickException(
+            "phase=validate unset libpq environment indirection before rotating credentials"
+        )
+    if "#" in database_url or any(ord(char) < 32 for char in database_url):
+        raise click.ClickException("phase=validate database_url contains ambiguous URI characters")
+    try:
+        parts = urlsplit(database_url)
+        parameters = conninfo_to_dict(database_url)
+        uri_identity = (
+            unquote(parts.username or ""),
+            unquote(parts.path.removeprefix("/")),
+            unquote(parts.hostname or "").lower(),
+            parts.port,
+        )
+    except (ValueError, psycopg.ProgrammingError):
+        # libpq parser errors can contain secret URI material.
+        raise click.ClickException("phase=validate invalid PostgreSQL connection URI") from None
     if parts.scheme not in {"postgres", "postgresql"}:
         raise click.ClickException("phase=validate database_url must use postgresql://")
     aliases = sorted(
-        key
-        for key, _value in (pair.partition("=")[::2] for pair in parts.query.split("&"))
-        if key and key.lower() in _INDIRECTING_QUERY_KEYS
+        key.lower()
+        for key, _value in parse_qsl(parts.query, keep_blank_values=True)
+        if key.lower() in _INDIRECTING_QUERY_KEYS
     )
     if aliases:
         raise click.ClickException(
             "phase=validate database_url uses indirection "
             f"({', '.join(aliases)}); address the role, database and endpoint directly"
         )
-    userinfo = parts.netloc.rpartition("@")[0]
-    role = userinfo.partition(":")[0]
-    database = parts.path.removeprefix("/")
-    if not role or not database:
+    role = parameters.get("user", "")
+    database = parameters.get("dbname", "")
+    password = parameters.get("password", "")
+    if (
+        not isinstance(role, str)
+        or not role
+        or not isinstance(database, str)
+        or not database
+        or not isinstance(password, str)
+        or not password
+    ):
         raise click.ClickException(
-            "phase=validate database_url must name the role and database directly"
+            "phase=validate database_url must name the role, password and database directly"
         )
-    if not parts.hostname or parts.port is None:
+    host = parameters.get("host", "")
+    port = parameters.get("port", "")
+    if (
+        not isinstance(host, str)
+        or not host
+        or host.startswith(("/", "@"))
+        or "," in host
+        or not isinstance(port, str)
+        or not port.isascii()
+        or not port.isdecimal()
+        or not 0 < int(port) <= 65535
+    ):
         raise click.ClickException(
-            "phase=validate database_url must name the endpoint host and port directly"
+            "phase=validate database_url must name one endpoint host and port directly"
         )
-    return _RotationTarget(
-        role=unquote(role), database=unquote(database), host=parts.hostname, port=parts.port
-    )
+    if (role, database, host.lower(), int(port)) != uri_identity or password != unquote(
+        parts.password or ""
+    ):
+        raise click.ClickException(
+            "phase=validate database_url is ambiguous between URI and libpq parsing"
+        )
+    return _RotationTarget(role=role, database=database, host=host, port=int(port))
 
 
 class DatastoreExposureError(RuntimeError):
@@ -396,7 +446,7 @@ def _rotation_failure_detail(exc: BaseException) -> str:
 
 def _observe_hub_alter(
     database_url: str,
-    role: str,
+    target: _RotationTarget,
     intended_password: str,
     *,
     resume_conninfo: str | None = None,
@@ -412,14 +462,26 @@ def _observe_hub_alter(
     """
 
     async def _work(connection: Any, _remaining: float) -> None:
+        info = connection.info
+        if (info.user, info.dbname, info.host, info.port) != (
+            target.role,
+            target.database,
+            target.host,
+            target.port,
+        ):
+            raise click.ClickException(
+                "phase=validate connected PostgreSQL target differs from the validated URI; "
+                "the pending pair is preserved. Re-run "
+                "`gobby datastores rotate-password postgres` after resolving the target"
+            )
         # ALTER ROLE is a utility statement, so the verifier is a composed literal,
         # never a bound parameter. Generate SCRAM explicitly rather than relying on
         # the server's default password_encryption.
         verifier = connection.pgconn.encrypt_password(
-            intended_password.encode(), role.encode(), b"scram-sha-256"
+            intended_password.encode(), target.role.encode(), b"scram-sha-256"
         )
         statement = sql.SQL("ALTER ROLE {} PASSWORD {}").format(
-            sql.Identifier(role), sql.Literal(verifier.decode("ascii"))
+            sql.Identifier(target.role), sql.Literal(verifier.decode("ascii"))
         )
         await connection.execute(statement)
 
@@ -531,7 +593,9 @@ def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> No
     # is the pending DSN a valid fallback for the ALTER.
     resume_conninfo = new_url if pending is not None else None
     try:
-        _observe_hub_alter(current_url, role, intended_password, resume_conninfo=resume_conninfo)
+        _observe_hub_alter(current_url, target, intended_password, resume_conninfo=resume_conninfo)
+    except click.ClickException:
+        raise
     except CommittedCleanupError as exc:
         raise click.ClickException(
             "phase=cleanup COMMIT was observed, but cleanup failed; the pending pair "
