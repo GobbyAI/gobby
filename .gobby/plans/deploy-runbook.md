@@ -89,10 +89,10 @@ removal needs no Targets.
    execution with the same seat key instead of launching. Two such runs, or
    a run of that execution with no placement in its snapshot, refuse, and
    the execution fails for the operator. Recovery re-registers
-   `pipeline-<execution id>` and reuses the existing child session, so
-   pre- and post-restart seats share one parent. If the row was deleted,
-   registration creates a replacement with the same external id, and 7.2
-   matches on the external id. Resume runs the definition snapshot taken at
+   `pipeline-<execution id>` and normally reuses the existing child
+   session, so pre- and post-restart seats share one parent. 7.2 matches
+   every session with that external id, so a replacement child, if
+   registration ever creates one, still finds the original runs. Resume runs the definition snapshot taken at
    launch (7.1), so a sync during the restart cannot change the resumed
    steps. Public resume of a `failed` execution resets every step
    (`pipeline_executor.py:546-561`), so it is refused for runbooks (8.1).
@@ -523,12 +523,14 @@ canonical title, and the call sits between that preflight and the pane
 reservation. It reads the parent's external id `pipeline-<execution id>`,
 collects every session in the project with that external id (the reused
 child and any replacement), and lists every run parented to them in any
-status, unpaged. It compares each run's `resume_metadata_json["placement"]`
+status, unpaged, excluding the current spawn's own run when its row already
+exists. It compares each run's `resume_metadata_json["placement"]`
 (#23015) by workspace id and canonical title.
 
 - One match: return `success: True`, `adopted: True`, the run's `run_id` and
-  `status`, and its recorded `workspace`, `tab_ref` and `pane_ref`. Nothing
-  is reserved, isolated or launched. An ended or moved seat is still
+  `status`, the snapshot's workspace id and title, and the `tab_ref` and
+  `pane_ref` of the workspace pane its terminal is still bound to, else
+  `null`. Nothing is reserved, isolated or launched. An ended or moved seat is still
   adopted, so its original `run_id` is kept.
 - No match: the ordinary placed spawn proceeds.
 - Two or more matches, or any run of that execution whose snapshot is
@@ -622,7 +624,7 @@ Targets:
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::resume_pipeline`
 - `src/gobby/cli/pipelines_runs.py::show_pipeline_run`
 - `tests/workflows/test_runbook_pipeline.py`
-- `tests/cli/test_cli_pipelines.py::*` — scope-reason: cover `-i seats=adversary` and step outputs in `runs show --json`
+- `tests/cli/test_cli_pipelines.py::*` — scope-reason: cover `-i seats=adversary` reaching the executor as a string and step outputs in `runs show --json`
 
 **Research context:** `planning-council` has `type: pipeline`,
 `tags: [runbook]`, `resume_on_restart: true`, and inputs `workspace`
@@ -682,11 +684,13 @@ itself is proven against real `spawn_agent` in 7.2 and live in D1.
   carries the same parent and seat key. A restart after the writer completed
   keeps its `run_id`, skips the guard and launches only the adversary. test:
   `tests/workflows/test_runbook_pipeline.py::test_restart_reruns_on_same_child`.
-- 8.1.4 - A partial deploy keeps the launched seat's output. A fresh CLI run
-  with `-i seats=adversary` passes the guard and launches only the
+- 8.1.4 - A partial deploy keeps the launched seat's output. A fresh run
+  with `seats: "adversary"` passes the guard and launches only the
   adversary, and a run that asks for the writer while its run is active is
-  refused. test:
-  `tests/cli/test_cli_pipelines.py::test_runbook_relaunches_missing_seat`.
+  refused. `gobby pipelines run -i seats=adversary` hands the executor that
+  string unchanged. test:
+  `tests/workflows/test_runbook_pipeline.py::test_partial_deploy_relaunches_missing_seat`.
+  test: `tests/cli/test_cli_pipelines.py::test_run_passes_seats_input_as_string`.
 - 8.1.5 - `resume_pipeline` on a failed runbook execution refuses with the
   typed error and changes no step. test:
   `tests/workflows/test_runbook_pipeline.py::test_failed_runbook_resume_refused`.
