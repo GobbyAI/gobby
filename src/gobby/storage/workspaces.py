@@ -392,17 +392,17 @@ def _write_layout(conn: Transaction, tab_id: str, layout: LayoutNode) -> Workspa
     return WorkspaceTab.from_row(_required(row, f"Tab {tab_id}"))
 
 
-def _delete_tab(conn: Transaction, tab_id: str) -> None:
+def _delete_tab(conn: Transaction, tab: WorkspaceTab) -> None:
     """Delete a tab row; a workspace focus hint naming it goes with it.
 
-    ``focused_tab_id`` has no foreign key, so the hint is cleared here rather than
-    by the schema. The workspace row is touched after the caller's tab locks;
-    workspace ops run one at a time on the daemon loop, so that never waits.
+    The caller holds the owning workspace before the tab. Focus hints have no
+    foreign key, so clear the owning workspace's hint explicitly.
     """
-    conn.execute("DELETE FROM workspace_tabs WHERE id = %s", (tab_id,))
+    conn.execute("DELETE FROM workspace_tabs WHERE id = %s", (tab.id,))
     conn.execute(
-        "UPDATE workspaces SET focused_tab_id = NULL, updated_at = now() WHERE focused_tab_id = %s",
-        (tab_id,),
+        "UPDATE workspaces SET focused_tab_id = NULL, updated_at = now() "
+        "WHERE id = %s AND focused_tab_id = %s",
+        (tab.workspace_id, tab.id),
     )
 
 
@@ -416,11 +416,33 @@ def _drop_from_layout(
     """
     layout = _without_panes(tab.layout, pane_ids)
     if layout is None:
-        _delete_tab(conn, tab.id)
+        _delete_tab(conn, tab)
         return None
     if tab.focused_pane_id in pane_ids:
         conn.execute("UPDATE workspace_tabs SET focused_pane_id = NULL WHERE id = %s", (tab.id,))
     return _write_layout(conn, tab.id, layout)
+
+
+def _lock_tabs(conn: Transaction, *tab_ids: str) -> dict[str, WorkspaceTab]:
+    """Lock owning workspaces before tabs, then validate their homes."""
+    homes = {
+        str(row["id"]): str(row["workspace_id"])
+        for row in conn.execute(
+            "SELECT id, workspace_id FROM workspace_tabs WHERE id = ANY(%s::uuid[])",
+            (list(tab_ids),),
+        ).fetchall()
+    }
+    for tab_id in tab_ids:
+        if tab_id not in homes:
+            raise WorkspaceNotFoundError(f"Tab {tab_id} not found")
+    _lock_rows(conn, "workspaces", *homes.values())
+    tabs = {
+        tab_id: WorkspaceTab.from_row(row)
+        for tab_id, row in _lock_rows(conn, "workspace_tabs", *tab_ids).items()
+    }
+    if any(tab.workspace_id != homes[tab_id] for tab_id, tab in tabs.items()):
+        raise WorkspaceNotFoundError("A tab moved to another workspace concurrently; retry")
+    return tabs
 
 
 def _lock_pane_tabs(
@@ -428,10 +450,10 @@ def _lock_pane_tabs(
 ) -> tuple[list[str], dict[str, WorkspaceTab]]:
     """Lock the tabs holding ``pane_ids`` (plus ``extra_tab_ids``) and re-check each home."""
     homes = [_pane_tab_id(conn, pane_id) for pane_id in pane_ids]
-    locked = _lock_rows(conn, "workspace_tabs", *homes, *extra_tab_ids)
+    locked = _lock_tabs(conn, *homes, *extra_tab_ids)
     if [_pane_tab_id(conn, pane_id) for pane_id in pane_ids] != homes:
         raise WorkspaceNotFoundError("A pane moved to another tab concurrently; retry")
-    return homes, {tab_id: WorkspaceTab.from_row(row) for tab_id, row in locked.items()}
+    return homes, locked
 
 
 class WorkspaceManager:
@@ -713,11 +735,11 @@ class WorkspaceManager:
         """Delete a tab with its panes; its ref becomes free."""
         tab_id = _uuid(tab_id)
         with self.db.transaction() as conn:
-            tab = WorkspaceTab.from_row(_lock_rows(conn, "workspace_tabs", tab_id)[tab_id])
+            tab = _lock_tabs(conn, tab_id)[tab_id]
             panes = conn.execute(
                 "DELETE FROM workspace_panes WHERE tab_id = %s RETURNING *", (tab_id,)
             ).fetchall()
-            _delete_tab(conn, tab_id)
+            _delete_tab(conn, tab)
         return LayoutChange(
             removed_panes=tuple(WorkspacePane.from_row(row) for row in panes),
             removed_tabs=(tab,),

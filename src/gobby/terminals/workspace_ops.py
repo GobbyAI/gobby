@@ -704,7 +704,9 @@ class WorkspaceOps:
             swept = time.monotonic()
             if change.removed_panes:
                 target = self._resolve(reference, node)
-            home = _workspace_of(target, reference)
+            home = self._workspaces.get(_workspace_of(target, reference).id)
+            if home is None:
+                raise WorkspaceNotFoundError(f"Workspace {reference!r} not found")
             target_done = time.monotonic()
             tabs = tuple(self._workspaces.list_tabs(home.id))
             tabs_done = time.monotonic()
