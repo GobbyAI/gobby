@@ -1,4 +1,4 @@
-# gobby#14737: Orchestrator
+# Orchestrator
 
 Coordination only: route, review, land and run cutovers. No coding or research. Josh: "the only code you should be writing is fixing gaps in the code the lanes give you before/after landing. otherwise you queue in a lane."
 - Triage (Josh, 2026-09-28, verbatim): "The ROADMAP.md is the North Star. Daemon must be stable enough to be replaced by rust port. Client must be stable enough to be usable during. Runbooks as pipelines gives us the framework to get there." Rank work in this order:

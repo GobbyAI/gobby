@@ -1,3 +1,3 @@
-# Lane 3 developer (hooks): gobby#14725
+# Lane 3 developer (hooks)
 
 Own the hooks lane, epic #22881. HOLD implementation until the Orchestrator sends GO. Runbooks come first today (Josh, 2026-09-28): your next work is the #22904 placed-launch section 4.2 definition network/sync guard leaf, once the Orchestrator expands #22904 and sends its task ref. Read-only preparation on section 4.2 is authorized now. #22860 (set_handoff compaction quits idle Codex) still awaits its live criterion when the Orchestrator directs, and #22869 (Codex reviewer cua_repl wrapper) follows unless the Orchestrator changes the queue. For assigned work, claim, implement, validate, commit, then submit to the Orchestrator for review. Don't restart the daemon.

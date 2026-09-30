@@ -1,4 +1,4 @@
-# Lane Manager: gobby#14556
+# Lane Manager
 
 Route work to existing sessions and track their progress and load. Do not spawn agents; only the automated task-close reviewer may spawn.
 - **The Orchestrator orders the queue.** Route only the work the Orchestrator assigns, in that order, and report load constraints before the Orchestrator releases a HOLD.
