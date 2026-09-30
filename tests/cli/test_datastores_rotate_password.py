@@ -454,6 +454,77 @@ def test_postgres_rotation_preserves_pending_on_indeterminate_commit(
     assert pending["pending_password"] not in result.output
 
 
+def test_postgres_rotation_resume_falls_back_to_intended_password_after_commit(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """A pending pair whose COMMIT already landed retries with the intended password."""
+    pending_password = "resume-intended-password-0123456789"
+    update_bootstrap_yaml(
+        rotation_home / "bootstrap.yaml",
+        lambda data: data.__setitem__(
+            "credential_rotation",
+            {
+                "role": "gobby",
+                "pending_password": pending_password,
+                "previous_password": "old-secret",
+            },
+        ),
+    )
+    issued: list[str] = []
+
+    async def _connect(dsn: str, **_kwargs: Any) -> _FakeConnection:
+        issued.append(dsn)
+        if dsn == _CURRENT_DSN:
+            raise psycopg.errors.InvalidPassword("password authentication failed")
+        return _FakeConnection()
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 0, result.output
+    assert len(issued) == 2, issued
+    assert issued[0] == _CURRENT_DSN
+    fallback_pw = unquote(urlsplit(issued[1]).password or "")
+    assert fallback_pw == pending_password
+    assert "credential_rotation" not in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    _url, published = _new_password(rotation_home)
+    assert published == pending_password
+    assert pending_password not in result.output
+
+
+def test_postgres_rotation_resume_does_not_retry_on_connection_failure(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """A non-authentication failure propagates without a password fallback."""
+    update_bootstrap_yaml(
+        rotation_home / "bootstrap.yaml",
+        lambda data: data.__setitem__(
+            "credential_rotation",
+            {
+                "role": "gobby",
+                "pending_password": "resume-intended-password-0123456789",
+                "previous_password": "old-secret",
+            },
+        ),
+    )
+    issued: list[str] = []
+
+    async def _connect(dsn: str, **_kwargs: Any) -> _FakeConnection:
+        issued.append(dsn)
+        raise psycopg.OperationalError("connection refused")
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1
+    assert issued == [_CURRENT_DSN]
+    assert "PostgreSQL password rotation failed: OperationalError" in result.output
+    pending = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["credential_rotation"]
+    assert pending["pending_password"] == "resume-intended-password-0123456789"
+
+
 def test_postgres_rotation_tolerates_observed_commit_cleanup_failure(
     monkeypatch: pytest.MonkeyPatch, rotation_home: Path
 ) -> None:

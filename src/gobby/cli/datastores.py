@@ -394,8 +394,26 @@ def _rotation_failure_detail(exc: BaseException) -> str:
     return type(exc).__name__
 
 
-def _observe_hub_alter(database_url: str, role: str, intended_password: str) -> None:
-    """Run the transactional ALTER on the bounded helper and observe its COMMIT."""
+_AUTHENTICATION_FAILURES: tuple[type[BaseException], ...] = (
+    psycopg.errors.InvalidPassword,
+    psycopg.errors.InvalidAuthorizationSpecification,
+)
+
+
+def _observe_hub_alter(
+    database_url: str,
+    role: str,
+    intended_password: str,
+    *,
+    resume_conninfo: str | None = None,
+) -> None:
+    """Run the transactional ALTER on the bounded helper and observe its COMMIT.
+
+    ``resume_conninfo`` is the pending intended DSN, retried only when the current
+    credential is refused. A refusal means an earlier COMMIT may already be
+    effective; it does not prove either physical outcome. Pending stays preserved
+    until a COMMIT is observed.
+    """
 
     async def _work(connection: Any, _remaining: float) -> None:
         # ALTER ROLE is a utility statement, so the verifier is a composed literal,
@@ -409,20 +427,29 @@ def _observe_hub_alter(database_url: str, role: str, intended_password: str) -> 
         )
         await connection.execute(statement)
 
-    try:
-        asyncio.run(
-            run_bounded_db(
-                _work,
-                conninfo=database_url,
-                deadline_seconds=_HUB_ALTER_DEADLINE_SECONDS,
-                statement_timeout_remaining=False,
-                lock_timeout=False,
+    conninfos = (database_url,) if resume_conninfo is None else (database_url, resume_conninfo)
+    for index, conninfo in enumerate(conninfos):
+        try:
+            asyncio.run(
+                run_bounded_db(
+                    _work,
+                    conninfo=conninfo,
+                    deadline_seconds=_HUB_ALTER_DEADLINE_SECONDS,
+                    statement_timeout_remaining=False,
+                    lock_timeout=False,
+                )
             )
-        )
-    except CommittedCleanupError:
-        # COMMIT was observed; only termination/reap failed, so the ALTER is durable
-        # and final publication must still proceed.
-        return
+            return
+        except CommittedCleanupError:
+            # COMMIT was observed; only termination/reap failed, so the ALTER is durable
+            # and final publication must still proceed.
+            return
+        except _AUTHENTICATION_FAILURES:
+            # The current credential was refused. On resume the intended password may
+            # already be effective, so retry with it; the refusal alone proves neither
+            # outcome. Any other connection or SQL failure propagates unchanged.
+            if index + 1 == len(conninfos):
+                raise
 
 
 def _finalize_postgres_rotation(
@@ -504,8 +531,12 @@ def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> No
             ) from exc
 
     new_url = _dsn_with_password(current_url, intended_password)[1]
+    # A resumed rotation may already have committed the intended password while the
+    # bootstrap DSN still carries the previous one (post-COMMIT ambiguity). Only then
+    # is the pending DSN a valid fallback for the ALTER.
+    resume_conninfo = new_url if pending is not None else None
     try:
-        _observe_hub_alter(current_url, role, intended_password)
+        _observe_hub_alter(current_url, role, intended_password, resume_conninfo=resume_conninfo)
     except IndeterminateCommitError as exc:
         raise click.ClickException(
             f"phase=alter COMMIT outcome unobserved; the pending pair is preserved. "
