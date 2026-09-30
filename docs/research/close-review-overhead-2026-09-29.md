@@ -89,7 +89,7 @@ first 5 s of launch. They are process start-up probes:
 | Operation | Count | Processes |
 | --- | --- | --- |
 | `system-info vfs.disk-space` | 73 | Python, codex, git, uv, zsh, bash |
-| `sysctl-read kern.iossupportversion` | 21 | bash, node, git, id, uv, sed, tr, wc, file, Python |
+| `sysctl-read kern.iossupportversion` | 22 | bash, node, git, id, uv, sed, tr, wc, file, Python |
 | `system-info net.link.addr` | 3 | codex |
 | `mach-lookup com.apple.SystemConfiguration.configd` | 2 | codex |
 | `network-outbound` (no target recorded) | 2 | codex |
@@ -130,7 +130,7 @@ Successful reviewer runs created in the §6 "after" window, by model:
 
 | Provider / model | Runs | p50 | p90 | Mean tool calls |
 | --- | --- | --- | --- | --- |
-| codex `gpt-5.6-terra` | 29 | 184 s | 265 s | 35 |
+| codex `gpt-5.6-terra` | 29 | 200 s | 287 s | 34 |
 | codex `gpt-6.1-sol` | 4 | 613 s | 779 s | 49 |
 | claude `sonnet` | 1 | 72 s | 72 s | 22 |
 
@@ -138,6 +138,11 @@ In the 7-day window, 446 `gpt-5.6-terra` reviewer runs succeeded with a mean of 
 These medians describe what happened and are not a model comparison. The
 `gpt-6.1-sol` sample is 4 runs, and the two models reviewed different task mixes and
 diff sizes. Any conclusion about model speed needs a like-for-like sample.
+
+The table is project-scoped to gobby and uses completed reviews created in the fixed
+§6 "after" window. Runtime is `agent_runs.completed_at - agent_runs.started_at`;
+tool-call means use those same runs (terra 976/29, sol 197/4, sonnet 22/1), rounded
+to whole calls. All-project figures and the 7-day mean are separate cohorts.
 
 ## 4. Per-call cost: reviewer against standing seats (VERIFIED)
 
@@ -154,12 +159,21 @@ skill reads.
 
 ## 5. Concurrency against hook and DB latency (VERIFIED)
 
-Window: [2026-09-29 00:30, 2026-09-30 00:30) UTC, in 130 buckets of 10 minutes. Active
-sessions in a bucket are the distinct sessions with a `tool_call` or `rule_eval` event
-in it. Standing seats are sessions without an `agent_run_id`. Reviewers are sessions
+Window: [2026-09-29 00:30, 2026-09-30 00:30) UTC, containing 144 possible intervals
+of 10 minutes. The tables summarize the 130 intervals with a `tool_call` or
+`rule_eval` event; 14 intervals have neither event and are omitted. Active sessions
+in an observed bucket are the distinct sessions with one of those events in it.
+Standing seats are sessions without an `agent_run_id`. Reviewers are sessions
 whose run is `task-close-reviewer`. Workers are all other spawned runs. The same rule
 counts every population, across every project. Per-bucket statistics are computed from
 the raw events in the bucket.
+
+The retained `buckets_fixed.sql` / `buckets_fixed.txt` output is authoritative for
+the table values. Its join to sessions excludes the window's two `skill_invoke`
+events, whose session ids are null. An explicit `tool_call` / `rule_eval` filter
+in `buckets_fixed2.sql` reproduces the same 130 session/call/latency rows. The
+original snapshot-derived CPU, pool and executor columns are retained because the
+earliest snapshots have since expired; they are not recomputed from partial data.
 
 How to read the table:
 
@@ -267,7 +281,7 @@ the change it is the busy fraction of the single slot.
 | #22729: SRT verification dominates launch. | Supported: 78% of this launch, p50 about 2.8 s across the fleet. It is a small share of reviewer wall time. |
 | #22629: all-seat counting must include reviewers. | Supported as an accounting rule. Reviewers were exempt from the per-project cap. §5 shows reviewers add a load increment comparable to a seat, so count them like seats, with no separate penalty. |
 | The single slot is justified by measured load. | Unsupported. §5 and §6. |
-| Reviewer model choice drives close latency. | Unsupported by this data. The medians differ (746 s against 184 s), but the task mixes are unequal and the `gpt-6.1-sol` sample is 3 runs. §3. |
+| Reviewer model choice drives close latency. | Unsupported by this data. The medians differ (613 s against 200 s), but the task mixes are unequal and the `gpt-6.1-sol` sample is 4 runs. §3. |
 | SRT denials slow reviews. | Unknown. The log captures only the first 100 main-run denials, all of them start-up probes. §2. |
 
 ## 8. Recommendation
