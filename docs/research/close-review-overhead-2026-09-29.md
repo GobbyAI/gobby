@@ -18,12 +18,15 @@ The single close slot is coordination policy. Measured cost does not force it.
 - A reviewer is one more agent process. Its launch costs about 3 s of daemon time.
   After that, its per-call hook, proxy and DB cost is the same as or lower than a
   standing seat's.
-- In the last 24 hours the daemon hook and DB path showed no saturation, at up to 25
-  active sessions and up to 5 reviewer sessions in a 10-minute bucket.
-- Since serialization, the one slot has been busy only 17% of wall time.
+- Over 2026-09-29 00:30 to 2026-09-30 00:30 UTC, the DB pool had no waiter.
+  Per-bucket `rule_eval` p95 stayed at or below 10 ms, with up to 26 active sessions
+  and up to 5 reviewer sessions in a 10-minute bucket (§5).
+- In the 16 h after serialization, the one slot was busy 12.9% of the window (§6).
 
-Close throughput is limited by the admission process around the slot, reviewer model
-time, and fleet activity. It is not limited by reviewer load on the daemon.
+The measurements do not show reviewer load limiting close throughput. After
+serialization, reviews fell from 6.31 to 2.13 per hour. Fleet activity also fell 41%
+over the same windows. How much of the drop is the admission process and how much is
+lower activity is unmeasured (§6).
 
 Least mechanism justified by these measurements: restore a per-project reviewer cap
 above 1, admitted under Josh's 5-minute load-below-24 rule. Lane2 already owns the
@@ -38,7 +41,8 @@ above 1, admitted under Josh's 5-minute load-below-24 rule. Lane2 already owns t
 | Standing seats in that window | 10 `claude-opus-5-5` (Claude Code), 7 `gpt-6.1-sol`, 2 `deepseek/deepseek-v4.1-flash`, 1 `gpt-5.6-terra`, 1 `gpt-6-luna` (Codex). Total 21. |
 | Other spawned runs in that window | 2 `gpt-6.1-sol` and 1 `gpt-5.6-sol` (Codex). The reviewer is one of them. |
 | Latency source | `metrics_events` rows: `tool_call` is proxy MCP call latency; `rule_eval` is rule-engine hook latency. Snapshots come from `metric_snapshots`. |
-| Launch source | `Spawn phase timings` log lines from `agents/spawn_executor.execute_spawn`. 1,551 spawns, 2026-09-13 16:57 to now. |
+| Launch source | `Spawn phase timings` log lines from `agents/spawn_executor.execute_spawn`. 1,551 spawns, from 2026-09-13 16:57 local time (the start of `daemon.log.1`) to 2026-09-29 19:30 local time (2026-09-30 00:30 UTC). |
+| Observation boundaries | All windows are fixed and half-open, in UTC. §5 covers [2026-09-29 00:30, 2026-09-30 00:30). §6 compares [2026-09-28 16:34:06, 2026-09-29 08:34:06) with [2026-09-29 08:34:06, 2026-09-30 00:34:06), 16 h each on either side of `ef4668dc77`. §3's post-serialization table uses the §6 "after" window. The 7-day figures cover [2026-09-23 00:30, 2026-09-30 00:30). |
 
 Model mix is a confound. Most reviewers before 2026-09-29 were `gpt-5.6-terra`. The
 natural run studied here is `gpt-6.1-sol`. §3 gives the per-model medians as descriptive
@@ -122,18 +126,18 @@ Tool time breakdown:
 - Shell work (`ocr delegate preview`, `gcode grep`, `gcode symbol-at`): about 10 s
   total.
 
-Successful reviewer runs since serialization, by model:
+Successful reviewer runs created in the §6 "after" window, by model:
 
 | Provider / model | Runs | p50 | p90 | Mean tool calls |
 | --- | --- | --- | --- | --- |
 | codex `gpt-5.6-terra` | 29 | 184 s | 265 s | 35 |
-| codex `gpt-6.1-sol` | 3 | 746 s | 784 s | 55 |
+| codex `gpt-6.1-sol` | 4 | 613 s | 779 s | 49 |
 | claude `sonnet` | 1 | 72 s | 72 s | 22 |
 
-Over 7 days, 446 `gpt-5.6-terra` reviewer runs succeeded with a mean of 265 s. These
-medians describe what happened and are not a model comparison. The `gpt-6.1-sol` sample
-is 3 runs, and the two models reviewed different task mixes and diff sizes. Any
-conclusion about model speed needs a like-for-like sample.
+In the 7-day window, 446 `gpt-5.6-terra` reviewer runs succeeded with a mean of 265 s.
+These medians describe what happened and are not a model comparison. The
+`gpt-6.1-sol` sample is 4 runs, and the two models reviewed different task mixes and
+diff sizes. Any conclusion about model speed needs a like-for-like sample.
 
 ## 4. Per-call cost: reviewer against standing seats (VERIFIED)
 
@@ -148,44 +152,63 @@ The reviewer's maximum was the 59.8 s search in §3. Excluding it, the reviewer'
 are cheaper than the seats' calls, because they are mostly short `get_task_diff` and
 skill reads.
 
-## 5. Concurrency against hook and DB latency, last 24 h (VERIFIED)
+## 5. Concurrency against hook and DB latency (VERIFIED)
 
-There are 131 buckets of 10 minutes each. Active sessions in a bucket are the distinct
-sessions with a `tool_call` or `rule_eval` event. Standing seats are sessions without
-an `agent_run_id`. Reviewers are sessions whose run is `task-close-reviewer`. Workers
-are all other spawned runs. The same rule counts every population.
+Window: [2026-09-29 00:30, 2026-09-30 00:30) UTC, in 130 buckets of 10 minutes. Active
+sessions in a bucket are the distinct sessions with a `tool_call` or `rule_eval` event
+in it. Standing seats are sessions without an `agent_run_id`. Reviewers are sessions
+whose run is `task-close-reviewer`. Workers are all other spawned runs. The same rule
+counts every population, across every project. Per-bucket statistics are computed from
+the raw events in the bucket.
 
-| Active sessions | Buckets | rule_eval p95 | tool_call p50 | tool_call p95 | Daemon CPU % | Pool waiting max | Executor queue age max |
+How to read the table:
+
+- "Bucket p95 median / max" is the median and the maximum, across the buckets in a row,
+  of each bucket's own p95.
+- "tool_call p50" is the median of the bucket p50s.
+- "CPU %" is the median of the bucket means of `daemon_cpu_percent`.
+- "Pool waiting" and "executor queue age" are maxima of `metric_snapshots` gauges.
+- A dash means no `rule_eval` events fell in those buckets.
+
+None of these values is a pooled percentile over all the events in a row.
+
+| Active sessions | Buckets | rule_eval bucket p95, median / max | tool_call bucket p50, median | tool_call bucket p95, median / max | CPU % | Pool waiting, max | Executor queue age, max |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 5-9 | 27 | 2.1 ms | 23 ms | 2,140 ms | 14 | 0 | 0 s |
-| 10-14 | 37 | 2.2 ms | 23 ms | 2,202 ms | 27 | 0 | 0 s |
-| 15-19 | 35 | 2.5 ms | 27 ms | 2,385 ms | 33 | 0 | 0.22 s |
-| 20-24 | 22 | 2.2 ms | 34 ms | 2,255 ms | 38 | 0 | 0.15 s |
-| 25-29 | 2 | 4.1 ms | 42 ms | 2,564 ms | 39 | 0 | 0 s |
+| 0-4 | 8 | - / - | 99 ms | 305 / 2,290 ms | 8 | 0 | 0 s |
+| 5-9 | 27 | 2.1 / 6.2 ms | 23 ms | 2,140 / 2,552 ms | 14 | 0 | 0 s |
+| 10-14 | 36 | 2.2 / 10.0 ms | 23 ms | 2,202 / 3,403 ms | 26 | 0 | 0 s |
+| 15-19 | 35 | 2.5 / 6.3 ms | 27 ms | 2,385 / 4,021 ms | 34 | 0 | 0.22 s |
+| 20-24 | 22 | 2.2 / 6.7 ms | 34 ms | 2,255 / 4,894 ms | 38 | 0 | 0.15 s |
+| 25-29 | 2 | 4.1 / 4.3 ms | 42 ms | 2,564 / 2,905 ms | 38 | 0 | 0 s |
 
-By reviewers active in the bucket:
+By reviewer sessions active in the bucket (same statistics):
 
-| Reviewers | Buckets | rule_eval p95 | tool_call p50 | tool_call p95 | CPU % |
+| Reviewers | Buckets | rule_eval bucket p95, median / max | tool_call bucket p50, median | tool_call bucket p95, median / max | CPU % |
 | --- | --- | --- | --- | --- | --- |
-| 0 | 64 | 2.2 ms | 25 ms | 2,157 ms | 20 |
-| 1 | 38 | 2.5 ms | 27 ms | 2,232 ms | 30 |
-| 2 | 20 | 2.2 ms | 30 ms | 2,612 ms | 36 |
-| 3 | 7 | 2.3 ms | 25 ms | 2,619 ms | 32 |
-| 4-5 | 2 | 2.0-3.1 ms | 22-32 ms | 2,228-3,926 ms | 37-44 |
+| 0 | 63 | 2.2 / 10.0 ms | 25 ms | 2,157 / 4,021 ms | 19 |
+| 1 | 38 | 2.5 / 6.3 ms | 27 ms | 2,232 / 3,949 ms | 29 |
+| 2 | 20 | 2.2 / 5.2 ms | 30 ms | 2,612 / 4,894 ms | 35 |
+| 3 | 7 | 2.3 / 3.5 ms | 25 ms | 2,619 / 3,403 ms | 32 |
+| 4-5 | 2 | 2.5 / 3.1 ms | 27 ms | 3,077 / 3,926 ms | 40 |
 
-Standing seats per bucket: median 13, maximum 23.
+Standing seats per bucket: median 13, maximum 23. Maximum total active sessions: 26.
 
 Findings:
 
-- The hook path did not saturate. `rule_eval` p95 stayed between 2 and 4 ms across the
-  whole range.
-- #22729's 2026-09-22 measurement put the knee at `rule_eval` p95 197.6 ms with 15
-  active sessions. That knee no longer reproduces; the stability work since then moved
-  it. INFERRED: this is not a controlled comparison.
+- The hook path did not saturate. Across the 111 buckets with `rule_eval` events, the
+  bucket p95 ranged 0-10.0 ms (median 2.3 ms, 90th percentile 4.2 ms). The single
+  10.0 ms bucket had 10-14 active sessions and no reviewer.
+- #22729 measured `rule_eval` p95 at 197.6 ms with 15 active sessions on 2026-09-22.
+  No bucket in this window comes near it. INFERRED: the stability work since then
+  moved the knee. This is not a controlled comparison, and #22729 may have computed
+  its percentile differently.
 - The DB pool never had a waiter. The executor queue age peaked at 0.22 s.
-- Daemon CPU grows with active sessions (14% to 39%), and `tool_call` p50 rises gently
-  (23 ms to 42 ms). This is the only measurable trend, and it is not specific to
-  reviewers.
+- Daemon CPU grows with active sessions (8% to 38% median), and the median bucket
+  `tool_call` p50 rises from 23 ms to 42 ms between 5-9 and 25-29 active sessions.
+  The 0-4 row is higher (99 ms) on only 8 buckets. This is the only measurable trend,
+  and it is not specific to reviewers.
+- Bucket `tool_call` p95 is dominated by long-running tools such as spawns and
+  searches, so it tracks the tool mix more than daemon pressure.
 
 Counting caveat: reviewers that run one after another can share a 10-minute bucket, and
 the metrics cover every project. The 4-5 reviewer buckets therefore do not mean 4-5
@@ -204,27 +227,43 @@ concurrent reviewers in this project.
 - Added a role rule in `.gobby/roles/_common.md`: lanes wait for an explicit Lane
   Manager release before `close_task(preview=false)`.
 
-Close reviews in project gobby, 24 hours either side of the change:
+Close reviews in project gobby, in two equal 16 h windows either side of the change:
 
-| Period | Reviews | Reviews per hour | Slot busy fraction | Run p50 | Queue wait p50 / max |
-| --- | --- | --- | --- | --- | --- |
-| Before `ef4668dc77` | 117 | 5.9 | 0.34 of one slot | 206 s | 0 s / 42 s |
-| After | 33 | 2.8 | 0.17 | 188 s | 0 s / 0 s |
+| Measure | Before: [09-28 16:34:06, 09-29 08:34:06) | After: [09-29 08:34:06, 09-30 00:34:06) |
+| --- | --- | --- |
+| Reviews created (all launched and finished) | 101 | 34 |
+| Reviews per hour (count / 16 h) | 6.31 | 2.13 |
+| Reviewer-seconds per window-second (review runtime clipped to the window / 57,600 s) | 0.359 | 0.129 |
+| Review run p50 | 202 s | 189 s |
+| Queue wait, max | 42 s | 0 s |
+| Project `tool_call` events | 15,983 | 9,377 |
+| Distinct sessions with events | 134 | 71 |
+| `close_task` calls | 256 | 88 |
+| Reviews per 1,000 `tool_call` events | 6.3 | 3.6 |
+
+The "after" window closes at 00:34:06, after the last review it contains had finished,
+so no review is censored. Reviewer-seconds per window-second is capacity-neutral. Before
+the change the cap was 3, and 0.359 means about 36% of one slot's worth of time. After
+the change it is the busy fraction of the single slot.
 
 - Queue wait is now zero because contention no longer reaches the queue. A second
   caller is rejected with `close_review_busy`, or waits for Lane Manager release, before
   any row exists. That wait is not persisted.
-- Under the old default of 3, peak overlap in the retained 7 days was 3 reviews.
-- The one slot is idle 83% of wall time. INFERRED: halved throughput with a mostly idle
-  slot points to the admission process (LM release plus the busy rejection) and lower
-  fleet activity. Slot capacity is not the cause.
+- Under the old default of 3, peak overlap in the 7-day window was 3 reviews.
+- The single slot was idle 87.1% of the "after" window.
+- Fleet activity fell 41% (by `tool_call` events) between the windows, and the review
+  rate fell 66%. Normalized per 1,000 `tool_call` events, reviews fell 43%.
+- INFERRED: part of the drop tracks lower activity. The remainder is consistent with
+  the admission process (Lane Manager release plus busy rejection), but release waits
+  are not persisted, so that attribution is not measured. Slot capacity was not
+  binding: the slot was idle most of the window.
 
 ## 7. Hypothesis ledger
 
 | Hypothesis | Verdict |
 | --- | --- |
 | Reviewers cost more per call than standing seats. | Rejected. §4. |
-| Reviewer concurrency saturates hooks or the DB. | Rejected for the last 24 h. No saturation up to 25 active sessions. §5. |
+| Reviewer concurrency saturates hooks or the DB. | Rejected for the §5 window. Bucket `rule_eval` p95 stayed at or below 10 ms and the pool had no waiter, up to 26 active sessions. §5. |
 | #22729: SRT verification dominates launch. | Supported: 78% of this launch, p50 about 2.8 s across the fleet. It is a small share of reviewer wall time. |
 | #22629: all-seat counting must include reviewers. | Supported as an accounting rule. Reviewers were exempt from the per-project cap. §5 shows reviewers add a load increment comparable to a seat, so count them like seats, with no separate penalty. |
 | The single slot is justified by measured load. | Unsupported. §5 and §6. |
@@ -235,8 +274,9 @@ Close reviews in project gobby, 24 hours either side of the change:
 
 1. Restore a per-project reviewer cap above 1, admitted when the 5-minute load average
    is below 24. Count reviewers in the all-seat total the same way standing seats are
-   counted. Drop the Lane Manager release step, or make it apply only when admission
-   refuses. Lane2 owns this under #23059.
+   counted. Persist Lane Manager release waits so the admission process's share of the
+   throughput drop (§6) can be measured before that step is changed. Lane2 owns the cap
+   under #23059.
 2. #22729 SRT verification caching stays worthwhile for spawn-heavy fanout. It does not
    change close throughput.
 3. Reviewer model speed: no recommendation. §3 records the per-model medians without
@@ -248,7 +288,7 @@ Close reviews in project gobby, 24 hours either side of the change:
    delegated to L5 #14768 alongside #22729.
 2. `gobby-sessions:search_session_messages`
    (`src/gobby/mcp_proxy/tools/sessions/_messages.py:101-190`) scans rendered
-   transcript windows linearly. Over 7 days: 56 calls, p50 14.4 s, p90 200 s,
+   transcript windows linearly. In the 7-day window: 56 calls, p50 14.4 s, p90 200 s,
    max 1,397 s. A miss reads every window of every candidate session. Filed as #23117
    (bounded transcript search) and delegated to L2 #14828 after #23113.
 
