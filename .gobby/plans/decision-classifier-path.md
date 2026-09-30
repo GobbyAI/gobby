@@ -1178,7 +1178,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   alert, an unavailable classifier escalates, a cohort with the classifier
   unavailable on some records scores those records with the incumbent's
   recorded order and yields a deployed-minus-incumbent Recall@k equal to the
-  paired available-record difference times the available fraction, a cohort
+  paired available-record difference times the available fraction, taken
+  within the same non-empty-gold Recall@k records, a cohort
   where the classifier trails the incumbent on its available records yields
   `FAIL` although most records fall back, the found-work pair and
   `min_probability` selections
@@ -1553,3 +1554,6 @@ the full pytest suite.
   available-record difference times the available fraction. 2.1.5 now
   checks that weighting and a trailing classifier under heavy fallback. The
   superseded M1 was retired for re-derivation.
+- 2026-09-29: Renewed consensus with Plan Adversary gobby#14579 on the 2.1.5
+  repair, with the available fraction defined within the non-empty-gold
+  Recall@k records.
