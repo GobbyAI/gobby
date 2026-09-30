@@ -74,9 +74,10 @@ removal needs no Targets.
    Any failed, truncated or partial lookup refuses.
 7. **The guard also covers hand-launched seats.** Seats Josh launched by hand
    have no agent run. The guard maps each seat's role file through
-   `.gobby/roles/roster.md` to a session ref. It refuses when that session
-   is live, allows a ref whose session has ended, and refuses a ref that
-   does not resolve.
+   `.gobby/roles/roster.md` to every session ref in a row for that file,
+   since one role file can have several rows. It refuses when any of those
+   sessions is live or any ref does not resolve, and passes only when
+   every one has ended.
 8. **Restart reconciles each seat step by its invocation id.** Runbooks set
    `resume_on_restart: true`. Recovery keeps completed step outputs and
    re-runs only unfinished steps. The executor gives every step a
@@ -206,7 +207,8 @@ removal needs no Targets.
   not agent runs and do not count against the cap.
 - `.gobby/roles/roster.md` rows have the form `| <file>.md | gobby#N |`,
   pinned by `tests/workflows/test_default_agent_role_contract.py::_probe_documented_lookup`.
-  No Python reads the roster today.
+  No Python reads the roster today. One role file can have several rows:
+  the canonical roster has three `code-reviewer.md` rows.
 - `plans/deferral.py::validate_deferral` matches each original acceptance
   item ID as text in the task's validation criteria. Its ownership check walks
   the recovery epic's dependency edges (`_dependency_closure`), not its
@@ -433,12 +435,12 @@ every check below passes. Otherwise it returns `success: False` with an
    with no page cap. A run whose 6.1 `seat` equals a requested key refuses,
    naming its `run_id`.
 3. Hand-launched seats. `.gobby/roles/roster.md` under the project root is
-   parsed with the pinned row form. A seat whose `role_file` has a row
-   resolves that row's `gobby#N` through the session manager. A session in
-   `LIVE_SESSION_STATUSES` (`storage/sessions/_constants.py:23`) refuses,
-   naming the ref. An ended session passes. A ref that does not resolve
-   refuses. A seat with no row passes. A requested seat whose role file is
-   missing refuses.
+   parsed with the pinned row form. A seat resolves the `gobby#N` of every
+   row whose file equals its `role_file` through the session manager. Any
+   session in `LIVE_SESSION_STATUSES` (`storage/sessions/_constants.py:23`)
+   refuses, naming the ref. Any ref that does not resolve refuses. The seat
+   passes only when every matching row's session has ended. A seat with no
+   row passes. A requested seat whose role file is missing refuses.
 4. Capacity. When `max_active_agents_for_project` minus the active count is
    below the number of seats requested, the guard refuses. This is an early
    snapshot (Decision 6). Each seat's `reserve_agent_slot` stays
@@ -458,7 +460,8 @@ runbook-level admission check.
   member (active, paused, interrupted, awaiting_input, awaiting_approval,
   awaiting_handoff) refuses with the session ref; an ended session passes; an unresolvable
   ref, a missing roster, a malformed roster and a missing role file each
-  refuse. test:
+  refuse. A role file with two rows, one session ended and one live,
+  refuses with the live ref whichever row comes first. test:
   `tests/agents/test_runbook_seats.py::test_roster_seats_and_stale_refs`.
 - 6.2.3 - Two executions of one runbook that both reach the guard both see a
   live sibling, and at most one passes. test:
