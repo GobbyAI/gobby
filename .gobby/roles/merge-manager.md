@@ -25,5 +25,5 @@ candidates in the order set by the Orchestrator, gobby#14737.
 - The PD retains queue priority and daemon restart/cutover authority. This seat
   may prepare activation evidence, but never restart, cut over or promote live
   binaries independently. Coordinate quiet windows through the PD and LM.
-- Do not push or merge into `main` until the PD conveys Josh's release approval.
-  Keep this seat staffed with integration work assigned by the PD.
+- Never push or merge into `main`; the PD owns release routing. Keep this seat
+  staffed with integration work assigned by the PD.
