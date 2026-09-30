@@ -394,12 +394,6 @@ def _rotation_failure_detail(exc: BaseException) -> str:
     return type(exc).__name__
 
 
-_AUTHENTICATION_FAILURES: tuple[type[BaseException], ...] = (
-    psycopg.errors.InvalidPassword,
-    psycopg.errors.InvalidAuthorizationSpecification,
-)
-
-
 def _observe_hub_alter(
     database_url: str,
     role: str,
@@ -409,10 +403,12 @@ def _observe_hub_alter(
 ) -> None:
     """Run the transactional ALTER on the bounded helper and observe its COMMIT.
 
-    ``resume_conninfo`` is the pending intended DSN, retried only when the current
-    credential is refused. A refusal means an earlier COMMIT may already be
-    effective; it does not prove either physical outcome. Pending stays preserved
-    until a COMMIT is observed.
+    ``resume_conninfo`` is the pending intended DSN. On the resumed pending-pair
+    path the current credential may already have been replaced by a COMMIT whose
+    outcome was never observed, so a connection failure falls back to that exact
+    intended DSN at most once. The failure proves neither physical outcome, so a
+    failed or ambiguous fallback preserves the pending pair. A fresh rotation has
+    no fallback: it connects once and propagates any failure unchanged.
     """
 
     async def _work(connection: Any, _remaining: float) -> None:
@@ -427,6 +423,7 @@ def _observe_hub_alter(
         )
         await connection.execute(statement)
 
+    resume = resume_conninfo is not None
     conninfos = (database_url,) if resume_conninfo is None else (database_url, resume_conninfo)
     for index, conninfo in enumerate(conninfos):
         try:
@@ -444,11 +441,13 @@ def _observe_hub_alter(
             # COMMIT was observed; only termination/reap failed, so the ALTER is durable
             # and final publication must still proceed.
             return
-        except _AUTHENTICATION_FAILURES:
-            # The current credential was refused. On resume the intended password may
-            # already be effective, so retry with it; the refusal alone proves neither
-            # outcome. Any other connection or SQL failure propagates unchanged.
-            if index + 1 == len(conninfos):
+        except psycopg.OperationalError:
+            # A psycopg connect refusal is the base OperationalError, not its SQLSTATE
+            # subclass, so it cannot be told from a generic connection failure. Only on
+            # resume does that ambiguity matter: try the intended DSN once. The error
+            # proves neither outcome, so do not infer a committed ALTER from it, and a
+            # fresh rotation (``resume`` False) propagates unchanged with no retry.
+            if not resume or index + 1 == len(conninfos):
                 raise
 
 

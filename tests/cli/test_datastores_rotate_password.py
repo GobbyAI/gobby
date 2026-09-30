@@ -27,7 +27,7 @@ from gobby.config.bootstrap_io import (
 )
 from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.config_repository import ConfigRepository
-from gobby.storage.hub.async_ops import IndeterminateCommitError
+from gobby.storage.hub.async_ops import BoundedDBTimeoutError, IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
@@ -475,7 +475,11 @@ def test_postgres_rotation_resume_falls_back_to_intended_password_after_commit(
     async def _connect(dsn: str, **_kwargs: Any) -> _FakeConnection:
         issued.append(dsn)
         if dsn == _CURRENT_DSN:
-            raise psycopg.errors.InvalidPassword("password authentication failed")
+            # psycopg's connect path raises the BASE OperationalError for a real
+            # password refusal; the SQLSTATE subclass is never produced there.
+            raise psycopg.OperationalError(
+                'connection failed: FATAL:  password authentication failed for user "gobby"'
+            )
         return _FakeConnection()
 
     monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
@@ -493,10 +497,10 @@ def test_postgres_rotation_resume_falls_back_to_intended_password_after_commit(
     assert pending_password not in result.output
 
 
-def test_postgres_rotation_resume_does_not_retry_on_connection_failure(
+def test_postgres_rotation_resume_retries_intended_dsn_once_then_propagates(
     monkeypatch: pytest.MonkeyPatch, rotation_home: Path
 ) -> None:
-    """A non-authentication failure propagates without a password fallback."""
+    """A resumed rotation retries the intended DSN once, then propagates the failure."""
     update_bootstrap_yaml(
         rotation_home / "bootstrap.yaml",
         lambda data: data.__setitem__(
@@ -519,10 +523,81 @@ def test_postgres_rotation_resume_does_not_retry_on_connection_failure(
     result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
 
     assert result.exit_code == 1
-    assert issued == [_CURRENT_DSN]
+    assert len(issued) == 2, issued
+    assert issued[0] == _CURRENT_DSN
+    fallback_pw = unquote(urlsplit(issued[1]).password or "")
+    assert fallback_pw == "resume-intended-password-0123456789"
     assert "PostgreSQL password rotation failed: OperationalError" in result.output
     pending = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["credential_rotation"]
     assert pending["pending_password"] == "resume-intended-password-0123456789"
+
+
+def test_postgres_rotation_resume_keeps_pending_when_fallback_also_fails(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """An ambiguous refusal whose intended-DSN fallback also fails never publishes."""
+    pending_password = "resume-intended-password-0123456789"
+    update_bootstrap_yaml(
+        rotation_home / "bootstrap.yaml",
+        lambda data: data.__setitem__(
+            "credential_rotation",
+            {
+                "role": "gobby",
+                "pending_password": pending_password,
+                "previous_password": "old-secret",
+            },
+        ),
+    )
+    issued: list[str] = []
+
+    async def _connect(dsn: str, **_kwargs: Any) -> _FakeConnection:
+        issued.append(dsn)
+        raise psycopg.OperationalError("connection failed: connection refused")
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1
+    assert len(issued) == 2, issued
+    assert issued[0] == _CURRENT_DSN
+    assert unquote(urlsplit(issued[1]).password or "") == pending_password
+    # Failure proves neither outcome: the pending pair must survive and no new DSN is published.
+    assert "credential_rotation" in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] == _CURRENT_DSN
+    assert pending_password not in result.output
+
+
+def test_postgres_rotation_resume_bounded_timeout_does_not_fall_back(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """A bounded-helper deadline is not the connect ambiguity, so it never retries."""
+    pending_password = "resume-intended-password-0123456789"
+    update_bootstrap_yaml(
+        rotation_home / "bootstrap.yaml",
+        lambda data: data.__setitem__(
+            "credential_rotation",
+            {
+                "role": "gobby",
+                "pending_password": pending_password,
+                "previous_password": "old-secret",
+            },
+        ),
+    )
+    issued: list[str] = []
+
+    async def _connect(dsn: str, **_kwargs: Any) -> _FakeConnection:
+        issued.append(dsn)
+        raise BoundedDBTimeoutError("bounded PostgreSQL work deadline expired")
+
+    monkeypatch.setattr(psycopg.AsyncConnection, "connect", _connect)
+
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+
+    assert result.exit_code == 1
+    assert issued == [_CURRENT_DSN]
+    pending = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["credential_rotation"]
+    assert pending["pending_password"] == pending_password
 
 
 def test_postgres_rotation_tolerates_observed_commit_cleanup_failure(
