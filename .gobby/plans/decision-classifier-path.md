@@ -119,10 +119,22 @@ The plan also sets:
      `asyncio.timeout(timeout_seconds)` bounds the whole call, backoff
      included. `retry_async` gains an optional caller retry predicate, because
      its default `is_transient_error` (`:40-53`) would retry a 422.
-   - Any final transport failure opens a cooldown of
-     `failure_cooldown_seconds` (default 60). During it, calls fail fast with
-     `reason="cooldown"` and never dial. This keeps a dead server from charging
-     the found-work hook its timeout on every Stop.
+   - Retries use `retry_async(..., max_retries=3, delay=0.1)`, so the
+     backoffs are about 0.1 s and 0.2 s. Three attempts fit inside the default
+     2 s budget, and the budget cuts the sequence short when it expires first.
+   - A call's budget is `min(timeout_seconds, caller timeout)`. Consumers pass
+     the time they have left.
+   - Every remote failure opens a cooldown of `failure_cooldown_seconds`
+     (default 60): transport errors, exhausted transient statuses, permanent
+     `http_status`, `parse`, and a `timeout` at the full configured budget.
+     During it, calls fail fast with `reason="cooldown"` and never dial. This
+     keeps a dead or misconfigured server from charging the found-work hook
+     its timeout on every Stop.
+   - Local outcomes never open it: `unconfigured`, `oversize`, a `timeout`
+     under a caller budget shorter than `timeout_seconds`, and caller
+     cancellation. So one consumer's short budget or oversized input cannot
+     disable the shared service for the others. `asyncio.CancelledError`
+     propagates unchanged.
    - `get_decision_service(config)` keeps one cached service, identified by a
      fingerprint of every service-affecting field: `api_base`, `model`, a hash
      of the resolved `api_key`, `timeout_seconds`, `max_input_tokens`, and
@@ -529,7 +541,14 @@ either returns validated answers or raises a typed `DecisionsUnavailable`.
 replaces. It used `ChoiceQuestion(criteria: dict[str, str])`,
 `ChoiceAnswer(choice, probabilities, confidence)`, `DecisionsUnavailable`, and
 `choose(state, questions)`, posting `{state, model, questions}`. Answers matched
-by question key, and a missing key was a hard failure. Keep those shapes.
+by question key, and a missing key was a hard failure. Keep those shapes,
+with one addition: the TypeSafe API (`https://docs.typesafe.ai/api.md`) and
+Kev's README both require `instructions` on every question, so
+`ChoiceQuestion` gains it.
+
+The documented API is the contract. The capture confirms that the local
+backend follows it and records any discrepancy; it cannot relax a documented
+constraint.
 
 The wire shape is pinned by capture, before any code:
 - Run one Choice request against a local `/v1/systemone` server (Kev, per
@@ -554,13 +573,17 @@ fits.
 This capture is also #22604's wire spike (Coordination With #22604).
 
 Module contents:
-- `ChoiceQuestion`, `ChoiceAnswer`.
+- `ChoiceQuestion(instructions: str, criteria: Mapping[str, str])`,
+  serialized as `{"type": "choice", "instructions": ..., "criteria": ...}`.
+  `instructions` is required, with no default; each consumer writes its own.
+- `ChoiceAnswer(choice, probabilities, confidence)`.
 - `DecisionsUnavailable(reason: Literal["unconfigured", "cooldown",
   "oversize", "timeout", "http_status", "parse"], detail: str)`.
 - `DecisionService`, holding the config and a cooldown deadline. Each call
   opens its own `httpx.AsyncClient`. Its method is `async choose(consumer: str, state:
-  Mapping[str, Any], questions: Mapping[str, ChoiceQuestion]) -> dict[str,
-  ChoiceAnswer]`.
+  Mapping[str, Any], questions: Mapping[str, ChoiceQuestion], *,
+  timeout_seconds: float | None = None) -> dict[str, ChoiceAnswer]`. The
+  keyword is the caller budget from Decision 9.
 - `estimate_tokens(body) -> int`, computed as `len(json.dumps(body)) // 4`.
 - `get_decision_service(config: DecisionsConfig) -> DecisionService`, which
   returns the one cached service while the Decision 9 fingerprint is
@@ -576,17 +599,23 @@ Transport, per Decisions 8 and 9:
 - `Authorization: Bearer` is sent only when `api_key` is set;
 - every 3xx and every 4xx except 429 raise `http_status` without retry;
 - transport errors and 429, 529 and 5xx retry through `retry_async` with the
-  caller predicate: one attempt plus at most two retries, and
-  `asyncio.timeout(timeout_seconds)` around the whole call;
+  caller predicate and `delay=0.1`: one attempt plus at most two retries, and
+  `asyncio.timeout(budget)` around the whole call;
 - responses are parsed strictly. Any violation raises `parse` before any
   consumer policy sees it:
+  - the response `model` must equal the requested model;
   - answer keys must match the question keys exactly;
-  - each `choice` must be one of that question's option keys;
+  - each answer's `type` must equal its question's type;
   - probability keys must match the option keys;
-  - every probability, confidence, and Noul value must be finite and in
+  - every probability, confidence, and `noul` value must be finite and in
     [0,1];
-- a final failure sets the cooldown, and calls inside the cooldown raise
-  `cooldown` without dialing.
+  - Choice probabilities must sum to 1 within `1e-3`;
+  - `choice` must be an option whose probability is within `1e-6` of the
+    maximum, so any tied maximum is accepted as returned;
+  - `usage.input_tokens` is optional and, when present, is logged as the
+    measured token count;
+- the Decision 9 cooldown rules apply exactly: remote failures open it, and
+  local outcomes and cancellation never do.
 
 Logging: one `decisions.call` event per call, with `consumer`, `model`,
 `question_count`, `schema_hash` (sha256 of the sorted question keys and option
@@ -602,14 +631,18 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 - 1.2.1 - `choose` posts `{model, state, questions}` to
   `{api_base}/v1/systemone`, parses the captured fixture, and raises `parse`
-  for these responses: a missing or extra answer key, a choice outside the
-  offered options, mismatched probability keys, and any non-finite or
-  out-of-range value. test:
+  for these responses: a mismatched model, a missing or extra answer key, a
+  wrong answer type, a choice outside the offered options or below the
+  maximum probability, mismatched probability keys, probabilities summing
+  outside `1 ± 1e-3`, and any non-finite or out-of-range value. A tied maximum
+  is accepted. The request carries `type` and `instructions` on every
+  question. test:
   `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_captured_wire`.
-- 1.2.2 - Call counts are exact per status: 3xx, 401, 403, 404, and 422 make
-  one call each; 429, 529, 500, and transport errors make three. The whole call
-  including backoff ends at `timeout_seconds`. `retry_async` without a
-  predicate keeps its current behavior. test:
+- 1.2.2 - With an ample budget, call counts are exact per status: 3xx, 401,
+  403, 404, and 422 make one call each; 429, 529, 500, and transport errors
+  make three. With a budget shorter than the backoff sequence, the call ends
+  at the budget with fewer attempts and raises `timeout`. `retry_async`
+  without a predicate keeps its current behavior. test:
   `tests/ai/test_decisions_service.py::test_retry_only_on_transient_status`.
 - 1.2.7 - The client ignores `HTTP_PROXY`/`HTTPS_PROXY` and never follows a
   redirect. test:
@@ -620,8 +653,11 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 1.2.3 - A request over `max_input_tokens` raises `oversize` without sending.
   test:
   `tests/ai/test_decisions_service.py::test_oversize_request_never_dials`.
-- 1.2.4 - After a final transport failure, calls inside the cooldown raise
-  `cooldown` without dialing, and the first call after it dials again. test:
+- 1.2.4 - Table-driven: transport error, exhausted 529, 401, `parse`, and a
+  full-budget `timeout` each open the cooldown; `unconfigured`, `oversize`, a
+  caller-budget `timeout`, and caller cancellation do not, and cancellation
+  propagates. Inside the cooldown, calls raise `cooldown` without dialing, and
+  the first call after it dials again. test:
   `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.
 - 1.2.5 - Log records carry no state or option text. test:
   `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.
@@ -805,9 +841,12 @@ cannot reject every candidate, which is why the tool consumer uses Noul
 (`jev.md` use case 2). This is the second consumer, so Noul lands here
 (Decision 7).
 
-Add `async noul(consumer, state, propositions: Mapping[str, str]) ->
-dict[str, NoulAnswer(probability: float)]` to `DecisionService`. It uses the
-same transport, ceiling, and cooldown. Its wire field names come from a second
+Add `async noul(consumer, state, propositions: Mapping[str, str], *,
+timeout_seconds: float | None = None) -> dict[str, NoulAnswer(probability:
+float)]` to `DecisionService`. Each proposition is serialized as `{"type":
+"noul", "instructions": <proposition>}`, and `probability` is read from the
+answer's `noul` field under the same strict parsing. It uses the same
+transport, ceiling, and cooldown. Its wire field names come from a second
 capture, taken before any code in this leaf:
 - Run one Noul request with three propositions against the same local server.
 - Append the redacted request and response to
@@ -819,14 +858,28 @@ Consumer: state is `{"request": task_description}`, with one proposition per
 candidate, "Tool `<server>/<tool>` (`<description>`) materially applies to the
 request."
 
-Batching: if the estimate exceeds the ceiling, split the candidates across
-requests. Ranking is by probability.
+One logical rerank has one budget, `ai.decisions.timeout_seconds`, and one
+complete result or none:
+- Batching packs candidates in semantic order, greedily, into requests that
+  each fit the ceiling.
+- If the state plus one candidate alone exceeds the ceiling, the whole
+  classifier result is `oversize`. Nothing is truncated.
+- Batches run concurrently under one `asyncio.TaskGroup` and one deadline. If
+  any batch fails, the rest are cancelled and awaited, and the whole
+  classifier result is unavailable. A partial set never becomes a ranking or a
+  reject-all.
+- Ranking sorts by descending probability, with ties broken by semantic
+  order, and returns at most `top_k`, the same slice today's successful LLM
+  rerank takes.
 
 By `tool_rerank.mode`:
 - `off`: today's path, unchanged.
-- `shadow`: today's path runs and returns. The classifier runs within its own
-  timeout, and a shadow record pairs its probabilities with the LLM rerank
-  order.
+- `shadow`: today's path decides and returns its result or its fallback,
+  unchanged. The classifier runs concurrently with it under `asyncio.gather`
+  within the rerank budget, and the request waits for both, so no task
+  outlives the request. A wrapper converts every classifier `Exception` into
+  an unavailable result. A shadow record pairs its probabilities with the LLM
+  rerank order.
 - `enforce`, with a matching `evaluated_model`: candidates at or above
   `min_probability` come back in probability order (`search_mode="decide"`),
   and an empty result is a valid reject-all. On `DecisionsUnavailable`, the
@@ -861,6 +914,17 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 3.1.4 - Enforce mode with a mismatched `evaluated_model` behaves as shadow.
   test:
   `tests/mcp_proxy/services/test_recommendation_decisions.py::test_model_mismatch_downgrades_to_shadow`.
+- 3.1.5 - One rerank is bounded and complete:
+  - more than `top_k` passing candidates return exactly `top_k`;
+  - equal probabilities keep semantic order;
+  - a failed second batch makes the whole result unavailable, so enforce falls
+    back to the LLM rerank;
+  - an oversized singleton yields `oversize` without truncation;
+  - a shadow classifier exception leaves the incumbent's result and failure
+    semantics intact, with no task pending after return.
+
+  test:
+  `tests/mcp_proxy/services/test_recommendation_decisions.py::test_rerank_batches_are_bounded_and_complete`.
 
 ### 3.2 Found-work confirmation cascade [category: code] (depends: 3.1)
 `kind: deliverable`
