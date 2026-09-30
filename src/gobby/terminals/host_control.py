@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from gobby.terminals.host_client import PingResult, parse_ping
 from gobby.terminals.host_protocol import (
     CONTROL_PROTOCOL_VERSION,
     HostListRow,
@@ -28,13 +29,6 @@ class HelloResult:
     host_epoch: str
     version: str
     protocol_version: int
-
-
-@dataclass(frozen=True)
-class PingResult:
-    host_epoch: str
-    version: str
-    host_pid: int
 
 
 class HostControlClient:
@@ -74,12 +68,7 @@ class HostControlClient:
         )
 
     async def ping(self) -> PingResult:
-        payload = await self._roundtrip({"method": "ping"})
-        return PingResult(
-            host_epoch=str(payload["host_epoch"]),
-            version=str(payload.get("version", "")),
-            host_pid=int(payload["host_pid"]),
-        )
+        return parse_ping(await self._roundtrip({"method": "ping"}))
 
     async def list_terminals(self) -> list[HostListRow]:
         payload = await self._roundtrip({"method": "list"})
