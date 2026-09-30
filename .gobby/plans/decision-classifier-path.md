@@ -117,7 +117,10 @@ The plan also sets:
      proxy (3.3). It takes `state`, questions of one primitive type, and an
      optional caller budget. It returns typed answers with `response_model`
      and `backend_identity`, or a typed unavailable reason. Existing pipeline
-     MCP steps branch on its result, so no pipeline step type is added.
+     MCP steps call it with no new step type and keep their fail-closed
+     contract: a success passes its answers to later steps, and an
+     unavailable or invalid call fails the step with its reason, as
+     `jev.md` specifies for an explicit pipeline decision.
    - Daemon consumers call `DecisionService` directly and never go through
      MCP: tool rerank, found-work, #22604's community labels, and #22075's
      future outage classifier.
@@ -1482,7 +1485,7 @@ Targets:
 - `docs/reference-audit/config.json::*` — scope-reason: append one `gobby-decisions:evaluate` MCP operation and its evidence entry
 - `src/gobby/install/shared/skills/gobby/references/config/models.md`
 
-**Granularity:** Five acceptance items, one outcome: an agent or pipeline
+**Granularity:** Six acceptance items, one outcome: an agent or pipeline
 reaches the shared decision service through one MCP tool that returns typed
 answers with provenance or a typed unavailable reason. The registry, its
 request validation, its registration, and its reference-audit mapping land
@@ -1503,18 +1506,48 @@ configured decision wire", and add it in `setup_internal_registries` with
 the existing `config_resolver`.
 
 One tool, `evaluate(state: dict[str, Any], questions: dict[str, dict[str,
-Any]], timeout_seconds: float | None = None) -> dict[str, Any]`, registered
-with `read_only=True`, because it changes no Gobby state:
-- Each question takes the wire shape 1.2 and 3.1 serialize:
-  `{"type": "choice", "instructions": str, "criteria": {option: text}}` or
-  `{"type": "noul", "instructions": str}`.
-- Every question in one call has the same type. One type means one service
-  call per tool call, so an answer set never mixes backend identities, the
-  rule 3.1 applies across batches.
-- These requests return `{"success": false, "reason": "invalid_request",
-  "detail": ...}` without dialing: an empty question map, mixed types, an
-  unknown type, a missing or empty `instructions`, an empty `criteria` on a
-  Choice question, and a `timeout_seconds` that is not positive.
+Any]], timeout_seconds: float | None = None) -> dict[str, Any]`, with
+`read_only=True`, because it changes no Gobby state. The `@registry.tool`
+decorator derives only a flat object schema from `dict` annotations
+(`mcp_proxy/tools/internal.py:171-247`), and `_prepare_call` (`:332-358`)
+coerces and rejects unknown outer arguments without validating nested
+values. So the tool registers through `registry.register(name="evaluate",
+..., input_schema=EVALUATE_INPUT_SCHEMA, func=..., read_only=True)`
+(`internal.py:139-169`) with an explicit schema that agents read through
+`get_tool_schema`:
+- `state`: an object.
+- `questions`: an object with at least one property, whose values are
+  `oneOf` two closed shapes, the wire shapes 1.2 and 3.1 serialize:
+  - Choice: `{"type": "choice", "instructions": <non-empty string>,
+    "criteria": <object, at least one property, string values of length at
+    least 1>}`;
+  - Noul: `{"type": "noul", "instructions": <non-empty string>}`.
+
+  Neither shape admits other keys.
+- `timeout_seconds`: a number above 0, optional.
+
+The handler validates the same rules itself before it reads the config,
+because the registry enforces no nested schema. Every failure returns
+`{"success": false, "reason": "invalid_request", "detail": ...}` without
+building a service, dialing, or touching the cooldown:
+- `state` that is not an object;
+- an empty question map, or a question key that is not a non-empty string;
+- a question that is not an object, or carries a key outside its shape;
+- an unknown or missing `type`, or mixed types across questions;
+- `instructions` that is missing, not a string, or empty;
+- on a Choice question, `criteria` that is missing, not an object, or
+  empty, or has an option key or text that is not a non-empty string;
+- on a Noul question, any `criteria`;
+- a `timeout_seconds` that is a `bool`, not a number, non-finite, or not
+  above 0.
+
+Every question in one call has the same type. One type means one service
+call per tool call, so an answer set never mixes backend identities, the
+rule 3.1 applies across batches.
+
+Caller input is rejected at this public boundary so it can never reach the
+backend as a permanent 4xx that opens the cooldown shared with daemon
+consumers.
 - The tool reads `config_resolver()` on every call. A `None` config, or an
   unset `api_base` or `model`, returns `reason: "unconfigured"` without
   building a service.
@@ -1529,13 +1562,22 @@ with `read_only=True`, because it changes no Gobby state:
   `backend_identity` is `null` when unverified.
 - `DecisionsUnavailable` returns `{"success": false, "reason": exc.reason,
   "detail": exc.detail}`. `asyncio.CancelledError` propagates unchanged.
+- Every `success: false` result, including `invalid_request` and
+  `unconfigured`, also carries `"error": "<reason>: <detail>"`. `detail` is
+  tool- or service-authored text and never contains state or option text.
 - The tool has no `mode`, no `evaluated_*` check, no shadow record, and no
   config field (Decision 6).
 - The service's `decisions.call` event, with consumer `mcp_evaluate`, is the
   tool's only log record. The tool logs no state or option text.
 
-Pipelines call the tool from existing MCP steps and branch on `success` and
-`answers` with ordinary conditions. No pipeline step type is added.
+Pipelines call the tool from existing MCP steps, and the pipeline engine
+is unchanged. `workflows/pipeline/handlers.py::execute_mcp_step`
+(`:98-118`) raises on an internal `success: false` using only its `error`
+key, and strips `success` from a good result. So a successful step exposes
+`type`, `answers`, `response_model`, and `backend_identity` to later steps,
+and an unavailable or invalid call fails the step with a message naming
+its reason. That is the fail-closed contract `jev.md` sets for an explicit
+pipeline decision. No pipeline step type is added.
 `registries.py` grows by two lines and stays under the ceiling.
 
 Reference contract: `tests/skills/reference_library_helpers.py::coverage_errors`
@@ -1578,9 +1620,15 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   answers keyed by question with `response_model` and `backend_identity`. A
   `timeout_seconds` above the configured value is capped at it. test:
   `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_choice_and_noul_round_trip`.
-- 3.3.2 - An empty question map, mixed types, an unknown type, a missing
-  `instructions`, an empty `criteria`, and a non-positive `timeout_seconds`
-  each return `invalid_request` with no request sent. test:
+- 3.3.2 - Table-driven over every rejection the handler lists: a
+  non-object `state`, an empty question map, a non-object question, an
+  extra key, mixed types, an unknown or missing type, `instructions` that is
+  missing, empty, or a list, Choice `criteria` that is missing, empty, or has
+  a non-string value such as `{"a": 42}`, Noul `criteria`, and a
+  `timeout_seconds` that is `true`, `0`, negative, `NaN`, or infinite. Each
+  returns `invalid_request` with an `error` string, and no service is built,
+  no request is sent, and the cooldown is unchanged. The fetched
+  `evaluate` schema carries both nested question shapes. test:
   `tests/mcp_proxy/tools/test_decisions_tools.py::test_evaluate_rejects_invalid_requests_without_dialing`.
 - 3.3.3 - A `None` config and an unset `api_base` return `unconfigured`.
   `cooldown`, `oversize`, and `http_status` return `success: false` with that
@@ -1594,6 +1642,12 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 3.3.5 - `gobby-decisions:evaluate` is mapped in the `config` reference
   audit with passing evidence, and `references/config/models.md` names it.
   test: `tests/skills/test_reference_library.py::test_reference_contract_3_2_1`.
+- 3.3.6 - Through the real `execute_mcp_step`, with a tool proxy that calls
+  the registry, a successful step returns `type`, `answers`,
+  `response_model`, and `backend_identity` without `success`, and an
+  unavailable call fails the step with a `RuntimeError` whose message names
+  the reason (`cooldown`). test:
+  `tests/mcp_proxy/tools/test_decisions_tools.py::test_pipeline_step_passes_answers_and_fails_closed`.
 
 ## P4: Documentation
 `kind: framing`
@@ -1727,4 +1781,11 @@ with a typed reason. Do not run the full pytest suite.
   `gobby-decisions:evaluate` tool on the `docs/research/jev.md` boundary,
   with daemon consumers staying on direct service calls. Leaf 3.3 builds it
   and maps it in the `config` reference audit, 4.1 documents it, and
-  Activation Gate item 1 and the #22075 edge include it. The superseded M1 was retired for re-derivation.
+  Activation Gate item 1 and the #22075 edge include it.
+- 2026-09-30: Plan Adversary gobby#14579 reviewed 1e4d549 and returned two
+  blocking findings, both applied. MCP_INPUT_BOUNDARY: 3.3 registers an
+  explicit nested input schema and validates every nested type and the
+  budget in the handler before any service is built, so malformed input
+  never reaches the shared cooldown (3.3.2). MCP_PIPELINE_RESULT: failures
+  carry an `error` string, and 3.3.6 pins the unchanged fail-closed
+  `execute_mcp_step` contract. The superseded M1 was retired for re-derivation.
