@@ -1803,3 +1803,6 @@ with a typed reason. Do not run the full pytest suite.
   bounds `criteria` at 255 options, Jev's documented Choice maximum, in the
   schema and the handler, and 3.3.2 pins 255 accepted and 256 rejected. The
   superseded M1 was retired for re-derivation.
+- 2026-09-30: Renewed consensus with Plan Adversary gobby#14579 on 7fe9a6f,
+  which confirmed the 255-option maximum against the TypeSafe API reference
+  and found every other obligation and route unchanged.
