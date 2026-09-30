@@ -505,7 +505,6 @@ Consumers unchanged:
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_exposed.py` — no-edit-reason: it calls `run_pipeline` with unchanged arguments, and the snapshot is written inside it.
 - `src/gobby/runner_lifecycle_subsystems.py` — no-edit-reason: it calls `run_pipeline` and `resume_interrupted_pipelines` with unchanged signatures.
 - `tests/events/test_mcp_tool_changes.py` — no-edit-reason: it references `run_pipeline` by name, and the name and signature are unchanged.
-- `tests/skills/test_reference_library.py` — no-edit-reason: it references `run_pipeline` by name, and the name and signature are unchanged.
 
 **Acceptance:**
 
@@ -524,26 +523,50 @@ Consumers unchanged:
 Targets:
 - `src/gobby/workflows/pipeline_executor.py::*` — scope-reason: put each step's deterministic invocation_id into its template context
 - `src/gobby/workflows/pipeline/renderer.py::StepRenderer`
+- `src/gobby/workflows/pipeline/renderer.py::_RESERVED_CONTEXT_KEYS`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_seat_adoption.py`
-- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: accept reserved_run_id from a pipeline child and call reconciliation before any placement or launch work
+- `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: route reserved_run_id from an authenticated pipeline caller to authority checks and reconciliation before any placement or launch work
 - `tests/workflows/test_pipeline_invocation_id.py`
 - `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py`
 
 **Research context:** Decision 8. The executor sets
 `invocation_id = uuid5(NAMESPACE_URL, f"gobby-pipeline:{execution_id}:{step_id}")`
 in each step's context, and `StepRenderer.build_render_context` and
-`should_run_step` expose it as a reserved name. It is stable across
-restarts, because the execution id and step ids are.
+`should_run_step` expose it as a reserved name: `invocation_id` joins
+`_RESERVED_CONTEXT_KEYS` (`renderer.py:71`), so a step with that id is not
+flattened over it (`:118`, `:357`). It is stable across restarts, because
+the execution id and step ids are.
 
-`reserved_run_id` is reviewer-internal today (`_factory.py:420-440`). This
-leaf also accepts it when the resolved parent session has
-`source="pipeline"`. `_seat_adoption.py::reconcile_pipeline_invocation` then
-runs before placement preflight, isolation and launch:
+`reserved_run_id` is reviewer-internal today (`_factory.py:420-440`). The
+factory separates the ambient caller (`get_current_session_id()`,
+`:401`) from the declared `parent_session_id`, and any caller may name a
+pipeline child as its declared parent. Authority therefore comes from the
+ambient caller: a pipeline MCP step calls the proxy with the pipeline
+child as its ambient session (`pipeline/handlers.py:47-83`).
+`_seat_adoption.py::authorize_pipeline_invocation` runs when
+`reserved_run_id` is set and the ambient caller is a session with
+`source="pipeline"`. It refuses `invocation_unauthorized` unless all of
+these hold:
+
+- The caller's external id is `pipeline-<execution_id>` and the caller
+  is not deleted.
+- The resolved declared parent is the caller itself.
+- Execution `<execution_id>` exists, is `running`, and has the caller's
+  `project_id`, which is also the spawn's project.
+- `reserved_run_id` equals the `invocation_id` of a step in that
+  execution's launch snapshot (7.1).
+
+When the ambient caller is not a pipeline session, the existing
+reviewer branch runs unchanged, and the queued task-close reviewer path
+is untouched. Authorization runs before any run lookup or adoption.
+`_seat_adoption.py::reconcile_pipeline_invocation` then runs before
+placement preflight, isolation and launch:
 
 - No run with that id: the ordinary path runs, including placement
   preflight and `seat_live`, and the new run is created with that id.
-- A run with that id whose parent session's external id differs from the
-  caller parent's external id: refuse `invocation_conflict`.
+- A run with that id whose parent session is missing, lacks
+  `source="pipeline"`, has another `project_id`, or has another external
+  id than the caller: refuse `invocation_conflict`.
 - A run with that id that has `started_at` set: return
   `success: True`, `adopted: True`, its `run_id` and `status`, and the
   `workspace`, `tab_ref` and `pane_ref` of the workspace pane bound to its
@@ -576,7 +599,8 @@ Consumers unchanged:
 **Acceptance:**
 
 - 7.2.1 - A step's `invocation_id` is the same before and after a restart,
-  and two steps of one execution get different ids. test:
+  two steps of one execution get different ids, and a step whose id is
+  `invocation_id` does not override the reserved name. test:
   `tests/workflows/test_pipeline_invocation_id.py::test_invocation_id_is_stable_per_step`.
 - 7.2.2 - A placed spawn from a pipeline child whose `reserved_run_id` names
   a started run returns that run with `adopted: true` and makes no
@@ -589,10 +613,15 @@ Consumers unchanged:
 - 7.2.4 - A run with the id that was prepared and never started, or failed
   before start, refuses `seat_launch_unsettled` and launches nothing. test:
   `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_unstarted_run_refuses`.
-- 7.2.5 - A run with the id under another execution refuses
-  `invocation_conflict`. A replacement child with the same external id
-  adopts. A non-pipeline caller passing `reserved_run_id` keeps the
-  reviewer-internal refusal. test:
+- 7.2.5 - A non-pipeline caller that names a real pipeline child as
+  `parent_session_id` keeps the reviewer-internal refusal and reaches no
+  lookup. A pipeline caller refuses `invocation_unauthorized` when its
+  declared parent is another session, its execution is missing, not
+  running or in another project, or the id is not one of its steps'
+  invocation ids. A run with the id under another execution or another
+  project refuses `invocation_conflict`. A replacement child with the
+  same external id adopts. The queued task-close reviewer spawn is
+  unchanged. test:
   `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_invocation_authority`.
 
 ### 7.3 Cron pipeline launch requires a cron session [category: code]
@@ -693,7 +722,6 @@ a `run_id` line per step that has one.
 
 Consumers unchanged:
 - `src/gobby/cli/pipelines.py` — no-edit-reason: it registers the `runs` command group, and `show_pipeline_run` keeps its name and options.
-- `tests/skills/test_reference_library.py` — no-edit-reason: it references `resume_pipeline` by name, and the name and signature are unchanged.
 
 Tests run the real `PipelineExecutor` against the isolated test hub with a
 stub `gobby-agents` proxy. The stub records each call's arguments, ambient
@@ -747,6 +775,7 @@ Targets:
 - `src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md`
 - `src/gobby/install/shared/skills/gobby/references/pipelines/overview.md`
 - `src/gobby/install/shared/skills/gobby/catalog.json::*` — scope-reason: register the runbooks topic beside the other pipelines references
+- `tests/skills/test_reference_library.py::*` — scope-reason: add test_pipelines_runbooks_topic_is_registered beside the existing reference cases
 
 **Research context:** `docs/guides/pipelines.md` gains a "Runbooks" section
 covering Decisions 1–14: the tag, the bundled definition and its inputs, the
@@ -1237,3 +1266,11 @@ Do not run the full pytest suite.
   reads the launch snapshot before any claim or reset (7.1, 8.1.5). 9.1
   registers the runbooks topic in the catalog and overview. 6.2.2 covers
   every live session status.
+- 2026-09-30: Adversary round on 20efd6d. INVOCATION_AUTHORITY: the
+  widened `reserved_run_id` path authorizes the ambient pipeline caller,
+  its running same-project execution and a snapshot step's invocation id
+  before any lookup, and reconciliation checks the original run's parent
+  source, project and external id (7.2, 7.2.5). TARGET_COMPLETENESS: 7.2
+  targets `_RESERVED_CONTEXT_KEYS` and pins collision protection (7.2.1),
+  and 9.1 targets `tests/skills/test_reference_library.py`, removed from
+  7.1 and 8.1 Consumers unchanged.
