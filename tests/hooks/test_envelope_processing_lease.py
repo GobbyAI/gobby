@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from threading import Event
 from typing import Any
 
 import psutil
@@ -218,3 +220,97 @@ def test_mark_processed_without_token_does_not_override_foreign_lease(tmp_path: 
     assert record.get("status") == "processing"
     assert record.get("owner_token") == token
     assert record.get("response") is None
+
+
+@pytest.mark.parametrize("operation", ["renew", "finalize", "reject_release", "terminal_release"])
+def test_marker_mutation_keeps_claim_exclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+    processed_dir = tmp_path / "processed"
+    envelope_id = "n-0000000000001-renew-race"
+    token = claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    assert token is not None
+    response = {"continue": True, "decision": "allow"}
+    if operation == "terminal_release":
+        assert envelope_dedupe.finalize_envelope_processed(
+            envelope_id, token, response=response, processed_dir=processed_dir
+        )
+    marker = next(processed_dir.glob("*.json"))
+    read_started = Event()
+    resume_renewal = Event()
+    claim_started = Event()
+    original_read_text = Path.read_text
+
+    def pause_marker_read(
+        path: Path, encoding: str | None = None, errors: str | None = None
+    ) -> str:
+        content = original_read_text(path, encoding=encoding, errors=errors)
+        if path.parent == processed_dir and not read_started.is_set():
+            read_started.set()
+            assert resume_renewal.wait(5), "renewal was never resumed"
+        return content
+
+    def duplicate_claim() -> str | None:
+        claim_started.set()
+        return claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+
+    def mutate_marker() -> bool:
+        if operation == "renew":
+            return envelope_dedupe.renew_envelope_processing_lease(
+                envelope_id, token, processed_dir=processed_dir
+            )
+        if operation == "finalize":
+            return envelope_dedupe.finalize_envelope_processed(
+                envelope_id, token, response=response, processed_dir=processed_dir
+            )
+        return release_envelope_processing_claim(
+            envelope_id,
+            owner_token="not-the-owner" if operation == "reject_release" else None,
+            processed_dir=processed_dir,
+        )
+
+    monkeypatch.setattr(Path, "read_text", pause_marker_read)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        renewal = executor.submit(mutate_marker)
+        try:
+            assert read_started.wait(5), "renewal never read its lease"
+            duplicate = executor.submit(duplicate_claim)
+            assert claim_started.wait(5), "duplicate claim never started"
+            assert marker.exists(), "renewal exposed an unclaimed envelope"
+        finally:
+            resume_renewal.set()
+        assert renewal.result(timeout=5) is (operation in {"renew", "finalize"})
+        assert duplicate.result(timeout=5) is None
+    record = _marker_record(processed_dir, envelope_id)
+    if operation in {"finalize", "terminal_release"}:
+        assert record["status"] == "processed"
+        assert record["response"] == response
+    else:
+        assert record["owner_token"] == token
+        assert record["status"] == "processing"
+
+
+def test_failed_renewal_preserves_claim_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    processed_dir = tmp_path / "processed"
+    envelope_id = "n-0000000000001-renew-failure"
+    token = claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    assert token is not None
+    original = _marker_record(processed_dir, envelope_id)
+
+    def fail_replace(source: Path, destination: Path) -> None:
+        raise OSError("replace failed")
+
+    with monkeypatch.context() as context:
+        context.setattr(os, "replace", fail_replace)
+        with pytest.raises(OSError, match="replace failed"):
+            envelope_dedupe.renew_envelope_processing_lease(
+                envelope_id, token, processed_dir=processed_dir
+            )
+    assert _marker_record(processed_dir, envelope_id) == original
+    assert list(processed_dir.glob("*.tmp")) == []
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is None
+    assert envelope_dedupe.renew_envelope_processing_lease(
+        envelope_id, token, processed_dir=processed_dir
+    )

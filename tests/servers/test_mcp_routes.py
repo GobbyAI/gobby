@@ -31,7 +31,7 @@ from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -4540,11 +4540,14 @@ class TestHooksEndpoints:
             "retry_kind": "ingress_backpressure",
             "reason": reason,
         }
-        # The retry path releases for the caller, then request teardown
-        # releases again as a CAS on the lease this execution owned.
-        assert release.call_args_list[0] == call(envelope_id)
+        # Retry and teardown must both release only this execution's lease.
         assert len(release.call_args_list) == 2
-        assert set(release.call_args_list[1].kwargs) == {"owner_token"}
+        retry_release, teardown_release = release.call_args_list
+        assert retry_release.args == (envelope_id,)
+        assert set(retry_release.kwargs) == {"owner_token"}
+        assert isinstance(retry_release.kwargs["owner_token"], str)
+        assert retry_release.kwargs["owner_token"]
+        assert retry_release == teardown_release
         mark_processed.assert_not_called()
 
     @pytest.mark.parametrize(

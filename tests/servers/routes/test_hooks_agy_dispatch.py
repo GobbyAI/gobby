@@ -11,7 +11,7 @@ from concurrent.futures import Future
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import httpx
@@ -787,11 +787,14 @@ class TestAgyAdapterTimeoutRetry:
             "retry_kind": "adapter_timeout",
         }
         mark_processed.assert_not_called()
-        # The retry path releases for the caller, then request teardown
-        # releases again as a CAS on the lease this execution owned.
-        assert release.call_args_list[0] == call("env-agy-timeout")
+        # Timeout and teardown must both release only this execution's lease.
         assert len(release.call_args_list) == 2
-        assert set(release.call_args_list[1].kwargs) == {"owner_token"}
+        retry_release, teardown_release = release.call_args_list
+        assert retry_release.args == ("env-agy-timeout",)
+        assert set(retry_release.kwargs) == {"owner_token"}
+        assert isinstance(retry_release.kwargs["owner_token"], str)
+        assert retry_release.kwargs["owner_token"]
+        assert retry_release == teardown_release
 
     def test_ingress_retry_includes_retry_kind_discriminator(
         self,

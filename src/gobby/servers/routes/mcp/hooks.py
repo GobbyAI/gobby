@@ -479,7 +479,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 inc_counter("hooks_failed_total")
                 released = bool(
                     envelope_id
-                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                    and owner_token
+                    and await asyncio.to_thread(
+                        release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                    )
                 )
                 logger.warning(
                     "Retrying hook after startup-claim preflight timeout",
@@ -553,7 +556,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 released = bool(
                     envelope_id
-                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                    and owner_token
+                    and await asyncio.to_thread(
+                        release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                    )
                 )
                 logger.warning(
                     "Retrying managed hook until durable run identity is available",
@@ -583,7 +589,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 released = bool(
                     envelope_id
-                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                    and owner_token
+                    and await asyncio.to_thread(
+                        release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                    )
                 )
                 logger.warning(
                     "Retrying hook after daemon-not-ready gate",
@@ -678,8 +687,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     if not live_worker:
                         released = bool(
                             envelope_id
+                            and owner_token
                             and await asyncio.to_thread(
-                                release_envelope_processing_claim, envelope_id
+                                release_envelope_processing_claim,
+                                envelope_id,
+                                owner_token=owner_token,
                             )
                         )
                     logger.warning(
