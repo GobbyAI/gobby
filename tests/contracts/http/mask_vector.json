@@ -1,0 +1,121 @@
+[
+  {
+    "name": "nested_object",
+    "input": {
+      "a": {
+        "b": {
+          "c": 1,
+          "d": 2
+        }
+      }
+    },
+    "mask": [
+      "/a/b/c"
+    ],
+    "expected": {
+      "a": {
+        "b": {
+          "c": "@mask@",
+          "d": 2
+        }
+      }
+    }
+  },
+  {
+    "name": "array_index",
+    "input": {
+      "items": [
+        {
+          "id": 1
+        },
+        {
+          "id": 2
+        }
+      ]
+    },
+    "mask": [
+      "/items/1/id"
+    ],
+    "expected": {
+      "items": [
+        {
+          "id": 1
+        },
+        {
+          "id": "@mask@"
+        }
+      ]
+    }
+  },
+  {
+    "name": "escapes",
+    "input": {
+      "a/b": 1,
+      "m~n": 2,
+      "k": 3
+    },
+    "mask": [
+      "/a~1b",
+      "/m~0n"
+    ],
+    "expected": {
+      "a/b": "@mask@",
+      "m~n": "@mask@",
+      "k": 3
+    }
+  },
+  {
+    "name": "absent_field",
+    "input": {
+      "a": {
+        "b": 1
+      }
+    },
+    "mask": [
+      "/a/missing",
+      "/nope/deeper",
+      "/a/b/c"
+    ],
+    "expected": {
+      "a": {
+        "b": 1
+      }
+    }
+  },
+  {
+    "name": "secret_redaction",
+    "input": {
+      "proof": "p",
+      "outer": {
+        "dsn": "postgresql://x",
+        "token": "t",
+        "keep": "k",
+        "list": [
+          {
+            "api_key": "q",
+            "port": 1
+          }
+        ]
+      },
+      "issued_at": 5
+    },
+    "mask": [
+      "/issued_at"
+    ],
+    "expected": {
+      "proof": "@secret@",
+      "outer": {
+        "dsn": "@secret@",
+        "token": "@secret@",
+        "keep": "k",
+        "list": [
+          {
+            "api_key": "@secret@",
+            "port": 1
+          }
+        ]
+      },
+      "issued_at": "@mask@"
+    }
+  }
+]

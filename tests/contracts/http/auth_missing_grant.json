@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "name": "auth_missing_grant",
+  "family": "auth",
+  "credential": "operator",
+  "request": {
+    "method": "POST",
+    "path": "/api/embeddings",
+    "query": {},
+    "headers": {},
+    "body": {
+      "input": [
+        "hi"
+      ]
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": "Request rejected",
+      "code": "missing_grant"
+    }
+  },
+  "mask": []
+}
