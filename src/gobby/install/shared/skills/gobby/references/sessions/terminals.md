@@ -34,6 +34,13 @@ workflow. It records dirty-file state for edit detection; do not recapture to hi
 changes or bypass task evidence. For waiting on output, load the waits topic and
 use the run-based primitive rather than repeating snapshots.
 
+Before a directed seat pause, such as a CLI update, a root terminal operator calls
+`hold_session_claims(session_id, reason)` on a same-machine seat so the claim
+sweep does not treat the seat's exit as a death. The hold survives status writes
+and clears when revival proves the seat resumed, on `release_session_claims_hold`,
+or at the returned `expires_at` (the revival horizon). Nothing places it
+implicitly.
+
 Guide: [Terminal tools](../../../../../../../../docs/guides/sessions.md#terminal-tools).
 
 _Last verified: 2026-09-21_

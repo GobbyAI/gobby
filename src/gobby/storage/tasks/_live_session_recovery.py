@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.sessions.operator_claim_hold import is_operator_claim_held
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
@@ -88,6 +89,7 @@ async def recover_expired_live_session_claims(
         if session is not None and (
             session.status in _LIVE_OWNER_STATUSES
             or is_contestable_terminal_expiry(session, variables)
+            or is_operator_claim_held(variables)
         ):
             # Recovery costs more here than a claim release does: a dirty task is
             # escalated and _clear_claim_variables pops the attribution #20789

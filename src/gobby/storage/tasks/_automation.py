@@ -16,6 +16,7 @@ from gobby.sessions.contested_expiry import (
     CONTESTED_TERMINAL_EXPIRY_VARIABLE,
     contested_expiry_stamp,
 )
+from gobby.sessions.operator_claim_hold import OPERATOR_CLAIM_HOLD_VARIABLE
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions._constants import (
     LIVE_SESSION_STATUS_ORDER,
@@ -181,6 +182,13 @@ def release_task_claim(
             contested_expiry_stamp(revival_cutoff),
             CONTESTED_TERMINAL_EXPIRY_VARIABLE,
             contested_expiry_stamp(now),
+            OPERATOR_CLAIM_HOLD_VARIABLE,
+            OPERATOR_CLAIM_HOLD_VARIABLE,
+            CONTESTED_EXPIRY_STAMP_PATTERN,
+            OPERATOR_CLAIM_HOLD_VARIABLE,
+            contested_expiry_stamp(revival_cutoff),
+            OPERATOR_CLAIM_HOLD_VARIABLE,
+            contested_expiry_stamp(now),
         )
     )
 
@@ -246,6 +254,19 @@ def release_task_claim(
                       -- the pattern is what makes that comparison chronological:
                       -- fixed-width UTC only, the same set the Python shield
                       -- parses. Anything else reads as no marker on both sides.
+                      AND sv.variables -> %s ->> 'created_at' ~ %s
+                      AND sv.variables -> %s ->> 'created_at' >= %s
+                      AND sv.variables -> %s ->> 'created_at' <= %s
+               )
+               AND NOT EXISTS (
+                   -- An operator parked this seat on purpose (a directed CLI
+                   -- update, say), so the expiry that follows its exit is not
+                   -- a death. Status writes leave the hold alone; release or a
+                   -- proven resume clears it, and the revival horizon bounds it.
+                   SELECT 1
+                     FROM session_variables sv
+                    WHERE sv.session_id = tasks.claimed_by_session_id
+                      AND jsonb_typeof(sv.variables -> %s) = 'object'
                       AND sv.variables -> %s ->> 'created_at' ~ %s
                       AND sv.variables -> %s ->> 'created_at' >= %s
                       AND sv.variables -> %s ->> 'created_at' <= %s

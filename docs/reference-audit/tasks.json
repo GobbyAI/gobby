@@ -482,6 +482,22 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
+      "tool": "record_close_receipt",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/task_commits.py",
+        "symbol": "record_close_receipt"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; role and ownership checks apply"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
       "tool": "close_task",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._actions import register_action_tools
+from gobby.mcp_proxy.tools.sessions._claim_hold import register_claim_hold_tools
 from gobby.mcp_proxy.tools.sessions._commits import register_commits_tools
 from gobby.mcp_proxy.tools.sessions._crud import register_crud_tools
 from gobby.mcp_proxy.tools.sessions._handoff import register_handoff_tools
@@ -107,6 +108,10 @@ def create_session_messages_registry(
             db=db,
             worktree_manager=worktree_manager,
         )
+
+    # --- Operator claim hold (directed seat parking) ---
+    if session_manager is not None and db is not None:
+        register_claim_hold_tools(registry, session_manager, db)
 
     # --- Transcript Archive Tools ---
     if session_manager is not None:
