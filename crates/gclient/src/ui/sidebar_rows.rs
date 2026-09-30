@@ -16,7 +16,7 @@ use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar::machine_admits;
 use crate::ui::status::{control_indicator, state_dot};
 use crate::ui::text::{display_width, truncate_end};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use unicode_width::UnicodeWidthChar;
 
@@ -583,7 +583,7 @@ pub(crate) fn row_second_line_with_travel<'a>(
             } else {
                 spans.push(Span::styled(
                     truncate_end("No assigned task", budget),
-                    Style::default().fg(chrome.palette.overlay1),
+                    Style::default().fg(quiet_fg(row, &chrome.palette)),
                 ));
             }
         }
@@ -605,9 +605,20 @@ pub fn row_third_line<'a>(row: &'a SidebarRow, width: u16, chrome: &Chrome) -> L
         // it sits a neutral tier below the title so no state hue is borrowed.
         Span::styled(
             truncate_end(&row.model_slug, budget),
-            Style::default().fg(chrome.palette.overlay1),
+            Style::default().fg(quiet_fg(row, &chrome.palette)),
         ),
     ])
+}
+
+/// A row's quiet text: `overlay1` on the sidebar ground, `subtext0` on an
+/// active (`surface0`) or selected (`surface1`) fill, where `overlay1` falls
+/// under AA.
+fn quiet_fg(row: &SidebarRow, p: &Palette) -> Color {
+    if row.selected || row.active {
+        p.subtext0
+    } else {
+        p.overlay1
+    }
 }
 
 /// herdr `resolved_token_spans`, reduced to the glyph + title + trailing

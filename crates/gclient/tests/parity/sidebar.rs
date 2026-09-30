@@ -389,7 +389,9 @@ parity_tests! {
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
-            assert_eq!(agent_style.fg, Some(p.overlay1));
+            // On the active fill the quiet line steps up to subtext0, since
+            // overlay1 on surface0 falls under AA.
+            assert_eq!(agent_style.fg, Some(p.subtext0));
             assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
             assert_eq!(agent_style.bg, Some(p.surface0));

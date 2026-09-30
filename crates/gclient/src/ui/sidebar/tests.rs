@@ -283,3 +283,87 @@ fn list_scroll_clamps_to_the_last_page() {
     assert_eq!(metrics.viewport_rows, 4);
     assert!(!should_show_scrollbar(list_metrics(3, 4, 0)));
 }
+
+/// Every drawn cell of an agent's quiet lines (`No assigned task`, the
+/// model) meets AA against the fill it actually sits on: the ground, the
+/// active fill and the selected fill, in dark, light and monochrome.
+#[test]
+fn agent_quiet_lines_meet_aa_on_every_row_fill() {
+    use crate::theme::{contrast_ratio, ThemeKind};
+    use ratatui::style::Color;
+
+    let rgb = |color: Color, ground: Color| match (color, ground) {
+        (Color::Rgb(r, g, b), _) | (Color::Reset, Color::Rgb(r, g, b)) => (r, g, b),
+        other => panic!("not a palette colour: {other:?}"),
+    };
+    let row = |id: &str, active: bool, selected: bool| SidebarRow {
+        id: id.into(),
+        definition: "Codex".into(),
+        model_slug: "gpt-6-sol".into(),
+        kind: RowKind::Agent,
+        active,
+        selected,
+        ..SidebarRow::default()
+    };
+    let rows = [
+        row("plain", false, false),
+        row("active", true, false),
+        row("selected", false, true),
+    ];
+    let mut light = Chrome::dark();
+    light.set_theme(ThemeKind::Light);
+    let mut mono_dark = Chrome::dark();
+    mono_dark.prefs.monochrome = true;
+    mono_dark.set_theme(ThemeKind::Dark);
+    let mut mono_light = Chrome::dark();
+    mono_light.prefs.monochrome = true;
+    mono_light.set_theme(ThemeKind::Light);
+    for chrome in [Chrome::dark(), light, mono_dark, mono_light] {
+        let p = &chrome.palette;
+        let area = Rect::new(0, 0, 26, 12);
+        let mut terminal = Terminal::new(TestBackend::new(26, 12)).unwrap();
+        let mut hits = SidebarHits::default();
+        terminal
+            .draw(|frame| {
+                render_section_rows(
+                    frame,
+                    area,
+                    SidebarSection::Agents,
+                    &rows,
+                    &chrome,
+                    &mut hits,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = screen(&terminal);
+        let mut checked = [0usize; 3];
+        for (y, line) in text.lines().enumerate() {
+            let quiet = line.trim();
+            if quiet != "No assigned task" && quiet != "gpt-6-sol" {
+                continue;
+            }
+            let row_y = u16::try_from(y).unwrap();
+            let fill = hits
+                .agents
+                .iter()
+                .position(|(_, rect)| (rect.y..rect.bottom()).contains(&row_y))
+                .expect("a quiet line belongs to a row");
+            for x in 0..area.width {
+                let cell = &buffer[(x, row_y)];
+                if cell.symbol().trim().is_empty() {
+                    continue;
+                }
+                let ratio = contrast_ratio(rgb(cell.fg, p.panel_bg), rgb(cell.bg, p.panel_bg));
+                assert!(
+                    ratio >= 4.5,
+                    "{:?} {} row {quiet:?}: {ratio:.2}:1",
+                    chrome.theme.kind,
+                    rows[fill].id,
+                );
+            }
+            checked[fill] += 1;
+        }
+        assert_eq!(checked, [2, 2, 2], "both quiet lines of every row drawn");
+    }
+}
