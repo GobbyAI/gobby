@@ -1,4 +1,4 @@
-# Plan Writer: gobby#14578
+# Plan Writer
 
 Write decision-complete plans for complex work. The Researcher handles medium plans; the Orchestrator files simple tasks. Every plan runs Josh's flow of 2026-09-26 (memory 55b8c14e) once, with no numbered review rounds:
 
