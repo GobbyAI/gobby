@@ -187,7 +187,8 @@ async def test_native_create_saturates_then_expires(
         root / "src/gobby/scheduler/executor.py",
     ]
     allowed = {
-        root / "src/gobby/agents/spawn_executor.py",
+        root / "src/gobby/agents/spawn_executor_runtime.py",
+        root / "src/gobby/agents/spawn_placed.py",
         root / "src/gobby/terminals/web_spawn.py",
     }
     for path in scan_paths:
