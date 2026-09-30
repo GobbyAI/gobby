@@ -3964,17 +3964,34 @@ class TestHooksEndpoints:
         from gobby.hooks.phase_timing import HookPhaseTimings
 
         wait_seconds = 0.2
+
+        class WorkerClock:
+            wall = 100.0
+
+            def perf_counter(self) -> float:
+                return self.wall
+
+            def thread_time(self) -> float:
+                return 7.0
+
+        clock = WorkerClock()
+
+        def wait_without_cpu(*_args: object) -> dict[str, object]:
+            clock.wall += wait_seconds
+            return {}
+
         adapter = MagicMock()
-        adapter.handle_native.side_effect = lambda *_args: time.sleep(wait_seconds) or {}
+        adapter.handle_native.side_effect = wait_without_cpu
         timings = HookPhaseTimings()
 
-        await run_adapter_hook(
-            adapter, {}, MagicMock(), timeout_seconds=None, phase_timings=timings
-        )
+        with patch("gobby.hooks.adapter_execution.time", clock):
+            await run_adapter_hook(
+                adapter, {}, MagicMock(), timeout_seconds=None, phase_timings=timings
+            )
 
         breakdown = timings.breakdown()
-        assert breakdown["adapter_worker"] >= wait_seconds
-        assert breakdown["adapter_worker_cpu"] < wait_seconds / 4
+        assert breakdown["adapter_worker"] == pytest.approx(wait_seconds)
+        assert breakdown["adapter_worker_cpu"] == 0.0
 
     @pytest.mark.asyncio
     async def test_adapter_executor_runs_sixteen_sessions_concurrently(self) -> None:
@@ -5184,7 +5201,7 @@ class TestEnvelopeOwnershipLease:
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         envelope_id = "n-0000000000001-dead-lease"
         processed_dir = gobby_home / "hooks" / "inbox" / "processed"
-        assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+        assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
         aged = (
             datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 5)
         ).isoformat()

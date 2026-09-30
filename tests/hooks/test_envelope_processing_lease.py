@@ -48,11 +48,13 @@ def _rewrite_marker(processed_dir: Path, envelope_id: str, **updates: object) ->
 def test_claim_writes_owner_token_and_process_identity(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-lease"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    claimed_token = claim_envelope_processing(envelope_id, processed_dir=processed_dir)
 
     record = _marker_record(processed_dir, envelope_id)
     token = record.get("owner_token")
     assert isinstance(token, str) and token
+    assert claimed_token == token
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is None
     assert record.get("owner_pid") == os.getpid()
     create_time = record.get("owner_create_time")
     assert isinstance(create_time, float)
@@ -66,7 +68,7 @@ def test_claim_writes_owner_token_and_process_identity(tmp_path: Path) -> None:
 def test_clear_stale_retains_live_owner_past_replay_grace(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-live"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     aged = (datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 30)).isoformat()
     _rewrite_marker(
         processed_dir,
@@ -84,7 +86,7 @@ def test_clear_stale_retains_live_owner_past_replay_grace(tmp_path: Path) -> Non
 def test_clear_stale_reclaims_expired_lease_when_owner_is_dead(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-dead"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     aged = (datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 30)).isoformat()
     _rewrite_marker(
         processed_dir,
@@ -107,7 +109,7 @@ def test_finalize_processed_compare_and_set_rejects_losing_owner(tmp_path: Path)
 
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-cas"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     token = str(_marker_record(processed_dir, envelope_id)["owner_token"])
 
     assert (
@@ -155,7 +157,7 @@ def test_finalize_processed_compare_and_set_rejects_losing_owner(tmp_path: Path)
 def test_release_compare_and_set_rejects_losing_owner(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-release-cas"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     token = _marker_record(processed_dir, envelope_id).get("owner_token")
     assert isinstance(token, str) and token
 
@@ -186,7 +188,7 @@ def test_renew_lease_extends_expiry_for_matching_owner(tmp_path: Path) -> None:
 
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-renew"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     original = _marker_record(processed_dir, envelope_id)
     token = str(original["owner_token"])
     original_expiry = str(original["lease_expires_at"])
@@ -203,7 +205,7 @@ def test_renew_lease_extends_expiry_for_matching_owner(tmp_path: Path) -> None:
 def test_mark_processed_without_token_does_not_override_foreign_lease(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-no-token"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     token = _marker_record(processed_dir, envelope_id).get("owner_token")
     assert isinstance(token, str) and token
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -18,6 +19,7 @@ from gobby.hooks.envelope_dedupe import (
     claim_envelope_processing,
     read_envelope_marker,
 )
+from gobby.hooks.phase_timing import timed_to_thread
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     SUPPORTED_HOOK_RESPONSE_CAPABILITY,
@@ -106,7 +108,7 @@ async def test_cancelled_execution_stops_renewal_and_releases_the_claim(
     assert renewal_tasks[0].cancelled()
     # The claim went with the execution: a replay can claim the envelope again.
     assert read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir) is None
-    assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is not None
 
 
 def test_finalized_marker_survives_request_teardown(
@@ -135,7 +137,7 @@ def test_finalized_marker_survives_request_teardown(
     assert len(renewal_tasks) == 1
     assert renewal_tasks[0].done()
     # Processed is terminal: the envelope cannot be claimed for a second run.
-    assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is False
+    assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is None
 
 
 def test_claim_release_reports_executor_queue_apart_from_work(
@@ -187,8 +189,17 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
     server = _server(session_storage)
     lookup_seconds = 0.05
 
+    class LookupClock:
+        # Real wall time plus the lookup's controlled cost; phase timing reads it.
+        offset = 0.0
+
+        def perf_counter(self) -> float:
+            return time.perf_counter() + self.offset
+
+    clock = LookupClock()
+
     def slow_terminal_response(envelope_id: str) -> None:
-        time.sleep(lookup_seconds)
+        clock.offset += lookup_seconds
 
     with (
         TestClient(server.app) as client,
@@ -202,6 +213,7 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
         )
         with (
             patch.object(hooks_route, "envelope_terminal_response", slow_terminal_response),
+            patch("gobby.hooks.phase_timing.time", clock),
             patch.object(hooks_route, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
             patch.object(hooks_route.logger, "warning") as warning,
         ):
@@ -221,3 +233,43 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
     assert breakdown["envelope_claim"] >= (
         breakdown["envelope_claim_queue"] + breakdown["envelope_claim_work"]
     )
+
+
+def test_fresh_envelope_claims_and_learns_its_owner_token_in_one_executor_hop(
+    session_storage: SessionManager,
+    processed_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each executor hop pays a loop resume under load; a fresh claim needs one (#23063)."""
+    server = _server(session_storage)
+    phases: list[str] = []
+    renewals: list[tuple[str, str]] = []
+    async def recording_hop(
+        phase: str, function: Callable[..., object], /, *args: object, **kwargs: object
+    ) -> object:
+        phases.append(phase)
+        return await timed_to_thread(phase, function, *args, **kwargs)
+
+    def start(envelope_id: str, owner_token: str) -> None:
+        marker = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        assert marker is not None
+        assert marker["owner_token"] == owner_token
+        renewals.append((envelope_id, owner_token))
+
+    monkeypatch.setattr("gobby.servers.routes.mcp.hooks.timed_to_thread", recording_hop)
+    monkeypatch.setattr(hooks_route, "start_envelope_lease_renewal", start)
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        adapter = MagicMock()
+        adapter.handle_native.return_value = {"continue": True}
+        adapter_cls.return_value = adapter
+        response = client.post(
+            "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
+        )
+
+    assert response.status_code == 200
+    assert phases.count("envelope_claim") == 1
+    assert [envelope_id for envelope_id, _ in renewals] == [ENVELOPE_ID]

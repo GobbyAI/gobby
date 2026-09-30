@@ -175,10 +175,14 @@ def clear_stale_envelope_processing_marker(
     return True
 
 
-def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
-    """Atomically claim first processing rights for an envelope ID."""
+def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = None) -> str | None:
+    """Atomically claim first processing rights; return the lease owner token written.
+
+    Returning the token saves the caller a second executor hop to read it back
+    (#23063), and ties lease renewal to this claim rather than a later re-read.
+    """
     if not envelope_id:
-        return False
+        return None
 
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -187,6 +191,7 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
         pid, create_time = _owner_process_identity()
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         pid, create_time = os.getpid(), time.time()
+    owner_token = str(uuid4())
     try:
         with marker.open("x", encoding="utf-8") as fh:
             fh.write(
@@ -195,7 +200,7 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
                         "envelope_id": envelope_id,
                         "claimed_at": now.isoformat(),
                         "status": "processing",
-                        "owner_token": str(uuid4()),
+                        "owner_token": owner_token,
                         "owner_pid": pid,
                         "owner_create_time": create_time,
                         "renewed_at": now.isoformat(),
@@ -206,21 +211,8 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
                 + "\n"
             )
     except FileExistsError:
-        return False
-    return True
-
-
-def envelope_processing_owner_token(
-    envelope_id: str,
-    *,
-    processed_dir: Path | None = None,
-) -> str | None:
-    """Return the live processing lease token for an envelope, if present."""
-    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if record is None or record.get("status") != "processing":
         return None
-    token = record.get("owner_token")
-    return token if isinstance(token, str) and token else None
+    return owner_token
 
 
 def renew_envelope_processing_lease(

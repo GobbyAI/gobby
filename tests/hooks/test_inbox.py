@@ -820,11 +820,11 @@ def test_compute_sleep_seconds_clamps_negative_jitter() -> None:
 def test_release_envelope_processing_claim_allows_retry(tmp_path: Path) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-retry"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
 
     assert release_envelope_processing_claim(envelope_id, processed_dir=processed_dir) is True
     assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
 
 
 def test_release_envelope_processing_claim_preserves_finalized_or_absent_marker(
@@ -832,7 +832,7 @@ def test_release_envelope_processing_claim_preserves_finalized_or_absent_marker(
 ) -> None:
     processed_dir = tmp_path / "processed"
     envelope_id = "n-0000000000001-finalized"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     token = read_envelope_marker(envelope_id, processed_dir=processed_dir)
     assert token is not None
     owner_token = token.get("owner_token")
@@ -893,7 +893,7 @@ async def test_below_floor_quarantine_releases_lease_and_settles_barrier(
     envelope_id = "n-0000000000001-below-lease"
     envelope_path = _write_inbox_envelope(inbox_dir, envelope_id, _below_floor_envelope())
     processed_dir = inbox_dir / "processed"
-    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
     app = FastAPI()
 
     with patch("gobby.hooks.inbox._post_envelope", new_callable=AsyncMock) as post:

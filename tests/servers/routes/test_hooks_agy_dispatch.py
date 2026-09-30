@@ -606,9 +606,11 @@ async def test_envelope_claim_lifecycle_keeps_hook_loop_responsive(
     monkeypatch.setattr(hooks_routes, "preflight_agy_startup_claim_bounded", claim)
     monkeypatch.setattr(hooks_routes, "_run_adapter_hook", fail_adapter)
     monkeypatch.setattr(hooks_routes, "rollback_agy_startup_claim", lambda *args: None)
-    monkeypatch.setattr(hooks_routes, "envelope_processing_owner_token", lambda _id: None)
-    monkeypatch.setattr(hooks_routes, "claim_envelope_processing", lambda _id: True)
-    monkeypatch.setattr(hooks_routes, "release_envelope_processing_claim", lambda _id: True)
+    monkeypatch.setattr(hooks_routes, "claim_envelope_processing", lambda _id: "owner-1")
+    monkeypatch.setattr(hooks_routes, "start_envelope_lease_renewal", lambda *_args: None)
+    monkeypatch.setattr(
+        hooks_routes, "release_envelope_processing_claim", lambda _id, **_kwargs: True
+    )
     monkeypatch.setattr(hooks_routes, operation, blocked_io)
 
     async with httpx.AsyncClient(
@@ -669,8 +671,7 @@ async def test_timeout_finalizer_registration_keeps_hook_loop_responsive(
     monkeypatch.setattr(hooks_routes, "preflight_agy_startup_claim_bounded", claim)
     monkeypatch.setattr(hooks_routes, "_run_adapter_hook", fail_adapter)
     monkeypatch.setattr(hooks_routes, "invalidate_agy_startup_claim", lambda *args: None)
-    monkeypatch.setattr(hooks_routes, "claim_envelope_processing", lambda _id: True)
-    monkeypatch.setattr(hooks_routes, "envelope_processing_owner_token", lambda _id: "owner-1")
+    monkeypatch.setattr(hooks_routes, "claim_envelope_processing", lambda _id: "owner-1")
     monkeypatch.setattr(hooks_routes, "start_envelope_lease_renewal", lambda *_args: None)
     monkeypatch.setattr(
         adapter_execution, "schedule_adapter_timeout_finalization", blocked_registration
