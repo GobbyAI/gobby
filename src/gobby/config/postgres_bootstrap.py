@@ -50,9 +50,18 @@ def _require_present_string(data: dict[str, Any], key: str) -> str:
 def read_pending_credential_rotation(gobby_home: Path) -> PendingCredentialRotation | None:
     """Return the parser-validated pending pair, or ``None`` when no rotation is in flight."""
     data = read_bootstrap_yaml(bootstrap_path(gobby_home))
+    return pending_credential_rotation_from_mapping(data)
+
+
+def pending_credential_rotation_from_mapping(
+    data: dict[str, Any],
+) -> PendingCredentialRotation | None:
+    """Validate recovery state at both the publication and recovery boundaries."""
     raw = data.get(_PENDING_ROTATION_KEY)
     if raw is None:
         return None
+    if data.get("datastore_mode", "local") != "local":
+        raise BootstrapConfigError("pending credential rotation requires local datastore mode")
     if not isinstance(raw, dict):
         raise BootstrapConfigError(f"{_PENDING_ROTATION_KEY} must be a mapping")
     return PendingCredentialRotation(

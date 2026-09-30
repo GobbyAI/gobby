@@ -442,12 +442,19 @@ def test_pending_rotation_round_trips_and_requires_string_fields(temp_dir: Path)
     def _annotate_incomplete(data: dict[str, Any]) -> None:
         data["credential_rotation"] = {"role": "gobby"}
 
-    update_bootstrap_yaml(bootstrap_file, _annotate_incomplete)
+    before = bootstrap_file.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending credential"):
+        update_bootstrap_yaml(bootstrap_file, _annotate_incomplete)
+    assert bootstrap_file.read_bytes() == before
+    # Invalid on-disk state must also fail closed when loaded by recovery.
+    _write_bootstrap(
+        bootstrap_file, f"database_url: {database_url}\ncredential_rotation:\n  role: gobby\n"
+    )
     with pytest.raises(BootstrapConfigError, match="pending_password"):
         read_pending_credential_rotation(temp_dir)
 
 
-def test_write_postgres_defaults_clears_pending_rotation_atomically(temp_dir: Path) -> None:
+def test_write_postgres_defaults_preserves_pending_rotation(temp_dir: Path) -> None:
     def _annotate_pending_and_note(data: dict[str, Any]) -> None:
         data["credential_rotation"] = {
             "role": "gobby",
@@ -456,7 +463,8 @@ def test_write_postgres_defaults_clears_pending_rotation_atomically(temp_dir: Pa
         }
         data["cosmetic_note"] = "keep me"
 
-    """The finalize compare-and-set writes the new DSN and drops the pair together."""
+    """Ordinary defaults writers cannot perform recovery's credential transition."""
+    from gobby.config.bootstrap import BootstrapConfigError
     from gobby.config.bootstrap_io import update_bootstrap_yaml
     from gobby.config.postgres_bootstrap import write_postgres_defaults
 
@@ -470,17 +478,18 @@ def test_write_postgres_defaults_clears_pending_rotation_atomically(temp_dir: Pa
         _annotate_pending_and_note,
     )
 
-    write_postgres_defaults(
-        gobby_home=temp_dir,
-        database_url="postgresql://gobby:pending-placeholder@localhost:60891/gobby",
-        clear_credential_rotation=True,
-    )
+    before = bootstrap_file.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending credential"):
+        write_postgres_defaults(
+            gobby_home=temp_dir,
+            database_url="postgresql://gobby:pending-placeholder@localhost:60891/gobby",
+            clear_credential_rotation=True,
+        )
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
-    assert (
-        persisted["database_url"] == "postgresql://gobby:pending-placeholder@localhost:60891/gobby"
-    )
-    assert "credential_rotation" not in persisted
+    assert bootstrap_file.read_bytes() == before
+    assert persisted["database_url"] == "postgresql://gobby:old-secret@localhost:60891/gobby"
+    assert persisted["credential_rotation"]["pending_password"] == "pending-placeholder"
     assert persisted["cosmetic_note"] == "keep me"
 
 

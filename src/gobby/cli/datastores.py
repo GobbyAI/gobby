@@ -22,19 +22,19 @@ from psycopg_pool import PoolTimeout
 
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import (
+    publish_bootstrap_yaml_locked,
     read_bootstrap_yaml,
-    update_bootstrap_yaml,
     write_bootstrap_yaml,
 )
 from gobby.config.postgres_bootstrap import (
     read_pending_credential_rotation,
-    write_postgres_defaults,
 )
 from gobby.storage.hub.async_ops import (
     CommittedCleanupError,
     IndeterminateCommitError,
     run_bounded_db,
 )
+from gobby.utils.durable_file import exclusive_file_lock
 
 from .installers.falkor import rotate_falkordb_password
 from .installers.managed_services_lock import ManagedServicesLockError, managed_services_lock
@@ -511,47 +511,67 @@ def _observe_hub_alter(
 
 def _finalize_postgres_rotation(
     *,
-    gobby_home: Path,
     bootstrap_file: Path,
-    role: str,
     new_url: str,
-    redaction_secrets: tuple[str, ...],
+    prepared: dict[str, Any],
 ) -> None:
     """Publish the new DSN and drop the pending pair as one compare-and-set."""
     try:
-        write_postgres_defaults(
-            gobby_home=gobby_home,
-            database_url=new_url,
-            clear_credential_rotation=True,
-        )
+        completed = dict(prepared)
+        completed["database_url"] = new_url
+        completed.pop("credential_rotation", None)
+        publish_bootstrap_yaml_locked(bootstrap_file, completed, expected_credentials=prepared)
     except (BootstrapConfigError, OSError) as exc:
-        click.echo(
-            f"phase=finalize PostgreSQL role {role!r} now uses the new password but "
-            f"{bootstrap_file} was not updated: "
-            f"{_rotation_failure_detail(exc)}",
-            err=True,
-        )
-        click.echo(
-            f"Set database_url in {bootstrap_file} to: "
-            f"{_redact_secrets(new_url, redaction_secrets)}",
-            err=True,
-        )
-        click.echo(
-            "Resume with `gobby datastores rotate-password postgres`; the pending "
-            "credential pair is still on disk.",
-            err=True,
-        )
-        raise click.ClickException("bootstrap.yaml update failed after the role changed") from exc
+        # A rename may have taken effect before fsync/readback failed. A reread
+        # selects the state to repair; only another durable publication proves it.
+        try:
+            visible = read_bootstrap_yaml(bootstrap_file)
+            actual_credentials = (visible.get("database_url"), visible.get("credential_rotation"))
+            if actual_credentials not in (
+                (prepared.get("database_url"), prepared.get("credential_rotation")),
+                (new_url, None),
+            ):
+                raise BootstrapConfigError("credential state changed during publication")
+            restored = dict(visible)
+            restored["database_url"] = prepared["database_url"]
+            restored["credential_rotation"] = prepared["credential_rotation"]
+            publish_bootstrap_yaml_locked(bootstrap_file, restored, expected_credentials=visible)
+        except (BootstrapConfigError, OSError) as restore_error:
+            raise click.ClickException(
+                "phase=finalize indeterminate-publication; durable pending restoration "
+                "could not be proved. Re-run `gobby datastores rotate-password postgres` "
+                "to resume if pending is present; otherwise reconcile the canonical "
+                "bootstrap before retrying. "
+                f"(publication={_rotation_failure_detail(exc)}, "
+                f"restoration={_rotation_failure_detail(restore_error)})"
+            ) from None
+        raise click.ClickException(
+            "phase=finalize pending-restored; COMMIT was observed and the pending pair "
+            "was durably restored. Re-run `gobby datastores rotate-password postgres` "
+            f"to resume. ({_rotation_failure_detail(exc)})"
+        ) from None
 
 
 def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> None:
+    # Callers may hold a stale snapshot. The canonical owner is read only after
+    # the same services→sidecar lock order used by managed service transitions.
+    with managed_services_lock(gobby_home, operation="rotate PostgreSQL credentials"):
+        with exclusive_file_lock(gobby_home / "bootstrap.yaml"):
+            _rotate_postgres_password_locked(gobby_home)
+
+
+def _rotate_postgres_password_locked(gobby_home: Path) -> None:
     bootstrap_file = gobby_home / "bootstrap.yaml"
+    bootstrap = read_bootstrap_yaml(bootstrap_file)
+    if bootstrap.get("datastore_mode", "local") != "local":
+        raise click.ClickException("phase=validate credential rotation requires local mode")
     current_url = bootstrap.get("database_url")
     if not isinstance(current_url, str) or not current_url:
         raise click.ClickException(f"{bootstrap_file} has no database_url; run `gobby install`")
     target = _parse_rotation_target(current_url)
 
     pending = read_pending_credential_rotation(gobby_home)
+    prepared = dict(bootstrap)
     if pending is not None:
         # Resume: reapply the SAME intended password so a crash before COMMIT cannot
         # strand the role on a password nobody recorded.
@@ -562,30 +582,31 @@ def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> No
             )
         role = target.role
         intended_password = pending.pending_password
-        redaction_secrets = (intended_password, pending.previous_password)
     else:
         new_password = secrets.token_urlsafe(32)
         role = target.role
         previous_password = unquote(urlsplit(current_url).password or "")
         intended_password = new_password
-        redaction_secrets = (new_password, previous_password)
 
-        def _stage(data: dict[str, Any]) -> None:
-            data["credential_rotation"] = {
-                "role": role,
-                "pending_password": intended_password,
-                "previous_password": previous_password,
-            }
+        prepared["credential_rotation"] = {
+            "role": role,
+            "pending_password": intended_password,
+            "previous_password": previous_password,
+        }
 
-        # Durable pending publication precedes ALTER: a crash between here and the
-        # COMMIT leaves recovery state on disk rather than a role nobody can open.
-        try:
-            update_bootstrap_yaml(bootstrap_file, _stage)
-        except (BootstrapConfigError, OSError) as exc:
-            raise click.ClickException(
-                f"phase=prepare could not publish the pending credential pair: "
-                f"{_rotation_failure_detail(exc)}"
-            ) from exc
+    # Resume also republishes: visible pending after a failed rename/fsync is not
+    # durability evidence. ALTER starts only after this durable boundary succeeds.
+    try:
+        publish_bootstrap_yaml_locked(bootstrap_file, prepared, expected_credentials=bootstrap)
+    except (BootstrapConfigError, OSError) as exc:
+        raise click.ClickException(
+            f"phase=prepare could not publish the pending credential pair: "
+            f"{_rotation_failure_detail(exc)}. Re-run "
+            "`gobby datastores rotate-password postgres` to resume if pending is "
+            "present; otherwise repair bootstrap storage before retrying."
+        ) from None
+
+    prepared = read_bootstrap_yaml(bootstrap_file)
 
     new_url = _dsn_with_password(current_url, intended_password)[1]
     # A resumed rotation may already have committed the intended password while the
@@ -610,17 +631,16 @@ def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> No
         ) from exc
     except Exception as exc:
         raise click.ClickException(
-            f"PostgreSQL password rotation failed: {_rotation_failure_detail(exc)}"
-        ) from exc
+            f"phase=alter PostgreSQL password rotation failed: {_rotation_failure_detail(exc)}. "
+            "Re-run `gobby datastores rotate-password postgres` to resume."
+        ) from None
 
-    # The role has already changed: a failed write below must hand the operator
-    # the new DSN for manual repair before the command exits.
+    # Successful durable publication removes pending. A publication fault must
+    # restore it durably or report that the publication state is indeterminate.
     _finalize_postgres_rotation(
-        gobby_home=gobby_home,
         bootstrap_file=bootstrap_file,
-        role=role,
         new_url=new_url,
-        redaction_secrets=redaction_secrets,
+        prepared=prepared,
     )
 
 

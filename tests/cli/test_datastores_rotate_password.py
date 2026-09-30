@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import re
+import secrets
+import stat
 import subprocess
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +23,10 @@ from click.testing import CliRunner
 import gobby.cli.datastores as datastores
 import gobby.cli.installers.falkor as falkor
 from gobby.cli import cli
+from gobby.cli.installers.managed_services_lock import (
+    ManagedServicesLockError,
+    managed_services_lock,
+)
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.config.bootstrap_io import (
     read_bootstrap_yaml,
@@ -26,10 +34,12 @@ from gobby.config.bootstrap_io import (
     write_bootstrap_yaml,
 )
 from gobby.config.persistence import validate_falkordb_password
+from gobby.config.postgres_bootstrap import write_postgres_defaults
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.async_ops import BoundedDBTimeoutError, IndeterminateCommitError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from gobby.utils.durable_file import exclusive_file_lock
 
 pytestmark = pytest.mark.unit
 
@@ -200,42 +210,256 @@ def test_postgres_rotation_keeps_bootstrap_when_alter_role_fails(
 
     assert result.exit_code == 1
     assert "PostgreSQL password rotation failed: OperationalError" in result.output
+    assert "phase=alter" in result.output
+    assert "rotate-password postgres" in result.output
     assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] == _CURRENT_DSN
     assert "credential_rotation" in read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
 
 
-def test_postgres_rotation_reports_new_dsn_when_bootstrap_write_fails(
+@pytest.mark.parametrize("after_rename", [False, True])
+def test_postgres_rotation_prepare_failure_has_redacted_resume_guidance(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path, after_rename: bool
+) -> None:
+    connection, connects = _patch_connect(monkeypatch)
+    replace = os.replace
+
+    def fail_preparation(source: Any, destination: Any) -> None:
+        if Path(destination) == rotation_home / "bootstrap.yaml":
+            if after_rename:
+                replace(source, destination)
+            raise OSError("old-secret preparation fault")
+        replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_preparation)
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+    assert result.exit_code == 1
+    assert connects == []
+    assert connection.committed is False
+    assert "phase=prepare" in result.output
+    assert "OSError" in result.output
+    assert "rotate-password postgres" in result.output
+    assert "old-secret" not in result.output
+    assert "postgresql://" not in result.output
+    data = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert data["database_url"] == _CURRENT_DSN
+    assert ("credential_rotation" in data) is after_rename
+
+
+def test_resume_requires_durable_pending_republication_before_alter(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    path = rotation_home / "bootstrap.yaml"
+    pair = {"role": "gobby", "previous_password": "old-secret", "pending_password": "new-secret"}
+    update_bootstrap_yaml(path, lambda data: data.update(credential_rotation=pair))
+    connection, connects = _patch_connect(monkeypatch)
+    replace = os.replace
+
+    def fail_durable_publication(source: Any, destination: Any) -> None:
+        if Path(destination) == path:
+            raise OSError("pending durability unavailable")
+        replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", fail_durable_publication)
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+    assert result.exit_code == 1
+    assert connects == []
+    assert connection.committed is False
+    assert "phase=prepare" in result.output
+    assert "rotate-password postgres" in result.output
+    assert read_bootstrap_yaml(path)["credential_rotation"] == pair
+
+
+@pytest.mark.parametrize(
+    "writer", ["full-map", "drop-pair", "change-url", "defaults", "remote", "remote-full-map"]
+)
+def test_pending_writers_cannot_change_credential_state(rotation_home: Path, writer: str) -> None:
+    path = rotation_home / "bootstrap.yaml"
+    pair = {"role": "gobby", "previous_password": "old-secret", "pending_password": "new-secret"}
+    update_bootstrap_yaml(path, lambda data: data.update(credential_rotation=pair))
+    before = path.read_bytes()
+
+    def mutate(data: dict[str, Any]) -> None:
+        if writer == "drop-pair":
+            data.pop("credential_rotation")
+        elif writer in ("remote", "remote-full-map"):
+            data.update(datastore_mode="remote", hub_daemon_url="http://hub.example:60887")
+        else:
+            data["database_url"] = _CURRENT_DSN.replace("old-secret", "unexpected-secret")
+
+    with pytest.raises(BootstrapConfigError, match="credential|pending"):
+        if writer == "full-map":
+            stale = read_bootstrap_yaml(path)
+            stale.pop("credential_rotation")
+            write_bootstrap_yaml(path, stale)
+        elif writer == "remote-full-map":
+            candidate = read_bootstrap_yaml(path)
+            mutate(candidate)
+            write_bootstrap_yaml(path, candidate)
+        elif writer == "defaults":
+            write_postgres_defaults(
+                gobby_home=rotation_home, database_url=_CURRENT_DSN, clear_credential_rotation=True
+            )
+        else:
+            update_bootstrap_yaml(path, mutate)
+    assert path.read_bytes() == before
+    update_bootstrap_yaml(path, lambda data: data.update(services_bind_address="127.0.0.1"))
+    after = read_bootstrap_yaml(path)
+    assert after["credential_rotation"] == pair
+    assert after["database_url"] == _CURRENT_DSN
+    assert after["services_bind_address"] == "127.0.0.1"
+
+
+def test_initial_pending_publication_requires_complete_local_pair(rotation_home: Path) -> None:
+    path = rotation_home / "bootstrap.yaml"
+    before = path.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending_password"):
+        update_bootstrap_yaml(path, lambda data: data.update(credential_rotation={"role": "gobby"}))
+    assert path.read_bytes() == before
+
+
+def test_postgres_rotation_reports_resume_when_bootstrap_write_fails(
     monkeypatch: pytest.MonkeyPatch, rotation_home: Path
 ) -> None:
     connection, _connects = _patch_connect(monkeypatch)
-    captured: dict[str, str] = {}
-
-    def _fail_write(
-        *,
-        gobby_home: Path,
-        database_url: str,
-        clear_credential_rotation: bool = False,
-    ) -> None:
-        _ = gobby_home
-        assert clear_credential_rotation is True
-        captured["database_url"] = database_url
-        raise BootstrapConfigError("disk full")
-
-    monkeypatch.setattr(datastores, "write_postgres_defaults", _fail_write)
+    attempts = _install_publication_fault(monkeypatch, rotation_home, "before-rename")
 
     result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
 
     assert result.exit_code == 1
     assert len(connection.statements) == 1
-    new_url = captured["database_url"]
-    password = unquote(cast(str, urlsplit(new_url).password))
     assert connection.statements[0].endswith(f"'{_FAKE_SCRAM}'")
-    # The repair DSN is emitted redacted; the raw password never reaches output.
-    assert password not in result.output
-    assert "Set database_url in" in result.output
-    assert "gobby:****@localhost:60891/gobby" in result.output
-    assert "bootstrap.yaml update failed after the role changed" in result.output
+    assert attempts[0] == 3
+    assert "phase=finalize" in result.output
+    assert "pending-restored" in result.output
+    assert "rotate-password postgres" in result.output
+    assert "postgresql://" not in result.output
     assert read_bootstrap_yaml(rotation_home / "bootstrap.yaml")["database_url"] == _CURRENT_DSN
+
+
+def _install_publication_fault(
+    monkeypatch: pytest.MonkeyPatch,
+    home: Path,
+    fault: str,
+    *,
+    restore_fault: str | None = None,
+) -> list[int]:
+    path = home / "bootstrap.yaml"
+    attempts = [0]
+    replace = os.replace
+    fsync = os.fsync
+    read_bytes = Path.read_bytes
+    readback_failed = False
+
+    def replace_file(source: Any, destination: Any) -> None:
+        if Path(destination) == path:
+            attempts[0] += 1
+            if (attempts[0] == 2 and fault == "before-rename") or (
+                attempts[0] == 3 and restore_fault == "before-rename"
+            ):
+                raise OSError("old-secret new-secret publication fault")
+        replace(source, destination)
+        if Path(destination) == path and attempts[0] == 2 and fault == "after-rename":
+            raise OSError("old-secret new-secret publication fault")
+        if Path(destination) == path and attempts[0] == 3 and restore_fault == "after-rename":
+            raise OSError("old-secret new-secret restoration fault")
+
+    def sync(fd: int) -> None:
+        if (attempts[0] == 2 and fault == "directory-fsync") or (
+            attempts[0] == 3 and restore_fault == "directory-fsync"
+        ):
+            if stat.S_ISDIR(os.fstat(fd).st_mode):
+                raise OSError("old-secret new-secret directory fsync fault")
+        fsync(fd)
+
+    def read(candidate: Path) -> bytes:
+        nonlocal readback_failed
+        if candidate == path and attempts[0] == 2 and fault == "readback" and not readback_failed:
+            readback_failed = True
+            raise OSError("old-secret new-secret readback fault")
+        if candidate == path and attempts[0] == 3 and restore_fault == "readback":
+            raise OSError("old-secret new-secret restoration readback fault")
+        return read_bytes(candidate)
+
+    monkeypatch.setattr(os, "replace", replace_file)
+    monkeypatch.setattr(os, "fsync", sync)
+    monkeypatch.setattr(Path, "read_bytes", read)
+    return attempts
+
+
+@pytest.mark.parametrize("fault", ["before-rename", "after-rename", "directory-fsync", "readback"])
+def test_postgres_rotation_restores_pending_after_publication_fault(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path, fault: str
+) -> None:
+    connection, _ = _patch_connect(monkeypatch)
+    monkeypatch.setattr(secrets, "token_urlsafe", lambda _size: "new-secret")
+    attempts = _install_publication_fault(monkeypatch, rotation_home, fault)
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+    assert result.exit_code == 1
+    assert connection.committed is True
+    assert attempts[0] == 3
+    data = read_bootstrap_yaml(rotation_home / "bootstrap.yaml")
+    assert data["database_url"] == _CURRENT_DSN
+    assert data["credential_rotation"] == {
+        "role": "gobby",
+        "previous_password": "old-secret",
+        "pending_password": "new-secret",
+    }
+    assert "phase=finalize" in result.output
+    assert "pending-restored" in result.output
+    assert "OSError" in result.output
+    assert "rotate-password postgres" in result.output
+    for secret in ("old-secret", "new-secret", _CURRENT_DSN, _FAKE_SCRAM):
+        assert secret not in result.output
+
+
+@pytest.mark.parametrize("fault", ["before-rename", "after-rename", "directory-fsync", "readback"])
+@pytest.mark.parametrize(
+    "restore_fault", ["before-rename", "after-rename", "directory-fsync", "readback"]
+)
+def test_postgres_rotation_reports_indeterminate_when_restore_fails(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path, fault: str, restore_fault: str
+) -> None:
+    connection, _ = _patch_connect(monkeypatch)
+    monkeypatch.setattr(secrets, "token_urlsafe", lambda _size: "new-secret")
+    attempts = _install_publication_fault(
+        monkeypatch, rotation_home, fault, restore_fault=restore_fault
+    )
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+    assert result.exit_code == 1
+    assert connection.committed is True
+    assert attempts[0] == 3
+    assert "phase=finalize" in result.output
+    assert "indeterminate-publication" in result.output
+    assert "OSError" in result.output
+    assert "rotate-password postgres" in result.output
+    for claim in ("was not updated", "still on disk", "pending-restored"):
+        assert claim not in result.output
+    for secret in ("old-secret", "new-secret", _CURRENT_DSN, _FAKE_SCRAM):
+        assert secret not in result.output
+
+
+def test_postgres_rotation_reports_indeterminate_when_publication_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    connection, _ = _patch_connect(monkeypatch)
+    attempts = _install_publication_fault(monkeypatch, rotation_home, "after-rename")
+    read_bytes = Path.read_bytes
+
+    def unreadable_after_rename(path: Path) -> bytes:
+        if path == rotation_home / "bootstrap.yaml" and attempts[0] == 2:
+            raise OSError("old-secret unreadable publication")
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", unreadable_after_rename)
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+    assert result.exit_code == 1
+    assert connection.committed is True
+    assert attempts[0] == 2
+    assert "indeterminate-publication" in result.output
+    assert "restoration=BootstrapConfigError" in result.output
+    assert "rotate-password postgres" in result.output
+    assert "pending-restored" not in result.output
+    assert "old-secret" not in result.output
 
 
 def test_falkordb_rotation_stores_a_new_secret_without_docker(
@@ -786,6 +1010,87 @@ def test_postgres_rotation_uses_normalized_direct_target(
     assert "credential_rotation" not in bootstrap
     assert "sslmode=disable" in bootstrap["database_url"]
     assert "old-secret" not in result.output
+
+
+def test_postgres_rotation_ignores_stale_bootstrap_argument(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """The locked canonical reread selects the credential used for this rotation."""
+    path = rotation_home / "bootstrap.yaml"
+    stale = read_bootstrap_yaml(path)
+    fresh_url = _CURRENT_DSN.replace("old-secret", "fresh-primary-secret")
+    update_bootstrap_yaml(path, lambda data: data.__setitem__("database_url", fresh_url))
+    connection, connects = _patch_connect(monkeypatch)
+    previous_passwords: list[str] = []
+    original_execute = connection.execute
+
+    async def observe_prepared_pair(query: Any) -> None:
+        pending = read_bootstrap_yaml(path)["credential_rotation"]
+        previous_passwords.append(pending["previous_password"])
+        await original_execute(query)
+
+    monkeypatch.setattr(connection, "execute", observe_prepared_pair)
+
+    datastores._rotate_postgres_password(rotation_home, stale)
+
+    assert connects[0][0] == fresh_url
+    assert previous_passwords == ["fresh-primary-secret"]
+    assert connection.committed
+    assert "credential_rotation" not in read_bootstrap_yaml(path)
+
+
+def test_postgres_rotation_serializes_canonical_writers(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """Other canonical and managed-service writers are excluded throughout ALTER."""
+    path = rotation_home / "bootstrap.yaml"
+    entered: list[str] = []
+
+    def probe_services_lock() -> bool:
+        try:
+            with managed_services_lock(rotation_home, operation="test-probe", timeout=0.01):
+                return True
+        except ManagedServicesLockError:
+            return False
+
+    def observe_alter(*_args: object, **_kwargs: object) -> None:
+        pending = read_bootstrap_yaml(path)["credential_rotation"]
+        entered.append(pending["pending_password"])
+        with pytest.raises(TimeoutError):
+            with exclusive_file_lock(path, timeout_seconds=0.01):
+                pass
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            assert executor.submit(probe_services_lock).result(timeout=1) is False
+
+    monkeypatch.setattr(datastores, "_observe_hub_alter", observe_alter)
+
+    datastores._rotate_postgres_password(rotation_home, read_bootstrap_yaml(path))
+
+    assert len(entered) == 1
+    assert "credential_rotation" not in read_bootstrap_yaml(path)
+    with exclusive_file_lock(path, timeout_seconds=0.1):
+        assert path.is_file()
+    assert probe_services_lock() is True
+
+
+def test_stale_full_map_writer_cannot_replace_rotated_credentials(
+    monkeypatch: pytest.MonkeyPatch, rotation_home: Path
+) -> None:
+    """A pre-rotation whole-map snapshot cannot publish the old primary again."""
+    path = rotation_home / "bootstrap.yaml"
+    stale = read_bootstrap_yaml(path)
+    _patch_connect(monkeypatch)
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
+    assert result.exit_code == 0, result.output
+    after_rotation = path.read_bytes()
+
+    with pytest.raises(BootstrapConfigError, match="credential"):
+        write_bootstrap_yaml(path, stale)
+
+    assert path.read_bytes() == after_rotation
+    current = read_bootstrap_yaml(path)
+    assert current["database_url"] != _CURRENT_DSN
+    assert "credential_rotation" not in current
 
 
 def test_postgres_rotation_preserves_unrelated_bootstrap_fields(

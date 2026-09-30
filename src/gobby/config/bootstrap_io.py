@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
@@ -54,8 +55,19 @@ def update_bootstrap_yaml(
 ) -> None:
     with exclusive_file_lock(path):
         data = read_bootstrap_yaml(path)
+        expected = deepcopy(data)
         updater(data)
-        publish_bootstrap_yaml_locked(path, data)
+        from gobby.config.bootstrap import BootstrapConfigError
+
+        if expected.get("credential_rotation") is not None and (
+            _credential_state(data) != _credential_state(expected)
+            or data.get("datastore_mode", "local") != "local"
+        ):
+            raise BootstrapConfigError(
+                "pending credential rotation must be preserved; "
+                "run `gobby datastores rotate-password postgres` to resume"
+            )
+        publish_bootstrap_yaml_locked(path, data, expected_credentials=expected)
 
 
 def inject_local_files_home(path: Path, files_home: str | Path) -> None:
@@ -71,12 +83,31 @@ def inject_local_files_home(path: Path, files_home: str | Path) -> None:
         publish_bootstrap_yaml_locked(path, data)
 
 
-def publish_bootstrap_yaml_locked(path: Path, data: dict[str, Any]) -> None:
+def _credential_state(data: dict[str, Any]) -> tuple[Any, Any]:
+    return data.get("database_url"), data.get("credential_rotation")
+
+
+def publish_bootstrap_yaml_locked(
+    path: Path,
+    data: dict[str, Any],
+    *,
+    expected_credentials: dict[str, Any] | None = None,
+) -> None:
     """Validate and durably replace ``path``. Caller must hold the sidecar lock."""
-    from gobby.config.bootstrap import bootstrap_from_mapping
+    from gobby.config.bootstrap import BootstrapConfigError, bootstrap_from_mapping
+    from gobby.config.postgres_bootstrap import pending_credential_rotation_from_mapping
 
     existing = read_bootstrap_yaml(path) if path.exists() else {}
+    expected = data if expected_credentials is None else expected_credentials
+    if (path.exists() or expected_credentials is not None) and (
+        _credential_state(existing) != _credential_state(expected)
+    ):
+        raise BootstrapConfigError(
+            "credential state changed; reread bootstrap before writing; "
+            "run `gobby datastores rotate-password postgres` to resume pending rotation"
+        )
     merged = _merge_owner_fields(existing, dict(data))
+    pending_credential_rotation_from_mapping(merged)
     config = bootstrap_from_mapping(merged)
     if config.files_home:
         merged["files_home"] = config.files_home
