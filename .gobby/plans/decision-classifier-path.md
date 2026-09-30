@@ -96,11 +96,19 @@ The plan also sets:
 6. **No MCP tool.** Every consumer is daemon-internal and calls the service
    directly. `jev.md`'s `gobby-decisions:evaluate` tool has no caller.
    Rejected under `restraint`. An agent-facing need reopens it.
-7. **Primitives: Choice first, then Noul.** Josh ruled on 2026-09-24 that
-   Noul arrives with the second consumer.
-   - 1.2 ships `choose`.
-   - 3.1 (tool rerank, the second consumer after #22604) adds `noul`.
+7. **Primitives: Choice first, then Noul, as a proposed build order.**
+   Josh's 2026-09-24 ruling reads: Choice only until the second consumer adds
+   Noul. This plan proposes, for Josh's approval, to apply it as build order:
+   - 1.2 builds `choose`, the client that #22604's stamped 6.3.1 anchors.
+   - 3.1 builds `noul` together with tool rerank, the in-plan consumer that
+     needs it, and 3.2 reuses it.
    - Score has no consumer and is not built.
+
+   No consumer is live today. #22604 keeps its own independent parking, and
+   tool rerank ships in `shadow`. No ordering edge ties 3.1 to #22604 in
+   either direction, and there is no rollout or activation order between
+   community labels and tool rerank. In-plan sequencing stays
+   1.2, 2.1, 3.1, 3.2.
 8. **Request ceiling and truncation guard.** At Kev commit `0fe8fc97c2bc` (2026-09-29), Kev trains on
    384 state tokens and serves up to 65,536 state tokens
    (`kev/model.py::SERVE_MAX_STATE`) and 73,728 branch tokens
@@ -218,8 +226,9 @@ The plan also sets:
     This is the accept-when-confident, escalate-when-unsure design from arXiv
     2609.26550 (Decision 13).
 12. **Promotion gates, measured on the frozen holdout (2.1).** A consumer
-    enters `enforce` only after its report is committed under
-    `docs/evidence/decisions/`, and only when:
+    enters `enforce` only after the Activation Gate's live capture (item 4)
+    holds and its report is committed under `docs/evidence/decisions/`, and
+    only when:
     - expected calibration error is at most 0.10;
     - the option-order or candidate-order flip rate is at most 10%;
     - p95 latency is at most 1 s against the local backend;
@@ -356,22 +365,22 @@ stamped M1, so that file is not edited. At expansion, the PD updates task
   6.3's budget of about 500 tokens of state plus 250 per question per
   community, that is at most 10 communities per request instead of 20;
 - records its wire spike against the local `/v1/systemone` server only. The
-  OpenRouter alpha arm is dropped under Decisions 1 and 2, and 1.2's wire
-  capture satisfies the spike;
+  OpenRouter alpha arm is dropped under Decisions 1 and 2, and the Activation
+  Gate's live capture (item 4) satisfies the spike;
 - keeps 6.3.2 to 6.3.5 unchanged.
 
 Two stamped 6.3 items change their anchors:
 - 6.3.1's test anchor (`tests/llm/test_decisions_client.py`) is satisfied by
   1.2.1 here.
-- 6.3.6's two-arm spike is satisfied by 1.2.6, with the OpenRouter arm
-  dropped under Decision 2.
+- 6.3.6's two-arm spike is satisfied by the Activation Gate's live capture
+  (item 4), with the OpenRouter arm dropped under Decision 2.
 
 The completed plan's M1 is not edited. The PD records both substitutions in
 #22604's description and validation criteria at expansion, so the close
 reviewer checks the new anchors. This is one of the PD's disposition items.
 
-#22604 keeps its `enhancement` parking (Josh, 2026-09-23). Its own admission
-leads the consumer order, as the research doc's §5 ruling set.
+#22604 keeps its independent `enhancement` parking (Josh, 2026-09-23). This
+plan adds no dependency on it in either direction.
 
 ## Activation Gate and #22075
 `kind: framing`
@@ -385,7 +394,16 @@ when every one of these holds:
    `ai.decisions.api_base` and `ai.decisions.model` name it. The server can be
    Kev from the post-0.6 installer option, or any compatible server Josh runs.
 3. `GET /api/llm/status` reports `decide` available with that model.
-4. At least one consumer is in `mode: enforce`. It has passed its Decision 12
+4. The PD has verified a live capture against that server, committed as
+   `docs/evidence/decisions/systemone-live-<date>.md`:
+   - the server's source commit;
+   - its `/v1/models` card and the Decision 10 backend identity;
+   - one Choice and one Noul round trip that the service parses;
+   - the measured characters-per-token ratio on a path-heavy request.
+
+   No consumer leaves `shadow` before this item holds. Gobby does not start,
+   stop, or install the server.
+5. At least one consumer is in `mode: enforce`. It has passed its Decision 12
    gate, and its report is committed under `docs/evidence/decisions/`.
 
 The Assistant presents that state to Josh when it holds. Until then, #22075
@@ -396,7 +414,7 @@ candidate) stays blocked.
 Closing #23024 does not unblock it.
 - At expansion, the PD moves #22075's `blocked_by` edge from #23024 to leaf
   3.2, the last consumer leaf.
-- Gate items 2 to 4 are operational conditions, not leaves. The PD verifies
+- Gate items 2 to 5 are operational conditions, not leaves. The PD verifies
   them and records them on #22075 before lifting anything.
 - Josh lifting `deferred-by-josh` is the final hold.
 
@@ -433,6 +451,13 @@ Targets:
 - `tests/config/test_decisions_config.py`
 - `tests/ai/test_capability_registry.py::*` — scope-reason: cover the `decide` binding's unavailable and available states
 - `tests/code_index/test_community_labeler.py::test_ungated_validated_name_writes_model_label`
+
+**Granularity:** Fourteen acceptance items, one outcome: a loadable
+`ai.decisions` config surfaced as the `decide` capability. 1.1.5 to 1.1.14
+give each row of the `DecisionsConfig` table its own obligation, because
+plan-coverage requires one item per work-enumerating table row. The rows share
+one model, one validator set, and two parametrized tests, and no row can land
+alone without leaving `AIConfig` unloadable.
 
 **Research context:** The precedent is `EmbeddingsConfig`
 (`config/persistence.py:187-248`), which uses
@@ -558,19 +583,36 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   available with the model and `adapter_style` `local` when configured, and it
   appears in the registry status snapshot. test:
   `tests/ai/test_capability_registry.py::test_decide_binding_reports_configuration`.
-- 1.1.5 - One parametrized case per scalar row of the `DecisionsConfig`
-  table: `api_base` defaults `None`; `api_key` defaults `None` and a
-  `$secret:` reference loads resolved; `model` defaults `None`;
-  `timeout_seconds` defaults `2.0` and rejects `0`; `max_input_tokens`
-  defaults `8192`, rejects `255`, and rejects a value at or above
-  `backend_max_state_tokens`; `backend_max_state_tokens` defaults `65536` and
-  rejects `0`; `failure_cooldown_seconds` defaults `60` and rejects `-1`.
+- 1.1.5 - `api_base` row: defaults to `None`, and the capability is
+  unavailable while it is unset. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.6 - `api_key` row: defaults to `None`, a `$secret:` reference loads
+  resolved, and the value is never logged. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.7 - `model` row: defaults to `None`. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.8 - `timeout_seconds` row: defaults to `2.0` and rejects `0`. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.9 - `max_input_tokens` row: defaults to `8192`, rejects `255`, and
+  rejects a value at or above `backend_max_state_tokens`. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.10 - `backend_max_state_tokens` row: defaults to `65536` and rejects
+  `0`. test:
+  `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
+- 1.1.11 - `failure_cooldown_seconds` row: defaults to `60` and rejects `-1`.
   test:
   `tests/config/test_decisions_config.py::test_decisions_scalar_rows_defaults_and_bounds`.
-- 1.1.6 - One parametrized case per consumer row: `community_label`,
-  `tool_rerank`, and `found_work` each default to `mode` `off` with their
-  documented thresholds and unset `evaluated_model` and `evaluated_backend`,
-  and each rejects `enforce` without both. test:
+- 1.1.12 - `community_label` row: defaults to `mode` `off`, `min_confidence`
+  `0.5`, and unset `evaluated_model` and `evaluated_backend`, and rejects
+  `enforce` without both. test:
+  `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
+- 1.1.13 - `tool_rerank` row: defaults to `mode` `off`, `min_probability`
+  `0.5`, and unset `evaluated_model` and `evaluated_backend`, and rejects
+  `enforce` without both. test:
+  `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
+- 1.1.14 - `found_work` row: defaults to `mode` `off`, `accept_below` `0.1`,
+  `accept_above` `0.9`, and unset `evaluated_model` and `evaluated_backend`,
+  and rejects `enforce` without both. test:
   `tests/config/test_decisions_config.py::test_decisions_consumer_rows_defaults`.
 
 ### 1.2 `DecisionService` with Choice, request ceiling, and cooldown [category: code] (depends: 1.1)
@@ -595,8 +637,8 @@ either returns validated answers from an identified backend or raises a typed
   hands consumers unvalidated answers, one without the ceiling lets Kev
   truncate silently, and one without the cooldown stalls every consumer on a
   dead server.
-- The capture (1.2.6) fixes the field names the parser and its fixture pin, so
-  it comes first inside the same leaf.
+- The pinned contract record (1.2.6) fixes the field names the parser and
+  its fixtures use, so it comes first inside the same leaf.
 
 **Research context:** #22604's 6.3 specified a client that this module
 replaces. It used `ChoiceQuestion(criteria: dict[str, str])`,
@@ -607,31 +649,25 @@ with one addition: the TypeSafe API (`https://docs.typesafe.ai/api.md`) and
 Kev's README both require `instructions` on every question, so
 `ChoiceQuestion` gains it.
 
-The documented API is the contract. The capture confirms that the local
-backend follows it and records any discrepancy; it cannot relax a documented
-constraint.
+The documented API is the contract, and the wire shape is pinned from it
+before any code, with no live server:
+- `docs/evidence/decisions/systemone-wire.md` records the TypeSafe request and
+  response schema as fetched on 2026-09-29, for Choice and Noul.
+- It also records Kev commit `0fe8fc97c2bc` (2026-09-29) as the reference
+  local backend: `MODEL_NAMES`, `SERVE_MAX_STATE`, `SERVE_MAX_BRANCH`, the
+  silent truncation in `Server.submit`, the `usage` block in `Server._body`,
+  and the `/v1/models` card fields Decision 10 hashes.
+- `tests/ai/fixtures/systemone_choice_response.json` is authored from that
+  documented schema, with `usage.input_tokens`.
+- Where 6.3's field names differ from the documented schema, the schema wins,
+  and the evidence file records the difference.
 
-The wire shape is pinned by capture, before any code:
-- Run one Choice request against a local `/v1/systemone` server (Kev, per
-  Decision 3) with two questions.
-- Record the redacted request and response in
-  `docs/evidence/decisions/systemone-wire.md`, and save the response body as
-  the test fixture.
-- If the captured field names differ from 6.3's, the capture wins. The evidence
-  file records the difference.
-
-The evidence file pins the backend as Kev commit `0fe8fc97c2bc` (2026-09-29), with its `SERVE_MAX_STATE`,
-`SERVE_MAX_BRANCH`, truncation behavior, and `/v1/models` card fields. The
-same capture records:
-- the server-reported `usage.input_tokens` for a path-heavy request that fits.
-  This sets the estimate's divisor for the quality ceiling: the default stays
-  4 unless the measured ratio is lower;
-- the `/v1/models` card, with the fields Decision 10 hashes.
-
-The truncation guard (Decision 8) needs no probe, because it reads every
-response's own `usage.input_tokens`.
-
-This capture is also #22604's wire spike (Coordination With #22604).
+Schema fixtures prove conformance to the documented contract only. They make
+no claim that a given server is compatible at runtime. That is established by
+the Activation Gate's live capture (item 4), which is also #22604's wire spike
+and measures the characters-per-token ratio. The estimate stays advisory
+(Decision 8), and the truncation guard reads every response's own
+`usage.input_tokens`.
 
 Module contents:
 - `ChoiceQuestion(instructions: str, criteria: Mapping[str, str])`,
@@ -701,14 +737,14 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 **Acceptance:**
 
 - 1.2.1 - `choose` posts `{model, state, questions}` to
-  `{api_base}/v1/systemone`, parses the captured fixture, and raises `parse`
+  `{api_base}/v1/systemone`, parses the documented-schema fixture, and raises `parse`
   for these responses: a mismatched model, a missing or extra answer key, a
   wrong answer type, a choice outside the offered options or below the
   maximum probability, mismatched probability keys, probabilities summing
   outside `1 ± 1e-3`, and any non-finite or out-of-range value. A tied maximum
   is accepted. The request carries `type` and `instructions` on every
   question. test:
-  `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_captured_wire`.
+  `tests/ai/test_decisions_service.py::test_choose_posts_and_parses_documented_wire`.
 - 1.2.2 - With an ample budget, call counts are exact per status: 3xx, 401,
   403, 404, and 422 make one call each; 429, 529, 500, and transport errors
   make three. With a budget shorter than the backoff sequence, the call ends
@@ -740,9 +776,10 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `tests/ai/test_decisions_service.py::test_cooldown_fails_fast_then_recovers`.
 - 1.2.5 - Log records carry no state or option text. test:
   `tests/ai/test_decisions_service.py::test_call_log_redacts_state`.
-- 1.2.6 - The wire capture from a local server is recorded, including the
-  pinned Kev commit, its state and branch limits, the `/v1/models` card, and
-  the measured token ratio. behavior:
+- 1.2.6 - The pinned contract record holds the documented TypeSafe Choice and
+  Noul schemas and the Kev `0fe8fc97c2bc` reference facts: model names, state
+  and branch limits, truncation, `usage`, and the `/v1/models` card fields.
+  behavior:
   "/v1/systemone" in `docs/evidence/decisions/systemone-wire.md`.
 
 ## P2: Evaluation
@@ -939,7 +976,7 @@ Targets:
 `top_k * 2` candidates and asks the LLM to rerank them. On any exception it
 returns semantic order with `search_mode="hybrid_fallback"`. Choice alone
 cannot reject every candidate, which is why the tool consumer uses Noul
-(`jev.md` use case 2). This is the second consumer, so Noul lands here
+(`jev.md` use case 2). Noul lands here with the consumer that needs it
 (Decision 7).
 
 Add `async noul(consumer, state, propositions: Mapping[str, str], *,
@@ -947,13 +984,14 @@ timeout_seconds: float | None = None) -> dict[str, NoulAnswer(probability:
 float)]` to `DecisionService`. Each proposition is serialized as `{"type":
 "noul", "instructions": <proposition>}`, and `probability` is read from the
 answer's `noul` field under the same strict parsing. It uses the same
-transport, ceiling, and cooldown. Its wire field names come from a second
-capture, taken before any code in this leaf:
-- Run one Noul request with three propositions against the same local server.
-- Append the redacted request and response to
-  `docs/evidence/decisions/systemone-wire.md`, which 1.2 created.
-- Save the response body as `tests/ai/fixtures/systemone_noul_response.json`.
-  The `noul` parser tests read this fixture.
+transport, ceiling, and cooldown. Its wire field names come from the Noul
+schema that 1.2 pinned in `docs/evidence/decisions/systemone-wire.md`:
+- Before any code in this leaf, author
+  `tests/ai/fixtures/systemone_noul_response.json` from that schema, with
+  three propositions. The `noul` parser tests read this fixture.
+- Append to the evidence file a note naming the fixture and any field the
+  consumer relies on. Runtime compatibility waits for the Activation Gate's
+  live capture.
 
 Consumer: state is `{"request": task_description}`, with one proposition per
 candidate, "Tool `<server>/<tool>` (`<description>`) materially applies to the
@@ -999,9 +1037,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 3.1.1 - `noul` posts per-proposition questions, parses the captured Noul
-  fixture, and returns probabilities by key under the same ceiling and
-  cooldown. The Noul capture is appended to
+- 3.1.1 - `noul` posts per-proposition questions, parses the
+  documented-schema Noul fixture, and returns probabilities by key under the
+  same ceiling and cooldown. The fixture note is appended to
   `docs/evidence/decisions/systemone-wire.md`. test:
   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 - 3.1.2 - Shadow mode returns today's result unchanged and writes one shadow
