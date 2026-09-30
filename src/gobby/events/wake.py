@@ -16,6 +16,7 @@ import time
 import weakref
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.events.live_wake import (
@@ -85,6 +86,7 @@ class TmuxSender(Protocol):
         *,
         submit: bool = False,
         clear_before_submit: bool = False,
+        composer_confirmed_empty: bool = False,
         cli_source: str | None = None,
     ) -> Coroutine[Any, Any, None]: ...
 
@@ -788,6 +790,10 @@ class WakeDispatcher:
             )
             if blocked is not None:
                 return blocked
+            if confirmed_empty:
+                # The sender needs the positive proof to settle an old wake latch;
+                # merely opting out of a drain does not supply that proof.
+                send = partial(send, composer_confirmed_empty=True)
             try:
                 await send(
                     terminal_id,

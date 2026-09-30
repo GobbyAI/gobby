@@ -12,6 +12,7 @@ import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions import _terminal
+from gobby.mcp_proxy.tools.sessions import _terminal_compaction as compaction
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
     _COMMAND_NOT_SUBMITTED_ERROR_CODE,
     _INTERRUPT_ATTEMPTS,
@@ -673,3 +674,97 @@ async def test_draft_typed_after_the_first_probe_refuses_before_any_drain(comman
     assert pane.keys == ["escape"]
     assert pane.typed == []
     clear.assert_called_once_with()
+
+
+class _ChangingInterruptPane(_ComposerPane):
+    def __init__(self, source: str, state: str) -> None:
+        super().__init__()
+        self.source = source
+        self.state = state
+        self.failed_probe = False
+        self.frame = self._frame("")
+
+    def _frame(self, text: str) -> str:
+        if self.source == "claude":
+            return _claude_frame(text)
+        footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
+        return f"done\n› {text}\n\n{footer}"
+
+    def occupy(self) -> None:
+        self.frame = (
+            "unreadable provider frame"
+            if self.state == "unknown"
+            else self._frame("operator draft")
+        )
+        self.failed_probe = self.state == "error"
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        if self.failed_probe:
+            raise RuntimeError("composer snapshot failed")
+        return self.frame
+
+
+@pytest.mark.parametrize("state", ["draft", "unknown", "error"])
+@pytest.mark.parametrize(
+    ("source", "phase"),
+    [
+        ("claude", "settle"),
+        ("codex", "settle"),
+        ("claude", "retry"),
+        ("claude", "blind"),
+        ("codex", "blind"),
+    ],
+)
+async def test_composer_is_rechecked_before_each_interrupt_after_waits(
+    monkeypatch: pytest.MonkeyPatch, source: str, state: str, phase: str
+) -> None:
+    """A changed composer before an interrupt gets no further keys, text, or destructive drain."""
+    pane = _ChangingInterruptPane(source, state)
+    reader = IdleDetector(BundledDetectionRegistry(), source).composer_read
+    assert reader(pane.frame).state == "empty"
+
+    async def settle(*_args: object, **_kwargs: object) -> bool:
+        if phase != "retry":
+            pane.occupy()
+        return False
+
+    async def wait_interrupt(
+        _observer: Callable[[], bool | None], *, attempt_seconds: float
+    ) -> bool:
+        pane.occupy()
+        return False
+
+    monkeypatch.setattr(compaction, "_wait_for_turn_to_settle", settle)
+    monkeypatch.setattr(compaction, "_wait_for_interrupt", wait_interrupt)
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source=source,
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        observe_interrupt=None if phase == "blind" else (lambda: False),
+        turn_settled=lambda: False,
+        settle_seconds=0.0,
+        composer_read=reader,
+    )
+
+    expected_code = "composer_occupied" if state == "draft" else "composer_unknown"
+    assert result[0] is False
+    assert result[2] is False
+    assert result[3] == {"error_code": expected_code, "continuation_pending": False}
+    assert result[1] is not None
+    assert pane.keys == (["escape" if source == "claude" else "ctrl-c"] if phase == "retry" else [])
+    assert pane.typed == []
+    expected_frame = (
+        "unreadable provider frame" if state == "unknown" else pane._frame("operator draft")
+    )
+    assert pane.frame == expected_frame
+    if phase == "blind":
+        mark.assert_not_called()
+        clear.assert_not_called()
+    else:
+        mark.assert_called_once_with()
+        clear.assert_called_once_with()

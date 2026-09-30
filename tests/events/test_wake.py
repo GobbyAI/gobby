@@ -1851,6 +1851,7 @@ class TestComposerGate:
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=False,
+            composer_confirmed_empty=True,
             cli_source=ANY,
         )
 
@@ -1876,6 +1877,7 @@ class TestComposerGate:
             CONTINUE_WAKE_MESSAGE,
             submit=True,
             clear_before_submit=False,
+            composer_confirmed_empty=True,
             cli_source=ANY,
         )
 

@@ -212,6 +212,39 @@ async def _wait_for_interrupt(
     return await asyncio.to_thread(observe_interrupt)
 
 
+async def _send_compaction_interrupt(
+    pane: PaneIO,
+    key: NamedKey,
+    session_id: str,
+    *,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Recheck the composer immediately before each interrupt, including retries."""
+    try:
+        writable, refuse_reason, state = await composer_gate_for_write(
+            pane, cli_source, composer_read, action="a compaction interrupt"
+        )
+    except Exception:
+        logger.warning("Composer probe failed before interrupt for %s", session_id, exc_info=True)
+        writable, refuse_reason, state = False, "composer probe failed before interrupt", "unknown"
+    if not writable:
+        return (
+            False,
+            refuse_reason,
+            {
+                "error_code": (
+                    _COMPOSER_OCCUPIED_ERROR_CODE
+                    if state == "draft"
+                    else _COMPOSER_UNKNOWN_ERROR_CODE
+                ),
+                "continuation_pending": False,
+            },
+        )
+    ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
+    return ok, reason, None
+
+
 async def _confirm_interrupt(
     pane: PaneIO,
     key: NamedKey,
@@ -221,6 +254,8 @@ async def _confirm_interrupt(
     attempt_seconds: float,
     turn_settled: Callable[[], bool | None] | None = None,
     presses: int = _INTERRUPT_ATTEMPTS,
+    cli_source: str | None = None,
+    composer_read: ComposerReader | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
     pressed = False
@@ -234,11 +269,11 @@ async def _confirm_interrupt(
                 return True, None, None
         if attempt == presses:
             break
-        ok, reason = await send_pane_key(
-            pane, key, session_id, action="sending compaction interrupt"
+        ok, reason, detail = await _send_compaction_interrupt(
+            pane, key, session_id, cli_source=cli_source, composer_read=composer_read
         )
         if not ok:
-            return False, reason, None
+            return False, reason, detail
         pressed = True
         observed = await _wait_for_interrupt(observe_interrupt, attempt_seconds=attempt_seconds)
         if observed is None:
@@ -315,6 +350,8 @@ async def _interrupt_turn(
     settle_seconds: float,
     turn_settled: Callable[[], bool | None] | None = None,
     presses: int = _INTERRUPT_ATTEMPTS,
+    cli_source: str | None = None,
+    composer_read: ComposerReader | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Interrupt the running turn: transcript-confirmed, or blind with a settle."""
     if observe_interrupt is not None:
@@ -327,10 +364,14 @@ async def _interrupt_turn(
             attempt_seconds=settle_seconds * _INTERRUPT_ATTEMPTS / presses,
             turn_settled=turn_settled,
             presses=presses,
+            cli_source=cli_source,
+            composer_read=composer_read,
         )
-    ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
+    ok, reason, detail = await _send_compaction_interrupt(
+        pane, key, session_id, cli_source=cli_source, composer_read=composer_read
+    )
     if not ok:
-        return False, reason, None
+        return False, reason, detail
     if settle_seconds > 0:
         await asyncio.sleep(settle_seconds)
     return True, None, None
@@ -612,6 +653,8 @@ async def _send_terminal_compaction_command_locked(
                     settle_seconds=interrupt_seconds,
                     turn_settled=turn_settled,
                     presses=_CLI_INTERRUPT_PRESSES.get(cli_source or "", _INTERRUPT_ATTEMPTS),
+                    cli_source=cli_source,
+                    composer_read=composer_read,
                 )
                 if not interrupted:
                     if isinstance(pane, _SeatGuardedPane):

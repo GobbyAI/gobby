@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, replace
-from typing import cast
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import ANY, AsyncMock, MagicMock
 from uuid import UUID
 
@@ -14,6 +16,7 @@ from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.events.live_wake import ActivityProbe, TerminalActivity, composer_occupied_result
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, WakeDispatcher
 from gobby.runner_init.orchestration import _send_tmux_session_wake
+from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
@@ -26,6 +29,9 @@ from tests.terminals.fakes import (
     make_memory_terminal,
     runtime_registry,
 )
+
+if TYPE_CHECKING:
+    from gobby.runner import GobbyRunner
 
 pytestmark = pytest.mark.unit
 
@@ -415,6 +421,81 @@ async def test_latched_wake_is_settled_by_the_delivered_composer_clear(
     assert [record.getMessage() for record in caplog.records if "Settling" in record.getMessage()]
 
 
+def _provider_composer_frame(source: str, text: str = "") -> str:
+    if source == "claude":
+        return f"done\n{'─' * 20}\n❯\xa0{text}\n{'─' * 20}\n"
+    footer = "  GPT-6-Sol xhigh · ~/Projects/gobby · 0.5.0\n  ← for agents · ? for shortcuts"
+    return f"done\n› {text}\n\n{footer}"
+
+
+@pytest.mark.parametrize("source", ["claude", "codex"])
+@pytest.mark.parametrize("state", ["empty", "draft", "unknown", "error"])
+async def test_real_probe_settles_old_wake_only_after_confirmed_empty(
+    managed_chain: ManagedChain,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    state: str,
+) -> None:
+    """An old wake latch recovers without draining; unsafe reads preserve the latch and text."""
+    wake_key = f"wake:{managed_chain.row.id}"
+    managed_chain.store.persist_unresolved_write(
+        managed_chain.row.id, wake_key, "automatic", daemon_epoch="earlier-daemon"
+    )
+    registry = BundledDetectionRegistry()
+    frame = (
+        "unreadable provider frame"
+        if state == "unknown"
+        else _provider_composer_frame(source, "operator draft" if state != "empty" else "")
+    )
+    managed_chain.native.snapshot_text = frame
+    if state == "error":
+        monkeypatch.setattr(
+            managed_chain.native, "snapshot", AsyncMock(side_effect=RuntimeError("probe failed"))
+        )
+    else:
+        assert IdleDetector(registry, source).composer_read(frame).state == state
+    runner = cast(
+        "GobbyRunner",
+        SimpleNamespace(
+            detection_registry=registry,
+            terminal_services=SimpleNamespace(runtime_for=lambda _terminal: managed_chain.native),
+        ),
+    )
+
+    async def probe(session: Any, terminal: Any | None) -> TerminalActivity:
+        return await probe_terminal_activity(runner, session, terminal)
+
+    manager = _session_manager(NATIVE_TERMINAL_CONTEXT)
+    manager.get.return_value.source = source
+    dispatcher = WakeDispatcher(
+        session_manager=manager,
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=managed_chain.store,
+        activity_probe=probe,
+    )
+    try:
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        unresolved = managed_chain.store.rows[managed_chain.row.id].unresolved_writes
+        if state == "empty":
+            assert result["delivered"] is True
+            assert unresolved == {}
+            assert managed_chain.native.write_log == [
+                ("text", CONTINUE_WAKE_MESSAGE),
+                ("key", "enter"),
+            ]
+        else:
+            assert result["delivered"] is False
+            assert wake_key in unresolved
+            assert managed_chain.native.write_log == []
+            assert managed_chain.native.snapshot_text == frame
+    finally:
+        retries = list(dispatcher._composer_retries.values())
+        for retry in retries:
+            retry.cancel()
+        await asyncio.gather(*retries, return_exceptions=True)
+
+
 @pytest.mark.asyncio
 async def test_undelivered_composer_clear_leaves_the_earlier_wake_latched(
     managed_chain: ManagedChain,
@@ -646,6 +727,7 @@ async def test_urgent_wake_injects_an_empty_composer() -> None:
         CONTINUE_WAKE_MESSAGE,
         submit=True,
         clear_before_submit=False,
+        composer_confirmed_empty=True,
         cli_source=ANY,
     )
 
@@ -668,6 +750,7 @@ async def test_only_an_unconfirmed_composer_keeps_the_blind_drain(
         submit=True,
         clear_before_submit=drains,
         cli_source=ANY,
+        **({} if drains else {"composer_confirmed_empty": True}),
     )
 
 
