@@ -48,6 +48,7 @@ from gobby.storage.workspaces import (
     LayoutChange,
     WorkspaceManager,
     WorkspaceNotFoundError,
+    WorkspacePane,
     layout_pane_ids,
 )
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -1292,6 +1293,171 @@ async def test_workspace_rename_writes_storage_off_the_event_loop() -> None:
     assert seen[0] != loop_thread
 
 
+def test_snapshot_uses_one_pool_acquisition_for_resolution_and_reads(harness: _Harness) -> None:
+    import time
+
+    from gobby.telemetry.query_timing import observe_queries
+
+    h = harness
+    workspace, _created = h.workspaces.create(LOCAL_MACHINE_ID, "snapshot")
+    change = h.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+    )
+    tab, pane = change.tabs[0], change.panes[0]
+    h.workspaces.mark_spawn_in_flight(pane.id)
+    queries: list[float] = []
+    acquisitions: list[float] = []
+    started = time.perf_counter()
+    with observe_queries(queries.append, pool_acquire_observer=acquisitions.append):
+        snapshot, swept = h.ops._snapshot_storage(workspace.id, None, {})
+    elapsed = time.perf_counter() - started
+    print(
+        f"snapshot elapsed_ms={elapsed * 1000:.1f} queries={len(queries)} "
+        f"pool_acquires={len(acquisitions)} pool_wait_ms={sum(acquisitions) * 1000:.1f}"
+    )
+    assert snapshot.workspace == workspace
+    assert snapshot.tabs == (tab,)
+    assert snapshot.panes == (pane,)
+    assert swept.removed_panes == ()
+    assert len(acquisitions) == 1
+
+
+def test_snapshot_holds_sweep_locks_until_both_row_lists_are_read(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from psycopg.errors import LockNotAvailable
+
+    h = harness
+    workspace, _created = h.workspaces.create(LOCAL_MACHINE_ID, "snapshot")
+    change = h.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+    )
+    tab, pane = change.tabs[0], change.panes[0]
+    h.workspaces.mark_spawn_in_flight(pane.id)
+    read_panes = h.workspaces.list_panes
+    updates: list[bool] = []
+
+    def update_layout() -> bool:
+        try:
+            with h.db.transaction() as conn:
+                conn.execute("SET LOCAL lock_timeout = '200ms'")
+                conn.execute(
+                    "UPDATE workspace_tabs SET title = 'concurrent' WHERE id = %s", (tab.id,)
+                )
+            return True
+        except LockNotAvailable:
+            return False
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+
+        def list_panes(workspace_id: str) -> list[WorkspacePane]:
+            updates.append(executor.submit(update_layout).result(timeout=3))
+            return read_panes(workspace_id)
+
+        monkeypatch.setattr(h.workspaces, "list_panes", list_panes)
+        snapshot, _swept = h.ops._snapshot_storage(workspace.id, None, {})
+
+    assert updates == [False]
+    assert snapshot.tabs == (tab,)
+    assert snapshot.panes == (pane,)
+    assert update_layout() is True
+    assert h.workspaces.list_tabs(workspace.id)[0].title == "concurrent"
+
+
+@pytest.mark.parametrize("operation", ["close_tab", "remove_pane", "move_pane"])
+def test_focused_tab_deletion_and_snapshot_share_parent_first_lock_order(
+    harness: _Harness,
+    monkeypatch: pytest.MonkeyPatch,
+    operation: Literal["close_tab", "remove_pane", "move_pane"],
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gobby.storage import workspaces as storage
+    from gobby.storage.hub.protocol import Row, Transaction
+    from gobby.terminals.workspace_contract import WorkspaceSnapshot
+
+    h = harness
+    workspace, _created = h.workspaces.create(LOCAL_MACHINE_ID, "focused")
+    change = h.workspaces.create_tab(
+        workspace.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+    )
+    tab, pane = change.tabs[0], change.panes[0]
+    h.workspaces.mark_spawn_in_flight(pane.id)
+    h.workspaces.set_focus_hints(
+        workspace.id, project_id=h.project_id, tab_id=tab.id, pane_id=pane.id
+    )
+    target_id = tab.id
+    if operation == "move_pane":
+        other, _created = h.workspaces.create(LOCAL_MACHINE_ID, "destination")
+        destination = h.workspaces.create_tab(
+            other.id, pane_id=str(uuid.uuid4()), project_id=h.project_id
+        )
+        h.workspaces.mark_spawn_in_flight(destination.panes[0].id)
+        target_id = destination.tabs[0].id
+
+    role = threading.local()
+    tab_locked = threading.Event()
+    delete_parent_locked = threading.Event()
+    snapshot_parent_requested = threading.Event()
+    snapshot_parent_locked = threading.Event()
+    finish_delete = threading.Event()
+    lock_rows = storage._lock_rows
+
+    def synchronized_locks(conn: Transaction, table: storage._Table, *ids: str) -> dict[str, Row]:
+        if role.name == "snapshot" and table == "workspaces":
+            snapshot_parent_requested.set()
+        rows = lock_rows(conn, table, *ids)
+        if role.name == "delete" and table == "workspaces":
+            delete_parent_locked.set()
+        elif role.name == "delete" and table == "workspace_tabs":
+            tab_locked.set()
+            assert finish_delete.wait(timeout=3), "Deletion barrier was not released"
+        elif role.name == "snapshot" and table == "workspaces":
+            snapshot_parent_locked.set()
+        return rows
+
+    monkeypatch.setattr(storage, "_lock_rows", synchronized_locks)
+
+    def delete() -> LayoutChange:
+        role.name = "delete"
+        with h.db.transaction() as conn:
+            conn.execute("SET LOCAL statement_timeout = '3s'")
+            if operation == "close_tab":
+                return h.workspaces.close_tab(tab.id)
+            if operation == "remove_pane":
+                return h.workspaces.remove_pane(pane.id)
+            return h.workspaces.move_pane(pane.id, tab_id=target_id)
+
+    def snapshot() -> WorkspaceSnapshot:
+        role.name = "snapshot"
+        with h.db.transaction() as conn:
+            conn.execute("SET LOCAL statement_timeout = '3s'")
+            return h.ops._snapshot_storage(workspace.id, None, {})[0]
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        closing = executor.submit(delete)
+        try:
+            assert tab_locked.wait(timeout=3), "Deletion did not acquire its tab lock"
+            reading = executor.submit(snapshot)
+            assert snapshot_parent_requested.wait(timeout=3), "Snapshot did not request its parent"
+            # With reversed locks, the snapshot takes the parent while deletion
+            # holds the child. With parent-first locks it waits until deletion commits.
+            if not delete_parent_locked.is_set():
+                assert snapshot_parent_locked.wait(timeout=3), "Snapshot did not acquire its parent"
+        finally:
+            finish_delete.set()
+        closed = closing.result(timeout=5)
+        taken = reading.result(timeout=5)
+
+    assert closed.removed_tabs[0].id == tab.id
+    assert taken.workspace.focused_tab_id is None
+    assert taken.tabs == ()
+    assert taken.panes == ()
+    assert h.workspaces.get(workspace.id) == taken.workspace
+
+
 def _storage_ops(workspaces: MagicMock) -> WorkspaceOps:
     return WorkspaceOps(
         workspaces=workspaces,
@@ -1386,6 +1552,10 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
         seen.append(("sweep", threading.get_ident()))
         return SimpleNamespace(removed_panes=(), removed_tabs=())
 
+    def get_workspace(_workspace_id: str) -> SimpleNamespace:
+        seen.append(("workspace", threading.get_ident()))
+        return workspace
+
     def list_tabs(_workspace_id: str) -> tuple[object, ...]:
         seen.append(("tabs", threading.get_ident()))
         return ()
@@ -1397,6 +1567,7 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
     workspaces = MagicMock()
     workspaces.resolve_reference.side_effect = resolve_reference
     workspaces.sweep_dead_panes.side_effect = sweep_dead_panes
+    workspaces.get.side_effect = get_workspace
     workspaces.list_tabs.side_effect = list_tabs
     workspaces.list_panes.side_effect = list_panes
     ops = _storage_ops(workspaces)
@@ -1404,7 +1575,7 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
         snapshot = await ops.workspace_snapshot("operator", "ws-1")
     assert snapshot.workspace.id == "ws-1"
     sweep_threads = [thread for kind, thread in seen if kind == "sweep"]
-    row_threads = [thread for kind, thread in seen if kind in {"tabs", "panes"}]
+    row_threads = [thread for kind, thread in seen if kind in {"workspace", "tabs", "panes"}]
     assert sweep_threads
     assert row_threads
     assert sweep_threads[0] != loop_thread
@@ -1415,34 +1586,45 @@ async def test_workspace_snapshot_reads_rows_on_the_sweep_thread() -> None:
 async def test_workspace_snapshot_log_separates_worker_wait_and_execution(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
+    from gobby.telemetry.query_timing import observe_queries, record_pool_acquire, record_query
+
     machine = SimpleNamespace(id="machine-1", ref=None, hostname="local")
     workspace = SimpleNamespace(id="ws-1")
     workspaces = MagicMock()
-    workspaces.resolve_reference.return_value = SimpleNamespace(
-        tab=None, pane=None, workspace=workspace, node=machine
-    )
+
+    def resolve_reference(_reference: str, *, node: str | None = None) -> SimpleNamespace:
+        record_pool_acquire(0.2)
+        record_query(0.05)
+        return SimpleNamespace(tab=None, pane=None, workspace=workspace, node=machine)
+
+    workspaces.resolve_reference.side_effect = resolve_reference
     workspaces.sweep_dead_panes.return_value = SimpleNamespace(removed_panes=(), removed_tabs=())
+    workspaces.get.return_value = workspace
     workspaces.list_tabs.return_value = ()
     workspaces.list_panes.return_value = ()
     ops = _storage_ops(workspaces)
 
-    async def run_storage(fn: Callable[..., Any], *args: Any) -> Any:
-        return fn(*args)
-
+    caller_queries: list[float] = []
+    caller_acquires: list[float] = []
     ticks = iter((0.0, 0.1, 0.2, 1.2, 1.25, 1.5, 1.55, 1.6, 1.65, 1.7, 2.0, 2.1))
     with (
         patch("gobby.terminals.workspace_ops.time", SimpleNamespace(monotonic=ticks.__next__)),
         patch("gobby.terminals.workspace_contract.require_machine_id", return_value="machine-1"),
-        patch.object(ops, "_db", side_effect=run_storage),
         patch.object(ops, "_publish_removal", return_value=None),
+        observe_queries(caller_queries.append, pool_acquire_observer=caller_acquires.append),
     ):
         snapshot = await ops.workspace_snapshot("operator", "ws-1")
+        record_query(0.25)
+        record_pool_acquire(0.3)
 
     assert snapshot.workspace.id == "ws-1"
     workspaces.sweep_dead_panes.assert_called_once_with("ws-1")
     workspaces.list_tabs.assert_called_once_with("ws-1")
     workspaces.list_panes.assert_called_once_with("ws-1")
     assert "worker_wait_ms=1000.0 worker_ms=500.0 worker_return_ms=300.0" in caplog.text
+    assert "query_ms=50.0 query_count=1 pool_wait_ms=200.0 pool_acquires=1" in caplog.text
+    assert caller_queries == [0.25]
+    assert caller_acquires == [0.3]
 
 
 @pytest.mark.asyncio
@@ -1484,6 +1666,7 @@ async def test_snapshot_watermark_excludes_a_publish_waiting_on_the_fence() -> N
     workspaces = MagicMock()
     workspaces.resolve_reference.side_effect = resolve_reference
     workspaces.sweep_dead_panes.side_effect = sweep_dead_panes
+    workspaces.get.return_value = workspace
     workspaces.list_tabs.return_value = ()
     workspaces.list_panes.return_value = ()
     ops = _storage_ops(workspaces)
