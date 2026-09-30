@@ -283,7 +283,7 @@
       "command": "gobby start",
       "reference": "src/gobby/install/shared/skills/gobby/references/admin/daemon.md",
       "implementation": {
-        "path": "src/gobby/cli/daemon.py",
+        "path": "src/gobby/cli/daemon_start.py",
         "symbol": "start"
       },
       "verification": [
