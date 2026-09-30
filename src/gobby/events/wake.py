@@ -68,7 +68,6 @@ LIVE_WAKE_TIMEOUT_SECONDS = 5.0
 # delay before the session sees it; giving up never loses it.
 COMPOSER_RETRY_BASE_SECONDS = 15.0
 COMPOSER_RETRY_MAX_SECONDS = 240.0
-COMPOSER_RETRY_MAX_ATTEMPTS = 6
 
 RunDb = Callable[..., Awaitable[Any]]
 LifecycleRefresh = Callable[[str], Awaitable[None]]
@@ -328,10 +327,9 @@ class WakeDispatcher:
     def _schedule_composer_retry(self, session_id: str, *, priority: str) -> None:
         """Retry a wake withheld from a composer that was not confirmed empty.
 
-        Bounded exponential backoff: each withheld attempt doubles the wait
-        until ``COMPOSER_RETRY_MAX_SECONDS``, and the loop stops after
-        ``COMPOSER_RETRY_MAX_ATTEMPTS``. The durable message is never lost; the
-        retries only shorten the delay before a cleared composer accepts it.
+        Each withheld attempt doubles the wait until ``COMPOSER_RETRY_MAX_SECONDS``.
+        Keep one retry task until a confirmed empty composer accepts the wake or
+        its lifecycle/terminal outcome no longer permits delivery.
         """
         if session_id in self._composer_retries:
             return
@@ -346,7 +344,8 @@ class WakeDispatcher:
 
     async def _retry_withheld_wake(self, session_id: str, *, priority: str) -> None:
         delay = COMPOSER_RETRY_BASE_SECONDS
-        for attempt in range(COMPOSER_RETRY_MAX_ATTEMPTS):
+        attempt = 0
+        while True:
             await self._composer_retry_wait(delay)
             lock = self._live_wake_locks.get(session_id)
             if lock is None:
@@ -363,11 +362,12 @@ class WakeDispatcher:
                 logger.warning("Composer retry failed for session %s", session_id, exc_info=True)
                 return
             skipped = result.get("skipped")
+            attempt += 1
             logger.log(
                 logging.DEBUG if skipped == "debounced" else logging.INFO,
                 "Composer retry for session %s: attempt=%d delivered=%s skipped=%s",
                 session_id,
-                attempt + 1,
+                attempt,
                 result.get("delivered"),
                 skipped,
             )

@@ -372,7 +372,6 @@ async def composer_gate_for_write(
     composer_read: ComposerReader | None,
     *,
     action: str,
-    refuse_unknown: bool = True,
 ) -> tuple[bool, str | None, str]:
     """Refuse a composer write unless a probe positively confirms the composer is empty.
 
@@ -385,10 +384,7 @@ async def composer_gate_for_write(
     withholding there would starve it forever; that case keeps the drain. No probe
     bound means the caller has no safer read to offer and keeps its existing path.
 
-    ``refuse_unknown=False`` keeps the unreadable-frame path writable for a caller
-    that owns a durable fallback for the message anyway: the continuation prompt
-    must still reach a session whose compact just finished, so it refuses only the
-    draft it can positively attribute to the operator.
+    Callers retain their durable fallback when an unreadable frame refuses a write.
     """
     if composer_read is None:
         return True, None, "unprobed"
@@ -397,8 +393,6 @@ async def composer_gate_for_write(
         return True, None, "empty"
     if read.state == "draft":
         return False, "composer holds an operator draft", "draft"
-    if not refuse_unknown:
-        return True, None, "unknown"
     return False, f"composer could not be confirmed empty before {action}", "unknown"
 
 

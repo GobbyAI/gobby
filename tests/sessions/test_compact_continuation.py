@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, ComposerRead, IdleDetector
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_shutdown import _settle_finalizers_under_cancellation
 from gobby.sessions.compact_continuation import (
@@ -32,6 +32,7 @@ from gobby.sessions.compact_continuation import (
     consume_and_schedule_handoff_compact_continuation,
     consume_handoff_compact_continuation_pending,
     mark_handoff_compact_continuation_pending,
+    persist_pull_prompt_message,
     schedule_codex_handoff_compact_continuation_readiness,
     schedule_handoff_compact_continuation,
 )
@@ -1005,6 +1006,43 @@ async def _send_pull_prompt(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("cli_source", ["claude", "codex"])
+@pytest.mark.parametrize("state", ["draft", "unknown", "probe_error"])
+async def test_pull_prompt_refuses_unconfirmed_composer_and_keeps_durable_message(
+    session_db: HubDatabase, cli_source: str, state: str
+) -> None:
+    """An unreadable frame may conceal a draft; refusal must write nothing."""
+    tmux = _FakeTmux()
+    tmux.composer_text = "unreadable frame containing the operator's unsent draft"
+
+    def read(_snapshot: str | None) -> ComposerRead:
+        if state == "probe_error":
+            raise RuntimeError("snapshot parser failed")
+        return ComposerRead("draft" if state == "draft" else "unknown", "operator draft")
+
+    def retain() -> None:
+        persist_pull_prompt_message(session_db, SESSION_ID, _PULL_PROMPT, "refused-attempt")
+
+    sent = await _send_handoff_compact_continuation(
+        TmuxPaneIO(tmux, "%12"),
+        _PULL_PROMPT,
+        SESSION_ID,
+        delay_seconds=0,
+        cli_source=cli_source,
+        composer_read=read,
+        on_send_failure=retain,
+    )
+
+    assert sent is False
+    assert tmux.sent_keys == []
+    assert tmux.composer_text == "unreadable frame containing the operator's unsent draft"
+    queued = InterSessionMessageManager(session_db).get_undelivered_messages(SESSION_ID)
+    assert [(message.content, message.message_type) for message in queued] == [
+        (_PULL_PROMPT, "handoff_continuation")
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pull_prompt_waits_for_the_shared_composer_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1023,6 +1061,8 @@ async def test_pull_prompt_waits_for_the_shared_composer_lock(
     monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)
 
     tmux = _FakeTmux()
+    tmux.composer_text = _claude_frame("❯\xa0")
+    assert _CLAUDE_READ(tmux.composer_text).state == "empty"
     async with composer_action_lock("%12"):
         send = asyncio.create_task(_send_pull_prompt(tmux))
         for _ in range(5):
@@ -1085,11 +1125,22 @@ class TestPullPromptFallback:
         fallback. What stranded the live prompts (gobby#22550) was skipping the
         Enter, not trusting the frame after it.
         """
-        tmux = _FakeTmux()
-        tmux.composer_text = None
+
+        class UnreadableAfterEnterTmux(_FakeTmux):
+            composer_text: str | None = _claude_frame("❯\xa0")
+
+            async def send_keys(self, pane_id: str, text: str, *, literal: bool = False) -> bool:
+                delivered = await super().send_keys(pane_id, text, literal=literal)
+                if text == "Enter" and not literal:
+                    self.composer_text = None
+                return delivered
+
+        tmux = UnreadableAfterEnterTmux()
+        assert _CLAUDE_READ(tmux.composer_text).state == "empty"
         failures: list[int] = []
 
         assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is True
+        assert _CLAUDE_READ(tmux.composer_text).state == "unknown"
         assert failures == []
         assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1

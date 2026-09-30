@@ -22,7 +22,6 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.live_wake import TerminalActivity
 from gobby.events.wake import (
     COMPOSER_RETRY_BASE_SECONDS,
-    COMPOSER_RETRY_MAX_ATTEMPTS,
     COMPOSER_RETRY_MAX_SECONDS,
     CONTINUE_WAKE_MESSAGE,
     CONTINUE_WAKE_SIGNAL,
@@ -553,6 +552,7 @@ class TestWakeDispatch:
             clear_before_submit=True,
             cli_source=ANY,
         )
+        assert tmux_sender.await_args is not None
         assert "Task completed" not in tmux_sender.await_args.args[1]
 
     @pytest.mark.asyncio
@@ -1349,8 +1349,8 @@ class TestWakeDispatch:
             terminal_manager=_managed_terminal(),
         )
 
-        async def run_wakes() -> list[None]:
-            return await asyncio.gather(
+        async def run_wakes() -> None:
+            await asyncio.gather(
                 dispatcher.wake(
                     WAKE_SESSION_ID,
                     "Done",
@@ -1420,8 +1420,8 @@ class TestWakeDispatch:
             terminal_manager=_managed_terminal(),
         )
 
-        async def run_wakes() -> list[None]:
-            return await asyncio.gather(
+        async def run_wakes() -> None:
+            await asyncio.gather(
                 dispatcher.wake(
                     WAKE_SESSION_ID,
                     "Done",
@@ -1683,10 +1683,12 @@ class TestWakeDispatch:
         )
 
         async def run_wakes() -> list[dict[str, object]]:
-            return await asyncio.gather(
-                dispatcher.dispatch_live_wake("web-1"),
-                dispatcher.dispatch_live_wake("web-1"),
-                dispatcher.dispatch_live_wake("web-1"),
+            return list(
+                await asyncio.gather(
+                    dispatcher.dispatch_live_wake("web-1"),
+                    dispatcher.dispatch_live_wake("web-1"),
+                    dispatcher.dispatch_live_wake("web-1"),
+                )
             )
 
         wakes = asyncio.create_task(run_wakes())
@@ -1761,6 +1763,7 @@ class TestWakeDispatch:
         assert debounced["skipped"] == "debounced"
         assert retried["delivered"] is True
         assert tmux_sender.await_count == 2
+        assert tmux_sender.await_args is not None
         assert tmux_sender.await_args.args[1] == retry_prompt
         assert ism_manager.create_message.call_args.kwargs["content"] == retry_prompt
 
@@ -2001,14 +2004,18 @@ class TestComposerRetry:
         pane_sender.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_retry_backoff_is_bounded_when_the_draft_never_clears(
+    async def test_retry_continues_with_capped_delay_until_empty(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        from gobby.agents.idle_detector import ComposerRead
+        from gobby.agents.idle_detector import ComposerRead, ComposerState
         from gobby.events.live_wake import TerminalActivity
 
+        # Stay occupied beyond the old six-attempt/705-second abandonment point.
+        states: list[ComposerState] = ["draft" for _ in range(8)]
+        states.append("empty")
+
         async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
-            return TerminalActivity(ComposerRead("draft", "operator text"))
+            return TerminalActivity(ComposerRead(states.pop(0), "operator text"))
 
         pane_sender = AsyncMock()
         dispatcher = TestComposerGate._dispatcher(probe, pane_sender)
@@ -2022,7 +2029,9 @@ class TestComposerRetry:
         await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
         await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
 
-        assert len(delays) == COMPOSER_RETRY_MAX_ATTEMPTS
+        assert len(delays) == 8
         assert delays[-1] == COMPOSER_RETRY_MAX_SECONDS
         assert all(delay <= COMPOSER_RETRY_MAX_SECONDS for delay in delays)
-        pane_sender.assert_not_awaited()
+        assert delays[:4] == [15.0, 30.0, 60.0, 120.0]
+        assert states == []
+        pane_sender.assert_awaited_once()

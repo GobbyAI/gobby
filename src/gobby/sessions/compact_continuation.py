@@ -578,7 +578,6 @@ async def _type_handoff_compact_continuation(
             cli_source,
             composer_read,
             action="the set_handoff continuation",
-            refuse_unknown=False,
         )
         if not writable:
             logger.warning(
