@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
     link_close_commit_shas,
     resolve_close_commit_shas,
+    select_close_candidate,
     unlinked_tagged_commits,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
@@ -304,6 +305,16 @@ async def commit_close(
             evaluation,
             "The prospective commit set changed after evaluation; retry close_task.",
         )
+    candidate_commit_sha, candidate_error = await select_close_candidate(
+        commit_shas if commit_sha or not fresh_skip_leaf_checks else [],
+        commit_sha,
+        cwd=evaluation.repo_path,
+    )
+    if candidate_error or candidate_commit_sha != evaluation.candidate_commit_sha:
+        return stale_close_response(
+            evaluation,
+            "The reviewed close candidate is missing or changed; retry close_task with commit_sha.",
+        )
     if not fresh_skip_leaf_checks:
         # The evaluation's gate-7 divergence scan, repeated against fresh git state.
         (unlinked_on_head, _elsewhere), tagged_error = await unlinked_tagged_commits(
@@ -393,7 +404,7 @@ async def commit_close(
     if clean_proof.status == "skipped":
         clean_reason = "Task clean proof: disabled_by_configuration"
         audit_reason = f"{audit_reason}\n\n{clean_reason}" if audit_reason else clean_reason
-    current_commit_sha = commit_shas[-1] if commit_shas else None
+    current_commit_sha = candidate_commit_sha
     closed_ancestors: list[str] = []
     try:
         # Off the loop: the transition runs synchronous psycopg, and
