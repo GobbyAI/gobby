@@ -1441,6 +1441,8 @@ the full pytest suite.
   batches only, with a still-running classifier cancelled and awaited when
   the incumbent returns; Coordination With #22604 narrows the no-edge
   statement to tool rerank (3.1) and keeps #22604's dependency on 1.2.
+- 2026-09-29: Renewed consensus with Plan Adversary gobby#14579 on
+  4fd29ee after independent verification of the PD repairs.
 
 ## M1 Task Manifest
 `kind: manifest`
