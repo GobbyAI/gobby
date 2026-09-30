@@ -1218,24 +1218,8 @@ deferral:
     - 3.1.5
 ```
 
-## V1: Verification
+## V1 Plan Changelog
 `kind: verification`
-
-Run after each leaf's final edit and again before the PD lands the branch:
-
-```bash
-DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_imports.py tests/workflows/test_workflows_sync.py tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py tests/cli/test_cli_pipelines.py tests/mcp_proxy/tools/test_agents_run_payload.py tests/mcp_proxy/tools/test_agent_live_stats.py tests/agents/test_runbook_seats.py tests/workflows/test_runbook_pipeline.py tests/scheduler/test_cron_runbook_chain.py tests/scheduler/test_cron_executor.py tests/workflows/test_pipeline_executor_child_session.py tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py tests/workflows/test_pipeline_invocation_id.py tests/skills/test_reference_library.py -q
-uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
-uv run gobby plans validate "$(git rev-parse --show-toplevel)/.gobby/plans/deploy-runbook.md" -p /Users/josh/Projects/gobby
-```
-
-Validate the absolute artifact path: from a task worktree, a relative path
-under `-p` resolves to the main checkout's copy. After the PD-owned restart,
-`gobby pipelines list --tag runbook` lists the bundled `planning-council`.
-Do not run the full pytest suite.
-
-## Changelog
-`kind: framing`
 
 - 2026-09-30: Full rewrite for #22895. The runbook document, service, ledger
   migration and `deploy_runbook` tool family are withdrawn in favor of tagged
@@ -1274,3 +1258,24 @@ Do not run the full pytest suite.
   targets `_RESERVED_CONTEXT_KEYS` and pins collision protection (7.2.1),
   and 9.1 targets `tests/skills/test_reference_library.py`, removed from
   7.1 and 8.1 Consumers unchanged.
+- 2026-09-30: Consensus. The Adversary (gobby#14579) rechecked bccc937
+  and resolved INVOCATION_AUTHORITY and TARGET_COMPLETENESS with no
+  remaining blocking findings. Narrative consensus between the Writer and
+  the Adversary on this candidate. The changelog moves to this canonical
+  V1 heading, and verification becomes V2 with its commands unchanged.
+
+## V2: Verification
+`kind: verification`
+
+Run after each leaf's final edit and again before the PD lands the branch:
+
+```bash
+DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_imports.py tests/workflows/test_workflows_sync.py tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py tests/cli/test_cli_pipelines.py tests/mcp_proxy/tools/test_agents_run_payload.py tests/mcp_proxy/tools/test_agent_live_stats.py tests/agents/test_runbook_seats.py tests/workflows/test_runbook_pipeline.py tests/scheduler/test_cron_runbook_chain.py tests/scheduler/test_cron_executor.py tests/workflows/test_pipeline_executor_child_session.py tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py tests/workflows/test_pipeline_invocation_id.py tests/skills/test_reference_library.py -q
+uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
+uv run gobby plans validate "$(git rev-parse --show-toplevel)/.gobby/plans/deploy-runbook.md" -p /Users/josh/Projects/gobby
+```
+
+Validate the absolute artifact path: from a task worktree, a relative path
+under `-p` resolves to the main checkout's copy. After the PD-owned restart,
+`gobby pipelines list --tag runbook` lists the bundled `planning-council`.
+Do not run the full pytest suite.
