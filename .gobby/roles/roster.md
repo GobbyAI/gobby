@@ -6,7 +6,7 @@
 | orchestrator.md | gobby#14737 |
 | merge-manager.md | gobby#14894 |
 | lane-1-gclient.md | gobby#14909 |
-| lane-2-stability.md | gobby#14925 |
+| lane-2-stability.md | gobby#14962 |
 | lane-3-hooks.md | gobby#14956 |
 | lane-3-hooks.md | gobby#14954 |
 | lane-4-runbooks.md | gobby#14674 |
