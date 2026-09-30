@@ -139,16 +139,25 @@ The plan also sets:
      leaves at least `backend_max_state_tokens - 1` input tokens, so a
      response whose `usage.input_tokens` reaches that value raises
      `DecisionsUnavailable(reason="truncated")`, and so does a response with no
-     `usage.input_tokens`. `backend_max_state_tokens` defaults to 65,536 from
-     the pinned Kev commit. A false positive fails closed.
-   - `backend_max_state_tokens` defaults per wire: 65,536 for `systemone`
-     from the pinned Kev commit, and 32,000 for `openrouter-decisions`, which
-     OpenRouter documents as the whole input, state plus questions
-     (`https://openrouter.ai/docs/guides/community/jev.md`, retrieved
-     2026-09-30). An explicit value overrides the default. OpenRouter's
-     response to an oversize request is undocumented. If it truncates, the
-     guard catches it; if it rejects, the request fails as `http_status`.
-     The Activation Gate's live capture records which one happens.
+     `usage.input_tokens`. A false positive fails closed.
+   - `backend_max_state_tokens` is the backend's input limit in the scope
+     that backend documents, and it defaults per wire:
+     - 65,536 for `systemone`, from the pinned Kev commit, where it bounds
+       the encoded state;
+     - 32,000 for `openrouter-decisions`, which OpenRouter documents as the
+       whole input, state plus questions
+       (`https://openrouter.ai/docs/guides/community/jev.md`, retrieved
+       2026-09-30).
+     - An explicit value overrides the default. TypeSafe direct documents
+       64k for the whole request and 32k for state plus the longest question
+       (`https://docs.typesafe.ai/models`), so a TypeSafe endpoint sets the
+       value from those documented scopes, and its live capture records it.
+   - OpenRouter's response to an oversize request is undocumented. A
+     rejection fails as `http_status`. The guard counts as catching
+     truncation only after the Activation Gate's live capture verifies the
+     limit and the `usage.input_tokens` semantics it relies on, and that
+     capture records which behavior occurs. Until then every consumer stays
+     in `shadow`.
    - Consumers batch to `service.max_input_tokens`.
    - The evaluation (2.1) measures quality at the state sizes each consumer
      actually sends, because every consumer runs far beyond Kev's training
@@ -458,9 +467,9 @@ when every one of these holds:
      `identity_contract`;
    - one Choice and one Noul round trip that the service parses;
    - the measured characters-per-token ratio on a path-heavy request;
-   - the server's actual state limit, which must equal
-     `backend_max_state_tokens`, and evidence that `usage.input_tokens`
-     counts every encoded state token, by contract:
+   - the server's input limit and its scope (encoded state, or the whole
+     input), which must equal `backend_max_state_tokens`, and evidence that
+     `usage.input_tokens` counts every token in that scope, by contract:
      - `model_card` (a server Josh runs): the server's source commit, its
        `/v1/models` card, and the limit and usage semantics read from that
        source;
@@ -879,10 +888,12 @@ Transport, per Decisions 8 and 9:
     at least 0. A missing or malformed value raises `truncated` under
     Decision 8, before any policy sees the answers;
   - the truncation guard is sound only for a backend whose
-    `usage.input_tokens` counts every encoded state token and whose actual
-    state limit equals the resolved `backend_max_state_tokens`. Kev at the
-    pinned commit satisfies both, and OpenRouter documents
-    `usage.input_tokens` and a 32,000-token limit. The Activation Gate's live capture verifies both for the
+    `usage.input_tokens` counts every token in the scope of its input
+    limit and whose limit in that scope equals the resolved
+    `backend_max_state_tokens`. Kev at the pinned commit satisfies both for
+    the encoded state. OpenRouter documents `usage.input_tokens` and a
+    32,000-token whole-input limit, and its truncation behavior stays
+    unverified until the live capture. The Activation Gate's live capture verifies both for the
     configured server, and an unverified or mismatched server keeps every
     consumer in `shadow`;
 - the Decision 9 cooldown rules apply exactly: remote failures open it, and
@@ -1213,8 +1224,11 @@ answer's `noul` field under the same strict parsing. It uses the same
 transport, ceiling, and cooldown. Its wire field names come from the Noul
 schema that 1.2 pinned in `docs/evidence/decisions/systemone-wire.md`:
 - Before any code in this leaf, author
-  `tests/ai/fixtures/systemone_noul_response.json` from that schema, with
-  three propositions. The `noul` parser tests read this fixture.
+  `tests/ai/fixtures/systemone_noul_response.json` from that schema, and
+  `tests/ai/fixtures/openrouter_decisions_noul_response.json` from
+  OpenRouter's schema with a dated `model`, `id`, `provider`, and `usage`
+  carrying `output_tokens` and `cost`, each with three propositions. The
+  `noul` parser tests read both fixtures.
 - Append to the evidence file a note naming the fixture and any field the
   consumer relies on. Runtime compatibility waits for the Activation Gate's
   live capture.
@@ -1279,9 +1293,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 
 **Acceptance:**
 
-- 3.1.1 - `noul` posts per-proposition questions, parses the
-  documented-schema Noul fixture, and returns probabilities by key under the
-  same ceiling and cooldown. The fixture note is appended to
+- 3.1.1 - `noul` posts per-proposition questions on either wire, parses
+  both documented-schema Noul fixtures, and returns probabilities by key
+  under the same ceiling and cooldown. The fixture note is appended to
   `docs/evidence/decisions/systemone-wire.md`. test:
   `tests/ai/test_decisions_service.py::test_noul_returns_probabilities_by_key`.
 - 3.1.2 - Shadow mode returns today's result unchanged and writes one shadow
@@ -1523,3 +1537,8 @@ the full pytest suite.
   external test target through `wire_api`, pinned from OpenRouter's API
   reference, tutorial and hub pages (Researcher gobby#14550, retrieved
   2026-09-30). The superseded M1 was retired for re-derivation.
+- 2026-09-29: Plan Adversary gobby#14579 reviewed 6b19579 with no blocking
+  finding. Applied DC-OR-01 (the input limit's documented scope per
+  backend, and OpenRouter truncation left unverified until the live
+  capture) and named the OpenRouter Noul fixture in 3.1. Renewed consensus
+  on this revision.
