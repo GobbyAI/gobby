@@ -1492,6 +1492,39 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
 
 
 @pytest.mark.asyncio
+async def test_gclient_survives_daemon_restart_with_usable_native_pane(
+    daemon_instance: DaemonInstance,
+) -> None:
+    """Live #23076 2.3.1/2.3.3 proof: the real client survives a daemon restart.
+
+    The pane's frame source hits EOF when the daemon goes down, and the client
+    must reconnect straight to the still-running host, keep the same pane
+    address, and keep accepting input; the daemon then adopts the same host at
+    the same epoch when it comes back.
+    """
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+        epoch_before = _wait_for_host(http, daemon_instance).get("host_epoch")
+    assert isinstance(epoch_before, str) and epoch_before, "host epoch missing before restart"
+    terminal_id = await _shell(daemon_instance, marker="GCLIENT-RESTART-BEFORE")
+    async with _running_gclient(daemon_instance) as client:
+        address = await _adopt(daemon_instance, terminal_id)
+        await _activate_terminal(client, address)
+        await _screen(client, "GCLIENT-RESTART-BEFORE")
+        _restart_daemon_preserving_host(daemon_instance)
+        assert client.poll() is None, "gclient exited when the daemon stopped"
+        await _screen(client, "GCLIENT-RESTART-BEFORE")
+        assert address in client.screen.text, "pane address was not retained after restart"
+        await _take_and_echo(client, "GCLIENT-RESTART-AFTER")
+        with _http(daemon_instance) as http:
+            host_after = await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+            assert host_after.get("adopted") is True
+            assert host_after.get("host_epoch") == epoch_before
+            row = http.get(f"/api/terminals/{terminal_id}").json()
+            assert row.get("state") == "live"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("terminal_backend", ["native", "tmux"], indirect=True)
 async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
