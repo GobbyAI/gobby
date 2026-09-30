@@ -178,15 +178,20 @@ async def settle_decision_callback(
         return True
 
     clicked_id = message.metadata_json.get("callback_source_message_id")
-    if not clicked_id:
-        return False
-    source = await asyncio.to_thread(
-        store.get_message_by_platform_id,
-        channel.name,
-        str(clicked_id),
-        platform_destination=str(chat_id),
+    source = (
+        await asyncio.to_thread(
+            store.get_message_by_platform_id,
+            channel.name,
+            str(clicked_id),
+            platform_destination=str(chat_id),
+        )
+        if clicked_id
+        else None
     )
     if source is None or not _is_decision(source):
+        # Only a persisted decision in this chat can be reissued; any other stale click
+        # is refused as invalid, even when the registry still recognized its token.
+        message.metadata_json["callback_status"] = "invalid"
         return False
     async with manager.decision_locks(source.id):
         current = await asyncio.to_thread(store.get_message, source.id)

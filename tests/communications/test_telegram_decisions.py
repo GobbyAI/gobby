@@ -905,6 +905,83 @@ async def test_action_keyboard_is_not_reissued(decision: _Decision) -> None:
     assert _calls(post_json, "editMessageText") == []
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("click_chat_id", "bound_message_id", "action"),
+    [
+        pytest.param("3333333", _SOURCE_MESSAGE_ID, None, id="wrong_chat"),
+        pytest.param(_CHAT_ID, _SOURCE_MESSAGE_ID, "agent_menu", id="action_keyboard"),
+        pytest.param(_CHAT_ID, 555, None, id="unpersisted_source"),
+    ],
+)
+async def test_expired_known_token_outside_a_persisted_decision_resolves_invalid(
+    decision: _Decision, click_chat_id: str, bound_message_id: int, action: str | None
+) -> None:
+    if action is not None:
+        decision.store.update_message_delivery(
+            decision.source.id,
+            "sent",
+            None,
+            str(_SOURCE_MESSAGE_ID),
+            {**decision.source.metadata_json, "callback_action": action},
+        )
+    now = [1000.0]
+    post_json = AsyncMock(return_value=_OK)
+    adapter = _adapter(post_json)
+    adapter._callback_registry = TelegramCallbackRegistry(clock=lambda: now[0])
+    markup = adapter._callback_registry.register_keyboard(
+        _KEYBOARD,
+        session_id=decision.session_id,
+        chat_id=_CHAT_ID,
+        thread_id=None,
+        ttl_seconds=30,
+        action=action,
+        source_id=decision.source.id,
+    )
+    adapter._callback_registry.bind_keyboard(markup, str(bound_message_id))
+    token = markup["inline_keyboard"][0][0]["callback_data"]
+    now[0] += 31
+    inbound = InboundCommunications(_manager(decision, adapter))
+
+    click = _click(adapter, token, "q-1", chat_id=click_chat_id, message_id=bound_message_id)
+    handled = await inbound.handle_messages("telegram", [click])
+
+    assert handled[0].metadata_json["callback_status"] == "invalid"
+    assert _calls(post_json, "editMessageText") == []
+    assert _calls(post_json, "editMessageReplyMarkup") == []
+    assert _row(decision).get("callback_state") is None
+    assert _routed(decision, "q-1") is None
+
+
+@pytest.mark.asyncio
+async def test_expired_known_token_without_a_source_message_resolves_invalid(
+    decision: _Decision,
+) -> None:
+    now = [1000.0]
+    post_json = AsyncMock(return_value=_OK)
+    adapter = _adapter(post_json)
+    adapter._callback_registry = TelegramCallbackRegistry(clock=lambda: now[0])
+    markup = adapter._callback_registry.register_keyboard(
+        _KEYBOARD,
+        session_id=decision.session_id,
+        chat_id=_CHAT_ID,
+        thread_id=None,
+        ttl_seconds=30,
+        source_id=decision.source.id,
+    )
+    token = markup["inline_keyboard"][0][0]["callback_data"]
+    now[0] += 31
+    inbound = InboundCommunications(_manager(decision, adapter))
+    click = _click(adapter, token, "q-1")
+    click.metadata_json.pop("callback_source_message_id", None)
+
+    handled = await inbound.handle_messages("telegram", [click])
+
+    assert handled[0].metadata_json["callback_status"] == "invalid"
+    assert _calls(post_json, "editMessageText") == []
+    assert _routed(decision, "q-1") is None
+
+
 def test_decision_state_transitions_are_compare_and_set(decision: _Decision) -> None:
     store = decision.store
     source_id = decision.source.id
