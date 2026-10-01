@@ -13,6 +13,7 @@ from typing import Any, cast
 from uuid import uuid4
 
 import httpx
+from websockets.protocol import State
 
 from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.idle_detector import IdleDetector, plain_text
@@ -34,7 +35,47 @@ from tests.e2e.test_terminal_client_stack import WsSession, _attach_locator, _ws
 
 
 class ProofWsSession(WsSession):
+    def __init__(self, daemon: DaemonInstance) -> None:
+        super().__init__(daemon)
+        self._proof_subscribed = False
+
+    async def connect(self) -> None:
+        self._proof_subscribed = False
+        start = len(self.messages)
+        await super().connect()
+        events = {"hook_event", "session_event"}
+        await self.send({"type": "subscribe", "events": sorted(events)})
+        try:
+            ack = await self.wait_for(
+                lambda event: event.get("type") == "subscribe_success"
+                and event in self.messages[start:],
+                timeout=8,
+                description="proof event subscription acknowledgement",
+            )
+        except (AssertionError, TimeoutError) as exc:
+            raise ProofRefused("proof event subscription acknowledgement unavailable") from exc
+        acknowledged = ack.get("events")
+        if (
+            not isinstance(acknowledged, list)
+            or any(not isinstance(event, str) for event in acknowledged)
+            or not events.issubset(acknowledged)
+        ):
+            raise ProofRefused("proof event subscription acknowledgement incomplete")
+        self._proof_subscribed = True
+        self.require_events()
+
+    def require_events(self) -> None:
+        if (
+            not self._proof_subscribed
+            or self._task is None
+            or self._task.done()
+            or self._ws is None
+            or self._ws.state != State.OPEN
+        ):
+            raise ProofRefused("proof hook/session stream unavailable")
+
     async def close(self) -> None:
+        self._proof_subscribed = False
         await super().close()
         if self._task is not None:
             await asyncio.gather(self._task, return_exceptions=True)
@@ -93,7 +134,7 @@ class Frames:
 class Seat:
     surface: Surface
     external_id: str
-    ws: WsSession
+    ws: ProofWsSession
     frames: Frames
     detector: IdleDetector
     locator: AttachLocator
@@ -272,13 +313,13 @@ class LiveProof:
             details = await self.call(
                 "gobby-sessions", "get_session", {"session_id": seat.surface.session_id}
             )
-            while details.get("status") != "idle":
+            while details.get("status") != "paused":
                 await seat.ws.wait_for(
                     lambda event, baseline=start: event.get("type") == "session_event"
                     and event.get("session_id") == seat.surface.session_id
                     and event in seat.ws.messages[baseline:],
                     timeout=timeout,
-                    description="real idle lifecycle",
+                    description="real paused lifecycle",
                 )
                 start = len(seat.ws.messages)
                 details = await self.call(
@@ -318,6 +359,7 @@ class LiveProof:
             raise ProofRefused("unsupported held boundary command")
         gate = (seat.surface.terminal_id, hashlib.sha256((command + "\n").encode()).hexdigest())
         try:
+            seat.ws.require_events()
             if self.trace.gate != gate or self.trace.release.is_set():
                 raise ProofRefused("held boundary is not armed")
             await asyncio.wait_for(self.trace.staged.wait(), 10)
@@ -328,6 +370,7 @@ class LiveProof:
                 timeout=10,
             )
             await self.validate(seat)
+            seat.ws.require_events()
             current = seat.frames.latest
             if (
                 self.trace.gate != gate
@@ -357,6 +400,7 @@ class LiveProof:
     async def notice(self, seat: Seat, priority: str) -> str:
         await self.validate(seat)
         marker = f"R2_22915_{seat.surface.provider.upper()}_{priority.upper()}_NOTICE"
+        before = seat.frames.revision
         result = await self.call(
             "gobby-agents",
             "send_message",
@@ -371,7 +415,9 @@ class LiveProof:
         ids = result.get("message_ids")
         if not isinstance(ids, list) or len(ids) != 1:
             raise ProofRefused("proof notice has no unique durable ID")
-        frame = await seat.frames.wait_for(lambda frame: True)
+        # Force this read attachment's view even when the native host deduplicates unchanged frames.
+        await seat.frames.client.set_scroll_offset(0)
+        frame = await seat.frames.wait_for(lambda frame: True, after=before)
         self.evidence.append(
             {
                 "case": priority,

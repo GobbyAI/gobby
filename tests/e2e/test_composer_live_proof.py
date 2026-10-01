@@ -125,6 +125,7 @@ async def composer_fixture(
                 "hook_extensions.websocket.broadcast_events": [
                     "user-prompt-submit",
                     "session-start",
+                    "post-compact",
                     "stop",
                 ],
             }

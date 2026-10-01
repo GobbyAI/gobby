@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 from collections.abc import Callable
 from pathlib import Path
@@ -13,9 +15,11 @@ from uuid import uuid4
 import httpx
 import pytest
 
+from gobby.storage.sessions._constants import ALLOWED_SESSION_STATUSES
+from gobby.terminals.frame_client import FrameClient
 from tests.e2e.composer_proof import ProofRefused, ProofScope, Surface, require_private_root
 from tests.e2e.composer_proof_frames import ProofFrame
-from tests.e2e.composer_proof_live import LiveProof, Seat
+from tests.e2e.composer_proof_live import Frames, LiveProof, Seat
 from tests.e2e.composer_proof_setup import verify_setup
 from tests.e2e.composer_proof_trace import ProofTrace
 
@@ -31,8 +35,9 @@ def test_sealed_home_remains_a_valid_private_fixture_root(
     assert require_private_root(home) == home.resolve()
 
 
-async def test_idle_wait_uses_real_update_event_then_rereads_status() -> None:
-    own = Surface("codex", str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+async def test_empty_wait_uses_real_update_event_then_rereads_paused_status(provider: str) -> None:
+    own = Surface(provider, str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
     messages: list[dict[str, Any]] = []
 
     async def update(predicate: Callable[[dict[str, Any]], bool], **kwargs: Any) -> dict[str, Any]:
@@ -56,11 +61,95 @@ async def test_idle_wait_uses_real_update_event_then_rereads_status() -> None:
         ),
     )
     proof = LiveProof.__new__(LiveProof)
-    read = AsyncMock(side_effect=[{"status": "active"}, {"status": "idle"}])
+    statuses = ["active", "paused"]
+    assert set(statuses) <= ALLOWED_SESSION_STATUSES
+    read = AsyncMock(side_effect=[{"status": status} for status in statuses])
     with patch.object(proof, "call", read), patch.object(proof, "validate", AsyncMock()):
         assert await proof.empty(seat) == frame
     assert read.await_count == 2
     wait.assert_awaited_once()
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("priority", ["normal", "urgent"])
+async def test_notice_waits_for_a_new_atomic_frame(provider: str, priority: str) -> None:
+    own = Surface(provider, str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
+    frames = Frames.__new__(Frames)
+    frames.client = cast(FrameClient, SimpleNamespace(set_scroll_offset=AsyncMock()))
+    frames.latest = ProofFrame("frame before notice", (3, 0))
+    frames.revision = 7
+    frames.changed = asyncio.Condition()
+    frames.failure = None
+    seat = cast(Seat, SimpleNamespace(surface=own, frames=frames))
+    proof = LiveProof.__new__(LiveProof)
+    proof.evidence = []
+    sent = asyncio.Event()
+    message_id = str(uuid4())
+
+    async def send(*args: Any) -> dict[str, Any]:
+        sent.set()
+        return {"message_ids": [message_id]}
+
+    with (
+        patch.object(proof, "call", AsyncMock(side_effect=send)),
+        patch.object(proof, "validate", AsyncMock()),
+    ):
+        task = asyncio.create_task(proof.notice(seat, priority))
+        try:
+            await asyncio.wait_for(sent.wait(), 1)
+            assert not task.done(), "notice evidence must wait beyond the pre-notice frame"
+            fresh = ProofFrame("frame after notice", (9, 2))
+            async with frames.changed:
+                frames.latest = fresh
+                frames.revision += 1
+                frames.changed.notify_all()
+            assert await asyncio.wait_for(task, 1) == message_id
+            assert (
+                proof.evidence[0]["frame_sha256"] == hashlib.sha256(fresh.ansi.encode()).hexdigest()
+            )
+            assert proof.evidence[0]["cursor"] == [9, 2]
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+async def test_notice_refreshes_a_semantically_unchanged_native_frame(provider: str) -> None:
+    own = Surface(provider, str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
+    frame = ProofFrame("unchanged owned draft", (7, 1))
+    frames = Frames.__new__(Frames)
+    frames.client = FrameClient.__new__(FrameClient)
+    frames.latest = frame
+    frames.revision = 12
+    frames.changed = asyncio.Condition()
+    frames.failure = None
+    seat = cast(Seat, SimpleNamespace(surface=own, frames=frames))
+    proof = LiveProof.__new__(LiveProof)
+    proof.evidence = []
+    message_id = str(uuid4())
+    sent = asyncio.Event()
+
+    async def send_notice(*args: Any) -> dict[str, Any]:
+        sent.set()
+        return {"message_ids": [message_id]}
+
+    async def host_view_reply(payload: dict[str, Any]) -> None:
+        assert sent.is_set(), "the fresh view must be requested after sending the notice"
+        assert payload == {"type": "set_scroll_offset", "rows_from_live_edge": 0}
+        # The native host forces a new frame for the attachment even when cells/cursor match.
+        async with frames.changed:
+            frames.revision += 1
+            frames.changed.notify_all()
+
+    with (
+        patch.object(proof, "call", AsyncMock(side_effect=send_notice)),
+        patch.object(proof, "validate", AsyncMock()),
+        patch.object(frames.client, "_send", AsyncMock(side_effect=host_view_reply)),
+    ):
+        assert await asyncio.wait_for(proof.notice(seat, "normal"), 0.1) == message_id
+    assert frames.revision == 13
+    assert frames.latest == frame
+    assert proof.evidence[0]["cursor"] == [7, 1]
 
 
 def test_setup_requires_the_isolated_project_and_its_private_home(tmp_path: Path) -> None:
@@ -159,6 +248,7 @@ async def test_compact_boundary_requires_fresh_held_frame_before_any_race(
             frames=SimpleNamespace(wait_for=frame_wait, latest=frame),
             external_id="proof-external",
             ws=SimpleNamespace(
+                require_events=lambda: None,
                 messages=[
                     {
                         "type": "hook_event",
@@ -167,7 +257,7 @@ async def test_compact_boundary_requires_fresh_held_frame_before_any_race(
                     }
                 ]
                 if state == "submitted"
-                else []
+                else [],
             ),
             detector=SimpleNamespace(
                 composer_read=lambda ansi: SimpleNamespace(
