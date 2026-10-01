@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_periodic import _default_loops, start_periodic_tasks
 from gobby.runner_maintenance import purge_deleted_skills_loop
@@ -127,6 +128,7 @@ async def test_periodic_start_uses_configured_skill_retention() -> None:
     loops["purge_deleted_skills_loop"] = capture_skill_purge
     active_config = DaemonConfig(skills={"soft_delete_retention_days": 14})
     runner = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         config_runtime=SimpleNamespace(capture=static_runtime_capture(active_config)),
         metrics_manager=object(),
         metrics_event_store=object(),

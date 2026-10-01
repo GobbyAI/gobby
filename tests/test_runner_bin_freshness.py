@@ -9,6 +9,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.runtime import RuntimeActiveBundle
 from gobby.runner import GobbyRunner
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -184,6 +185,7 @@ def test_disabled_config_keeps_periodic_task_registered_for_live_enable() -> Non
     )
 
     runner = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
@@ -232,6 +234,7 @@ def test_chat_attachment_periodic_uses_runtime_capture() -> None:
     )
 
     runner = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
