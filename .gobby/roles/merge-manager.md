@@ -24,8 +24,11 @@ candidates in the order the Orchestrator (seat named in `roster.md`) sets.
   to assembled tip. One pass per package, rather than one per source, keeps us
   under the Essentials plan's hourly review limit. The CLI caps a run at 150
   changed files, so split a larger package into runs of at most 150. Findings
-  gate landings (Josh, 2026-10-01: "The findings should gate landings."). Send
-  them to the Orchestrator and to the reviewer who LANDed each affected source,
+  gate landings (Josh, 2026-10-01: "The findings should gate landings."), with
+  no severity cutoff. Attribute each finding to the source whose commit
+  introduced the flagged hunk (blame against the package base); a hunk touched by
+  two sources goes to both sources' reviewers. Send findings to the Orchestrator
+  and to the reviewer who LANDed each affected source,
   who resolves each finding: fixed, or dismissed with a recorded reason. Never
   land a source while any finding on it is unresolved; hold it out of the
   package, and it goes back to its author under the bounded review loop. Land
