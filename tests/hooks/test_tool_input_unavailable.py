@@ -62,8 +62,20 @@ def test_marker_survives_a_second_normalization_pass() -> None:
         {"field": "tool_input", "code": "invalid_json", "content": TRUNCATED},
         {"field": "elsewhere", "code": "invalid_json"},
         {"field": "tool_input", "code": "truncated"},
+        {"field": "tool_input", "code": []},
+        {"field": "tool_input", "code": {}},
+        {"field": [], "code": "invalid_json"},
     ],
-    ids=["string", "missing-code", "extra-key", "unknown-field", "unknown-code"],
+    ids=[
+        "string",
+        "missing-code",
+        "extra-key",
+        "unknown-field",
+        "unknown-code",
+        "list-code",
+        "dict-code",
+        "list-field",
+    ],
 )
 def test_malformed_sender_marker_is_dropped(marker: object) -> None:
     data: dict[str, Any] = {"tool_name": "Bash", "tool_input_error": marker}

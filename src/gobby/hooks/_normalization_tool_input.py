@@ -6,14 +6,15 @@ from typing import Any, Literal, TypedDict
 
 TOOL_INPUT_ERROR_FIELD = "tool_input_error"
 TOOL_INPUT_SOURCES = ("tool_input", "toolArgs", "parameters", "args")
-_ERROR_CODES = frozenset({"invalid_json", "non_object_json"})
+ToolInputErrorCode = Literal["invalid_json", "non_object_json"]
+_ERROR_CODES: tuple[ToolInputErrorCode, ...] = ("invalid_json", "non_object_json")
 
 
 class ToolInputError(TypedDict):
     """Why a tool input is unavailable; it never carries the sender's content."""
 
     field: str
-    code: Literal["invalid_json", "non_object_json"]
+    code: ToolInputErrorCode
 
 
 def tool_input_error(data: Mapping[str, Any]) -> ToolInputError | None:
@@ -22,9 +23,11 @@ def tool_input_error(data: Mapping[str, Any]) -> ToolInputError | None:
     if not isinstance(marker, Mapping) or set(marker) != {"field", "code"}:
         return None
     field, code = marker["field"], marker["code"]
-    if field not in TOOL_INPUT_SOURCES or code not in _ERROR_CODES:
+    # Type-check before membership: an unhashable sender value must drop, not raise.
+    if not isinstance(field, str) or field not in TOOL_INPUT_SOURCES:
         return None
-    return {"field": field, "code": code}
+    known = next((known for known in _ERROR_CODES if known == code), None)
+    return {"field": field, "code": known} if known is not None else None
 
 
 def tool_input_source(data: Mapping[str, Any]) -> str:
@@ -33,7 +36,7 @@ def tool_input_source(data: Mapping[str, Any]) -> str:
 
 
 def mark_tool_input_unavailable(
-    data: dict[str, Any], source: str, code: Literal["invalid_json", "non_object_json"]
+    data: dict[str, Any], source: str, code: ToolInputErrorCode
 ) -> None:
     """Drop the unusable input and record why, without retaining its content."""
     data.pop("tool_input", None)
