@@ -12,6 +12,7 @@ import yaml
 from gobby.agents.sync import get_bundled_agents_path, sync_bundled_agents
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
+from gobby.storage.definitions.revisions import advance_persistent_revision
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -26,6 +27,21 @@ def _parse_body(row: object) -> AgentDefinitionBody:
     if isinstance(payload, str):
         return AgentDefinitionBody.model_validate_json(payload)
     return AgentDefinitionBody.model_validate(payload)
+
+
+def _step_workflow_row_versions(db: HubDatabase) -> dict[str, tuple[object, str]]:
+    rows = db.fetchall(
+        "SELECT agent_definition_id, updated_at, xmin::text AS xmin FROM agent_step_workflows"
+    )
+    return {str(row["agent_definition_id"]): (row["updated_at"], row["xmin"]) for row in rows}
+
+
+def _step_revision_rows(db: HubDatabase) -> dict[str, tuple[int, object]]:
+    rows = db.fetchall(
+        "SELECT domain, revision, updated_at FROM definition_revisions "
+        "WHERE domain IN ('agents', 'agent_step_workflows')"
+    )
+    return {str(row["domain"]): (int(row["revision"]), row["updated_at"]) for row in rows}
 
 
 class TestSyncBundledAgents:
@@ -235,6 +251,66 @@ class TestSyncBundledAgents:
             "gobby-worktrees:get_worktree",
             "gobby-merge:inspect_merge_state",
         ]
+
+    @pytest.mark.unit
+    def test_resync_leaves_unchanged_step_workflows_untouched(
+        self, definition_db: PostgresHubDatabase
+    ) -> None:
+        """A second sync of unchanged templates writes no step row, revision or notify."""
+        db = definition_db
+        sync_bundled_agents(db)
+        rows_before = _step_workflow_row_versions(db)
+        revisions_before = _step_revision_rows(db)
+        assert rows_before, "expected stepped bundled agents"
+
+        with patch(
+            "gobby.storage.definitions._shared.advance_persistent_revision",
+            wraps=advance_persistent_revision,
+        ) as advance:
+            sync_bundled_agents(db)
+
+        assert _step_workflow_row_versions(db) == rows_before
+        assert _step_revision_rows(db) == revisions_before
+        advance.assert_not_called()
+
+    @pytest.mark.unit
+    def test_resync_propagates_step_only_template_change(
+        self, tmp_path: Path, definition_db: PostgresHubDatabase
+    ) -> None:
+        """A template change confined to step_workflow still reaches the stored row."""
+        db = definition_db
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        template = (
+            "name: step-probe\n"
+            "description: Step probe\n"
+            "provider: claude\n"
+            "mode: interactive\nprompts:\n  agent: Run the assigned task.\n"
+            "workflows:\n  rule_selectors:\n    include: []\n"
+            "step_workflow:\n"
+            "  steps:\n"
+            "    - name: work\n"
+            "      status_message: {message}\n"
+        )
+        agent_yaml = agents_dir / "step-probe.yaml"
+        agent_yaml.write_text(template.format(message="Working"))
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            sync_bundled_agents(db)
+            revisions_before = _step_revision_rows(db)
+            agent_yaml.write_text(template.format(message="Still working"))
+            result = sync_bundled_agents(db)
+
+        assert result["skipped"] == 1
+        stored = _mgr(db).get_by_name("step-probe")
+        assert stored is not None
+        step_row = _mgr(db).get_step_workflow(stored.id)
+        assert step_row is not None
+        assert step_row.steps_json[0]["status_message"] == "Still working"
+        revisions_after = _step_revision_rows(db)
+        assert (
+            revisions_after["agent_step_workflows"][0]
+            == revisions_before["agent_step_workflows"][0] + 1
+        )
 
     @pytest.mark.unit
     def test_sync_enables_legacy_discovery_placeholder(

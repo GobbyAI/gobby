@@ -126,7 +126,10 @@ def _write_child(
     step_workflow: Mapping[str, Any] | None,
 ) -> bool:
     existing = txn.execute(
-        "SELECT id FROM agent_step_workflows WHERE agent_definition_id = %s",
+        """
+        SELECT steps_json, variables_json, exit_condition
+        FROM agent_step_workflows WHERE agent_definition_id = %s
+        """,
         (agent_definition_id,),
     ).fetchone()
     if step_workflow is None:
@@ -156,6 +159,15 @@ def _write_child(
             ),
         )
         return True
+    # Compare decoded JSON so jsonb key order and tuple/list spelling never
+    # register as a change; an unchanged row gets no write, revision or notify.
+    stored = (
+        _decode_json_array(existing["steps_json"]),
+        decode_json_object(existing["variables_json"]) or {},
+        existing["exit_condition"],
+    )
+    if stored == (json.loads(json.dumps(steps)), json.loads(json.dumps(variables)), exit_condition):
+        return False
     txn.execute(
         """
         UPDATE agent_step_workflows
