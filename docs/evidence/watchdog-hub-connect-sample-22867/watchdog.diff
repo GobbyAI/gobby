@@ -1,0 +1,34 @@
+--- watchdog.sh.installed
++++ watchdog.sh
+@@ -142,6 +142,8 @@
+   else
+     echo "running runs: $runs"
+     if [ "$runs" -ge 8 ]; then echo "ALARM[runs]: running runs $runs >= 8"; fi
++    # Server-wide, so a hub handshake timeout (#22867) can be read against it.
++    echo "hub connections: $(q "select count(*) from pg_stat_activity")"
+     q "select left(id::text,8)||' '||coalesce(agent_name,'?') from agent_runs where status='running'" |
+       sed 's/^/  /'
+   fi
+@@ -150,6 +152,9 @@
+   echo "cargo processes: $builds"
+   if [ "$builds" -ge 3 ]; then echo "ALARM[cargo]: $builds concurrent cargo builds"; fi
+
++  # Each gcode vector sync opens its own hub connection (#22867).
++  echo "gcode processes: $(pgrep -x gcode | wc -l | tr -d ' ')"
++
+   cur_err=$(wc -l <"$err" | tr -d ' ')
+   base=$prev_err
+   if [ "$prev_err" -eq 0 ] || [ "$cur_err" -lt "$prev_err" ]; then base=$cur_err; fi
+@@ -188,9 +193,10 @@
+   now=$(date +%s)
+   if [ "$sig" != none ] && { [ "$sig" != "$last_sig" ] || [ $((now - last_sent)) -ge "$cooldown" ]; }; then
+     # Self-contained for a phone: every line except the per-run listing and the
+-    # non-alarm cargo/vector counters; the ALARM lines carry those when they breach.
++    # non-alarm cargo/vector/gcode/connection counters; the ALARM lines carry
++    # cargo and vector when they breach.
+     msg="Gobby watchdog ALARM ($(hostname -s)):
+-$(printf '%s\n' "$out" | grep -v -E '^(  [0-9a-f]{8} |cargo|vector)')"
++$(printf '%s\n' "$out" | grep -v -E '^(  [0-9a-f]{8} |cargo|vector|gcode|hub connections)')"
+     short=$(printf '%s\n' "$out" | grep '^ALARM' | head -3 | paste -sd' ' -)
+     if notify "$msg" "$short"; then
+       case ",$sig," in

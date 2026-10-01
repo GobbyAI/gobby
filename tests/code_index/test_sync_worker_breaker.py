@@ -835,7 +835,9 @@ async def test_daemon_config_failure_stops_subprocesses_and_preserves_pending_wo
     assert gateway.vector_calls
     assert set(gateway.vector_calls).issubset(paths)
     assert gateway.graph_calls == []
-    assert storage.mark_vector_sync_attempted.call_count == len(gateway.vector_calls)
+    # An effective-config timeout is retryable since #22813: one attempt mark per
+    # file, with its bounded in-process retries counted as calls.
+    assert storage.mark_vector_sync_attempted.call_count == len(set(gateway.vector_calls))
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
@@ -880,7 +882,7 @@ async def test_daemon_config_half_open_allows_one_probe_then_resumes(
         batch_size=50,
         gateway_breaker=gateway_breaker,
     )
-    assert gateway.vector_calls == ["src/f0.py"]
+    assert gateway.vector_calls == ["src/f0.py"] * 3  # one file, one bounded retry burst
     assert gateway.graph_calls == []
     assert gateway_breaker.state is BreakerState.OPEN
 
