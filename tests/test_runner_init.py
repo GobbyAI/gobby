@@ -171,7 +171,7 @@ class TestGobbyRunnerInit:
                 )
             )
             await storage_hygiene.sweep_test_schemas_loop(
-                "postgresql://gobby:secret@localhost:60891/gobby",
+                FAKE_DATABASE_URL,
                 lambda: next(shutdown),
                 sleep=AsyncMock(),
             )

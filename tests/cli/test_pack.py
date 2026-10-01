@@ -19,6 +19,7 @@ from click.testing import CliRunner
 from gobby.cli.hub_backup.files_home import FilesHomeArchiveError
 from gobby.cli.pack import _human_size, _import_docker_volume, pack, unpack
 from gobby.config.bootstrap_io import update_bootstrap_yaml, write_bootstrap_yaml
+from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
 
@@ -777,8 +778,8 @@ class TestFilesHomePack:
         assert leftover == []
 
 
-_DESTINATION_URL = "postgresql://gobby:old-secret@localhost:60891/gobby"
-_ARCHIVED_URL = "postgresql://gobby:source-secret@localhost:60891/gobby"
+_DESTINATION_URL = fake_database_url("old-secret")
+_ARCHIVED_URL = fake_database_url("source-secret")
 _PENDING_ROTATION = {
     "role": "gobby",
     "pending_password": "pending-placeholder",
