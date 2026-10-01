@@ -505,6 +505,12 @@ Targets:
 - `tests/cli/test_install_front_door.py::*` — scope-reason: same
 - `tests/test_runner_init.py::*` — scope-reason: patches `gobby.runner_init.storage.ensure_machine_identity`; gains the `ensure_local_api_key` patch
 - `tests/runner_helpers.py::*` — scope-reason: same patch list gains `ensure_local_api_key`
+- `src/gobby/cli/hub_backup/files_home.py::archived_bootstrap`
+- `src/gobby/cli/hub_backup/files_home.py::merge_bootstrap_preserving_files_home`
+- `src/gobby/cli/pack.py::_plan_unpack`
+- `src/gobby/cli/pack.py::unpack`
+- `src/gobby/cli/hub_backup/bootstrap_restore.py`
+- `tests/cli/test_pack.py::*` — scope-reason: gains the machine-bound key restore cases (4.2.16, 4.2.17)
 
 **Research context:**
 
@@ -561,8 +567,14 @@ single read-modify-write transaction:
 2. Take `exclusive_file_lock(bootstrap_path)` (the sidecar lock
    `update_bootstrap_yaml` uses) and hold it through step 5, so startup and
    `gobby install` serialize. Inside it, `read_bootstrap_yaml`; when the
-   mapping is not `datastore_mode: local` or already has `api_key`, return
-   (a contender that lost the race reuses the winner's key).
+   mapping is not `datastore_mode: local`, return. When it names an `api_key`,
+   return only when that key is live for this machine: an `api_keys` row with id
+   `api_key_id`, `key_hash` equal to `hash(api_key)`, `machine_id` equal to the
+   given machine, and `revoked_at` null (a contender that lost the race reuses
+   the winner's key). Otherwise the bootstrap key is stale: a PostgreSQL restore
+   removed or replaced its row, or it was revoked or minted for another machine.
+   Continue to step 3 and publish the new pair over it. The stale row is never
+   revoked here, because it can belong to another machine.
 3. Mint for `LocalUserManager.require_sole_user()` and the given machine with
    label `local daemon`.
 4. Publish `api_key` and `api_key_id` with `publish_bootstrap_yaml_locked`,
@@ -641,6 +653,30 @@ Adoption:
   next start retries, and `ensure_local_api_key`'s own revoke-before-rename rule still holds.
   `gobby install` keeps reporting the failure to the operator.
 
+Restore (P4-10, PD ruling gobby#14972, 2026-10-01). The destination owns its
+machine-bound credentials, as it already owns `database_url` and
+`credential_rotation` (#23166). `archived_bootstrap` and
+`merge_bootstrap_preserving_files_home` (`src/gobby/cli/hub_backup/files_home.py`)
+take a required keyword `restore_identity: bool`, which `_plan_unpack` and `unpack`
+(`src/gobby/cli/pack.py`) pass from `--restore-identity`. `src/gobby/cli/pack.py` is
+905 lines, so this leaf does not grow it. The bootstrap preview in `_plan_unpack`
+(`read_bootstrap_yaml`, `archived_bootstrap`, `validated_bootstrap_payload`, and the
+`ClickException` mapping) and the `bootstrap.yaml` branch in `unpack` move to the new
+`src/gobby/cli/hub_backup/bootstrap_restore.py` as
+`preview_archived_bootstrap(target, content, dest_files_home, *, restore_identity)`
+and `restore_archived_bootstrap(target, content, dest_files_home, *, restore_identity)`.
+The second also prints the re-enrollment line. `pack.py` calls both and ends the
+leaf shorter than it starts.
+- Ordinary unpack drops `api_key` and `api_key_id` from both the archive and the
+  destination, so the restored bootstrap names no key. A `local` install mints a
+  key bound to its own machine on the next start through `ensure_local_api_key`.
+  A `remote` bootstrap is left unenrolled, and `unpack` prints that
+  `gobby auth login` must be run again (4.5). No foreign key is ever imported.
+- `--restore-identity` keeps the archived pair together with the archived
+  `machine_id`. When the PostgreSQL payload was not restored or lacks the key's
+  row, `ensure_local_api_key` treats the key as stale and mints a replacement
+  (step 2).
+
 Consumers unchanged:
 - `src/gobby/runner_init/helpers.py` — no-edit-reason: `ensure_machine_identity` keeps its signature and body.
 - `tests/storage/test_machines.py` — no-edit-reason: exercises `ensure_machine_identity` only; verification only.
@@ -648,9 +684,8 @@ Consumers unchanged:
 - `src/gobby/config/postgres_bootstrap.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 - `src/gobby/ui_exposure.py` — no-edit-reason: same.
 - `tests/config/test_files_home.py` — no-edit-reason: same; verification only.
-- `src/gobby/cli/hub_backup/files_home.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
+- `tests/cli/test_hub_files_restore.py` — no-edit-reason: invokes the `unpack` command, whose options are unchanged; its archives carry no `api_key`, so the files_home restore it pins is unaffected.
 - `tests/cli/test_datastores_rotate_password.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
-- `tests/cli/test_pack.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 - `tests/config/test_bootstrap_postgres.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 
 Verification planned:
@@ -659,13 +694,15 @@ Verification planned:
 `cargo test -p gobby-core grant`,
 `cargo test -p gobby-daemon --test cli_contract`,
 `uv run python scripts/generate_runtime_config_contract.py`,
-`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_api_keys.py tests/utils/test_api_key_format.py tests/servers/routes/test_api_keys.py tests/cli/test_cli_install.py tests/cli/test_install_coverage.py tests/test_runner_init.py tests/runtime_grants/ tests/config/test_runtime_config_contract.py tests/config/test_bootstrap.py tests/storage/test_storage_auth.py tests/e2e/test_local_api_key_adoption.py tests/e2e/test_api_key_bootstrap_lockout.py -v`.
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_api_keys.py tests/utils/test_api_key_format.py tests/servers/routes/test_api_keys.py tests/cli/test_cli_install.py tests/cli/test_install_coverage.py tests/cli/test_pack.py tests/test_runner_init.py tests/runtime_grants/ tests/config/test_runtime_config_contract.py tests/config/test_bootstrap.py tests/storage/test_storage_auth.py tests/e2e/test_local_api_key_adoption.py tests/e2e/test_api_key_bootstrap_lockout.py -v`.
 
-**Granularity:** fifteen items, one leaf. The migration, `ApiKeyManager`, the
+**Granularity:** eighteen items, one leaf. The migration, `ApiKeyManager`, the
 format helper, and the routes are one issuance path; none is observable without
 the others. Local-key adoption is the issuance path's second caller and D1's flag
 day requires every install to hold a key before it lands. The schema carriers
-are regenerated outputs of the one migration.
+are regenerated outputs of the one migration. The restore rules ship with the
+bootstrap fields, because the first bootstrap that carries a key is also the
+first one an unpack could carry to another machine.
 
 **Acceptance:**
 
@@ -684,6 +721,9 @@ are regenerated outputs of the one migration.
 - 4.2.7 - The catalog manifest, `grant/bundle.rs` golden checksums, `schema_contract.rs`, and `schema_expected_identity.json` name migration 456. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 4.2.8 - The five signed goldens under `tests/runtime_grants/golden/` carry the new schema identity and the golden-vector tests pass. file: `tests/runtime_grants/golden/brokered_datastores.json`.
 - 4.2.9 - Bootstrap parses and writes `api_key`, `api_key_id`, and `hub_cert`, and the config carrier is regenerated. file: `crates/gcore/assets/config/runtime_config_contract.json`.
+- 4.2.16 - An ordinary cross-machine unpack of an archive whose bootstrap names an `api_key` restores a bootstrap with neither the archived nor the destination's `api_key` and `api_key_id`, and a `remote` archive prints the `gobby auth login` re-enrollment line. test: `tests/cli/test_pack.py::test_unpack_drops_machine_bound_api_key`.
+- 4.2.17 - `--restore-identity` restores the archived `api_key` and `api_key_id` together with the archived `machine_id`. test: `tests/cli/test_pack.py::test_unpack_restore_identity_keeps_api_key_pair`.
+- 4.2.18 - `ensure_local_api_key` mints nothing when the bootstrap key is live for this machine. It mints and publishes a replacement when the bootstrap names a key whose row is absent, revoked, hash-mismatched, or bound to another machine, and it leaves that row unrevoked. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_replaces_stale_bootstrap_key`.
 
 ### 4.5 `gobby auth login` and `gobby auth key --show` [category: code] (depends: 4.1, 4.2)
 `kind: deliverable`
@@ -1175,6 +1215,21 @@ deferral:
 - 2026-10-01: Renewed consensus required. The 4.2 inventory repair leaves the M1 source
   hash stale, so M1 is withdrawn (memory `f5577ae0`). The Adversary checks the repair and
   derives a fresh M1.
+- 2026-10-01: P4-10 (Adversary gobby#14579, at `74457aff2f`), resolved under #23193.
+  `archived_bootstrap` keeps only `database_url` and `credential_rotation` from the
+  destination, so once 4.2 adds `api_key`, an ordinary cross-machine unpack would
+  install the origin machine's key under the destination's `machine_id`. Step 2
+  returned whenever `api_key` was present, so startup could not repair it. PD ruling
+  (gobby#14972): option A, within the approved own-machine-key requirement and the
+  #23166 destination-owns-credentials contract, with no Josh button. 4.2 now:
+  - targets `files_home.py` and `pack.py`, moving `pack.py`'s bootstrap handling to the
+    new `bootstrap_restore.py` so `pack.py` does not grow;
+  - drops the key pair on ordinary unpack;
+  - keeps it under `--restore-identity`;
+  - leaves a `remote` bootstrap unenrolled for `gobby auth login`;
+  - re-mints over a bootstrap key whose row is not live for this machine.
+  New acceptance items are 4.2.16 to 4.2.18, so 4.2 has eighteen. `files_home.py` and
+  `test_pack.py` leave the Consumers unchanged inventory.
 
 ## V2: Verification
 `kind: verification`
