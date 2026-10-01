@@ -86,10 +86,10 @@ def load_admission(path: Path, checkout: Path) -> Admission:
 def verify_binary_set(spec: Admission) -> Path:
     """Only called after execution admission; never builds or installs a binary."""
     from gobby.install.bin_set_coherence import (
-        SET_MEMBERS,
         _require_installed_agreement,
         probe_set_member_identity,
     )
+    from gobby.utils.native_bin import SET_MEMBERS
 
     for binary in (*spec.native.values(), *spec.providers.values(), *spec.support_tools):
         if not binary.path.is_absolute() or not os.access(binary.path, os.X_OK):
