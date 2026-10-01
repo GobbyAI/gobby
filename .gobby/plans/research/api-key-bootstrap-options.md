@@ -12,6 +12,162 @@ This revision makes these changes:
 
 Superseded text is kept and marked.
 
+## 0. Revision 3 (2026-10-01): Josh's plan, for every hub topology
+
+**Status.** This section supersedes the node-facing parts of revision 2:
+- section 5 F3 and "Node registration DX (revision 2b)", which Josh rejected: "That's ugly. I liked my auth plan better. It fits the roadmap";
+- section 5a K1, which is retracted;
+- section 10 choices 3, 7 and 10.
+
+Sections 1-3 (hub-to-Postgres, H6), 6 (reset), 9 and 11 still stand except where noted. **Nothing is decided.**
+
+### 0.1 Josh's plan and the topologies it must serve
+
+From the #23128 description and Josh's 2026-10-01 replies:
+1. The hub's **limited first run** issues the first API key, then locks.
+2. **Reset-to-first-run** revokes every key.
+3. A **node is URL + API key** and nothing else. All its data moves over HTTP (D2 relay, section 4).
+4. The key is "valid only for the machine itself tied to".
+5. "Users might only want to set up nodes while the cloud we eventually set up acts as the hub", and "The cloud is just one option. We need to support all."
+6. "A user should be able to acquire a key by registering a node with the hub using their auth credentials."
+
+One node flow must therefore work against four hub topologies:
+
+| Topology | TLS seen by the node | Who terminates TLS |
+| --- | --- | --- |
+| T1. Local-only hub (no remote nodes) | none (loopback) | n/a |
+| T2. Self-hosted, direct over LAN or tailnet | front-door TLS (#23270), self-signed or operator-supplied | gdaemon front door |
+| T3. Self-hosted behind a TLS-terminating proxy (Tailscale `serve --https`, Funnel, nginx) | proxy's certificate (ts.net certificates come from Let's Encrypt, per [Tailscale HTTPS](https://tailscale.com/kb/1153/enabling-https)) | the proxy |
+| T4. Cloud hub behind a load balancer | WebPKI | the load balancer |
+
+### 0.2 First run and additional keys
+
+- **Self-hosted hubs (T1-T3).** The limited first-run window is open only to **loopback peer + the 0600 local proof** (section 5a, revision 2a). The proof matters because T3 proxies deliver remote traffic as loopback peers. `gobby` on the hub, or the hub web UI reached from loopback, shows the first key once. The window then locks with a singleton CAS (`hub_authority.state`). An unauthenticated first-run window on a network-reachable hub would be F0, which is rejected.
+- **Cloud hub (T4).** The cloud's authenticated signup is the first run. The account owner gets the first key in the dashboard, and the user never touches a hub terminal. No open window ever exists on the public internet.
+- **More nodes.** Primarily, each node registers with the user's credentials (section 0.3) and receives its own already-bound key. The secondary path: an authenticated user mints a pasteable key in the web UI (**New node key**) for a headless node (section 0.3b). The lock applies only to *unauthenticated* issuance.
+- Pasted keys are shown once and stored hashed. **Unbound pasted keys expire** if they are not bound within a TTL (choice R3).
+
+### 0.3 Primary path: register the node with the user's hub credentials
+
+Josh: "A user should be able to acquire a key by registering a node with the hub using their auth credentials." This **reverses revision 2's choice 7**: P4's credential route (`POST /api/auth/keys/bootstrap`, :590-604) stays and becomes the primary node path, with the changes below.
+
+`gobby node register <hub-url>`:
+1. The node checks the hub certificate using the section 0.5 rules **before** prompting for anything, so credentials are never sent to an unverified hub.
+2. The node's gdaemon generates an Ed25519 keypair and persists it at 0600 in a pending location. A retry reuses it.
+3. The user authenticates in one of two ways, and the hub advertises which it supports:
+   - **Password prompt** on the node (email + password). Works for self-hosted hubs (T1-T3).
+   - **Device code**, following [RFC 8628, OAuth 2.0 Device Authorization Grant](https://www.rfc-editor.org/rfc/rfc8628.html). The node prints a short code and a URL, and the user approves in a browser already logged in to the hub. This fits cloud hubs (T4) with SSO or MFA, and any node where typing a password is unwanted.
+4. The hub verifies the credentials, rate-limited as today. It then **mints the machine's key already bound** to the submitted public key, so no unbound window exists. It returns the key id and machine id. The key secret is never sent back; the node needs only its private key.
+5. The node promotes the pending keypair and writes the DSN-free bootstrap: `hub_url`, `key_id` and the private-key path. The password is never stored on the node.
+6. A retry after a lost response, with the same pending public key and fresh credentials, returns the existing binding. It is idempotent, with no duplicate machine and no lockout.
+
+**How credentials relate to the bound key:**
+- **Credentials are the user's identity; the machine key is a per-machine credential derived from one login.** After registration they are independent.
+- **Revoking one machine** (`gobby keys revoke <machine>`, or the web UI) kills only that machine's key. The credentials and the other machines are untouched.
+- **Password change** leaves existing machine keys valid by default. The change form offers "also revoke all machines" (choice R6).
+- **Reset-to-first-run** revokes every machine key and web session, and reopens the first-run lock (section 6). User accounts and password hashes survive. Resetting the password is a separate step (`gobby auth credentials`, local). Every node re-registers.
+- **Account deletion or disablement** revokes that user's machine keys.
+
+**The first run, restated.** On a self-hosted hub, the limited first run establishes the owner's credentials and issues the hub's own first machine key, then locks. Today `ensure_install_identity` (`src/gobby/cli/install_identity.py:64-65`) already creates the sole user at install. On a cloud hub, signup is the first run. Either way, nodes register afterwards with those credentials.
+
+### 0.3b Secondary path: a pasted key with bind on first use (BOFU)
+
+This path is for headless or automated nodes where neither a password prompt nor a browser is available. A logged-in user mints a key in the web UI (**New node key**), and the node runs `gobby node connect <hub-url> <api-key>`, or has the same two fields in its bootstrap. Then:
+
+1. Before any network call, the node's gdaemon generates an Ed25519 keypair and **persists it at 0600 in a pending location**. A retry reuses it. This is the same lost-response rule the PD set for revision 2b.
+2. The first call is `POST /api/nodes/bind`, sent over TLS (section 0.5). It carries the API key as a bearer, the public key, and a signature over a hub-issued nonce. In one CAS on the key row:
+   - **unbound**: store the public key. The key is now bound, and the call returns the machine id.
+   - **bound to this public key**: idempotent success. This makes a lost response safe.
+   - **bound to a different public key**: 409 `key_bound_to_other_machine`. The attempt is recorded and shown in the web UI's machines list.
+3. On success the node promotes the pending keypair. It then **drops the API key secret** and keeps only the key id and its private key. After binding, the key secret is never sent again: every request is signed (section 0.4) and names the key by id.
+4. Failures before the request is sent (certificate trust, unreachable hub) delete the pending key. A definite rejection (unknown, expired, revoked, or bound elsewhere) also deletes it.
+
+**The same key used from a second machine.** Two cases:
+- After binding, machine 2 has no private key. Every signed request fails with 401, and a bind attempt gets 409. The key is useless there.
+- If an attacker with a stolen *unbound* key binds first, the real node gets 409 on its first call. That failure is loud, not silent. The user revokes the key in the UI and mints a new one.
+
+The exposure is bounded by the unbound-key TTL and by "shown once". To move a node (reinstall, new disk), the user either mints a new key or clicks **Unbind** on the old key, so the next first use rebinds it.
+
+**Honest equivalence.** BOFU is enrollment (F3) with the code renamed "API key". The security properties match, including the binding being possession of a 0600 private-key file (section 5a, survey). What differs is DX: two familiar fields (URL, key) instead of an invite string. The key itself, not a one-time code, is the long-lived identity name.
+
+### 0.4 Binding mechanism: signed requests (K2) everywhere; K1 retracted
+
+**K1 (mutual TLS) cannot serve T3 or T4.** A client certificate ends where TLS ends.
+- Tailscale `serve --https` and Funnel terminate TLS in tailscaled (section 5a, revision 2a).
+- AWS ALB does offer mutual TLS, but in passthrough mode "The load balancer sends the entire client certificate chain to the target, without verifying it" in the `X-Amzn-Mtls-Clientcert` header ([ALB mutual TLS](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/mutual-authentication.html)). Its verify mode needs a CA trust store, which pinned self-signed client keys do not have. Either way the hub would trust a proxy-asserted header. That is provider-specific and impossible behind Tailscale serve or plain nginx without equivalent configuration.
+
+**K2 survives any TLS termination.** Use [RFC 9421 HTTP Message Signatures](https://www.rfc-editor.org/rfc/rfc9421.html), whose algorithm registry includes `ed25519`.
+- The covered components are method, target URI, `content-digest` (RFC 9530) and the signature parameters `created`, `expires`, `nonce` ("A random unique value generated for this signature") and `keyid`.
+- RFC 9421 leaves replay detection to the application (section 7.2.2). The hub enforces a short `created`/`expires` window (for example 5 minutes) plus a per-key nonce cache covering that window. After a hub restart only the window bounds replay, and the window is short.
+
+**Where the signing code lives.** Only Rust, at two points:
+- The node's gdaemon relay (D2) signs every upstream request.
+- The hub front door verifies signatures before forwarding to Python.
+
+Node-local clients (ghook, gcode, CLI) talk to their own node gdaemon over loopback, using the node's local proof. They never hold the key. That removes the cost revision 2 charged K2 for three client languages: hub Python never sees signatures, and node clients never sign.
+
+**WebSockets and long-lived streams.** The WS upgrade request is signed, and the hub verifies it once per connection. For revocation, the front door keeps a key-id to live-connection registry and closes a key's sockets when that key is revoked, or on reset. That is the bounded D2 channel duty, now required because a WS connection outlives one request.
+
+**Hub-local clients are unchanged:** loopback + local proof, plaintext, with no signing on the ghook hot path.
+
+### 0.5 Certificate trust: how the node decides
+
+The URL alone tells the node which trust mode applies. No trust-on-first-use prompt ever happens.
+
+1. **`https://` URL with no fingerprint** means **WebPKI**: the system roots verify the hub certificate. This covers T3 (ts.net, nginx with a public certificate) and T4 (cloud). Nothing is pinned, so certificate renewals are invisible.
+2. **`https://` URL with a fingerprint fragment**, for example `https://192.168.1.5:60887/#sha256=<spki>`, means **pinned self-signed** (T2 self-signed mode). The fragment is never sent to the server. The hub displays this exact URL next to the key whenever its front door runs `tls.mode: self-signed` (#23270), so the user still copies two fields. If the hub certificate is regenerated, the hub shows a new URL and the node is re-pointed. No trust on first use.
+3. **`https://` URL that fails WebPKI and has no fingerprint**: refuse. The error says to copy the URL shown by the hub, which carries the fingerprint for self-signed hubs.
+4. **`http://` URL**: accepted only for loopback (T1 tooling). A non-loopback `http://` URL is refused, because the bind call sends the key secret.
+
+Revision 2 wanted P4 4.5 `hub_cert` pinning for every node. That is now fallback rule 2 only.
+
+### 0.6 #23270 is still needed as scoped
+
+#23270 ("Front-door TLS for remote peers with loopback plaintext") remains required and **unchanged**:
+- T2 needs the front door's own TLS listener, either self-signed (for rule 2) or `tls.mode: files` with an operator-supplied WebPKI certificate (rule 1).
+- Its loopback-plaintext path serves T1, hub-local clients and T3's proxy hop.
+- Its forwarding-header handling matters more under T3 and T4. The front door must treat a loopback peer as non-authoritative without the local proof, and it reads the client address only from configured trusted proxies.
+- What drops out is revision 2's K1 follow-on leaf (an optional client-certificate verifier). No client-certificate work joins #23270.
+- K2 verification is a separate front-door route-layer leaf that depends on #23270 only for the shared front-door code.
+- L7 needs no course change.
+
+### 0.7 Plan sections that change (revision 3 delta on section 8)
+
+1. 4.2 schema:
+   - `api_keys` keeps a hash of the bearer secret for first use.
+   - It adds `bound_pubkey` (Ed25519), `bound_machine_id`, `bound_at`, `bind_expires_at` and `revoked_at`.
+   - `hub_authority` gets singleton state + epoch.
+   - There is **no** `enrollment_codes` table.
+   - The email/password route (:590-604) **stays as the primary registration route**. It now takes a public key and returns a key already bound to it. A device-code pair joins it: `POST /api/auth/device` and the browser approval page.
+2. 4.5 CLI:
+   - Hub side: `gobby keys create|list|unbind|revoke`, the first-run display, and `gobby auth reset`.
+   - Node side: `gobby node register <url>` (primary; password or device code) and `gobby node connect <url> <key>` (secondary; BOFU).
+   - The password-change form gains the "revoke all machines" option (choice R6).
+   - The node bootstrap is `hub_url` + `key_id` + the 0600 private-key path.
+3. New front-door leaf, **K2 verification**: RFC 9421 verification, the `created`/`expires` window, the nonce cache, and the key-to-connection registry for WS revocation.
+4. D2 relay: sign every upstream request, run BOFU on first start, and apply the trust rules in section 0.5.
+5. Web UI: the machines list (with 409 alerts), **New node key**, Unbind and Revoke.
+6. The cloud hub (T4) adds no Gobby protocol work beyond this. Its signup flow is cloud-product scope.
+7. Unchanged from revision 2:
+   - The hub-side H6 slice, 8.8 ("DB credential narrowing").
+   - 4.6 / #23269, which refuses node starts until D2.
+   - The `shared-stack.md` rewrite.
+   - The run-modes parser contract.
+   - Section 9 dispositions.
+
+### 0.8 Choices for Josh (revision 3)
+
+Nothing is decided. These choices replace section 10's 3, 7 and 10. Choice 7 is reversed by Josh's direction: the credential route stays as the primary path. Choices 1, 4, 5, 6, 8 and 9 carry over unchanged.
+
+- **R0. Node registration methods:** password prompt plus device code (recommended; the device code covers SSO/MFA and cloud), password only, or device code only?
+- **R1. Binding:** keys bound at registration, plus bind on first use for pasted keys, with signed requests after binding (recommended); or plain bearer keys with no machine binding (simplest, and drops "valid only for the machine")?
+- **R2. One key per machine** (recommended; matches "valid only for the machine itself tied to"), or one key that can bind several machines?
+- **R3. Unbound-key expiry:** 24 hours (recommended), 7 days, or none?
+- **R4. Self-signed hubs:** a URL carrying the fingerprint fragment (recommended; keeps two fields), or require WebPKI everywhere, which means every self-hosted direct hub (T2) needs an operator certificate or a proxy?
+- **R5. Second-machine bind attempt:** 409 plus a web UI alert (recommended), or also auto-revoke the key?
+- **R6. Password change:** keep machine keys valid and offer an opt-in "revoke all machines" (recommended), or always revoke all machine keys?
+- **R7. Pasted-key path (section 0.3b):** keep it for headless or automated nodes (recommended), or drop it so credential registration is the only path?
+
 ## 1. Two auth problems, one credential today
 
 Gobby has two separate authentication problems:
@@ -178,7 +334,7 @@ Survey analogues (section 11):
 - F3 avoids putting the user's reusable password on remote machines.
 - Idempotent registration by public key removes the "response lost, hub locked" failure mode.
 
-### Node registration DX (revision 2b, proposal)
+### Node registration DX (revision 2b, proposal). RETRACTED: Josh rejected the invite DX; see section 0.3
 
 Josh asked what the DX is for registering a node. The flow has two steps, one on each machine.
 
@@ -211,7 +367,7 @@ Josh asked what the DX is for registering a node. The flow has two steps, one on
 
 **Exposure.** The invite string is a secret until it is used. It is single-use and short-lived, and pinning means a stolen invite cannot be redirected to a fake hub. If a hub regenerates its self-signed certificate, existing pins break and nodes must re-pin. The plan should route certificate rotation through a `gobby node` re-pin step. That re-pin needs a fresh out-of-band fingerprint, for example from a new invite, and never uses trust on first use.
 
-## 5a. Machine-bound keys (revision 2)
+## 5a. Machine-bound keys (revision 2). K1 RETRACTED by revision 3; see section 0.4. The 2a route table and the loopback-is-not-authority rule still stand
 
 Josh: "API keys would be valid only for the machine itself tied to."
 
@@ -345,7 +501,7 @@ The PD disposed each finding on 2026-10-01:
 - **(b) The Rust `read_hub_database_bootstrap_file` skips the 0600 mode check** (`bootstrap.rs:194-209`), and **(d) the top-level `~/.gobby/grants/` directory is 0755** (subdirectories 0700, files 0600). Both are independent and small. One fix task covers both, created after #23128 closes. Its gcore change ships in the next coherent-set release.
 - **(e) The stray `falkordb_password` key** in this machine's bootstrap.yaml is unread by any parser. This is choice 9.
 
-## 10. Choices for Josh (revision 2)
+## 10. Choices for Josh (revision 2). Choices 3, 7 and 10 SUPERSEDED by section 0.8; choice 7 is reversed
 
 1. **Hub Postgres password at rest** (Keychain withdrawn):
    - **A. One 0600 file, narrowed (H6).** The Gitea, Grafana and n8n pattern. *Recommended.* It accepts one plaintext DB password file on the hub only; nodes hold none.
