@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from http.client import IncompleteRead
 from pathlib import Path
@@ -17,7 +18,9 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from gobby.agents.srt_runtime import (
+    _CONTENT_MANIFEST_NAME,
     SrtRuntimeError,
+    build_srt_content_manifest,
     make_srt_installation_immutable,
     srt_install_lock,
     srt_install_root,
@@ -133,6 +136,91 @@ def _install_srt_runtime() -> SrtInstallResult:
 
         verify_srt_installation_locked()
         return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
+
+
+def restage_srt_runner() -> SrtInstallResult:
+    """Bring the staged runner up to this build, swapping only runner-owned files.
+
+    A runner change bumps ``SRT_RELEASE.runner_sha256`` and leaves every other
+    pinned file alone, so the installed package tree is kept when it still
+    matches its manifest. Anything else falls back to the full staged install.
+    """
+    try:
+        restaged = _restage_srt_runner()
+    except SrtRuntimeError:
+        raise
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SrtRuntimeError(f"failed to restage the managed SRT runner: {exc}") from exc
+    return restaged if restaged is not None else install_srt_runtime()
+
+
+def _restage_srt_runner() -> SrtInstallResult | None:
+    target = srt_install_root()
+    runner = (Path(__file__).parents[1] / "agents" / "srt_runner.mjs").read_bytes()
+    if hashlib.sha256(runner).hexdigest() != SRT_RELEASE.runner_sha256:
+        raise SrtRuntimeError("bundled SRT runner checksum mismatch")
+    with srt_install_lock():
+        if target.is_symlink() or not target.is_dir():
+            return None
+        try:
+            verify_srt_installation_locked()
+        except SrtRuntimeError:
+            pass
+        else:
+            return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=False)
+
+        manifest = json.loads((target / _CONTENT_MANIFEST_NAME).read_text(encoding="utf-8"))
+        receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
+        if not isinstance(manifest, dict) or not isinstance(receipt, dict):
+            return None
+        # Only the runner entries may differ; never re-hash changed package content.
+        expected_receipt = SRT_RELEASE.receipt_fields()
+        if _without(build_srt_content_manifest(target), "runner.mjs") != _without(
+            manifest, "runner.mjs"
+        ) or _without(receipt, "runner_sha256", "node") != _without(
+            expected_receipt, "runner_sha256"
+        ):
+            return None
+
+        manifest["runner.mjs"] = SRT_RELEASE.runner_sha256
+        receipt |= expected_receipt
+        root_mode = stat.S_IMODE(target.stat().st_mode)
+        target.chmod(root_mode | stat.S_IWUSR)
+        try:
+            _replace_file(target / "runner.mjs", runner, 0o555)
+            _replace_file(
+                target / "receipt.json",
+                (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+                0o444,
+            )
+            _replace_file(
+                target / _CONTENT_MANIFEST_NAME,
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+                0o444,
+            )
+        finally:
+            target.chmod(root_mode)
+        verify_srt_installation_locked()
+        return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
+
+
+def _without(mapping: Mapping[str, object], *keys: str) -> dict[str, object]:
+    return {key: value for key, value in mapping.items() if key not in keys}
+
+
+def _replace_file(path: Path, data: bytes, mode: int) -> None:
+    """Write a complete sibling, then rename it over ``path`` as a new inode."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _require_node() -> Path:

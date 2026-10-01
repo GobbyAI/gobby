@@ -351,7 +351,7 @@ def verify_srt_installation_locked(
     runner_sha256 = hashlib.sha256(runner_bytes).hexdigest()
     if runner_sha256 != SRT_RELEASE.runner_sha256:
         _raise_srt_lockout(
-            "managed SRT runner checksum mismatch",
+            "managed SRT runner checksum mismatch; run `gobby install srt`",
             run_id=run_id,
             provider=provider,
             policy_hash=policy_hash,
