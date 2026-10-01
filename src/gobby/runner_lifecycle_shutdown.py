@@ -130,19 +130,21 @@ async def _shutdown_websocket_server(runner: GobbyRunner, timeout: float = 5.0) 
 
     if websocket_task is not None and not websocket_task.done():
         logger.debug("Waiting for WebSocket startup task to finish before shutdown")
+        # wait_for would cancel the task on timeout and then wait out its cancellation,
+        # so neither bound would hold for a task slow to honor it. asyncio.wait does not.
         try:
-            await asyncio.wait_for(websocket_task, timeout=timeout)
-        except TimeoutError:
-            logger.warning("WebSocket startup task did not finish before shutdown; cancelling")
-            websocket_task.cancel()
-            try:
-                await asyncio.wait_for(websocket_task, timeout=1.0)
-            except (asyncio.CancelledError, TimeoutError):
-                logger.warning("WebSocket startup task shutdown timed out or cancelled")
+            await asyncio.wait((websocket_task,), timeout=timeout)
+            if not websocket_task.done():
+                logger.warning("WebSocket startup task did not finish before shutdown; cancelling")
+                websocket_task.cancel()
+                await asyncio.wait((websocket_task,), timeout=1.0)
         except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("WebSocket startup task failed during shutdown: %s", e)
+            websocket_task.cancel()
+            raise
+        if not websocket_task.done():
+            logger.warning("WebSocket startup task did not stop after cancellation")
+        elif not websocket_task.cancelled() and (error := websocket_task.exception()) is not None:
+            logger.warning("WebSocket startup task failed during shutdown: %s", error)
 
     if websocket_server is not None:
         logger.debug("Stopping WebSocket server before HTTP shutdown")
