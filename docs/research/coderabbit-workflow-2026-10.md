@@ -10,6 +10,10 @@ The **Code Reviewer seat** should run CodeRabbit as an **advisory** input on the
 
 This adds no new mechanism: no code, pipeline, rule or gate. It needs one bullet in `.gobby/roles/code-reviewer.md` and Josh's answers to the decisions in section 6. It is the only option that binds CodeRabbit's evidence to the same SHA the LAND names, and the reviewer already has to judge findings.
 
+It fits Josh's confirmed **Essentials** plan:
+- **Per-candidate runs are small.** The median is 6 files, and about 98% of candidates fit the 150-file cap. A Merge Manager package pass (package 3 was 210 files) would have to be split.
+- **The volume fits.** The ~36 candidates a day sit within 5 reviews an hour, as long as a busy hour may skip with a note.
+
 ## 1. Current usage
 
 ### Editor extension
@@ -75,9 +79,15 @@ Each fact is tagged with its source:
 - Every session on this machine authenticates as **joshwilhelmi in GobbyAI** through the stored login. I didn't open `~/.coderabbit/auth.json`.
 
 ### Rate and cost
-- **Hourly limit per developer [docs-latest, management/plans]:** Free 3, OSS 3, Essentials 5, Team 8, Advanced 10, Enterprise 12.
+- **Plan: Essentials.** Josh confirmed this on 2026-10-01: "I'm on the Coderabbit essentials plan. Can upgrade if the need arises."
+- Two separate limits apply. A per-run file cap and an hourly review count.
+- **Per-run file cap [docs-latest, management/plans]:** at most 150 files per review on Free and Essentials, 100–300 on OSS, and 300 on Team, Advanced and Enterprise. The docs say this is "the maximum number of files CodeRabbit reviews in a single review, not an hourly limit". Josh's estimate of a 150-file cap matches the Essentials row.
+- **How 0.7.3 enforces the cap [local, installed binary strings]:**
+  - The server reports the limit. The CLI parses "Too many files! This PR contains N files, which is X over the limit of M." and emits error code `too_many_files` with `retryable: false` and `actionRequired: true`.
+  - The binary holds no hard-coded file limit. It also builds narrower-scope candidates (`--committed`, `--uncommitted` or up to five `--dir` scopes) with a fits/does-not-fit flag. The CLI never picks one or retries by itself **[docs-latest, cli/reference]**.
+  - There is a separate client-side cap of `MAX_DIFF_SIZE_MB=20` on the diff, and `payload_too_large` means "diff too large".
+- **Hourly limit per developer [docs-latest, management/plans]:** Free 3, OSS 3, **Essentials 5**, Team 8, Advanced 10, Enterprise 12.
   - The five Code Reviewer seats (gobby#14641, #14680, #14681, #14944 and #14945) would all count as **one** developer.
-  - The **plan tier is unknown** (see decision D1).
 - **Usage-based add-on [docs-latest]:**
   - Price: $1 per credit, 4 files per credit, so $0.25 per reviewed file.
   - It applies only after the plan allowance is exhausted, only on Essentials, Team or Advanced, and only with an explicit `--use-credits`.
@@ -115,11 +125,15 @@ A typical candidate takes about 1–5 minutes, and packages of 200+ files take 7
 These figures come from merges on 0.5.0 since 09-24:
 - **287 landings in 8 days:** 63, 34, 31, 32, 51, 44, 16 and 16 per day, so about 36 per day on average with bursty peaks.
 - **Files per landing:** p50 = 6, p90 = 49, max = 1034. That's 6,724 files in total.
+- **Landings over the cap:** recounted at 0.5.0 b1dc981f1f, 7 of the 298 merges since 09-24 changed more than 150 files, and 2 changed more than 300.
+- **Packages:** package 3 (#23190 at b1dc981f1f) changed 210 files against its 0.5.0 parent, over the Essentials cap.
 
-| Plan tier | Hourly limit | Daily ceiling | Fit at ~36 candidates/day |
-|---|---|---|---|
-| Free or OSS | 3/h | 72 | Fits the average, but a 63-landing day concentrated in working hours saturates it. Reviewers would need to skip when rate-limited. |
-| Team | 8/h | 192 | Comfortable for one run per candidate, including re-reviews after a BOUNCE. |
+Fit on the confirmed Essentials plan, against the alternative of upgrading to Team:
+
+| Limit | Essentials (current) | Team (upgrade) |
+|---|---|---|
+| Reviews per hour, shared by all 5 reviewer seats | 5. About 120 a day at the most, so it fits the ~36/day average. A burst of more than 5 candidates in one hour has to wait or skip. | 8. Comfortable, including re-reviews after a BOUNCE. |
+| Files per run | 150. About 97.7% of candidates fit (291 of 298). An over-cap candidate fails with `too_many_files`; reviewing it needs split runs. | 300. Only 2 of 298 candidates exceed it. |
 
 Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and a p90 candidate is about $12.
 
@@ -138,7 +152,7 @@ Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and 
 - **Latency and load:**
   - Adds about 1–5 minutes per candidate inside the reviewer's own pass. It can run while the reviewer reads the diff.
   - It's one run per review (BOUNCE re-reviews included), with no heavy-run key needed: it's a network call plus a local `git worktree add`.
-- **Failure mode:** a rate limit, `Too many files`, an auth expiry or an `error` event leaves the reviewer without CodeRabbit input. As advisory, the reviewer records "CodeRabbit: unavailable (<reason>)" and proceeds. False positives are triaged like any lead (skill contract: "findings are leads, not patches").
+- **Failure mode:** a rate limit, `too_many_files` (a candidate over 150 files on Essentials, about 2% of landings), an auth expiry or an `error` event leaves the reviewer without CodeRabbit input. An over-cap candidate can still get partial coverage: the reviewer reruns with one of the CLI's narrower `--dir` candidates, each of which costs another review from the hourly 5. As advisory, the reviewer records "CodeRabbit: unavailable (<reason>)" and proceeds. False positives are triaged like any lead (skill contract: "findings are leads, not patches").
 - **LAND and receipt:**
   - The review runs on the same SHA the LAND names. `internalState.json.reviewedCommitIds` and `git.json.head` record that SHA, so the LAND evidence can cite "CodeRabbit run <end-ms> on <sha>: N findings, M adopted".
   - Blocking findings go through the existing BOUNCE and bounded correction loop. The single correction pass counts them like any other finding, so the loop stays as it is.
@@ -147,7 +161,7 @@ Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and 
 ### C. Merge Manager package pass on the staged tree
 - **Signal:** only for cross-candidate interactions, which are rare. Most of it duplicates per-candidate findings, attributed to the wrong owner.
 - **Latency and load:**
-  - Packages bundle about 16 positions, so hundreds of files. Expect 7–12+ minutes and a real risk of `Too many files`. Cost scales with total files (about $0.25 each on credits).
+  - Packages bundle about 16 positions, so hundreds of files. Package 3 changed 210 files, which is over the Essentials cap of 150 files per run. A package pass would have to be **split** into several `--dir`-scoped runs, each costing one of the 5 hourly reviews. Splitting by directory also cuts across candidates and loses the cross-file context the pass was meant to add. Expect 7–12+ minutes per run. Cost scales with total files (about $0.25 each on credits).
   - It holds the MM reservation longer and blocks every other landing.
 - **Failure mode:** findings arrive **after** the LAND approval. MM may only "fix gaps caused by integration" and must return semantic changes to an independent source reviewer, so each actionable finding reopens review for an already-approved candidate in the middle of a reservation.
 - **LAND and receipt:** it conflicts with the contract. The LAND approves a source SHA, and a package finding against the merged tree doesn't map to any single LAND.
@@ -190,7 +204,7 @@ git -C /Users/josh/Projects/gobby worktree remove "$WT"
 
 | ID | Question | Choices |
 |---|---|---|
-| D1 | CodeRabbit plan tier for GobbyAI? It sets the hourly limit, and the CLI doesn't show it. | `Free/OSS (3/h)` · `Essentials (5/h)` · `Team (8/h)` · `Advanced+ (10–12/h)` |
+| D1 | ~~Plan tier~~ **Answered 2026-10-01: Essentials (5/h, 150 files per run).** Remaining choice: | `Stay on Essentials (recommended)` · `Upgrade to Team (8/h, 300 files)` |
 | D2 | Adopt CodeRabbit as a Code Reviewer input on the exact SHA? | `Adopt (recommended)` · `Not now` |
 | D3 | Advisory or blocking? | `Advisory (recommended)` · `Unresolved HIGH blocks LAND` |
 | D4 | What code may be sent to CodeRabbit? | `All candidate paths` · `Exclude .gobby/ and roles` · `Only src/ and crates/` |
@@ -198,7 +212,7 @@ git -C /Users/josh/Projects/gobby worktree remove "$WT"
 | D6 | When the plan allowance runs out? | `Skip and note it (recommended)` · `Enable credits with a cap` |
 | D7 | Which candidates get a run? | `Every candidate (recommended)` · `Only src/ or crates/ changes` |
 
-If D1 is Free/OSS and D7 is "Every candidate", D6 "Skip and note it" keeps the reviewer moving on peak days.
+On Essentials with D7 "Every candidate", choosing D6 "Skip and note it" keeps the reviewer moving through hours with more than 5 candidates and past the rare candidate over 150 files. Upgrade to Team only if skipped runs become common.
 
 ## Sources
 
