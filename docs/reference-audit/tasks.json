@@ -541,7 +541,7 @@
         "source-contract",
         "focused-task-tests"
       ],
-      "audience": "operator-only"
+      "audience": "agent; registered caller in the task project, preview by default"
     },
     {
       "surface": "mcp",
