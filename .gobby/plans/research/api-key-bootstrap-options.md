@@ -340,20 +340,9 @@ PD review of this revision is required before the Assistant presents the choices
 
 ### Josh's decisions
 
-PD cleared `b3023b3`. The Assistant presented it on Telegram at 14:35 CT on 2026-10-01, and Josh answered "Agreed" to the recommendations.
+**Pending.** Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01, and no choice is decided yet.
 
-| Choice | Decision |
-| --- | --- |
-| 1 | **A.** One narrowed 0600 hub DB password file (H6). Josh accepts plaintext in that single hub file. Nodes hold none |
-| 2 | Withdrawn |
-| 3 | 0600 machine private key, with enforce-and-repair |
-| 4 | No nodes until the D2 relay, with per-request revocation checks. The channel follows later |
-| 5 | *Open*, awaiting Josh |
-| 6 | Reset is local-only |
-| 7 | Drop P4's email/password bootstrap route. Nodes enroll with one-time codes |
-| 8 | Drop secret fields from on-disk grants. One loopback handshake per gcode process |
-| 9 | *Open*, awaiting Josh |
-| 10 | **K1.** Mutual TLS with pinned per-machine public keys. Remote machines dial the front door directly |
+A decision table recorded in `4d8bc01` was **retracted**. The Assistant misread Josh's "Agreed", and Josh said: "I didn't accept yet."
 
 ## 11. Survey: how popular self-hosted projects handle this (verified)
 
