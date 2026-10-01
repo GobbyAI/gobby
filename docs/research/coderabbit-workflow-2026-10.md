@@ -2,17 +2,37 @@
 
 Task: #23189 (research spike, P3). Requested by Josh on 2026-10-01: "We should find a way to incorporate coderabbit into our workflow". Researcher gobby#14550. Read-only.
 
-This investigation pushed nothing, opened no PR, installed nothing, accessed no storage and ran no CodeRabbit review. Its only network call was `coderabbit usage`, which returns account data and sends no code.
+This investigation pushed nothing, opened no PR, created no branch on the remote, installed nothing, accessed no storage and ran no CodeRabbit review. It made two network calls, and neither sent code: `coderabbit usage`, which returns account data, and one `git ls-remote --symref origin HEAD`, which confirmed that the default branch is `main`.
+
+## Josh's rulings
+
+Josh's rulings so far, in order. The latest one governs.
+
+1. 2026-10-01: "On coderabbit, we can batch together multiple commits. Thought is we have merge manager do the same before merges, so we keep under the limit".
+2. 2026-10-01, 16:22 CT: "CodeRabbit won't work until after we push, and then we have to make sure we're packaging < 150 reviewable file changes for a CodeRabbit pass."
+
+Ruling 2 sets the constraint for the rest of this note:
+- CodeRabbit runs only on pushed commits.
+- Every CodeRabbit pass covers **fewer than 150 reviewable changed files**.
+- Pre-landing runs are out. That covers the author self-check, the reviewer run on the exact SHA and an MM package pass on the staged tree.
+- Ruling 1's batching survives as **package sizing**: the Merge Manager keeps each landing small enough to be one post-push batch.
+
+Sections 1–3 are background on the CLI and the repository and remain accurate. Sections 4–6 apply the post-push constraint, and section 7 is the batch plan for the current backlog.
 
 ## Recommendation
 
-The **Code Reviewer seat** should run CodeRabbit as an **advisory** input on the **exact candidate SHA**. It runs in a temporary detached worktree, and the reviewer folds the findings into its own HIGH/MEDIUM/LOW findings.
+Run **post-push batch reviews**, one review-only pull request per batch, each covering fewer than 150 reviewable files. Then triage the findings into ordinary fix tasks with the existing `coderabbit` skill.
 
-This adds no new mechanism: no code, pipeline, rule or gate. It needs one bullet in `.gobby/roles/code-reviewer.md` and Josh's answers to the decisions in section 6. It is the only option that binds CodeRabbit's evidence to the same SHA the LAND names, and the reviewer already has to judge findings.
+- **Sizing (MM, pre-landing, no CodeRabbit run):** the Merge Manager keeps every package landing under 150 reviewable files. It counts them with `git diff --name-only <first parent> <package merge>`, after the `.coderabbit.yaml` `path_filters`. It records the count and the SHA range in the package receipt. An oversize package is split into two landings.
+- **Review (Josh, post-push):** Josh pushes each batch end as a throwaway `cr/` branch. He opens a pull request against the previous batch's branch and comments `@coderabbitai review`.
+- **Triage:** the PD routes each pull request's findings through `$gobby coderabbit` (the canonical skill: native Plan Mode, a fix/no-fix table, verify before fixing) to the lane that owns the paths, as normal fix tasks. The code has already landed, so findings feed fix work and never gate a LAND.
 
-It fits Josh's confirmed **Essentials** plan:
-- **Per-candidate runs are small.** The median is 6 files, and 230 of 232 landings fit the 150-file cap. A Merge Manager package pass (package 3 was 210 files) would have to be split.
-- **The volume fits.** The ~29 landings a day sit within 5 reviews an hour, as long as a busy hour may skip with a note.
+This adds no code, pipeline or gate. It needs:
+- a sizing bullet in `.gobby/roles/merge-manager.md`;
+- a routing bullet for the PD;
+- Josh's answers to section 6.
+
+It is the only option that satisfies both rulings with existing mechanisms.
 
 ## 1. Current usage
 
@@ -122,7 +142,6 @@ A typical candidate takes about 1–5 minutes, and packages of 200+ files take 7
 
 ## 3. Throughput being served
 
-These figures come from merges on 0.5.0 since 09-24:
 These are first-parent merges on 0.5.0 since 09-24, counted at b1dc981f1f. Each one is a landing that a reviewer approved, and its size is the merge diff against the first parent. Command: `git log b1dc981f1f --first-parent --merges --since=2026-09-24`, then `git diff --name-only <m>^1 <m>` for each merge.
 
 An earlier draft counted all-ancestry merges, which include merges inside candidate branches, so those aren't review candidates.
@@ -140,28 +159,18 @@ Fit on the confirmed Essentials plan, against the alternative of upgrading to Te
 
 Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and a p90 candidate is 26 × $0.25 ≈ $6.50.
 
-## 4. Integration points
+## 4. Integration points under the post-push constraint
 
-### A. Author pre-CANDIDATE self-check
-- **Signal:** low independence. The author picks which findings to act on, and the reviewer never sees the rest. Its real value is catching defects before a reviewer round trip. `pre-push-test.sh` already offers this for humans.
-- **Latency and load:**
-  - Adds 1–5 minutes to every candidate, including both runs per bounced candidate.
-  - All lanes share one hourly limit, the most runs of any option, so it saturates first.
-- **Failure mode:** findings are silently dropped or partially applied, and a rate-limited lane stalls or skips without anyone knowing.
-- **LAND and receipt:** no interaction. Fixes produce new SHAs before the CANDIDATE, so the LAND contract is unchanged, and the reviewer still sees nothing CodeRabbit said.
+Ruling 2 rules out the first three options. Each is kept here with the original analysis condensed.
 
-### B. Reviewer-seat input on the exact SHA (recommended)
-- **Signal:** high. CodeRabbit is an independent model and toolchain (ruff, shellcheck, clippy, osv and the repository's `path_instructions`). It lands at the decision point, and a reviewer who already must verify findings filters it, so false positives cost one triage line, not a code change.
-- **Latency and load:**
-  - Adds about 1–5 minutes per candidate inside the reviewer's own pass. It can run while the reviewer reads the diff.
-  - It's one run per review (BOUNCE re-reviews included), with no heavy-run key needed: it's a network call plus a local `git worktree add`.
-- **Failure mode:** a rate limit, `too_many_files` (a candidate over 150 files on Essentials: 2 of 232 landings, one of them a package), an auth expiry or an `error` event leaves the reviewer without CodeRabbit input. An over-cap candidate can still get partial coverage: the reviewer reruns with one of the CLI's narrower `--dir` candidates, each of which costs another review from the hourly 5. As advisory, the reviewer records "CodeRabbit: unavailable (<reason>)" and proceeds. False positives are triaged like any lead (skill contract: "findings are leads, not patches").
-- **LAND and receipt:**
-  - The review runs on the same SHA the LAND names. `internalState.json.reviewedCommitIds` and `git.json.head` record that SHA, so the LAND evidence can cite "CodeRabbit run <end-ms> on <sha>: N findings, M adopted".
-  - Blocking findings go through the existing BOUNCE and bounded correction loop. The single correction pass counts them like any other finding, so the loop stays as it is.
-  - A new SHA needs a new run.
+### A. Author pre-CANDIDATE self-check: ruled out (pre-push)
+The original analysis already rated its signal low: the author filters its own findings, and the reviewer never sees them.
 
-### C. Merge Manager package pass on the staged tree
+### B. Reviewer-seat input on the exact SHA: ruled out (pre-push)
+This was the earlier recommendation. It bound evidence to the LAND SHA, but it runs before any push. Its strengths carry over to E as triage quality: an independent toolchain whose findings a verifier filters.
+
+### C. Merge Manager package pass on the staged tree: ruled out (pre-push)
+Ruling 2 rules it out explicitly. It would also have had to split oversize packages and attribute findings after the LAND. The original analysis follows for the record.
 - **Signal:** only for cross-candidate interactions, which are rare. Most of it duplicates per-candidate findings, attributed to the wrong owner.
 - **Latency and load:**
   - Packages bundle about 16 positions, so hundreds of files. Package 3 changed 210 files, which is over the Essentials cap of 150 files per run. A package pass would have to be **split** into several `--dir`-scoped runs, each costing one of the 5 hourly reviews. Splitting by directory also cuts across candidates and loses the cross-file context the pass was meant to add. Expect 7–12+ minutes per run. Cost scales with total files (about $0.25 each on credits).
@@ -169,7 +178,8 @@ Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and 
 - **Failure mode:** findings arrive **after** the LAND approval. MM may only "fix gaps caused by integration" and must return semantic changes to an independent source reviewer, so each actionable finding reopens review for an already-approved candidate in the middle of a reservation.
 - **LAND and receipt:** it conflicts with the contract. The LAND approves a source SHA, and a package finding against the merged tree doesn't map to any single LAND.
 
-### D. Pipeline step (headless, daemon-run)
+### D. Pipeline step (headless, daemon-run): not recommended
+A post-push variant could drive the CLI or the GitHub app from a pipeline. It still carries every cost below, and the hourly limit and the 150-file cap still apply.
 - **Signal:** same as B, but without a reviewer filtering it, so raw findings are noisy (`profile: assertive`; 64 findings over 6 reviews).
 - **Latency and load:** the most new mechanism of any option:
   - a pipeline definition and a step runner
@@ -183,39 +193,87 @@ Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and 
   - A step that gates anything is a new gate. The Lane Manager role says no unapproved gate or throttle without Josh's approval.
 - **LAND and receipt:** it could stamp `reviewedCommitIds` into a receipt automatically. That benefit is all that B lacks, and B can cite the same field by hand.
 
+### E. Post-push batch pull requests, sized by the MM (recommended)
+- **Signal:** high. It uses the same independent toolchain as B (ruff, shellcheck, clippy, osv and `path_instructions`). The `coderabbit` skill's verify-then-decide contract filters its output. A batch spans several candidates, so it also sees cross-candidate interactions, which was C's only unique signal.
+- **Latency and load:**
+  - Lanes and reviewers wait on nothing, because it runs after the code lands and Josh pushes.
+  - Volume:
+    - Batch reviews: one per batch. The current backlog is 6 batches (section 7). From here on it is about one per package.
+    - Runs: well inside Essentials' 5 per hour. When more than 5 batches queue up at once, as with this backlog, trigger them about an hour apart.
+  - Sizing costs the MM one `git diff --name-only` count per package. It needs no CodeRabbit run and no network.
+- **Failure mode:**
+  - **Diff over the cap:** a batch at 150 or more files fails with "Too many files" and nothing is reviewed. Sizing prevents this. The cut rule in section 7 recovers an oversize range.
+  - **No auto-review:** `auto_review.base_branches` is `[main, dev]`, and the default branch is `main`. A pull request into a `cr/` branch is therefore never auto-reviewed. The manual `@coderabbitai review` trigger is the documented path. **It is not yet verified on this repository**, so confirm it on batch 1.
+  - **Wrong base:** if Josh pushes `0.5.0` before he opens batch 1, a pull request based on `0.5.0` shows an empty diff. Pinning the base as `cr/0.5.0-b0` prevents this.
+  - **Findings ignored:** routing to fix tasks through the skill makes every finding an explicit fix or no-fix row.
+- **LAND and receipt:**
+  - LAND is unchanged; findings never gate it.
+  - The package receipt gains one line, "CodeRabbit batch: `<from>..<to>`, N reviewable files". The PD's triage maps each pull request back to its batch range, and so to the package and task whose paths it touches.
+
 ## 5. Proposed role text and procedure (the Orchestrator applies it after Josh decides; not edited here)
 
-Proposed bullet for `.gobby/roles/code-reviewer.md`:
+Proposed bullet for `.gobby/roles/merge-manager.md`:
 
-> - CodeRabbit (advisory, Josh 2026-10-xx): for each CANDIDATE, run CodeRabbit on the exact candidate SHA in a temporary detached worktree. Verify every finding against the code like any lead, and fold valid ones into your HIGH/MEDIUM/LOW findings. Cite the run in the LAND evidence: SHA, finding count and adopted count. If the run fails (rate limit, `Too many files`, auth, error event), note "CodeRabbit unavailable: <reason>" and continue. A CodeRabbit finding never blocks by itself.
+> - CodeRabbit batch sizing (Josh 2026-10-01): keep every package landing under 150 reviewable changed files. Count them with `git diff --name-only <first parent> <package merge>`, minus `.coderabbit.yaml` `path_filters`. Record "CodeRabbit batch: <first parent>..<package merge>, N reviewable files" in the package receipt. If staging reaches 150, split the package into two landings. Never run CodeRabbit before a push.
 
-Procedure (CLI 0.7.3; do not run until Josh approves the data egress):
+Proposed bullet for the PD role:
+
+> - CodeRabbit triage (Josh 2026-10-01): when Josh reports a batch pull request reviewed, route its findings through `$gobby coderabbit` to the lane that owns the paths, as ordinary fix tasks. Findings never reopen a LAND.
+
+Procedure for Josh, per batch k (k = 1..N, using section 7's table):
 
 ```bash
-SHA=<exact candidate sha>
-WT=/private/tmp/cr-review-${SHA:0:10}
-git -C /Users/josh/Projects/gobby worktree add --detach "$WT" "$SHA"
-cd "$WT" && coderabbit review --agent --committed \
-  --base-commit "$(git merge-base "$SHA" 0.5.0)" > "/private/tmp/cr-${SHA:0:10}.ndjson"
-# parse the `finding` and `complete`/`error` events; do not trust the exit code on 0.7.3
-git -C /Users/josh/Projects/gobby worktree remove "$WT"
+# once, before pushing 0.5.0 itself: pin the current remote base
+git push origin <from_1>:refs/heads/cr/0.5.0-b0
+# per batch
+git push origin <to_k>:refs/heads/cr/0.5.0-b<k>
+gh pr create --base cr/0.5.0-b<k-1> --head cr/0.5.0-b<k> \
+  --title "CodeRabbit batch k/N" --body "Review-only; do not merge."
+gh pr comment <pr> --body "@coderabbitai review"
+# after review: close the PR unmerged; delete the cr/ branches when all batches are done
 ```
 
-`--base 0.5.0` in place of `--base-commit` matches the 07-29 precedent (`baseBranch: origin/0.5.0`). `--base-commit <merge-base>` pins the base exactly, so the reviewed range equals the candidate's own commits.
+- Open each pull request as non-draft, because `drafts: false`.
+- Because `<from_k>` is an ancestor of `<to_k>`, each pull request's diff is exactly that batch's range.
 
 ## 6. Decisions for Josh (Telegram buttons)
 
 | ID | Question | Choices |
 |---|---|---|
-| D1 | ~~Plan tier~~ **Answered 2026-10-01: Essentials (5/h, 150 files per run).** Remaining choice: | `Stay on Essentials (recommended)` · `Upgrade to Team (8/h, 300 files)` |
-| D2 | Adopt CodeRabbit as a Code Reviewer input on the exact SHA? | `Adopt (recommended)` · `Not now` |
-| D3 | Advisory or blocking? | `Advisory (recommended)` · `Unresolved HIGH blocks LAND` |
-| D4 | What code may be sent to CodeRabbit? | `All candidate paths` · `Exclude .gobby/ and roles` · `Only src/ and crates/` |
-| D5 | CLI version? | `Stay on 0.7.3 (recommended)` · `Update to 0.8.x (review only; never use handoff, which uploads the session transcript)` |
-| D6 | When the plan allowance runs out? | `Skip and note it (recommended)` · `Enable credits with a cap` |
-| D7 | Which candidates get a run? | `Every candidate (recommended)` · `Only src/ or crates/ changes` |
+| D1 | Adopt post-push batch pull requests with MM package sizing? | `Adopt (recommended)` · `Not now` |
+| D2 | Plan tier? Answered as Essentials (5 per hour, 150 files per run). | `Stay on Essentials (recommended)` · `Upgrade to Team (8/h, 300 files: the backlog needs at least 3 batches)` |
+| D3 | How is each batch triggered? | `Manual @coderabbitai review (recommended)` · `Add a cr/ pattern to auto_review.base_branches` |
+| D4 | Where do findings go? | `Fix tasks for the owning lane (recommended)` · `Hold the next push until they are triaged` |
+| D5 | What happens to the current backlog? | `Review all 6 batches (recommended)` · `Only from package 5 onward` |
+| D6 | When the allowance runs out? | `Wait for the next hour (recommended)` · `Enable credits with a cap` |
 
-On Essentials with D7 "Every candidate", choosing D6 "Skip and note it" keeps the reviewer moving through hours with more than 5 candidates and past the rare candidate over 150 files. Upgrade to Team only if skipped runs become common.
+D3's alternative edits `.coderabbit.yaml`. The setting takes regex patterns according to [docs-latest]. That is unverified on this repository.
+
+## 7. Batch plan for the current backlog
+
+**Range.** `origin/0.5.0` = `2d1d73f579` (2026-09-29) to `0.5.0` = `9a514a7cf1`, counted 2026-10-01 at 16:22 CT. It is a fast-forward of 315 commits, 55 of them first-parent, with 600 net changed files. 599 files are reviewable, because `uv.lock` is the only path that `path_filters` excludes.
+
+**Method.** Each count is `git diff --name-only <from> <to>` with `.coderabbit.yaml` `path_filters` applied, which is the pull request's diff. The cut rule works in three steps:
+1. Walk `0.5.0`'s first-parent history and end each batch at the furthest commit that keeps the range under 150.
+2. Where one first-parent commit alone is 150 or more, cut inside its second parent, the package branch.
+3. Check that each `from` is an ancestor of its `to`.
+
+Every batch's raw count, before filters, is also under 150, so the result does not depend on whether CodeRabbit counts filtered paths.
+
+| Batch | from (exclusive) | to | Reviewable files | Commits | Ends at |
+|---|---|---|---|---|---|
+| B1 | `2d1d73f579` | `aaa466e4ff07d99c7d503ba9117385b7d60ade3c` | 143 (raw 144) | 59 | #23145 roster and coordination policy |
+| B2 | `aaa466e4ff` | `63d90c3b479c2d6a8bed0b88364ee220b32de0b8` | 110 | 64 | #23171 typing and closing reference |
+| B3 | `63d90c3b47` | `8fd2bfd3f2521b512cbeef97eb4d18ca49675f50` | 120 | 30 | #23184 SRT cursor |
+| B4 | `8fd2bfd3f2` | `724e4d848d36afa77a788b529e25d8c06d983420` | 125 | 52 | inside package 3 (#23190): bounded websocket shutdown |
+| B5 | `724e4d848d` | `b1dc981f1fbc440398c603788236af4a362dc2ad` | 100 | 36 | package 3 merge |
+| B6 | `b1dc981f1f` | `9a514a7cf1060efb6aacd709598cbac374c7951d` | 109 | 74 | `0.5.0` head: package 4, docs batch, #23268 |
+
+- **Package 3 split:** package 3's merge `b1dc981f1f` alone changes 210 files, so no first-parent cut fits. B4 and B5 cut on its second parent, `a7320ef60d`, at `724e4d848d`.
+- **Totals:** the batches add up to 707 file reviews against 599 net, because some files change in more than one batch.
+- **Batch count:** 599 / 149 means at least 5 batches. The greedy cut gives 6.
+- **Rate limit:** Essentials allows 5 reviews per hour, so trigger B6 an hour after B1.
+- **Later landings:** package 5 onward starts at `9a514a7cf1`. With MM sizing, each package is one batch.
 
 ## Sources
 
@@ -237,4 +295,9 @@ On Essentials with D7 "Every candidate", choosing D6 "Skip and note it" keeps th
   - `src/gobby/install/shared/skills/coderabbit/SKILL.md`
   - `.gobby/roles/{_common,code-reviewer,merge-manager,lane-manager,roster}.md`
   - `git log b1dc981f1f --first-parent --merges --since=2026-09-24`
+  - Section 7:
+    - `git rev-list --first-parent origin/0.5.0..0.5.0` for the cut candidates.
+    - `git diff --name-only <from> <to>` for the counts, filtered by `.coderabbit.yaml` `path_filters` through Python `PurePosixPath.full_match`.
+    - `git merge-base <from> <to>` to confirm ancestry.
+  - `git ls-remote --symref origin HEAD` for the default branch.
 - **Memories:** f5537d2c, f153518c, 245c154c, baba0f0a.
