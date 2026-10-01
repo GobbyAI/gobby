@@ -3965,7 +3965,13 @@ class TestHooksEndpoints:
 
         wait_seconds = 0.2
         adapter = MagicMock()
-        adapter.handle_native.side_effect = lambda *_args: time.sleep(wait_seconds) or {}
+
+        def _wait_then_answer(*_args: object) -> dict[str, object]:
+            # The idle wait is the workload under test: wall time with no CPU.
+            threading.Event().wait(wait_seconds)
+            return {}
+
+        adapter.handle_native.side_effect = _wait_then_answer
         timings = HookPhaseTimings()
 
         await run_adapter_hook(

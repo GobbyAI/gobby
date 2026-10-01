@@ -759,7 +759,7 @@
     },
     {
       "finding": "Telegram guide claimed callback TTL was clamped; out-of-range and non-integer values are rejected.",
-      "implementation": "src/gobby/communications/telegram_callbacks.py::_bounded_ttl",
+      "implementation": "src/gobby/communications/telegram_callbacks.py::bounded_callback_ttl",
       "resolution": "Describe required integer range and failure behavior.",
       "evidence": [
         "media-callbacks-adapters"
