@@ -15,7 +15,7 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult
 from gobby.tasks.close_checklist import (
@@ -2121,7 +2121,7 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
@@ -2212,7 +2212,7 @@ async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failu
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),

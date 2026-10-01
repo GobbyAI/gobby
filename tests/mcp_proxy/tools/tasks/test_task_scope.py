@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -10,11 +11,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gobby.mcp_proxy.tools.tasks._task_scope as task_scope
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     TaskScopeEvaluation,
     collect_commit_paths,
     collect_declared_task_targets,
-    collect_deleted_commit_paths_async,
     evaluate_task_scope,
     find_targets_not_found,
 )
@@ -355,7 +356,7 @@ def test_collect_commit_paths_includes_root_and_later_commits(tmp_path: Path) ->
     }
 
 
-async def test_deleted_commit_paths_are_git_deletions_absent_from_head(tmp_path: Path) -> None:
+def _git_repo(tmp_path: Path) -> Callable[..., str]:
     def git(*args: str) -> str:
         result = subprocess.run(
             ["git", *args], cwd=tmp_path, check=True, capture_output=True, text=True
@@ -365,6 +366,34 @@ async def test_deleted_commit_paths_are_git_deletions_absent_from_head(tmp_path:
     git("init", "-q")
     git("config", "user.email", "test@example.com")
     git("config", "user.name", "Test User")
+    return git
+
+
+async def test_net_commit_paths_drop_a_file_a_later_link_reverts(tmp_path: Path) -> None:
+    git = _git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "src" / "a.py").write_text("VALUE = 1\n")
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    (tmp_path / "src" / "a.py").write_text("VALUE = 2\n")
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    assert 1\n")
+    git("commit", "-qam", "change both")
+    change_sha = git("rev-parse", "HEAD")
+    (tmp_path / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
+    git("commit", "-qam", "revert the test")
+    revert_sha = git("rev-parse", "HEAD")
+
+    net = await task_scope.collect_net_commit_paths_async([change_sha, revert_sha], str(tmp_path))
+
+    assert net == task_scope.NetCommitPaths(changed=frozenset({"src/a.py"}), deleted=frozenset())
+
+
+async def test_net_commit_paths_report_deletions_absent_from_the_candidate(
+    tmp_path: Path,
+) -> None:
+    git = _git_repo(tmp_path)
     names = ("test_gone.py", "tests/test_moved.py", "tests/test_readded.py", "tests/test_kept.py")
     for name in names:
         path = tmp_path / name
@@ -386,13 +415,19 @@ async def test_deleted_commit_paths_are_git_deletions_absent_from_head(tmp_path:
     # Tracked at HEAD but missing from the worktree is not a deletion.
     (tmp_path / "tests" / "test_readded.py").unlink()
 
-    deleted = await collect_deleted_commit_paths_async((delete_sha, readd_sha), str(tmp_path))
+    net = await task_scope.collect_net_commit_paths_async([delete_sha, readd_sha], str(tmp_path))
 
-    assert deleted == {"test_gone.py", "tests/test_moved.py"}
+    # The deleted-then-readded test nets to nothing; a rename deletes its source.
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset(
+            {"test_gone.py", "tests/test_moved.py", "tests/test_renamed.py", "tests/test_kept.py"}
+        ),
+        deleted=frozenset({"test_gone.py", "tests/test_moved.py"}),
+    )
 
 
-async def test_deleted_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path) -> None:
+async def test_net_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
 
-    with pytest.raises(RuntimeError, match="Cannot inspect changed paths"):
-        await collect_deleted_commit_paths_async(("0" * 40,), str(tmp_path))
+    with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
+        await task_scope.collect_net_commit_paths_async(["0" * 40], str(tmp_path))

@@ -19,6 +19,7 @@ from gobby.plans.semantic_lint import find_file_paths_in_text
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
+from gobby.tasks.commits import collect_net_name_status_async
 from gobby.utils.daemon_git import GitOk, daemon_git
 
 if TYPE_CHECKING:
@@ -238,30 +239,51 @@ async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str)
     return await _diff_tree_paths(commit_shas, repo_path)
 
 
-async def collect_deleted_commit_paths_async(
-    commit_shas: Iterable[str], repo_path: str
-) -> set[str]:
-    """Return paths a linked commit deleted that ``HEAD`` in ``repo_path`` no longer tracks.
+@dataclass(frozen=True)
+class NetCommitPaths:
+    """Paths a close set changes on net, and those it leaves deleted."""
 
-    Deletion is Git's record alone: a file tracked at HEAD but missing from the
-    worktree is never reported.
+    changed: frozenset[str] = frozenset()
+    deleted: frozenset[str] = frozenset()
+
+
+async def collect_net_commit_paths_async(commit_shas: list[str], repo_path: str) -> NetCommitPaths:
+    """Return what the linked commits change on net against the close review's base.
+
+    A file a later link reverts, or one only edited and never committed, is absent.
+    Deletion is Git's record alone: a file the candidate tracks but the worktree
+    lacks is never reported.
     """
-    deleted = await _diff_tree_paths(commit_shas, repo_path, "--diff-filter=D")
-    if not deleted:
-        return deleted
-    tree = await daemon_git.run(
-        ["ls-tree", "-r", "--name-only", "-z", "HEAD"], cwd=repo_path, timeout=10
-    )
-    if not isinstance(tree, GitOk):
-        raise RuntimeError("Cannot list the paths tracked at HEAD.")
-    return deleted - set(tree.stdout.split("\0"))
+    if not commit_shas:
+        return NetCommitPaths()
+    listing = await collect_net_name_status_async(commit_shas, cwd=repo_path)
+    if listing is None:
+        raise RuntimeError("Cannot compute the net diff of the linked commits against their base.")
+    changed: set[str] = set()
+    deleted: set[str] = set()
+    fields = iter(listing.split("\0"))
+    for status in fields:
+        kind = status.strip()[:1]
+        if not kind:
+            continue
+        # Renames and copies name a source then a destination; a rename removes its source.
+        names = [next(fields, ""), next(fields, "")] if kind in "RC" else [next(fields, "")]
+        paths = [_normalize_git_repo_path(name) for name in names]
+        if kind == "C":
+            paths = paths[1:]
+        for path in paths:
+            if path is not None:
+                changed.add(path)
+        if kind in "DR" and paths[0] is not None:
+            deleted.add(paths[0])
+    return NetCommitPaths(frozenset(changed), frozenset(deleted))
 
 
-async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str, *flags: str) -> set[str]:
+async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     paths: set[str] = set()
     for sha in commit_shas:
         result = await daemon_git.run(
-            ["diff-tree", "--root", "--no-commit-id", *flags, "--name-only", "-z", "-r", sha],
+            ["diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r", sha],
             cwd=repo_path,
             timeout=10,
         )
