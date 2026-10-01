@@ -29,11 +29,11 @@ use items::{
     agent_items, global_items, pane_items, project_items, submenu_items, tab_items, worktree_items,
 };
 pub(super) use items::{
-    arrange_items, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
+    arrange_row, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
 };
 
 /// A menu that opens beside the row of its parent menu that names it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Submenu {
     /// View › Theme: the theme choices.
     Theme,
@@ -42,17 +42,30 @@ pub enum Submenu {
     Sidebar,
     /// View › Sidebar › one section: only that section's options.
     Section(SidebarSection),
+    /// Arrange: the layout choices for the tab the opening menu (Window, a
+    /// tab's or a pane's) was built for.
+    Arrange(ArrangeTarget),
 }
 
 impl Submenu {
-    /// The submenu holding this one's row; `None` for a row of the View
+    /// The submenu holding this one's row; `None` for a row of a menu bar
     /// menu itself.
-    fn parent(self) -> Option<Self> {
+    fn parent(&self) -> Option<Self> {
         match self {
             Self::Section(_) => Some(Self::Sidebar),
-            Self::Theme | Self::Sidebar => None,
+            Self::Theme | Self::Sidebar | Self::Arrange(_) => None,
         }
     }
+}
+
+/// The tab an Arrange choice lays out, fixed when the menu offering it was
+/// built so a later focus change cannot redirect it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrangeTarget {
+    /// The id of the tab to arrange.
+    pub tab: String,
+    /// The pane whose menu offered the choice; it must still be in `tab`.
+    pub pane: Option<PaneId>,
 }
 
 /// What the menu was opened on.
@@ -70,7 +83,7 @@ pub enum ContextMenuKind {
     Submenu(Submenu),
 }
 
-/// Layout choices prepared for Window › Arrange.
+/// The layout choices under Arrange ▸.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrangeLayout {
     EvenHorizontal,
@@ -83,7 +96,12 @@ pub enum ArrangeLayout {
 /// What an item does when activated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
-    Arrange(ArrangeLayout),
+    /// Lay out the target tab's panes; refused once the tab is gone or the
+    /// pane has left it.
+    Arrange {
+        layout: ArrangeLayout,
+        target: ArrangeTarget,
+    },
     OpenNewGrid,
     NewGrid {
         rows: u8,
@@ -170,13 +188,13 @@ pub fn build_menu<W: WorkspaceView>(
 ) -> ContextMenuState {
     let items = match &kind {
         ContextMenuKind::Pane(pane) => pane_items(ws, chrome, *pane),
-        ContextMenuKind::Tab(_) => tab_items(),
+        ContextMenuKind::Tab(index) => tab_items(chrome, *index),
         ContextMenuKind::Global => global_items(),
         ContextMenuKind::Project(project_id) => project_items(ws, chrome, project_id),
         ContextMenuKind::Worktree(worktree_id) => worktree_items(chrome, worktree_id),
         ContextMenuKind::Agent(entry_id) => agent_items(ws, entry_id),
         ContextMenuKind::MenuBar(menu) => super::menu_bar::menu_bar_items(ws, chrome, *menu),
-        ContextMenuKind::Submenu(submenu) => submenu_items(chrome, *submenu),
+        ContextMenuKind::Submenu(submenu) => submenu_items(chrome, submenu),
     };
     menu_state(kind, anchor, items)
 }
@@ -236,8 +254,16 @@ pub fn close_menu(chrome: &mut Chrome) {
 }
 
 /// Close the menu and hand back the selected item's action, when the item
-/// is enabled.
+/// is enabled. An enabled row that opens a submenu leaves the menu open so
+/// the submenu cascades from it.
 pub fn activate_menu(chrome: &mut Chrome) -> Option<(ContextMenuKind, MenuAction)> {
+    if let Some(menu) = chrome.menu.as_ref() {
+        if let Some(item) = menu.items.get(menu.selected) {
+            if item.enabled && matches!(item.action, MenuAction::OpenSubmenu(_)) {
+                return Some((menu.kind.clone(), item.action.clone()));
+            }
+        }
+    }
     let menu = chrome.menu.take();
     chrome.mode = Mode::Terminal;
     let menu = menu?;
@@ -270,7 +296,7 @@ where
         MenuAction::ToggleGroup(project_id) => chrome.sidebar.toggle_group(project_id),
         MenuAction::PinSidebar => toggle_sidebar_pin(workspace.gobby_home(), chrome),
         MenuAction::OpenSubmenu(submenu) => {
-            chrome.menu = Some(submenu_state(workspace, chrome, *submenu));
+            chrome.menu = Some(submenu_state(workspace, chrome, submenu));
             chrome.mode = Mode::ContextMenu;
         }
         MenuAction::SetTheme(theme) => {
@@ -294,11 +320,22 @@ where
 
 /// `submenu` open beside the row that names it and level with it, with every
 /// menu it cascades from open behind it, each with that row selected. The
-/// outermost is the View menu, where it draws under its title.
-fn submenu_state<W: WorkspaceView>(ws: &W, chrome: &Chrome, submenu: Submenu) -> ContextMenuState {
-    let mut parent = match submenu.parent() {
-        Some(outer) => submenu_state(ws, chrome, outer),
-        None => {
+/// open menu is the parent when it has that row; otherwise the chain is
+/// rebuilt from the View menu, where it draws under its title.
+fn submenu_state<W: WorkspaceView>(
+    ws: &W,
+    chrome: &mut Chrome,
+    submenu: &Submenu,
+) -> ContextMenuState {
+    let opener = MenuAction::OpenSubmenu(submenu.clone());
+    let open = chrome
+        .menu
+        .take()
+        .filter(|menu| menu.items.iter().any(|item| item.action == opener));
+    let mut parent = match (open, submenu.parent()) {
+        (Some(open), _) => open,
+        (None, Some(outer)) => submenu_state(ws, chrome, &outer),
+        (None, None) => {
             let view = MenuBarMenu::View;
             let anchor = chrome
                 .view
@@ -309,10 +346,7 @@ fn submenu_state<W: WorkspaceView>(ws: &W, chrome: &Chrome, submenu: Submenu) ->
             build_menu(ws, chrome, ContextMenuKind::MenuBar(view), anchor)
         }
     };
-    let row = parent
-        .items
-        .iter()
-        .position(|item| item.action == MenuAction::OpenSubmenu(submenu));
+    let row = parent.items.iter().position(|item| item.action == opener);
     let anchor = row
         .and_then(|index| parent.item_rects.get(index))
         .map_or(parent.anchor, |row| {
@@ -320,7 +354,7 @@ fn submenu_state<W: WorkspaceView>(ws: &W, chrome: &Chrome, submenu: Submenu) ->
         });
     parent.selected = row.unwrap_or(parent.selected);
     let mut state = menu_state(
-        ContextMenuKind::Submenu(submenu),
+        ContextMenuKind::Submenu(submenu.clone()),
         anchor,
         submenu_items(chrome, submenu),
     );

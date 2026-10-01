@@ -23,8 +23,8 @@ pub use attach::AttachState;
 pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
 pub use live_loop::arrange::plan_arrange;
 pub use live_loop::menu::{
-    build_menu, item_rects, menu_rect, ArrangeLayout, ContextMenuKind, ContextMenuState,
-    MenuAction, MenuItem, Submenu,
+    apply_local_menu_action, build_menu, item_rects, menu_rect, ArrangeLayout, ArrangeTarget,
+    ContextMenuKind, ContextMenuState, MenuAction, MenuItem, Submenu,
 };
 pub use live_loop::menu_dispatch::apply_live_menu_action;
 pub use live_loop::modal_input::{apply_rename, route_modal_key, ModalOutcome};

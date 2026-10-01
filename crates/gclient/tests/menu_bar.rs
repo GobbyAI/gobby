@@ -3,8 +3,8 @@ mod mock_daemon;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::apply_live_menu_action;
 use gobby_client::app::{
-    build_menu, route_modal_key, route_mouse, ContextMenuKind, ControlState, MenuAction,
-    ModalOutcome, MouseOutcome, Submenu,
+    build_menu, route_modal_key, route_mouse, ArrangeTarget, ContextMenuKind, ControlState,
+    MenuAction, ModalOutcome, MouseOutcome, Submenu,
 };
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::key_input::KeyInput;
@@ -242,16 +242,19 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "Zoom",
             "Close pane",
             "Resize mode",
-            "Arrange: even horizontal",
-            "Arrange: even vertical",
-            "Arrange: main horizontal",
-            "Arrange: main vertical",
-            "Arrange: tiled",
-            "New grid…",
+            "Arrange ▸",
         ]
     );
 
-    // Every menu-bar menu and every View submenu under it.
+    // Every menu-bar menu, every View submenu under it and Window › Arrange
+    // for the fixture's tab.
+    let tab = live_menu_fixture(true, false)
+        .await
+        .chrome
+        .active_tab()
+        .expect("fixture tab")
+        .id
+        .clone();
     let kinds: Vec<ContextMenuKind> = MenuBarMenu::ALL
         .into_iter()
         .map(ContextMenuKind::MenuBar)
@@ -263,6 +266,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
                 Submenu::Section(SidebarSection::Projects),
                 Submenu::Section(SidebarSection::Agents),
                 Submenu::Section(SidebarSection::Terminals),
+                Submenu::Arrange(ArrangeTarget { tab, pane: None }),
             ]
             .map(ContextMenuKind::Submenu),
         )

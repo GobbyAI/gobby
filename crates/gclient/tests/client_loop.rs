@@ -8248,10 +8248,10 @@ async fn context_menu_dispatches_items_and_closes_outside() {
         press(MouseButton::Left, item_cell(bare_cell, 5)).await;
         settle_live_event().await;
 
-        // The tab's menu: `close tab` runs the confirm-close path.
+        // The tab's menu: `close tab` (its fourth row) runs the confirm-close path.
         press(MouseButton::Right, tab_cell).await;
-        hover(item_cell(tab_cell, 2)).await;
-        press(MouseButton::Left, item_cell(tab_cell, 2)).await;
+        hover(item_cell(tab_cell, 3)).await;
+        press(MouseButton::Left, item_cell(tab_cell, 3)).await;
         settle_live_event().await;
         drop(input_tx);
         (initial, other)
