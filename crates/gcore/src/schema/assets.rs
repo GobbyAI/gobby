@@ -264,6 +264,12 @@ pub(crate) const MIGRATIONS: &[EmbeddedMigration] = &[
             "../../assets/schema/migrations/456_bind_agent_run_overlay_to_requested_worktree.sql"
         ),
     },
+    EmbeddedMigration {
+        version: 457,
+        filename: "457_workspace_pane_role.sql",
+        checksum: "376fb752cd7f7184f43ba4136170b81e0928eeabe6d534b1c5dd8f80deb2a306",
+        sql: include_str!("../../assets/schema/migrations/457_workspace_pane_role.sql"),
+    },
 ];
 // Numbered migrations after canonical baseline@420 land here.
 const _: &str = include_str!("../../assets/schema/migrations/.gitkeep");

@@ -5605,6 +5605,10 @@
       "definition": "integer|int4|NO||NEVER"
     },
     {
+      "name": "workspace_panes.role",
+      "definition": "text|text|YES||NEVER"
+    },
+    {
       "name": "workspace_panes.tab_id",
       "definition": "uuid|uuid|NO||NEVER"
     },
@@ -7621,6 +7625,10 @@
     {
       "name": "workspace_panes.workspace_panes_pkey",
       "definition": "PRIMARY KEY (id)"
+    },
+    {
+      "name": "workspace_panes.workspace_panes_role_byte_limit",
+      "definition": "CHECK (role IS NULL OR octet_length(role) >= 1 AND octet_length(role) <= 1024)"
     },
     {
       "name": "workspace_panes.workspace_panes_tab_id_fkey",

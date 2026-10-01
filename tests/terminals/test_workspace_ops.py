@@ -31,6 +31,7 @@ from gobby.agents.detection.registry import (
 )
 from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import _authorize_send_keys_target
+from gobby.servers.websocket.workspace_ws import _OP_ENVELOPE, _arguments, _result
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -307,6 +308,56 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
     assert ("ht-1", minted_id) in h.native.terminated_host_ids
     killed = h.terminals.get(minted_id)
     assert killed is not None and killed.state == "exited"
+
+
+@pytest.mark.parametrize("role", [None, "persistent-reviewer"])
+async def test_tab_create_and_pane_split_carry_role(harness: _Harness, role: str | None) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=role)).panes[0]
+    split = (await h.ops.pane_split(OPERATOR, first.id, "horizontal", role=role)).panes[0]
+    assert first.role == split.role == role
+    assert {pane.id: pane.role for pane in h.workspaces.list_panes(workspace.id)} == {
+        first.id: role,
+        split.id: role,
+    }
+    snapshot = await h.ops.workspace_snapshot(OPERATOR, workspace.id)
+    snapshot_rows = _result(snapshot.panes)
+    event_rows = [
+        event["panes"][0] for event in h.events if event["kind"] in {"tab.created", "pane.added"}
+    ]
+    assert [row["id"] for row in event_rows] == [first.id, split.id]
+    assert {row["id"] for row in snapshot_rows} == {first.id, split.id}
+    for row in [*event_rows, *snapshot_rows]:
+        if role is None:
+            assert "role" not in row
+        else:
+            assert row["role"] == role
+
+
+async def test_empty_pane_role_is_invalid_before_storage(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    pane = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    with (
+        patch.object(h.workspaces, "create_tab") as create,
+        patch.object(h.workspaces, "add_pane") as split,
+    ):
+        await _raises("invalid_op", h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=""))
+        await _raises("invalid_op", h.ops.pane_split(OPERATOR, pane.id, "horizontal", role=""))
+    create.assert_not_called()
+    split.assert_not_called()
+    assert h.workspaces.list_panes(workspace.id) == [pane]
+
+
+@pytest.mark.parametrize("method", ["tab_create", "pane_split"])
+def test_workspace_ws_accepts_role_argument(method: str) -> None:
+    args: dict[str, object] = {"role": "reviewer"}
+    if method == "tab_create":
+        args.update(workspace="w#0", project_id=str(uuid.uuid4()))
+    else:
+        args.update(pane="p#0:0:0", axis="horizontal")
+    assert _arguments(method, args, _OP_ENVELOPE)["role"] == "reviewer"
 
 
 async def test_spawned_shell_is_killed_when_pane_binding_raises(harness: _Harness) -> None:
