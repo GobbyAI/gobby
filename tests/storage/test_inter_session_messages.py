@@ -17,6 +17,8 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.session_models import Session
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
@@ -671,6 +673,31 @@ class TestInterSessionMessageManagerDeliveryClaims:
         assert manager.get_message(old.id) is None
         assert manager.get_message(recent.id) is not None
         assert manager.get_message(undelivered.id) is not None
+
+    def test_undelivered_sent_at_or_before_is_recipient_scoped_and_inclusive(
+        self, mailbox: tuple[InterSessionMessageManager, Session, Session, Session]
+    ) -> None:
+        manager, sender, recipient, foreign = mailbox
+        cutoff = datetime(2026, 2, 1, tzinfo=UTC)
+        message_ids: dict[str, str] = {}
+        for label, to_session, offset in (
+            ("at cutoff", recipient.id, timedelta(0)),
+            ("after cutoff", recipient.id, timedelta(seconds=1)),
+            ("foreign", foreign.id, -timedelta(seconds=1)),
+        ):
+            message = manager.create_message(
+                from_session=sender.id, to_session=to_session, content=label
+            )
+            manager.db.execute(
+                "UPDATE inter_session_messages SET sent_at = %s WHERE id = %s",
+                (cutoff + offset, message.id),
+            )
+            message_ids[label] = message.id
+
+        assert manager.has_undelivered_sent_at_or_before(recipient.id, cutoff) is True
+        manager.mark_delivered(message_ids["at cutoff"], recipient.id)
+        assert manager.has_undelivered_sent_at_or_before(recipient.id, cutoff) is False
+        assert manager.has_undelivered_sent_at_or_before(foreign.id, cutoff) is True
 
     def test_ordered_marked_undelivered_recipient_and_row_queries(self, mailbox) -> None:
         manager, sender, recipient, foreign = mailbox

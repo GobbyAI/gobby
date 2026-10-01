@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.events.live_wake import wake_debounced_result, wake_failure
 from gobby.events.wake import NativeWakeTarget
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.events.wake import WakeDispatcher
@@ -59,7 +60,6 @@ async def dispatch_live_wakes(
 
         fallback: list[tuple[str, Any]] = []
         native_targets: list[NativeWakeTarget] = []
-        native_sessions: dict[str, Any] = {}
         for session_id in session_ids:
             if session_id in results:
                 continue
@@ -88,7 +88,7 @@ async def dispatch_live_wakes(
             if terminal is None or getattr(terminal, "backend", None) != "native":
                 fallback.append((session_id, session))
                 continue
-            if not dispatcher._should_send_live_wake(session_id, session):
+            if not await dispatcher._should_send_live_wake(session_id):
                 results[session_id] = wake_debounced_result(session_id, method="terminal")
                 continue
             current, state_failure = await dispatcher._preflight_live_side_effect(
@@ -105,7 +105,6 @@ async def dispatch_live_wakes(
             if blocked is not None:
                 results[session_id] = blocked
                 continue
-            native_sessions[session_id] = session
             native_targets.append(
                 NativeWakeTarget(
                     session_id=session_id,
@@ -114,6 +113,7 @@ async def dispatch_live_wakes(
                 )
             )
 
+        attempted_at = utc_now()
         async with asyncio.TaskGroup() as group:
             native_task = (
                 group.create_task(_send_native(dispatcher, native_targets))
@@ -130,7 +130,7 @@ async def dispatch_live_wakes(
             for result in native_task.result():
                 session_id = str(result["session_id"])
                 if result.get("delivered") is True:
-                    dispatcher._record_live_wake(session_id, native_sessions[session_id])
+                    await dispatcher._record_live_wake(session_id, attempted_at)
                 results[session_id] = result
         for session_id, task in fallback_tasks.items():
             results[session_id] = task.result()
