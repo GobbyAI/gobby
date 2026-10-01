@@ -743,8 +743,13 @@ class KnowledgeGraphService:
         project_id: str | None = None,
         include_global: bool = True,
         timeout_seconds: float | None = None,
+        rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] | None = None,
     ) -> RelatedMemoryTraversal:
-        """Traverse from entities through relationships to find related memory IDs."""
+        """Traverse from entities through relationships to find related memory IDs.
+
+        ``rows_cache`` is an optional request-scoped memo so repeated backfill
+        rounds reuse the invariant neighbor-hop rows (#22910).
+        """
         return await self._reader.find_related_memory_ids(
             entity_keys=entity_keys,
             max_hops=max_hops,
@@ -752,6 +757,7 @@ class KnowledgeGraphService:
             project_id=project_id,
             include_global=include_global,
             timeout_seconds=timeout_seconds,
+            rows_cache=rows_cache,
         )
 
     # -----------------------------------------------------------------------
