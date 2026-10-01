@@ -151,6 +151,29 @@ def test_sandbox_brief_caps_violation_count_scan(
     assert record["violation_count_truncated"] is True
 
 
+def test_sandbox_brief_counts_the_capped_log_summary_total(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    run_dir = gobby_home / "run" / "sandbox" / "run-capped"
+    run_dir.mkdir(parents=True)
+    violations = run_dir / "violations.jsonl"
+    entries = [json.dumps({"line": f"v{value}"}) for value in range(1000)]
+    entries.append(json.dumps({"line": "v5004", "totalCount": 5005, "omittedCount": 4005}))
+    violations.write_text("\n".join(entries) + "\n", encoding="utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    record = sandbox_record(
+        {"sandbox": {"backend": "srt", "violation_path": str(violations)}},
+        include_events=False,
+    )
+
+    assert record is not None
+    assert record["violation_count"] == 5005
+    assert "violation_count_truncated" not in record
+
+
 def test_live_list_count_reuses_unchanged_log(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

@@ -30,20 +30,48 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
+// Every violation repeats the provider's full command line, 54-130 KB for an
+// agent spawn; its head still names the binary and leading arguments.
+const MAX_COMMAND_CHARS = 1024
+// Ten times the store's 100-entry tail. A run's later violations are counted,
+// and the final flush records the latest one with the true total.
+const MAX_RECORDED_VIOLATIONS = 1000
+
+function appendEntry(path, violation, extra = {}) {
+  const entry = { ...violation, ...extra }
+  if (typeof entry.command === 'string' && entry.command.length > MAX_COMMAND_CHARS) {
+    entry.commandLength = entry.command.length
+    entry.command = entry.command.slice(0, MAX_COMMAND_CHARS)
+    entry.commandTruncated = true
+  }
+  const line = JSON.stringify(entry, (_, value) =>
+    typeof value === 'bigint' ? value.toString() : value,
+  )
+  appendFileSync(path, `${line}\n`, { encoding: 'utf8', mode: 0o600 })
+}
+
 // The store keeps only its last 100 violations, so its array length stops
 // growing once the tail is full. Its monotonic total is the cursor instead.
-function appendViolations(path, store, recorded) {
+function appendViolations(path, store, cursor) {
   const total = store.getTotalCount()
   const violations = store.getViolations()
-  const fresh = Math.min(total - recorded, violations.length)
-  for (const violation of fresh > 0 ? violations.slice(-fresh) : []) {
-    const line = JSON.stringify(violation, (_, value) =>
-      typeof value === 'bigint' ? value.toString() : value,
-    )
-    appendFileSync(path, `${line}\n`, { encoding: 'utf8', mode: 0o600 })
+  const fresh = Math.min(total - cursor.seen, violations.length)
+  const room = Math.max(MAX_RECORDED_VIOLATIONS - cursor.written, 0)
+  for (const violation of violations.slice(violations.length - fresh).slice(0, room)) {
+    appendEntry(path, violation)
+    cursor.written++
+  }
+  cursor.seen = total
+  chmodSync(path, 0o600)
+}
+
+function appendSummary(path, store, cursor) {
+  const total = store.getTotalCount()
+  const latest = store.getViolations().at(-1)
+  if (total > cursor.written && latest !== undefined) {
+    appendEntry(path, latest, { totalCount: total, omittedCount: total - cursor.written })
   }
   chmodSync(path, 0o600)
-  return total
 }
 
 async function main() {
@@ -70,7 +98,7 @@ async function main() {
     throw new Error(`SRT does not support platform ${process.platform}`)
   }
 
-  let seenViolations = 0
+  const cursor = { seen: 0, written: 0 }
   let unsubscribe = () => {}
   const signals = ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGWINCH']
   const signalHandlers = new Map()
@@ -80,7 +108,7 @@ async function main() {
     await SandboxManager.initialize(parsed.data, undefined, true)
     const store = SandboxManager.getSandboxViolationStore()
     unsubscribe = store.subscribe(() => {
-      seenViolations = appendViolations(options.violationsPath, store, seenViolations)
+      appendViolations(options.violationsPath, store, cursor)
     })
 
     const command = options.preflight ? [process.execPath, '--version'] : options.command
@@ -137,11 +165,9 @@ async function main() {
       failure ??= error
     }
     try {
-      seenViolations = appendViolations(
-        options.violationsPath,
-        SandboxManager.getSandboxViolationStore(),
-        seenViolations,
-      )
+      const store = SandboxManager.getSandboxViolationStore()
+      appendViolations(options.violationsPath, store, cursor)
+      appendSummary(options.violationsPath, store, cursor)
     } catch (error) {
       failure ??= error
     }
