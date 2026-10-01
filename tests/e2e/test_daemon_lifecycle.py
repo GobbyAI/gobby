@@ -22,10 +22,10 @@ import pytest
 
 from gobby.cli.install_setup_impeccable import _publish_launcher, _publish_stamp
 from gobby.cli.utils_process import is_port_available
-from gobby.install.bin_set_coherence import IDENTITY_STAMP_NAME, probe_set_member_identity
+from gobby.install.bin_set_coherence import probe_set_member_identity
 from gobby.storage.schema_identity_pin import stamp_bytes
 from gobby.utils.dependency_requirements import IMPECCABLE_RELEASE
-from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_name
+from gobby.utils.native_bin import IDENTITY_STAMP_NAME, NATIVE_BIN_DIR_ENV, native_bin_name
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
