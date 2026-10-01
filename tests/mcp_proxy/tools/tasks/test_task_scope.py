@@ -25,6 +25,35 @@ from gobby.storage.tasks import LocalTaskManager, Task
 pytestmark = pytest.mark.unit
 
 
+def test_explicit_target_with_unknown_suffix_keeps_unrelated_paths_out_of_scope() -> None:
+    result = _evaluate(
+        description="Targets:\n- `ops/cron.example`\n\nAcceptance:\n- schedule deployed",
+        annotations=[_annotation("src/schedule.py", "expansion")],
+        actual_paths={"ops/cron.example", "src/schedule.py", "ops/unrelated.example"},
+    )
+    assert result.declared_paths == ("ops/cron.example", "src/schedule.py")
+    assert result.out_of_scope_paths == ("ops/unrelated.example",)
+    assert result.accepted is False
+
+
+@pytest.mark.parametrize("target", ["ops/cron.example", "ops/Caddyfile", "Dockerfile", ".env"])
+def test_explicit_targets_are_not_limited_to_known_suffixes(target: str) -> None:
+    targets = collect_declared_task_targets(
+        f"Targets: `{target}` — config for `src/context.py`\n"
+        "Consumers unchanged: `src/untouched.py`\n"
+        "**Acceptance:**\n- Verify `tests/test_schedule.py`"
+    )
+    assert targets == {target}
+
+
+def test_inline_targets_preserve_extensionless_files_and_reject_external_paths() -> None:
+    targets = collect_declared_task_targets(
+        "Targets: Dockerfile, ops/cron.example, `src/app.py`\n"
+        "Target: `../outside.py`\nTarget: `/absolute.py`\nTarget: `https://host/file.py`"
+    )
+    assert targets == {"Dockerfile", "ops/cron.example", "src/app.py"}
+
+
 def _task(description: str = "", validation_criteria: str | None = None) -> Task:
     now = datetime(2026, 8, 6, 12, tzinfo=UTC)
     return Task(
