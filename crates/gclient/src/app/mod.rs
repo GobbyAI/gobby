@@ -804,7 +804,11 @@ impl<D: Daemon> Workspace<D> {
     pub fn observe_daemon_disconnect(&mut self, _generation: Generation, error: DaemonError) {
         self.daemon_ready = false;
         for pane in self.panes.values_mut() {
-            pane.clear_control(error.to_string());
+            // The host owns an existing direct input grant. Losing the daemon
+            // does not revoke it; a host refusal still clears it on that stream.
+            if !(pane.writable() && pane.direct_input()) {
+                pane.clear_control(error.to_string());
+            }
         }
         self.daemon_error = Some(error);
     }

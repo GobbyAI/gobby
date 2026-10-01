@@ -4658,9 +4658,17 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
 fn daemon_loss_reducer_clears_control_without_frames() {
     let mut ws = Workspace::scripted();
     let pane = ws
-        .open_terminal("term-loss", "native", "epoch-loss")
+        .open_terminal("term-loss", "tmux", "epoch-loss")
         .expect("pane");
     ws.force_held(pane);
+    assert!(
+        ws.pane(pane).writable(),
+        "the pane held control before loss"
+    );
+    assert!(
+        !ws.pane(pane).direct_input(),
+        "tmux control remains daemon-bound even on a direct frame stream"
+    );
     let rendered_before = ws.pane(pane).frames_rendered();
     let sent_before = ws.daemon().ws_sent().len();
 

@@ -18,7 +18,7 @@ use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
-use gobby_terminal::protocol::ClientMessage;
+use gobby_terminal::protocol::{ClientMessage, ServerMessage};
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::{live_workspace_on_direct_host, DirectHost, MockDaemon};
 use ratatui::backend::TestBackend;
@@ -199,6 +199,156 @@ async fn pane_reconnects_to_host_without_daemon() {
     assert!(
         websocket_requests(&mock, "terminal_input").is_empty(),
         "the carried grant types on the frame stream, never through the daemon"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+/// A daemon-only outage leaves the existing host grant usable. The host can
+/// still revoke that authority on the same frame stream while the daemon is away.
+#[tokio::test]
+async fn held_native_input_survives_daemon_outage_and_host_refusal_still_applies() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-held-through-daemon-outage";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    let attachment_before = workspace.pane(pane_id).attachment_id().to_string();
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
+        host.wait_for("input before the daemon outage", |seen| {
+            seen.iter()
+                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"a"))
+        })
+        .await;
+        let reconnect = mock.pause_next_websocket();
+        mock.close_websockets_going_away();
+        // Starting the held reconnect proves that the loop observed the close.
+        // Keep it held until after the loop exits, so no reply can restore control.
+        wait_until("the held daemon reconnect", || {
+            mock.websocket_handshakes() >= 2
+        })
+        .await;
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
+        host.wait_for("input while the daemon is unavailable", |seen| {
+            seen.iter()
+                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"b"))
+        })
+        .await;
+        host.to_client
+            .send(ServerMessage::InputRefused {
+                code: "input_not_granted".into(),
+            })
+            .expect("host refuses the carried grant");
+        settle().await;
+        drop(input_tx);
+        reconnect
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, reconnect) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    reconnect.notify_one();
+    result.expect("daemon-only outage loop");
+    let pane = workspace.pane(pane_id);
+    assert!(pane.is_observe(), "host refusal ends the carried authority");
+    assert!(!pane.direct_input(), "a refused host grant cannot type");
+    assert!(
+        pane.has_take_back(),
+        "the refusal offers explicit take-back"
+    );
+    assert_eq!(
+        pane.status_message(),
+        Some("terminal refused input (input_not_granted); take control again")
+    );
+    assert_eq!(pane.attachment_id(), attachment_before);
+    assert_eq!(pane.transport(), Some(Transport::Direct));
+    assert_eq!(host.attaches(), 1, "the host stream never needed recovery");
+    assert_eq!(websocket_requests(&mock, "terminal_attach").len(), 1);
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "offline native input never falls back through the daemon"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
+/// Losing the daemon cannot create host authority for an ungranted native pane.
+#[tokio::test]
+async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-ungranted-through-daemon-outage";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    mock.enqueue_take_control_reply_without_host_grant(1);
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        settle().await;
+        let reconnect = mock.pause_next_websocket();
+        mock.close_websockets_going_away();
+        wait_until("the held daemon reconnect", || {
+            mock.websocket_handshakes() >= 2
+        })
+        .await;
+        send_key(&input_tx, KeyCode::Char('x'), KeyModifiers::NONE).await;
+        drop(input_tx);
+        reconnect
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, reconnect) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    reconnect.notify_one();
+    result.expect("ungranted daemon-only outage loop");
+    let pane = workspace.pane(pane_id);
+    assert!(pane.is_observe());
+    assert!(
+        !pane.direct_input(),
+        "disconnect cannot create a host grant"
+    );
+    assert_eq!(pane.transport(), Some(Transport::Direct));
+    assert_eq!(websocket_requests(&mock, "terminal_take_control").len(), 1);
+    assert!(websocket_requests(&mock, "terminal_input").is_empty());
+    assert!(
+        host.drain().iter().all(|message| !matches!(
+            message,
+            ClientMessage::Input { .. } | ClientMessage::Paste { .. }
+        )),
+        "an ungranted pane writes no input on the surviving host stream"
     );
     host.shutdown().await;
     mock.shutdown().await;

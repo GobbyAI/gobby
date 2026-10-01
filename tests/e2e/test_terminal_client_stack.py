@@ -1439,6 +1439,18 @@ async def _take_and_echo(client: GclientDriver, marker: str) -> None:
     await _screen(client, marker)
 
 
+def _stop_daemon_for_client_outage(daemon: DaemonInstance) -> None:
+    """Stop only the isolated daemon, leaving its native host for adoption."""
+    write_shutdown_intent("gclient-e2e-outage", ShutdownIntent.RESTART, home=daemon.gobby_home)
+    os.kill(daemon.pid, signal.SIGTERM)
+    wait_for_condition(
+        lambda: not daemon.is_alive(),
+        timeout=20.0,
+        interval=0.1,
+        description="isolated daemon stopped while native client remains attached",
+    )
+
+
 @pytest.mark.asyncio
 async def test_gclient_renders_native_row_through_host(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
@@ -1500,7 +1512,17 @@ async def test_gclient_survives_daemon_restart_with_usable_native_pane(
         address = await _adopt(daemon_instance, terminal_id)
         await _activate_terminal(client, address)
         await _screen(client, "GCLIENT-RESTART-BEFORE")
-        _restart_daemon_preserving_host(daemon_instance)
+        await _take_and_echo(client, "GCLIENT-RESTART-HELD")
+        await asyncio.to_thread(_stop_daemon_for_client_outage, daemon_instance)
+        try:
+            await _screen(client, "Daemon unavailable")
+            assert client.poll() is None, "gclient exited while the daemon was down"
+            # The carried host grant must accept input before a daemon can
+            # issue another lease. Split the marker to exclude terminal echo.
+            client.send("echo GCLIENT-RESTART-'OFFLINE'\r")
+            await _screen(client, "GCLIENT-RESTART-OFFLINE")
+        finally:
+            await asyncio.to_thread(daemon_instance.restart)
         assert client.poll() is None, "gclient exited when the daemon stopped"
         await _screen(client, "GCLIENT-RESTART-BEFORE")
         assert address in client.screen.text, "pane address was not retained after restart"
@@ -1511,6 +1533,62 @@ async def test_gclient_survives_daemon_restart_with_usable_native_pane(
             assert host_after.get("host_epoch") == epoch_before
             row = http.get(f"/api/terminals/{terminal_id}").json()
             assert row.get("state") == "live"
+
+
+@pytest.mark.asyncio
+async def test_gclient_survives_daemon_stop_during_startup_response(
+    daemon_instance: DaemonInstance,
+) -> None:
+    """A daemon stop halfway through launch HTTP must keep the real client alive."""
+    with _http(daemon_instance) as http:
+        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+    terminal_id = await _shell(daemon_instance, marker="GCLIENT-STARTUP-READY")
+    address = await _adopt(daemon_instance, terminal_id)
+    wire = ClientWire(daemon_instance)
+    original_http = wire.http
+    cut = asyncio.Event()
+
+    async def truncate_after_stop(
+        connection: ServerConnection, request: Request
+    ) -> Response | None:
+        response = await original_http(connection, request)
+        if request.path != "/api/admin/config" or cut.is_set():
+            return response
+        assert response is not None and response.status_code == 200
+        await asyncio.to_thread(_stop_daemon_for_client_outage, daemon_instance)
+        cut.set()
+        # Preserve the real response's successful status and Content-Length,
+        # then close with an incomplete body, as an interrupted HTTP read does.
+        response.body = response.body[: len(response.body) // 2]
+        return response
+
+    with patch.object(wire, "http", new=truncate_after_stop):
+        async with wire.running():
+            async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+                try:
+                    # Reading the PTY also answers startup terminal queries;
+                    # waiting only on the server event leaves the client parked.
+                    await asyncio.to_thread(
+                        client.wait_for,
+                        lambda _screen: cut.is_set(),
+                        description="interrupted startup HTTP response",
+                        timeout=15.0,
+                    )
+                    await asyncio.to_thread(daemon_instance.restart)
+                    await _activate_terminal(client, address)
+                    await _screen(client, "GCLIENT-STARTUP-READY")
+                    assert client.poll() is None, "gclient exited on an interrupted launch response"
+                    await _take_and_echo(client, "GCLIENT-STARTUP-AFTER")
+                except AssertionError as exc:
+                    log = daemon_instance.gobby_home / "logs" / "gclient.log"
+                    if log.is_file():
+                        exc.add_note(
+                            f"Isolated gclient exit attribution: {log.read_text()[-4000:]}"
+                        )
+                    raise
+                finally:
+                    if not daemon_instance.is_alive():
+                        await asyncio.to_thread(daemon_instance.restart)
 
 
 @pytest.mark.asyncio

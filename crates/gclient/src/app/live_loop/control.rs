@@ -226,12 +226,14 @@ pub(super) async fn send_live_input(
     if workspace.exit_reason().is_some() {
         return Ok(());
     }
-    // A direct pane types on its host socket, which needs no daemon. Once its
-    // stream is restored across the exec, the carried grant types even while
-    // the daemon is still away; the host refuses the key if the grant moved
-    // (#23076). Scoped to a restored pane so every other input path is
-    // unchanged: an ordinary direct pane still needs its daemon lease.
-    if workspace.host_recovered.contains(&pane_id) && workspace.pane(pane_id).direct_input() {
+    // A restored host stream or an already-held direct grant can keep typing
+    // while the daemon is away. The host remains authoritative for refusal;
+    // an outage never acquires a grant for an observing or ungranted pane.
+    let pane = workspace.pane(pane_id);
+    if pane.direct_input()
+        && (workspace.host_recovered.contains(&pane_id)
+            || (!workspace.daemon_ready() && pane.writable()))
+    {
         return send_live_write(workspace, pane_id, data, paste).await;
     }
     if !workspace.daemon_ready() {

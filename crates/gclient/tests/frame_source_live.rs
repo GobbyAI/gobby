@@ -208,9 +208,9 @@ fn build_test_gterm() -> PathBuf {
         .and_then(Path::parent)
         .expect("target profile directory")
         .join("gterm");
-    // Every worktree shares this target directory, so an existing binary may come from another
-    // checkout. Always let Cargo validate it against this tree; incremental no-op builds keep the
-    // common path cheap, and Cargo's shared build lock safely serializes required rebuilds.
+    // The profile directory belongs to this checkout. Let Cargo validate an
+    // existing binary against the current source before copying it to the host's
+    // private inode; incremental no-op builds keep that provenance check cheap.
     let status = Command::new(env!("CARGO"))
         .current_dir(&workspace)
         .args([
