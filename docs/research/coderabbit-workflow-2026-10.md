@@ -21,23 +21,24 @@ Sections 1–3 are background on the CLI and the repository and remain accurate.
 
 ## Recommendation
 
-Run **post-push batch reviews**, one review-only pull request per batch, each covering fewer than 150 reviewable files. Then triage the findings into ordinary fix tasks with the existing `coderabbit` skill.
+Run **post-push batch passes through the existing local CLI or extension**, with each batch selected by its exact SHA range and holding fewer than 150 reviewable files. Then triage the findings into ordinary fix tasks with the existing `coderabbit` skill. This is option E in section 4.
 
 - **Sizing (MM, pre-landing, no CodeRabbit run):** the Merge Manager keeps every package landing under 150 reviewable files. It counts them with `git diff --name-only <first parent> <package merge>`, after the `.coderabbit.yaml` `path_filters`. It records the count and the SHA range in the package receipt. An oversize package is split into two landings.
-- **Review (Josh, post-push):** Josh pushes each batch end as a throwaway `cr/` branch. He opens a pull request against the previous batch's branch and comments `@coderabbitai review`.
-- **Triage:** the PD routes each pull request's findings through `$gobby coderabbit` (the canonical skill: native Plan Mode, a fix/no-fix table, verify before fixing) to the lane that owns the paths, as normal fix tasks. The code has already landed, so findings feed fix work and never gate a LAND.
+- **Review (post-push; Josh, or a seat he names):** after Josh pushes, check out each batch end `<to>` in a temporary detached worktree. Then run `coderabbit review --agent --committed --base-commit <from>`, which is the CLI's existing base-commit selection (section 2). The extension's equivalent is a local review of the same range. Nothing new is published: no branches and no pull requests.
+- **Triage:** the PD routes each batch's findings through `$gobby coderabbit` (the canonical skill: native Plan Mode, a fix/no-fix table, verify before fixing) to the lane that owns the paths, as normal fix tasks. The code has already landed, so findings feed fix work and never gate a LAND.
 
-This adds no code, pipeline or gate. It needs:
+**Unverified:** that a local run works on a pushed range after Josh's ruling. Whatever "won't work until after we push" refers to, nobody has run a post-push CLI pass on this repository. This research did not run one, because a review sends code. Batch 1 is the test. If it fails, the fallback channel is review-only stacked pull requests (option F). Choosing between them is Josh's call, set out as decision D3.
+
+This adds no code, pipeline, gate, branch or pull request. It needs:
 - a sizing bullet in `.gobby/roles/merge-manager.md`;
 - a routing bullet for the PD;
 - Josh's answers to section 6.
 
-It is the only option that satisfies both rulings with existing mechanisms.
-
 ## 1. Current usage
 
 ### Editor extension
-- CodeRabbit is normally run locally through the editor extension (memory f5537d2c). Josh pastes the findings into a session as `$gobby coderabbit <findings>` (memory f153518c).
+- **Historical:** a 2026-07-01 note recorded that CodeRabbit ran locally through the editor extension. On 2026-10-01 (21:22 UTC), memory f5537d2c was updated to Josh's post-push ruling, which supersedes that note: CodeRabbit reviews only pushed work, in batches under 150 reviewable files. The memory also says not to assume GitHub PR branches are needed unless Josh asks.
+- Josh pastes the findings into a session as `$gobby coderabbit <findings>` (memory f153518c).
 - On disk, `coderabbit.coderabbit-vscode` 0.21.3, 0.21.6 and 0.21.7 are installed under `~/.antigravity-ide/extensions` and `~/.cursor/extensions`.
 
 ### CLI
@@ -161,13 +162,19 @@ Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and 
 
 ## 4. Integration points under the post-push constraint
 
-Ruling 2 rules out the first three options. Each is kept here with the original analysis condensed.
+Ruling 2 rules out A, B and C, because each runs before a push. Each keeps its four-dimension comparison here for the record. D, E and F are the post-push options.
 
 ### A. Author pre-CANDIDATE self-check: ruled out (pre-push)
-The original analysis already rated its signal low: the author filters its own findings, and the reviewer never sees them.
+- **Signal:** low independence. The author picks which findings to act on, and the reviewer never sees the rest. Its value was catching defects before a reviewer round trip.
+- **Latency and load:** adds 1–5 minutes to every candidate, with two runs per bounced candidate. Every lane shares one hourly limit, so it saturates first.
+- **Failure mode:** findings are silently dropped or partially applied, and a rate-limited lane stalls or skips without anyone knowing.
+- **LAND and receipt:** no interaction. Fixes produce new SHAs before the CANDIDATE, and the reviewer sees nothing CodeRabbit said.
 
-### B. Reviewer-seat input on the exact SHA: ruled out (pre-push)
-This was the earlier recommendation. It bound evidence to the LAND SHA, but it runs before any push. Its strengths carry over to E as triage quality: an independent toolchain whose findings a verifier filters.
+### B. Reviewer-seat input on the exact SHA: ruled out (pre-push; the earlier recommendation)
+- **Signal:** high. The toolchain is independent (ruff, shellcheck, clippy, osv and `path_instructions`), and a reviewer who already verifies findings filters it at the decision point.
+- **Latency and load:** about 1–5 minutes per candidate inside the reviewer's pass, with one run per review, BOUNCE re-reviews included.
+- **Failure mode:** a rate limit, `too_many_files` (2 of 232 landings), an auth expiry or an `error` event leaves the reviewer without input. Because it is advisory, the reviewer records "CodeRabbit: unavailable" and proceeds.
+- **LAND and receipt:** the strongest binding. `reviewedCommitIds` records the LAND SHA, so the LAND can cite the run. A new SHA needs a new run.
 
 ### C. Merge Manager package pass on the staged tree: ruled out (pre-push)
 Ruling 2 rules it out explicitly. It would also have had to split oversize packages and attribute findings after the LAND. The original analysis follows for the record.
@@ -193,22 +200,37 @@ A post-push variant could drive the CLI or the GitHub app from a pipeline. It st
   - A step that gates anything is a new gate. The Lane Manager role says no unapproved gate or throttle without Josh's approval.
 - **LAND and receipt:** it could stamp `reviewedCommitIds` into a receipt automatically. That benefit is all that B lacks, and B can cite the same field by hand.
 
-### E. Post-push batch pull requests, sized by the MM (recommended)
+### E. Post-push batch pass through the existing CLI or extension, sized by the MM (recommended)
 - **Signal:** high. It uses the same independent toolchain as B (ruff, shellcheck, clippy, osv and `path_instructions`). The `coderabbit` skill's verify-then-decide contract filters its output. A batch spans several candidates, so it also sees cross-candidate interactions, which was C's only unique signal.
 - **Latency and load:**
   - Lanes and reviewers wait on nothing, because it runs after the code lands and Josh pushes.
-  - Volume:
-    - Batch reviews: one per batch. The current backlog is 6 batches (section 7). From here on it is about one per package.
-    - Runs: well inside Essentials' 5 per hour. When more than 5 batches queue up at once, as with this backlog, trigger them about an hour apart.
-  - Sizing costs the MM one `git diff --name-only` count per package. It needs no CodeRabbit run and no network.
+  - One run per batch. The backlog is 6 batches (section 7), and from here on it is about one per package.
+    - The local records show 222–264-file runs at 7–12 minutes, so expect a few minutes to about 10 per batch.
+    - Essentials allows 5 runs per hour, so this backlog needs runs spread over more than an hour.
+  - Sizing costs the MM one `git diff --name-only` count per package, with no CodeRabbit run and no network.
+  - It needs no new branches, pull requests or config. The selection uses existing flags: a detached checkout of `<to>` plus `--committed --base-commit <from>`, as in the #19205 precedent (section 2).
 - **Failure mode:**
-  - **Diff over the cap:** a batch at 150 or more files fails with "Too many files" and nothing is reviewed. Sizing prevents this. The cut rule in section 7 recovers an oversize range.
-  - **No auto-review:** `auto_review.base_branches` is `[main, dev]`, and the default branch is `main`. A pull request into a `cr/` branch is therefore never auto-reviewed. The manual `@coderabbitai review` trigger is the documented path. **It is not yet verified on this repository**, so confirm it on batch 1.
-  - **Wrong base:** if Josh pushes `0.5.0` before he opens batch 1, a pull request based on `0.5.0` shows an empty diff. Pinning the base as `cr/0.5.0-b0` prevents this.
-  - **Findings ignored:** routing to fix tasks through the skill makes every finding an explicit fix or no-fix row.
+  - **Unverified post-push behaviour:** nobody has confirmed that a local run on a pushed range works under Josh's "won't work until after we push". Batch 1 is the test. If it fails, Josh picks F through D3.
+  - **Diff over the cap:** a batch at 150 or more files fails with `too_many_files` (`retryable:false`). Sizing prevents this.
+  - **Payload size:** the client-side `MAX_DIFF_SIZE_MB=20` is far away. The largest backlog batch, B6, is about 1.0 MB of diff.
+  - **Exit codes:** they are undocumented on 0.7.3, so read the `complete` or `error` event.
+  - **Interruptions:** an auth expiry or the hourly limit pauses the queue. Resume at the next hour (D6).
+  - **Findings ignored:** routing through the skill makes every finding an explicit fix or no-fix row.
 - **LAND and receipt:**
-  - LAND is unchanged; findings never gate it.
-  - The package receipt gains one line, "CodeRabbit batch: `<from>..<to>`, N reviewable files". The PD's triage maps each pull request back to its batch range, and so to the package and task whose paths it touches.
+  - LAND is unchanged, and findings never gate it.
+  - The package receipt gains one line: "CodeRabbit batch: `<from>..<to>`, N reviewable files".
+  - The run's `git.json.head` and `reviewedCommitIds` record `<to>`, so each finding maps to its batch range, and from there to the package and the task whose paths it touches.
+
+### F. Post-push review-only stacked pull requests (fallback)
+- **Signal:** same as E. The GitHub app also posts findings as pull-request comments.
+- **Latency and load:**
+  - Same run count and hourly limit as E.
+  - It adds two remote pushes per batch (a `cr/` branch for the batch and one pinned base), plus a pull request and a manual trigger. Josh closes them afterwards.
+- **Failure mode:**
+  - **No auto-review:** `auto_review.base_branches` is `[main, dev]`, and the default branch is `main`. A pull request into a `cr/` branch is never auto-reviewed. The manual `@coderabbitai review` trigger is the documented path, unverified on this repository.
+  - **Wrong base:** pushing `0.5.0` before batch 1 opens empties a pull request based on `0.5.0`. Pinning the base as `cr/0.5.0-b0` prevents this.
+  - Memory f5537d2c says not to assume PR branches unless Josh asks, so F needs his explicit choice.
+- **LAND and receipt:** same as E. Each pull request's diff is exactly `<from>..<to>`, because `<from>` is an ancestor of `<to>`.
 
 ## 5. Proposed role text and procedure (the Orchestrator applies it after Josh decides; not edited here)
 
@@ -218,42 +240,50 @@ Proposed bullet for `.gobby/roles/merge-manager.md`:
 
 Proposed bullet for the PD role:
 
-> - CodeRabbit triage (Josh 2026-10-01): when Josh reports a batch pull request reviewed, route its findings through `$gobby coderabbit` to the lane that owns the paths, as ordinary fix tasks. Findings never reopen a LAND.
+> - CodeRabbit triage (Josh 2026-10-01): when a post-push batch review finishes, route its findings through `$gobby coderabbit` to the lane that owns the paths, as ordinary fix tasks. Findings never reopen a LAND.
 
-Procedure for Josh, per batch k (k = 1..N, using section 7's table):
+**E procedure,** after Josh's push, per batch k from section 7's table. Josh runs it, or a seat he names, under his stored CodeRabbit login:
 
 ```bash
-# once, before pushing 0.5.0 itself: pin the current remote base
-git push origin <from_1>:refs/heads/cr/0.5.0-b0
-# per batch
+WT=/private/tmp/cr-batch-<k>
+git -C /Users/josh/Projects/gobby worktree add --detach "$WT" <to_k>
+cd "$WT" && mkdir -p reports && coderabbit review --agent --committed \
+  --base-commit <from_k> > "reports/coderabbit-batch-<k>.md"
+# read the `complete`/`error` event; hand the report to `$gobby coderabbit`
+git -C /Users/josh/Projects/gobby worktree remove "$WT"
+```
+
+The extension's equivalent is a local review of the same checkout against `<from_k>`.
+
+**F procedure (fallback, only if Josh picks it in D3):**
+
+```bash
+git push origin <from_1>:refs/heads/cr/0.5.0-b0          # once, before pushing 0.5.0
 git push origin <to_k>:refs/heads/cr/0.5.0-b<k>
 gh pr create --base cr/0.5.0-b<k-1> --head cr/0.5.0-b<k> \
   --title "CodeRabbit batch k/N" --body "Review-only; do not merge."
 gh pr comment <pr> --body "@coderabbitai review"
-# after review: close the PR unmerged; delete the cr/ branches when all batches are done
+# after review: close unmerged; delete cr/ branches when done
 ```
 
-- Open each pull request as non-draft, because `drafts: false`.
-- Because `<from_k>` is an ancestor of `<to_k>`, each pull request's diff is exactly that batch's range.
+Open each pull request as non-draft, because `drafts: false`.
 
 ## 6. Decisions for Josh (Telegram buttons)
 
 | ID | Question | Choices |
 |---|---|---|
-| D1 | Adopt post-push batch pull requests with MM package sizing? | `Adopt (recommended)` · `Not now` |
+| D1 | Adopt post-push batch passes with MM package sizing? | `Adopt (recommended)` · `Not now` |
 | D2 | Plan tier? Answered as Essentials (5 per hour, 150 files per run). | `Stay on Essentials (recommended)` · `Upgrade to Team (8/h, 300 files: the backlog needs at least 3 batches)` |
-| D3 | How is each batch triggered? | `Manual @coderabbitai review (recommended)` · `Add a cr/ pattern to auto_review.base_branches` |
+| D3 | Review channel? | `Local CLI/extension on each batch range (recommended; batch 1 verifies)` · `Review-only stacked PRs (F)` |
 | D4 | Where do findings go? | `Fix tasks for the owning lane (recommended)` · `Hold the next push until they are triaged` |
 | D5 | What happens to the current backlog? | `Review all 6 batches (recommended)` · `Only from package 5 onward` |
 | D6 | When the allowance runs out? | `Wait for the next hour (recommended)` · `Enable credits with a cap` |
-
-D3's alternative edits `.coderabbit.yaml`. The setting takes regex patterns according to [docs-latest]. That is unverified on this repository.
 
 ## 7. Batch plan for the current backlog
 
 **Range.** `origin/0.5.0` = `2d1d73f579` (2026-09-29) to `0.5.0` = `9a514a7cf1`, counted 2026-10-01 at 16:22 CT. It is a fast-forward of 315 commits, 55 of them first-parent, with 600 net changed files. 599 files are reviewable, because `uv.lock` is the only path that `path_filters` excludes.
 
-**Method.** Each count is `git diff --name-only <from> <to>` with `.coderabbit.yaml` `path_filters` applied, which is the pull request's diff. The cut rule works in three steps:
+**Method.** Each count is `git diff --name-only <from> <to>` with `.coderabbit.yaml` `path_filters` applied. That is the range E's `--base-commit <from>` selects at `<to>`, and the same diff a pull request would show under F. The cut rule works in three steps:
 1. Walk `0.5.0`'s first-parent history and end each batch at the furthest commit that keeps the range under 150.
 2. Where one first-parent commit alone is 150 or more, cut inside its second parent, the package branch.
 3. Check that each `from` is an ancestor of its `to`.
