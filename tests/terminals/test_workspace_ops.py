@@ -1833,3 +1833,31 @@ async def test_close_refuses_membership_drift_since_read(
         kept = h.terminals.get(terminal_id)
         assert kept is not None and kept.state == "live"
     assert list(h.native.terminated_host_ids) == kills
+
+
+async def test_select_emits_focus_requested_where_hints_stay_passive(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    spawned = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    tab, pane = spawned.tabs[0], spawned.panes[0]
+
+    # A window persisting its own focus stays a passive hint.
+    await h.ops.workspace_set_focus_hints(
+        OPERATOR, workspace.id, project_id=h.project_id, tab=tab.id, pane=pane.id
+    )
+    assert h.events[-1]["kind"] == "focus_hints"
+
+    # An explicit select asks live windows to show the tab and pane, and stores
+    # the tab's own project as the hint.
+    selected, focused = await h.ops.workspace_select(OPERATOR, workspace.id, tab.id, pane=pane.id)
+    requested = h.events[-1]
+    assert requested["kind"] == "focus_requested"
+    assert [(row["id"], row["project_id"]) for row in requested["tabs"]] == [(tab.id, h.project_id)]
+    assert (selected.focused_project_id, selected.focused_tab_id) == (h.project_id, tab.id)
+    assert focused is not None and focused.focused_pane_id == pane.id
+
+    # The tab form keeps the tab's own pane focus.
+    await h.ops.workspace_select(OPERATOR, workspace.id, tab.id)
+    reselected = h.events[-1]
+    assert reselected is not requested and reselected["kind"] == "focus_requested"
+    assert [row.focused_pane_id for row in h.workspaces.list_tabs(workspace.id)] == [pane.id]

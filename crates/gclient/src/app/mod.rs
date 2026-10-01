@@ -136,6 +136,9 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// `(tab, pane)` of the panes pending placements landed in, drained by
     /// the chrome sync that focuses them.
     placed_panes: Vec<(String, String)>,
+    /// `(project, tab)` the last `workspace.select` asked every window to
+    /// show, drained by the chrome sync that shows it on the tab row's pane.
+    requested_focus: Option<(String, String)>,
     /// The control request a focus change or a queued key asked for. The loop
     /// starts it beside the select, which is what keeps every daemon round
     /// trip out of the click and the keystroke (#22573).
@@ -239,6 +242,7 @@ impl Workspace {
             pending_control: None,
             next_control_seq: 0,
             placed_panes: Vec::new(),
+            requested_focus: None,
         }
     }
 

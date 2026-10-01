@@ -146,6 +146,9 @@ pub enum WorkspaceEventKind {
     PaneRemoved,
     #[serde(rename = "focus_hints")]
     FocusHints,
+    /// An explicit `workspace.select`: attached windows show its focus.
+    #[serde(rename = "focus_requested")]
+    FocusRequested,
 }
 
 /// A `workspace_event`: the rows one mutation changed, in the lifecycle order
@@ -203,6 +206,17 @@ pub enum WorkspaceOp {
         workspace: String,
         project_id: Option<String>,
         tab: Option<String>,
+        pane: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        node: Option<String>,
+    },
+    /// Focus `tab` (on `pane`, else the tab's own focused pane) and ask every
+    /// attached window to show it.
+    #[serde(rename = "workspace.select")]
+    WorkspaceSelect {
+        workspace: String,
+        tab: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         pane: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         node: Option<String>,
