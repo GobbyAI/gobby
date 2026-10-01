@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, Never
 from uuid import uuid4
 
+from gobby.sessions.compact_markers import HANDOFF_COMPACT_CONTINUE_VARIABLE
 from gobby.sessions.handoff_records import (
     FOUND_WORK_DISPOSITIONS,
     FoundWorkEntry,
@@ -856,6 +857,16 @@ def _consume_candidate(
         )
         if not expects_clear and consumed.open_found_work:
             arm_found_work_gate(variables)
+        gate = variables.get(HANDOFF_DISPATCH_GATE_VARIABLE)
+        if (
+            isinstance(gate, Mapping)
+            and gate.get("attempt_id") == attempt_id
+            and gate.get("readiness_unconfirmed") is True
+        ):
+            variables.pop(HANDOFF_DISPATCH_GATE_VARIABLE, None)
+            continuation = variables.get(HANDOFF_COMPACT_CONTINUE_VARIABLE)
+            if isinstance(continuation, Mapping) and continuation.get("attempt_id") == attempt_id:
+                variables.pop(HANDOFF_COMPACT_CONTINUE_VARIABLE, None)
         _store_variables(conn, session_id, variables, exists=True)
         return consumed
 

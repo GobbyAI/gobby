@@ -25,8 +25,6 @@ from gobby.sessions.compact_continuation import (
     _continuation_pane,
     _continue_after_codex_compaction_ready,
     _count_codex_compact_ready_status_lines,
-    _merge_session_variable,
-    _pop_session_variable,
     _send_handoff_compact_continuation,
     clear_handoff_compact_continuation_pending,
     consume_and_schedule_handoff_compact_continuation,
@@ -35,9 +33,11 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_handoff_compact_continuation_readiness,
     schedule_handoff_compact_continuation,
 )
+from gobby.sessions.compact_continuation_store import _merge_session_variable, _pop_session_variable
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
     build_handoff_continue_prompt,
+    consume_pending_handoff,
     stage_handoff_attempt,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
@@ -333,6 +333,115 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", ["no_receipt", "new_gate", "new_marker"])
+async def test_readiness_timeout_preserves_undelivered_or_replaced_attempt(
+    session_db: HubDatabase,
+    conflict: str,
+) -> None:
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    if conflict != "no_receipt":
+        record_handoff_delivery(
+            session_db,
+            handoff_id=staged.handoff_record_id,
+            attempt_id=attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=SESSION_ID,
+        )
+    mark_handoff_compact_continuation_pending(
+        session_db,
+        SESSION_ID,
+        prompt="Call get_handoff",
+        attempt_id="b" * 32 if conflict == "new_marker" else attempt_id,
+    )
+    variables = SessionVariableManager(session_db)
+    variables.set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {
+            "attempt_id": "b" * 32 if conflict == "new_gate" else attempt_id,
+            "delivery_pending": True,
+        },
+    )
+    before = variables.get_variables(SESSION_ID)
+    tmux = _FakeTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+        fresh_seconds=-1,
+    )
+    assert variables.get_variables(SESSION_ID) == before
+    assert tmux.sent_keys == []
+
+
+@pytest.mark.asyncio
+async def test_delivered_codex_readiness_timeout_releases_tools_for_recovery(
+    session_db: HubDatabase,
+) -> None:
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    record_handoff_delivery(
+        session_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=SESSION_ID,
+    )
+    mark_handoff_compact_continuation_pending(
+        session_db, SESSION_ID, prompt="Call get_handoff", attempt_id=attempt_id
+    )
+    variables = SessionVariableManager(session_db)
+    variables.set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {"attempt_id": attempt_id, "delivery_pending": True},
+    )
+    tmux = _FakeTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+        fresh_seconds=-1,
+    )
+
+    result = variables.get_variables(SESSION_ID)
+    gate = result[HANDOFF_DISPATCH_GATE_VARIABLE]
+    assert gate["delivery_failed"] is True
+    assert gate["delivery_pending"] is False
+    assert gate["attempt_pending"] is False
+    assert gate["error_code"] == "compact_unconfirmed"
+    assert gate["readiness_unconfirmed"] is True
+    assert result[HANDOFF_COMPACT_CONTINUE_VARIABLE]["attempt_id"] == attempt_id
+    assert tmux.sent_keys == []
+    recovered = consume_pending_handoff(session_db, SESSION_ID)
+    assert recovered is not None
+    assert recovered.attempt_id == attempt_id
+    assert "Compacted" in recovered.markdown
+    remaining = variables.get_variables(SESSION_ID)
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in remaining
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in remaining
 
 
 @pytest.mark.asyncio

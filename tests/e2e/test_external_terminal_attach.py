@@ -24,6 +24,7 @@ import httpx
 import pytest
 import websockets
 
+from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import AttachLocator
 from gobby.terminals.frame_client import FrameClient, FrameProtocolError
 from gobby.terminals.host_protocol import read_pidfile
@@ -31,6 +32,7 @@ from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
+    MCPTestClient,
     daemon_token,
     terminate_process_tree,
 )
@@ -76,6 +78,9 @@ while True:
         sys.stdout.flush()
     elif text == "HIDE_CURSOR":
         sys.stdout.write("\\033[?25l")
+        sys.stdout.flush()
+    elif text == "SHOW_CODEX_IDLE":
+        sys.stdout.write("\\n" * 80 + "› \\n  GPT-6.1-Sol · 80% context left\\n")
         sys.stdout.flush()
     elif text == "APP_CURSOR":
         sys.stdout.write("\\033[?1h")
@@ -593,6 +598,101 @@ async def _ws_write(
                 assert parsed.get("outcome") == "delivered"
                 return
         raise AssertionError("write outcome not received")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["replied", "timeout"])
+async def test_codex_reply_wait_reaches_terminal_after_isolated_restart(
+    daemon_instance: DaemonInstance,
+    daemon_client: httpx.Client,
+    cli_events: CLIEventSimulator,
+    isolated_tmux: IsolatedTmux,
+    mcp_client: MCPTestClient,
+    postgres_db: Any,
+    outcome: str,
+) -> None:
+    _wait_for_host(daemon_client, daemon_instance)
+    waiter = cli_events.register_session(
+        external_id=f"codex-restart-{uuid.uuid4().hex}",
+        source="Codex",
+        project_id=E2E_PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+    )["id"]
+    owner = cli_events.register_session(
+        external_id=f"owner-restart-{uuid.uuid4().hex}",
+        source="Codex",
+        project_id=E2E_PROJECT_ID,
+        cwd=str(daemon_instance.project_dir),
+    )["id"]
+    sessions = SessionManager(postgres_db)
+    assert (
+        sessions.update(waiter, terminal_context=isolated_tmux.context(), status="paused")
+        is not None
+    )
+    isolated_tmux.send_line("SHOW_CODEX_IDLE")
+    item = wait_for_condition(
+        lambda: _list_external(daemon_client),
+        timeout=10,
+        interval=0.1,
+        description="Codex external terminal",
+    )
+    viewer = await _open_viewer(
+        _attach_from_item(item),
+        daemon_token(daemon_instance.gobby_home),
+        cols=VIEWER_COLS,
+        rows=VIEWER_ROWS,
+    )
+    await viewer.detach()
+    await viewer.close()
+    mcp_client.session_id = waiter
+    registration = mcp_client.call_tool(
+        server_name="gobby-agents",
+        tool_name="wait_for_coordination",
+        arguments={"owner_session": owner, "reply": True, "timeout": 120},
+    )
+    result = registration.get("result", registration)
+    assert result["outcome"] == "waiting", registration
+    wait_id = result["wait_id"]
+    daemon_instance.stop()
+    if outcome == "timeout":
+        postgres_db.execute(
+            "UPDATE coordination_waits SET expires_at = clock_timestamp() - interval '1 second' "
+            "WHERE id = %s",
+            (wait_id,),
+        )
+    daemon_instance.restart()
+    _wait_for_host(daemon_client, daemon_instance)
+    if outcome == "replied":
+        mcp_client.session_id = owner
+        sent = mcp_client.call_tool(
+            server_name="gobby-agents",
+            tool_name="send_message",
+            arguments={
+                "target": "session",
+                "target_id": waiter,
+                "content": "post-restart durable reply",
+                "wake": False,
+            },
+        )
+        assert sent["success"] is True, sent
+    wait_for_condition(
+        lambda: (
+            postgres_db.fetchone("SELECT outcome FROM coordination_waits WHERE id = %s", (wait_id,))
+            or {}
+        ).get("outcome")
+        == outcome,
+        timeout=20,
+        interval=0.1,
+        description=f"durable wait {outcome}",
+    )
+    wait_for_condition(
+        lambda: "ECHO:[Gobby] Check messages" in isolated_tmux.capture(),
+        timeout=30,
+        interval=0.2,
+        description="post-restart wait wake reached idle Codex pane",
+    )
+    assert sessions.get(waiter) is not None
+    assert isolated_tmux.display("#{pane_dead}") == "0"
 
 
 @pytest.mark.asyncio

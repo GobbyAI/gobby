@@ -44,7 +44,10 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
 }
 _DEFAULT_COMPACT_INTERRUPT_KEY: NamedKey = "escape"
 _CLI_COMPACT_INTERRUPT_KEYS: dict[str, NamedKey] = {
-    "codex": "ctrl_c",
+    # Codex 0.159.0: idle Ctrl+C requests quit; Escape interrupts only running work.
+    # openai/codex rust-v0.159.0, codex-rs/tui/src/: interaction.rs:510-521
+    # (under chatwidget/), keymap.rs:1603, bottom_pane/mod.rs:1598-1611.
+    "codex": "escape",
     # Grok 1.0.30: Esc never cancels a turn; Ctrl+C on an empty composer does.
     "grok": "ctrl_c",
 }
