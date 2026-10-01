@@ -86,6 +86,8 @@ REDIRECT_RULES = frozenset(
 
 TRUE_RESTRICTION_RULES = frozenset(
     {
+        "archivist-write-scope",
+        "assistant-write-scope",
         "block-autonomous-clear-session",
         "block-cross-session-foreign-dirty-edit",
         "block-cross-session-foreign-staged-commit",
@@ -136,9 +138,14 @@ TRUE_RESTRICTION_RULES = frozenset(
         "no-uv-add",
         "no-wget-upload",
         "no-yarn-add",
+        "plan-writer-enhancer-only",
         "require-handoff-at-context-limit",
         "retry-terminal-handoff-after-delivery-failure",
         "review-closed-task-memories-before-handoff",
+        "seat-keep-enhancer-receipt",
+        "seat-no-launch-cli",
+        "seat-no-pipeline-launch",
+        "seat-no-spawn",
     }
 )
 
