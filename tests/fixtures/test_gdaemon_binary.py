@@ -31,6 +31,52 @@ def _checkout(tmp_path: Path, *, source_mtime_ns: int, binary_mtime_ns: int | No
     return tmp_path
 
 
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "crates/gcore/src/grant/tests.rs",
+        "crates/gcore/src/grant/cache_tests.rs",
+        "crates/gcore/tests/credential.rs",
+        "crates/gdaemon/benches/startup.rs",
+        "crates/gdaemon/examples/inspect.rs",
+    ],
+)
+def test_newer_test_only_file_does_not_stale_checkout_binary(tmp_path: Path, relative: str) -> None:
+    repo = _checkout(tmp_path, source_mtime_ns=1_000, binary_mtime_ns=2_000)
+    _write(repo / relative, 3_000)
+    assert select_test_gdaemon(repo, {CHECKOUT_BINARY_ENV: "checkout"}, "gdaemon") == (
+        repo / "target" / "debug" / "gdaemon"
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "crates/gcore/src/grant/cache.rs",
+        "crates/gcore/assets/schema/migrations/999_example.sql",
+        "crates/gcore/build.rs",
+        "crates/gdaemon/Cargo.toml",
+        "Cargo.toml",
+        "Cargo.lock",
+    ],
+)
+def test_newer_binary_input_rejects_checkout_binary(tmp_path: Path, relative: str) -> None:
+    repo = _checkout(tmp_path, source_mtime_ns=1_000, binary_mtime_ns=2_000)
+    _write(repo / relative, 3_000)
+    with pytest.raises(CheckoutBinaryError, match="older than") as caught:
+        select_test_gdaemon(repo, {CHECKOUT_BINARY_ENV: "checkout"}, "gdaemon")
+    assert relative in str(caught.value)
+
+
+def test_inline_test_module_retains_production_file_freshness_check(tmp_path: Path) -> None:
+    repo = _checkout(tmp_path, source_mtime_ns=1_000, binary_mtime_ns=2_000)
+    source = _write(repo / "crates/gcore/src/grant/cache.rs", 3_000)
+    source.write_text("pub fn production() {}\n#[cfg(test)]\nmod tests {}\n")
+    os.utime(source, ns=(3_000, 3_000))
+    with pytest.raises(CheckoutBinaryError, match="cache.rs"):
+        select_test_gdaemon(repo, {CHECKOUT_BINARY_ENV: "checkout"}, "gdaemon")
+
+
 @pytest.mark.parametrize("env", [{}, {CHECKOUT_BINARY_ENV: ""}, {CHECKOUT_BINARY_ENV: "installed"}])
 def test_installed_binary_is_the_default(tmp_path: Path, env: dict[str, str]) -> None:
     repo = _checkout(tmp_path, source_mtime_ns=1_000, binary_mtime_ns=2_000)
