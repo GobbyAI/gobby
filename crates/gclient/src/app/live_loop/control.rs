@@ -10,7 +10,9 @@ use crate::frame_source::{FrameError, FrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
-use super::super::{ControlOutcome, ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
+use super::super::{
+    AttachState, ControlOutcome, ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE,
+};
 
 /// Status shown when a key lands in a pane whose lease another viewer took.
 pub const LEASE_LOST_INPUT: &str =
@@ -242,14 +244,17 @@ pub(super) async fn send_live_input(
     if workspace.pane(pane_id).writable() {
         return send_live_write(workspace, pane_id, data, paste).await;
     }
-    if !workspace.pane(pane_id).is_live() {
+    let acquiring = workspace.awaiting_control(pane_id);
+    let pane = workspace.pane(pane_id);
+    if !pane.is_live()
+        && !(acquiring && matches!(pane.attach_state(), AttachState::Attaching { .. }))
+    {
         return Ok(());
     }
     // A lost lease and an unknown write outcome both wait on a person, so
     // typing into them says what is wrong instead of queueing. Once that
     // person has asked for control, the decision is made and the keys they
     // type next belong in the queue like any other (#22573).
-    let acquiring = workspace.awaiting_control(pane_id);
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     let refusal = match pane.control {
         ControlState::LeaseLost if !acquiring => Some(LEASE_LOST_INPUT),

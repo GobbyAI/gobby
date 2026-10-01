@@ -290,6 +290,91 @@ async fn held_native_input_survives_daemon_outage_and_host_refusal_still_applies
     mock.shutdown().await;
 }
 
+/// Keys typed while the returned daemon replaces a native attachment wait for
+/// that attachment's grant instead of disappearing during its host handshake.
+#[tokio::test]
+async fn native_input_during_daemon_reattach_waits_for_the_new_grant() {
+    let mock = MockDaemon::start("local-token").await;
+    mock.use_unique_attachment_ids();
+    let terminal_id = "terminal-daemon-reattach-input";
+    let host = DirectHost::start("epoch-1").await;
+    let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
+    let pane_id = workspace
+        .pane_for_terminal(terminal_id)
+        .expect("direct pane");
+    let mut terminal = Terminal::new(TestBackend::new(48, 12)).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    show_roster(&workspace, &mut chrome);
+    let (input_tx, input_rx) = mpsc::channel(16);
+
+    let driver = async {
+        wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
+        send_key(&input_tx, KeyCode::Char('a'), KeyModifiers::NONE).await;
+        host.wait_for("input before reconnect", |seen| {
+            seen.iter()
+                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"a"))
+        })
+        .await;
+        for _ in 0..2 {
+            mock.enqueue(
+                "GET",
+                "/api/terminals?",
+                200,
+                json!({
+                    "items": [{
+                        "terminal_id": terminal_id,
+                        "backend": "native",
+                        "state": "live",
+                        "attach": host.roster_attach(terminal_id),
+                    }],
+                    "next_cursor": null,
+                    "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
+                }),
+            );
+        }
+        let gate = host.hold_accepts();
+        mock.close_websockets_going_away();
+        wait_for_websocket_requests(&mock, "terminal_attach", 2).await;
+        // The daemon answered the replacement attach, but the host cannot yet
+        // answer its handshake. This is a live-loop input event in that window.
+        send_key(&input_tx, KeyCode::Char('b'), KeyModifiers::NONE).await;
+        settle().await;
+        assert_eq!(
+            websocket_requests(&mock, "terminal_take_control").len(),
+            1,
+            "the new attachment cannot ask for a grant before its host is ready"
+        );
+        host.release_accepts(&gate);
+        wait_for_websocket_requests(&mock, "terminal_take_control", 2).await;
+        host.wait_for("the key queued during native reattachment", |seen| {
+            seen.iter()
+                .any(|message| matches!(message, ClientMessage::Input { data } if data == b"b"))
+        })
+        .await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("native reattachment input loop");
+    assert_eq!(workspace.pane(pane_id).transport(), Some(Transport::Direct));
+    assert!(
+        websocket_requests(&mock, "terminal_input").is_empty(),
+        "queued native input must stay on the granted host stream"
+    );
+    host.shutdown().await;
+    mock.shutdown().await;
+}
+
 /// Losing the daemon cannot create host authority for an ungranted native pane.
 #[tokio::test]
 async fn daemon_outage_never_grants_input_to_an_ungranted_native_pane() {
