@@ -820,7 +820,7 @@ class TestWriteNormalization:
     def test_write_change_list_populates_file_path(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "Write",
-            "tool_input": [{"path": "/file.txt", "content": "new content"}],
+            "tool_input": {"changes": [{"path": "/file.txt", "content": "new content"}]},
         }
 
         normalize_tool_fields(data)
@@ -834,10 +834,12 @@ class TestWriteNormalization:
     def test_write_change_list_populates_file_paths_for_multiple_files(self) -> None:
         data: dict[str, Any] = {
             "tool_name": "Write",
-            "tool_input": [
-                {"path": "/file-a.txt", "content": "a"},
-                {"path": "/file-b.txt", "content": "b"},
-            ],
+            "tool_input": {
+                "changes": [
+                    {"path": "/file-a.txt", "content": "a"},
+                    {"path": "/file-b.txt", "content": "b"},
+                ]
+            },
         }
 
         normalize_tool_fields(data)

@@ -112,15 +112,14 @@ def _extract_change_path(change: Any) -> str | None:
 
 
 def _normalize_file_change_input(tool_input: Any) -> Any:
-    """Normalize app-server style file-change lists into canonical Write input."""
-    if isinstance(tool_input, list):
-        normalized_input: dict[str, Any] = {"changes": tool_input}
-        changes = tool_input
-    elif isinstance(tool_input, dict) and isinstance(tool_input.get("changes"), list):
-        normalized_input = dict(tool_input)
-        changes = normalized_input["changes"]
-    else:
+    """Derive Write paths from an object input carrying an app-server ``changes`` list.
+
+    A bare list is never recovered here; normalization marks it unavailable (#23179).
+    """
+    if not isinstance(tool_input, dict) or not isinstance(tool_input.get("changes"), list):
         return tool_input
+    normalized_input: dict[str, Any] = dict(tool_input)
+    changes = normalized_input["changes"]
 
     paths: list[str] = []
     for change in changes:

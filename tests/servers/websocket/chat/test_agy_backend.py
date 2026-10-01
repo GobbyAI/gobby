@@ -617,12 +617,13 @@ async def test_progress_clock_renews_on_translated_events() -> None:
         stdout=_TimedStdout(
             [
                 (0.0, _init()),
-                (0.04, _text("still going")),
-                (0.04, _result(usage=_usage())),
+                # Each gap fits the timeout with load headroom; together they exceed it.
+                (0.2, _text("still going")),
+                (0.2, _result(usage=_usage())),
             ]
         )
     )
-    backend, session = _session(process, prompt_timeout=0.05)
+    backend, session = _session(process, prompt_timeout=0.3)
     which, create = _spawn_patches(process)
     with which, create:
         await backend.attach_session(session)
