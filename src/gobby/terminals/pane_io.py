@@ -95,6 +95,7 @@ _SUBMIT_VERIFY_POLL_SECONDS = 0.1
 #: CLI's own pty driver waits 10ms, so this is margin, not a measured minimum.
 SUBMIT_ENTER_GAP_SECONDS = 1.5
 COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
+COMPOSER_UNKNOWN_ERROR_CODE = "composer_unknown"
 TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE = "enter_delivery_unconfirmed"
 #: The write and Enter were delivered, but no read proved the draft left the composer.
@@ -367,6 +368,36 @@ async def clear_composer(pane: PaneIO, cli_source: str | None) -> SendResult:
         if not ok:
             return False, reason
     return True, None
+
+
+async def composer_gate_for_write(
+    pane: PaneIO,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+    *,
+    action: str,
+) -> tuple[bool, str | None, str]:
+    """Refuse a composer write unless a probe positively confirms the composer is empty.
+
+    A blind write into an unread composer is what let a daemon wake land inside an
+    operator's half-typed word and let a staged ``/compact`` collide with a wake.
+    A ``draft`` is refused because the operator owns that text, and an ``unknown``
+    frame is refused for a provider whose manifest can classify a composer at all,
+    because the frame may hold a draft the probe could not read. A provider whose
+    manifest has no composer rules answers ``unknown`` to every probe, so
+    withholding there would starve it forever; that case keeps the drain. No probe
+    bound means the caller has no safer read to offer and keeps its existing path.
+
+    Callers retain their durable fallback when an unreadable frame refuses a write.
+    """
+    if composer_read is None:
+        return True, None, "unprobed"
+    read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
+    if read.state == "empty":
+        return True, None, "empty"
+    if read.state == "draft":
+        return False, "composer holds an operator draft", "draft"
+    return False, f"composer could not be confirmed empty before {action}", "unknown"
 
 
 def log_pane_failure(pane: PaneIO, session_id: str, action: str, reason: str | None) -> None:

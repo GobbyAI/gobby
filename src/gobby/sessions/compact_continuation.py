@@ -27,10 +27,12 @@ from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
+from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
     clear_composer,
+    composer_gate_for_write,
     submit_text,
 )
 
@@ -529,15 +531,18 @@ async def _send_handoff_compact_continuation(
     on_send_failure: Callable[[], None] | None = None,
     composer_read: ComposerReader | None = None,
 ) -> bool:
-    sent = await _type_handoff_compact_continuation(
-        pane,
-        prompt,
-        session_id,
-        delay_seconds=delay_seconds,
-        cli_source=cli_source,
-        composer_read=composer_read,
-        verify_seconds=SUBMIT_VERIFY_SECONDS,
-    )
+    # The pull prompt is typed into the same physical composer a wake drains and
+    # submits, so hold the shared lock across its whole clear/submit/verify run.
+    async with composer_action_lock(str(getattr(pane, "target", "") or "")):
+        sent = await _type_handoff_compact_continuation(
+            pane,
+            prompt,
+            session_id,
+            delay_seconds=delay_seconds,
+            cli_source=cli_source,
+            composer_read=composer_read,
+            verify_seconds=SUBMIT_VERIFY_SECONDS,
+        )
     if not sent and on_send_failure is not None:
         on_send_failure()
     return sent
@@ -566,8 +571,25 @@ async def _type_handoff_compact_continuation(
         await asyncio.sleep(delay_seconds)
     try:
         # An operator draft in the composer would be submitted with the pull
-        # prompt, so empty the box first (blind: the prompt reads fine regardless).
-        ok, reason = await clear_composer(pane, cli_source)
+        # prompt, so require a positively empty composer before typing anything.
+        # Only an unprobed composer keeps the blind drain: after a confirmed-empty
+        # read it could only delete keystrokes the operator typed since.
+        writable, refuse_reason, composer_state = await composer_gate_for_write(
+            pane,
+            cli_source,
+            composer_read,
+            action="the set_handoff continuation",
+        )
+        if not writable:
+            logger.warning(
+                "Skipping set_handoff continuation for %s: %s",
+                session_id,
+                refuse_reason,
+            )
+            return False
+        ok, reason = (
+            (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
+        )
         if not ok:
             logger.warning(
                 "Failed clearing the composer before set_handoff continuation for %s: %s",

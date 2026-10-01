@@ -13,7 +13,8 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
+from gobby.agents.idle_detector import IdleDetector
+from gobby.terminals.composer_lock import composer_action_lock
 from gobby.terminals.pane_io import (
     DEFAULT_SNAPSHOT_LINES,
     ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
@@ -23,6 +24,7 @@ from gobby.terminals.pane_io import (
     PaneIO,
     SendResult,
     clear_composer,
+    composer_gate_for_write,
     log_pane_failure,
     send_pane_key,
     submit_text,
@@ -84,6 +86,7 @@ _COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _COMMAND_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 _COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 _COMPOSER_OCCUPIED_ERROR_CODE = "composer_occupied"
+_COMPOSER_UNKNOWN_ERROR_CODE = "composer_unknown"
 _INTERRUPT_UNCONFIRMED_ERROR_CODE = "interrupt_unconfirmed"
 # The session's recorded CLI process no longer owns its pane, so no key may be sent.
 NO_TERMINAL_TARGET_ERROR_CODE = "no_terminal_target"
@@ -210,6 +213,39 @@ async def _wait_for_interrupt(
     return await asyncio.to_thread(observe_interrupt)
 
 
+async def _send_compaction_interrupt(
+    pane: PaneIO,
+    key: NamedKey,
+    session_id: str,
+    *,
+    cli_source: str | None,
+    composer_read: ComposerReader | None,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Recheck the composer immediately before each interrupt, including retries."""
+    try:
+        writable, refuse_reason, state = await composer_gate_for_write(
+            pane, cli_source, composer_read, action="a compaction interrupt"
+        )
+    except Exception:
+        logger.warning("Composer probe failed before interrupt for %s", session_id, exc_info=True)
+        writable, refuse_reason, state = False, "composer probe failed before interrupt", "unknown"
+    if not writable:
+        return (
+            False,
+            refuse_reason,
+            {
+                "error_code": (
+                    _COMPOSER_OCCUPIED_ERROR_CODE
+                    if state == "draft"
+                    else _COMPOSER_UNKNOWN_ERROR_CODE
+                ),
+                "continuation_pending": False,
+            },
+        )
+    ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
+    return ok, reason, None
+
+
 async def _confirm_interrupt(
     pane: PaneIO,
     key: NamedKey,
@@ -219,6 +255,8 @@ async def _confirm_interrupt(
     attempt_seconds: float,
     turn_settled: Callable[[], bool | None] | None = None,
     presses: int = _INTERRUPT_ATTEMPTS,
+    cli_source: str | None = None,
+    composer_read: ComposerReader | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Send the interrupt key until the CLI's transcript confirms the turn stopped."""
     pressed = False
@@ -232,11 +270,11 @@ async def _confirm_interrupt(
                 return True, None, None
         if attempt == presses:
             break
-        ok, reason = await send_pane_key(
-            pane, key, session_id, action="sending compaction interrupt"
+        ok, reason, detail = await _send_compaction_interrupt(
+            pane, key, session_id, cli_source=cli_source, composer_read=composer_read
         )
         if not ok:
-            return False, reason, None
+            return False, reason, detail
         pressed = True
         observed = await _wait_for_interrupt(observe_interrupt, attempt_seconds=attempt_seconds)
         if observed is None:
@@ -313,6 +351,8 @@ async def _interrupt_turn(
     settle_seconds: float,
     turn_settled: Callable[[], bool | None] | None = None,
     presses: int = _INTERRUPT_ATTEMPTS,
+    cli_source: str | None = None,
+    composer_read: ComposerReader | None = None,
 ) -> tuple[bool, str | None, dict[str, Any] | None]:
     """Interrupt the running turn: transcript-confirmed, or blind with a settle."""
     if observe_interrupt is not None:
@@ -325,10 +365,14 @@ async def _interrupt_turn(
             attempt_seconds=settle_seconds * _INTERRUPT_ATTEMPTS / presses,
             turn_settled=turn_settled,
             presses=presses,
+            cli_source=cli_source,
+            composer_read=composer_read,
         )
-    ok, reason = await send_pane_key(pane, key, session_id, action="sending compaction interrupt")
+    ok, reason, detail = await _send_compaction_interrupt(
+        pane, key, session_id, cli_source=cli_source, composer_read=composer_read
+    )
     if not ok:
-        return False, reason, None
+        return False, reason, detail
     if settle_seconds > 0:
         await asyncio.sleep(settle_seconds)
     return True, None, None
@@ -458,6 +502,53 @@ async def _send_terminal_compaction_command(
     on_command_submitting: Callable[[], None] | None = None,
     seat_left: Callable[[], bool] | None = None,
 ) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
+    """Serialize the whole compaction ladder under the shared composer lock.
+
+    The composer probe, interrupt, drain, submit and verify are all separate
+    awaits against one physical composer, so a concurrent wake would otherwise
+    type into a staged command. Holding one lock across the ladder keeps it
+    atomic against every other composer writer (events/wake.py, wake_batch.py).
+    """
+    async with composer_action_lock(str(getattr(pane, "target", "") or "")):
+        return await _send_terminal_compaction_command_locked(
+            pane,
+            command,
+            session_id,
+            cli_source=cli_source,
+            mark_continuation_pending=mark_continuation_pending,
+            clear_continuation_pending=clear_continuation_pending,
+            schedule_continuation_readiness=schedule_continuation_readiness,
+            continuation_readiness_capture_lines=continuation_readiness_capture_lines,
+            observe_interrupt=observe_interrupt,
+            turn_settled=turn_settled,
+            settle_seconds=settle_seconds,
+            interrupt_settle_seconds=interrupt_settle_seconds,
+            rejection_settle_seconds=rejection_settle_seconds,
+            composer_read=composer_read,
+            on_command_submitting=on_command_submitting,
+            seat_left=seat_left,
+        )
+
+
+async def _send_terminal_compaction_command_locked(
+    pane: PaneIO,
+    command: str,
+    session_id: str,
+    *,
+    cli_source: str | None,
+    mark_continuation_pending: Callable[[], bool],
+    clear_continuation_pending: Callable[[], bool],
+    schedule_continuation_readiness: Callable[[str | None], bool] | None = None,
+    continuation_readiness_capture_lines: int | None = None,
+    observe_interrupt: Callable[[], bool | None] | None = None,
+    turn_settled: Callable[[], bool | None] | None = None,
+    settle_seconds: float | None = None,
+    interrupt_settle_seconds: float = _DEFAULT_INTERRUPT_SETTLE_SECONDS,
+    rejection_settle_seconds: float = _COMPACTION_REJECTION_SETTLE_SECONDS,
+    composer_read: ComposerReader | None = None,
+    on_command_submitting: Callable[[], None] | None = None,
+    seat_left: Callable[[], bool] | None = None,
+) -> tuple[bool, str | None, bool, dict[str, Any] | None]:
     """Interrupt a live turn, drain the composer, submit the command, watch for a rejection.
 
     ``settle_seconds`` overrides every wait (tests); ``observe_interrupt`` is the
@@ -485,20 +576,27 @@ async def _send_terminal_compaction_command(
     if seat_left is not None:
         pane = _SeatGuardedPane(pane, seat_left)
     try:
-        if composer_read is not None:
-            read = composer_read(await pane.snapshot(COMPOSER_PROBE_LINES, mode="ansi"))
-            if read.state == "draft":
-                logger.info(
-                    "Refusing %s for session %s: composer holds an operator draft",
-                    command,
-                    session_id,
-                )
-                return (
-                    False,
-                    "composer holds an operator draft",
-                    False,
-                    {"error_code": _COMPOSER_OCCUPIED_ERROR_CODE, "continuation_pending": False},
-                )
+        writable, refuse_reason, composer_state = await composer_gate_for_write(
+            pane, cli_source, composer_read, action=command
+        )
+        if not writable:
+            logger.info(
+                "Refusing %s for session %s: %s",
+                command,
+                session_id,
+                refuse_reason,
+            )
+            error_code = (
+                _COMPOSER_OCCUPIED_ERROR_CODE
+                if composer_state == "draft"
+                else _COMPOSER_UNKNOWN_ERROR_CODE
+            )
+            return (
+                False,
+                refuse_reason,
+                False,
+                {"error_code": error_code, "continuation_pending": False},
+            )
         interrupt_key = _compact_interrupt_key(cli_source)
         interrupt_seconds = interrupt_settle_seconds if settle_seconds is None else settle_seconds
         rejection_seconds = rejection_settle_seconds if settle_seconds is None else settle_seconds
@@ -557,6 +655,8 @@ async def _send_terminal_compaction_command(
                     settle_seconds=interrupt_seconds,
                     turn_settled=turn_settled,
                     presses=_CLI_INTERRUPT_PRESSES.get(cli_source or "", _INTERRUPT_ATTEMPTS),
+                    cli_source=cli_source,
+                    composer_read=composer_read,
                 )
                 if not interrupted:
                     if isinstance(pane, _SeatGuardedPane):
@@ -587,7 +687,32 @@ async def _send_terminal_compaction_command(
                     None,
                 )
 
-            cleared, clear_reason = await clear_composer(pane, cli_source)
+            # The settle wait and interrupt ran since the first probe, so that empty read
+            # cannot authorize this write: probe again, refuse a draft or unknown frame,
+            # and drain only a composer no probe could read.
+            writable, refuse_reason, composer_state = await composer_gate_for_write(
+                pane, cli_source, composer_read, action=command
+            )
+            if not writable:
+                if continuation_pending:
+                    clear_continuation_pending()
+                logger.info("Refusing %s for session %s: %s", command, session_id, refuse_reason)
+                error_code = (
+                    _COMPOSER_OCCUPIED_ERROR_CODE
+                    if composer_state == "draft"
+                    else _COMPOSER_UNKNOWN_ERROR_CODE
+                )
+                return (
+                    False,
+                    refuse_reason,
+                    False,
+                    {"error_code": error_code, "continuation_pending": False},
+                )
+            cleared, clear_reason = (
+                (True, None)
+                if composer_state == "empty"
+                else await clear_composer(pane, cli_source)
+            )
             if not cleared:
                 if continuation_pending:
                     clear_continuation_pending()

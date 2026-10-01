@@ -17,6 +17,7 @@ from gobby.runner_init.services import mark_service_degraded
 from gobby.runner_init.terminal_wiring import init_terminal_wiring, wake_write_services
 from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.sessions.lifecycle import SessionLifecycleManager
+from gobby.terminals.composer_lock import composer_action_lock
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -53,7 +54,7 @@ async def _send_native_wake_batch(targets: list[NativeWakeTarget]) -> list[dict[
     for target in targets:
         operations = [
             NativeBatchOperation(kind="key", payload=key)
-            for key in composer_clear_sequence(target.cli_source)
+            for key in (composer_clear_sequence(target.cli_source) if target.drain else ())
         ]
         operations.extend(
             [
@@ -125,6 +126,7 @@ async def _send_tmux_session_wake(
     *,
     submit: bool = False,
     clear_before_submit: bool = False,
+    composer_confirmed_empty: bool = False,
     cli_source: str | None = None,
 ) -> None:
     from gobby.agents.tmux.text_injection import TMUX_TEXT_ENTER_DELAY_SECONDS
@@ -146,7 +148,10 @@ async def _send_tmux_session_wake(
     if terminal is None:
         raise RuntimeError(f"no terminal for wake identity {identity}")
     action_key = f"wake:{terminal.id}"
-    async with coordinator.logical_action_lock(terminal.id):
+    # Reentrant acquisition: the wake dispatcher already holds this terminal's
+    # composer lock across its probe, and the raw asyncio.Lock would deadlock on
+    # a second same-task acquire.
+    async with composer_action_lock(terminal.id, coordinator=coordinator):
         steps: list[WriteRequest | SequenceDelay] = []
         if not submit:
             steps.append(
@@ -160,7 +165,11 @@ async def _send_tmux_session_wake(
             )
         else:
             literal_text = message.rstrip("\n")
-            if clear_before_submit:
+            if composer_confirmed_empty:
+                # The dispatcher holds this same composer lock across the fresh
+                # empty probe and this call. Settle without deleting late input.
+                await _settle_earlier_wake(coordinator, terminal, action_key)
+            elif clear_before_submit:
                 await _drain_composer_before_wake(coordinator, terminal, identity, cli_source)
                 if literal_text:
                     steps.append(SequenceDelay(seconds=TMUX_TEXT_ENTER_DELAY_SECONDS))
@@ -266,8 +275,8 @@ async def _drain_composer_before_wake(
 async def _settle_earlier_wake(coordinator: Any, terminal: Any, action_key: str) -> None:
     """Release the latch of an earlier wake once the composer is known empty.
 
-    Called only after the drain was Delivered, so whatever the earlier attempt
-    left on screen is gone and repeating the wake is safe. Left latched, one
+    Called after a Delivered drain or a positive empty probe under the shared
+    composer lock, so repeating the wake is safe. Left latched, one
     wake whose reply was lost makes the coordinator suppress every later wake
     to this terminal for as long as the terminal lives (#21670). This is the
     settlement the watchdog applies to ``idle-reprompt`` once its clear has
