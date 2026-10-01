@@ -600,3 +600,115 @@ uv run gobby plans validate .gobby/plans/gdaemon-http-contract-corpus.md -p /Use
 
 The Rust command runs only after 3.2 and needs PD clearance while a load breach
 is active. Do not run the full pytest suite.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Fixture format, Python recorder and replay, first corpus
+  category: test
+  task_type: feature
+  depends_on: []
+  validation_criteria: '3.1.1: On a synthetic manifest, the loader rejects a case
+    whose `schema_version` differs from the manifest''s and skips `origin: gdaemon`
+    families. test: `tests/contracts/test_http_corpus.py::test_loader_rejects_version_and_filters_origin`.
+
+    3.1.2: The recorder writes every `origin: python` case deterministically: two
+    recordings against one fixture produce identical bytes, and those bytes contain
+    none of the daemon token, the encoded runtime grant, the nested grant token, or
+    the `deployment_token`. test: `tests/contracts/test_http_corpus.py::test_recorder_is_deterministic`.
+
+    3.1.3: Every first-corpus case replays equal from its committed file through the
+    front-door e2e fixture with freshly injected credentials, including `Cache-Control:
+    no-store` on both runtime-handshake cases, and the module collects and runs under
+    the focused standalone command. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    3.1.4: The Python mask helper produces the shared vector''s `expected` output.
+    test: `tests/contracts/test_http_corpus.py::test_mask_vector_matches_expected`.
+
+    3.1.5: Every manifest family has a valid `parity` and `origin`, every listed case
+    file exists, and every case''s `family` is a manifest family. test: `tests/contracts/test_http_corpus.py::test_manifest_contract`.
+
+    3.1.6: The README documents the format, the `credential` recipes, the redaction
+    key set, the masks, and the re-record procedure. file: `tests/contracts/http/README.md`.
+
+    3.1.7: A synthetic grant whose `dsn`, `password`, `api_key`, deployment `token`,
+    `payload_checksum`, and `signature` are identical in two recordings writes none
+    of them, and every non-secret grant field keeps its shape. test: `tests/contracts/test_http_corpus.py::test_secret_redaction_is_unconditional`.'
+  labels:
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.1
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.2
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.3
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.4
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.5
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.6
+  - covers:gdaemon-http-contract-corpus:3.1:3.1.7
+  tdd: false
+  source_section: '3.1'
+  assigned_agent: backend-developer
+- title: Rust replay harness and the gdaemon-authored front_door family
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.1'
+  validation_criteria: '3.2.1: Every `proxy`-parity case replays equal through `gdaemon
+    serve` against the case-driven stub, and the stub received the case''s request
+    unchanged. test: `crates/gdaemon/tests/http_contracts.rs::proxy_families_replay_equal`.
+
+    3.2.2: The `health` family replays equal under `native` routing and carries `x-gobby-served-by:
+    gdaemon`. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal`.
+
+    3.2.3: The `front_door` family''s typed 503 replays equal against a backend address
+    held bound and non-listening through the replay. test: `crates/gdaemon/tests/http_contracts.rs::front_door_backend_down_replays_equal`.
+
+    3.2.4: Rust masking produces the shared vector''s `expected` output. test: `crates/gdaemon/tests/http_contracts.rs::mask_matches_python_vector`.
+
+    3.2.5: Every family in `FAMILIES` has at least one manifest case with `native`
+    parity, and no other family except `front_door` has `native` parity. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
+
+    3.2.6: On synthetic manifests, the precheck names a registered family with no
+    case, a registered family with `proxy` parity, and an unregistered family with
+    `native` parity. test: `crates/gdaemon/tests/http_contracts.rs::precheck_rejects_missing_or_mismatched_parity`.'
+  labels:
+  - covers:gdaemon-http-contract-corpus:3.2:3.2.1
+  - covers:gdaemon-http-contract-corpus:3.2:3.2.2
+  - covers:gdaemon-http-contract-corpus:3.2:3.2.3
+  - covers:gdaemon-http-contract-corpus:3.2:3.2.4
+  - covers:gdaemon-http-contract-corpus:3.2:3.2.5
+  - covers:gdaemon-http-contract-corpus:3.2:3.2.6
+  tdd: false
+  source_section: '3.2'
+  assigned_agent: backend-developer
+- title: Per-case backend state and the native health down case
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: On a synthetic manifest, the Python loader rejects
+    a case whose `backend` is missing or is neither `up` nor `down`, and returns only
+    `up` cases of `origin: python` families. test: `tests/contracts/test_http_corpus.py::test_loader_rejects_missing_or_invalid_backend`.
+
+    3.3.2: Every committed case declares `backend`, and every Python-replayed case
+    replays equal in its declared `up` state through the front-door e2e fixture. test:
+    `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    3.3.3: The Rust harness replays every case in its declared backend state: `up`
+    against the case stub and `down` against the held non-listening address. test:
+    `crates/gdaemon/tests/http_contracts.rs::cases_replay_in_declared_backend_state`.
+
+    3.3.4: The `health` family replays equal under `native` routing in both its `up`
+    and `down` cases, each carrying `x-gobby-served-by: gdaemon`. The `down` case
+    is the typed 503. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal_up_and_down`.
+
+    3.3.5: The README documents the `backend` field and which states each language
+    replays. file: `tests/contracts/http/README.md`.'
+  labels:
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.1
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.2
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.3
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.4
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.5
+  tdd: false
+  source_section: '3.3'
+  assigned_agent: backend-developer
+```
