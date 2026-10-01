@@ -366,14 +366,40 @@ def _has_pytest_fail_placeholder(
 
 
 def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
-    """Visit evaluations before their call or conditional boundary, in source order."""
+    """Visit eager evaluations before their call or conditional boundary."""
     children: Iterable[ast.AST]
-    if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+    if isinstance(statement, ast.Assign):
+        children = [statement.value, *statement.targets]
+    elif isinstance(statement, ast.AnnAssign):
+        # Local annotations are not evaluated, even with no assigned value.
+        children = [*(() if statement.value is None else (statement.value,)), statement.target]
+    elif isinstance(statement, ast.AugAssign):
+        children = [statement.target, statement.value]
+    elif isinstance(statement, ast.Dict):
+        children = (
+            child
+            for key, value in zip(statement.keys, statement.values, strict=True)
+            for child in (key, value)
+            if child is not None
+        )
+    elif isinstance(statement, ast.Call):
+        # Starred positional arguments run before keywords, even when written later.
+        children = [statement.func, *statement.args, *(kw.value for kw in statement.keywords)]
+    elif isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
         children = [
             *getattr(statement, "decorator_list", ()),
             *statement.args.defaults,
             *(value for value in statement.args.kw_defaults if value is not None),
         ]
+    elif isinstance(statement, ast.ClassDef):
+        children = [
+            *statement.decorator_list,
+            *statement.bases,
+            *(kw.value for kw in statement.keywords),
+            *statement.body,
+        ]
+    elif isinstance(statement, ast.TypeAlias):
+        children = ()
     elif isinstance(statement, ast.If | ast.While | ast.IfExp | ast.Assert):
         children = [statement.test]
     elif isinstance(statement, ast.BoolOp):
@@ -386,8 +412,12 @@ def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
         children = [statement.subject]
     elif isinstance(statement, ast.Try | ast.TryStar):
         children = ()
-    elif isinstance(statement, ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp):
-        children = statement.generators
+    elif isinstance(statement, ast.GeneratorExp):
+        # Construction evaluates only the first iterator; the body stays lazy.
+        children = [statement.generators[0].iter]
+    elif isinstance(statement, ast.ListComp | ast.SetComp | ast.DictComp):
+        # The remaining clauses and body are conditional on the first iterator.
+        children = statement.generators[:1]
     else:
         children = ast.iter_child_nodes(statement)
     for child in children:

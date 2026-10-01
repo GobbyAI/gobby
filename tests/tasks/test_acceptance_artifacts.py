@@ -1668,6 +1668,110 @@ def _tb_line_red(
                 ("assert-test", 'assert pytest.fail("not written yet")'),
                 ("bool-first", 'pytest.fail("not written yet") or feature()'),
                 ("with-context", 'with pytest.fail("not written yet"):\n        pass'),
+                ("assign-target", 'marker[feature()] = pytest.fail("not written yet")'),
+                ("assign-attribute", 'feature().marker = pytest.fail("not written yet")'),
+                ("assign-targets", 'marker = feature().marker = pytest.fail("not written yet")'),
+                ("annassign-target", 'marker[feature()]: object = pytest.fail("not written yet")'),
+                (
+                    "annassign-attribute",
+                    'feature().marker: object = pytest.fail("not written yet")',
+                ),
+                ("local-annotation", 'marker: feature() = 0\n    pytest.fail("not written yet")'),
+                ("local-annotation-only", 'marker: feature()\n    pytest.fail("not written yet")'),
+                ("dict-values", 'result = {0: pytest.fail("not written yet"), feature(): 1}'),
+                ("dict-unpack", 'result = {**{0: pytest.fail("not written yet")}, feature(): 1}'),
+                (
+                    "augassign-value",
+                    'marker[0] += {0: pytest.fail("not written yet"), feature(): 1}',
+                ),
+                ("keyword-value", 'feature(key={0: pytest.fail("not written yet"), feature(): 1})'),
+                ("starred-value", 'feature(*{0: pytest.fail("not written yet"), feature(): 1})'),
+                (
+                    "listcomp-iterator",
+                    'result = [x for x in {0: pytest.fail("not written yet"), feature(): 1}]',
+                ),
+                (
+                    "setcomp-iterator",
+                    'result = {x for x in {0: pytest.fail("not written yet"), feature(): 1}}',
+                ),
+                (
+                    "dictcomp-iterator",
+                    'result = {x: x for x in {0: pytest.fail("not written yet"), feature(): 1}}',
+                ),
+                (
+                    "generator-iterator",
+                    'result = (x for x in {0: pytest.fail("not written yet"), feature(): 1})',
+                ),
+                (
+                    "generator-body",
+                    'pending = (feature() for _ in ())\n    pytest.fail("not written yet")',
+                ),
+                (
+                    "generator-later-iterator",
+                    "pending = (x for x in () for y in feature())\n"
+                    '    pytest.fail("not written yet")',
+                ),
+                (
+                    "generator-filter",
+                    'pending = (x for x in () if feature())\n    pytest.fail("not written yet")',
+                ),
+                (
+                    "lambda-default",
+                    'pending = lambda x={0: pytest.fail("not written yet"), feature(): 1}: x',
+                ),
+                (
+                    "nested-def-default",
+                    'def pending(x={0: pytest.fail("not written yet"), feature(): 1}):\n'
+                    "        feature()",
+                ),
+                (
+                    "nested-def-keyword-default",
+                    'def pending(*, x={0: pytest.fail("not written yet"), feature(): 1}):\n'
+                    "        feature()",
+                ),
+                (
+                    "nested-async-def-default",
+                    'async def pending(x={0: pytest.fail("not written yet"), feature(): 1}):\n'
+                    "        feature()",
+                ),
+                (
+                    "class-decorator",
+                    '@pytest.fail("not written yet")\n    class Pending:\n'
+                    "        marker = feature()",
+                ),
+                (
+                    "type-alias",
+                    'type Pending = feature()\n    pytest.fail("not written yet")',
+                ),
+            )
+        ],
+        *[
+            pytest.param(
+                "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+                "    marker = {0: 0}\n    "
+                + statement
+                + '\n    pytest.fail("feature returned unexpectedly")\n',
+                _tb_line_red("Failed: feature returned unexpectedly"),
+                2,
+                None,
+                id=f"evaluated-application-{name}",
+            )
+            for name, statement in (
+                ("annassign-value", "marker: object = feature()"),
+                ("annassign-target", "feature().marker: object = 0"),
+                ("augassign-subscript", "marker[feature()] += 0"),
+                ("augassign-attribute", "feature().marker += 0"),
+                ("dict-key", "marker = {feature(): 0}"),
+                ("dict-value", "marker = {0: feature()}"),
+                ("keyword", "dict(key=feature())"),
+                ("starred-before-keyword", 'dict(key=pytest.fail("later"), *(feature(),))'),
+                ("keyword-after-starred", "dict(*(), key=feature())"),
+                ("generator-iterator", "pending = (x for x in feature())"),
+                ("listcomp-iterator", "marker = [x for x in feature()]"),
+                ("setcomp-iterator", "marker = {x for x in feature()}"),
+                ("dictcomp-iterator", "marker = {x: x for x in feature()}"),
+                ("lambda-default", "pending = lambda x=feature(): x"),
+                ("nested-def-default", "def pending(x=feature()):\n        return x"),
             )
         ],
         pytest.param(
