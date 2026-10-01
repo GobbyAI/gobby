@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from gobby.storage.agents import AgentRun
+from gobby.storage.agents import AgentRun, _sandbox_records
 from gobby.storage.agents._sandbox_records import (
     _MAX_COUNTED_VIOLATIONS,
     _cached_violation_count,
@@ -121,8 +121,68 @@ def test_sandbox_record_skips_corrupt_utf8_violation_lines(
     )
 
     assert record is not None
-    assert record["violation_count"] == 2
+    # The count is the shared line counter's, so detail and brief agree on it.
+    assert record["violation_count"] == 3
     assert record["violations"] == [{"sequence": 1}, {"sequence": 2}]
+
+
+def _live_violation_log(gobby_home: Path, run_id: str, lines: int) -> Path:
+    run_dir = gobby_home / "run" / "sandbox" / run_id
+    run_dir.mkdir(parents=True)
+    violations = run_dir / "violations.jsonl"
+    violations.write_text(
+        "".join(json.dumps({"sequence": value}) + "\n" for value in range(lines)),
+        encoding="utf-8",
+    )
+    return violations
+
+
+def test_sandbox_record_decodes_only_the_recent_tail_of_a_long_log(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    violations = _live_violation_log(gobby_home, "run-long", 5_000)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    real_loads = json.loads
+    decoded = 0
+
+    def counting_loads(*args: Any, **kwargs: Any) -> Any:
+        nonlocal decoded
+        decoded += 1
+        return real_loads(*args, **kwargs)
+
+    monkeypatch.setattr(json, "loads", counting_loads)
+
+    record = sandbox_record(
+        {"sandbox": {"backend": "srt", "violation_path": str(violations)}},
+        include_events=True,
+    )
+
+    assert record is not None
+    assert record["violation_count"] == 5_000
+    assert record["violations"] == [{"sequence": value} for value in range(4_900, 5_000)]
+    assert decoded == 100
+
+
+def test_sandbox_record_tail_window_drops_the_partial_first_line(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    violations = _live_violation_log(gobby_home, "run-window", 1_000)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    monkeypatch.setattr(_sandbox_records, "_MAX_TAIL_BYTES", 100)
+
+    record = sandbox_record(
+        {"sandbox": {"backend": "srt", "violation_path": str(violations)}},
+        include_events=True,
+    )
+
+    assert record is not None
+    events = record["violations"]
+    assert 0 < len(events) < 100
+    assert events == [{"sequence": value} for value in range(1_000 - len(events), 1_000)]
 
 
 def test_sandbox_brief_caps_violation_count_scan(
