@@ -276,3 +276,53 @@ def test_blocks_nested_wrapped_mutating_script(
     event = _shell_event("Bash", command)
 
     assert RuleEngine(db)._should_block(effect, event) is True
+
+
+@pytest.mark.parametrize("tool_name", ["Bash", "exec_command"])
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Quotes and backslashes inside a word vanish before it runs, so each of
+        # these runs the mutation (#23134).
+        "'gobby'" + _MUTATION[5:],
+        '"gobby"' + _MUTATION[5:],
+        "go''bby" + _MUTATION[5:],
+        "g\\obby" + _MUTATION[5:],
+        "\\gobby" + _MUTATION[5:],
+        "gobby 'tasks'" + _MUTATION[11:],
+        "gobby t\\asks" + _MUTATION[11:],
+        "sudo 'gobby'" + _MUTATION[5:],
+        "$'\\x67obby'" + _MUTATION[5:],
+        "eval '\\gobby" + _MUTATION[5:] + "'",
+        # zsh drops the backslash of an unknown `$'...'` escape.
+        "$'\\gobby'" + _MUTATION[5:],
+        "eval $'\\gobby" + _MUTATION[5:] + "'",
+        # zsh reads `\C-j` as a newline, which separates the commands.
+        "eval $'true\\C-j" + _MUTATION + "'",
+    ],
+)
+def test_blocks_quoted_or_escaped_command_word(
+    db: HubDatabase, effect: RuleEffect, tool_name: str, command: str
+) -> None:
+    event = _shell_event(tool_name, command)
+
+    assert RuleEngine(db)._should_block(effect, event) is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        # Decoded words are re-quoted before matching, so a word holding a
+        # separator or newline stays one data argument.
+        "echo 'x; " + _MUTATION + "'",
+        "git commit -m $'subject\\n" + _MUTATION + "'",
+        # A dequoted name in argument position is still only an argument.
+        "echo 'gobby'" + _MUTATION[5:],
+    ],
+)
+def test_allows_dequoted_words_in_data_position(
+    db: HubDatabase, effect: RuleEffect, command: str
+) -> None:
+    event = _shell_event("Bash", command)
+
+    assert RuleEngine(db)._should_block(effect, event) is False

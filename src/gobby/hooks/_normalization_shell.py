@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.hooks._ansi_c import decode_ansi_c_escape
+from gobby.hooks._ansi_c import ShellDialect, decode_ansi_c_escape
 from gobby.hooks._normalization_paths import _append_unique_path
 
 # Tools that run shell commands. ``Bash`` is the canonical runtime name, but
@@ -125,12 +125,12 @@ def tokenize_shell_command(
     return scan.tokens
 
 
-def scan_shell_command(command: str) -> ShellScan:
+def scan_shell_command(command: str, *, dialect: ShellDialect = "bash") -> ShellScan:
     """Tokenize ``command`` and keep each token's source span and heredoc bodies.
 
     Spans index into ``command`` with quotes and escapes included, so a token
     range maps back to its raw text. Raises ``ValueError`` on an unclosed
-    quote or a trailing escape.
+    quote or a trailing escape. ``dialect`` selects how ``$'...'`` escapes decode.
     """
     tokens: list[ShellToken] = []
     spans: list[tuple[int, int]] = []
@@ -189,7 +189,7 @@ def scan_shell_command(command: str) -> ShellScan:
 
         if in_single_quote:
             if ansi_c and char == "\\" and index + 1 < len(command):
-                decoded, index = decode_ansi_c_escape(command, index)
+                decoded, index = decode_ansi_c_escape(command, index, dialect=dialect)
                 current.append(decoded)
                 continue
             if char == "'":

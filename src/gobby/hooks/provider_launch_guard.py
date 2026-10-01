@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from gobby.hooks._ansi_c import SHELL_DIALECTS, ShellDialect
 from gobby.hooks._normalization_shell import (
     ShellToken,
     _get_command_text,
@@ -120,7 +121,10 @@ _HELP_COMMAND_PROVIDERS = frozenset({"codex", "droid", "grok", "agy"})
 def blocks_direct_provider_launch(tool_name: Any, tool_input: Any) -> bool:
     """Rule predicate, independent of session variables and launch preferences."""
     command = _get_command_text(tool_input)
-    return bool(is_shell_tool(tool_name) and command and _blocked(command, 0))
+    if not (is_shell_tool(tool_name) and command):
+        return False
+    # bash and zsh decode some `$'...'` escapes differently; block on either reading.
+    return any(_blocked(command, 0, dialect) for dialect in SHELL_DIALECTS)
 
 
 def _prepare(command: str, depth: int, *, data: bool = False) -> tuple[str, list[str]]:
@@ -363,14 +367,14 @@ def _piped_to_shell(tokens: list[ShellToken], end: int) -> bool:
     return False
 
 
-def _blocked(command: str, depth: int) -> bool:
+def _blocked(command: str, depth: int, dialect: ShellDialect = "bash") -> bool:
     if depth > _MAX_DEPTH or len(command) > _MAX_LENGTH:
         return True
     try:
         prepared, expansions = _prepare(command, depth)
-        if any(_blocked(body, depth + 1) for body in expansions):
+        if any(_blocked(body, depth + 1, dialect) for body in expansions):
             return True
-        scan = scan_shell_command(prepared)
+        scan = scan_shell_command(prepared, dialect=dialect)
         start = 0
         for end in range(len(scan.tokens) + 1):
             if end < len(scan.tokens) and not _separator(scan.tokens[end]):
@@ -382,11 +386,13 @@ def _blocked(command: str, depth: int) -> bool:
             if not words:
                 continue
             name = words[0].rsplit("/", 1)[-1]
+            # A named shell decodes the script it runs in its own dialect.
+            inner: ShellDialect = "zsh" if name == "zsh" else "bash"
             if name in _PROVIDERS and not _administration(words[1:], name):
                 return True
             piped = _piped_to_shell(scan.tokens, end)
             if piped and name in {"echo", "printf"}:
-                if any(_blocked(value, depth + 1) for value in words[1:]):
+                if any(_blocked(value, depth + 1, dialect) for value in words[1:]):
                     return True
             if name in _SHELLS:
                 for index, arg in enumerate(words[1:], 1):
@@ -395,21 +401,22 @@ def _blocked(command: str, depth: int) -> bool:
                         script = words[index + 1 : index + 3]
                         if script[:1] == ["--"]:
                             script = script[1:]
-                        if script and _blocked(script[0], depth + 1):
+                        if script and _blocked(script[0], depth + 1, inner):
                             return True
                         break
                 # Literal here-strings are executable input as well.
                 for index, token in enumerate(segment[:-1]):
                     if _shell_stdin(words) and not token.quoted and token.value == "<<<":
-                        if _blocked(segment[index + 1].value, depth + 1):
+                        if _blocked(segment[index + 1].value, depth + 1, inner):
                             return True
             if _shell_stdin(words) or piped:
-                if any(_blocked(body.text, depth + 1) for body in bodies):
+                body_dialect = inner if _shell_stdin(words) else dialect
+                if any(_blocked(body.text, depth + 1, body_dialect) for body in bodies):
                     return True
             for body in bodies:
                 if not body.quoted:
                     _, substitutions = _prepare(body.text, depth, data=True)
-                    if any(_blocked(value, depth + 1) for value in substitutions):
+                    if any(_blocked(value, depth + 1, dialect) for value in substitutions):
                         return True
         return False
     except ValueError:

@@ -136,6 +136,8 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "echo $'it\\'s'",
         # `\c` does not consume the closing quote; the word is data.
         "echo $'\\c'Z",
+        # Either dialect's decoding of an echo argument is still data.
+        "echo $'\\claude -p hi'",
     ],
 )
 def test_administration_and_documentation(command: str) -> None:
@@ -243,6 +245,11 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         # zsh keeps a decoded NUL, so `eval` still runs the command after it.
         "eval $'true\\0; claude -p hi'",
         "eval $'true\\x00; claude -p hi'",
+        # zsh drops an unknown escape's backslash and reads `\C-j` as a newline.
+        "$'\\claude' -p hi",
+        "eval $'true\\C-jclaude -p hi'",
+        # A named zsh decodes its script's escapes as zsh, whatever the outer shell.
+        "zsh -c \"\\$'\\\\claude' -p hi\"",
     ],
 )
 def test_execution_contexts(command: str) -> None:

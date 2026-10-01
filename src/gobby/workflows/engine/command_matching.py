@@ -36,6 +36,7 @@ import re
 import shlex
 from dataclasses import dataclass
 
+from gobby.hooks._ansi_c import SHELL_DIALECTS
 from gobby.hooks._normalization_shell import (
     _SHELL_SEQUENCING_TOKENS,
     HeredocBody,
@@ -155,7 +156,26 @@ def _after_options(words: list[str], value_options: frozenset[str]) -> list[str]
     return words[index:]
 
 
-def _wrapper_scripts(subject: str) -> list[str]:
+def _decoded_stages(subject: str) -> list[list[str]]:
+    """Return each pipeline stage's words as bash and as zsh would run them.
+
+    The shells decode some ``$'...'`` escapes differently, so a word can name a
+    command under one and not the other; both readings are kept.
+    """
+    stages: list[list[str]] = []
+    for dialect in SHELL_DIALECTS:
+        try:
+            scan = scan_shell_command(subject, dialect=dialect)
+        except ValueError:
+            continue
+        for stage in _pipeline_stages(scan.tokens):
+            words = _stage_words(stage)
+            if words and words not in stages:
+                stages.append(words)
+    return stages
+
+
+def _wrapper_scripts(stages: list[list[str]]) -> list[str]:
     """Return the command strings a segment's literal wrappers would execute.
 
     Only arguments that are code count: a shell ``-c`` string, ``eval``'s
@@ -163,15 +183,8 @@ def _wrapper_scripts(subject: str) -> list[str]:
     prefix ``_unwrap`` strips. A data argument to an ordinary command
     (``git commit -m``) is not a wrapper and yields nothing.
     """
-    try:
-        scan = scan_shell_command(subject)
-    except ValueError:
-        return []
     scripts: list[str] = []
-    for stage in _pipeline_stages(scan.tokens):
-        words = _stage_words(stage)
-        if not words:
-            continue
+    for words in stages:
         unwrapped = _unwrap(words)
         if not unwrapped:
             continue
@@ -229,6 +242,11 @@ def command_patterns_match(
     while pending:
         text, depth = pending.pop()
         pattern_subjects.append(mask_one(text))
+        # Quotes and backslashes inside a word vanish before it runs, so a
+        # quoted or escaped command name still runs that command. Match each
+        # stage's decoded words too, re-quoted so a word holding spaces stays data.
+        stages = _decoded_stages(text)
+        pattern_subjects.extend(mask_one(shlex.join(words)) for words in stages)
         if depth >= _WRAPPER_DEPTH:
             continue
         # A literal execution wrapper (``bash -c``, ``eval``, ``xargs``,
@@ -236,7 +254,7 @@ def command_patterns_match(
         # scanner reads as one segment's words. Resolve it through these same
         # rules, to a bounded depth, so a nested wrapped invocation such as
         # ``bash -c "bash -c '…'"`` still matches (#23134).
-        for script in _wrapper_scripts(text):
+        for script in _wrapper_scripts(stages):
             pending.extend((inner, depth + 1) for inner in executable_command_subjects(script))
     if not any(re.search(pattern, subject) for subject in pattern_subjects):
         return False

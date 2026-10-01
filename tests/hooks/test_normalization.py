@@ -2104,10 +2104,36 @@ class TestHeredocTokenization:
 
     def test_scan_ansi_c_control_escape_keeps_quote_pairs(self) -> None:
         # The lexer pairs each backslash with the next character first, so `\c`
-        # never consumes the closing quote and `\c\'` keeps the quote as text.
-        scan = scan_shell_command("x $'\\c'Z $'\\c\\'y' ; z")
+        # never consumes the closing quote (bash prints a lone backslash), and
+        # `\c\X` is ^\ followed by X, a backslash included.
+        scan = scan_shell_command("x $'\\c'Z $'\\c\\'y' $'\\c\\\\x' ; z")
 
-        assert shell_token_values(scan.tokens) == ["x", "\\cZ", "\x1c'y", ";", "z"]
+        assert shell_token_values(scan.tokens) == ["x", "\\Z", "\x1c'y", "\x1c\\x", ";", "z"]
+
+    @pytest.mark.parametrize(
+        ("word", "decoded"),
+        [
+            # zsh has no `\c` escape and drops the backslash of any unknown one.
+            ("$'\\cJ'", "cJ"),
+            ("$'\\gobby'", "gobby"),
+            ("$'\\8'", "8"),
+            # A hex or Unicode escape with no digits is NUL.
+            ("$'\\x'", "\0"),
+            # `\C-X` is control and `\M-X` meta; they compose in either order.
+            ("$'\\C-j'", "\n"),
+            ("$'\\Cx'", "\x18"),
+            ("$'\\C-?'", "\x7f"),
+            ("$'\\C-\\\\'", "\x1c"),
+            ("$'\\M-\\C-a'", "\x81"),
+            ("$'\\C-\\M-a'", "\x81"),
+            # A modifier with nothing before the closing quote decodes to nothing.
+            ("$'\\C-'Z", "Z"),
+        ],
+    )
+    def test_scan_decodes_ansi_c_escapes_as_zsh(self, word: str, decoded: str) -> None:
+        scan = scan_shell_command(f"x {word}", dialect="zsh")
+
+        assert shell_token_values(scan.tokens) == ["x", decoded]
 
     def test_scan_records_an_unterminated_body_as_live_input(self) -> None:
         command = "cat <<EOF > out.txt\nstill > body\nnever closed"
