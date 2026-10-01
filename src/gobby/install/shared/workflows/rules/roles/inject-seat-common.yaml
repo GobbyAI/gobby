@@ -18,6 +18,7 @@ rules:
       and not variables.get('_seat_common_injected')
     effects:
       - type: inject_context
+        delivery: on_receipt
         template: |
           ## Seat Guidance
 
@@ -34,5 +35,6 @@ rules:
           - Definitions never name a terminal backend.
           - Task edits: the Assistant calls `gobby-tasks:update_task` only when Josh asks. The Orchestrator edits tasks as needed. Every other seat asks the Orchestrator, including for its own assigned task.
       - type: set_variable
+        delivery: on_receipt
         variable: _seat_common_injected
         value: true
