@@ -169,24 +169,29 @@ def canonicalize_call_tool_wrapper(
             raise CallToolWrapperAmbiguityError(
                 f"{raw_argument_field}.arguments,{raw_argument_field}.args"
             )
-        for field in CALL_TOOL_ARGUMENT_FIELDS:
-            if field in canonical_arguments:
-                raw_nested_arguments = canonical_arguments[field]
-                if raw_nested_arguments is None:
-                    canonical_arguments = {}
-                elif isinstance(raw_nested_arguments, dict):
-                    canonical_arguments = dict(raw_nested_arguments)
-                elif isinstance(raw_nested_arguments, str):
-                    # The same parser as a top-level string, so hook consumers and
-                    # dispatch hold one dict (#23125).
-                    canonical_arguments = _coerce_wrapper_arguments(
-                        raw_nested_arguments,
-                        field_name=f"{raw_argument_field}.{field}",
-                    )
-                else:
-                    canonical_arguments = raw_nested_arguments
-                unwrapped_nested_arguments = True
-                break
+        # A null alias counts as absent, as at top level, so it never shadows the
+        # other alias's payload; only null aliases yield empty arguments.
+        present_fields = [f for f in CALL_TOOL_ARGUMENT_FIELDS if f in canonical_arguments]
+        nested_field = next(
+            (f for f in present_fields if canonical_arguments[f] is not None),
+            present_fields[0] if present_fields else None,
+        )
+        if nested_field is not None:
+            raw_nested_arguments = canonical_arguments[nested_field]
+            if raw_nested_arguments is None:
+                canonical_arguments = {}
+            elif isinstance(raw_nested_arguments, dict):
+                canonical_arguments = dict(raw_nested_arguments)
+            elif isinstance(raw_nested_arguments, str):
+                # The same parser as a top-level string, so hook consumers and
+                # dispatch hold one dict (#23125).
+                canonical_arguments = _coerce_wrapper_arguments(
+                    raw_nested_arguments,
+                    field_name=f"{raw_argument_field}.{nested_field}",
+                )
+            else:
+                canonical_arguments = raw_nested_arguments
+            unwrapped_nested_arguments = True
 
     if (
         isinstance(canonical_arguments, dict)

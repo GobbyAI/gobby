@@ -266,6 +266,33 @@ def test_nested_both_aliases_raise_typed_ambiguity() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("null_alias", "payload_alias"),
+    [("arguments", "args"), ("args", "arguments")],
+)
+def test_nested_null_alias_yields_to_the_other_alias(null_alias: str, payload_alias: str) -> None:
+    """A null nested alias counts as absent, as it does at top level."""
+    payload = {"clear_session": False}
+
+    wrapper = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={**_HANDOFF_ROUTE, null_alias: None, payload_alias: payload},
+    )
+
+    assert wrapper.arguments == payload
+
+
+def test_nested_null_aliases_only_yield_empty_arguments() -> None:
+    wrapper = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={**_HANDOFF_ROUTE, "arguments": None, "args": None},
+    )
+
+    assert wrapper.arguments == {}
+
+
 def test_canonical_call_tool_input_keeps_both_aliases_when_ambiguous() -> None:
     tool_input = {**_HANDOFF_ROUTE, "arguments": {}, "args": {"clear_session": True}}
 
