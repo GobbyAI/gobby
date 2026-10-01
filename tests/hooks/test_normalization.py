@@ -677,11 +677,12 @@ class TestFieldAliases:
         normalize_tool_fields(data)
         assert data["tool_input"] == {"path": "/foo.py", "file_path": "/foo.py"}
 
-    def test_toolArgs_invalid_json_string_kept_as_string(self) -> None:
-        """Invalid JSON in toolArgs should be kept as-is."""
+    def test_toolArgs_invalid_json_string_is_marked(self) -> None:
+        """Invalid JSON in toolArgs is marked unavailable, not passed on as a string."""
         data: dict[str, Any] = {"toolArgs": "not valid json"}
         normalize_tool_fields(data)
-        assert data["tool_input"] == "not valid json"
+        assert "tool_input" not in data
+        assert data["tool_input_error"] == {"field": "toolArgs", "code": "invalid_json"}
 
     def test_toolArgs_does_not_overwrite_tool_input(self) -> None:
         data: dict[str, Any] = {"toolArgs": '{"a": 1}', "tool_input": {"b": 2}}
@@ -719,15 +720,17 @@ class TestFieldAliases:
         normalize_tool_fields(data)
         assert data["tool_input"]["command"] == "ls -la"
 
-    def test_tool_input_invalid_json_string_is_preserved(self) -> None:
+    def test_tool_input_invalid_json_string_is_marked(self) -> None:
         data: dict[str, Any] = {"tool_input": "not json"}
         normalize_tool_fields(data)
-        assert data["tool_input"] == "not json"
+        assert "tool_input" not in data
+        assert data["tool_input_error"] == {"field": "tool_input", "code": "invalid_json"}
 
-    def test_tool_input_json_non_object_string_is_preserved(self) -> None:
+    def test_tool_input_json_non_object_string_is_marked(self) -> None:
         data: dict[str, Any] = {"tool_input": "[1, 2, 3]"}
         normalize_tool_fields(data)
-        assert data["tool_input"] == "[1, 2, 3]"
+        assert "tool_input" not in data
+        assert data["tool_input_error"] == {"field": "tool_input", "code": "non_object_json"}
 
     def test_tool_input_object_keeps_raw_and_aliases(self) -> None:
         data: dict[str, Any] = {"tool_input": {"cmd": "ls"}}

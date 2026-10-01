@@ -25,6 +25,7 @@ from gobby.hooks._normalization_shell import (
     shell_token_values,
     tokenize_shell_command,
 )
+from gobby.hooks.normalization import is_shell_tool, tool_input_error
 from gobby.hooks.phase_timing import timed_to_thread
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
@@ -375,6 +376,12 @@ async def foreign_staged_commit_conflict(
     project_path: str,
 ) -> str:
     """Inspect commit ownership without parking a workflow worker on Git."""
+    if is_shell_tool(event.data.get("tool_name")) and tool_input_error(event.data) is not None:
+        # An undecodable shell input may hide a commit, so it can't pass as none.
+        return (
+            "Shell tool input arrived as undecodable JSON, so Gobby can't check it for a "
+            "git commit that would record another session's staged files. Retry the command."
+        )
     invocations = parse_git_commit_invocations(_extract_shell_command(event))
     if not invocations:
         return ""

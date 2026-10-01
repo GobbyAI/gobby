@@ -22,7 +22,7 @@ from gobby.adapters.codex_impl.execution_chain import (
 from gobby.adapters.codex_impl.execution_chain import (
     extract_yielded_cell_id as extract_yielded_cell_id,
 )
-from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.normalization import normalize_tool_fields, tool_input_error
 
 logger = logging.getLogger(__name__)
 
@@ -339,6 +339,9 @@ def build_tool_event_data(
             "status": item_data.get("status"),
         }
         if dynamic_name in _FUNCTIONS_EXEC_NAMES:
+            # functions.exec arguments are JavaScript source, not a JSON object.
+            if isinstance(item_data.get("arguments"), str):
+                item_data.setdefault("tool_input", {"arguments": item_data["arguments"]})
             command = extract_functions_exec_command(item_data.get("arguments"))
             if command is not None:
                 item_data["_original_tool_name"] = dynamic_name
@@ -372,8 +375,12 @@ def build_pre_tool_lifecycle_payload(
     params: dict[str, Any],
     *,
     tool_name_map: dict[str, str] | None = None,
-) -> tuple[str, dict[str, Any]] | None:
-    """Extract tool name and input from an item/started notification."""
+) -> tuple[str, dict[str, Any] | str] | None:
+    """Extract tool name and input from an item/started notification.
+
+    An input that is not a JSON object is returned as the sender's string,
+    never coerced to ``{}``.
+    """
     item = extract_completed_item_payload(params)
     if not item or not looks_like_tool_item(item):
         return None
@@ -387,13 +394,19 @@ def build_pre_tool_lifecycle_payload(
     if not isinstance(tool_name, str) or not tool_name:
         return None
 
-    tool_input = data.get("tool_input") or {}
     original_tool = data.get("_original_tool_name") or data.get("tool_name")
     if original_tool in _FUNCTIONS_EXEC_NAMES and isinstance(data.get("arguments"), str):
-        tool_input = {"arguments": data["arguments"]}
-    if not isinstance(tool_input, dict):
-        tool_input = {}
-    return tool_name, tool_input
+        return tool_name, {"arguments": data["arguments"]}
+    unavailable = tool_input_error(data)
+    if unavailable is not None:
+        # Hand the sender's string on so the lifecycle hook marks it too.
+        field = unavailable["field"]
+        raw = data.get("input") if field == "tool_input" else data.get(field)
+        if not isinstance(raw, str):
+            raw = item.get("tool_input")
+        return tool_name, raw if isinstance(raw, str) else ""
+    tool_input = data.get("tool_input")
+    return tool_name, tool_input if isinstance(tool_input, dict) else {}
 
 
 def build_post_tool_lifecycle_payload(

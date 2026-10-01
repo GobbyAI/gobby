@@ -155,12 +155,12 @@ class ChatSessionHooksMixin:
             ) -> SyncHookJSONOutput:
                 raw_tool_name = inp.get("tool_name", "")
                 tool_name = raw_tool_name if isinstance(raw_tool_name, str) else ""
-                tool_input = inp.get("tool_input", {})
-                if not isinstance(tool_input, dict):
-                    tool_input = {}
+                raw_tool_input = inp.get("tool_input", {})
+                tool_input = raw_tool_input if isinstance(raw_tool_input, dict) else {}
+                # The hook sees the sender's string so normalization can mark it.
                 data = {
                     "tool_name": tool_name,
-                    "tool_input": tool_input,
+                    "tool_input": raw_tool_input if isinstance(raw_tool_input, str) else tool_input,
                 }
                 resp = await cb_pre(data)
                 persist = self._additional_context_persist()

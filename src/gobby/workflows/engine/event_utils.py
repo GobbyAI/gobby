@@ -3,6 +3,7 @@
 from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import tool_input_error
 from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
 from gobby.workflows.definitions import RuleTriggerEvent
 from gobby.workflows.enforcement.blocking import is_gobby_call_tool
@@ -53,6 +54,9 @@ def _get_tool_identity(event_data: dict[str, Any]) -> str:
 
 
 def _target_task_tool_input(data: dict[str, Any]) -> dict[str, Any]:
+    # A marked input names no task; never fall back to a sibling ``arguments``.
+    if tool_input_error(data) is not None:
+        return {}
     raw_tool_input = data.get("tool_input") or data.get("arguments") or {}
     if not isinstance(raw_tool_input, dict):
         return {}

@@ -205,9 +205,14 @@ def normalize_agy_tool_call(raw_tool_name: str, tool_input: Any = None) -> dict[
         return normalized
 
     normalized["tool_name"] = f"mcp__{server}__{tool}"
-    arguments = decode_agy_tool_args(tool_input.get("Arguments"))
+    raw_arguments = tool_input.get("Arguments")
+    arguments = decode_agy_tool_args(raw_arguments)
     if isinstance(arguments, Mapping):
         normalized["tool_input"] = dict(arguments)
+    elif isinstance(raw_arguments, str):
+        # Not a JSON object: keep the sender's string so hook normalization
+        # marks the input unavailable instead of rules reading the envelope.
+        normalized["tool_input"] = raw_arguments
     return normalized
 
 

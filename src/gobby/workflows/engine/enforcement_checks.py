@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.normalization import tool_input_error
 from gobby.tasks.state_semantics import get_claimed_session_id
 from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.enforcement.blocking import (
@@ -31,6 +32,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
 
 _DENIAL_COUNTS_VARIABLE = "_enforcement_denial_counts"
+_UNAVAILABLE_MCP_TARGET = (
+    "call_tool arguments arrived as undecodable JSON, so the MCP target can't be checked against"
+)
 _TERMINAL_DENIAL_COUNT = 3
 _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
     {
@@ -490,6 +494,19 @@ class EnforcementCheckMixin:
 
         # Check MCP tool restrictions (for call_tool)
         if blocked_mcp_tools and is_gobby_call_tool(tool_name):
+            if tool_input_error(event.data) is not None:
+                reason = (
+                    f"Rule enforced by Gobby: [agent-enforcement:{agent_type}]\n"
+                    f"{_UNAVAILABLE_MCP_TARGET} the '{agent_type}' agent's MCP block-list."
+                    f"{_agent_tool_block_guidance()}"
+                )
+                reason = self._record_enforcement_denial(
+                    session_id=session_id,
+                    rule="agent-mcp-tool-block",
+                    target=f"tool:{canonical_tool.casefold()}",
+                    reason=reason,
+                )
+                return HookResponse(decision="block", reason=reason)
             tool_input = event.data.get("tool_input") or {}
             if isinstance(tool_input, dict):
                 mcp_server = tool_input.get("server_name", "")
@@ -692,6 +709,27 @@ class EnforcementCheckMixin:
 
         # Check MCP tool restrictions (for call_tool)
         if is_gobby_call_tool(tool_name):
+            if tool_input_error(event.data) is not None and (
+                step.blocked_mcp_tools or step.allowed_mcp_tools != "all"
+            ):
+                # Identity-based exemptions can't apply to a call with no readable target.
+                reason = (
+                    f"Rule enforced by Gobby: [step-enforcement:{wf_name}/{step.name}]\n"
+                    f"{_UNAVAILABLE_MCP_TARGET} the '{step.name}' step's MCP restrictions."
+                    f"{_step_tool_block_guidance(step.name)}"
+                )
+                reason = self._record_enforcement_denial(
+                    session_id=session_id,
+                    rule="step-mcp-tool-unavailable-input",
+                    target=allowed_target,
+                    reason=reason,
+                    step=step,
+                    instance=instance,
+                )
+                self._audit_step_tool_call(
+                    session_id, wf_name, step.name, tool_name, "block", reason=reason
+                )
+                return HookResponse(decision="block", reason=reason)
             tool_input = event.data.get("tool_input") or {}
             if isinstance(tool_input, dict):
                 mcp_server = tool_input.get("server_name", "")
