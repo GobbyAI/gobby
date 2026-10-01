@@ -14,7 +14,7 @@ ToolResultKind = Literal["text", "json", "image", "error"]
 # belongs here -- see RenderState.__deepcopy__ for why the resolved-id set
 # qualifies. Everything not named is deep-copied, so a field added later is
 # rollback-safe by default rather than silently reset (#20875).
-_SHARED_RENDER_STATE_FIELDS = frozenset({"resolved_tool_call_ids"})
+_SHARED_RENDER_STATE_FIELDS = frozenset({"resolved_tool_call_ids", "pre_window_tool_first_open"})
 
 
 @dataclass
@@ -135,7 +135,7 @@ class RenderState:
 
         The daemon deep-copies this state on its event loop once per transcript
         batch to have something to roll back to, so every field it copies is a
-        per-batch cost (#20859). ``resolved_tool_call_ids`` is the one field a
+        per-batch cost (#20859). ``resolved_tool_call_ids`` is a field a
         rollback has no reason to undo: it only ever grows, and an id in it can
         only suppress a duplicate tool_result, never change how a record renders.
         Re-feeding a rolled-back batch puts its calls back in
@@ -145,6 +145,9 @@ class RenderState:
         is what lets the suppression be unconditional -- remembering every id
         for the life of the session -- without the copy growing with the
         session.
+
+        The prior-index tool lookup is also shared: its suppression boundary is
+        fixed, so later entries cannot suppress calls from a speculative batch.
 
         The field list comes from ``fields(self)`` with the explicit share list
         ``_SHARED_RENDER_STATE_FIELDS`` rather than a hand enumeration, so a
