@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -31,6 +32,23 @@ class CallToolWrapperInputError(ValueError):
         self.field_name = field_name
         self.raw_value = raw_value
         super().__init__(f"Invalid JSON in '{field_name}' parameter: {raw_value[:200]}")
+
+
+class CallToolWrapperAmbiguityError(CallToolWrapperInputError):
+    """Raised when both ``arguments`` and ``args`` carry a value.
+
+    Neither spelling outranks the other, so picking one would silently drop the
+    other's payload.
+    """
+
+    def __init__(self, field_name: str = "arguments,args"):
+        self.field_name = field_name
+        self.raw_value = ""
+        ValueError.__init__(
+            self,
+            f"Ambiguous call_tool input in '{field_name}': both 'arguments' and 'args' "
+            "were provided; pass exactly one.",
+        )
 
 
 def _coerce_wrapper_arguments(
@@ -85,9 +103,12 @@ def canonicalize_call_tool_wrapper(
     should use UUIDs. If routing fields are already top-level, malformed string
     arguments are preserved for target validation. Wrapper ``intent`` metadata is
     accepted at top level or beside nested routing fields; target ``arguments.intent``
-    remains untouched.
+    remains untouched. Supplying both ``arguments`` and ``args``, at the top level or
+    inside a nested wrapper payload, raises ``CallToolWrapperAmbiguityError``.
     """
 
+    if arguments is not None and args is not None:
+        raise CallToolWrapperAmbiguityError()
     raw_argument_value = arguments if arguments is not None else args
     raw_argument_field = "arguments" if arguments is not None else "args"
     try:
@@ -144,6 +165,10 @@ def canonicalize_call_tool_wrapper(
     # server/tool values preserve malformed target arguments for downstream validation.
     unwrapped_nested_arguments = False
     if wrapper_route_from_nested and isinstance(canonical_arguments, dict):
+        if all(canonical_arguments.get(field) is not None for field in CALL_TOOL_ARGUMENT_FIELDS):
+            raise CallToolWrapperAmbiguityError(
+                f"{raw_argument_field}.arguments,{raw_argument_field}.args"
+            )
         for field in CALL_TOOL_ARGUMENT_FIELDS:
             if field in canonical_arguments:
                 raw_nested_arguments = canonical_arguments[field]
@@ -151,6 +176,13 @@ def canonicalize_call_tool_wrapper(
                     canonical_arguments = {}
                 elif isinstance(raw_nested_arguments, dict):
                     canonical_arguments = dict(raw_nested_arguments)
+                elif isinstance(raw_nested_arguments, str):
+                    # The same parser as a top-level string, so hook consumers and
+                    # dispatch hold one dict (#23125).
+                    canonical_arguments = _coerce_wrapper_arguments(
+                        raw_nested_arguments,
+                        field_name=f"{raw_argument_field}.{field}",
+                    )
                 else:
                     canonical_arguments = raw_nested_arguments
                 unwrapped_nested_arguments = True
@@ -189,21 +221,10 @@ def canonical_call_tool_input(tool_input: Mapping[str, Any]) -> dict[str, Any]:
     alias is folded in), and non-wrapper keys are kept. Inputs the proxy would
     reject before dispatch are returned as an unchanged copy.
     """
-    raw_arguments = tool_input.get("arguments")
-    raw_args = tool_input.get("args")
-    if not all(
-        value is None or isinstance(value, str | dict) for value in (raw_arguments, raw_args)
-    ):
+    if _non_object_argument_field(tool_input) is not None:
         return dict(tool_input)
     try:
-        wrapper = canonicalize_call_tool_wrapper(
-            server_name=_wrapper_string(tool_input.get("server_name")),
-            tool_name=_wrapper_string(tool_input.get("tool_name")),
-            arguments=raw_arguments,
-            args=raw_args,
-            project_id=_wrapper_string(tool_input.get("project_id")),
-            intent=_wrapper_string(tool_input.get("intent")),
-        )
+        wrapper = _canonicalize_tool_input(tool_input)
     except CallToolWrapperInputError:
         return dict(tool_input)
 
@@ -221,3 +242,55 @@ def canonical_call_tool_input(tool_input: Mapping[str, Any]) -> dict[str, Any]:
         else:
             canonical[field] = value
     return canonical
+
+
+def call_tool_arguments_refusal(tool_input: Mapping[str, Any]) -> dict[str, str] | None:
+    """Return why the proxy will refuse this wrapper's target arguments, or None.
+
+    The result is ``{"field", "code"}`` with code ``ambiguous_alias``,
+    ``invalid_json``, ``non_object_json`` or ``non_object``. Every refused shape
+    stops at canonicalization or ``prepare_arguments`` before a target tool runs;
+    this names the refusal for hook consumers that must not read the raw value.
+    """
+    non_object_field = _non_object_argument_field(tool_input)
+    if non_object_field is not None:
+        return {"field": non_object_field, "code": "non_object"}
+    try:
+        wrapper = _canonicalize_tool_input(tool_input)
+    except CallToolWrapperAmbiguityError as exc:
+        return {"field": exc.field_name, "code": "ambiguous_alias"}
+    except CallToolWrapperInputError as exc:
+        return {"field": exc.field_name, "code": _string_refusal_code(exc.raw_value)}
+    if wrapper.arguments is None or isinstance(wrapper.arguments, dict):
+        return None
+    field = "arguments" if tool_input.get("arguments") is not None else "args"
+    if isinstance(wrapper.arguments, str):
+        return {"field": field, "code": _string_refusal_code(wrapper.arguments)}
+    return {"field": field, "code": "non_object"}
+
+
+def _canonicalize_tool_input(tool_input: Mapping[str, Any]) -> CanonicalCallToolWrapper:
+    return canonicalize_call_tool_wrapper(
+        server_name=_wrapper_string(tool_input.get("server_name")),
+        tool_name=_wrapper_string(tool_input.get("tool_name")),
+        arguments=tool_input.get("arguments"),
+        args=tool_input.get("args"),
+        project_id=_wrapper_string(tool_input.get("project_id")),
+        intent=_wrapper_string(tool_input.get("intent")),
+    )
+
+
+def _non_object_argument_field(tool_input: Mapping[str, Any]) -> str | None:
+    for field in CALL_TOOL_ARGUMENT_FIELDS:
+        value = tool_input.get(field)
+        if value is not None and not isinstance(value, str | dict):
+            return field
+    return None
+
+
+def _string_refusal_code(raw_value: str) -> str:
+    try:
+        json.loads(raw_value)
+    except ValueError:
+        return "invalid_json"
+    return "non_object_json"

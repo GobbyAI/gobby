@@ -15,7 +15,10 @@ from gobby.hooks._normalization_shell import (
     tokenize_shell_command,
 )
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
-from gobby.mcp_proxy._call_tool_wrapper import canonicalize_call_tool_wrapper
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CallToolWrapperInputError,
+    canonicalize_call_tool_wrapper,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -296,22 +299,36 @@ class TestCallToolExtraction:
         assert result["mcp_server"] == "gobby-tasks"
         assert result["mcp_tool"] == "escalate_task"
 
-    def test_nested_arguments_take_precedence_over_args_alias(self) -> None:
-        data: dict[str, Any] = {
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "arguments": {
-                    "server_name": "arguments-server",
-                    "tool_name": "arguments-tool",
-                },
+    @pytest.mark.parametrize(
+        "tool_input",
+        [
+            {
+                "arguments": {"server_name": "arguments-server", "tool_name": "arguments-tool"},
                 "args": {"server_name": "args-server", "tool_name": "args-tool"},
             },
-        }
+            {
+                "arguments": {},
+                "args": {"server_name": "args-server", "tool_name": "args-tool"},
+            },
+        ],
+        ids=["both-routed", "empty-arguments"],
+    )
+    def test_both_argument_aliases_route_nowhere(self, tool_input: dict[str, Any]) -> None:
+        """Both spellings are ambiguous to the proxy, so neither payload routes the event."""
+        data: dict[str, Any] = {"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input}
 
         result = normalize_mcp_fields(data)
 
-        assert result["mcp_server"] == "arguments-server"
-        assert result["mcp_tool"] == "arguments-tool"
+        with pytest.raises(CallToolWrapperInputError):
+            canonicalize_call_tool_wrapper(
+                server_name=None,
+                tool_name=None,
+                arguments=tool_input["arguments"],
+                args=tool_input["args"],
+            )
+        assert result["tool_input"] == tool_input
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "call_tool"
 
     def test_top_level_route_fields_independently_override_nested_route(self) -> None:
         data: dict[str, Any] = {
@@ -334,20 +351,12 @@ class TestCallToolExtraction:
         "tool_input",
         [
             {
-                "arguments": {"server_name": "arguments-server", "tool_name": "arguments-tool"},
-                "args": {"server_name": "args-server", "tool_name": "args-tool"},
-            },
-            {
                 "server_name": "top-server",
                 "arguments": {"server_name": "nested-server", "tool_name": "nested-tool"},
             },
             {
                 "arguments": None,
                 "args": {"server_name": "args-server", "tool_name": "args-tool"},
-            },
-            {
-                "arguments": {},
-                "args": {"server_name": "ignored-server", "tool_name": "ignored-tool"},
             },
         ],
     )
