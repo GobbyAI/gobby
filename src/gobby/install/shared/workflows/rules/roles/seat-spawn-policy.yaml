@@ -76,7 +76,8 @@ rules:
     when: >
       'plan-writer' in [variables.get('_agent_type'), variables.get('_persona_name')]
       and not (
-        tool_input.get('agent') == 'plan-enhancer-taskless'
+        tool_input.get('tool_name') == 'spawn_agent'
+        and tool_input.get('agent') == 'plan-enhancer-taskless'
         and tool_input.get('isolation') == 'none'
         and len(variables.get('claimed_tasks') or {}) == 1
         and not all_tasks_have_label(list(variables.get('claimed_tasks')), 'enhancer-pass-spent')

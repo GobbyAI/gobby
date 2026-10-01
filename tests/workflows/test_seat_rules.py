@@ -399,6 +399,10 @@ async def test_plan_writer_enhancer_pass_is_per_task(harness: _ProxyHarness) -> 
     ):
         refused = await harness.spawn(writer, **arguments)
         assert refused is not None and "plan-writer-enhancer-only" in refused["error"]
+    # The exception is spawn_agent alone: dispatch_batch with the enhancer arguments
+    # would spawn without a receipt.
+    batch = await harness.call(writer, "gobby-agents", "dispatch_batch", dict(ENHANCER_CALL))
+    assert batch is not None and "plan-writer-enhancer-only" in batch["error"]
     assert await harness.spawn(unclaimed, **ENHANCER_CALL) is not None
     assert harness.dispatcher.receipt_calls == 0
 
