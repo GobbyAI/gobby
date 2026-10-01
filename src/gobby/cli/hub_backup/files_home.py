@@ -533,10 +533,15 @@ def archived_bootstrap(
 
     from gobby.config.bootstrap import BootstrapConfigError
 
+    # Parser errors quote the offending line, which can carry a credential.
     try:
-        loaded = yaml.safe_load(archived.decode("utf-8"))
-    except (UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise BootstrapConfigError(f"archived bootstrap.yaml is unreadable: {exc}") from exc
+        text = archived.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BootstrapConfigError("archived bootstrap.yaml is not valid UTF-8") from exc
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise BootstrapConfigError("archived bootstrap.yaml is not valid YAML") from exc
     data = dict(loaded) if isinstance(loaded, dict) else {}
     for key in _DESTINATION_CREDENTIAL_KEYS:
         data.pop(key, None)

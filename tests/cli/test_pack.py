@@ -9,7 +9,7 @@ import os
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import click
 import pytest
@@ -896,6 +896,12 @@ class TestUnpackDestinationOwnership:
                 "pending credential rotation requires local datastore mode",
                 id="remote-archive-during-rotation",
             ),
+            pytest.param(
+                {"database_url": _DESTINATION_URL},
+                {"gobby/bootstrap.yaml": f'database_url: "{_ARCHIVED_URL}\n\tx'.encode()},
+                "archived bootstrap.yaml is not valid YAML",
+                id="malformed-bootstrap-with-credential",
+            ),
         ],
     )
     def test_refuses_before_stopping_services(
@@ -916,6 +922,7 @@ class TestUnpackDestinationOwnership:
         result = runner.invoke(unpack, [str(archive), "--force"])
 
         assert result.exit_code != 0
+        assert "postgresql://" not in result.output
         assert expected in result.output
         services.stop_daemon.assert_not_called()
         services.stop_docker.assert_not_called()
@@ -957,6 +964,28 @@ class TestUnpackDestinationOwnership:
         services.start_docker.assert_not_called()
         assert bootstrap.read_bytes() == before
         assert not (pack_env.home / "notes.txt").exists()
+
+    def test_restarts_docker_before_daemon_when_failing_before_restore(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        runner: CliRunner,
+    ) -> None:
+        restarts = MagicMock()
+        restarts.attach_mock(services.start_docker, "start_docker")
+        restarts.attach_mock(services.start_daemon, "start_daemon")
+        not_a_directory = tmp_path / "not-a-directory"
+        not_a_directory.write_text("blocks the gobby home")
+        monkeypatch.setattr(pack_module, "get_gobby_home", lambda: not_a_directory / "home")
+        archive = _unpack_archive(tmp_path, {"project-gobby/project.json": b"{}"})
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        assert restarts.mock_calls == [call.start_docker(), call.start_daemon()]
+        assert not (tmp_path / ".gobby" / "project.json").exists()
 
     @pytest.mark.parametrize("failure", ["files-restore", "services-restart"])
     def test_reports_stopped_services_after_restore_began(
