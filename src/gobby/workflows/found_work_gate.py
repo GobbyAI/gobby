@@ -30,9 +30,9 @@ from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidenceUnavailable,
     TranscriptValidationRun,
-    TranscriptValidationSegment,
 )
 from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
+from gobby.workflows.validation_cover import green_covers_failure, run_targets
 
 logger = logging.getLogger(__name__)
 
@@ -131,22 +131,6 @@ _USER_DEFERRAL_RE = re.compile(
     r"\bjust\s+file\b|\bfile\s+(?:it|them|these)\s+for\s+later\b",
     re.IGNORECASE,
 )
-_SCOPE_OPTION_NAMES = frozenset({"-k", "-m", "--filter", "--run", "-run"})
-# ``-p`` selects a crate for cargo; for pytest it loads a plugin (``-p no:cacheprovider``).
-_CARGO_SCOPE_OPTION_NAMES = _SCOPE_OPTION_NAMES | {"-p", "--package"}
-_PYTHON_LAUNCHER_RE = re.compile(r"^python(?:\d+(?:\.\d+)?)?$")
-_COVER_SUFFIXES = {
-    ".py",
-    ".pyi",
-    ".rs",
-    ".ts",
-    ".tsx",
-    ".js",
-    ".mjs",
-    ".cjs",
-    ".go",
-}
-_COVER_ROOTS = ("tests/", "src/", "crates/")
 _REPORTED_FAILURE_PATH_RE = re.compile(
     r"^\s*(?:FAILED|ERROR)\s+([^\s:]+)|"
     r"^\s*([^\s:]+\.[A-Za-z0-9]+):\d+(?::\d+)?:\s+(?:error|warning)\b",
@@ -256,20 +240,22 @@ def unresolved_validation_failures(
     *,
     owner_handoff: bool,
     foreign_paths: AbstractSet[str] = frozenset(),
+    project_path: str | None = None,
 ) -> tuple[TranscriptValidationRun, ...]:
-    """Return failures without a later covering green run."""
+    """Return failures without a later, or another tree's, covering green run."""
     ordered = sorted(runs, key=lambda run: run.order)
     unresolved: list[TranscriptValidationRun] = []
-    for index, failed in enumerate(ordered):
+    for failed in ordered:
         if failed.outcome != "failure":
             continue
-        later_greens = [
+        greens = [
             run
-            for run in ordered[index + 1 :]
+            for run in ordered
             if run.outcome == "success" and set(run.categories) & set(failed.categories)
         ]
-        if any(_run_covers(green, failed) for green in later_greens):
+        if any(green_covers_failure(green, failed, project_path) for green in greens):
             continue
+        later_greens = [run for run in greens if run.order > failed.order]
         if owner_handoff and _verified_foreign_clearance(
             failed,
             later_greens,
@@ -624,6 +610,7 @@ class FoundWorkStopAnalyzer:
             evidence.validation_runs,
             owner_handoff=owner_handoff,
             foreign_paths=foreign_paths,
+            project_path=project_path,
         )
         remaining: list[str] = []
         for failed in unresolved:
@@ -798,43 +785,6 @@ def _analysis_cache_key(
     ).hexdigest()
 
 
-def _run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
-    """Return whether every red validation segment sits inside a green segment.
-
-    Segments compare one to one, never as a union across the run: a lint
-    segment's paths cannot cover a test segment, and a sibling segment's
-    selectors cannot narrow it.
-    """
-    greens = _run_segments(success)
-    return all(
-        any(_segment_covers(green, red) for green in greens) for red in _run_segments(failure)
-    )
-
-
-def _segment_covers(
-    success: TranscriptValidationSegment,
-    failure: TranscriptValidationSegment,
-) -> bool:
-    """Same category, no extra selectors (``-k``, ``-m``, ...), and containing paths."""
-    if not set(success.categories) & set(failure.categories):
-        return False
-    success_paths, success_selectors = _split_targets(_command_targets(success.command))
-    failure_paths, failure_selectors = _split_targets(_command_targets(failure.command))
-    if not success_selectors <= failure_selectors:
-        return False
-    if not success_paths:
-        return True
-    if not failure_paths:
-        return False
-    return all(any(target_covers(green, red) for green in success_paths) for red in failure_paths)
-
-
-def _split_targets(targets: Sequence[str]) -> tuple[tuple[str, ...], frozenset[str]]:
-    paths = tuple(target for target in targets if not target.startswith("-"))
-    selectors = frozenset(target for target in targets if target.startswith("-"))
-    return paths, selectors
-
-
 def _verified_foreign_clearance(
     failure: TranscriptValidationRun,
     later_greens: Sequence[TranscriptValidationRun],
@@ -857,95 +807,20 @@ def _reported_failure_paths(run: TranscriptValidationRun) -> set[str]:
             paths.add(raw.removeprefix("./").split("::", 1)[0])
     if paths:
         return paths
-    return {target for target in _run_targets(run) if Path(target).suffix}
+    return {target for target in run_targets(run) if Path(target).suffix}
 
 
 def _green_scope_avoids_foreign_paths(
     run: TranscriptValidationRun,
     foreign_paths: AbstractSet[str],
 ) -> bool:
-    targets = tuple(target for target in _run_targets(run) if not target.startswith("-"))
+    targets = tuple(target for target in run_targets(run) if not target.startswith("-"))
     if not targets:
         return False
     return all(
         not target_covers(target, foreign_path) and not target_covers(foreign_path, target)
         for target in targets
         for foreign_path in foreign_paths
-    )
-
-
-def _run_segments(run: TranscriptValidationRun) -> tuple[TranscriptValidationSegment, ...]:
-    """The run's validation segments; the whole command when it was built unclassified."""
-    return run.validation_segments or (
-        TranscriptValidationSegment(command=run.command, categories=run.categories),
-    )
-
-
-def _run_targets(run: TranscriptValidationRun) -> tuple[str, ...]:
-    """Cover targets across every validation segment, for the foreign-path checks."""
-    return tuple(
-        dict.fromkeys(
-            target for segment in _run_segments(run) for target in _command_targets(segment.command)
-        )
-    )
-
-
-def _command_targets(command: str) -> tuple[str, ...]:
-    try:
-        tokens = _drop_python_launcher(shlex.split(command))
-    except ValueError:
-        return ()
-    program = next((token for token in tokens if "=" not in token), "")
-    scope_options = _CARGO_SCOPE_OPTION_NAMES if program == "cargo" else _SCOPE_OPTION_NAMES
-    targets: list[str] = []
-    for index, token in enumerate(tokens):
-        if token in scope_options and index + 1 < len(tokens):
-            value = tokens[index + 1]
-            if "/" in value or Path(value).suffix:
-                normalized_value = value.removeprefix("./").rstrip("/")
-                if _is_cover_target(normalized_value):
-                    targets.append(normalized_value)
-                continue
-            targets.append(f"{token}:{value}")
-            continue
-        if token.startswith("-") or "=" in token or token in {"&&", "||", ";"}:
-            continue
-        normalized = token.removeprefix("./").rstrip("/")
-        if _is_cover_target(normalized):
-            targets.append(normalized)
-    return tuple(dict.fromkeys(targets))
-
-
-def _drop_python_launcher(tokens: list[str]) -> list[str]:
-    """Drop ``python -m <module>`` launcher triples; that ``-m`` is no marker selector."""
-    kept: list[str] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if (
-            _PYTHON_LAUNCHER_RE.match(token)
-            and index + 2 < len(tokens)
-            and tokens[index + 1] == "-m"
-        ):
-            index += 3
-            continue
-        kept.append(token)
-        index += 1
-    return kept
-
-
-def _is_cover_target(token: str) -> bool:
-    """Keep source/test paths; drop log redirects and mkdir/cd directories."""
-    path = token.split("::", 1)[0]
-    suffix = Path(path).suffix.lower()
-    if suffix in _COVER_SUFFIXES:
-        return True
-    normalized = path.replace("\\", "/")
-    return any(
-        normalized == root.rstrip("/")
-        or normalized.startswith(root)
-        or f"/{root}" in f"/{normalized}/"
-        for root in _COVER_ROOTS
     )
 
 
