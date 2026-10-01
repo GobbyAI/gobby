@@ -28,7 +28,6 @@ HUB_ONLY_PERIODIC_TASKS = frozenset(
         "metrics-archive",
         "model-metadata-refresh",
         "provider-capability-refresh",
-        "generation-endpoint-health",
         "span-cleanup",
         "unmodeled-observation-cleanup",
         "loop-progress-cleanup",
@@ -213,9 +212,7 @@ def start_periodic_tasks(
 
     runner._generation_endpoint_health_task = None
     generation_endpoint_health = getattr(services, "generation_endpoint_health", None)
-    if generation_endpoint_health is not None and not hub_only_skipped(
-        "generation-endpoint-health"
-    ):
+    if generation_endpoint_health is not None:
         run = getattr(generation_endpoint_health, "run", None)
         refresh_loop = run(lambda: runner._shutdown_requested) if callable(run) else None
         if inspect.iscoroutine(refresh_loop):

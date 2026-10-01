@@ -24,7 +24,6 @@ HUB_ONLY = frozenset(
         "metrics-archive",
         "model-metadata-refresh",
         "provider-capability-refresh",
-        "generation-endpoint-health",
         "span-cleanup",
         "unmodeled-observation-cleanup",
         "loop-progress-cleanup",
@@ -46,6 +45,7 @@ MACHINE_LOCAL = frozenset(
         "bin-freshness",
         "expired-isolation-cleanup",
         "tmux-window-repair",
+        "generation-endpoint-health",
     }
 )
 
@@ -114,6 +114,8 @@ async def test_node_mode_skips_hub_only_periodic_tasks(
     )
     assert runner._metric_snapshot_task is None
     assert runner._approval_timeout_task is None
+    # The endpoint probe is this machine's in-memory diagnostic; a node keeps it.
+    assert runner._generation_endpoint_health_task is not None
 
 
 @pytest.mark.asyncio
