@@ -388,6 +388,7 @@ Consumers unchanged:
 - `tests/test_runner_lifecycle.py` — no-edit-reason: same.
 - `tests/test_runner_pid_file.py` — no-edit-reason: same.
 - `tests/e2e/test_autonomous_mode.py` — no-edit-reason: uses `daemon_instance` with `tls` defaulting to off; URLs and behavior unchanged.
+- `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: types `DaemonInstance` and uses `daemon_instance` with `tls` defaulting to off; URLs and behavior unchanged.
 - `tests/e2e/test_daemon_auth.py` — no-edit-reason: same.
 - `tests/e2e/test_e2e_smoke.py` — no-edit-reason: same.
 - `tests/e2e/test_external_terminal_attach.py` — no-edit-reason: same.
