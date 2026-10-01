@@ -576,6 +576,16 @@ Verification planned: `cargo test -p gobby-daemon --test http_contracts`, then
 - 2026-10-01: Renewed consensus required. The index drift repair leaves the M1 source
   hash stale, so M1 is withdrawn (memory `f5577ae0`). Its bytes stay in Git history.
   The Adversary checks the repair and derives a fresh M1.
+- 2026-10-01: Renewed consensus. The Adversary (gobby#14579) independently checked
+  `5032400525` against the landed Rust replay harness, indexed corpus case, bootstrap
+  consumers, and agent-route fixture. The index drift and P4-10 carryover are resolved.
+  Front-door 4.2 names the approved API keys/nodes slice's 4.2 (`7f49b4dc61`) as its
+  execution authority and is not expanded independently. No blocking finding remains.
+  All 99 acceptance items are unchanged: 81 across thirteen front-door leaves and 18
+  across three corpus leaves. Corpus 3.3's criteria and labels remain byte-identical to
+  #23248 (per-case backend state), and the canonical M1 routing and dependency decisions
+  from `4cc206f4d9` are preserved. The superseded M1s remain in Git history. The
+  Adversary derives and applies fresh M1 to both committed narratives.
 
 ## V2: Verification
 `kind: verification`
