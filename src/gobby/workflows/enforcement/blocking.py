@@ -56,6 +56,7 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
             "remove_dependency",
             "remove_label",
             "reopen_task",
+            "repair_closed_candidate",
             "restore_tasks",
             "submit_close_review",
             "unlink_commit",
