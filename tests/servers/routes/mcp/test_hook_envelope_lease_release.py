@@ -150,8 +150,11 @@ def test_claim_release_reports_executor_queue_apart_from_work(
     with (
         TestClient(server.app) as client,
         patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
-        patch.object(phase_timing, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
-        patch.object(hooks_route.logger, "warning") as warning,
+        patch.object(
+            hooks_route,
+            "observe_hook_phase_timings",
+            wraps=phase_timing.observe_hook_phase_timings,
+        ) as observe_timings,
     ):
         adapter = MagicMock()
         adapter.handle_native.return_value = {"continue": True}
@@ -165,12 +168,7 @@ def test_claim_release_reports_executor_queue_apart_from_work(
     assert response.status_code == 200
     assert read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir) is not None
     assert renewal_tasks[0].done()
-    (slow,) = [
-        entry
-        for entry in warning.call_args_list
-        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
-    ]
-    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
+    breakdown = observe_timings.call_args.args[0].breakdown()
     # Two envelope_claim hops (claim, owner token) accumulate into one key.
     for hop in ("envelope_claim", "persistence_receipt", "persistence_release_claim"):
         assert breakdown[f"{hop}_work"] > 0
@@ -208,8 +206,11 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
         with (
             patch.object(hooks_route, "envelope_terminal_response", slow_terminal_response),
             patch.object(phase_timing, "time", fake_time),
-            patch.object(phase_timing, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
-            patch.object(hooks_route.logger, "warning") as warning,
+            patch.object(
+                hooks_route,
+                "observe_hook_phase_timings",
+                wraps=phase_timing.observe_hook_phase_timings,
+            ) as observe_timings,
         ):
             duplicate = client.post(
                 "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
@@ -217,12 +218,7 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
 
     assert first.status_code == 200
     assert duplicate.status_code == 409
-    (slow,) = [
-        entry
-        for entry in warning.call_args_list
-        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
-    ]
-    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
+    breakdown = observe_timings.call_args.args[0].breakdown()
     assert breakdown["envelope_claim_work"] >= lookup_seconds
     assert breakdown["envelope_claim"] >= (
         breakdown["envelope_claim_queue"] + breakdown["envelope_claim_work"]

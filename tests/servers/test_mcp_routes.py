@@ -25,6 +25,7 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 import asyncio
 import concurrent.futures
 import json
+import logging
 import threading
 import time
 from collections.abc import Iterator, Mapping
@@ -3474,9 +3475,10 @@ class TestHooksEndpoints:
         assert response.json()["continue"] is True
         mock_handle_native.assert_called_once()
 
-    def test_execute_hook_logs_dominant_phase_when_slow(
+    def test_execute_hook_exports_every_phase_and_its_sub_phases(
         self, session_storage: SessionManager
     ) -> None:
+        from gobby.hooks import phase_timing
         from gobby.hooks.phase_timing import HOOK_PHASES
 
         server = create_http_server(
@@ -3492,9 +3494,11 @@ class TestHooksEndpoints:
                 "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
                 return_value={"continue": True},
             ),
-            patch("gobby.hooks.phase_timing.SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+            patch(
+                "gobby.servers.routes.mcp.hooks.observe_hook_phase_timings",
+                wraps=phase_timing.observe_hook_phase_timings,
+            ) as observe_timings,
             patch("gobby.hooks.phase_timing.observe_histogram") as observe,
-            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
         ):
             response = client.post(
                 "/api/hooks/execute",
@@ -3506,19 +3510,12 @@ class TestHooksEndpoints:
         assert {entry.kwargs["attributes"]["phase"] for entry in observe.call_args_list} == set(
             HOOK_PHASES
         )
-        slow_warnings = [
-            entry
-            for entry in warning.call_args_list
-            if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
-        ]
-        assert len(slow_warnings) == 1
-        extra = slow_warnings[0].kwargs["extra"]
-        assert extra["dominant_phase"] in extra["hook_phase_durations_seconds"]
+        timings = observe_timings.call_args.args[0]
         # The mock hook manager evaluates no rules, so there is no session or rule sub-phase;
         # the route's own hops still split executor queue from work, and the adapter worker
         # and loop resume are attributed apart from the `response` residual (#23063).
-        assert extra["session_id"] is None
-        assert set(extra["rule_evaluation_breakdown_seconds"]) == {
+        assert timings.session_id is None
+        assert set(timings.breakdown()) == {
             "request_body",
             "adapter_worker",
             "adapter_worker_cpu",
@@ -3530,88 +3527,53 @@ class TestHooksEndpoints:
             "persistence_receipt_queue",
             "persistence_receipt_work",
         }
-        assert extra["dominant_phase_seconds"] >= 0
 
-    def test_execute_hook_samples_repeated_slow_phase_warnings(
+    def test_execute_hook_logs_no_slow_hook_line_at_any_level(
         self, session_storage: SessionManager
     ) -> None:
-        """#22866: one full slow-hook WARNING per dominant phase per window."""
+        """#22866: hook timing goes to the histogram only; no slow-hook line, sampled or summary."""
+        from gobby.servers.routes.mcp import hooks as hooks_route
+
         server = create_http_server(
             port=60887,
             test_mode=True,
             session_manager=session_storage,
         )
         server.app.state.hook_manager = _mock_hook_manager()
+        records: list[logging.LogRecord] = []
 
-        with (
-            TestClient(server.app) as client,
-            patch(
-                "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
-                return_value={"continue": True},
-            ),
-            patch(
-                "gobby.servers.routes.mcp.hooks.observe_hook_phase_timings",
-                return_value=("admission_wait", 6.0, {"admission_wait": 6.0}),
-            ),
-            patch("gobby.hooks.phase_timing.SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
-            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
-        ):
-            responses = [
-                client.post(
-                    "/api/hooks/execute",
-                    json=_hook_envelope(hook_type="session-start", source="claude"),
-                )
-                for _ in range(3)
-            ]
+        class _Capture(logging.Handler):
+            def emit(self, record: logging.LogRecord) -> None:
+                records.append(record)
 
-        assert [response.status_code for response in responses] == [200] * 3
-        messages = [entry.args[0] for entry in warning.call_args_list if entry.args]
-        assert messages.count("Slow hook execution dominated by %s") == 1
-        assert not [message for message in messages if message.startswith("Slow hook summary")]
-
-    def test_daemon_shutdown_drains_the_open_slow_hook_summary(
-        self, session_storage: SessionManager
-    ) -> None:
-        """#22866: the last window's summary is logged at shutdown, not lost with the process."""
-        server = create_http_server(
-            port=60887,
-            test_mode=True,
-            session_manager=session_storage,
-        )
-        server.app.state.hook_manager = _mock_hook_manager()
-
-        # The warning patch encloses the app lifespan so the shutdown emission is captured.
-        with (
-            patch("gobby.servers.routes.mcp.hooks.logger.warning") as warning,
-            patch(
-                "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
-                return_value={"continue": True},
-            ),
-            patch(
-                "gobby.servers.routes.mcp.hooks.observe_hook_phase_timings",
-                return_value=("admission_wait", 6.0, {"admission_wait": 6.0}),
-            ),
-            patch("gobby.hooks.phase_timing.SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
-        ):
-            with TestClient(server.app) as client:
-                for _ in range(3):
+        capture = _Capture(level=logging.DEBUG)
+        route_logger = hooks_route.logger
+        previous_level = route_logger.level
+        route_logger.setLevel(logging.DEBUG)
+        route_logger.addHandler(capture)
+        try:
+            assert not route_logger.disabled
+            # The capture encloses the whole app lifespan, so a shutdown drain would show too.
+            with (
+                patch(
+                    "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
+                    return_value={"continue": True},
+                ),
+                TestClient(server.app) as client,
+            ):
+                responses = [
                     client.post(
                         "/api/hooks/execute",
                         json=_hook_envelope(hook_type="session-start", source="claude"),
                     )
-                assert not [
-                    entry
-                    for entry in warning.call_args_list
-                    if entry.args and entry.args[0].startswith("Slow hook summary")
+                    for _ in range(3)
                 ]
+        finally:
+            route_logger.removeHandler(capture)
+            route_logger.setLevel(previous_level)
 
-        (summary,) = [
-            entry
-            for entry in warning.call_args_list
-            if entry.args and entry.args[0].startswith("Slow hook summary")
-        ]
-        count, suppressed, _max_seconds, _window, by_phase = summary.args[1:]
-        assert (count, suppressed, by_phase) == (3, 2, {"admission_wait": 3})
+        assert [response.status_code for response in responses] == [200] * 3
+        assert not [record for record in records if "Slow hook" in record.getMessage()]
 
     def test_execute_hook_claude_envelope_source(self, session_storage: SessionManager) -> None:
         """Envelope-shaped Claude requests should normalize to the flat adapter payload."""
