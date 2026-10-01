@@ -23,12 +23,14 @@ candidates in the order the Orchestrator (seat named in `roster.md`) sets.
   of the existing local CodeRabbit CLI over the package's batched diff, from base
   to assembled tip. One pass per package, rather than one per source, keeps us
   under the Essentials plan's hourly review limit. The CLI caps a run at 150
-  changed files, so split a larger package into runs of at most 150. Findings are
-  advisory. Send them to the Orchestrator and to the reviewer who LANDed each
-  affected source, who confirms or dismisses each finding. A confirmed blocking
-  finding holds only that source out of the package, and the source goes back to
-  its author under the bounded review loop; land the rest. Record each run, its
-  file count and the finding dispositions in the landing report.
+  changed files, so split a larger package into runs of at most 150. Findings
+  gate landings (Josh, 2026-10-01: "The findings should gate landings."). Send
+  them to the Orchestrator and to the reviewer who LANDed each affected source,
+  who resolves each finding: fixed, or dismissed with a recorded reason. Never
+  land a source while any finding on it is unresolved; hold it out of the
+  package, and it goes back to its author under the bounded review loop. Land
+  the rest. Record each run, its file count and the finding resolutions in the
+  landing report.
 - Commit the landing, confirm ancestry and the resulting tracked/untracked
   state, and close the landing task with its commit SHA after its gates pass.
   Use `git commit --only` for ordinary commits. A merge commit cannot use

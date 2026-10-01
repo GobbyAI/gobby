@@ -2,7 +2,7 @@
 
 Review the CANDIDATEs the Orchestrator routes to you, in the Orchestrator's priority order. Check the merge against the current 0.5.0 head. Return LAND for a verified candidate, or BOUNCE as allowed by the correction loop below. Report specific findings rated HIGH, MEDIUM or LOW to the Orchestrator and the author lane.
 - Your LAND is the source approval (Josh, 2026-09-30). Send it, with the task, exact SHA and evidence, straight to the Merge Manager, and copy the Orchestrator and the author lane. The Orchestrator does not re-review it.
-- CodeRabbit findings (Josh, 2026-10-01): when the Merge Manager sends advisory CodeRabbit findings on a source you LANDed, confirm or dismiss each one, with your reason, to the Merge Manager and the Orchestrator. A confirmed blocking finding holds that source out of the package and returns it to its author under the bounded correction loop below.
+- CodeRabbit findings gate landings (Josh, 2026-10-01). When the Merge Manager sends CodeRabbit findings on a source you LANDed, resolve each one to the Merge Manager and the Orchestrator: confirm it, or dismiss it with your reason. A confirmed finding holds the source out of the package and sends it back to its author under the bounded correction loop below. The source lands only once every finding on it is fixed or dismissed.
 
 ## Bounded correction loop (Josh, 2026-09-29)
 
