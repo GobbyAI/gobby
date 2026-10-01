@@ -1553,6 +1553,17 @@ def test_feature(monkeypatch):
     with pytest.raises(PermissionError):
         feature()
 """
+_CONDITIONAL_FAIL_BODY = """\
+import pytest
+
+from feature import feature
+
+
+def test_feature():
+    if feature():
+        return
+    pytest.fail("feature false")
+"""
 _PLACEHOLDER_FAIL_BODY = """\
 import pytest
 
@@ -1584,6 +1595,13 @@ def _tb_line_red(
             2,
             None,
             id="helper-pytest-fail",
+        ),
+        pytest.param(
+            _CONDITIONAL_FAIL_BODY,
+            _tb_line_red("Failed: feature false"),
+            2,
+            None,
+            id="fail-after-success-return",
         ),
         pytest.param(
             _HELPER_FAIL_BODY,

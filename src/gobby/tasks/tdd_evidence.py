@@ -307,13 +307,16 @@ def _find_red_run(
 def _has_pytest_fail_placeholder(
     test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
 ) -> bool:
-    """A top-level pytest.fail() fails the test whatever the code under test does."""
+    """A body that is only pytest.fail() fails whatever the code under test does."""
     node = _original_test_node(test, evidence, run)
-    return node is not None and any(
-        isinstance(statement, ast.Expr)
-        and isinstance(statement.value, ast.Call)
-        and ast.unparse(statement.value.func) in {"pytest.fail", "fail"}
-        for statement in node.body
+    if node is None:
+        return False
+    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
+    return (
+        len(body) == 1
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Call)
+        and ast.unparse(body[0].value.func) in {"pytest.fail", "fail"}
     )
 
 
