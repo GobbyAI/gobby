@@ -280,15 +280,17 @@ places:
 
 Periodic tasks, by task name, for Decision 5.
 
-Hub-only: skipped in `node` mode.
+Hub-only: skipped in `node` mode, 18 periodic tasks.
 - `metrics-cleanup`
 - `test-schema-sweep`
 - `tool-result-cleanup`
 - `workflow-audit-cleanup`
 - `metrics-archive`
 - `model-metadata-refresh`
-- `provider-capability-refresh`
-- `generation-endpoint-health`
+- `provider-capability-refresh`: its snapshot is shared per provider. The
+  agy, grok, and qwen collectors probe local CLIs, so the hub's CLI
+  versions define the fleet catalog. That gap predates this plan and stays
+  open for node capability design.
 - `span-cleanup`
 - `unmodeled-observation-cleanup`
 - `loop-progress-cleanup`
@@ -312,6 +314,9 @@ Machine-local: started in every mode.
 - `expired-isolation-cleanup`: reaps this machine's worktrees and clones after
   local Git evidence rechecks.
 - `tmux-window-repair`: the local tmux server.
+- `generation-endpoint-health`: `GenerationEndpointHealthCoordinator` is
+  in-memory, takes no database, and feeds only this machine's
+  `/api/status`.
 
 Hub-only startup phases in `init_subsystems`, skipped in `node` mode:
 - `code_index_bm25` (`_repair_code_index_bm25`): it repairs shared PostgreSQL
@@ -485,6 +490,13 @@ deferral:
 - 2026-09-29: Consensus with the Adversary (gobby#14579) at 3e29899. RM-01 to
   RM-04, the Granularity decision, and the scope boundary are resolved, with no
   open design objection. The Adversary derives and applies M1 from these bytes.
+- 2026-10-01: R6's review found `generation-endpoint-health` machine-local:
+  its coordinator is in-memory, takes no database, and feeds only this
+  machine's `/api/status`. On the PD's ruling (gobby#14972) it moves to the
+  machine-local list, leaving 18 hub-only periodic tasks, and L7's
+  correction 32ad98fb04 runs it in every mode. `provider-capability-refresh`
+  stays hub-only, with a note on the local CLI probes. 2.2.1 and M1 are
+  unchanged.
 
 ## V2: Verification
 `kind: verification`
