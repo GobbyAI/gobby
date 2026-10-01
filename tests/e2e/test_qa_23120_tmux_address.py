@@ -469,6 +469,7 @@ def test_adopted_tmux_pane_keeps_its_workspace_address(
         "close_workspace": closed,
     }
     evidence.json("tmux-metadata-after.json", after)
+    assert closed.get("success") is True, closed
     assert after["tmux"] == before["tmux"], {"before": before["tmux"], "after": after["tmux"]}
     assert after["rows"]["a"].get("state") == "live", after["rows"]["a"]
     assert after["rows"]["b"].get("state") == "live", after["rows"]["b"]
