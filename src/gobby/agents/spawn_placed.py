@@ -40,7 +40,7 @@ async def _placed_runtime_spawn(
     request: SpawnRequest,
     plan: ProviderSpawnPlan,
     *,
-    binder: Callable[[str], Awaitable[None]],
+    binder: Callable[[str], Awaitable[None]] | None,
     manager: TerminalManager,
     runtime: TerminalRuntime,
     backend: str,
@@ -82,7 +82,7 @@ async def _placed_runtime_spawn(
 
 
 class _PlacedAttempt:
-    """The ownership boundary of one claimed placed attempt."""
+    """The ownership boundary of one placed attempt or existing-terminal retry."""
 
     def __init__(self, request: SpawnRequest, plan: ProviderSpawnPlan, attempt: InDoubtAttempt):
         self.request = request
@@ -95,7 +95,7 @@ class _PlacedAttempt:
 
     async def run(
         self,
-        binder: Callable[[str], Awaitable[None]],
+        binder: Callable[[str], Awaitable[None]] | None,
         command: list[str],
         existing: Terminal | None,
     ) -> SpawnResult:
@@ -182,7 +182,7 @@ class _PlacedAttempt:
 
     async def _run(
         self,
-        binder: Callable[[str], Awaitable[None]],
+        binder: Callable[[str], Awaitable[None]] | None,
         command: list[str],
         existing: Terminal | None,
     ) -> SpawnResult:
@@ -226,15 +226,16 @@ class _PlacedAttempt:
             await self._settle_inline(asyncio.to_thread(manager.fail_pending, terminal_id))
             return self._cancelled()
 
-        try:
-            await asyncio.shield(self._start("bind", binder(terminal_id)))
-        except asyncio.CancelledError:
-            return self._cancelled()
-        except Exception as exc:
-            logger.warning("Placement bind failed for terminal %s", terminal_id, exc_info=True)
-            code, detail = _deferred_failure_code(backend, exc)
-            await self._settle_inline(self._fail_unprepared(exc, _settle_native_spawn_failure))
-            return self._failed(code, detail=detail)
+        if binder is not None:
+            try:
+                await asyncio.shield(self._start("bind", binder(terminal_id)))
+            except asyncio.CancelledError:
+                return self._cancelled()
+            except Exception as exc:
+                logger.warning("Placement bind failed for terminal %s", terminal_id, exc_info=True)
+                code, detail = _deferred_failure_code(backend, exc)
+                await self._settle_inline(self._fail_unprepared(exc, _settle_native_spawn_failure))
+                return self._failed(code, detail=detail)
 
         spawn_request = TerminalSpawnRequest(
             terminal_id=UUID(terminal_id),
