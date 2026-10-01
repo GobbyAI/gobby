@@ -90,7 +90,13 @@ Per platform:
    - The DB password cannot live in the DB's own `secrets` table, because it is needed to open the DB.
    - bootstrap.yaml keeps host, port, user and dbname only.
 3. The installer passes the password to Compose only for **initdb**. The image's `POSTGRES_*` variables "only have an effect if you start the container with a data directory that is empty". Later `up` runs omit it (S7). Rotation already happens through SQL.
-4. Collapse to one unseal path. `gdaemon` (Rust) and Python both unseal; `GOBBY_DATABASE_URL` (S8) carries the DSN only in a child env, never in a file, which is acceptable under the goal. gcode's direct bootstrap read (S6) moves onto the grant path.
+4. Use one OS-store reader. Only `gdaemon` reads the KEK from the OS store, and the macOS item ACL trusts only `gdaemon`.
+   - Python cannot be the reader. Its interpreter is not Gobby-signed, so an ACL naming it would trust every Python script.
+   - An ACL that trusts `/usr/bin/security` trusts any caller of that tool, so it is excluded too.
+   - The Python runner already spawns `gdaemon` (`runner_front_door.py::FrontDoorChild`). It receives the KEK over the inherited `GOBBY_PARENT_FD` channel, never through env or a file, and unseals the DB password in memory.
+   - One-shot Python CLI commands that need the KEK while no daemon is running (`gobby datastores`, `unpack`) get it from a `gdaemon` subcommand over a stdout pipe.
+   - Linux and Windows backends have no code-signature ACL. The same single-reader shape is kept anyway, for one code path.
+   - `GOBBY_DATABASE_URL` (S8) carries the DSN only in a child env, never in a file, which is acceptable under the goal. gcode's direct bootstrap read (S6) moves onto the grant path.
 
 Pros:
 
@@ -104,6 +110,9 @@ Cons:
 - Unattended start depends on a platform backend: macOS before login, Linux below systemd 256 without TPM or host key, and container-hosted hubs.
 - Recovery when the OS store is lost (new machine, reset keychain) needs a re-key path. See section 6.
 - A process running as the same OS user can still ask the store. On macOS the code-signature ACL narrows that. Linux and Windows backends do not.
+- **macOS: ad-hoc signing breaks the ACL on every rebuild.** `promote_workspace_binary_set` (`src/gobby/install/bin_set_coherence.py`) ad-hoc signs each staged binary. An ad-hoc signature's designated requirement is its cdhash, so a trusted-app or partition-list entry bound to `gdaemon` stops matching after every `gdaemon` rebuild. After each crate release the result is a keychain prompt, or a failed unattended start. There are two fixes:
+  - Sign with a stable **Developer ID** identity, so the designated requirement survives rebuilds.
+  - **Re-ACL at install/promote time**, after each promotion. That step itself needs the keychain password, which makes promotion interactive.
 
 **Grant cache (S5).** Under the goal, on-disk grants must stop carrying secret fields. The recommendation is to cache only non-secret grant metadata and have gcode fetch `Direct` secrets per process through the existing loopback handshake. That costs one loopback handshake per gcode process. The alternative is HTTP-only gcode (D4), which also serves nodes.
 
@@ -194,7 +203,7 @@ Before the transaction commits, the front door still rejects any key whose row i
    - Add `gobby auth reset` (section 6) and the F2 first-run on the hub.
 4. 4.6 / #23269: the refusal stays. Nodes are "unsupported until D2".
 5. Promote **D2 relay** (without channel) to a prerequisite of any node support. State which of D3, D4 and D5 gate "nodes supported".
-6. New hub-side slice (not in P4 today), "DB credential at rest": KEK in the OS store, sealed DB/datastore passwords in bootstrap, init-only Compose password, gcode S6 removal, secret-free grant cache. It touches:
+6. New hub-side slice (not in P4 today), "DB credential at rest": KEK in the OS store read only by `gdaemon` and handed to Python over `GOBBY_PARENT_FD`, sealed DB/datastore passwords in bootstrap, init-only Compose password, gcode S6 removal, secret-free grant cache, and S10 `grant_signing_secret` sealed under the same KEK in `deployment_runtime`. It touches:
    - `config/bootstrap.py`
    - `cli/installers/postgres.py`
    - `compose_env.py`
@@ -203,22 +212,27 @@ Before the transaction commits, the front door still rejects any key whose row i
    - `crates/gcore/src/ai/effective_config.rs`
    - `crates/gcore/src/grant/cache.rs`
    - `storage/secrets.py`
+   - `daemon_lease.py`
+   - `runner_front_door.py`
 7. `docs/guides/shared-stack.md` client setup: rewrite. Remove the DSN, KEK and token copies.
 8. Run-modes: a `(remote, false)` node bootstrap has no `database_url`. Update the parser contract in both Python and Rust.
 
-## 9. Found issues (not fixed here; investigation only)
+## 9. Found issues and PD dispositions
 
-These are routed to the PD for disposition:
+The PD disposed each finding on 2026-10-01:
 
-- S6: gcode reads the daemon's full bootstrap DSN (`effective_config.rs:212-222`). This contradicts `.gobby/plans/completed/daemon-native-runtime-boundary.md:281`.
-- The Rust `read_hub_database_bootstrap_file` skips the 0600 mode check (`bootstrap.rs:194-209`).
-- S10: `grant_signing_secret` is stored plaintext in `deployment_runtime`.
-- The top-level `~/.gobby/grants/` directory is 0755 (subdirectories 0700, files 0600).
-- The stray `falkordb_password` key in this machine's bootstrap.yaml is unread by any parser.
+- **(a) S6:** gcode reads the daemon's full bootstrap DSN (`effective_config.rs:212-222`). This contradicts `.gobby/plans/completed/daemon-native-runtime-boundary.md:281`. Belongs to the "DB credential at rest" slice (section 8.6) and depends on choices 1 and 8.
+- **(c) S10:** `grant_signing_secret` is stored plaintext in `deployment_runtime`. Belongs to the same slice and depends on choices 1 and 8.
+- **(b) The Rust `read_hub_database_bootstrap_file` skips the 0600 mode check** (`bootstrap.rs:194-209`), and **(d) the top-level `~/.gobby/grants/` directory is 0755** (subdirectories 0700, files 0600). Both are independent and small. One fix task covers both, created after #23128 closes. Its gcore change ships in the next coherent-set release.
+- **(e) The stray `falkordb_password` key** in this machine's bootstrap.yaml is unread by any parser. This is choice 9.
 
 ## 10. Choices for Josh
 
-1. **Where the hub DB password rests.** Recommended: KEK in the OS store, DB password sealed in bootstrap (section 3). Alternatives: Linux-only peer (H1, unverified); a cert key file (H2).
+1. **Where the hub DB password rests.** Recommended: KEK in the OS store read only by `gdaemon`, with the DB password sealed in bootstrap (section 3). Alternatives: Linux-only peer (H1, unverified); a cert key file (H2).
+   - On macOS this choice also needs a signing decision, because ad-hoc signing breaks the keychain ACL on every `gdaemon` rebuild.
+   - Option A: a Developer ID signing identity. It needs an Apple Developer account, and the release pipeline must sign with it.
+   - Option B: re-ACL at each install/promote. Every promotion then needs the keychain password.
+   - Neither option means a prompt or an unattended-start failure after each crate release.
 2. **No protected backend available** (old Linux, no TPM, containerized hub): refuse to start, or allow an explicit opt-in 0600 file with a warning?
 3. **Node API key at rest:** OS store with a 0600-file fallback (recommended), OS store only, or 0600 file only?
 4. **Node support timing:** accept "no nodes until D2 relay" (recommended), with D2's channel following later?
@@ -226,5 +240,6 @@ These are routed to the PD for disposition:
 6. **Reset authorization:** local-only (recommended), or also an existing admin key remotely?
 7. **P4's email/password bootstrap route:** drop in favour of enrollment codes (recommended), or keep as an alternative?
 8. **Grant cache:** drop secrets from on-disk grants and pay one loopback handshake per gcode process (recommended), or move gcode to HTTP-only DB access (D4-style) for hubs too?
+9. **Stray `falkordb_password` key** in the live `~/.gobby/bootstrap.yaml`: approve removing it. Nothing reads its value. The edit changes live state, so either Josh runs it or Josh approves an agent running it.
 
 PD review of this packet is required before the Assistant presents the choices.
