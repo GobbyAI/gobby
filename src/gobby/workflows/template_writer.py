@@ -83,7 +83,8 @@ def write_agent_template(
 ) -> Path:
     """Write an agent definition to a YAML file.
 
-    Agents are written as top-level documents (not nested under a key).
+    Agents are written as top-level documents (not nested under a key), with
+    the ``type: agent`` that ``sync_imported_definition`` requires.
 
     Args:
         name: Agent name (used as filename)
@@ -93,7 +94,7 @@ def write_agent_template(
     Returns:
         Path to the written file
     """
-    return _write_yaml(name, definition, output_dir)
+    return _write_yaml(name, {"type": "agent", **definition}, output_dir)
 
 
 def write_variable_template(

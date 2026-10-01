@@ -8,13 +8,16 @@ from typing import Any
 
 import pytest
 
+from gobby.mcp_proxy.tools.workflows._agents import _export_row
+from gobby.mcp_proxy.tools.workflows._auto_export import auto_export_definition
 from gobby.mcp_proxy.tools.workflows._import import reload_cache
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.imports import sync_imported_definition
+from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.imports import sync_imported_definition, sync_imported_workflow_file
 from gobby.workflows.pipeline_loader import PipelineLoader
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
@@ -284,3 +287,31 @@ def test_sync_imported_variable_uses_one_name_for_kind_and_upsert(temp_db: HubDa
             {"name": "pref-var", "type": "agent", "provider": "claude"},
             None,
         )
+
+
+def test_auto_exported_agent_reimports_every_field(temp_db: HubDatabase, tmp_path: Path) -> None:
+    """The YAML an MCP agent write auto-exports restores the same body on import."""
+    manager = AgentDefinitionManager(temp_db)
+    row = manager.create(
+        "exported-agent",
+        {
+            "name": "exported-agent",
+            "description": "Round-trips through YAML",
+            "version": "2.4.0",
+            "provider": "claude",
+            "prompts": {"agent": "Run the exported workflow."},
+            "workflows": {"rule_selectors": {"include": ["tag:review"]}},
+            "step_workflow": _STEP_WORKFLOW,
+        },
+    )
+    original = AgentDefinitionBody.model_validate(manager.get(row.id).definition_json)
+
+    exported = auto_export_definition(_export_row(manager.get(row.id)), tmp_path, kind="agent")
+    assert exported is not None
+    assert manager.hard_delete(row.id)
+
+    sync_imported_workflow_file(temp_db, exported, None)
+
+    restored = manager.get_by_name("exported-agent")
+    assert restored is not None
+    assert AgentDefinitionBody.model_validate(restored.definition_json) == original

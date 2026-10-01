@@ -14,7 +14,14 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response
-from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.storage.definitions import DefinitionNameConflictError, DefinitionNotFoundError
@@ -95,11 +102,18 @@ def _reconcile_cancelled_agent_run(manager: Any, run_id: str) -> None:
 
 
 class CreateAgentDefinitionRequest(BaseModel):
-    """Request body for creating an agent definition in the DB."""
+    """Request body for creating an agent definition in the DB.
+
+    Unknown keys are rejected: a field the agent body does not carry would
+    otherwise be dropped silently.
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str
     project_id: str | None = None
     description: str | None = None
+    version: str | None = None
     sources: list[str] | None = None
     surfaces: list[str] | None = None
     prompts: AgentPromptBlocks = Field(default_factory=AgentPromptBlocks)
@@ -108,15 +122,10 @@ class CreateAgentDefinitionRequest(BaseModel):
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
     fallback_agent: str | None = None
-    mode: str = "inherit"
     isolation: str | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
-    default_workflow: str | None = None
-    sandbox_config: dict[str, Any] | None = None
     workflows: dict[str, Any] | None = None
-    lifecycle_variables: dict[str, Any] | None = None
-    default_variables: dict[str, Any] | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
     enabled: bool = True
@@ -137,10 +146,13 @@ class CreateAgentDefinitionRequest(BaseModel):
 
 
 class UpdateAgentDefinitionRequest(BaseModel):
-    """Request body for updating an agent definition."""
+    """Request body for updating an agent definition; unknown keys are rejected."""
+
+    model_config = ConfigDict(extra="forbid")
 
     name: str | None = None
     description: str | None = None
+    version: str | None = None
     sources: list[str] | None = None
     surfaces: list[str] | None = None
     prompts: AgentPromptBlocks | None = None
@@ -149,15 +161,10 @@ class UpdateAgentDefinitionRequest(BaseModel):
     reasoning_effort: str | None = None
     reasoning_required: bool | None = None
     fallback_agent: str | None = None
-    mode: str | None = None
     isolation: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    default_workflow: str | None = None
-    sandbox_config: dict[str, Any] | None = None
     workflows: dict[str, Any] | None = None
-    lifecycle_variables: dict[str, Any] | None = None
-    default_variables: dict[str, Any] | None = None
     step_workflow: dict[str, Any] | None = None
     enabled: bool | None = None
     blocked_tools: list[str] | None = None
@@ -343,7 +350,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
             definition_json = await server.run_db(load_definition_json)
             body = AgentDefinitionBody.model_validate_json(definition_json)
-            data = body.model_dump(exclude_none=True)
+            data = {"type": "agent", **body.model_dump(mode="json", exclude_none=True)}
             yaml_content = yaml.dump(data, default_flow_style=False, sort_keys=False)
 
             return Response(
@@ -401,6 +408,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             body = AgentDefinitionBody(
                 name=request.name,
                 description=request.description,
+                version=request.version,
                 sources=request.sources,
                 surfaces=request.surfaces,
                 prompts=request.prompts,
@@ -409,7 +417,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 reasoning_effort=request.reasoning_effort,
                 reasoning_required=request.reasoning_required,
                 fallback_agent=request.fallback_agent,
-                mode=request.mode,
                 isolation=request.isolation,
                 base_branch=request.base_branch,
                 timeout=request.timeout,
@@ -461,24 +468,17 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
                 # Load existing definition_json and apply updates
                 row = manager.get(definition_id)
-                body_dict = _row_body(row)
-                preserved_extra_fields = {
-                    "default_workflow",
-                    "default_variables",
-                    "lifecycle_variables",
-                    "mode",
-                    "sandbox",
-                }
                 body_dict = {
                     key: value
-                    for key, value in body_dict.items()
-                    if key in AgentDefinitionBody.model_fields or key in preserved_extra_fields
+                    for key, value in _row_body(row).items()
+                    if key in AgentDefinitionBody.model_fields
                 }
 
                 # Map body-level fields
                 for key in (
                     "name",
                     "description",
+                    "version",
                     "sources",
                     "surfaces",
                     "prompts",
@@ -487,11 +487,9 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     "reasoning_effort",
                     "reasoning_required",
                     "fallback_agent",
-                    "mode",
                     "isolation",
                     "base_branch",
                     "timeout",
-                    "default_workflow",
                 ):
                     if key in fields:
                         body_dict[key] = fields[key]
@@ -499,12 +497,6 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 # Nested dict fields that replace wholesale
                 if "workflows" in fields:
                     body_dict["workflows"] = fields["workflows"]
-                if "sandbox_config" in fields:
-                    body_dict["sandbox"] = fields["sandbox_config"]
-                if "lifecycle_variables" in fields:
-                    body_dict["lifecycle_variables"] = fields["lifecycle_variables"]
-                if "default_variables" in fields:
-                    body_dict["default_variables"] = fields["default_variables"]
                 for key in (
                     "step_workflow",
                     "blocked_tools",
