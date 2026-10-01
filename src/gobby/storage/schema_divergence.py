@@ -17,9 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from gobby.install.bin_set_coherence import (
-    IDENTITY_STAMP_NAME,
     REBUILD_REMEDY,
-    SET_MEMBERS,
     BinarySetCoherenceError,
     probe_set_member_identity,
 )
@@ -27,7 +25,13 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.schema_contract import SchemaContractError, expected_schema_identity
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
 from gobby.utils import spawn
-from gobby.utils.native_bin import native_bin_dir, native_bin_name, resolve_native_bin
+from gobby.utils.native_bin import (
+    IDENTITY_STAMP_NAME,
+    SET_MEMBERS,
+    native_bin_dir,
+    native_bin_name,
+    resolve_native_bin,
+)
 
 logger = logging.getLogger(__name__)
 
