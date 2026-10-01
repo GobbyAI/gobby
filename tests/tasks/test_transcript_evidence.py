@@ -1262,6 +1262,39 @@ async def test_shell_commands_without_validation_categories_remain_review_eviden
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["claude", "codex-direct", "codex-nested"])
+async def test_review_only_commands_do_not_retain_output(tmp_path: Path, shape: str) -> None:
+    # Retained output is pickled back from the derivation pool; review-only runs
+    # never feed an output-reading gate, so carrying it only stalls the loop.
+    def pair(command: str, call_id: str) -> list[dict[str, Any]]:
+        result = {"exit_code": 0, "output": f"{call_id} output"}
+        if shape == "claude":
+            return _claude_tool_pair(
+                command=command, call_id=call_id, start=BASE_TIME, result=result
+            )
+        if shape == "codex-direct":
+            return _codex_direct_exec_pair(command=command, result=result, call_id=call_id)
+        return _codex_nested_exec_pair(command=command, result=result, call_id=call_id)
+
+    transcript = tmp_path / f"{shape}.jsonl"
+    _write_jsonl(
+        transcript,
+        [*pair("printf filler", "review"), *pair("uv run pytest tests/tasks -q", "validation")],
+    )
+    evidence = await derive_transcript_evidence(
+        _session(shape.split("-")[0], transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+    merged = merge_transcript_evidence(evidence)
+    assert [(run.command, run.output) for run in merged.command_runs] == [("printf filler", None)]
+    assert [run.command for run in merged.validation_runs] == ["uv run pytest tests/tasks -q"]
+    assert "validation output" in (merged.validation_runs[0].output or "")
+
+
+@pytest.mark.asyncio
 async def test_codex_consumes_nested_exec_outcome_and_apply_patch_edit(tmp_path: Path) -> None:
     transcript = tmp_path / "codex.jsonl"
     patch = "*** Begin Patch\n*** Update File: src/changed.py\n@@\n-old\n+new\n*** End Patch\n"
@@ -3822,13 +3855,15 @@ async def test_passing_test_types_audit_is_recorded_as_a_successful_type_check(
     ]
 
 
-def _codex_nested_exec_pair(*, command: str, result: dict[str, Any]) -> list[dict[str, Any]]:
+def _codex_nested_exec_pair(
+    *, command: str, result: dict[str, Any], call_id: str = "outer-exec"
+) -> list[dict[str, Any]]:
     """A `tools.exec_command` call nested inside `exec`, which Codex outcomes drive."""
     return [
         _codex_response_item(
             {
                 "type": "custom_tool_call",
-                "call_id": "outer-exec",
+                "call_id": call_id,
                 "name": "exec",
                 "input": (
                     f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); text(r);"
@@ -3839,7 +3874,7 @@ def _codex_nested_exec_pair(*, command: str, result: dict[str, Any]) -> list[dic
         _codex_response_item(
             {
                 "type": "custom_tool_call_output",
-                "call_id": "outer-exec",
+                "call_id": call_id,
                 "output": json.dumps(result),
             },
             BASE_TIME + timedelta(seconds=1),

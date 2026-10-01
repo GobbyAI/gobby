@@ -104,6 +104,8 @@ WINDOW_LOOKBACK = timedelta(hours=2)
 _UTC_LINE_TIMESTAMP_RE = re.compile(
     r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2}T[0-9:.]{8,})(?:Z|\+00:00)"'
 )
+# The general exit-preserving normalizer strips the `rtk` executable itself.
+_RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})")
 
 _SHELL_TOOLS = {
     "bash",
@@ -603,6 +605,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             else not classify_validation_command_equivalence(outcome.command).wrapped
         ),
     )
+    output, output_truncated = _retained_output(outcome.command, segments, output, output_truncated)
     provenance = outcome.result.get("outcome_provenance")
     if provenance == "codex.functions_exec.wrapper" and state.runs:
         prior = state.runs[-1]
@@ -736,7 +739,7 @@ def _record_validation_run(
     segments = _validation_segments(matches)
     # A literal recall carries the original failure sections, often larger than
     # the ordinary command summary. Keep that native receipt bounded separately.
-    recall = re.fullmatch(r"(?:uv run )?rtk recall [0-9a-f]{12,64}", command.strip())
+    recall = _RTK_RECALL_RE.fullmatch(command.strip())
     output, output_truncated = (
         _extract_output(result, max_chars=64_000) if recall else _extract_output(result)
     )
@@ -754,6 +757,7 @@ def _record_validation_run(
             f"{source_label} lacks a definitive exit outcome for {match.label if match else 'command'}; "
             "re-run the command in a supported shell tool"
         )
+    output, output_truncated = _retained_output(command, segments, output, output_truncated)
     state.runs.append(
         TranscriptValidationRun(
             session_id=state.session.id,
@@ -776,11 +780,26 @@ def _record_validation_run(
     _recover_rtk_output(state, result)
 
 
+def _retained_output(
+    command: str,
+    segments: tuple[TranscriptValidationSegment, ...],
+    output: str | None,
+    output_truncated: bool,
+) -> tuple[str | None, bool]:
+    """Keep output only where a gate reads it: validation runs and recall receipts.
+
+    Review-only shell output is never read after outcome extraction, and every
+    retained byte is unpickled from the derivation pool while holding the GIL.
+    """
+    if segments or _RTK_RECALL_RE.fullmatch(command.strip()):
+        return output, output_truncated
+    return None, False
+
+
 def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
     """Attach a native recall receipt to its unique original failed test run."""
     receipt = state.runs[-1]
-    # The general exit-preserving normalizer strips the `rtk` executable itself.
-    match = re.fullmatch(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})", receipt.command.strip())
+    match = _RTK_RECALL_RE.fullmatch(receipt.command.strip())
     if match is None or receipt.wrapped:
         return
     # Retrieval output contains the old pytest failure. Its transport outcome,
