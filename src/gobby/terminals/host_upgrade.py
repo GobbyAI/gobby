@@ -72,7 +72,6 @@ class HostUpgradeCoordinator:
         # In memory on purpose: a daemon restart or a new install tries once more.
         self._refused: set[str] = set()
         self._finished: set[str] = set()
-        self._warned_pids: set[int] = set()
         self._hash_key: tuple[int, int] | None = None
         self._hash: str | None = None
         self._closed = asyncio.Event()
@@ -91,8 +90,6 @@ class HostUpgradeCoordinator:
     async def observe(self, client: Any, ping: PingResult, capabilities: tuple[str, ...]) -> None:
         """Fold one healthy ping into the window, or ask a stale host to upgrade."""
         if "host_upgrade" not in capabilities:
-            if ping.host_pid not in self._warned_pids:
-                self._warned_pids.add(ping.host_pid)
             return
         status = ping.upgrade
         if status is None:
