@@ -11,6 +11,7 @@ Provides fixtures for:
 """
 
 import json
+import math
 import os
 import shutil
 import signal
@@ -350,6 +351,13 @@ def prepare_daemon_env(
         Environment dict ready for subprocess.Popen
     """
     env = dict(base_env) if base_env is not None else os.environ.copy()
+
+    # Preserve the owning pytest process identity even if the runner is reparented.
+    import psutil
+
+    owner = psutil.Process(os.getpid())
+    env["GOBBY_E2E_OWNER_PID"] = str(owner.pid)
+    env["GOBBY_E2E_OWNER_CREATE_TIME"] = str(owner.create_time())
 
     # Set PYTHONPATH so the daemon can import gobby modules
     root_dir = Path(__file__).parent.parent.parent
@@ -1905,12 +1913,7 @@ def assert_no_external_writes() -> Generator[None]:
 
 
 def _cleanup_orphan_gobby_processes() -> None:
-    """Clean up any orphan gobby processes from previous e2e test runs.
-
-    IMPORTANT: Only kills processes that are clearly from e2e tests
-    (identified by gobby_e2e_ temp directory in cmdline), NOT the user's
-    actual running daemon.
-    """
+    """Reap marked e2e runners only when their recorded test owner has exited."""
     import psutil
 
     current_pid = os.getpid()
@@ -1920,8 +1923,28 @@ def _cleanup_orphan_gobby_processes() -> None:
                 continue
 
             cmdline = " ".join(proc.cmdline())
-            # Only kill if it's a gobby runner AND has e2e test markers in path
             if "gobby.runner" in cmdline and "gobby_e2e_" in cmdline:
+                # A marker alone says nothing about whether another lane still owns it.
+                # Missing, malformed or inaccessible ownership is never permission to kill.
+                owner_env = proc.environ()
+                try:
+                    owner_pid = int(owner_env["GOBBY_E2E_OWNER_PID"])
+                    owner_created = float(owner_env["GOBBY_E2E_OWNER_CREATE_TIME"])
+                except (KeyError, ValueError):
+                    continue
+                if owner_pid <= 0 or owner_created <= 0 or not math.isfinite(owner_created):
+                    continue
+                try:
+                    owner = psutil.Process(owner_pid)
+                    if (
+                        owner.create_time() == owner_created
+                        and owner.is_running()
+                        and owner.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
+                    ):
+                        continue
+                except psutil.NoSuchProcess:
+                    pass
+
                 proc.terminate()
                 try:
                     proc.wait(timeout=3)
