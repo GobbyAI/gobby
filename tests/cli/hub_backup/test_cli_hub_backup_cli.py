@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -55,6 +56,7 @@ from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
 
 pytestmark = pytest.mark.unit
 
+_REAL_WHICH = shutil.which
 DATABASE_PASSWORD = "n0t-a-real-password"
 DATABASE_URL = f"postgresql://gobby:{DATABASE_PASSWORD}@localhost:60891/gobby"
 QDRANT_URL = "http://localhost:6333"
@@ -191,7 +193,12 @@ class _Harness:
 
     # -- preflight --------------------------------------------------------
 
-    def which(self, name: str) -> str | None:
+    def which(
+        self, name: str, mode: int = os.F_OK | os.X_OK, path: str | None = None
+    ) -> str | None:
+        # Only the docker preflight is faked; spawn resolves other tools for real.
+        if name != "docker":
+            return _REAL_WHICH(name, mode, path)
         self._step(f"which:{name}")
         return self.docker_path
 
