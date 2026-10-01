@@ -340,14 +340,20 @@ class HookManager(HookManagerDispatchMixin):
 
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
-        daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
+        # A not-ready cached status makes this gate check synchronously and, for
+        # critical hooks, sleep between retries on the adapter thread (#23063).
+        with measure_hook_phase("daemon_ready_gate"):
+            daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
         if daemon_unavailable:
             return daemon_unavailable
 
         response = self._handle_after_daemon_ready(event)
         if isinstance(response, HookResponse):
             return response
-        return asyncio.run(response)
+        # Inclusive elapsed time: loop setup and teardown, the awaited handler
+        # (handler_body), and response completion on a to_thread hop (#23063).
+        with measure_hook_phase("async_handler_run"):
+            return asyncio.run(response)
 
     async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
         """Internal async handle logic wrapped by span."""
@@ -419,6 +425,7 @@ class HookManager(HookManagerDispatchMixin):
                 platform_session_id = self._session_lookup.resolve(
                     event,
                     apply_session_mutations=not gated,
+                    cached_session=project_resolution.session,
                 )
             if event.metadata.get("_native_subagent_binding") and event.event_type in (
                 HookEventType.STOP,
@@ -662,7 +669,7 @@ class HookManager(HookManagerDispatchMixin):
         if isinstance(normalized_tool_name, str):
             observer_response.metadata.setdefault("_normalized_tool_name", normalized_tool_name)
 
-        with create_span("hook.enrich"):
+        with create_span("hook.enrich"), measure_hook_phase("response_enrich"):
             try:
                 self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:

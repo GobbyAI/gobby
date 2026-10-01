@@ -701,13 +701,14 @@ async def test_facade_threads_embed_text_to_the_search_service() -> None:
 class _AgedStorage:
     """Storage whose memories carry the ages the decay axis is measured against."""
 
-    def __init__(self, ages_in_days: dict[str, float]) -> None:
+    def __init__(self, ages_in_days: dict[str, float], now: datetime | None = None) -> None:
         self._ages = ages_in_days
+        self._now = now
 
     def _memory(self, memory_id: str) -> Memory:
         if memory_id not in self._ages:
             raise ValueError(memory_id)
-        updated = datetime.now(UTC) - timedelta(days=self._ages[memory_id])
+        updated = (self._now or datetime.now(UTC)) - timedelta(days=self._ages[memory_id])
         return Memory(
             id=memory_id,
             memory_type=MemoryType.FACT,
@@ -1335,49 +1336,74 @@ async def test_search_backfill_threads_one_expansion_cache_across_rounds() -> No
     assert [memory.id for memory in results] == ["a1", "a2", "a3"]
 
 
-def test_undecay_round_trips_equal_raw_cosines_to_one_score() -> None:
-    """#22910 found work: undecay must not leak division noise into the order.
+_PINNED_NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
-    Two candidates with the same raw cosine but very different ages recover
-    undecayed scores that differ only by floating-point round-trip error. That
-    value is both the floor's input and the primary ordering key, so the noise
-    let a genuine tie invert on wall-clock and could jitter a floor decision. The
-    recovered score must be identical for an exact tie.
+
+def _order_by_age(
+    monkeypatch: pytest.MonkeyPatch, cosines: dict[str, float], ages_in_days: dict[str, float]
+) -> list[str]:
+    """Rank semantic hits of equal fused score on a clock pinned to ``_PINNED_NOW``."""
+    from functools import partial
+
+    from gobby.memory.scoring import temporal_decay
+    from gobby.memory.services import _search_results
+
+    monkeypatch.setattr(_search_results, "temporal_decay", partial(temporal_decay, now=_PINNED_NOW))
+    service = _service(list(cosines), storage=_AgedStorage(ages_in_days, now=_PINNED_NOW))
+    results = service._build_results(
+        merged_ids=list(cosines),
+        ranking_score_map=dict.fromkeys(cosines, 0.5),
+        qdrant_score_map=cosines,
+        qdrant_set=set(cosines),
+        keyword_set=set(),
+        graph_set=None,
+        rrf_applied=False,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=30.0,
+        effective_min_score=0.0,
+        limit=len(cosines),
+    )
+    return [mem.id for mem in results]
+
+
+def test_build_results_ties_equal_raw_cosines_across_ages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#22910 found work: equal raw cosines must tie exactly whatever their ages.
+
+    Recovering the undecayed score by dividing the decay back out does not
+    round-trip: at 2 and 3 days a raw 0.9 comes back as 0.8999999999999999 and
+    0.9, so the older hit led on noise alone. On an exact tie the decayed score
+    decides, so the younger hit leads.
     """
-    from datetime import UTC, datetime, timedelta
+    order = _order_by_age(
+        monkeypatch,
+        {"older": 0.9, "younger": 0.9},
+        {"older": 3.0, "younger": 2.0},
+    )
 
-    from gobby.memory.scoring import temporal_decay, undecay
-
-    # A pinned clock keeps the ages exact: unrounded, 1 day recovers 0.9 and
-    # 2 days recovers 0.8999999999999999.
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    half_life = 30.0
-    raw = 0.9
-    scores = []
-    for age in (timedelta(days=1), timedelta(days=2)):
-        decay = temporal_decay(now - age, half_life, now=now)
-        scores.append(undecay(raw * decay, decay))
-
-    assert scores[0] == scores[1]
+    assert order == ["younger", "older"]
 
 
-def test_order_results_keeps_earlier_hit_on_equal_undecayed_scores() -> None:
-    """#22910 found work: an exact undecayed tie must keep input order."""
-    from datetime import UTC, datetime, timedelta
+def test_build_results_keeps_distinct_raw_cosines_apart_across_ages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#22910 close review: a higher raw cosine must lead whatever the ages.
 
-    from gobby.memory.scoring import temporal_decay, undecay
-    from gobby.memory.services._search_ranking import HitScores, order_results
+    Rounding the recovered score to 12 places merged 0.9000000000004 into 0.9,
+    and the decayed score then put the lower, younger hit first.
+    """
+    order = _order_by_age(
+        monkeypatch,
+        {"younger": 0.9, "older": 0.9000000000004},
+        {"younger": 1.0, "older": 3.0},
+    )
 
-    # Unrounded, the older hit recovers 0.9 and the younger 0.8999999999999999,
-    # so the noise alone would put the older hit first.
-    now = datetime(2026, 1, 1, tzinfo=UTC)
-    scores = {}
-    for hit, days in (("younger", 2), ("older", 3)):
-        decay = temporal_decay(now - timedelta(days=days), 30.0, now=now)
-        similarity = 0.9 * decay
-        scores[hit] = HitScores(undecay(similarity, decay), similarity, 0.5)
-
-    assert order_results(["younger", "older"], lambda hit: scores[hit]) == ["younger", "older"]
+    assert order == ["older", "younger"]
 
 
 def test_collapse_near_duplicates_matches_pairwise_cosine_reference() -> None:

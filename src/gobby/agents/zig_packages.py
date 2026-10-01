@@ -9,6 +9,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from gobby.paths import get_gobby_home
+
 ZIG_PACKAGES = "p"
 _ZIG_TARBALL_SUFFIX = ".tar.gz"
 _VENDORED_LIBGHOSTTY_VT = Path("crates") / "gterminal" / "vendor" / "libghostty-vt"
@@ -20,6 +22,17 @@ def vendored_libghostty_vt(checkout: Path) -> Path:
 
 def machine_zig_packages() -> Path:
     return Path.home() / ".cache" / "zig" / ZIG_PACKAGES
+
+
+def unsandboxed_zig_cache_dir() -> Path:
+    """Return the Zig mirror unsandboxed builds share across runs.
+
+    gterminal's build script reruns whenever ``LIBGHOSTTY_VT_ZIG_SYSTEM_DIR``
+    changes, so a per-run mirror rebuilds libghostty-vt on every run (#23198).
+    It sits beside the sandbox cache rather than under it: sandboxed runs keep
+    their own mirror and never write this one.
+    """
+    return get_gobby_home() / "cache" / "zig-packages"
 
 
 def _extract_zig_package(tarball: Path, dest: Path, *, staging_parent: Path) -> None:
@@ -59,6 +72,23 @@ def _link_zig_package(package: Path, dest: Path, *, staging_parent: Path) -> Non
         shutil.rmtree(staging, ignore_errors=True)
 
 
+def _resolves(package: Path) -> bool:
+    """Whether a materialized package still reaches every entry it mirrors."""
+    return package.is_dir() and all(child.exists() for child in package.iterdir())
+
+
+def _discard_package(package: Path, *, staging_parent: Path) -> None:
+    """Move a stale package aside before deleting it, so no run reads it half-removed."""
+    trash = Path(tempfile.mkdtemp(prefix=".zig-stale-", dir=staging_parent))
+    try:
+        os.replace(package, trash / package.name)
+    except FileNotFoundError:
+        pass  # A concurrent run discarded it first.
+    finally:
+        # Entries are links into source packages; rmtree removes links, never targets.
+        shutil.rmtree(trash, ignore_errors=True)
+
+
 def materialize_zig_packages(
     source: Path,
     cache_root: Path,
@@ -74,8 +104,9 @@ def materialize_zig_packages(
     back a sandboxed build. Already-extracted packages are mirrored as real
     directories of entry symlinks: copying the cache costs half a gigabyte and
     seconds per run, and a symlinked package root breaks the relative paths Zig
-    runs build tools through. Returns True only when every source package
-    resolved to a usable directory.
+    runs build tools through. The directory outlives runs, so a package whose
+    mirrored source has since vanished is rebuilt rather than reused. Returns
+    True only when every source package resolved to a usable directory.
     """
     packages = cache_root / ZIG_PACKAGES
     packages.mkdir(parents=True, exist_ok=True)
@@ -87,9 +118,11 @@ def materialize_zig_packages(
     for entry in entries:
         pkgid = entry.name.removesuffix(_ZIG_TARBALL_SUFFIX)
         dest = packages / pkgid
-        if dest.exists() or dest.is_symlink():
+        if _resolves(dest):
             continue
         try:
+            if os.path.lexists(dest):
+                _discard_package(dest, staging_parent=cache_root)
             if entry.is_dir():
                 _link_zig_package(entry, dest, staging_parent=cache_root)
                 continue

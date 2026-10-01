@@ -24,6 +24,7 @@ from gobby.tasks.tdd_evidence import is_test_convention_path
 from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
 )
+from gobby.utils.python_source import parse_agent_source
 from gobby.workflows.monolith_guard import MONOLITH_SOURCE_EXTENSIONS
 from gobby.workflows.rust_test_evidence import rust_edit_is_test_writing
 from gobby.workflows.tdd_paths import tdd_path_identity
@@ -400,7 +401,7 @@ def _parse_source_fragment(fragment: str) -> ast.Module | None:
         "def _gobby_task_commit_guardrail_wrapper():\n" + textwrap.indent(dedented, "    "),
     ):
         try:
-            return ast.parse(candidate)
+            return parse_agent_source(candidate)
         except SyntaxError:
             continue
     return None

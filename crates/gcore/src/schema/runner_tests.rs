@@ -1,20 +1,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
-use std::fs;
 use std::sync::{Mutex, mpsc};
 use std::time::Duration as StdDuration;
 
 use postgres::{Client, Config, NoTls, error::SqlState};
-use time::format_description::well_known::Rfc3339;
-use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use super::assets::{BASELINE_CHECKSUM, BASELINE_VERSION, EmbeddedMigration, MIGRATIONS};
 use super::error::SchemaError;
 use super::external::{ExternalPostgresObjectKind, gcode_postgres_objects};
-use super::gate::{
-    BackupGateContext, SourceIdentity, VerifiedBackupManifest, parse_backup_manifest,
-};
 use super::runner::{SchemaRunner, auth_schema_for, render_sql_for_schema};
 
 static RECOVERY_MIGRATION: EmbeddedMigration = EmbeddedMigration {
@@ -119,14 +113,6 @@ impl Drop for ScratchDatabase {
             "DROP DATABASE IF EXISTS {} WITH (FORCE)",
             self.name
         ));
-    }
-}
-
-struct ScratchPath(std::path::PathBuf);
-
-impl Drop for ScratchPath {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
     }
 }
 
@@ -250,19 +236,6 @@ fn assert_gcode_rls_policies(client: &mut Client) -> anyhow::Result<()> {
         "unexpected gcode RLS policies: {actual:?}"
     );
     Ok(())
-}
-
-fn source_identity(client: &mut Client) -> anyhow::Result<SourceIdentity> {
-    let row = client.query_one(
-        "SELECT (pg_control_system()).system_identifier::text, current_database(), oid \
-         FROM pg_database WHERE datname = current_database()",
-        &[],
-    )?;
-    Ok(SourceIdentity {
-        pg_system_identifier: row.get(0),
-        database_name: row.get(1),
-        database_oid: row.get(2),
-    })
 }
 
 #[test]
@@ -1717,75 +1690,6 @@ fn lock_and_recovery_tests_failed_apply_releases_database_apply_lock() -> anyhow
 }
 
 #[test]
-fn gate_tests_destructive_apply_requires_a_verified_v2_backup() -> anyhow::Result<()> {
-    let _serial = DATABASE_TEST_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let Some((_database, mut client)) = scratch_database()? else {
-        return Ok(());
-    };
-    SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
-    let error =
-        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
-            .apply()
-            .expect_err("default apply must halt at a destructive migration");
-    assert!(error.to_string().contains("verified hub backup"));
-
-    let fixture = include_str!("../../tests/fixtures/hub_backup_manifest/v3_roundtrip.json");
-    let mut manifest = parse_backup_manifest(fixture)?;
-    let database_head: i32 = client
-        .query_one(
-            "SELECT COALESCE(MAX(version), 0)::int FROM schema_migrations",
-            &[],
-        )?
-        .get(0);
-    manifest.backup_starting_head = database_head;
-    let root = env::temp_dir().join(format!("gcore-backup-gate-{}", Uuid::new_v4()));
-    let _scratch_path = ScratchPath(root.clone());
-    fs::create_dir_all(root.join("postgres"))?;
-    fs::write(root.join("postgres/fixture.dump"), [])?;
-    manifest.artifacts[0].sha256 =
-        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned();
-    let fixture_identity = manifest.source_identity.clone();
-    let created_at = OffsetDateTime::parse(&manifest.created_at, &Rfc3339)?;
-    let mut context = BackupGateContext::new(
-        &root,
-        &fixture_identity,
-        database_head,
-        created_at + Duration::hours(1),
-    );
-    context.max_age = Duration::hours(2);
-    let verified = VerifiedBackupManifest::verify(manifest.clone(), &context)?;
-
-    let error =
-        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
-            .apply_with_backup(&verified)
-            .expect_err("runner must reject a backup verified for another database");
-    assert!(error.to_string().contains("source identity"));
-
-    let identity = source_identity(&mut client)?;
-    manifest.source_identity = identity.clone();
-    let mut context = BackupGateContext::new(
-        &root,
-        &identity,
-        database_head,
-        created_at + Duration::hours(1),
-    );
-    context.max_age = Duration::hours(2);
-    let verified = VerifiedBackupManifest::verify(manifest, &context)?;
-
-    let report =
-        SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
-            .apply_with_backup(&verified)?;
-    assert_eq!(report.migrations_applied, 1);
-    let table_exists: bool = client
-        .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
-        .get(0);
-    assert!(table_exists);
-    Ok(())
-}
-
-#[test]
 fn migrations_directory_exists_and_registry_is_contiguous_above_baseline() {
     let migrations_dir =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/schema/migrations");
@@ -1822,7 +1726,7 @@ fn migrations_directory_exists_and_registry_is_contiguous_above_baseline() {
 }
 
 #[test]
-fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow::Result<()> {
+fn directive_marked_migration_executes_on_fresh_lineage() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1840,8 +1744,8 @@ fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow:
         .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
         .get(0);
     assert!(
-        !table_exists,
-        "fresh lineages must stamp destructive receipts without executing them"
+        table_exists,
+        "the retired directive is an inert comment; its body must execute"
     );
     let receipt_count: i64 = client
         .query_one(
@@ -1860,7 +1764,7 @@ fn fresh_destructive_migration_is_receipt_stamped_without_executing() -> anyhow:
 }
 
 #[test]
-fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow::Result<()> {
+fn directive_marked_migration_executes_on_existing_lineage() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1869,20 +1773,23 @@ fn existing_lineage_still_refuses_unauthorized_destructive_migration() -> anyhow
     };
     SchemaRunner::with_migrations_for_test(&mut client, "public", &[])?.apply()?;
 
-    let error =
+    let report =
         SchemaRunner::with_migrations_for_test(&mut client, "public", DESTRUCTIVE_MIGRATIONS)?
-            .apply()
-            .expect_err("existing lineages must still refuse unauthorized destructive migrations");
-    assert!(error.to_string().contains("verified hub backup"));
+            .apply()?;
+    assert_eq!(report.migrations_applied, 1);
     let table_exists: bool = client
         .query_one("SELECT to_regclass('gate_probe') IS NOT NULL", &[])?
         .get(0);
-    assert!(!table_exists);
+    assert!(table_exists);
+    assert_eq!(
+        migration_receipt_count(&mut client, &DESTRUCTIVE_MIGRATION)?,
+        1
+    );
     Ok(())
 }
 
 #[test]
-fn unauthorized_destructive_in_pending_batch_applies_nothing() -> anyhow::Result<()> {
+fn directive_marked_migration_applies_in_pending_batch_order() -> anyhow::Result<()> {
     let _serial = DATABASE_TEST_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1900,11 +1807,10 @@ fn unauthorized_destructive_in_pending_batch_applies_nothing() -> anyhow::Result
         DESTRUCTIVE_AFTER_COPY.checksum
     );
 
-    let error =
+    let report =
         SchemaRunner::with_migrations_for_test(&mut client, "public", COPY_THEN_DESTRUCTIVE)?
-            .apply()
-            .expect_err("pending destructive must preflight-fail before any copy applies");
-    assert!(error.to_string().contains("verified hub backup"));
+            .apply()?;
+    assert_eq!(report.migrations_applied, 2);
 
     let copy_exists: bool = client
         .query_one("SELECT to_regclass('copy_probe') IS NOT NULL", &[])?
@@ -1912,15 +1818,12 @@ fn unauthorized_destructive_in_pending_batch_applies_nothing() -> anyhow::Result
     let drop_exists: bool = client
         .query_one("SELECT to_regclass('drop_probe') IS NOT NULL", &[])?
         .get(0);
-    assert!(
-        !copy_exists,
-        "copy migration must not commit before the rejected destructive"
-    );
-    assert!(!drop_exists);
-    assert_eq!(migration_receipt_count(&mut client, &COPY_THEN_FENCE)?, 0);
+    assert!(copy_exists);
+    assert!(drop_exists);
+    assert_eq!(migration_receipt_count(&mut client, &COPY_THEN_FENCE)?, 1);
     assert_eq!(
         migration_receipt_count(&mut client, &DESTRUCTIVE_AFTER_COPY)?,
-        0
+        1
     );
     Ok(())
 }
