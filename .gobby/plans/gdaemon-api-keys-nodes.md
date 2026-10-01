@@ -1234,6 +1234,15 @@ deferral:
   - re-mints over a bootstrap key whose row is not live for this machine.
   New acceptance items are 4.2.16 to 4.2.18, so 4.2 has eighteen. `files_home.py` and
   `test_pack.py` leave the Consumers unchanged inventory.
+- 2026-10-01: Renewed consensus. The Adversary (gobby#14579) independently checked
+  `5796f6ba87` against the unpack, bootstrap publication, and machine-identity paths and
+  found P4-10 resolved, including stale-key replacement after PostgreSQL restore and
+  pre-stop refusal of absent or malformed archived identity. No blocking finding
+  remains. The narrative scope is four active leaves (4.6, 4.1, 4.2, 4.5) carrying 51
+  acceptance items (6, 18, 18, and 9), with D1 to D5 deferred. Under the PD's ruling,
+  this completes the approved destination-owns-credentials requirement. The entire
+  superseded M1 remains withdrawn in Git history. The Adversary derives and applies
+  fresh M1 from these committed bytes.
 
 ## V2: Verification
 `kind: verification`
