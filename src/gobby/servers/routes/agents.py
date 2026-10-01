@@ -524,11 +524,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 if "name" in fields:
                     update_fields["name"] = fields["name"]
                 if "tags" in fields:
-                    update_fields["tags"] = (
-                        None
-                        if fields["tags"] is None
-                        else [tag for tag in fields["tags"] if tag != "gobby"]
-                    )
+                    # An update can neither add nor remove the sync-ownership tag.
+                    tags = [tag for tag in fields["tags"] or [] if tag != "gobby"]
+                    if "gobby" in (row.tags or []):
+                        tags.insert(0, "gobby")
+                    update_fields["tags"] = None if fields["tags"] is None and not tags else tags
 
                 row = manager.update(definition_id, **update_fields)
             return {"status": "success", "definition": row.to_dict()}

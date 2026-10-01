@@ -221,6 +221,28 @@ def test_update_strips_reserved_gobby_tag(client: TestClient) -> None:
     assert updated.json()["definition"]["tags"] == ["keep", "ops"]
 
 
+@pytest.mark.parametrize("tags", [["gobby", "release"], ["release"]])
+def test_update_keeps_bundled_pipeline_sync_managed(
+    client: TestClient, pipe_manager: PipelineDefinitionManager, tags: list[str]
+) -> None:
+    """The editor's Save PUTs the row's own tags; a bundled row keeps "gobby"
+    whether or not the request carries it, so bundled sync still owns it."""
+    from gobby.workflows.sync_pipelines import _is_sync_managed_bundled_pipeline
+
+    row = _create_pipeline(
+        pipe_manager, name="bundled-pipe", source="installed", tags=["gobby", "release"]
+    )
+
+    updated = client.put(
+        f"/api/pipelines/definitions/{row.id}",
+        json={"description": "edited", "enabled": True, "tags": tags},
+    )
+
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["definition"]["tags"] == ["gobby", "release"]
+    assert _is_sync_managed_bundled_pipeline(pipe_manager.get(row.id))
+
+
 def test_duplicate_import_export_restore(
     client: TestClient,
     pipe_manager: PipelineDefinitionManager,

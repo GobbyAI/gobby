@@ -644,6 +644,34 @@ class TestCreateDefinition:
         assert kept.name == "developer-copy"
         assert kept.tags == ["edited"]
 
+    @pytest.mark.parametrize("tags", [["gobby", "default"], ["default"]])
+    def test_update_keeps_bundled_agent_sync_managed(
+        self, client: TestClient, agent_manager: AgentDefinitionManager, tags: list[str]
+    ) -> None:
+        """The web enable toggle PUTs the agent's own tags; a bundled row keeps "gobby"
+        whether or not the request carries it, so bundled sync still owns it."""
+        from gobby.agents.sync import _is_sync_managed_bundled_agent
+
+        bundled = agent_manager.create(
+            "developer",
+            {
+                "name": "developer",
+                "provider": "claude",
+                "prompts": {"agent": "Do the work."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            tags=["gobby", "default"],
+        )
+
+        response = client.put(
+            f"/api/agents/definitions/{bundled.id}",
+            json={"enabled": False, "tags": tags},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["definition"]["tags"] == ["gobby", "default"]
+        assert _is_sync_managed_bundled_agent(agent_manager.get(bundled.id))
+
     def test_create_with_project_id(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
