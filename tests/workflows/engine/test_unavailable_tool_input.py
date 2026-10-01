@@ -45,6 +45,16 @@ async def _evaluate(
     return await RuleEngine(db).evaluate(event, session_id=SESSION_ID, variables={})
 
 
+def _unnormalized_event(tool_input: Any) -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={"tool_name": "Edit", "tool_input": tool_input},
+    )
+
+
 BLOCK = RuleEffect(type="block", reason="protected path")
 INJECT = RuleEffect(type="inject_context", template="tool input rule fired")
 
@@ -87,3 +97,42 @@ async def test_non_block_effect_reading_unavailable_input_fails_open(
 
     assert response.decision == "allow"
     assert ("tool input rule fired" in (response.context or "")) is fired
+
+
+@pytest.mark.parametrize("tool_input", [["/repo/src/app.py"], 7], ids=["list", "int"])
+async def test_unnormalized_non_object_input_is_unavailable_not_empty(
+    temp_db: HubDatabase, tool_input: Any
+) -> None:
+    response = await _evaluate(
+        temp_db,
+        "tool_input.get('file_path') == '/repo/src/app.py'",
+        BLOCK,
+        _unnormalized_event(tool_input),
+    )
+
+    assert response.decision == "block"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "Run {% if schema_lease_key(tool_input) %}get_tool_schema("
+        "server_name='{{ tool_input.get('server_name') }}') first.{% else %}"
+        "call_tool again.{% endif %}",
+        "Path {% if tool_input.get('file_path') %}set{% else %}missing{% endif %}.",
+    ],
+    ids=["schema-lease-reason", "statement-only-reason"],
+)
+async def test_block_reason_reading_unavailable_input_renders_explanation(
+    temp_db: HubDatabase, reason: str
+) -> None:
+    effect = RuleEffect(type="block", reason=reason)
+
+    response = await _evaluate(
+        temp_db, "tool_input.get('file_path') == '/repo/src/app.py'", effect, _event(TRUNCATED)
+    )
+
+    assert response.decision == "block"
+    assert response.reason is not None
+    assert "{{" not in response.reason and "{%" not in response.reason
+    assert "tool input unavailable (invalid_json in tool_input)" in response.reason

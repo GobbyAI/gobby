@@ -17,9 +17,9 @@ def _content_delta(kind: str, **data: Any) -> StreamEvent:
     return StreamEvent(event_type="content_delta", data=payload)
 
 
-def _tool_input(value: Any) -> dict[str, Any] | str:
-    """Keep an object or a string; hook normalization marks a string unavailable."""
-    return value if isinstance(value, dict | str) else {}
+def _tool_input(value: Any) -> Any:
+    """Keep the sender's value; hook normalization marks a non-object unavailable."""
+    return value if value is not None else {}
 
 
 def _token_usage_data(token_usage: Any) -> dict[str, Any]:

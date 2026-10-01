@@ -12,7 +12,11 @@ import psycopg
 from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
-from gobby.hooks.normalization import ToolInputError, tool_input_error
+from gobby.hooks.normalization import (
+    ToolInputError,
+    is_non_object_tool_input,
+    tool_input_error,
+)
 from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
@@ -141,7 +145,11 @@ class TemplatingMixin:
         unavailable = tool_input_error(event.data)
         if unavailable is not None:
             return UnavailableToolInput(unavailable)
-        raw_tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
+        tool_input = event.data.get("tool_input")
+        if is_non_object_tool_input(tool_input):
+            # A non-object that skipped normalization is unusable, never an empty object.
+            return UnavailableToolInput({"field": "tool_input", "code": "non_object"})
+        raw_tool_input = tool_input or event.data.get("arguments") or {}
         if not isinstance(raw_tool_input, dict):
             raw_tool_input = {}
 
@@ -247,7 +255,7 @@ class TemplatingMixin:
         self, template: str, ctx: dict[str, Any], allowed_funcs: dict[str, Callable[..., Any]]
     ) -> str:
         """Render a Jinja2 template string with eval context and helper functions."""
-        if "{{" not in template:
+        if "{{" not in template and "{%" not in template:
             return template
         try:
             render_ctx = {**ctx, **allowed_funcs}
@@ -255,6 +263,9 @@ class TemplatingMixin:
             return engine.render(template, render_ctx)
         except (SecurityError, DatabaseOperationDeadlineExceeded, psycopg.errors.QueryCanceled):
             raise
+        except ToolInputUnavailableError as e:
+            # Raw Jinja is no explanation; say why the input could not be read.
+            return f"{e}: resend the call with its complete arguments as a JSON object."
         except Exception as e:
             logger.warning("Failed to render template: %s", e)
             return template

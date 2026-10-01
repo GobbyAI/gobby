@@ -42,7 +42,7 @@ from gobby.servers.websocket.chat.backends.base import (
 )
 from gobby.servers.websocket.chat.backends.droid_permissions import (
     DroidPermissionResolver,
-    raw_string_tool_input,
+    raw_non_object_tool_input,
 )
 from gobby.servers.websocket.chat.backends.droid_plan import (
     _closes_plan_capture,
@@ -265,7 +265,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                             if extracted is not None:
                                 structured_plan = extracted
                         if stream_event.data.get("kind") != "permission_request":
-                            raw_tool_input = raw_string_tool_input(stream_event.data)
+                            raw_tool_input = raw_non_object_tool_input(stream_event.data)
                             await self._apply_pre_tool_lifecycle(
                                 chat_event.tool_name,
                                 raw_tool_input

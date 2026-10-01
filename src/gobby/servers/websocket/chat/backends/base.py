@@ -372,12 +372,12 @@ class ManagedChatSessionBase:
     async def _apply_pre_tool_lifecycle(
         self,
         tool_name: str,
-        tool_input: dict[str, Any] | str,
+        tool_input: object,
     ) -> dict[str, Any] | None:
         """Run managed BEFORE_TOOL hooks and queue any returned context.
 
-        A string input is the provider's undecoded payload; hook normalization
-        marks it unavailable unless it decodes to a JSON object.
+        Any non-object input is the provider's raw payload; hook normalization
+        marks it unavailable unless it is a string that decodes to a JSON object.
         """
         if self._on_pre_tool is None:
             return None

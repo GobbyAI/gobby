@@ -135,13 +135,16 @@ class TestAgyPayloadAliases:
             # normalization marks them unavailable (#23168).
             ('{"server_name":', '{"server_name":'),
             ("[1]", "[1]"),
+            # Non-string non-objects stay the sender's value too (#23179).
+            ([1], [1]),
+            (7, 7),
             (None, None),
         ],
     )
     def test_normalize_agy_mcp_arguments(
         self,
-        arguments: dict[str, Any] | str | None,
-        expected_input: dict[str, Any] | str | None,
+        arguments: object,
+        expected_input: object,
     ) -> None:
         provider_input = {
             "ServerName": "gobby",
@@ -177,9 +180,13 @@ class TestAgyPayloadAliases:
         assert normalized["tool_input"] == provider_input
 
     @pytest.mark.parametrize(
-        ("tool_call", "tool_name"),
+        ("tool_call", "tool_name", "code"),
         [
-            ({"name": "write_to_file", "args": '{"TargetFile": "/repo/a.py", "Co'}, "Write"),
+            (
+                {"name": "write_to_file", "args": '{"TargetFile": "/repo/a.py", "Co'},
+                "Write",
+                "invalid_json",
+            ),
             (
                 {
                     "name": "call_mcp_tool",
@@ -190,18 +197,28 @@ class TestAgyPayloadAliases:
                     },
                 },
                 "mcp__gobby__call_tool",
+                "invalid_json",
+            ),
+            ({"name": "run_command", "args": ["git", "status"]}, "Bash", "non_object"),
+            (
+                {
+                    "name": "call_mcp_tool",
+                    "args": {"ServerName": "gobby", "ToolName": "call_tool", "Arguments": [1]},
+                },
+                "mcp__gobby__call_tool",
+                "non_object",
             ),
         ],
-        ids=["tool-args", "mcp-arguments"],
+        ids=["tool-args", "mcp-arguments", "list-tool-args", "list-mcp-arguments"],
     )
-    def test_truncated_agy_args_reach_hooks_marked(
-        self, tool_call: dict[str, Any], tool_name: str
+    def test_unusable_agy_args_reach_hooks_marked(
+        self, tool_call: dict[str, Any], tool_name: str, code: str
     ) -> None:
         data = normalize_tool_fields(apply_agy_payload_aliases({"toolCall": tool_call}))
 
         assert data["tool_name"] == tool_name
         assert "tool_input" not in data
-        assert tool_input_error(data) == {"field": "tool_input", "code": "invalid_json"}
+        assert tool_input_error(data) == {"field": "tool_input", "code": code}
 
     def test_force_continue_limit_is_a_positive_int(self) -> None:
         limit = getattr(agy_contract, "AGY_FORCE_CONTINUE_LIMIT", None)

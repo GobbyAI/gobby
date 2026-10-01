@@ -375,10 +375,10 @@ def build_pre_tool_lifecycle_payload(
     params: dict[str, Any],
     *,
     tool_name_map: dict[str, str] | None = None,
-) -> tuple[str, dict[str, Any] | str] | None:
+) -> tuple[str, object] | None:
     """Extract tool name and input from an item/started notification.
 
-    An input that is not a JSON object is returned as the sender's string,
+    An input that is not a JSON object is returned as the sender's value,
     never coerced to ``{}``.
     """
     item = extract_completed_item_payload(params)
@@ -399,12 +399,12 @@ def build_pre_tool_lifecycle_payload(
         return tool_name, {"arguments": data["arguments"]}
     unavailable = tool_input_error(data)
     if unavailable is not None:
-        # Hand the sender's string on so the lifecycle hook marks it too.
+        # Hand the sender's value on so the lifecycle hook marks it too.
         field = unavailable["field"]
         raw = data.get("input") if field == "tool_input" else data.get(field)
-        if not isinstance(raw, str):
+        if raw is None or isinstance(raw, dict):
             raw = item.get("tool_input")
-        return tool_name, raw if isinstance(raw, str) else ""
+        return tool_name, raw if raw is not None and not isinstance(raw, dict) else ""
     tool_input = data.get("tool_input")
     return tool_name, tool_input if isinstance(tool_input, dict) else {}
 
