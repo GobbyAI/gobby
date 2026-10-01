@@ -1074,6 +1074,7 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
 
 @pytest.mark.parametrize("backend", ["tmux", "native"])
 @pytest.mark.parametrize("proven", [True, False])
+@pytest.mark.parametrize("cancel_while_held", [False, True])
 async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -1081,6 +1082,7 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     monkeypatch: pytest.MonkeyPatch,
     backend: str,
     proven: bool,
+    cancel_while_held: bool,
 ) -> None:
     hold = asyncio.Event()
     runtime_type = FakeRuntime if proven else _UnkillableRuntime
@@ -1106,6 +1108,11 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     # The run rollback waits for the owner, so the held row stays pending.
     assert _run_statuses(h) == ["pending"]
     assert _child_sessions(h) == 1
+    if cancel_while_held:
+        runs = h.runner.run_storage.list_by_session(h.parent_id)
+        assert len(runs) == 1
+        assert h.runner.run_storage.cancel(runs[0].id) is not None
+        assert _terminal_states(h) == {terminal_id: "pending"}
     with pytest.raises(WorkspaceOpError) as refused:
         await h.ops.pane_close("operator", pane_id)
     assert refused.value.code == "busy"

@@ -444,16 +444,21 @@ async def confirm_exited(attempt: InDoubtAttempt) -> bool:
 
 
 async def release_claim(terminal_id: str, *, proven: bool) -> None:
-    """Release after a confirmed settlement and run the returned steps exactly once.
+    """Drain compensation exactly once, then release the confirmed settlement's claim.
 
     A proven exit runs every deferred step; a kept orphan runs only the steps
-    deferred with ``on_orphan``. The released steps have no other owner, so they
+    deferred with ``on_orphan``. The queued steps have no other owner, so they
     run shielded: cancelling the caller mid-step neither abandons that step nor
     skips the rest.
     """
-    steps = in_doubt_spawns.release(terminal_id, proven=proven)
-    if steps:
-        await _shielded(_run_deferred(terminal_id, steps))
+
+    async def drain() -> None:
+        while steps := in_doubt_spawns.drain(terminal_id, proven=proven):
+            await _run_deferred(terminal_id, steps)
+
+    # Keep the claim while callbacks run: a run transition must not exit a newer
+    # attempt bound to this id, and concurrent cleanup can still enqueue its steps.
+    await _shielded(drain())
 
 
 async def _run_deferred(terminal_id: str, steps: list[DeferredStep]) -> None:

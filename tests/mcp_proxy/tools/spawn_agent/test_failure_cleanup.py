@@ -966,7 +966,13 @@ async def _reap_with_concurrent_cleanup(
 
     registry = runtime_registry(FakeRuntime())
     manager = cast(TerminalManager, store)
-    with patch.object(spawn_executor, "_stale_pending_absent", first_absence), settle:
+    with (
+        patch.object(spawn_executor, "_stale_pending_absent", first_absence),
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run", terminalize
+        ),
+        settle,
+    ):
         reaping = asyncio.create_task(spawn_executor._reap_stale_row(manager, registry, row))
         await entered.wait()
         # Cleanup lands while the reaper holds the id, so its steps wait on that claim.
@@ -1064,11 +1070,77 @@ async def test_cas_missed_reap_releases_a_row_that_left_its_attempt() -> None:
 
     assert reaping.result() is False
     assert store.rows[row.id].state == "exited"
-    # No later reap lists this attempt, so the claim is released rather than held
-    # forever; with no proof of its own, the reaper runs none of its steps.
+    # The death proof remains valid after a CAS miss; compensation still runs.
     assert not in_doubt_spawns.holds(row.id)
+    terminalize.assert_awaited_once()
+    assert (handler.removed, children.deleted) == (1, ["child-1"])
+
+
+@pytest.mark.parametrize("moved_to", ["exited", "missing", "new_pending", "new_live"])
+async def test_sweep_reaches_suspended_cleanup_after_the_row_moves_on(moved_to: str) -> None:
+    row = _row("pending")
+    store = MemoryTerminalStore(row)
+    handler = _Isolation()
+    children = _ChildSessions()
+
+    async def rollback_while_protected(**_kwargs: object) -> bool:
+        assert in_doubt_spawns.holds(row.id)
+        return True
+
+    terminalize = AsyncMock(side_effect=rollback_while_protected)
+    reaping = await _reap_with_concurrent_cleanup(
+        store,
+        row,
+        absent=False,
+        settle=nullcontext(),
+        handler=handler,
+        children=children,
+        terminalize=terminalize,
+    )
+    assert reaping.result() is False
+    if moved_to == "missing":
+        del store.rows[row.id]
+    elif moved_to == "exited":
+        store.mark_exited(row.id)
+    else:
+        store.rows[row.id] = replace(
+            row,
+            state="pending" if moved_to == "new_pending" else "live",
+            attempt_generation=row.attempt_generation + 1,
+        )
+    moved_row = store.get(row.id)
+    registry = runtime_registry(FakeRuntime())
+    manager = cast(TerminalManager, store)
+    probe = AsyncMock(return_value=False)
+    with patch.object(spawn_executor, "_stale_pending_absent", probe):
+        await spawn_executor.reap_stale_pending_terminals(manager, registry, in_doubt_seconds=0)
+    # Moving the row is no proof that the old process died; keep every step.
+    assert in_doubt_spawns.holds(row.id)
     terminalize.assert_not_awaited()
     assert (handler.removed, children.deleted) == (0, [])
+    probe.assert_awaited_once()
+    assert probe.await_args is not None
+    assert probe.await_args.args[1].attempt_generation == row.attempt_generation
+    assert probe.await_args.kwargs == {"terminate": False}
+
+    probe.reset_mock(return_value=True)
+    probe.return_value = True
+    with (
+        patch.object(spawn_executor, "_stale_pending_absent", probe),
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run", terminalize
+        ),
+    ):
+        await spawn_executor.reap_stale_pending_terminals(manager, registry, in_doubt_seconds=0)
+    assert not in_doubt_spawns.holds(row.id)
+    terminalize.assert_awaited_once()
+    assert (handler.removed, children.deleted) == (1, ["child-1"])
+    assert store.get(row.id) == moved_row
+    with patch.object(spawn_executor, "_stale_pending_absent", probe):
+        await spawn_executor.reap_stale_pending_terminals(manager, registry, in_doubt_seconds=1e12)
+    probe.assert_awaited_once()
+    terminalize.assert_awaited_once()
+    assert (handler.removed, children.deleted) == (1, ["child-1"])
 
 
 async def test_held_terminal_defers_isolation_to_owner() -> None:
