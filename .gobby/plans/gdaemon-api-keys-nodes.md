@@ -648,6 +648,10 @@ Consumers unchanged:
 - `src/gobby/config/postgres_bootstrap.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 - `src/gobby/ui_exposure.py` — no-edit-reason: same.
 - `tests/config/test_files_home.py` — no-edit-reason: same; verification only.
+- `src/gobby/cli/hub_backup/files_home.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
+- `tests/cli/test_datastores_rotate_password.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
+- `tests/cli/test_pack.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
+- `tests/config/test_bootstrap_postgres.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 
 Verification planned:
 `UPDATE_GCORE_SCHEMA_MANIFEST=1 cargo test -p gobby-core --features postgres --test catalog_manifest_freshness`, then without the variable,
