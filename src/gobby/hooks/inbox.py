@@ -67,6 +67,8 @@ ORPHANED_TEMP_PRUNE_MAX_ENTRIES: Final = 100_000
 # daemon and is handed back to the inbox instead of being lost.
 _RECEIPT_CLAIM_SUFFIX: Final = ".claimed.tmp"
 _RECEIPT_CLAIM_OWNER = uuid.uuid4().hex
+# Stamped by ghook on a Stop whose live POST failed (crates/ghook/src/dispatch.rs).
+LIVE_DELIVERY_FAILURE_HEADER: Final = "X-Gobby-Live-Delivery-Failure"
 
 
 def get_hook_inbox_dir() -> Path:
@@ -592,6 +594,20 @@ async def _drain_hook_inbox_once_locked(
         ):
             logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
 
+        headers = envelope.get("headers")
+        live_failure = (
+            headers.get(LIVE_DELIVERY_FAILURE_HEADER) if isinstance(headers, dict) else None
+        )
+        if live_failure:
+            # ghook fails Stop open (#20744): the turn ended with no live verdict (#23266).
+            logger.warning(
+                "Replaying %s %s hook %s whose live delivery failed (%s); "
+                "turn-end gates did not run before the turn ended",
+                envelope.get("source"),
+                envelope.get("hook_type"),
+                path.name,
+                live_failure,
+            )
         try:
             response = await _post_envelope(app, envelope, envelope_id=envelope_id)
         except Exception as exc:

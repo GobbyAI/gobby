@@ -743,6 +743,49 @@ async def test_drain_hook_inbox_keeps_failed_replay_files(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("stamped", [True, False])
+async def test_replay_of_stamped_stop_warns_turn_end_gates_skipped(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    stamped: bool,
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    stamp = "connect; at=2026-10-01T15:28:10+00:00"
+    envelope: dict[str, Any] = {
+        "schema_version": 1,
+        "enqueued_at": "2026-10-01T15:28:07Z",
+        "critical": False,
+        "response_capability": SUPPORTED_HOOK_RESPONSE_CAPABILITY,
+        "hook_type": "Stop",
+        "input_data": {},
+        "source": "codex",
+        "headers": {"X-Gobby-Live-Delivery-Failure": stamp} if stamped else {},
+    }
+    (inbox_dir / "n-0000000000001-stop.json").write_text(json.dumps(envelope))
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    caplog.set_level(logging.WARNING, logger="gobby.hooks.inbox")
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 1
+    warnings = [r.getMessage() for r in caplog.records if "turn-end gates" in r.getMessage()]
+    if stamped:
+        assert len(warnings) == 1
+        assert "codex Stop" in warnings[0]
+        assert stamp in warnings[0]
+    else:
+        assert warnings == []
+
+
+@pytest.mark.asyncio
 async def test_drain_hook_inbox_keeps_conflict_replay_files(tmp_path: Path) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)

@@ -251,6 +251,9 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
                 failure_kind,
                 report.transport_error.as_deref(),
             );
+            if planned_shutdown::is_stop_hook(hook_type) && !is_critical {
+                stamp_live_delivery_failure(&env, &enqueued_path, failure_kind);
+            }
 
             // Keep the inbox file durable and log the failed POST before
             // returning a fail-open action, including adapter timeouts.
@@ -285,6 +288,35 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         settle_delivered_inbox(&enqueued_path, emitted.stdout_succeeded, receipt.as_ref());
     }
     emitted.exit_code
+}
+
+/// Inbox-envelope header the daemon's replay reads to WARN about a turn that
+/// ended without a live verdict.
+const LIVE_DELIVERY_FAILURE_HEADER: &str = "X-Gobby-Live-Delivery-Failure";
+
+/// Stop is noncritical and fails open (#20744), so a failed live POST ends the
+/// turn with no daemon verdict and turn-end gates never run live. Stamp the
+/// retained envelope so its replay is daemon-visible (#23266). An envelope the
+/// drain already consumed is not recreated.
+fn stamp_live_delivery_failure(
+    envelope: &Envelope,
+    enqueued_path: &Path,
+    failure_kind: diagnostics::FailureKind,
+) {
+    if !enqueued_path.exists() {
+        return;
+    }
+    let Ok(mut stamped) = serde_json::to_value(envelope) else {
+        return;
+    };
+    stamped["headers"][LIVE_DELIVERY_FAILURE_HEADER] = Value::String(format!(
+        "{}; at={}",
+        failure_kind.as_str(),
+        chrono::Utc::now().to_rfc3339()
+    ));
+    if let Ok(bytes) = serde_json::to_vec_pretty(&stamped) {
+        let _ = transport::atomic_write(enqueued_path, &bytes);
+    }
 }
 
 fn settle_delivered_inbox(

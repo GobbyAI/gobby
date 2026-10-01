@@ -5,12 +5,20 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const FAILURE_SCHEMA_VERSION: u32 = 1;
 const RESPONSE_BODY_MAX_BYTES: usize = 8192;
 const RECENT_FAILURE_LIMIT: usize = 10;
+/// Stop failures mean the turn ended without a daemon verdict (#20744 keeps
+/// Stop fail-open), so their evidence gets its own cap instead of being pushed
+/// out by routine tool-hook failures (#23266).
+const TURN_END_FAILURE_LIMIT: usize = 100;
+const TURN_END_MARKER: &str = "-turn-end-";
+/// Matches the daemon's inbox orphan-temp window: an older `.json.tmp` belongs
+/// to a writer that died between create and rename.
+const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,7 +34,7 @@ pub(crate) enum FailureKind {
 }
 
 impl FailureKind {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::InvalidSuccessJson => "invalid_success_json",
             Self::SuccessResponseMapping => "success_response_mapping",
@@ -160,9 +168,14 @@ pub(crate) fn record_failure(ctx: FailureContext<'_>) -> Result<PathBuf> {
 fn record_failure_to_dir(dir: &Path, ctx: FailureContext<'_>) -> Result<PathBuf> {
     let artifact = FailureArtifact::from_context(ctx);
     let file_name = format!(
-        "{}-{}-{}-{}.json",
+        "{}-{}{}{}-{}.json",
         transport::ts13(),
         if artifact.critical { "c" } else { "n" },
+        if crate::planned_shutdown::is_stop_hook(&artifact.hook_type) {
+            TURN_END_MARKER
+        } else {
+            "-"
+        },
         artifact.failure_kind.as_str(),
         Uuid::new_v4()
     );
@@ -227,8 +240,21 @@ fn read_failure_entries(dir: &Path) -> Vec<FailureEntry> {
 }
 
 fn prune_old_failure_artifacts(dir: &Path, keep_path: &Path) -> Result<()> {
-    let mut entries = read_failure_entries(dir);
-    if entries.len() <= RECENT_FAILURE_LIMIT {
+    sweep_orphan_tmp_files(dir);
+    let (turn_end, other): (Vec<_>, Vec<_>) =
+        read_failure_entries(dir).into_iter().partition(|entry| {
+            entry
+                .path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(TURN_END_MARKER))
+        });
+    prune_newest(turn_end, keep_path, TURN_END_FAILURE_LIMIT)?;
+    prune_newest(other, keep_path, RECENT_FAILURE_LIMIT)
+}
+
+fn prune_newest(mut entries: Vec<FailureEntry>, keep_path: &Path, limit: usize) -> Result<()> {
+    if entries.len() <= limit {
         return Ok(());
     }
 
@@ -238,12 +264,34 @@ fn prune_old_failure_artifacts(dir: &Path, keep_path: &Path) -> Result<()> {
             .then_with(|| b.modified_at.cmp(&a.modified_at))
             .then_with(|| b.path.cmp(&a.path))
     });
-    for entry in entries.into_iter().skip(RECENT_FAILURE_LIMIT) {
+    for entry in entries.into_iter().skip(limit) {
         fs::remove_file(&entry.path).with_context(|| {
             format!("remove old ghook failure artifact {}", entry.path.display())
         })?;
     }
     Ok(())
+}
+
+/// Best-effort: a concurrent ghook may be mid-write, so only stale temps go.
+fn sweep_orphan_tmp_files(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let is_artifact_tmp = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.ends_with(".json.tmp"));
+        let is_stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > ORPHAN_TMP_MAX_AGE);
+        if is_artifact_tmp && is_stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn cap_response_body(body: &str) -> (String, bool) {
@@ -471,5 +519,54 @@ mod tests {
         assert_eq!(json_files, RECENT_FAILURE_LIMIT);
         assert!(path.exists(), "newly written failure artifact is retained");
         assert!(dir.path().join("ignored.tmp").exists());
+    }
+
+    #[test]
+    fn stop_failure_artifact_survives_newer_failures_and_orphan_tmps_are_swept() {
+        let dir = tempdir().unwrap();
+        let stale_tmp = dir.path().join("1-n-connect-dead.json.tmp");
+        let fresh_tmp = dir.path().join("2-n-connect-live.json.tmp");
+        fs::write(&stale_tmp, "{}").unwrap();
+        fs::write(&fresh_tmp, "{}").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&stale_tmp)
+            .unwrap()
+            .set_modified(SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60))
+            .unwrap();
+
+        let record = |hook_type: &str| {
+            let mut envelope = envelope();
+            envelope.critical = false;
+            envelope.hook_type = hook_type.to_string();
+            record_failure_to_dir(
+                dir.path(),
+                FailureContext {
+                    envelope: &envelope,
+                    envelope_id: Some("env"),
+                    failure_kind: FailureKind::Connect,
+                    status_code: None,
+                    error: Some("connection refused"),
+                    response_body: None,
+                    transport_error: Some("connection refused"),
+                    daemon_url: "http://localhost:60887",
+                },
+            )
+            .unwrap()
+        };
+        let stop_artifact = record("Stop");
+        for _ in 0..=RECENT_FAILURE_LIMIT {
+            record("PostToolUse");
+        }
+
+        assert!(
+            stop_artifact.exists(),
+            "turn-end failure evidence is pruned"
+        );
+        assert!(!stale_tmp.exists(), "orphan tmp from a dead writer is kept");
+        assert!(
+            fresh_tmp.exists(),
+            "in-flight tmp of a live writer is removed"
+        );
     }
 }
