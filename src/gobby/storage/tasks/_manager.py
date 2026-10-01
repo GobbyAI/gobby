@@ -36,6 +36,7 @@ from gobby.storage.tasks._creation import (
 )
 from gobby.storage.tasks._decomposition import TaskDecompositionMixin
 from gobby.storage.tasks._delegation import delegate_task as _delegate_task
+from gobby.storage.tasks._delegation import transfer_task_authority as _transfer_task_authority
 from gobby.storage.tasks._id import generate_task_id, resolve_task_reference
 from gobby.storage.tasks._lifecycle import (
     add_label as _add_label,
@@ -519,6 +520,23 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
             task_id,
             delegated_by_session_id=delegated_by_session_id,
             delegated_to_session_id=delegated_to_session_id,
+            reason=reason,
+        )
+        self._notify_listeners()
+        return result
+
+    def transfer_task_authority(
+        self,
+        task_id: str,
+        *,
+        caller_session_id: str,
+        reason: str,
+    ) -> Task:
+        """Take over activation-receipt authority from an expired creator or delegator."""
+        result = _transfer_task_authority(
+            self.db,
+            task_id,
+            caller_session_id=caller_session_id,
             reason=reason,
         )
         self._notify_listeners()
