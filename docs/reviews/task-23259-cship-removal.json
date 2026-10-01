@@ -1,0 +1,269 @@
+{
+  "confirmation": "23259-delete-yes",
+  "live": {
+    "path": "/Users/josh/.claude/settings.json",
+    "before": "GOBBY_STATUSLINE_DOWNSTREAM='cship' /Users/josh/.gobby/bin/ghook --gobby-owned --cli=claude --type=statusline",
+    "after": "/Users/josh/.gobby/bin/ghook --gobby-owned --cli=claude --type=statusline",
+    "before_sha256": "871d4f31af0a51b42fbe5c9cf40bf337ea457d860c07e8d6fd901d9b68cf782e",
+    "after_sha256": "b3c0e764e7372c2559d8a51312ded2509feb2ada9407a8d4c70f7930ca41ad06",
+    "other_keys_unchanged": true
+  },
+  "backups": [
+    {
+      "path": "/Users/josh/.claude/settings.json.1775019866.backup",
+      "before_sha256": "697c6d2a5f6747594e4c7acbf62a610839417e0e9b1b19a5683d27387d803e26",
+      "after_sha256": "64bcd94c3e0c0706c5c9f18afa4fe2f8831c336abd7b0bb2629ec957cec641c2",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1775020520.backup",
+      "before_sha256": "b2c175826e00af6bcc8a8d3da280ed45a2dd7b88b65805bbbe516260ee62a544",
+      "after_sha256": "6b9a3d8f05aa7b23493a197e13e07996cde2495dea98e019540e1251e7888ed8",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1775356025.backup",
+      "before_sha256": "6d043be2246b29ff0a7b93a616198f3859dd5267444b2d13b4891faf4330097d",
+      "after_sha256": "5048f99e3a2a48a868654501dc7385c1ee9463215c35ffa3426075d75352f3cd",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1775428499.backup",
+      "before_sha256": "ed3f7015093a74a65950c67e72b1680c806a35d67b5fd310e9a6731af2aa05f8",
+      "after_sha256": "5048f99e3a2a48a868654501dc7385c1ee9463215c35ffa3426075d75352f3cd",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1775431846.backup",
+      "before_sha256": "ed3f7015093a74a65950c67e72b1680c806a35d67b5fd310e9a6731af2aa05f8",
+      "after_sha256": "5048f99e3a2a48a868654501dc7385c1ee9463215c35ffa3426075d75352f3cd",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1776014216.backup",
+      "before_sha256": "bf0b9e53e8c8dd3d3636d3ff2a536c28d30c529240eb3ec0f4c85c1fd124c015",
+      "after_sha256": "3d5ee4c6217135226c58a7d068463b0cc34b410b6d1e4026d51760129f18f1a7",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1776027740.backup",
+      "before_sha256": "e518e64c17925c5e342e4e95f6c0a3f1ed7949597d25e124289e1e9961e4773d",
+      "after_sha256": "3d5ee4c6217135226c58a7d068463b0cc34b410b6d1e4026d51760129f18f1a7",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1776412263.live-ghook-test.backup",
+      "before_sha256": "79605406f3d4512260a80db112084cb326ce53c73d5c5ee2542e5b4013757b60",
+      "after_sha256": "6313149752cc6f8c59d7c88fa7537c14857de1ecafbdacf2a7f4186b25cd18bc",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1780001977.backup",
+      "before_sha256": "38d51c96ea084830fc88b910e5bce392167e2a41631b03575a492f9374a9aba7",
+      "after_sha256": "8596060de6828d96ed5b57fe593981c807f16fe62cc23da6c04e7fffab0ba68e",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1780506799.backup",
+      "before_sha256": "022447d54c55c7782d21d8e4e0c9d17d6586f75548099094b3ceb8e52910ad51",
+      "after_sha256": "5fb4eacd420509d13c8d309ad98f960ca4dc677bf484b32a725970dd690d339b",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1783285334.backup",
+      "before_sha256": "f31096d97f798d16c11a8a01de3cb30c20a8d3bd6ad7d65a727169d1292df713",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1783731163.backup",
+      "before_sha256": "f31096d97f798d16c11a8a01de3cb30c20a8d3bd6ad7d65a727169d1292df713",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1783731187.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1784068240.backup",
+      "before_sha256": "f31096d97f798d16c11a8a01de3cb30c20a8d3bd6ad7d65a727169d1292df713",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1784082975.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785392424.backup",
+      "before_sha256": "f31096d97f798d16c11a8a01de3cb30c20a8d3bd6ad7d65a727169d1292df713",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785406280.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785409064.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785409129.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785435227.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785465460.backup",
+      "before_sha256": "f32dc6ecc0060f2dc9c6ecea32b02cf130f4173779d29c94f6c7bd428b052501",
+      "after_sha256": "c79482d7073325276c9aecb4de6ac7309759f52d5d4b706af3115dda1b5f9817",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785853047.backup",
+      "before_sha256": "64f7f8278227ac0403b3595e0c43d1b63569cf0bf2cd168dc7e7959722029823",
+      "after_sha256": "00eead031662fab35b29e8ad12567466bb1146e47c8c9d4cb16c0e9f11ba54aa",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1785956166.backup",
+      "before_sha256": "640896ec5e54e5ef7e38e7934f150b99da0cca8c4fa63c42e4a7b981d7a8d207",
+      "after_sha256": "00eead031662fab35b29e8ad12567466bb1146e47c8c9d4cb16c0e9f11ba54aa",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1786478361.backup",
+      "before_sha256": "4ea131ab8b4297a89ada27988039152a338eeaa069b50b56d138e9cbeeaf71e1",
+      "after_sha256": "2b5f9b7795015979d5c1538a6dec5a441eef5653dbd98e4f1c6dbd5b90e2b637",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1787054976.backup",
+      "before_sha256": "73f26b2936d1914b5b2a0986d134017159aedc0dfbc32362f1b2050641086e3e",
+      "after_sha256": "d98357cd74ccb2f8815b7d1b3335bea536e0cfa4be4d79797f6f2ab8d4a9ada1",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1788753618.backup",
+      "before_sha256": "10e3767c4611a0f6b1f340e216ed29a666adc5cdb2e2916ab51267160dd3acc4",
+      "after_sha256": "4155b9cbedb1b30e94a63dd7d77b481cbe160b93fbf0848d0af9a2cd1a8e51e5",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1789963937.backup",
+      "before_sha256": "912fc32af57666f1e7a92204b2556585702c7b60a32e55580695e702ea1f4174",
+      "after_sha256": "38aef7b2252e26862bdd1e3e6646a15a49feacf912b43692a86f55c43d329767",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1790025532.backup",
+      "before_sha256": "a7227dc1de046586b8cb999f4ae4ca8dd9a5d56b8748375b755f2dd53679659e",
+      "after_sha256": "dd7afa326fe710b4b6c04967845aa42cb3704956a49e396ffd6e0ac5b39875b1",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1790049842.backup",
+      "before_sha256": "4d90a80ddf355592a4c1ff519e6bbdf9a1fdfbe84bf6558058312302a32afdf0",
+      "after_sha256": "dd7afa326fe710b4b6c04967845aa42cb3704956a49e396ffd6e0ac5b39875b1",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1790087556.backup",
+      "before_sha256": "a7227dc1de046586b8cb999f4ae4ca8dd9a5d56b8748375b755f2dd53679659e",
+      "after_sha256": "dd7afa326fe710b4b6c04967845aa42cb3704956a49e396ffd6e0ac5b39875b1",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.1790136694.backup",
+      "before_sha256": "3577f7c3efc2b5d88df532dd6af64fe9861af95b46ff9c4125ac12c1dad4110e",
+      "after_sha256": "87979afd5b8be490e57b7f7ebc3d9a39742a7eeb3f4631fc9e6395c7071aa55f",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    },
+    {
+      "path": "/Users/josh/.claude/settings.json.bak-statusline",
+      "before_sha256": "2383823935420ff0ce17999d66239e22ed91b30bde171170f487e2f2783674b8",
+      "after_sha256": "2038774eca7f9ad5aae8d652aed4b7057c3d25780aee426527f03c0ca67d9cfd",
+      "removed_key": "statusLine",
+      "other_keys_unchanged": true
+    }
+  ],
+  "deleted": [
+    {
+      "path": "/Users/josh/.local/bin/cship",
+      "type": "file",
+      "size": 2873280,
+      "symlink": false,
+      "sha256": "b63739de14360f190a0f6a3278bb74df69758fd2c520128dda37944bfda85b76"
+    },
+    {
+      "path": "/Users/josh/.config/cship.toml",
+      "type": "file",
+      "size": 947,
+      "symlink": false,
+      "sha256": "0c287aacb0b08b5f0dba6d18a061bd583d1a4df3ba0788912793f5bb2344bb9a"
+    },
+    {
+      "path": "/Users/josh/.config/cship/sample-context.json",
+      "type": "file",
+      "size": 1087,
+      "symlink": false,
+      "sha256": "1b10a7aded067023921e2a7fdb9d084687972725b47b20aed8faac77b1273dd9"
+    },
+    {
+      "path": "/Users/josh/.config/cship",
+      "type": "directory",
+      "size": 96,
+      "symlink": false,
+      "contents": [
+        "sample-context.json"
+      ]
+    }
+  ]
+}
