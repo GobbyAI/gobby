@@ -903,30 +903,56 @@ async def test_failed_kill_orphans_and_keeps_isolation() -> None:
     assert handler.removed == 2
 
 
-async def test_held_terminal_defers_isolation_to_owner() -> None:
+async def _run_deferred(steps: list[Any], terminalize: AsyncMock) -> None:
+    with patch(
+        "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run", terminalize
+    ):
+        for step in steps:
+            await step()
+
+
+@pytest.mark.parametrize("proven", [True, False])
+async def test_held_terminal_defers_rollback_and_isolation_to_owner(proven: bool) -> None:
     held = _row("pending")
     store = MemoryTerminalStore(held)
     handler = _Isolation()
+    terminalize = AsyncMock(return_value=True)
     in_doubt_spawns.claim(held.id)
     try:
-        await _cleanup(store, FakeRuntime(), held.id, handler)
+        await _cleanup(store, FakeRuntime(), held.id, handler, terminalize=terminalize)
+        # Run terminalization would exit the held row, so it waits for the owner.
+        terminalize.assert_not_awaited()
         assert handler.removed == 0
+        assert store.rows[held.id].state == "pending"
     finally:
-        deferred = in_doubt_spawns.release(held.id)
-    assert len(deferred) == 1
-    for step in deferred:
-        await step()
-    assert handler.removed == 1
+        deferred = in_doubt_spawns.release(held.id, proven=proven)
 
+    await _run_deferred(deferred, terminalize)
+
+    # A kept orphan still rolls back the run; only a proven exit removes isolation.
+    terminalize.assert_awaited_once()
+    assert handler.removed == int(proven)
+
+
+async def test_held_terminal_defers_isolation_to_owner() -> None:
     reused = _row("pending")
+    handler = _Isolation()
+    terminalize = AsyncMock(return_value=True)
     in_doubt_spawns.claim(reused.id)
     try:
         await _cleanup(
-            MemoryTerminalStore(reused), FakeRuntime(), reused.id, handler, cleanup_isolation=False
+            MemoryTerminalStore(reused),
+            FakeRuntime(),
+            reused.id,
+            handler,
+            cleanup_isolation=False,
+            terminalize=terminalize,
         )
     finally:
-        assert in_doubt_spawns.release(reused.id) == []
-    assert handler.removed == 1
+        deferred = in_doubt_spawns.release(reused.id)
+    await _run_deferred(deferred, terminalize)
+    terminalize.assert_awaited_once()
+    assert handler.removed == 0
 
     # The owner settles and releases while cleanup is still running, so the
     # late isolation step finds no claim and decides from the row it left.
@@ -947,30 +973,24 @@ async def test_held_terminal_defers_isolation_to_owner() -> None:
         prior_generation = row.attempt_generation if carries_prior else row.attempt_generation - 1
         prior = (prior_generation, row.attempt_started_at)
 
-        async def owner_settles(
-            *_args: Any,
+        def owner_settles(
+            _run_id: str | None,
             _store: MemoryTerminalStore = store,
             _row: Terminal = row,
             _state: str | None = settled_state,
-            **_kwargs: Any,
-        ) -> bool:
+        ) -> None:
             in_doubt_spawns.release(_row.id)
             if _state is None:
                 _store.rows.pop(_row.id)
             else:
                 _store.rows[_row.id] = replace(_row, state=_state)
-            return True
 
+        # The owner settles after cleanup's held kill was skipped and before its
+        # rollback and isolation steps look for the claim.
         in_doubt_spawns.claim(row.id)
         try:
-            await _cleanup(
-                store,
-                FakeRuntime(),
-                row.id,
-                handler,
-                prior_attempt=prior,
-                terminalize=owner_settles,
-            )
+            with patch.object(_failure_cleanup, "_forget_spawn_run", owner_settles):
+                await _cleanup(store, FakeRuntime(), row.id, handler, prior_attempt=prior)
         finally:
             in_doubt_spawns.release(row.id)
         assert handler.removed == int(removes), label

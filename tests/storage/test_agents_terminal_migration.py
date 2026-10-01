@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -118,3 +118,43 @@ def test_orphaned_terminal_rows_stay_eligible_for_the_sweep(
 
     terminals.mark_exited(terminal.id)
     assert run.id not in {row.id for row in manager.list_terminal_with_tmux()}
+
+
+@pytest.mark.parametrize("transition", ["complete", "fail", "timeout", "cancel"])
+@pytest.mark.parametrize(("orphaned", "settled_state"), [(False, "exited"), (True, "orphaned")])
+def test_run_transition_leaves_an_orphaned_terminal_to_its_settlement(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    session_manager: SessionManager,
+    transition: str,
+    orphaned: bool,
+    settled_state: str,
+) -> None:
+    """An orphaned row's kill is unproven, so ending its run must not mark it exited."""
+    from gobby.storage.terminals import TerminalManager
+
+    session = session_manager.register(
+        external_id=f"terminal-orphan-transition-{transition}-{orphaned}",
+        machine_id=LOCAL_MACHINE_ID,
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    manager = LocalAgentRunManager(temp_db)
+    run = manager.create(parent_session_id=session.id, provider="claude", prompt="transition")
+    manager.start(run.id)
+    terminal = make_live_terminal(run, backend="tmux", db=temp_db)
+    terminals = TerminalManager(temp_db)
+    if orphaned:
+        terminals.mark_orphaned(terminal.id)
+    ends: dict[str, Callable[[str], object]] = {
+        "complete": manager.complete,
+        "fail": lambda run_id: manager.fail(run_id, "failed"),
+        "timeout": manager.timeout,
+        "cancel": manager.cancel,
+    }
+
+    assert ends[transition](run.id) is not None
+
+    row = terminals.get(terminal.id)
+    assert row is not None
+    assert row.state == settled_state

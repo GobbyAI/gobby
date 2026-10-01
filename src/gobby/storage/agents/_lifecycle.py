@@ -54,6 +54,8 @@ def _execute_terminal_transition(
         if not _positive_rowcount(cursor):
             return None
         now = utc_now()
+        # An orphaned row's kill was never proven: it stays for the proof-based
+        # settlement (terminal cleanup, kill retry or sweep) instead of exiting here.
         txn.execute(
             """
             UPDATE terminals
@@ -62,7 +64,7 @@ def _execute_terminal_transition(
                 automatic_write_quarantined_at = NULL,
                 automatic_write_quarantine_action_key = NULL
             WHERE id = (SELECT terminal_id FROM agent_runs WHERE id = %s)
-              AND state IN ('pending', 'live', 'orphaned')
+              AND state IN ('pending', 'live')
             """,
             (now, run_id),
         )

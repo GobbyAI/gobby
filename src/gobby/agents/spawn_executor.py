@@ -607,6 +607,9 @@ async def _reap_claimed_row(
         settled = result is not None
         return settled
     finally:
-        # Deferred compensation (isolation removal) runs only after a proven settle;
-        # an unproven exit keeps the row pending, so its process may still use it.
-        await release_claim(listed.id, run_deferred=settled)
+        # Deferred compensation runs only after a proven settle; an unproven exit
+        # keeps the row pending, so its process may still use it and no step runs.
+        if settled:
+            await release_claim(listed.id, proven=True)
+        else:
+            in_doubt_spawns.release(listed.id)

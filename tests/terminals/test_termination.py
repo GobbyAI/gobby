@@ -94,3 +94,19 @@ async def test_terminate_terminal_refuses_target_outside_actor_scope() -> None:
     assert raised.value.code == "forbidden"
     assert terminal.state == "live"
     assert runtime.killed == []
+
+
+@pytest.mark.asyncio
+async def test_kill_terminal_settles_a_pending_row_through_its_attempt() -> None:
+    terminal = make_memory_terminal(session_name="pending-shell")
+    terminal.state = "pending"
+    terminals = MemoryTerminalStore(terminal)
+    runtime = FakeRuntime()
+
+    exited = await kill_terminal(terminals, runtime_registry(runtime), terminal)
+
+    # mark_exited never moves a pending row, so the proven kill fails the attempt.
+    assert exited is not None
+    assert exited.state == "exited"
+    assert terminals.rows[terminal.id].state == "exited"
+    assert runtime.killed == ["pending-shell"]

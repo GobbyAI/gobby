@@ -1450,9 +1450,9 @@ async def test_owner_retry_survives_cancellation_until_shutdown(
     releases: list[str] = []
     release = in_doubt_spawns.release
 
-    def counting_release(terminal_id: str) -> list[Any]:
+    def counting_release(terminal_id: str, *, proven: bool = True) -> list[Any]:
         releases.append(terminal_id)
-        return release(terminal_id)
+        return release(terminal_id, proven=proven)
 
     monkeypatch.setattr(in_doubt_spawns, "release", counting_release)
     store = _StagedStore()
@@ -1536,9 +1536,7 @@ async def test_cancelled_release_still_runs_every_deferred_step_once() -> None:
     assert in_doubt_spawns.claim(terminal_id)
     assert in_doubt_spawns.defer(terminal_id, blocking_step)
     assert in_doubt_spawns.defer(terminal_id, second)
-    releasing = asyncio.create_task(
-        spawn_in_doubt_owner.release_claim(terminal_id, run_deferred=True)
-    )
+    releasing = asyncio.create_task(spawn_in_doubt_owner.release_claim(terminal_id, proven=True))
     await entered.wait()
     releasing.cancel()
     with pytest.raises(asyncio.CancelledError):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
+from datetime import datetime
 from typing import TYPE_CHECKING, Literal, Protocol
 
 from gobby.terminals.actor_scope import ActorScopeError, resolve_actor_scope
@@ -45,6 +46,14 @@ class TerminalStore(Protocol):
     def get_live_for_session(self, session_id: str) -> Terminal | None: ...
 
     def mark_exited(self, terminal_id: str) -> Terminal | None: ...
+
+    def fail_pending_attempt(
+        self,
+        terminal_id: str,
+        *,
+        attempt_generation: int,
+        attempt_started_at: datetime,
+    ) -> Terminal | None: ...
 
     def settle_lock(self, terminal_id: str) -> AbstractAsyncContextManager[None]: ...
 
@@ -92,6 +101,13 @@ async def kill_terminal(
         if await backend_session_present(runtime, current):
             raise TerminalKillUnprovenError(
                 f"Terminal {current.id} is still present after terminate"
+            )
+        if current.state == "pending":
+            # No owner holds it (checked above), so the proven kill settles this attempt.
+            return terminals.fail_pending_attempt(
+                current.id,
+                attempt_generation=current.attempt_generation,
+                attempt_started_at=current.attempt_started_at,
             )
         return terminals.mark_exited(current.id)
 

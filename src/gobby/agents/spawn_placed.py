@@ -154,7 +154,7 @@ class _PlacedAttempt:
             return
         if confirmed:
             self.owned = True
-            await release_claim(self.attempt.terminal_id, run_deferred=True)
+            await release_claim(self.attempt.terminal_id, proven=True)
 
     def _failed(
         self,
@@ -217,7 +217,7 @@ class _PlacedAttempt:
         if row is None:
             # The bump's CAS matched nothing, so no row of this attempt exists.
             self.owned = True
-            await release_claim(terminal_id, run_deferred=True)
+            await release_claim(terminal_id, proven=True)
             return self._failed("retry_generation_cas_failed", terminal=False)
         pair = attempt.pair = (row.attempt_generation, row.attempt_started_at)
         self.stage = "bind"
@@ -320,7 +320,7 @@ class _PlacedAttempt:
             result.prior_attempt = attempt.prior_attempt
             return result
         self.owned = True
-        await release_claim(terminal_id, run_deferred=True)
+        await release_claim(terminal_id, proven=True)
         return result
 
     async def _fail_unprepared(

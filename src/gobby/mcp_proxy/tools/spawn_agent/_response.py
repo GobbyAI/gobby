@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Protocol, runtime_checkable
 
 
@@ -35,8 +36,12 @@ def build_spawn_response(
     code_index_preflight_warning: dict[str, str] | None,
     reasoning: Any | None,
     terminal: Any | None = None,
+    placement: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Build the MCP response around backend-neutral terminal identity."""
+    """Build the MCP response around backend-neutral terminal identity.
+
+    A placed launch passes its ``workspace``, ``tab_ref`` and ``pane_ref``.
+    """
     terminal_id = getattr(terminal, "id", None) or getattr(spawn_result, "terminal_id", None)
     backend = getattr(terminal, "backend", None) or getattr(spawn_result, "backend", None)
     response = {
@@ -83,4 +88,6 @@ def build_spawn_response(
         response["reasoning"] = reasoning.to_dict()
     if code_index_preflight_warning is not None:
         response["warnings"] = [code_index_preflight_warning]
+    if placement is not None:
+        response.update(placement)
     return response
