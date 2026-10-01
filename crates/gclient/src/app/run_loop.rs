@@ -46,9 +46,6 @@ pub const RECONNECT_DELAYS: [Duration; 4] = [
 pub const MIN_RETRY_AFTER: Duration = Duration::from_millis(250);
 pub const MAX_RETRY_AFTER: Duration = Duration::from_secs(4);
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
-/// A direct pane's writer is full, so its new size waits (#22573: a
-/// backlog is pane status, never a toast).
-const VIEWPORT_BACKLOG: &str = "terminal viewport backlog; resize deferred";
 
 /// Scripted carrier for the real select loop used by integration tests.
 pub async fn run_scripted_loop<B: Backend>(
@@ -491,12 +488,8 @@ impl<D: Daemon> Workspace<D> {
             }));
         } else {
             let queued = source.send_input(&ClientMessage::SetViewport { rows, cols });
-            if let Err(error) = queued {
-                if matches!(error, FrameError::Backpressure) {
-                    pane.status_message = Some(VIEWPORT_BACKLOG.to_string());
-                }
-                return Err(error);
-            }
+            pane.viewport_deferred = matches!(queued, Err(FrameError::Backpressure));
+            queued?;
         }
         pane.viewport = (rows, cols);
         // Decision 14, as in `propagate_geometry`.

@@ -338,6 +338,24 @@ impl<'a> LivenessProbe<'a> {
         self.frames_render(frames_to).await;
         self.key_reaches(keys_to, key).await;
     }
+
+    /// The latest drawn status line, the frame's bottom row, comes to show
+    /// `text` (`shown`) or to drop it.
+    async fn status_line(&self, text: &str, shown: bool) {
+        let what = format!(
+            "the status line to {} {text:?}",
+            if shown { "show" } else { "drop" }
+        );
+        wait_until(&what, || {
+            self.frames
+                .lock()
+                .expect("recorded frames")
+                .last()
+                .and_then(|frame| frame.lines().last())
+                .is_some_and(|row| row.contains(text) == shown)
+        })
+        .await;
+    }
 }
 
 fn for_terminal(terminal_id: &'static str) -> impl Fn(&Value) -> bool + Send + 'static {
@@ -350,12 +368,13 @@ const HOST_EPOCH: &str = "stalling-host-epoch";
 /// A terminal host on a real frame socket, the way gterm serves one: it
 /// answers one direct attach, hands on what the client sends, and stops
 /// reading once `stall` is notified, so the client's bounded writer fills
-/// behind it while the socket stays open.
+/// behind it while the socket stays open. `resume` drains it again.
 struct StallingHost {
     _socket_dir: tempfile::TempDir,
     socket_path: PathBuf,
     received: mpsc::UnboundedReceiver<ClientMessage>,
     stall: Arc<Notify>,
+    resume: Arc<Notify>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -368,6 +387,8 @@ impl StallingHost {
         let (received_tx, received) = mpsc::unbounded_channel();
         let stall = Arc::new(Notify::new());
         let stalled = Arc::clone(&stall);
+        let resume = Arc::new(Notify::new());
+        let resumed = Arc::clone(&resume);
         let task = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.expect("direct client");
             let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
@@ -396,15 +417,18 @@ impl StallingHost {
                     },
                 }
             }
-            // Keep the socket open and unread until the test ends.
-            std::future::pending::<()>().await;
-            drop(stream);
+            // Keep the socket open and unread until `resume`, then drain it.
+            resumed.notified().await;
+            while let Ok(message) = read_message_async(&mut stream, MAX_FRAME_SIZE).await {
+                let _ = received_tx.send(message);
+            }
         });
         Self {
             _socket_dir: socket_dir,
             socket_path,
             received,
             stall,
+            resume,
             task,
         }
     }
@@ -781,6 +805,9 @@ const STALL_PASTE_BYTES: usize = 900 * 1024;
 /// bounded queue holds.
 const QUEUE_FILL_KEYS: usize = 300;
 
+/// The status-line words for a viewport the direct writer refused.
+const VIEWPORT_DEFERRED: &str = "resize deferred";
+
 #[tokio::test]
 async fn direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop() {
     let mock = MockDaemon::start("local-token").await;
@@ -807,12 +834,19 @@ async fn direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop()
         for _ in 0..QUEUE_FILL_KEYS {
             probe.key(KeyCode::Char('k'), KeyModifiers::NONE).await;
         }
-        // terminal-b's viewport changes twice while its writer is full.
+        // terminal-b's viewport changes twice while its writer is full, and
+        // the status line says the resize waits.
         probe.zoom().await;
         probe.zoom().await;
+        probe.status_line(VIEWPORT_DEFERRED, true).await;
         // Frames, ticks and keys on the proxied terminal-a keep flowing.
         probe.next_pane().await;
         probe.assert_live("terminal-a", "terminal-a", 'y').await;
+        probe.status_line(VIEWPORT_DEFERRED, true).await;
+        // Once the host drains, the retried viewport is queued and the
+        // warning leaves the status line.
+        host.resume.notify_one();
+        probe.status_line(VIEWPORT_DEFERRED, false).await;
         let batches = probe.batches;
         drop(input_tx);
         batches
@@ -834,11 +868,6 @@ async fn direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop()
         .pane_for_terminal("terminal-b")
         .expect("terminal-b pane");
     assert_eq!(workspace.pane(pane_b).transport(), Some(Transport::Direct));
-    let status = workspace.pane(pane_b).status_message().unwrap_or_default();
-    assert!(
-        status.contains("viewport"),
-        "terminal-b's status names the refused viewport: {status:?}"
-    );
     assert!(
         chrome
             .toasts
