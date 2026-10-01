@@ -5,6 +5,7 @@
 | assistant.md | gobby#14069 |
 | orchestrator.md | gobby#14737 |
 | merge-manager.md | gobby#14894 |
+| release-manager.md | gobby#14968 |
 | lane-1-gclient.md | gobby#14909 |
 | lane-2-stability.md | gobby#14962 |
 | lane-3-hooks.md | gobby#14956 |
