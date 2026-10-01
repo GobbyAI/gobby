@@ -85,7 +85,7 @@ def _carry_forward_staged_effects(
         return staged_payload, False
     if carried is None:
         return staged_payload, False
-    logger.info(
+    logger.debug(
         "Re-delivering hook receipt %s (generation %s) on envelope %s",
         carried.receipt_id,
         carried.delivery_generation,

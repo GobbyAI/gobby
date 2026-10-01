@@ -1,5 +1,6 @@
 """Tests for HTTP cron job endpoints."""
 
+import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -566,3 +567,19 @@ class TestCronGetRun:
         cron_storage.get_run.return_value = None
         resp = client.get("/api/cron/runs/cr-nonexistent")
         assert resp.status_code == 404
+
+    def test_malformed_run_id_is_404_against_real_storage(
+        self,
+        client: TestClient,
+        http_server: HTTPServer,
+        session_storage: SessionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """#22866: a non-UUID run id is unknown, not a logged 500."""
+        http_server.services.cron_storage = CronJobStorage(session_storage.db)
+
+        with caplog.at_level(logging.ERROR, logger="gobby.servers.routes.cron"):
+            resp = client.get("/api/cron/runs/84446b0d")
+
+        assert resp.status_code == 404
+        assert caplog.records == []

@@ -191,7 +191,7 @@ def _consume_inbox_delivery_receipt(
                 delivery_generation=generation,
             )
             if committed is None:
-                logger.info(
+                logger.debug(
                     "Delivery receipt %s generation %s was stale or unknown at consumption",
                     receipt_id,
                     generation,
