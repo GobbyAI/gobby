@@ -675,12 +675,12 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
         if read == 0 {
             return Err(ControlError::Closed);
         }
+        // gterm counts the newline toward MAX_CONTROL_LINE.
+        if line.len() > MAX_CONTROL_LINE {
+            return Err(ControlError::LineTooLong);
+        }
         if line.last() != Some(&b'\n') {
-            return Err(if line.len() > MAX_CONTROL_LINE {
-                ControlError::LineTooLong
-            } else {
-                ControlError::Closed
-            });
+            return Err(ControlError::Closed);
         }
         serde_json::from_slice(&line).map_err(|err| ControlError::Malformed(err.to_string()))
     }

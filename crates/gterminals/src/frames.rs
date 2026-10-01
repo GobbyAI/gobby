@@ -394,7 +394,20 @@ impl<S: AsyncRead + AsyncWrite + Unpin> FrameClient<S> {
         }
     }
 
+    /// Send one message. Input and Paste payloads over `MAX_WRITE_BYTES` are
+    /// refused before anything is written; gterm would answer `request_too_large`.
     pub async fn send(&mut self, message: &ClientMessage) -> Result<(), FrameError> {
+        let write_len = match message {
+            ClientMessage::Input { data } => data.len(),
+            ClientMessage::Paste { text } => text.len(),
+            _ => 0,
+        };
+        if write_len > MAX_WRITE_BYTES {
+            return Err(FrameError::Oversized {
+                claimed: write_len,
+                max: MAX_WRITE_BYTES,
+            });
+        }
         let frame = encode_frame(message)?;
         self.stream.write_all(&frame).await?;
         self.stream.flush().await?;

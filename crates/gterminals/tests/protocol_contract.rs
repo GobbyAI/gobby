@@ -9,8 +9,8 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use gobby_terminals::control::{
-    ControlClient, ControlError, EventCursor, EventError, HostEvent, HostEventKind, InputKind,
-    SpawnRequest, Subscription, WriteKind, WriteRequest,
+    self, ControlClient, ControlError, EventCursor, EventError, Hello, HostEvent, HostEventKind,
+    InputKind, SpawnRequest, Subscription, WriteKind, WriteRequest,
 };
 use gobby_terminals::frames::{
     self, CellData, ClientMessage, CursorState, DeltaQueue, FrameClient, FrameData, FrameError,
@@ -293,7 +293,43 @@ async fn control_client_fails_closed_on_auth_version_and_ids() -> Result<()> {
     );
     drop(client);
     host.await??;
+
+    // The control line ceiling counts the newline, as gterm's reader does.
+    let at_limit = hello_against_reply_of(control::MAX_CONTROL_LINE).await?;
+    assert!(at_limit.is_ok(), "{at_limit:?}");
+    let over = hello_against_reply_of(control::MAX_CONTROL_LINE + 1).await?;
+    assert!(matches!(over, Err(ControlError::LineTooLong)), "{over:?}");
     Ok(())
+}
+
+/// Answer one hello with a valid reply padded to exactly `total` bytes,
+/// newline included, and return what the client made of it.
+async fn hello_against_reply_of(total: usize) -> Result<Result<Hello, ControlError>> {
+    let (client_side, host_side) = duplex(64 * 1024);
+    let mut host_lines = BufReader::new(host_side);
+    let host = tokio::spawn(async move {
+        let mut line = String::new();
+        host_lines.read_line(&mut line).await?;
+        let request: Value = serde_json::from_str(&line)?;
+        let mut reply = with_id(hello_reply(1), &request["id"]);
+        reply["pad"] = json!("");
+        let unpadded = serde_json::to_vec(&reply)?.len() + 1;
+        reply["pad"] = json!("a".repeat(total - unpadded));
+        let mut bytes = serde_json::to_vec(&reply)?;
+        bytes.push(b'\n');
+        anyhow::ensure!(
+            bytes.len() == total,
+            "padded reply is {} bytes",
+            bytes.len()
+        );
+        host_lines.get_mut().write_all(&bytes).await?;
+        anyhow::Ok(())
+    });
+    let mut client = ControlClient::new(client_side);
+    let result = client.hello("token").await;
+    drop(client);
+    host.await??;
+    Ok(result)
 }
 
 #[tokio::test]
@@ -728,6 +764,44 @@ async fn frame_bytes_match_gterm() -> Result<()> {
     bytes_queue.push(large.clone())?;
     assert!(matches!(bytes_queue.push(large), Err(FrameError::Lag)));
     assert_eq!(bytes_queue.len(), 1);
+
+    // Write ceiling: Input and Paste payloads over MAX_WRITE_BYTES are refused
+    // before anything is written, as gterm's host would refuse them.
+    let at_cap = ClientMessage::Input {
+        data: vec![b'a'; frames::MAX_WRITE_BYTES],
+    };
+    let (client_side, mut host_side) = duplex(64 * 1024);
+    let host = tokio::spawn(async move {
+        let mut received = Vec::new();
+        host_side.read_to_end(&mut received).await?;
+        anyhow::Ok(received)
+    });
+    let mut client = FrameClient::new(client_side);
+    for over in [
+        ClientMessage::Input {
+            data: vec![b'a'; frames::MAX_WRITE_BYTES + 1],
+        },
+        ClientMessage::Paste {
+            text: "a".repeat(frames::MAX_WRITE_BYTES + 1),
+        },
+    ] {
+        let refused = client.send(&over).await.expect_err("over the write cap");
+        assert!(
+            matches!(
+                refused,
+                FrameError::Oversized { claimed, max }
+                    if claimed == frames::MAX_WRITE_BYTES + 1 && max == frames::MAX_WRITE_BYTES
+            ),
+            "{refused:?}"
+        );
+    }
+    client.send(&at_cap).await?;
+    drop(client);
+    assert_eq!(
+        host.await??,
+        frames::encode_frame(&at_cap)?,
+        "only the at-cap write reaches the host"
+    );
 
     // The handshake writes gterm's hello bytes and verifies the host epoch.
     let hello_len = bin_fixture("hello.bin")?.len();
