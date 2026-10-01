@@ -11,8 +11,8 @@ The **Code Reviewer seat** should run CodeRabbit as an **advisory** input on the
 This adds no new mechanism: no code, pipeline, rule or gate. It needs one bullet in `.gobby/roles/code-reviewer.md` and Josh's answers to the decisions in section 6. It is the only option that binds CodeRabbit's evidence to the same SHA the LAND names, and the reviewer already has to judge findings.
 
 It fits Josh's confirmed **Essentials** plan:
-- **Per-candidate runs are small.** The median is 6 files, and about 98% of candidates fit the 150-file cap. A Merge Manager package pass (package 3 was 210 files) would have to be split.
-- **The volume fits.** The ~36 candidates a day sit within 5 reviews an hour, as long as a busy hour may skip with a note.
+- **Per-candidate runs are small.** The median is 6 files, and 230 of 232 landings fit the 150-file cap. A Merge Manager package pass (package 3 was 210 files) would have to be split.
+- **The volume fits.** The ~29 landings a day sit within 5 reviews an hour, as long as a busy hour may skip with a note.
 
 ## 1. Current usage
 
@@ -84,7 +84,7 @@ Each fact is tagged with its source:
 - **Per-run file cap [docs-latest, management/plans]:** at most 150 files per review on Free and Essentials, 100–300 on OSS, and 300 on Team, Advanced and Enterprise. The docs say this is "the maximum number of files CodeRabbit reviews in a single review, not an hourly limit". Josh's estimate of a 150-file cap matches the Essentials row.
 - **How 0.7.3 enforces the cap [local, installed binary strings]:**
   - The server reports the limit. The CLI parses "Too many files! This PR contains N files, which is X over the limit of M." and emits error code `too_many_files` with `retryable: false` and `actionRequired: true`.
-  - The binary holds no hard-coded file limit. It also builds narrower-scope candidates (`--committed`, `--uncommitted` or up to five `--dir` scopes) with a fits/does-not-fit flag. The CLI never picks one or retries by itself **[docs-latest, cli/reference]**.
+  - The strings I searched show only a server-reported limit (`M` parsed from the error, plus `maxFiles` fields). They don't contain a client-side file-count constant, but absence from a strings search doesn't prove the binary has none. It also builds narrower-scope candidates (`--committed`, `--uncommitted` or up to five `--dir` scopes) with a fits/does-not-fit flag. The CLI never picks one or retries by itself **[docs-latest, cli/reference]**.
   - There is a separate client-side cap of `MAX_DIFF_SIZE_MB=20` on the diff, and `payload_too_large` means "diff too large".
 - **Hourly limit per developer [docs-latest, management/plans]:** Free 3, OSS 3, **Essentials 5**, Team 8, Advanced 10, Enterprise 12.
   - The five Code Reviewer seats (gobby#14641, #14680, #14681, #14944 and #14945) would all count as **one** developer.
@@ -123,19 +123,22 @@ A typical candidate takes about 1–5 minutes, and packages of 200+ files take 7
 ## 3. Throughput being served
 
 These figures come from merges on 0.5.0 since 09-24:
-- **287 landings in 8 days:** 63, 34, 31, 32, 51, 44, 16 and 16 per day, so about 36 per day on average with bursty peaks.
-- **Files per landing:** p50 = 6, p90 = 49, max = 1034. That's 6,724 files in total.
-- **Landings over the cap:** recounted at 0.5.0 b1dc981f1f, 7 of the 298 merges since 09-24 changed more than 150 files, and 2 changed more than 300.
+These are first-parent merges on 0.5.0 since 09-24, counted at b1dc981f1f. Each one is a landing that a reviewer approved, and its size is the merge diff against the first parent. Command: `git log b1dc981f1f --first-parent --merges --since=2026-09-24`, then `git diff --name-only <m>^1 <m>` for each merge.
+
+An earlier draft counted all-ancestry merges, which include merges inside candidate branches, so those aren't review candidates.
+- **232 landings in 8 days:** 25, 30, 31, 27, 45, 42, 15 and 17 per day, so about 29 per day on average with bursty peaks.
+- **Files per landing:** p50 = 6, p90 = 26, max = 210. That's 3,125 files in total.
+- **Landings over the cap:** 2 of 232 changed more than 150 files: package 3 (#23190, 210 files) and one sync merge, 7678c85f78 (153 files). None changed more than 300.
 - **Packages:** package 3 (#23190 at b1dc981f1f) changed 210 files against its 0.5.0 parent, over the Essentials cap.
 
 Fit on the confirmed Essentials plan, against the alternative of upgrading to Team:
 
 | Limit | Essentials (current) | Team (upgrade) |
 |---|---|---|
-| Reviews per hour, shared by all 5 reviewer seats | 5. About 120 a day at the most, so it fits the ~36/day average. A burst of more than 5 candidates in one hour has to wait or skip. | 8. Comfortable, including re-reviews after a BOUNCE. |
-| Files per run | 150. About 97.7% of candidates fit (291 of 298). An over-cap candidate fails with `too_many_files`; reviewing it needs split runs. | 300. Only 2 of 298 candidates exceed it. |
+| Reviews per hour, shared by all 5 reviewer seats | 5. About 120 a day at the most, so it fits the ~29/day average. A burst of more than 5 candidates in one hour has to wait or skip. | 8. Comfortable, including re-reviews after a BOUNCE. |
+| Files per run | 150. 230 of 232 landings fit. An over-cap landing fails with `too_many_files`; reviewing it needs split runs. | 300. All 232 fit. |
 
-Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and a p90 candidate is about $12.
+Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and a p90 candidate is 26 × $0.25 ≈ $6.50.
 
 ## 4. Integration points
 
@@ -152,7 +155,7 @@ Cost if credits were ever enabled: a p50 candidate is 6 × $0.25 ≈ $1.50, and 
 - **Latency and load:**
   - Adds about 1–5 minutes per candidate inside the reviewer's own pass. It can run while the reviewer reads the diff.
   - It's one run per review (BOUNCE re-reviews included), with no heavy-run key needed: it's a network call plus a local `git worktree add`.
-- **Failure mode:** a rate limit, `too_many_files` (a candidate over 150 files on Essentials, about 2% of landings), an auth expiry or an `error` event leaves the reviewer without CodeRabbit input. An over-cap candidate can still get partial coverage: the reviewer reruns with one of the CLI's narrower `--dir` candidates, each of which costs another review from the hourly 5. As advisory, the reviewer records "CodeRabbit: unavailable (<reason>)" and proceeds. False positives are triaged like any lead (skill contract: "findings are leads, not patches").
+- **Failure mode:** a rate limit, `too_many_files` (a candidate over 150 files on Essentials: 2 of 232 landings, one of them a package), an auth expiry or an `error` event leaves the reviewer without CodeRabbit input. An over-cap candidate can still get partial coverage: the reviewer reruns with one of the CLI's narrower `--dir` candidates, each of which costs another review from the hourly 5. As advisory, the reviewer records "CodeRabbit: unavailable (<reason>)" and proceeds. False positives are triaged like any lead (skill contract: "findings are leads, not patches").
 - **LAND and receipt:**
   - The review runs on the same SHA the LAND names. `internalState.json.reviewedCommitIds` and `git.json.head` record that SHA, so the LAND evidence can cite "CodeRabbit run <end-ms> on <sha>: N findings, M adopted".
   - Blocking findings go through the existing BOUNCE and bounded correction loop. The single correction pass counts them like any other finding, so the loop stays as it is.
@@ -233,5 +236,5 @@ On Essentials with D7 "Every candidate", choosing D6 "Skip and note it" keeps th
   - `pre-push-test.sh:544-564`
   - `src/gobby/install/shared/skills/coderabbit/SKILL.md`
   - `.gobby/roles/{_common,code-reviewer,merge-manager,lane-manager,roster}.md`
-  - `git log 0.5.0 --merges --since=2026-09-24`
+  - `git log b1dc981f1f --first-parent --merges --since=2026-09-24`
 - **Memories:** f5537d2c, f153518c, 245c154c, baba0f0a.
