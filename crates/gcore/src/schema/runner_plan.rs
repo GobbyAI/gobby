@@ -91,7 +91,8 @@ impl SchemaRunner<'_> {
 
 /// Validate every receipt and return the migrations an apply would run, in order.
 ///
-/// Writes nothing: receipt validation and the directive checks only. `apply_pending_migrations` executes the list this returns.
+/// Writes nothing: receipt validation and the directive checks only.
+/// `apply_pending_migrations` executes the list this returns.
 pub(super) fn resolve_pending_migrations<'m>(
     client: &mut Client,
     schema: &str,

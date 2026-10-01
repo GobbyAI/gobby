@@ -182,7 +182,7 @@ The crate's default feature set is empty:
 ```toml
 [features]
 default = []
-postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2", "dep:time"]
+postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2"]
 falkor = ["dep:redis"]
 qdrant = ["dep:reqwest", "dep:urlencoding"]
 indexing = ["dep:ignore", "dep:sha2"]

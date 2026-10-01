@@ -248,9 +248,9 @@ def test_profile_binds_discovered_epoch_without_changing_environment(
 ) -> None:
     epoch = MaintenanceEpoch(
         id=UUID("a260be66-d16e-4a27-bc5b-d1d1b8d2c617"),
-        campaign="schema-apply",
+        campaign="purge",
         opened_at=datetime(2026, 9, 5, tzinfo=UTC),
-        opened_by="hub-maintenance:schema-apply",
+        opened_by="hub-maintenance:purge",
         scope_note="isolated test",
         released_at=None,
         released_by_command=None,

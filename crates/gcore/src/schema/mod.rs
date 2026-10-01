@@ -7,7 +7,6 @@ mod assets;
 mod attached;
 mod error;
 mod external;
-mod gate;
 mod identity;
 mod runner;
 mod sql_splitter;
@@ -27,10 +26,6 @@ pub use attached::{
 pub use error::SchemaError;
 pub use external::{
     ExternalPostgresObject, ExternalPostgresObjectKind, ExternalSchemaError, gcode_postgres_objects,
-};
-pub use gate::{
-    ArtifactRecord, BackupManifestError, HubBackupManifest, SourceIdentity, StoreRecord,
-    VerificationState, parse_backup_manifest,
 };
 pub use identity::{AssetIdentity, SchemaIdentity, SchemaIdentityContract, schema_identity};
 pub use runner::{ApplyReport, PlanReport, SchemaRunner};

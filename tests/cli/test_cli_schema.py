@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib
 
-import click
 import pytest
 from click.testing import CliRunner
 
@@ -18,7 +17,6 @@ def test_schema_command_is_registered_on_root_cli() -> None:
 
 def test_apply_schema_plain(monkeypatch: pytest.MonkeyPatch) -> None:
     """`schema apply` applies the plain chain; no destructive branch or campaign remains."""
-    hub_maintenance = importlib.import_module("gobby.cli.hub_maintenance")
     required: list[str] = []
 
     class Runtime:
@@ -30,11 +28,12 @@ def test_apply_schema_plain(monkeypatch: pytest.MonkeyPatch) -> None:
 
     applied = CliRunner().invoke(root_cli, ["schema", "apply"])
     rejected = CliRunner().invoke(root_cli, ["schema", "apply", "--destructive"])
+    campaign = CliRunner().invoke(root_cli, ["hub-maintenance", "run", "schema-apply"])
 
     assert applied.exit_code == 0, applied.output
     assert required == ["database"]
     assert "Schema is at version 456" in applied.output
     assert rejected.exit_code == 2
     assert "No such option '--destructive'" in rejected.output
-    with pytest.raises(click.ClickException, match="no installed implementation"):
-        hub_maintenance._load_campaign_executor("schema-apply")
+    assert campaign.exit_code == 2
+    assert "'schema-apply' is not one of" in campaign.output
