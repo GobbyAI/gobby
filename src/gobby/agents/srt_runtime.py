@@ -536,6 +536,17 @@ def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:
         # fails its handshake without it. Egress stays proxy-filtered.
         "enableWeakerNetworkIsolation": True,
         "allowAppleEvents": False,
+        # Harmless denials that flooded violation logs (11.77 GB by 2026-10-01):
+        # libsystem reads kern.iossupportversion at every exec, compilers query
+        # free disk space, codex probes configd reachability. Enforcement is
+        # unchanged; SRT only stops recording lines containing these substrings.
+        "ignoreViolations": {
+            "*": [
+                "sysctl-read kern.iossupportversion",
+                "system-info vfs.disk-space",
+                "mach-lookup com.apple.SystemConfiguration.configd",
+            ]
+        },
     }
     if credentials:
         settings["credentials"] = {"envVars": credentials, "allowPlaintextInject": False}

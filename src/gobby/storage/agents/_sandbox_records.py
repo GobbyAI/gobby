@@ -189,25 +189,15 @@ def _cached_violation_count(path: str, size: int, mtime_ns: int) -> tuple[int, b
     del size, mtime_ns
     count = 0
     truncated = False
-    last = ""
     try:
         with Path(path).open(encoding="utf-8", errors="replace") as handle:
             for line in handle:
                 if not line.strip():
                     continue
                 count += 1
-                last = line
                 if count >= _MAX_COUNTED_VIOLATIONS:
                     truncated = next(handle, None) is not None
                     break
     except OSError:
         return 0, False
-    # A capped runner log ends in a summary entry carrying the run's true total.
-    if not truncated and '"totalCount"' in last:
-        try:
-            total = json.loads(last).get("totalCount")
-        except (json.JSONDecodeError, AttributeError):
-            total = None
-        if isinstance(total, int) and not isinstance(total, bool) and total >= count:
-            return total, False
     return count, truncated

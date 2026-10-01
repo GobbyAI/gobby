@@ -95,6 +95,49 @@ def test_render_settings_uses_srt_credential_schema() -> None:
     assert "inject_hosts" not in json.dumps(settings)
 
 
+def test_render_settings_ignores_only_benign_violation_noise() -> None:
+    paths = ResolvedSandboxPaths(
+        workspace_path="/workspace",
+        read_paths=["/workspace"],
+        write_paths=["/workspace"],
+        allow_external_network=False,
+        credential_env_vars=[],
+        allowed_domains=[],
+        denied_domains=[],
+        allow_unix_sockets=[],
+        deny_read_paths=[],
+        deny_write_paths=[],
+    )
+
+    ignored = render_srt_settings(paths)["ignoreViolations"]
+
+    assert ignored == {
+        "*": [
+            "sysctl-read kern.iossupportversion",
+            "system-info vfs.disk-space",
+            "mach-lookup com.apple.SystemConfiguration.configd",
+        ]
+    }
+    # SRT drops a violation when its log line contains any "*" pattern
+    # (sandbox-violation-store.js shouldIgnoreViolation).
+    noise = [
+        "bash(3482) deny(1) sysctl-read kern.iossupportversion",
+        "rustc(812) deny(1) system-info vfs.disk-space",
+        "codex(77) deny(1) mach-lookup com.apple.SystemConfiguration.configd",
+    ]
+    true_positives = [
+        "python3.14(91) deny(1) file-read-metadata /Users/x/.gobby/bootstrap.yaml",
+        "python3.14(91) deny(1) file-write-mode /Users/x/.gobby/machine_id",
+        "codex(77) deny(1) network-outbound 203.0.113.7:443",
+    ]
+    assert [any(p in line for p in ignored["*"]) for line in noise] == [True, True, True]
+    assert [any(p in line for p in ignored["*"]) for line in true_positives] == [
+        False,
+        False,
+        False,
+    ]
+
+
 async def test_package_root_discovery_preserves_worktree_carveout(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
