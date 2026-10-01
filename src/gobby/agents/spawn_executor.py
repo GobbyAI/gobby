@@ -584,12 +584,16 @@ async def _reap_claimed_row(
     from gobby.agents.spawn_in_doubt_owner import release_claim
 
     settled = False
+    moved_on = False
     pair = (listed.attempt_generation, listed.attempt_started_at)
     try:
         row = manager.get(listed.id)
-        if row is None or row.state != "pending":
-            return False
-        if (row.attempt_generation, row.attempt_started_at) != pair:
+        if (
+            row is None
+            or row.state != "pending"
+            or (row.attempt_generation, row.attempt_started_at) != pair
+        ):
+            moved_on = True
             return False
         try:
             absent = await _stale_pending_absent(runtime_registry.resolve(row.backend), row)
@@ -608,12 +612,18 @@ async def _reap_claimed_row(
             attempt_started_at=row.attempt_started_at,
         )
         settled = result is not None
+        # A missed settle means the row left this pending attempt under us.
+        moved_on = not settled
         return settled
     finally:
-        # Deferred compensation runs only after a proven settle; an unsettled exit
-        # keeps the row pending, so its process may still use it. The claim stays
-        # suspended with its steps until a later reap of this attempt settles it.
+        # Deferred compensation runs only after a proven settle. An unproven or
+        # failed settle keeps the row pending, so its process may still use it:
+        # the claim stays suspended with its steps until a later reap of this
+        # attempt settles it. A row that left this attempt is never listed for it
+        # again, so its claim is released and nothing waits on it.
         if settled:
             await release_claim(listed.id, proven=True)
+        elif moved_on:
+            in_doubt_spawns.release(listed.id)
         else:
             in_doubt_spawns.suspend(listed.id, pair)

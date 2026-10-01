@@ -946,30 +946,27 @@ class _ChildSessions:
         self.deleted.append(child_session_id)
 
 
-@pytest.mark.parametrize("first_reap", ["absence_unproven", "cas_miss", "settle_raises"])
-async def test_unsettled_reap_keeps_deferred_cleanup_for_the_proven_reap(first_reap: str) -> None:
-    row = _row("pending")
-    store = MemoryTerminalStore(row)
-    registry = runtime_registry(FakeRuntime())
-    handler = _Isolation()
-    children = _ChildSessions()
-    terminalize = AsyncMock(return_value=True)
+async def _reap_with_concurrent_cleanup(
+    store: MemoryTerminalStore,
+    row: Terminal,
+    *,
+    absent: bool,
+    settle: AbstractContextManager[object],
+    handler: _Isolation,
+    children: _ChildSessions,
+    terminalize: AsyncMock,
+) -> asyncio.Task[bool]:
+    """Reap ``row`` once while a failed spawn's cleanup lands mid-reap."""
     entered, resume = asyncio.Event(), asyncio.Event()
 
     async def first_absence(*_args: object) -> bool:
         entered.set()
         await resume.wait()
-        return first_reap != "absence_unproven"
+        return absent
 
+    registry = runtime_registry(FakeRuntime())
     manager = cast(TerminalManager, store)
-    settle_failure: AbstractContextManager[object] = nullcontext()
-    if first_reap == "cas_miss":
-        settle_failure = patch.object(store, "fail_pending_attempt", return_value=None)
-    elif first_reap == "settle_raises":
-        settle_failure = patch.object(
-            store, "fail_pending_attempt", side_effect=RuntimeError("settle failed")
-        )
-    with patch.object(spawn_executor, "_stale_pending_absent", first_absence), settle_failure:
+    with patch.object(spawn_executor, "_stale_pending_absent", first_absence), settle:
         reaping = asyncio.create_task(spawn_executor._reap_stale_row(manager, registry, row))
         await entered.wait()
         # Cleanup lands while the reaper holds the id, so its steps wait on that claim.
@@ -982,11 +979,39 @@ async def test_unsettled_reap_keeps_deferred_cleanup_for_the_proven_reap(first_r
             child_sessions=children,
         )
         resume.set()
-        if first_reap == "settle_raises":
-            with pytest.raises(RuntimeError, match="settle failed"):
-                await reaping
-        else:
-            assert await reaping is False
+        await asyncio.wait([reaping])
+    return reaping
+
+
+@pytest.mark.parametrize("first_reap", ["absence_unproven", "settle_raises"])
+async def test_unsettled_reap_keeps_deferred_cleanup_for_the_proven_reap(first_reap: str) -> None:
+    row = _row("pending")
+    store = MemoryTerminalStore(row)
+    registry = runtime_registry(FakeRuntime())
+    manager = cast(TerminalManager, store)
+    handler = _Isolation()
+    children = _ChildSessions()
+    terminalize = AsyncMock(return_value=True)
+    settle_failure: AbstractContextManager[object] = nullcontext()
+    if first_reap == "settle_raises":
+        settle_failure = patch.object(
+            store, "fail_pending_attempt", side_effect=RuntimeError("settle failed")
+        )
+
+    reaping = await _reap_with_concurrent_cleanup(
+        store,
+        row,
+        absent=first_reap != "absence_unproven",
+        settle=settle_failure,
+        handler=handler,
+        children=children,
+        terminalize=terminalize,
+    )
+    if first_reap == "settle_raises":
+        with pytest.raises(RuntimeError, match="settle failed"):
+            reaping.result()
+    else:
+        assert reaping.result() is False
 
     # The unsettled reap ran nothing and stays suspended on its attempt with the steps,
     # so no other owner (a placed retry, another attempt) can claim and settle the row.
@@ -1014,6 +1039,36 @@ async def test_unsettled_reap_keeps_deferred_cleanup_for_the_proven_reap(first_r
     terminalize.assert_awaited_once()
     assert (handler.removed, children.deleted) == (1, ["child-1"])
     assert not in_doubt_spawns.holds(row.id)
+
+
+async def test_cas_missed_reap_releases_a_row_that_left_its_attempt() -> None:
+    row = _row("pending")
+    store = MemoryTerminalStore(row)
+    handler = _Isolation()
+    children = _ChildSessions()
+    terminalize = AsyncMock(return_value=True)
+
+    def exited_under_the_reaper(terminal_id: str, **_attempt: object) -> None:
+        # Another path exits the row between the reaper's read and its settle.
+        store.mark_exited(terminal_id)
+
+    reaping = await _reap_with_concurrent_cleanup(
+        store,
+        row,
+        absent=True,
+        settle=patch.object(store, "fail_pending_attempt", side_effect=exited_under_the_reaper),
+        handler=handler,
+        children=children,
+        terminalize=terminalize,
+    )
+
+    assert reaping.result() is False
+    assert store.rows[row.id].state == "exited"
+    # No later reap lists this attempt, so the claim is released rather than held
+    # forever; with no proof of its own, the reaper runs none of its steps.
+    assert not in_doubt_spawns.holds(row.id)
+    terminalize.assert_not_awaited()
+    assert (handler.removed, children.deleted) == (0, [])
 
 
 async def test_held_terminal_defers_isolation_to_owner() -> None:
