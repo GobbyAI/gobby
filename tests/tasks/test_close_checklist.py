@@ -697,11 +697,23 @@ def test_cd_prefixed_pytest_covers_the_changed_python_test() -> None:
     assert gate.details["pytest_uncovered_paths"] == []
 
 
-@pytest.mark.parametrize("directory", ["--directory /repo", "--directory=/repo"])
-def test_uv_run_directory_pytest_covers_the_changed_python_test(directory: str) -> None:
-    command = (
-        f"GOBBY_TEST_PROTECT=1 uv run {directory} pytest tests/tasks/test_close_checklist.py -q"
-    )
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "GOBBY_TEST_PROTECT=1 uv run --directory /repo",
+        "GOBBY_TEST_PROTECT=1 uv run --directory=/repo",
+        "rtk uv run --directory /repo --no-sync",
+        "uv run --no-sync --directory /repo",
+        "uv run --no-sync",
+        "uv --directory /repo run --no-sync",
+        "uv --project=/repo run",
+        "UV_NO_SYNC=1 GOBBY_TEST_PROTECT=1 uv run --project /repo --frozen",
+        "rtk uv run --locked --offline",
+        "uv run rtk",
+    ],
+)
+def test_uv_run_options_pytest_covers_the_changed_python_test(prefix: str) -> None:
+    command = f"{prefix} pytest tests/tasks/test_close_checklist.py -q"
     core_command = _run(2, command=command).core_command
     gate = _changed_test_gate(command)
 
@@ -709,6 +721,39 @@ def test_uv_run_directory_pytest_covers_the_changed_python_test(directory: str) 
     assert pytest_targets(core_command) == ("tests/tasks/test_close_checklist.py",)
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rtk uv run --directory /repo --no-sync pytest tests/other_test.py -q",
+        # An unlisted uv option may change what runs, so it still declines credit.
+        "uv run --with pytest-xdist pytest tests/tasks/test_close_checklist.py -q",
+        "uv run --no-sync --isolated pytest tests/tasks/test_close_checklist.py -q",
+    ],
+)
+def test_uv_run_options_do_not_credit_other_scopes(command: str) -> None:
+    gate = _changed_test_gate(command)
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
+
+
+def test_failing_uv_run_no_sync_pytest_earns_no_credit() -> None:
+    command = "rtk uv run --directory /repo --no-sync pytest tests/tasks/test_close_checklist.py"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/test_close_checklist.py"),
+                _run(2, command=command, outcome="failure"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
 
 
 @pytest.mark.parametrize(
