@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from typing import Literal
 
@@ -13,7 +12,6 @@ from psycopg.errors import UniqueViolation
 
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import TerminalManager, truncate_title
-from gobby.storage.workspace_layout import WorkspaceNotFoundError
 from gobby.storage.workspaces import (
     LayoutChange,
     WorkspaceBusyError,
@@ -34,8 +32,6 @@ from gobby.terminals.workspace_contract import (
     _workspace_of,
     storage_errors,
 )
-
-logger = logging.getLogger(__name__)
 
 SEAT_HELD_STATES = frozenset({"pending", "live", "orphaned"})
 
@@ -327,9 +323,10 @@ class AgentPaneReserver:
         """Wait for the insert to settle so no commit lands after the rollback."""
         try:
             await asyncio.wait([insert])
-            failure = None if insert.cancelled() else insert.exception()
-            if failure is not None:
-                _warn("reserve", "insert", pane_id, None, failure)
+            if not insert.cancelled():
+                # Retrieve a late insert failure so the loop never reports it as
+                # unhandled; the rollback below is its whole handling.
+                insert.exception()
             await self._roll_back(pane_id)
         finally:
             self._clear(key, pane_id)
@@ -338,12 +335,9 @@ class AgentPaneReserver:
         """Remove an unbound pane; a failure leaves residue the next sweep prunes."""
         try:
             change = await asyncio.to_thread(self._workspaces.remove_pane, pane_id)
-        except WorkspaceNotFoundError:
+        except Exception:
             return
-        except Exception as exc:
-            _warn("reserve", "rollback", pane_id, None, exc)
-            return
-        await self._publish_removal("reserve", change, pane_id, None)
+        await self._publish_removal(change)
 
     async def bind(self, reserved: ReservedPane, terminal_id: str) -> WorkspacePane:
         """Bind the launch terminal and announce the pane; the mark and seat stay."""
@@ -371,19 +365,19 @@ class AgentPaneReserver:
         holds the seat until the terminal settles.
         """
         try:
-            if terminal_id is not None and await self._holds_seat(reserved.pane_id, terminal_id):
+            if terminal_id is not None and await self._holds_seat(terminal_id):
                 await self._keep(reserved.pane_id, terminal_id)
             else:
-                await self._remove(reserved.pane_id, terminal_id)
+                await self._remove(reserved.pane_id)
         finally:
             self.settle(reserved)
 
-    async def _holds_seat(self, pane_id: str, terminal_id: str) -> bool:
+    async def _holds_seat(self, terminal_id: str) -> bool:
         """Kill the launch terminal when active; True when it still holds the seat."""
         try:
             terminal = await asyncio.to_thread(self._terminals.get, terminal_id)
-        except Exception as exc:
-            _warn("release", "read", pane_id, terminal_id, exc)
+        except Exception:
+            # An unreadable terminal may still be running: keep holding the seat.
             return True
         if terminal is None or terminal.state == "exited":
             return False
@@ -391,42 +385,36 @@ class AgentPaneReserver:
             return True
         try:
             await kill_terminal(self._terminals, self._registry, terminal)
-        except Exception as exc:
-            _warn("release", "kill", pane_id, terminal_id, exc)
-            try:
+        except Exception:
+            # Best effort: the kept pane holds the seat whether or not the mark lands.
+            with suppress(Exception):
                 await asyncio.to_thread(
                     self._terminals.mark_kill_failed,
                     terminal.id,
                     attempt_generation=terminal.attempt_generation,
                     attempt_started_at=terminal.attempt_started_at,
                 )
-            except Exception as mark_exc:
-                _warn("release", "mark_kill_failed", pane_id, terminal_id, mark_exc)
             return True
         return False
 
     async def _keep(self, pane_id: str, terminal_id: str) -> None:
-        try:
+        """Bind the pane to its terminal; an unbound pane is residue the sweep prunes."""
+        with suppress(Exception):
             await asyncio.to_thread(
                 self._workspaces.set_pane_terminal, pane_id, terminal_id, owns_terminal=True
             )
-        except Exception as exc:
-            _warn("release", "bind", pane_id, terminal_id, exc)
 
-    async def _remove(self, pane_id: str, terminal_id: str | None) -> None:
+    async def _remove(self, pane_id: str) -> None:
+        """Remove the pane; a failure leaves residue the next sweep prunes."""
         try:
             change = await asyncio.to_thread(self._workspaces.remove_pane, pane_id)
-        except WorkspaceNotFoundError:
+        except Exception:
             return
-        except Exception as exc:
-            _warn("release", "remove", pane_id, terminal_id, exc)
-            return
-        await self._publish_removal("release", change, pane_id, terminal_id)
+        await self._publish_removal(change)
 
-    async def _publish_removal(
-        self, operation: str, change: LayoutChange, pane_id: str, terminal_id: str | None
-    ) -> None:
-        try:
+    async def _publish_removal(self, change: LayoutChange) -> None:
+        """Publish a committed removal; the row is already gone, so a failed publish is dropped."""
+        with suppress(Exception):
             workspace_id = (change.tabs or change.removed_tabs)[0].workspace_id
             if change.removed_panes:
                 await self._emit(
@@ -434,8 +422,6 @@ class AgentPaneReserver:
                 )
             if change.removed_tabs:
                 await self._emit("tab.removed", workspace_id, tabs=change.removed_tabs)
-        except Exception as exc:
-            _warn(operation, "publish", pane_id, terminal_id, exc)
 
     async def _emit(
         self,
@@ -463,17 +449,3 @@ class AgentPaneReserver:
         self._workspaces.clear_spawn_in_flight(pane_id)
         if self._seats.get(key) == pane_id:
             del self._seats[key]
-
-
-def _warn(
-    operation: str, phase: str, pane_id: str, terminal_id: str | None, exc: BaseException
-) -> None:
-    """Log a failed step by exception type only: messages may carry secrets."""
-    logger.warning(
-        "Agent pane %s %s failed: pane=%s terminal=%s error=%s",
-        operation,
-        phase,
-        pane_id,
-        terminal_id,
-        type(exc).__name__,
-    )

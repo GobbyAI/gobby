@@ -271,6 +271,11 @@ def _in_flight(h: _Harness) -> list[str]:
     return [pane_id for pane_id in h.minted if h.workspaces.is_spawn_in_flight(pane_id)]
 
 
+def _reserver_logs(caplog: pytest.LogCaptureFixture) -> list[str]:
+    """Records the reserver emitted; its loop paths must log nothing (Josh's loop-logging ban)."""
+    return [record.getMessage() for record in caplog.records if record.name == agent_panes.__name__]
+
+
 def _kinds(h: _Harness) -> list[str]:
     return [event["kind"] for event in h.events]
 
@@ -541,7 +546,7 @@ async def test_reserve_cancelled_before_return_leaves_nothing(
     h = harness
     ws = _workspace(h)
     anchor_tab, anchor = _base(h, ws)
-    caplog.set_level(logging.WARNING)
+    caplog.set_level(logging.DEBUG, logger=agent_panes.__name__)
     loop = asyncio.get_running_loop()
     unhandled: list[dict[str, Any]] = []
     loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
@@ -595,9 +600,9 @@ async def test_reserve_cancelled_before_return_leaves_nothing(
         await asyncio.sleep(0)
     finally:
         loop.set_exception_handler(None)
-    # A cancelled insert's failure is handled, never reported raw by the loop.
+    # A cancelled insert's failure is consumed: neither the loop nor the reserver reports it.
     assert unhandled == []
-    assert MESSAGE_MARKER not in caplog.text
+    assert _reserver_logs(caplog) == []
 
 
 async def test_release_kills_only_an_active_owned_terminal(
@@ -678,7 +683,7 @@ async def test_release_steps_are_independent(
 ) -> None:
     h = harness
     ws = _workspace(h)
-    caplog.set_level(logging.WARNING, logger=agent_panes.__name__)
+    caplog.set_level(logging.DEBUG, logger=agent_panes.__name__)
     kills: list[str] = []
     kill_failures: list[Exception] = []
 
@@ -691,23 +696,10 @@ async def test_release_steps_are_independent(
 
     monkeypatch.setattr(agent_panes, "kill_terminal", recording_kill)
 
-    def assert_logged(phase: str, reserved: ReservedPane, terminal: Terminal) -> None:
-        messages = [
-            record.getMessage()
-            for record in caplog.records
-            if reserved.pane_id in record.getMessage()
-        ]
-        assert any(
-            phase in message and terminal.id in message and "RuntimeError" in message
-            for message in messages
-        ), messages
-        assert MESSAGE_MARKER not in caplog.text
-
     # The kill raises: the pane stays with its orphaned terminal, and release returns.
     killed_fails, failed_terminal = await _launch(h, _tab(ws.id, "kill-raises"))
     kill_failures.append(RuntimeError(MESSAGE_MARKER))
     await h.reserver.release(killed_fails, terminal_id=failed_terminal.id)
-    assert_logged("kill", killed_fails, failed_terminal)
     assert _state(h, failed_terminal) == "orphaned"
 
     # remove_pane raises after the kill: the residue is out of flight and swept.
@@ -716,7 +708,6 @@ async def test_release_steps_are_independent(
         patched.setattr(h.workspaces, "remove_pane", _raiser(RuntimeError(MESSAGE_MARKER)))
         await h.reserver.release(reserved, terminal_id=terminal.id)
     assert kills[-1] == terminal.id and _state(h, terminal) == "exited"
-    assert_logged("remove", reserved, terminal)
     assert _in_flight(h) == []
     swept = h.workspaces.sweep_dead_panes(ws.id)
     assert reserved.pane_id in {pane.id for pane in swept.removed_panes}
@@ -726,7 +717,6 @@ async def test_release_steps_are_independent(
     h.publish_failures["pane.removed"] = RuntimeError(MESSAGE_MARKER)
     await h.reserver.release(reserved, terminal_id=terminal.id)
     assert kills[-1] == terminal.id and _state(h, terminal) == "exited"
-    assert_logged("publish", reserved, terminal)
     assert reserved.pane_id not in _pane_ids(h, ws)
 
     # The row is already gone.
@@ -749,6 +739,8 @@ async def test_release_steps_are_independent(
     h.workspaces.sweep_dead_panes(ws.id)
     for title in ("kill-raises", "remove-raises", "publish-raises", "row-gone", "settled"):
         await _reserve(h, _tab(ws.id, title))
+    # Failed steps surface through the kept or swept pane above, never through logs.
+    assert _reserver_logs(caplog) == []
 
 
 async def test_reserve_rollback_failure_leaves_sweepable_residue(
@@ -757,7 +749,7 @@ async def test_reserve_rollback_failure_leaves_sweepable_residue(
     h = harness
     ws = _workspace(h)
     _, anchor = _base(h, ws)
-    caplog.set_level(logging.WARNING, logger=agent_panes.__name__)
+    caplog.set_level(logging.DEBUG, logger=agent_panes.__name__)
     with monkeypatch.context() as patched:
         patched.setattr(h.workspaces, "rename_pane", _raiser(RuntimeError("label failed")))
         patched.setattr(h.workspaces, "remove_pane", _raiser(RuntimeError(MESSAGE_MARKER)))
@@ -765,8 +757,7 @@ async def test_reserve_rollback_failure_leaves_sweepable_residue(
             await _reserve(h, _split(anchor.id, "scout"))
 
     [residue] = h.minted
-    assert residue in caplog.text and "RuntimeError" in caplog.text
-    assert MESSAGE_MARKER not in caplog.text
+    assert _reserver_logs(caplog) == []
     assert _in_flight(h) == []
     assert _pane(h, ws, residue).terminal_id is None
 
