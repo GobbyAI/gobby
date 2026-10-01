@@ -163,3 +163,19 @@ async def test_a_sub_seven_character_link_does_not_admit_a_foreign_commit(leaf: 
 
     assert error is not None
     assert error["error"] == "close_commit_not_task_tagged"
+
+
+def test_close_task_with_commit_links_the_canonical_short_sha(leaf: _Leaf) -> None:
+    # The REST close route's shared path stored the caller's SHA verbatim.
+    full = _commit(leaf.repo, f"{leaf.tag(leaf.task)} fix: work")
+
+    closed = leaf.manager.close_task_with_commit(leaf.task.id, full, cwd=leaf.repo)
+
+    assert closed.commits == [leaf.short(full)]
+
+
+def test_close_task_with_commit_refuses_an_unresolved_sha_before_linking(leaf: _Leaf) -> None:
+    with pytest.raises(ValueError, match="Invalid or unresolved commit SHA"):
+        leaf.manager.close_task_with_commit(leaf.task.id, "f" * 40, cwd=leaf.repo)
+
+    assert not leaf.fresh().commits
