@@ -11,11 +11,10 @@ use uuid::Uuid;
 const FAILURE_SCHEMA_VERSION: u32 = 1;
 const RESPONSE_BODY_MAX_BYTES: usize = 8192;
 const RECENT_FAILURE_LIMIT: usize = 10;
-/// Stop failures mean the turn ended without a daemon verdict (#20744 keeps
-/// Stop fail-open), so their evidence gets its own cap instead of being pushed
-/// out by routine tool-hook failures (#23266).
-const TURN_END_FAILURE_LIMIT: usize = 100;
-const TURN_END_MARKER: &str = "-turn-end-";
+/// Retaining only the 10 listed by `--diagnose` let a burst of tool-hook
+/// failures prune the record of a Stop that failed open (#20744) before anyone
+/// read it (#23266).
+const FAILURE_RETENTION_LIMIT: usize = 100;
 /// Matches the daemon's inbox orphan-temp window: an older `.json.tmp` belongs
 /// to a writer that died between create and rename.
 const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
@@ -34,7 +33,7 @@ pub(crate) enum FailureKind {
 }
 
 impl FailureKind {
-    pub(crate) fn as_str(self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             Self::InvalidSuccessJson => "invalid_success_json",
             Self::SuccessResponseMapping => "success_response_mapping",
@@ -168,14 +167,9 @@ pub(crate) fn record_failure(ctx: FailureContext<'_>) -> Result<PathBuf> {
 fn record_failure_to_dir(dir: &Path, ctx: FailureContext<'_>) -> Result<PathBuf> {
     let artifact = FailureArtifact::from_context(ctx);
     let file_name = format!(
-        "{}-{}{}{}-{}.json",
+        "{}-{}-{}-{}.json",
         transport::ts13(),
         if artifact.critical { "c" } else { "n" },
-        if crate::planned_shutdown::is_stop_hook(&artifact.hook_type) {
-            TURN_END_MARKER
-        } else {
-            "-"
-        },
         artifact.failure_kind.as_str(),
         Uuid::new_v4()
     );
@@ -241,20 +235,8 @@ fn read_failure_entries(dir: &Path) -> Vec<FailureEntry> {
 
 fn prune_old_failure_artifacts(dir: &Path, keep_path: &Path) -> Result<()> {
     sweep_orphan_tmp_files(dir);
-    let (turn_end, other): (Vec<_>, Vec<_>) =
-        read_failure_entries(dir).into_iter().partition(|entry| {
-            entry
-                .path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains(TURN_END_MARKER))
-        });
-    prune_newest(turn_end, keep_path, TURN_END_FAILURE_LIMIT)?;
-    prune_newest(other, keep_path, RECENT_FAILURE_LIMIT)
-}
-
-fn prune_newest(mut entries: Vec<FailureEntry>, keep_path: &Path, limit: usize) -> Result<()> {
-    if entries.len() <= limit {
+    let mut entries = read_failure_entries(dir);
+    if entries.len() <= FAILURE_RETENTION_LIMIT {
         return Ok(());
     }
 
@@ -264,7 +246,7 @@ fn prune_newest(mut entries: Vec<FailureEntry>, keep_path: &Path, limit: usize) 
             .then_with(|| b.modified_at.cmp(&a.modified_at))
             .then_with(|| b.path.cmp(&a.path))
     });
-    for entry in entries.into_iter().skip(limit) {
+    for entry in entries.into_iter().skip(FAILURE_RETENTION_LIMIT) {
         fs::remove_file(&entry.path).with_context(|| {
             format!("remove old ghook failure artifact {}", entry.path.display())
         })?;
@@ -490,8 +472,8 @@ mod tests {
     #[test]
     fn record_failure_prunes_oldest_json_artifacts() {
         let dir = tempdir().unwrap();
-        for index in 0..RECENT_FAILURE_LIMIT {
-            fs::write(dir.path().join(format!("{index:02}-old.json")), "{}").unwrap();
+        for index in 0..FAILURE_RETENTION_LIMIT {
+            fs::write(dir.path().join(format!("{index:03}-old.json")), "{}").unwrap();
         }
         fs::write(dir.path().join("ignored.tmp"), "{}").unwrap();
 
@@ -516,7 +498,7 @@ mod tests {
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
             .count();
-        assert_eq!(json_files, RECENT_FAILURE_LIMIT);
+        assert_eq!(json_files, FAILURE_RETENTION_LIMIT);
         assert!(path.exists(), "newly written failure artifact is retained");
         assert!(dir.path().join("ignored.tmp").exists());
     }

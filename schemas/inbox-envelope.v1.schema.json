@@ -49,7 +49,7 @@
     },
     "headers": {
       "type": "object",
-      "description": "HTTP headers mirroring what ghook sent (or would have sent) to the daemon. Omitted headers are absent keys; empty-string values are never emitted. After a failed live POST of a noncritical Stop, ghook adds X-Gobby-Live-Delivery-Failure ('<failure_kind>; at=<RFC 3339>'), marking a Stop whose turn ended with no live daemon verdict.",
+      "description": "HTTP headers mirroring what ghook sent (or would have sent) to the daemon. Omitted headers are absent keys; empty-string values are never emitted.",
       "additionalProperties": {
         "type": "string",
         "minLength": 1

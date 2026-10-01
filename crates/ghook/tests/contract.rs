@@ -1690,38 +1690,6 @@ fn daemon_503_without_retry_body_keeps_noncritical_fail_open() -> TestResult {
 }
 
 #[test]
-fn codex_stop_without_verdict_stamps_retained_envelope() -> TestResult {
-    let home = tempfile::tempdir()?;
-    let gobby_home = tempfile::tempdir()?;
-    let body = r#"{"status":"unavailable","backend":{"state":"down","target":"127.0.0.1:60888"}}"#;
-    let (daemon_url, daemon) = start_daemon(http_json_status(503, "Service Unavailable", body))?;
-
-    let output = run_ghook_with_dirs(
-        home.path(),
-        gobby_home.path(),
-        Some("codex"),
-        Some("Stop"),
-        &daemon_url,
-        VALID_STDIN,
-        &[],
-    )?;
-    let _request = join_daemon(daemon)?;
-
-    // Stop stays fail-open (#20744): Codex ends the turn on this exit-1 error.
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
-    let envelope = read_single_inbox_envelope(gobby_home.path())?;
-    let stamp = envelope["headers"]["X-Gobby-Live-Delivery-Failure"]
-        .as_str()
-        .unwrap_or_default();
-    assert!(stamp.starts_with("connect; at="), "{envelope}");
-    let failures = read_failure_artifacts(gobby_home.path())?;
-    assert_eq!(failures.len(), 1);
-    assert_eq!(failures[0]["failure_kind"], "connect");
-
-    Ok(())
-}
-
-#[test]
 fn daemon_connect_failure_writes_failure_and_keeps_envelope_for_replay() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
