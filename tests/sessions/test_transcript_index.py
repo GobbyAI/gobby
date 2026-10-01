@@ -9,6 +9,7 @@ builds once and invalidates on append.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import logging
@@ -840,6 +841,114 @@ async def test_get_or_build_index_rebuilds_on_sidecar_size_mismatch(
 
     assert calls == 1
     assert rebuilt.size == st2.st_size
+    clear_index_cache()
+
+
+async def _index_after_lag_growth(
+    monkeypatch: pytest.MonkeyPatch, path: str, source: str, prefix: str, tail: str
+) -> tuple[TranscriptIndex, TranscriptIndex, int]:
+    """Persist a sidecar for ``prefix``, append ``tail``, and re-read the grown file.
+
+    Models the lag window: the processor's sidecar covers an older size while the
+    transcript has already grown. Returns the reader's index, a fresh full build of
+    the grown file, and how many full builds the reader ran.
+    """
+    original = transcript_index.build_index_from_file
+    monkeypatch.setattr(transcript_index, "build_index_from_file", original)
+    clear_index_cache()
+    Path(path).write_text(prefix, encoding="utf-8")
+    st = os.stat(path)
+    await get_or_build_index(path, source, SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    clear_index_cache()
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(tail)
+    grown = os.stat(path)
+    expected = original(path, source, SESSION, mtime_ns=grown.st_mtime_ns, size=grown.st_size)
+    builds = 0
+
+    def count_build(*args: Any, **kwargs: Any) -> TranscriptIndex:
+        nonlocal builds
+        builds += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(transcript_index, "build_index_from_file", count_build)
+    index = await get_or_build_index(
+        path, source, SESSION, mtime_ns=grown.st_mtime_ns, size=grown.st_size
+    )
+    return index, expected, builds
+
+
+def _agy_lines() -> list[str]:
+    return AGY_STATS_FIXTURE.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "make_lines"),
+    [
+        ("codex", _codex_lines),
+        ("claude", _claude_lines),
+        ("grok", lambda: _grok_boundary_lines()),
+        ("agy", _agy_lines),
+    ],
+)
+async def test_lag_window_growth_extends_sidecar_without_full_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    make_lines: Callable[[], list[str]],
+) -> None:
+    texts = _line_texts(make_lines())
+    path = str(tmp_path / f"{source}-lag.jsonl")
+
+    for split in range(1, len(texts)):
+        index, expected, builds = await _index_after_lag_growth(
+            monkeypatch, path, source, "".join(texts[:split]), "".join(texts[split:])
+        )
+
+        assert builds == 0, split
+        assert dataclasses.asdict(index) == dataclasses.asdict(expected), split
+        persisted = load_index_sidecar(
+            path, source, SESSION, seek_mode="byte", mtime_ns=index.mtime_ns, size=index.size
+        )
+        assert persisted is not None, split
+        assert dataclasses.asdict(persisted) == dataclasses.asdict(expected), split
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_lag_window_sidecar_ending_mid_line_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    content = "".join(_line_texts(_codex_lines()))
+    cut = content.index("\n", len(content) // 2) + 5
+
+    index, expected, builds = await _index_after_lag_growth(
+        monkeypatch, str(tmp_path / "codex-partial.jsonl"), "codex", content[:cut], content[cut:]
+    )
+
+    assert builds == 1
+    assert dataclasses.asdict(index) == dataclasses.asdict(expected)
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_lag_window_growth_without_incremental_parser_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    texts = _line_texts(_qwen_lines())
+    split = len(texts) // 2
+
+    index, expected, builds = await _index_after_lag_growth(
+        monkeypatch,
+        str(tmp_path / "qwen-lag.jsonl"),
+        "qwen",
+        "".join(texts[:split]),
+        "".join(texts[split:]),
+    )
+
+    assert builds == 1
+    assert dataclasses.asdict(index) == dataclasses.asdict(expected)
     clear_index_cache()
 
 

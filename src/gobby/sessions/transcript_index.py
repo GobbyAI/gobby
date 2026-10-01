@@ -314,9 +314,12 @@ def _should_record_parsed_boundary(boundaries: list[ParsedBoundary], message_cou
 
 def _next_index_after_records(records: list[Any], fallback: int, parsed_index: int) -> int:
     next_index = fallback
-    for record in records:
+    for offset, record in enumerate(records):
         if isinstance(record, ParsedMessage):
             next_index = max(next_index, record.index + 1)
+        elif isinstance(record, ParsedToolEvent):
+            # Tool events carry no index but still occupy a parser position.
+            next_index = max(next_index, parsed_index + offset + 1)
     if not records:
         next_index = max(next_index, parsed_index + 1)
     return next_index

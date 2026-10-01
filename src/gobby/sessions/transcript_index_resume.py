@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import io
+from typing import TYPE_CHECKING, cast
+
 from gobby.sessions.transcript_index import TranscriptIndex, TranscriptIndexAppender
+from gobby.sessions.transcript_index_sidecar import load_index_sidecar
 from gobby.sessions.transcript_renderer import RenderedMessage, RenderState
+from gobby.sessions.transcripts import get_parser
+
+if TYPE_CHECKING:
+    from gobby.sessions.transcripts.base import BaseTranscriptParser
 
 
 def _next_parser_index(index: TranscriptIndex) -> int:
@@ -73,3 +81,53 @@ def hydrate_appender_from_index(
         next_parser_index=_next_parser_index(index),
         next_raw_line_no=_next_raw_line_no(index),
     )
+
+
+def extend_index_from_file(
+    path: str,
+    source: str,
+    session_id: str | None,
+    *,
+    mtime_ns: int,
+    size: int,
+) -> TranscriptIndex | None:
+    """Extend a persisted byte index over appended lines instead of rebuilding it.
+
+    Returns ``None`` when no sidecar covers an append-only prefix of the file, the
+    parser cannot resume from persisted state, or the prefix ends mid-line.
+    """
+    parser = cast(
+        "BaseTranscriptParser",
+        get_parser(source, session_id=session_id, transcript_path=path),
+    )
+    if not parser.supports_incremental_state:
+        return None
+    prior = load_index_sidecar(
+        path,
+        source,
+        session_id,
+        seek_mode="byte",
+        mtime_ns=mtime_ns,
+        size=size,
+        allow_append=True,
+    )
+    if prior is None:
+        return None
+    with open(path, "rb") as handle:
+        if prior.size:
+            handle.seek(prior.size - 1)
+            if handle.read(1) != b"\n":
+                return None
+        tail = handle.read(size - prior.size)
+
+    lines: list[str] = []
+    offsets: list[int] = []
+    offset = prior.size
+    for raw_bytes in io.BytesIO(tail):
+        lines.append(raw_bytes.decode("utf-8", errors="replace"))
+        offsets.append(offset)
+        offset += len(raw_bytes)
+    appender = TranscriptIndexAppender(source, session_id, path, parser=parser)
+    hydrate_appender_from_index(appender, prior)
+    appender.append_positioned_lines(lines, offsets, mtime_ns=mtime_ns, size=size)
+    return appender.snapshot(mtime_ns=mtime_ns, size=size)

@@ -433,6 +433,7 @@ async def get_or_build_index(
         build_index_from_lines,
         build_index_from_raw_lines,
     )
+    from gobby.sessions.transcript_index_resume import extend_index_from_file
 
     if lines is not None:
         seek_mode = "line"
@@ -497,14 +498,25 @@ async def get_or_build_index(
                     )
                 )
             else:
-                index = await asyncio.to_thread(
-                    build_index_from_file,
+                extended = await asyncio.to_thread(
+                    extend_index_from_file,
                     path,
                     source,
                     session_id,
                     mtime_ns=mtime_ns,
                     size=size,
                 )
+                if extended is not None:
+                    index = extended
+                else:
+                    index = await asyncio.to_thread(
+                        build_index_from_file,
+                        path,
+                        source,
+                        session_id,
+                        mtime_ns=mtime_ns,
+                        size=size,
+                    )
             await asyncio.to_thread(persist_index_sidecar, path, index)
 
             async with _CACHE_LOCK:
