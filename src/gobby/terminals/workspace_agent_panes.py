@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Coroutine, Iterable, Iterator, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from psycopg.errors import UniqueViolation
 
@@ -175,8 +175,6 @@ class AgentPaneReserver:
         self._publish = publish
         self._locks: dict[str, asyncio.Lock] = {}
         self._seats: dict[_SeatKey, str] = {}
-        # Strong refs for shielded cleanups that outlive a cancelled reserve.
-        self._cleanups: set[asyncio.Task[None]] = set()
 
     async def preflight(
         self, actor: str, project_id: str, placement: AgentPlacement
@@ -253,14 +251,19 @@ class AgentPaneReserver:
             pane_id = mint_pane_id()
             self._seats[key] = pane_id
             self._workspaces.mark_spawn_in_flight(pane_id)
+            # asyncio.wait leaves the insert running when reserve is cancelled, like
+            # shield, without shield's loop-handler report of a later insert failure.
             insert = asyncio.ensure_future(
                 asyncio.to_thread(self._insert, resolved, pane_id, worktree_id)
             )
             with _placement_errors():
                 try:
-                    tab, pane = await asyncio.shield(insert)
-                except BaseException:
-                    await self._shielded(self._abandon(insert, key, pane_id))
+                    await asyncio.wait([insert])
+                    tab, pane = insert.result()
+                except BaseException as exc:
+                    interrupted = await self._compensate(insert, key, pane_id)
+                    if interrupted and not isinstance(exc, asyncio.CancelledError):
+                        raise asyncio.CancelledError from exc
                     raise
         return ReservedPane(
             pane_id=pane.id,
@@ -298,17 +301,35 @@ class AgentPaneReserver:
         )
         return change.tabs[0], self._workspaces.rename_pane(pane_id, placement.title)
 
-    async def _shielded(self, cleanup: Coroutine[Any, Any, None]) -> None:
-        """Run ``cleanup`` to completion even if the caller is cancelled again."""
-        task = asyncio.ensure_future(cleanup)
-        self._cleanups.add(task)
-        task.add_done_callback(self._cleanups.discard)
-        await asyncio.shield(task)
+    async def _compensate(
+        self,
+        insert: asyncio.Future[tuple[WorkspaceTab, WorkspacePane]],
+        key: _SeatKey,
+        pane_id: str,
+    ) -> bool:
+        """Roll back to completion through any cancellation; True if one arrived."""
+        cleanup = asyncio.ensure_future(self._abandon(insert, key, pane_id))
+        interrupted = False
+        while not cleanup.done():
+            try:
+                await asyncio.wait([cleanup])
+            except asyncio.CancelledError:
+                interrupted = True
+        cleanup.result()
+        return interrupted
 
-    async def _abandon(self, insert: asyncio.Future[Any], key: _SeatKey, pane_id: str) -> None:
+    async def _abandon(
+        self,
+        insert: asyncio.Future[tuple[WorkspaceTab, WorkspacePane]],
+        key: _SeatKey,
+        pane_id: str,
+    ) -> None:
         """Wait for the insert to settle so no commit lands after the rollback."""
         try:
             await asyncio.wait([insert])
+            failure = None if insert.cancelled() else insert.exception()
+            if failure is not None:
+                _warn("reserve", "insert", pane_id, None, failure)
             await self._roll_back(pane_id)
         finally:
             self._clear(key, pane_id)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import gc
 import itertools
 import logging
 import threading
@@ -535,49 +536,68 @@ async def test_reserve_insert_failure_leaves_nothing(
 
 
 async def test_reserve_cancelled_before_return_leaves_nothing(
-    harness: _Harness, monkeypatch: pytest.MonkeyPatch
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     h = harness
     ws = _workspace(h)
     anchor_tab, anchor = _base(h, ws)
-    for method, placement in (
-        ("create_tab", _tab(ws.id, "lead")),
-        ("rename_pane", _split(anchor.id, "scout")),
-    ):
-        committed, gate = threading.Event(), threading.Event()
-        original = getattr(h.workspaces, method)
+    caplog.set_level(logging.WARNING)
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    # (method held open, placement, cancellations, insert raises after it commits)
+    cases: list[tuple[str, AgentPlacement, int, bool]] = [
+        ("create_tab", _tab(ws.id, "lead"), 1, False),
+        ("rename_pane", _split(anchor.id, "scout"), 2, False),
+        ("create_tab", _tab(ws.id, "lead"), 2, True),
+    ]
+    try:
+        for method, placement, cancellations, insert_fails in cases:
+            committed, gate = threading.Event(), threading.Event()
+            original = getattr(h.workspaces, method)
 
-        def held(
-            *args: Any,
-            _original: Callable[..., Any] = original,
-            _committed: threading.Event = committed,
-            _gate: threading.Event = gate,
-            **kwargs: Any,
-        ) -> Any:
-            result = _original(*args, **kwargs)
-            _committed.set()
-            assert _gate.wait(5)
-            return result
+            def held(
+                *args: Any,
+                _original: Callable[..., Any] = original,
+                _committed: threading.Event = committed,
+                _gate: threading.Event = gate,
+                _fails: bool = insert_fails,
+                **kwargs: Any,
+            ) -> Any:
+                result = _original(*args, **kwargs)
+                _committed.set()
+                assert _gate.wait(5)
+                if _fails:
+                    raise RuntimeError(MESSAGE_MARKER)
+                return result
 
-        resolved = await h.reserver.preflight(OPERATOR, h.project_id, placement)
-        with monkeypatch.context() as patched:
-            patched.setattr(h.workspaces, method, held)
-            task = asyncio.create_task(h.reserver.reserve(resolved, worktree_id=None))
-            assert await asyncio.to_thread(committed.wait, 5)
-            task.cancel()
-            for _tick in range(5):
-                await asyncio.sleep(0)
-            # Cancellation waits for the running insert before it rolls back.
-            assert not task.done()
-            gate.set()
-            with pytest.raises(asyncio.CancelledError):
-                await task
-        assert _tab_ids(h, ws) == {anchor_tab.id}
-        assert _pane_ids(h, ws) == {anchor.id}
-        assert _in_flight(h) == []
+            resolved = await h.reserver.preflight(OPERATOR, h.project_id, placement)
+            with monkeypatch.context() as patched:
+                patched.setattr(h.workspaces, method, held)
+                task = asyncio.create_task(h.reserver.reserve(resolved, worktree_id=None))
+                assert await asyncio.to_thread(committed.wait, 5)
+                for _cancel in range(cancellations):
+                    task.cancel()
+                    for _tick in range(5):
+                        await asyncio.sleep(0)
+                    # Every cancellation waits for the running insert and its rollback.
+                    assert not task.done()
+                gate.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await task
+            assert _tab_ids(h, ws) == {anchor_tab.id}
+            assert _pane_ids(h, ws) == {anchor.id}
+            assert _in_flight(h) == []
 
-        retry = await _reserve(h, placement)
-        await h.reserver.release(retry, terminal_id=None)
+            retry = await _reserve(h, placement)
+            await h.reserver.release(retry, terminal_id=None)
+        gc.collect()
+        await asyncio.sleep(0)
+    finally:
+        loop.set_exception_handler(None)
+    # A cancelled insert's failure is handled, never reported raw by the loop.
+    assert unhandled == []
+    assert MESSAGE_MARKER not in caplog.text
 
 
 async def test_release_kills_only_an_active_owned_terminal(
