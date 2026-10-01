@@ -212,6 +212,16 @@ def test_real_gcode_writer_matches_python_model_contract(
     (project_meta / "project.json").write_text(
         json.dumps({"id": project_id, "name": "storage-conformance"})
     )
+    # gcode refuses a project with no checkout registered for this machine, and it
+    # compares against the resolved root (/private/var/... on macOS).
+    code_db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (project_id, "storage-conformance"),
+    )
+    code_db.execute(
+        "INSERT INTO project_checkouts (machine_id, project_id, root_path) VALUES (%s, %s, %s)",
+        (machine_id, project_id, str(root.resolve())),
+    )
     grant = _managed_grant(
         project_id=project_id,
         machine_id=machine_id,
