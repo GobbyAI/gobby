@@ -7,6 +7,11 @@ from gobby.storage.sessions._constants import LIVE_SESSION_STATUSES, TERMINAL_SE
 from gobby.storage.tasks._models import Task
 
 
+def _session_ref(seq_num: int | None, session_id: str) -> str:
+    """Audit name for a session: its #seq, or its stored UUID when it has no seq."""
+    return f"#{seq_num}" if seq_num is not None else session_id
+
+
 def delegate_task(
     db: HubDatabase,
     task_id: str,
@@ -157,15 +162,17 @@ def transfer_task_authority(
                 "the task's creator or delegator is still live and keeps its authority"
             )
 
-        if row["delegated_by_session_id"] is not None:
-            expired_ref = f"#{row['delegator_seq']}"
-            expired_status = row["delegator_status"]
+        slot = "delegator" if row["delegated_by_session_id"] is not None else "creator"
+        expired_id = row["delegated_by_session_id"] or row["created_in_session_id"]
+        if expired_id is None:
+            expired = "no recorded session"
         else:
-            expired_ref = f"#{row['creator_seq']}"
-            expired_status = row["creator_status"]
+            expired = (
+                f"{_session_ref(row[f'{slot}_seq'], expired_id)} (status={row[f'{slot}_status']})"
+            )
         transfer_note = (
-            f"authority transferred from {expired_ref} (status={expired_status}) "
-            f"to #{row['actor_seq']}: {reason}"
+            f"authority transferred from {expired} "
+            f"to {_session_ref(row['actor_seq'], caller_session_id)}: {reason}"
         )
         prior_reason = row["delegation_reason"]
         combined_reason = f"{prior_reason} | {transfer_note}" if prior_reason else transfer_note
