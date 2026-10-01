@@ -637,6 +637,7 @@ async def _evaluate_close(
                 validation_criteria=task.validation_criteria or "",
                 changed_paths=validation_paths,
                 deleted_paths=deleted_paths,
+                close_root=repo_path,
             ),
             item=10,
         )
