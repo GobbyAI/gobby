@@ -18,9 +18,14 @@ from gobby.tasks import (
     transcript_evidence_cache,
     transcript_evidence_snapshots,
 )
+from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots
+from gobby.workflows.found_work_gate import (
+    _reported_failure_paths,
+    unresolved_validation_failures,
+)
 from tests.tasks.test_transcript_evidence import (
     BASE_TIME,
     LOCAL_MACHINE_ID,
@@ -762,3 +767,128 @@ def test_snapshot_store_is_bounded() -> None:
     )
     assert transcript_evidence_snapshots.load_snapshot("session-0") is None
     assert transcript_evidence_snapshots.load_snapshot("session-3") is base
+
+
+_RECALL = "d1965a04eb04"
+
+
+def _long_session_records(tmp_path: Path) -> list[dict[str, Any]]:
+    """Validation reds and greens among shell commands, with an rtk recall receipt."""
+    noise = "line of shell output\n" * 200
+    steps: list[tuple[str, Any, bool]] = [
+        (
+            "uv run ruff check src/ && uv run pytest tests/tasks/test_a.py -q",
+            {"exit_code": 1, "stdout": "tests/tasks/test_a.py:3: AssertionError\n1 failed"},
+            True,
+        ),
+        ("git status", {"exit_code": 0, "stdout": noise}, False),
+        (
+            "uv run pytest tests/tasks/test_b.py -q",
+            {
+                "exit_code": 1,
+                "stdout": f"Pytest: 0 passed, 1 failed\n[full output: rtk recall {_RECALL}]",
+            },
+            True,
+        ),
+        (
+            f"rtk recall {_RECALL}",
+            "tests/tasks/test_b.py:7: AssertionError: assert False\n1 failed in 0.01s",
+            False,
+        ),
+        ("git diff", {"exit_code": 0, "stdout": noise}, False),
+        ("uv run pytest tests/tasks/test_a.py -q", {"exit_code": 0, "stdout": "4 passed"}, False),
+        ("ls src", {"exit_code": 0, "stdout": noise}, False),
+    ]
+    records: list[dict[str, Any]] = [
+        _claude_edit(
+            str(tmp_path / "src" / "changed.py"),
+            call_id="edit-1",
+            at=BASE_TIME + timedelta(seconds=1),
+        )
+    ]
+    for index, (command, result, is_error) in enumerate(steps):
+        records.extend(
+            _claude_tool_pair(
+                command=command,
+                call_id=f"step-{index}",
+                start=BASE_TIME + timedelta(seconds=10 * (index + 1)),
+                result=result,
+                is_error=is_error,
+            )
+        )
+    return records
+
+
+async def test_command_output_is_kept_only_while_a_reader_can_take_it(tmp_path: Path) -> None:
+    """Snapshots stop carrying settled shell output; validation output stays whole."""
+    transcript = tmp_path / "claude.jsonl"
+    records = _long_session_records(tmp_path)
+    _write_jsonl(transcript, records[:7])
+    session = _session("claude", transcript)
+    await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    _append_jsonl(transcript, records[7:])
+
+    evidence = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    snapshot = transcript_evidence_snapshots.load_snapshot(session.id)
+
+    assert snapshot is not None
+    *settled, latest = [run for run in snapshot.runs if not run.categories]
+    assert [run.command for run in settled] == ["git status", f"rtk recall {_RECALL}", "git diff"]
+    assert all(run.output is None for run in settled)
+    assert latest.command == "ls src"
+    assert latest.output
+    assert all(run.output for run in snapshot.runs if run.categories)
+    assert [run.output is None for run in evidence.command_runs] == [True, True, True, False]
+    recalled = next(run for run in evidence.validation_runs if "test_b.py" in run.command)
+    assert recalled.output_recovered_from == f"rtk recall {_RECALL}"
+
+
+async def test_dropping_settled_command_output_leaves_gate_findings_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stop gate and the close gate decide the same with and without the trim."""
+    transcript = tmp_path / "claude.jsonl"
+    _write_jsonl(transcript, _long_session_records(tmp_path))
+    session = _session("claude", transcript)
+
+    def findings(evidence: TranscriptEvidence) -> tuple[object, ...]:
+        unresolved = unresolved_validation_failures(
+            evidence.validation_runs, owner_handoff=False, project_path=str(tmp_path)
+        )
+        close = evaluate_validation_commands(
+            task_category="code",
+            evidence=evidence,
+            has_attributed_edits=True,
+            changed_paths=("src/changed.py",),
+        )
+        return (
+            [run.command for run in unresolved],
+            [sorted(_reported_failure_paths(run)) for run in unresolved],
+            close,
+        )
+
+    trimmed = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    clear_evidence_snapshots()
+    transcript_evidence_cache.clear_snapshots()
+    with monkeypatch.context() as untrimmed_derivation:
+
+        async def run_inline(function: Any, /, *args: Any) -> Any:
+            return function(*args)
+
+        # The pool's worker processes would not see the patched module.
+        untrimmed_derivation.setattr(
+            transcript_evidence, "run_in_transcript_evidence_pool", run_inline
+        )
+        untrimmed_derivation.setattr(
+            transcript_evidence, "_drop_settled_command_output", lambda runs: runs
+        )
+        untrimmed = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+
+    assert any(run.output for run in untrimmed.command_runs[:-1])
+    assert not any(run.output for run in trimmed.command_runs[:-1])
+    assert findings(trimmed) == findings(untrimmed)
+    # The compound red's lint segment has no green; test_b's red has none either.
+    assert findings(trimmed)[0] == [
+        "uv run ruff check src/ && uv run pytest tests/tasks/test_a.py -q",
+        "uv run pytest tests/tasks/test_b.py -q",
+    ]

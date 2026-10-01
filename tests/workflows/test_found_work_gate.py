@@ -938,6 +938,41 @@ class TestCrossTreeCover:
             == expected
         )
 
+    async def test_claim_free_base_reproduction_then_candidate_green_does_not_block(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        _window_bound_derive(
+            monkeypatch,
+            _run(1, "success", _CANDIDATE_GREEN),
+            _run(2, "failure", _BASE_RED),
+        )
+        facts = await _analyzer_with_session_tasks().analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+        assert facts.terminal_validation_failures == ()
+
+    @pytest.mark.parametrize("claimed", [False, True], ids=["claim_free", "claimed"])
+    async def test_red_without_green_on_any_tree_still_blocks(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        claimed: bool,
+    ) -> None:
+        _window_bound_derive(monkeypatch, _run(1, "failure", _BASE_RED))
+        links = [_claimed_task_link()] if claimed else []
+        facts = await _analyzer_with_session_tasks(*links).analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+        assert facts.terminal_validation_failures == (_BASE_RED,)
+
 
 class TestStopCoverCost:
     """A long session's Stop must not pay per failure-green pair, or block the event loop."""
@@ -1006,41 +1041,6 @@ class TestStopCoverCost:
         assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
         assert threads
         assert threading.get_ident() not in threads
-
-    async def test_claim_free_base_reproduction_then_candidate_green_does_not_block(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-    ) -> None:
-        _window_bound_derive(
-            monkeypatch,
-            _run(1, "success", _CANDIDATE_GREEN),
-            _run(2, "failure", _BASE_RED),
-        )
-        facts = await _analyzer_with_session_tasks().analyze(
-            event=_event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables={},
-            project_path=str(tmp_path),
-        )
-        assert facts.terminal_validation_failures == ()
-
-    @pytest.mark.parametrize("claimed", [False, True], ids=["claim_free", "claimed"])
-    async def test_red_without_green_on_any_tree_still_blocks(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        claimed: bool,
-    ) -> None:
-        _window_bound_derive(monkeypatch, _run(1, "failure", _BASE_RED))
-        links = [_claimed_task_link()] if claimed else []
-        facts = await _analyzer_with_session_tasks(*links).analyze(
-            event=_event(HookEventType.STOP),
-            session_id=SESSION_ID,
-            variables={},
-            project_path=str(tmp_path),
-        )
-        assert facts.terminal_validation_failures == (_BASE_RED,)
 
 
 def _claimed_task_link() -> dict[str, Any]:

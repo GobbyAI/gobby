@@ -435,6 +435,7 @@ def _derive_transcript_path_evidence(
             elif isinstance(record, ParsedToolEvent):
                 _observe_record_time(state, record.timestamp)
                 _consume_tool_event(state, record)
+    state.runs = _drop_settled_command_output(state.runs)
 
     snapshot = None
     if read is not None and not read.has_partial_tail:
@@ -814,6 +815,27 @@ def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
         output_recovered_from=receipt.command,
         output_recovered_at=receipt.completed_at,
     )
+
+
+def _drop_settled_command_output(
+    runs: list[TranscriptValidationRun],
+) -> list[TranscriptValidationRun]:
+    """Keep a non-validation run's output only while it is the latest run.
+
+    Its output is read only then: by the Codex wrapper dedupe and as an rtk
+    recall receipt. Validation output stays for the gates. Without this, a long
+    session's snapshot carries every shell command's output.
+    """
+    last = len(runs) - 1
+    return [
+        replace(run, output=None)
+        if index < last
+        and run.output is not None
+        and not run.categories
+        and not run.validation_segments
+        else run
+        for index, run in enumerate(runs)
+    ]
 
 
 def _shell_write_paths(

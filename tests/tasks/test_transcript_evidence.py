@@ -210,6 +210,19 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert fake.shutdown_args == (False, True)
 
 
+@pytest.fixture
+def _no_pending_pool_exit() -> None:
+    """Let an earlier test's pool-exit thread finish before tracker calls are recorded.
+
+    A real worker that outlives the shutdown timeout leaves its exit thread
+    running; it would later call the patched tracker stop and record into
+    another test's events.
+    """
+    for thread in threading.enumerate():
+        if thread.name == "transcript-evidence-pool-exit":
+            thread.join(10)
+
+
 class _RecordingExecutor:
     def __init__(self, events: list[str], *, block_on_wait: threading.Event | None = None) -> None:
         self._events = events
@@ -221,6 +234,7 @@ class _RecordingExecutor:
             self._block_on_wait.wait(5)
 
 
+@pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -237,6 +251,7 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     assert transcript_evidence_pool._pool is None
 
 
+@pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
@@ -246,14 +261,16 @@ def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) 
         transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
     )
 
-    started = time.monotonic()
-    transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
-    elapsed = time.monotonic() - started
+    try:
+        started = time.monotonic()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
+        elapsed = time.monotonic() - started
 
-    assert elapsed < 1.0
-    assert events == ["shutdown:wait=True:cancel=True"]
-    assert transcript_evidence_pool._pool is None
-    release.set()
+        assert elapsed < 1.0
+        assert events == ["shutdown:wait=True:cancel=True"]
+        assert transcript_evidence_pool._pool is None
+    finally:
+        release.set()
 
 
 def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
