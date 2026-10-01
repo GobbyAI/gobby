@@ -7,7 +7,6 @@ import json
 import logging
 import os
 import re
-import shlex
 from collections.abc import Mapping
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
@@ -17,6 +16,15 @@ from typing import TYPE_CHECKING, Any
 import psycopg
 from psycopg_pool import PoolTimeout
 
+from gobby.hooks._normalization_segments import _split_shell_segments
+from gobby.hooks._normalization_shell import (
+    _COMMAND_SUBSTITUTION,
+    ShellToken,
+    _contains_unexpanded_shell_reference,
+    _literal_cd_target,
+    shell_token_values,
+    tokenize_shell_command,
+)
 from gobby.hooks.phase_timing import timed_to_thread
 from gobby.terminal_ownership import TERMINAL_OWNER_STATUSES
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
@@ -42,33 +50,6 @@ _GIT_GLOBAL_OPTIONS_WITH_VALUE = {
     "--namespace",
     "--exec-path",
 }
-_SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", "&"})
-
-# A heredoc body is unquoted shell text, so `shlex.split` turns every word in it
-# into a token. A commit message delivered that way therefore reaches the
-# invocation parser as argv: one bare `--` line reads as git's pathspec
-# delimiter and the prose after it becomes pathspecs. Strip bodies before
-# tokenizing. `-m "..."` needs no such handling because shlex keeps a quoted
-# argument whole.
-_HEREDOC_BODY_RE = re.compile(
-    r"""<<-?\s*(?P<quote>['"]?)(?P<tag>[A-Za-z_][A-Za-z0-9_]*)(?P=quote)"""
-    r".*?^[ \t]*(?P=tag)[ \t]*$",
-    re.DOTALL | re.MULTILINE,
-)
-
-# `shlex.split` discards newlines, so newline-separated commands run together
-# into one token stream and the segment scan never terminates. Two chained
-# commits then parse as one invocation carrying the *later* command's
-# pathspecs, dropping the earlier unscoped commit's full-staged-set check.
-# Fold real separators into `;` so the scan ends where the command does; a
-# newline inside a quoted argument survives as ordinary token content.
-_LINE_CONTINUATION_RE = re.compile(r"\\\r?\n")
-
-
-def _normalize_shell_command(command: str) -> str:
-    command = _HEREDOC_BODY_RE.sub(" ", command)
-    command = _LINE_CONTINUATION_RE.sub(" ", command)
-    return command.replace("\n", " ; ")
 
 
 @dataclass(frozen=True)
@@ -79,6 +60,7 @@ class GitCommitInvocation:
     chdir: str | None = None
     work_tree: str | None = None
     root_options: tuple[str, ...] = ()
+    cwd_unverified: bool = False
 
     @property
     def is_path_scoped(self) -> bool:
@@ -114,46 +96,157 @@ def parse_git_commit_invocations(command: str) -> tuple[GitCommitInvocation, ...
     """Parse Git commit invocations from one shell command."""
     if not command.strip():
         return ()
-    command = _normalize_shell_command(command)
     try:
-        tokens = shlex.split(command)
+        shell_tokens = tokenize_shell_command(command)
+        cwd_unverified = False
     except ValueError:
-        tokens = command.split()
+        shell_tokens = [ShellToken(part) for part in command.split()]
+        cwd_unverified = True
 
     invocations: list[GitCommitInvocation] = []
-    index = 0
-    while index < len(tokens):
-        token = tokens[index]
-        if token.rsplit("/", maxsplit=1)[-1] != "git":
-            index += 1
-            continue
-
-        commit_index, chdir, work_tree, root_options = _skip_git_global_options(tokens, index + 1)
-        if commit_index >= len(tokens) or tokens[commit_index] != "commit":
-            index += 1
-            continue
-
-        segment_end = commit_index + 1
-        while segment_end < len(tokens) and tokens[segment_end] not in _SHELL_CONTROL_TOKENS:
-            segment_end += 1
-        segment = tokens[commit_index + 1 : segment_end]
-        delimiter_index = segment.index("--") if "--" in segment else -1
-        pathspecs = (
-            tuple(segment[delimiter_index + 1 :])
-            if delimiter_index >= 0 and delimiter_index + 1 < len(segment)
-            else ()
+    shell_chdir: str | None = None
+    conditional_chdir = False
+    segments = _split_shell_segments(_without_shell_comments(shell_tokens))
+    for segment_index, segment in enumerate(segments):
+        tokens = shell_token_values(segment.tokens)
+        next_separator = (
+            segments[segment_index + 1].separator_before
+            if segment_index + 1 < len(segments)
+            else None
         )
-        invocations.append(
-            GitCommitInvocation(
-                pathspecs=pathspecs,
-                chdir=chdir,
-                work_tree=work_tree,
-                root_options=root_options,
+        if conditional_chdir and segment.separator_before != "&&":
+            # An earlier failure can skip conditional navigation while a later
+            # unconditional command still runs in the original checkout.
+            cwd_unverified = True
+        if shell_chdir and segment.separator_before in {"||", "&"}:
+            cwd_unverified = True
+        if _unmodeled_navigation(segment.tokens):
+            # Subshells, groups, compounds, functions, substitutions and the
+            # other navigation forms below can move a later commit somewhere the
+            # linear cd model cannot follow. Refuse rather than guess.
+            cwd_unverified = True
+        if any(parse_git_commit_invocations(text) for text in _nested_shell_texts(segment.tokens)):
+            # A commit inside a nested shell string runs where that string says.
+            invocations.append(
+                GitCommitInvocation(
+                    pathspecs=(), chdir=None, work_tree=None, root_options=(), cwd_unverified=True
+                )
             )
-        )
-        index = segment_end + 1
+        if tokens[0] == "cd":
+            # Pipeline/background cd runs in a child shell and cannot rebase
+            # later commands in the parent. Dynamic targets are unprovable.
+            if segment.separator_before != "|" and next_separator not in {"|", "&"}:
+                target = _literal_cd_target(tokens)
+                if target is None or target.startswith("~") or segment.separator_before == "||":
+                    # The tokenizer's quoted bit also covers partial quoting,
+                    # which does not prove a leading tilde stayed literal.
+                    cwd_unverified = True
+                else:
+                    shell_chdir = _join_chdir(shell_chdir, target)
+                    conditional_chdir |= segment.separator_before == "&&"
+            continue
+
+        for index, token in enumerate(tokens):
+            if not _is_git_word(token):
+                continue
+            commit_index, chdir, work_tree, root_options = _skip_git_global_options(
+                tokens, index + 1
+            )
+            if commit_index >= len(tokens) or tokens[commit_index] != "commit":
+                continue
+            arguments = tokens[commit_index + 1 :]
+            delimiter_index = arguments.index("--") if "--" in arguments else -1
+            pathspecs = tuple(arguments[delimiter_index + 1 :]) if delimiter_index >= 0 else ()
+            if shell_chdir:
+                # Prepend shell navigation to Git's own -C options so root
+                # discovery and relative pathspec inspection use the same cwd.
+                root_options = ("-C", shell_chdir, *root_options)
+                chdir = _join_chdir(shell_chdir, chdir) if chdir else shell_chdir
+            invocations.append(
+                GitCommitInvocation(
+                    pathspecs=pathspecs,
+                    chdir=chdir,
+                    work_tree=work_tree,
+                    root_options=root_options,
+                    cwd_unverified=cwd_unverified
+                    or any(
+                        _contains_unexpanded_shell_reference(path) or path.startswith("~")
+                        for path in (chdir, work_tree, *root_options)
+                        if path is not None
+                    ),
+                )
+            )
+            break
 
     return tuple(invocations)
+
+
+_SHELL_KEYWORDS = frozenset(
+    {"if", "then", "elif", "else", "fi", "while", "until", "do", "done"}
+    | {"for", "case", "esac", "select", "function"}
+)
+_NAVIGATION_WORDS = frozenset({"cd", "pushd", "popd"})
+_NESTED_SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
+_SHELL_C_FLAG = re.compile(r"-[a-zA-Z]*c[a-zA-Z]*")
+_COMMAND_WORD_PREFIX = re.compile(r"[({`]")
+
+
+def _without_shell_comments(tokens: list[ShellToken]) -> list[ShellToken]:
+    """Drop each unquoted ``#`` word and the rest of its line; keep the newline."""
+    kept: list[ShellToken] = []
+    in_comment = False
+    for token in tokens:
+        if in_comment and not (token.value == "\n" and not token.quoted):
+            continue
+        in_comment = not token.quoted and token.value.startswith("#")
+        if not in_comment:
+            kept.append(token)
+    return kept
+
+
+def _is_git_word(token: str) -> bool:
+    """Whether a word runs git, including one opening a subshell or substitution."""
+    return _COMMAND_WORD_PREFIX.split(token)[-1].rsplit("/", maxsplit=1)[-1] == "git"
+
+
+def _unmodeled_navigation(tokens: list[ShellToken]) -> bool:
+    """Whether a segment may change the cwd in a way the linear cd model cannot follow."""
+    values = shell_token_values(tokens)
+    if values[0] in _SHELL_KEYWORDS or values[0] in {"pushd", "popd"}:
+        return True
+    for position, token in enumerate(tokens):
+        if token.value.startswith("CDPATH=") or (position and token.value in _NAVIGATION_WORDS):
+            return True
+        if not token.quoted and (
+            token.value in {"{", "}"} or any(char in token.value for char in "()`")
+        ):
+            return True
+    # Position-independent so assignments and wrappers (`command env`, `FOO=x env`)
+    # cannot hide env's directory option ahead of git.
+    git_index = next((i for i, value in enumerate(values) if _is_git_word(value)), None)
+    head = values[:git_index]
+    return any(value.rsplit("/", maxsplit=1)[-1] == "env" for value in head) and any(
+        value.startswith(("-C", "--chdir")) for value in head
+    )
+
+
+def _nested_shell_texts(tokens: list[ShellToken]) -> list[str]:
+    """Shell source this segment hands to another shell parse."""
+    values = shell_token_values(tokens)
+    # Any position, so assignments and wrappers (env, command, timeout, xargs)
+    # ahead of the shell cannot hide its source from the parse.
+    for index, value in enumerate(values):
+        name = value.rsplit("/", maxsplit=1)[-1]
+        if name == "eval" or (
+            name in _NESTED_SHELLS
+            and any(_SHELL_C_FLAG.fullmatch(later) for later in values[index + 1 :])
+        ):
+            return values[index + 1 :]
+    return [
+        token.value
+        for token in tokens
+        if token.quoted and _COMMAND_SUBSTITUTION.search(token.value)
+    ]
 
 
 def _skip_git_global_options(
@@ -285,6 +378,13 @@ async def foreign_staged_commit_conflict(
     invocations = parse_git_commit_invocations(_extract_shell_command(event))
     if not invocations:
         return ""
+    if any(invocation.cwd_unverified for invocation in invocations):
+        # Known unprovable input is a policy refusal, not an operational Git
+        # failure. Do not inspect a literal shell variable or page the operator.
+        return (
+            "Commit blocked: Gobby cannot prove this command's working directory. "
+            "Use a literal tool workdir and git -C path so checkout ownership can be verified."
+        )
 
     try:
         owners_by_checkout: dict[str, dict[str, tuple[ForeignPathOwner, ...]]] = {}

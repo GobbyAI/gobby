@@ -503,7 +503,18 @@ async def test_user_deferral_latches_past_the_turn_that_carried_it(
     }
     session_vars = MagicMock()
     session_vars.get_variables.side_effect = lambda _sid: dict(variables)
-    session_vars.merge_variables.side_effect = lambda _sid, changed: variables.update(changed)
+
+    def merge_variables(
+        _sid: str,
+        changed: dict[str, Any],
+        *,
+        observed_claim_task_id: str | None = None,
+        reconcile_claims: bool = False,
+    ) -> None:
+        del observed_claim_task_id, reconcile_claims
+        variables.update(changed)
+
+    session_vars.merge_variables.side_effect = merge_variables
     handler._session_var_manager = session_vars
     monkeypatch.setattr(
         handler._found_work_analyzer, "analyze", AsyncMock(return_value=FoundWorkStopFacts())

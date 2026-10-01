@@ -192,10 +192,16 @@ def task_edited_file_set_for_checkout(
 def task_edited_checkout_paths(
     variables: dict[str, Any], task_id: str
 ) -> frozenset[tuple[str, str]]:
-    """Return exact checkout/path pairs recorded for this task only."""
+    """Return this task's exact live and historical checkout/path pairs."""
     return frozenset(
         (root, path)
-        for root, files in _task_edited_file_checkouts(variables).get(task_id, {}).items()
+        for ledger_name in (
+            "task_edited_file_checkouts",
+            "task_edited_file_checkouts_history",
+        )
+        for root, files in _task_edited_file_checkouts(variables, ledger_name)
+        .get(task_id, {})
+        .items()
         for path in files
     )
 

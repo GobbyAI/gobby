@@ -34,6 +34,7 @@ from gobby.sessions.handoff_records import (
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
@@ -192,6 +193,12 @@ def _session_start_event(project_path: Path) -> HookEvent:
 
 def _prepare_handler(db: HubDatabase) -> tuple[WorkflowHookHandler, str]:
     _create_session(db)
+    task = LocalTaskManager(db).create_task(
+        project_id=PROJECT_ID,
+        title="Finish handoff stop-gate fixture",
+        claimed_by_session_id=SESSION_ID,
+        validation_criteria="The handoff yields and all stop gates rearm after consumption.",
+    )
     _insert_rules(db)
     payload = build_handoff_payload(
         current_state="The implementation is ready for the next epoch.",
@@ -220,7 +227,7 @@ def _prepare_handler(db: HubDatabase) -> tuple[WorkflowHookHandler, str]:
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
             "_variable_defaults_loaded": True,
             "baseline_dirty_files": [],
-            "claimed_tasks": {"55555555-5555-4555-8555-555555555555": "#42"},
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
             "mode_level": 2,
             "project": {"name": "gobby"},
             "session_edited_files": [],
@@ -300,6 +307,12 @@ async def test_web_chat_handoff_consumes_once_and_keeps_stop_gates_armed(
     tmp_path: Path,
 ) -> None:
     _create_session(temp_db)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=PROJECT_ID,
+        title="Finish web-chat handoff fixture",
+        claimed_by_session_id=SESSION_ID,
+        validation_criteria="Consume the handoff once and retain every armed stop gate.",
+    )
     temp_db.execute(
         "UPDATE sessions SET session_type = 'web_chat' WHERE id = %s",
         (SESSION_ID,),
@@ -366,7 +379,7 @@ async def test_web_chat_handoff_consumes_once_and_keeps_stop_gates_armed(
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
             "_variable_defaults_loaded": True,
             "baseline_dirty_files": [],
-            "claimed_tasks": {"55555555-5555-4555-8555-555555555555": "#42"},
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
             "mode_level": 2,
             "project": {"name": "gobby"},
             "session_edited_files": [],
@@ -388,6 +401,12 @@ async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearm
     tmp_path: Path,
 ) -> None:
     _create_session(temp_db)
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=PROJECT_ID,
+        title="Finish active web-chat handoff fixture",
+        claimed_by_session_id=SESSION_ID,
+        validation_criteria="The active turn yields, compacts and rearms every stop gate.",
+    )
     temp_db.execute(
         "UPDATE sessions SET session_type = 'web_chat' WHERE id = %s",
         (SESSION_ID,),
@@ -450,7 +469,7 @@ async def test_active_web_chat_handoff_yields_until_queued_compaction_then_rearm
             "_memory_pending_task_reviews": [{"task_ref": "#42"}],
             "_variable_defaults_loaded": True,
             "baseline_dirty_files": [],
-            "claimed_tasks": {"55555555-5555-4555-8555-555555555555": "#42"},
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
             "mode_level": 2,
             "project": {"name": "gobby"},
             "session_edited_files": [],

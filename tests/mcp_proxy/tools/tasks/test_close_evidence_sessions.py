@@ -263,6 +263,7 @@ async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("owner_task_history", [False, True])
 @pytest.mark.parametrize(
     "owner_task_ledger,owner_other_task_ledger,owner_other_task_history,legacy_other_task",
     [
@@ -286,6 +287,7 @@ async def test_close_commit_fallback_supplies_exact_checkout_paths() -> None:
 )
 async def test_close_excludes_other_task_edit_in_same_checkout(
     tmp_path: Path,
+    owner_task_history: bool,
     owner_task_ledger: bool,
     owner_other_task_ledger: bool,
     owner_other_task_history: bool,
@@ -413,6 +415,10 @@ async def test_close_excludes_other_task_edit_in_same_checkout(
         # B's live ledger was released after commit; the durable edit remains.
         owner_variables["task_edited_file_checkouts_history"] = {
             "other-task": {str(tmp_path): [relative_path]}
+        }
+    if owner_task_history:
+        owner_variables.setdefault("task_edited_file_checkouts_history", {})["task"] = {
+            str(tmp_path): [relative_path]
         }
     qa_variables = {"task_edited_file_checkouts": {"other-task": {str(tmp_path): [relative_path]}}}
     ctx.session_var_manager.get_variables.side_effect = {
@@ -637,8 +643,13 @@ def _claude_edit_session(transcript: Path, session_id: str, edited: Path, at: da
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "implementer_ledger",
+    ["task_edited_file_checkouts", "task_edited_file_checkouts_history"],
+)
 async def test_linked_implementer_test_edits_survive_a_partial_owner_ledger(
     tmp_path: Path,
+    implementer_ledger: str,
 ) -> None:
     # #23017: the reclaiming owner's ledger held one later production path, and
     # the implementer's proven test edits were narrowed away by it (#22781).
@@ -666,7 +677,7 @@ async def test_linked_implementer_test_edits_survive_a_partial_owner_ledger(
         },
     )
     ctx.session_var_manager.get_variables.side_effect = {
-        IMPLEMENTER: {"task_edited_file_checkouts": {"task": {str(tmp_path): [test_path]}}},
+        IMPLEMENTER: {implementer_ledger: {"task": {str(tmp_path): [test_path]}}},
         QA: {"task_edited_file_checkouts": {"task": {str(tmp_path): [owner_path]}}},
     }.get
 

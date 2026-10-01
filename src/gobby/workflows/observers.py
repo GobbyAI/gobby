@@ -229,6 +229,10 @@ def detect_task_claim(
     elif inner_tool_name == "update_task":
         update_args = tool_input.get("arguments", {}) or {}
         if update_args.get("status") != "in_progress":
+            if variables.get("claimed_tasks"):
+                # Edited criteria, labels or skills of a held claim must reach the
+                # TDD and extras gates now; a re-claim is refused as already held.
+                refresh_claimed_task_extra_skills(variables, task_manager)
             return
         raw_task_id = update_args.get("task_id")
         if raw_task_id and task_manager:
