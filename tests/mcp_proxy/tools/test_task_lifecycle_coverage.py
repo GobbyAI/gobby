@@ -28,9 +28,9 @@ from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
 from tests.mcp_proxy.tools.close_review_test_support import (
+    ECHOING_DAEMON_GIT,
     complete_invalid_close_review,
     complete_valid_close_review,
-    normalized_sha_is_full_identity,
     return_detached_response,
 )
 
@@ -263,8 +263,8 @@ class TestCloseTask:
     @pytest.fixture(autouse=True)
     def _candidate_is_its_own_identity(self) -> Iterator[None]:
         with patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
-            new=normalized_sha_is_full_identity,
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
+            new=ECHOING_DAEMON_GIT,
         ):
             yield
 

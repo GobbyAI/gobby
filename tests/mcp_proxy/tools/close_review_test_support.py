@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close as lifecycle_close
-from gobby.mcp_proxy.tools.tasks import _lifecycle_close_preview as close_preview
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
+from gobby.utils.daemon_git import GitOk
 
 
-async def normalized_sha_is_full_identity(sha: str, *, cwd: str) -> str | None:
-    """Stand-in for the close candidate's rev-parse: fake SHAs name no object.
+async def _rev_parse_echo(argv: tuple[str, ...], **_kwargs: object) -> GitOk:
+    return GitOk(status="ok", argv=argv, stdout=argv[-1], stderr="")
 
-    Normalization still runs against the task repository through the module's
-    (usually patched) normalize_commit_sha, so repo-path assertions keep holding.
-    """
-    return await close_preview.normalize_commit_sha(sha, cwd=cwd)
+
+# Replaces only the close candidate's rev-parse: fake SHAs name no object, so each
+# normalized SHA stands as its own full identity. Patch it over
+# _lifecycle_close_preview.daemon_git; normalization still runs for real.
+ECHOING_DAEMON_GIT = SimpleNamespace(run=_rev_parse_echo)
 
 
 async def complete_close_review(
