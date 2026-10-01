@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -408,3 +409,110 @@ def test_bootstrap_rejects_insecure_file_permissions(temp_dir: Path) -> None:
 
     with pytest.raises(BootstrapConfigError, match="permissions.*0600"):
         load_bootstrap(str(bootstrap_file))
+
+
+def test_pending_rotation_round_trips_and_requires_string_fields(temp_dir: Path) -> None:
+    """The pending pair is parser-validated and readable by recovery."""
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
+    from gobby.config.postgres_bootstrap import read_pending_credential_rotation
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    database_url = "postgresql://gobby:old-secret@localhost:60891/gobby"
+    _write_bootstrap(bootstrap_file, f"database_url: {database_url}\n")
+
+    assert read_pending_credential_rotation(temp_dir) is None
+
+    def _annotate_pending(data: dict[str, Any]) -> None:
+        data["credential_rotation"] = {
+            "role": "gobby",
+            "pending_password": "pending-placeholder",
+            "previous_password": "old-secret",
+        }
+
+    update_bootstrap_yaml(bootstrap_file, _annotate_pending)
+    pending = read_pending_credential_rotation(temp_dir)
+    assert pending is not None
+    assert (pending.role, pending.pending_password, pending.previous_password) == (
+        "gobby",
+        "pending-placeholder",
+        "old-secret",
+    )
+
+    def _annotate_incomplete(data: dict[str, Any]) -> None:
+        data["credential_rotation"] = {"role": "gobby"}
+
+    before = bootstrap_file.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending credential"):
+        update_bootstrap_yaml(bootstrap_file, _annotate_incomplete)
+    assert bootstrap_file.read_bytes() == before
+    # Invalid on-disk state must also fail closed when loaded by recovery.
+    _write_bootstrap(
+        bootstrap_file, f"database_url: {database_url}\ncredential_rotation:\n  role: gobby\n"
+    )
+    with pytest.raises(BootstrapConfigError, match="pending_password"):
+        read_pending_credential_rotation(temp_dir)
+
+
+def test_write_postgres_defaults_preserves_pending_rotation(temp_dir: Path) -> None:
+    def _annotate_pending_and_note(data: dict[str, Any]) -> None:
+        data["credential_rotation"] = {
+            "role": "gobby",
+            "pending_password": "pending-placeholder",
+            "previous_password": "old-secret",
+        }
+        data["cosmetic_note"] = "keep me"
+
+    """Ordinary defaults writers cannot perform recovery's credential transition."""
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
+    from gobby.config.postgres_bootstrap import write_postgres_defaults
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "database_url: postgresql://gobby:old-secret@localhost:60891/gobby\n",
+    )
+    update_bootstrap_yaml(
+        bootstrap_file,
+        _annotate_pending_and_note,
+    )
+
+    before = bootstrap_file.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending credential"):
+        write_postgres_defaults(
+            gobby_home=temp_dir,
+            database_url="postgresql://gobby:pending-placeholder@localhost:60891/gobby",
+        )
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert bootstrap_file.read_bytes() == before
+    assert persisted["database_url"] == "postgresql://gobby:old-secret@localhost:60891/gobby"
+    assert persisted["credential_rotation"]["pending_password"] == "pending-placeholder"
+    assert persisted["cosmetic_note"] == "keep me"
+
+
+def test_concurrent_bootstrap_writers_preserve_unrelated_fields(temp_dir: Path) -> None:
+    """Serialized canonical writers never lose each other's unrelated keys."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "database_url: postgresql://gobby:old-secret@localhost:60891/gobby\n",
+    )
+
+    def _writer(index: int) -> None:
+        def _apply(data: dict[str, Any], index: int = index) -> None:
+            data[f"writer_{index}"] = index
+
+        update_bootstrap_yaml(bootstrap_file, _apply)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_writer, range(16)))
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert {persisted[f"writer_{index}"] for index in range(16)} == set(range(16))
+    assert persisted["database_url"] == "postgresql://gobby:old-secret@localhost:60891/gobby"

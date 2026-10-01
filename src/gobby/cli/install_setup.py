@@ -92,6 +92,7 @@ def ensure_daemon_config(*, files_home: str | Path | None = None) -> dict[str, A
         }
         source = "generated"
     data["datastore_mode"] = data.get("datastore_mode") or "local"
+    data.setdefault("hub", False)
     data["files_home"] = str(validated)
     # A fresh bootstrap is the only place a PostgreSQL password is minted; an
     # existing bootstrap is returned above untouched and never rotated.

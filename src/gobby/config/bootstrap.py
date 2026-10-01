@@ -40,6 +40,7 @@ DEFAULT_SERVICES_BIND_ADDRESS = "127.0.0.1"
 BACKEND_PORT_OFFSET = 100
 
 DatastoreMode = Literal["local", "remote"]
+RunMode = Literal["standalone", "hub", "node"]
 UiExposureMode = Literal["tailscale"]
 FrontDoorRouteBackend = Literal["proxy", "native", "compare"]
 FRONT_DOOR_ROUTE_BACKENDS: tuple[FrontDoorRouteBackend, ...] = ("proxy", "native", "compare")
@@ -79,6 +80,7 @@ class BootstrapConfig:
     websocket_port: int = DEFAULT_WEBSOCKET_PORT
     ui_port: int = DEFAULT_UI_PORT
     datastore_mode: DatastoreMode = "local"
+    hub: bool = False
     services_bind_address: str = DEFAULT_SERVICES_BIND_ADDRESS
     database_url: str | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
@@ -87,6 +89,12 @@ class BootstrapConfig:
     files_home: str | None = None
     hub_daemon_url: str | None = None
     front_door: FrontDoorConfig = FrontDoorConfig()
+
+    def run_mode(self) -> RunMode:
+        """Derive the run mode from the ``datastore_mode``/``hub`` pair."""
+        if self.datastore_mode == "remote":
+            return "node"
+        return "hub" if self.hub else "standalone"
 
     def to_config_dict(self) -> dict[str, Any]:
         """Convert to a dict suitable for DaemonConfig construction.
@@ -172,12 +180,14 @@ def bootstrap_from_mapping(
         data.get("datastore_mode", BootstrapConfig.datastore_mode)
     )
     ui_expose = _parse_ui_exposure_mode(data.get("ui_expose"))
+    hub = _parse_yaml_bool(data.get("hub", BootstrapConfig.hub), "hub")
     bind_host = _parse_str(data.get("bind_host", BootstrapConfig.bind_host), "bind_host")
     daemon_port = _parse_int(data.get("daemon_port", BootstrapConfig.daemon_port), "daemon_port")
     daemon_url = _parse_optional_daemon_url(data.get("daemon_url"))
     files_home, hub_daemon_url = _parse_mode_owner_fields(
         data,
         datastore_mode=datastore_mode,
+        hub=hub,
         bind_host=bind_host,
         daemon_port=daemon_port,
         daemon_url=daemon_url,
@@ -195,6 +205,7 @@ def bootstrap_from_mapping(
         ),
         ui_port=_parse_int(data.get("ui_port", BootstrapConfig.ui_port), "ui_port"),
         datastore_mode=datastore_mode,
+        hub=hub,
         services_bind_address=_parse_str(
             data.get(
                 "services_bind_address",
@@ -281,6 +292,7 @@ def _parse_mode_owner_fields(
     data: dict[str, Any],
     *,
     datastore_mode: DatastoreMode,
+    hub: bool,
     bind_host: str,
     daemon_port: int,
     daemon_url: str | None,
@@ -293,6 +305,8 @@ def _parse_mode_owner_fields(
         if not _has_configured_value(data, "files_home"):
             raise BootstrapConfigError("files_home is required for datastore_mode: local")
         return _parse_files_home_value(data.get("files_home")), None
+    if hub:
+        raise BootstrapConfigError("hub: true requires datastore_mode: local")
     if _has_configured_value(data, "files_home"):
         raise BootstrapConfigError("files_home is not allowed on a remote bootstrap")
     if not _has_configured_value(data, "hub_daemon_url"):

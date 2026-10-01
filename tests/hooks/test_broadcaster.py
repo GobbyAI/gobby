@@ -164,8 +164,7 @@ async def test_broadcast_no_server(
     """Test safe handling when websocket server is None."""
     broadcaster = HookEventBroadcaster(None, default_config)
 
-    result = await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
-    assert result is None
+    await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
     assert broadcaster.websocket_server is None
 
 
@@ -268,6 +267,41 @@ async def test_broadcast_event_interrupt_is_normalized_and_default_enabled(
     for field, value in data.items():
         assert payload["data"][field] == value
     assert "unknown hook type" not in caplog.text.lower()
+
+
+@pytest.mark.parametrize(
+    "tool_input", ['{"file_path": "/tmp/example.py"}', {"file_path": "/tmp/example.py"}]
+)
+async def test_broadcast_event_normalizes_json_string_tool_input(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    tool_input: object,
+) -> None:
+    """A JSON-string tool_input broadcasts instead of dropping the before_tool event."""
+    from datetime import UTC, datetime
+
+    from gobby.hooks.normalization import normalize_tool_fields
+
+    data: dict[str, Any] = {
+        "external_id": "test-session",
+        "tool_name": "Read",
+        "tool_input": tool_input,
+    }
+    normalize_tool_fields(data)
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    payload = mock_websocket_server.broadcast.call_args.args[0]
+    assert payload["event_type"] == "pre-tool-use"
+    assert payload["data"]["tool_input"] == {"file_path": "/tmp/example.py"}
 
 
 @pytest.mark.asyncio
@@ -549,7 +583,9 @@ async def test_broadcast_event_session_end_runtime_reason(
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_with_response(mock_websocket_server, default_config) -> None:
+async def test_broadcast_event_with_response(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test broadcast_event with HookResponse."""
     from datetime import UTC, datetime
 
@@ -577,7 +613,7 @@ async def test_broadcast_event_with_response(mock_websocket_server, default_conf
 
 
 async def test_broadcast_message_display_serializes_replacement(
-    mock_websocket_server, default_config
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
 ) -> None:
     from datetime import UTC, datetime
 
@@ -607,8 +643,8 @@ async def test_broadcast_message_display_serializes_replacement(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_permission_request_allow_uses_decision_payload(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Plain allow PermissionRequest responses must match the nested output schema."""
@@ -642,8 +678,8 @@ async def test_broadcast_event_permission_request_allow_uses_decision_payload(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_notification_backfills_required_fields(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Notification broadcasts should tolerate CLI payloads without notification fields."""
@@ -674,8 +710,8 @@ async def test_broadcast_event_notification_backfills_required_fields(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_notification_uses_camel_case_type(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """notificationType aliases should populate notification_type without dropping extras."""
@@ -710,8 +746,8 @@ async def test_broadcast_event_notification_uses_camel_case_type(
     ],
 )
 async def test_broadcast_event_notification_maps_provider_level_or_severity(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
     field_name: str,
     field_value: str,
@@ -743,8 +779,8 @@ async def test_broadcast_event_notification_maps_provider_level_or_severity(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_notification_empty_message_falls_back(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Empty message fields should fall through to reason before validation."""
@@ -773,8 +809,8 @@ async def test_broadcast_event_notification_empty_message_falls_back(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_error_from_tool_output(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Test failed after_tool broadcasts backfill error from tool_output."""
@@ -805,8 +841,8 @@ async def test_broadcast_event_after_tool_failure_backfills_error_from_tool_outp
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_error_from_tool_response(
-    mock_websocket_server, default_config
-):
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test failed after_tool broadcasts backfill error from tool_response."""
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
 
@@ -831,8 +867,8 @@ async def test_broadcast_event_after_tool_failure_backfills_error_from_tool_resp
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_error_from_string_result(
-    mock_websocket_server, default_config
-):
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test failed after_tool broadcasts backfill error from a string-only result."""
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
 
@@ -857,8 +893,8 @@ async def test_broadcast_event_after_tool_failure_backfills_error_from_string_re
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_stringifies_truthy_non_string_error(
-    mock_websocket_server, default_config
-):
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Truthy non-string top-level errors should be coerced to strings."""
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
 
@@ -880,8 +916,8 @@ async def test_broadcast_event_after_tool_failure_stringifies_truthy_non_string_
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_prefers_nested_string_error_over_coerced_top_level(
-    mock_websocket_server, default_config
-):
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Nested failure strings should override stringified non-string top-level errors."""
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
 
@@ -904,8 +940,8 @@ async def test_broadcast_event_after_tool_failure_prefers_nested_string_error_ov
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_uses_default_error_message(
-    mock_websocket_server, default_config
-):
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test failed after_tool broadcasts fall back to a default error message."""
     default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
 
@@ -928,8 +964,8 @@ async def test_broadcast_event_after_tool_failure_uses_default_error_message(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_success_stays_post_tool_use(
-    mock_websocket_server, default_config
-):
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test successful after_tool broadcasts remain post-tool-use without injected error."""
     broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
     event = _make_after_tool_event(
@@ -950,8 +986,8 @@ async def test_broadcast_event_after_tool_success_stays_post_tool_use(
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_success_backfills_tool_name_from_response(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Post-tool success broadcasts use the normalized tool name when input omitted it."""
@@ -978,8 +1014,8 @@ async def test_broadcast_event_after_tool_success_backfills_tool_name_from_respo
 
 @pytest.mark.asyncio
 async def test_broadcast_event_after_tool_failure_backfills_tool_name_from_response(
-    mock_websocket_server,
-    default_config,
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Post-tool failure broadcasts use the normalized tool name when input omitted it."""
@@ -1009,7 +1045,9 @@ async def test_broadcast_event_after_tool_failure_backfills_tool_name_from_respo
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_unknown_type(mock_websocket_server, default_config) -> None:
+async def test_broadcast_event_unknown_type(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test broadcast_event with unknown event type."""
     from datetime import UTC, datetime
     from unittest.mock import MagicMock
@@ -1039,7 +1077,7 @@ async def test_broadcast_event_unknown_type(mock_websocket_server, default_confi
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_no_websocket(default_config):
+async def test_broadcast_event_no_websocket(default_config: DaemonConfig) -> None:
     """Test broadcast_event without websocket server."""
     from datetime import UTC, datetime
 
@@ -1054,13 +1092,14 @@ async def test_broadcast_event_no_websocket(default_config):
         data={"external_id": "test-session", "transcript_path": "/tmp", "source": "startup"},
     )
 
-    result = await broadcaster.broadcast_event(event)
-    assert result is None
+    await broadcaster.broadcast_event(event)
     assert broadcaster.websocket_server is None
 
 
 @pytest.mark.asyncio
-async def test_broadcast_subagent_event(mock_websocket_server, default_config):
+async def test_broadcast_subagent_event(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test broadcast of subagent events with special handling."""
     from gobby.hooks.hook_types import SubagentStartInput
 
@@ -1082,7 +1121,9 @@ async def test_broadcast_subagent_event(mock_websocket_server, default_config):
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_subagent_id_fallback(mock_websocket_server, default_config):
+async def test_broadcast_event_subagent_id_fallback(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test subagent_id fallback from external_id."""
     from datetime import UTC, datetime
 
@@ -1112,19 +1153,22 @@ async def test_broadcast_event_subagent_id_fallback(mock_websocket_server, defau
 
 
 @pytest.mark.asyncio
-async def test_broadcast_exception_handling(mock_websocket_server, default_config, sample_input):
+async def test_broadcast_exception_handling(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig, sample_input: SessionStartInput
+) -> None:
     """Test exception handling during broadcast."""
     mock_websocket_server.broadcast.side_effect = Exception("Connection error")
 
     broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
 
-    result = await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
-    assert result is None
+    await broadcaster.broadcast_hook_event(HookType.SESSION_START, sample_input)
     assert mock_websocket_server.broadcast.call_count == 1
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_exception_handling(mock_websocket_server, default_config):
+async def test_broadcast_event_exception_handling(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test exception handling in broadcast_event."""
     from datetime import UTC, datetime
 
@@ -1144,14 +1188,15 @@ async def test_broadcast_event_exception_handling(mock_websocket_server, default
         },
     )
 
-    result = await broadcaster.broadcast_event(event)
-    assert result is None
+    await broadcaster.broadcast_event(event)
     payload = mock_websocket_server.broadcast.call_args.args[0]
     assert payload["data"]["source"] == "startup"
 
 
 @pytest.mark.asyncio
-async def test_broadcast_with_task_context(mock_websocket_server, default_config):
+async def test_broadcast_with_task_context(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
     """Test broadcast includes task context when present."""
     from gobby.hooks.hook_types import PreToolUseInput
 
@@ -1178,8 +1223,10 @@ async def test_broadcast_with_task_context(mock_websocket_server, default_config
 
 
 @pytest.mark.asyncio
-async def test_broadcast_with_response_context_dict(mock_websocket_server, default_config):
-    """Test broadcast with response context as dict."""
+async def test_broadcast_with_response_context(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
+    """Test broadcast carries a string response context."""
     from datetime import UTC, datetime
 
     from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -1194,7 +1241,7 @@ async def test_broadcast_with_response_context_dict(mock_websocket_server, defau
     )
     response = HookResponse(
         decision="allow",
-        context={"existing": "dict"},  # Context as dict
+        context="injected context",
     )
 
     await broadcaster.broadcast_event(event, response)
