@@ -44,6 +44,7 @@ class _RunState:
     commit_submitted: bool = False
     commit_observed: bool = False
     result: Any = None
+    caller_cancellation: asyncio.CancelledError | None = None
 
 
 def _remaining(cutoff: float) -> float:
@@ -127,6 +128,8 @@ async def _terminate_child[T](
             if done:
                 return _consume_child_result(child)
         except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                state.caller_cancellation = state.caller_cancellation or exc
             termination_error = exc
 
     connection = state.connection
@@ -144,6 +147,8 @@ async def _terminate_child[T](
         try:
             await asyncio.wait({child}, timeout=reap_budget)
         except BaseException as exc:
+            if isinstance(exc, asyncio.CancelledError):
+                state.caller_cancellation = state.caller_cancellation or exc
             termination_error = termination_error or exc
             child.cancel()
 
@@ -205,6 +210,8 @@ async def run_bounded_db[T](
     cancellation that interrupts psycopg's cancel connection, and child reap.
     Timeouts before COMMIT submission are deterministically rolled back by local
     connection close. Failure after submission raises ``IndeterminateCommitError``.
+    After observed COMMIT, caller cancellation propagates with the durable result
+    in a ``CommittedCleanupError`` cause; clean deadline completion returns it.
     """
     if deadline_seconds <= 0.0:
         raise ValueError("deadline_seconds must be positive")
@@ -248,14 +255,21 @@ async def run_bounded_db[T](
         if not state.commit_submitted:
             raise
         child_error = exc
+    cancellation = cancellation or state.caller_cancellation
     if state.commit_submitted and not state.commit_observed:
         _raise_indeterminate(child_error or cancellation)
     if state.commit_observed:
-        if child_error is not None:
-            raise CommittedCleanupError(
-                "COMMIT was observed, but cleanup failed; the change is durable",
+        if child_error is not None or cancellation is not None:
+            committed = CommittedCleanupError(
+                "COMMIT was observed, but cleanup was interrupted or failed; "
+                "the change is durable; resume interrupted follow-up using this result",
                 result=state.result,
-            ) from child_error
+            )
+            # The same caller exception cannot be its own transitive cause.
+            committed.__cause__ = child_error if child_error is not cancellation else None
+            if cancellation is not None:
+                raise cancellation from committed
+            raise committed from child_error
         return child.result()
     if cancellation is not None:
         raise cancellation
