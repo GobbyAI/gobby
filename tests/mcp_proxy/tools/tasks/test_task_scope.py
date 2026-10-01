@@ -390,6 +390,68 @@ async def test_net_commit_paths_drop_a_file_a_later_link_reverts(tmp_path: Path)
     assert net == task_scope.NetCommitPaths(changed=frozenset({"src/a.py"}), deleted=frozenset())
 
 
+def _synced_side_branch(tmp_path: Path, *, conflict: bool, land: bool) -> list[str]:
+    """Build a side branch that syncs main in, fixes, and optionally lands; return its links."""
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    (tmp_path / "shared.py").write_text("BASE = True\n")
+    git("add", ".")
+    git("commit", "-qm", "base")
+    git("checkout", "-qb", "side")
+    (tmp_path / "feature.py").write_text("FEATURE = 1\n")
+    if conflict:
+        (tmp_path / "shared.py").write_text("SIDE = True\n")
+    git("add", ".")
+    git("commit", "-qm", "side feature")
+    linked = [git("rev-parse", "HEAD")]
+    git("checkout", "-q", "main")
+    (tmp_path / "unrelated.py").write_text("UNRELATED = True\n")
+    if conflict:
+        (tmp_path / "shared.py").write_text("MAIN = True\n")
+    git("add", ".")
+    git("commit", "-qm", "main work")
+    git("checkout", "-q", "side")
+    subprocess.run(
+        ["git", "merge", "--no-ff", "-q", "-m", "sync main", "main"],
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+    )
+    if conflict:
+        (tmp_path / "shared.py").write_text("RESOLVED = True\n")
+        git("add", "shared.py")
+        git("commit", "-qm", "sync main")
+    linked.append(git("rev-parse", "HEAD"))
+    (tmp_path / "feature.py").write_text("FEATURE = 2\n")
+    git("commit", "-qam", "side fix")
+    linked.append(git("rev-parse", "HEAD"))
+    if land:
+        git("checkout", "-q", "main")
+        git("merge", "--no-ff", "-q", "-m", "land side", "side")
+        linked.append(git("rev-parse", "HEAD"))
+    return linked
+
+
+@pytest.mark.parametrize(
+    ("conflict", "land", "expected"),
+    [
+        (False, False, {"feature.py"}),
+        (True, False, {"feature.py", "shared.py"}),
+        (False, True, {"feature.py"}),
+        (True, True, {"feature.py", "shared.py"}),
+    ],
+    ids=["clean-sync", "conflict-sync", "clean-landing", "conflict-landing"],
+)
+async def test_net_commit_paths_exclude_what_a_sync_merge_brought_in(
+    tmp_path: Path, conflict: bool, land: bool, expected: set[str]
+) -> None:
+    linked = _synced_side_branch(tmp_path, conflict=conflict, land=land)
+
+    net = await task_scope.collect_net_commit_paths_async(linked, str(tmp_path))
+
+    assert net == task_scope.NetCommitPaths(changed=frozenset(expected))
+
+
 async def test_net_commit_paths_report_deletions_absent_from_the_candidate(
     tmp_path: Path,
 ) -> None:
