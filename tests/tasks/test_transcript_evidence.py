@@ -58,7 +58,6 @@ from gobby.tasks.transcript_outcomes import extract_output as _extract_output
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
-_LARGE_TRANSCRIPT_MIN_BYTES = 80 * 1024 * 1024
 
 
 class _BrokenExecutor:
@@ -4404,83 +4403,74 @@ async def test_edit_outside_every_checkout_without_task_suffix_is_ignored(tmp_pa
     assert evidence.edits == ()
 
 
-async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: Path) -> None:
-    transcript = tmp_path / "large-claude.jsonl"
-    padding = "validation output " + ("x" * 3_400)
-    records: list[dict[str, Any]] = []
-    # Large enough that decoding the whole result in one GIL hold costs well over the
-    # 100 ms bound below, so an unchunked transfer fails it even on an idle host.
-    for index in range(24_800):
-        records.extend(
-            _claude_tool_pair(
-                command=f"printf filler-{index}",
-                call_id=f"filler-{index}",
-                start=BASE_TIME + timedelta(microseconds=index * 2),
-                result={"exit_code": 0, "stdout": padding},
-            )
-        )
-    validation_command = "uv run pytest tests/tasks/test_large.py -q"
-    records.extend(
-        _claude_tool_pair(
-            command=validation_command,
-            call_id="validation-final",
-            start=BASE_TIME + timedelta(seconds=1),
-            result={"exit_code": 0, "stdout": "1 passed"},
-        )
-    )
-    _write_jsonl(transcript, records)
-    assert transcript.stat().st_size >= _LARGE_TRANSCRIPT_MIN_BYTES
-
-    # The daemon prewarms the pool before admitting Stop hooks; a cold spawn here
-    # would charge one-time pool startup to the derivation.
+async def test_derivation_yields_to_event_loop_between_record_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Deterministic guard for the loop-stall fix: no clock and no host load. Records
+    # cross the pool boundary only inside bounded chunks, and the loop runs other
+    # ready tasks between every chunk it encodes or decodes. A transfer that
+    # rebuilds the whole result in one step fails both checks at any size or load.
+    transcript = _chunked_transfer_transcript(tmp_path, 3 * CHUNK_RECORDS)
+    session = _session("claude", transcript)
+    # Workers started before the spies below keep the unpatched codec, so only the
+    # daemon-side cooperative steps are observed.
     await transcript_evidence_pool.prewarm_transcript_evidence_pool()
-    loop = asyncio.get_running_loop()
-    started = asyncio.Event()
-    stop = asyncio.Event()
-    # Wall-clock gaps also include host scheduling delay, which no code change can
-    # remove. Each gap is attributed instead: CPU spent by the loop thread, plus CPU
-    # spent by this process's other threads, which covers GIL-holding work such as
-    # unpickling pool results in the executor manager thread.
-    gap_cpu: list[tuple[float, float, float]] = []
+    real_pool = transcript_evidence_pool.run_in_transcript_evidence_pool
+    crossed: list[object] = []
 
-    async def heartbeat() -> None:
-        previous = (loop.time(), time.thread_time(), time.process_time())
-        started.set()
-        while not stop.is_set():
-            tick = asyncio.Event()
-            timer = loop.call_later(0.05, tick.set)
-            try:
-                await tick.wait()
-            finally:
-                timer.cancel()
-            current = (loop.time(), time.thread_time(), time.process_time())
-            loop_cpu = current[1] - previous[1]
-            other_cpu = (current[2] - previous[2]) - loop_cpu
-            gap_cpu.append((current[0] - previous[0], loop_cpu, other_cpu))
-            previous = current
+    async def recording_pool(function: Any, /, *args: object) -> object:
+        crossed.append(args[-1])
+        result = await real_pool(function, *args)
+        crossed.append(result)
+        return result
 
-    heartbeat_task = asyncio.create_task(heartbeat())
-    await started.wait()
-    try:
-        evidence = await derive_transcript_evidence(
-            _session("claude", transcript),
-            BASE_TIME,
-            default_validation_detection_config(),
-            set(),
-            str(tmp_path),
+    monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", recording_pool)
+    turns = 0
+    steps: dict[str, list[int]] = {"_encode_steps": [], "_decode_steps": []}
+    for name, seen in steps.items():
+        real_steps = getattr(transcript_evidence_transfer, name)
+
+        def observed(value: Any, real_steps: Any = real_steps, seen: list[int] = seen) -> Any:
+            for step in real_steps(value):
+                seen.append(turns)
+                yield step
+
+        monkeypatch.setattr(transcript_evidence_transfer, name, observed)
+
+    async def count_turns() -> None:
+        nonlocal turns
+        while True:
+            turns += 1
+            await asyncio.sleep(0)
+
+    async def derive() -> TranscriptEvidence:
+        return await derive_transcript_evidence(
+            session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
         )
-    finally:
-        stop.set()
-        await heartbeat_task
 
-    assert gap_cpu
-    # A tick's lateness counts against the derivation only as far as this process
-    # spent CPU in that gap; lateness with no CPU behind it is host scheduling. The
-    # bound sits above the rare 49-82 ms record-reconstruction spikes a contended host
-    # adds to a single chunk, and below the whole-result hold this test guards against.
-    attributed = [gap for gap in gap_cpu if min(gap[0] - 0.05, gap[1] + gap[2]) >= 0.1]
-    assert not attributed, f"(wall, loop_cpu, other_cpu) per attributed gap: {attributed}"
-    assert validation_command in [run.command for run in evidence.validation_runs]
+    counter = asyncio.create_task(count_turns())
+    try:
+        await derive()
+        # The second derivation resumes, so its snapshot is encoded on the loop too.
+        evidence = await derive()
+    finally:
+        counter.cancel()
+        await asyncio.gather(counter, return_exceptions=True)
+
+    # crossed holds resume, result, resume, result; only a fresh cache sends no resume.
+    assert [type(item) for item in crossed[1:]] == [ChunkedPayload] * 3
+    for payload in cast(list[ChunkedPayload], crossed[1:]):
+        assert len(payload.chunks) > 1
+        assert all(len(pickle.loads(chunk)) <= CHUNK_RECORDS for chunk in payload.chunks)
+    for name, seen in steps.items():
+        assert len(seen) > 2, name
+        assert all(later > earlier for earlier, later in zip(seen, seen[1:], strict=False)), (
+            name,
+            seen,
+        )
+    assert "uv run pytest tests/tasks/test_chunked.py -q" in [
+        run.command for run in evidence.validation_runs
+    ]
 
 
 def _chunked_transfer_transcript(tmp_path: Path, filler_runs: int) -> Path:
