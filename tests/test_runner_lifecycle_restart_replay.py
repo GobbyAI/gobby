@@ -1115,6 +1115,7 @@ class TestAgentRestartReconciliation:
                 notify=AsyncMock(),
                 cleanup=MagicMock(),
             ),
+            websocket_server=None,
         )
 
 

@@ -5113,6 +5113,7 @@ class TestAgentRestartRecoveryHelpers:
                 capture=static_runtime_capture(DaemonConfig()),
             ),
             completion_registry=MagicMock(),
+            websocket_server=None,
         )
         resume = AsyncMock(
             side_effect=[
