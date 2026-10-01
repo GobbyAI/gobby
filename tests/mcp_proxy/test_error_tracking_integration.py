@@ -14,6 +14,7 @@ from gobby.mcp_proxy.models import ToolProxyErrorCode
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.state_manager import SessionVariableManager
 from tests.mcp_proxy.named_server_test_support import attach_named_servers
@@ -78,10 +79,14 @@ def _persisting_proxy(
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
         (project_id, "error-tracking"),
     )
+    # Tool events resolve the session's cwd from its machine checkout, which fails closed.
+    LocalProjectCheckoutManager(temp_db).register(
+        LOCAL_MACHINE_ID, project_id, "/tmp/error-tracking"
+    )
     session_manager = SessionManager(temp_db)
     session_id = session_manager.register_session(
         external_id="error-tracking-session",
-        machine_id="21000000-0000-4000-8000-000000000001",
+        machine_id=LOCAL_MACHINE_ID,
         source="codex",
         project_id=project_id,
         project_path="/tmp/error-tracking",

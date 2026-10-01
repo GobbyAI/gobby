@@ -158,7 +158,7 @@ def register_handoff_tools(
         except ValueError:
             return None
 
-    async def get_handoff(
+    def get_handoff(
         agent_run_id: str | None = None,
         failed_attempt_id: str | None = None,
         reconcile_late_compact: bool = False,
