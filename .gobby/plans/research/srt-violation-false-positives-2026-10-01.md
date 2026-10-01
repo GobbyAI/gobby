@@ -1,7 +1,9 @@
 # SRT violation false positives (2026-10-01)
 
-Root-cause record for #23288 and the later log cleanup. All reads were read-only and sampled.
-No full-file scans ran on the large logs except the size/count survey.
+Root-cause record for #23288 and the later log cleanup. All reads were read-only. Most of
+the tallies come from head and tail samples. Two scripts read full files: the size/count
+survey (the top 8 logs), and the process-attribution script (one named run's log per
+invocation).
 
 ## Problem
 
@@ -83,15 +85,13 @@ Every sampled `network-outbound` denial is bare, for example
 `codex(4001) deny(1) network-outbound`. None carries a host, IP or socket path.
 
 All five runs have the same `allowedDomains` with `strictAllowlist`: the OpenAI and
-ChatGPT hosts, the package registries, `localhost` and `127.0.0.1`. A domain blocked by
-SRT's filtering proxy would appear as a separate proxy-deny entry naming the host, and
-none appear. So these are seatbelt kernel denials of connections that bypassed the proxy,
-and they are not legitimate domains missing from the allowlist.
+ChatGPT hosts, the package registries, `localhost` and `127.0.0.1`. No proxy-deny entry
+naming a host appears in the samples.
 
-The destination cannot be proved from these logs. Direct-IP connects, or unix-socket
-connects outside `allowUnixSockets`, are the likely candidates. Per the PD's ruling
-(17:55 CDT), they stay recorded as true positives. No domain is added, and no
-destination-capture logging is added, under the logging ban.
+The destinations are unknown. These logs cannot show whether any of these denials was a
+legitimate request to a domain missing from the allowlist. The PD ruled (17:55 CDT,
+message 24f4d329) that they stay recorded. No domain is added, and no destination-capture
+logging is added, under the logging ban.
 
 ## Survey scripts
 
