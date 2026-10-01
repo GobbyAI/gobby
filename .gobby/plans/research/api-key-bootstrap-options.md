@@ -184,7 +184,7 @@ Josh: "API keys would be valid only for the machine itself tied to."
 
 | Option | How it binds | Mechanism cost | Verdict |
 | --- | --- | --- | --- |
-| **K1. Machine keypair + mutual TLS, public key pinned** | Each machine generates an Ed25519 keypair and a self-signed certificate. The hub stores the public key (SPKI hash) per machine. The front door requires a client certificate and looks up the verified public key. This is Syncthing's model: device ID = "SHA-256 hash of the certificate data", and "Both devices present their certificates" | P4 4.1 already adds rustls TLS to the front door. K1 adds a custom client-cert verifier and one lookup. No CA key to protect, because certificates are pinned rather than CA-issued | **Recommended** |
+| **K1. Machine keypair + mutual TLS, public key pinned** | Each machine generates an Ed25519 keypair and a self-signed certificate. The hub stores the public key (SPKI hash) per machine. The front door requests a client certificate (optional mode, section 5a) and looks up the verified public key. This is Syncthing's model: device ID = "SHA-256 hash of the certificate data", and "Both devices present their certificates" | P4 4.1 already adds rustls TLS to the front door. K1 adds a custom client-cert verifier and one lookup. No CA key to protect, because certificates are pinned rather than CA-issued | **Recommended** |
 | K2. Keypair + signed requests (HTTP Message Signatures, RFC 9421, or the Actions-runner signed-JWT pattern) | Per-request signature over method, path, date and nonce; the hub verifies with the stored public key | Custom canonicalization, plus a nonce/replay window, for every client in three languages (Python, Rust gcore/ghook, web) | Viable; more mechanism than K1 |
 | K3. Bearer API key + `machine_id` | The hub records which machine a key belongs to | The header is client-asserted, so a copied key works from any machine | Rejected: the binding is nominal only |
 
@@ -206,7 +206,31 @@ What "machine-bound" means without Keychain:
   - The Actions runner uses DPAPI on Windows.
 - A TPM is distinct from Keychain and could be a later opt-in. It is not part of this recommendation.
 
-Hub-local clients (CLI, ghook, gcode on the hub) use the hub machine's own key over loopback TLS. This replaces `local_cli_token`, which is the P4 D1 sweep (:858-982). The per-boot front-door secret stays the gdaemon-to-Python internal hop.
+### Revision 2a: credential per route and peer (PD review, 2026-10-01)
+
+**Hub-local clients stay on loopback plaintext.** #23270 ("Front-door TLS for remote peers with loopback plaintext") keeps loopback in plaintext. A TLS handshake on every `ghook` call would tax the hook hot path. So for hub-local clients:
+- Local authority = **loopback peer + the 0600 local proof** that F2 already uses (a hub-owner-readable file).
+- K1 applies to **non-loopback peers only**.
+- This replaces `local_cli_token` as P4 D1 (:858-982) intends. The local proof is the same kind of 0600 file, accepted only from loopback peers.
+- The per-boot front-door secret stays the gdaemon-to-Python internal hop.
+
+**Loopback alone is never authority.** Tailscale `serve --https` and Funnel terminate TLS in tailscaled and forward to the local service. The docs say "By default, the device's Tailscale daemon terminates the HTTPS connection" ([Tailscale Serve](https://tailscale.com/kb/1242/tailscale-serve)). This hub serves `https://mbp.tail4125a0.ts.net` to `localhost:60887`. Every tailnet request, and every Funnel request from the internet, therefore reaches the front door as a loopback peer. The local proof is what keeps those requests out of local authority. The same applies to the F2 first-run window and to reset.
+
+**Web UI.** Browsers cannot practically present pinned client certificates. The web UI keeps cookie login: `users.password_hash` to `auth_sessions`, via `gobby auth credentials`. The front door therefore runs client certificates in **optional mode**. The TLS handshake succeeds without a client certificate, and the route layer decides what each connection may do. In rustls that is a client-certificate verifier that does not make client auth mandatory (`ClientCertVerifier::client_auth_mandatory`); the API is cited from docs.rs and not prototyped.
+
+| Credential presented | Peer | Accepted on |
+| --- | --- | --- |
+| Local proof (0600 file) | Loopback only | All API routes, F2 first-run, `gobby auth reset` |
+| Verified client certificate (K1), key not revoked, current epoch | Non-loopback, direct TLS to the front door | All API routes for that machine's user, D2 relay, issuing enrollment codes |
+| Web session cookie (`auth_sessions`) | Any, including via Tailscale serve | Web UI pages and the API routes the web UI calls (same-origin, CSRF-protected as today), issuing enrollment codes. Never F2 or reset |
+| Enrollment code (F3) | Any | `node join` only |
+| None | Any | Health, the login form, the TLS certificate fingerprint |
+
+**K1 and TLS-terminating proxies.** A client certificate cannot cross a proxy that terminates TLS.
+- Under K1, remote machines dial the front door's own TLS listener directly, at its tailnet IP and port, and never the `serve --https` URL.
+- `serve --tcp`, "a raw TCP forwarder", passes the client's TLS through intact, so K1 also works behind it. Such connections then arrive from loopback, and the front door must not treat them as loopback-local. They carry no local proof, so the table above already handles them.
+- P4's hub-certificate pinning (`hub_cert`, 4.5) already requires a direct dial, because a serve URL presents tailscaled's certificate, not the hub's. K1 adds no new topology constraint.
+- K2's signed requests do survive a terminating proxy. That is K2's real advantage (choice 10).
 
 ## 6. Reset-to-first-run
 
@@ -248,11 +272,15 @@ Before the transaction commits, the front door still rejects any connection or r
    - Add `hub_authority` (singleton state + epoch) and `enrollment_codes`.
    - Drop or keep the email/password bootstrap route (:590-604) per Josh's choice.
    - The migration number stays "next free after 455".
-3. 4.1 TLS: add client-certificate verification (K1) to the rustls front door. Accept pinned self-signed client certificates checked against the machine table.
+3. 4.1 TLS: **#23270 scope is unchanged by choice 10.**
+   - #23270 builds server TLS, the first-byte peek and loopback plaintext, and all three stay.
+   - If K1 is chosen, a separate follow-on leaf after #23270 adds the optional client-certificate verifier: pinned self-signed certificates checked against the machine table, with cert-less handshakes allowed for cookie and enrollment routes. It also adds the route-credential table from section 5a.
+   - If K2 is chosen, 4.1 gains nothing; signature verification lives in the route layer.
+   - Neither option needs L7 to change course on #23270.
 4. 4.5:
    - Replace `gobby auth login` adding three fields to a remote bootstrap (:805, :755-761) with `gobby node join <hub-url> --code`. It generates the keypair and writes a fresh DSN-free bootstrap.
    - Add `gobby auth reset` (section 6) and the F2 first-run on the hub.
-5. P4 D1 (`local_cli_token` sweep): hub-local clients present the hub machine's key over loopback TLS.
+5. P4 D1 (`local_cli_token` sweep): hub-local clients present the 0600 local proof over loopback plaintext. The front door never treats a loopback peer alone as local authority, because of Tailscale serve and Funnel (section 5a).
 6. 4.6 / #23269: the refusal stays. Nodes are "unsupported until D2".
 7. Promote **D2 relay**, with per-request revocation checks and without the channel, to a prerequisite of any node support. State which of D3, D4 and D5 gate "nodes supported".
 8. New hub-side slice (not in P4 today), "DB credential narrowing" (H6):
@@ -298,7 +326,15 @@ The PD disposed each finding on 2026-10-01:
 7. **P4's email/password bootstrap route:** drop in favour of enrollment codes (recommended), or keep as an alternative?
 8. **Grant cache:** drop secret fields from the hundreds of on-disk grants and pay one loopback handshake per gcode process (recommended), accept them as 0600 files of the same class as the hub file, or move gcode to HTTP-only DB access (D4-style) for hubs too?
 9. **Stray `falkordb_password` key** in the live `~/.gobby/bootstrap.yaml`: approve removing it. Nothing reads its value. The edit changes live state, so either Josh runs it or Josh approves an agent running it.
-10. **Machine-bound mechanism:** K1, mutual TLS with pinned per-machine public keys (recommended; the Syncthing model, reusing P4 4.1 TLS), or K2, per-request signatures (the Actions-runner/RFC 9421 pattern)?
+10. **Machine-bound mechanism** (applies to non-loopback machines; the hub's own clients use loopback + local proof, and browsers use cookie login):
+    - **K1. Mutual TLS with pinned per-machine public keys.** The Syncthing model. *Recommended.*
+      - Remote machines must dial the front door's TLS listener directly (tailnet IP:port, or `tailscale serve --tcp` passthrough), never a `serve --https` or Funnel URL, because those terminate TLS and drop the client certificate.
+      - P4's hub-certificate pinning already requires that direct dial, so K1 adds no new constraint.
+      - It costs one optional-client-cert verifier after #23270, with no per-request signing code in three client languages.
+    - **K2. Per-request signatures** (the Actions-runner signed-JWT / RFC 9421 pattern).
+      - Works through any TLS-terminating proxy, including `serve --https` and Funnel.
+      - Costs canonical request signing plus a replay/nonce window in Python, Rust (gcore, ghook, gclient) and the relay. It also conflicts with P4's hub-certificate pin, unless the pin is dropped for proxied hubs.
+    - Pick K2 only if nodes must reach the hub through a TLS-terminating proxy.
 
 PD review of this revision is required before the Assistant presents the choices.
 
