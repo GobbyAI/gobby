@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from opentelemetry.sdk.metrics import MeterProvider
-from opentelemetry.sdk.metrics.export import InMemoryMetricReader
+from opentelemetry.sdk.metrics.export import HistogramDataPoint, InMemoryMetricReader
 
 from gobby.telemetry import instruments
 from gobby.telemetry.instruments import TelemetryMetrics
@@ -233,3 +233,30 @@ def test_observable_gauge_callback(
                     point = cast(_GaugePoint, metric.data.data_points[0])
                     assert point.value == 123.45
     assert found
+
+
+def test_seconds_histograms_resolve_sub_second_waits(
+    metrics_collector: TelemetryMetrics,
+    meter_provider: tuple[MeterProvider, InMemoryMetricReader],
+) -> None:
+    # The SDK default boundaries (0, 5, 10, ... 10000) are millisecond-scale; with them
+    # every sub-5 s pool acquire lands in one bucket and p95 queries are meaningless.
+    _, reader = meter_provider
+    metrics_collector.observe_histogram("database_pool_acquire_wait_seconds", value=0.3)
+
+    data = reader.get_metrics_data()
+    assert data is not None
+    points = [
+        point
+        for resource_metrics in data.resource_metrics
+        for scope_metrics in resource_metrics.scope_metrics
+        for metric in scope_metrics.metrics
+        if metric.name == "database_pool_acquire_wait_seconds"
+        for point in metric.data.data_points
+        if isinstance(point, HistogramDataPoint)
+    ]
+    assert len(points) == 1
+    bounds = list(points[0].explicit_bounds)
+    assert bounds == list(instruments.SECONDS_HISTOGRAM_BOUNDARIES)
+    assert bounds[0] < 0.3 < bounds[-1]
+    assert points[0].bucket_counts[bounds.index(0.5)] == 1
