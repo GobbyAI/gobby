@@ -22,6 +22,9 @@ mod workspace_panes;
 pub use attach::AttachState;
 pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
 pub use live_loop::arrange::plan_arrange;
+pub use live_loop::jobs::{
+    spawn_job, Coalescer, JobKey, JobLedger, JobOutcome, JobResult, JobTag, OpIntent,
+};
 pub use live_loop::menu::{
     apply_local_menu_action, build_menu, item_rects, menu_rect, ArrangeLayout, ArrangeTarget,
     ContextMenuKind, ContextMenuState, MenuAction, MenuItem, Submenu,

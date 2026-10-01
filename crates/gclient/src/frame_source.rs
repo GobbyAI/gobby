@@ -146,8 +146,9 @@ impl From<crate::daemon::DaemonError> for FrameError {
 pub trait FrameSource {
     async fn send(&mut self, message: &ClientMessage) -> Result<(), FrameError>;
     /// Queue one host input verb -- `BindAttachment`, `Input` or `Paste` --
-    /// without awaiting anything. Keys are typed on the render loop's thread,
-    /// so this never waits on a socket, a daemon or a writer task (#22573).
+    /// or a `SetViewport` without awaiting anything. Keys are typed and panes
+    /// sized on the render loop's thread, so this never waits on a socket, a
+    /// daemon or a writer task (#22573).
     fn send_input(&mut self, message: &ClientMessage) -> Result<(), FrameError>;
     async fn recv(&mut self) -> Result<ServerMessage, FrameError>;
     fn transport(&self) -> Transport;
@@ -667,6 +668,7 @@ impl FrameSource for UnixSocketFrameSource {
             ClientMessage::BindAttachment { .. }
                 | ClientMessage::Input { .. }
                 | ClientMessage::Paste { .. }
+                | ClientMessage::SetViewport { .. }
         ) {
             return Err(FrameError::Protocol(
                 "message is not a host input verb".into(),

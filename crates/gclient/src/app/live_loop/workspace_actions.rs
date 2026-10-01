@@ -21,9 +21,6 @@ use super::super::Workspace;
 use super::menu::MenuAction;
 use super::mouse::Placement;
 
-/// The focus a window shows on a daemon tab: `(project, tab, pane)`.
-pub(super) type ShownFocus = (String, String, Option<String>);
-
 /// Send `op`; `true` when the daemon accepted it. A refusal lands on the
 /// status line and the layout stays as the daemon has it; any other
 /// failure propagates. A close or focus hint refused `not_found` is done:
@@ -874,59 +871,6 @@ pub(super) async fn move_focused_pane_to_tab(
             },
         )
         .await?;
-    }
-    Ok(())
-}
-
-/// The focus this window shows when the active tab is the daemon's.
-fn shown_focus(workspace: &Workspace<LiveDaemon>, chrome: &Chrome) -> Option<ShownFocus> {
-    let project = workspace.project_id()?.to_owned();
-    let tab = active_daemon_tab(chrome)?;
-    let pane = daemon_pane_id(chrome, chrome.tab_focus(tab));
-    Some((project, tab.id.clone(), pane))
-}
-
-/// The focus the daemon stores for the workspace, in the shape this window
-/// sends, or `None` when the row names no project or no tab it still has.
-/// The loop starts its memo from it: a window that opens on the stored focus
-/// has nothing new to report.
-pub(super) fn stored_focus(workspace: &Workspace<LiveDaemon>) -> Option<ShownFocus> {
-    let model = workspace.workspace_model()?;
-    let project = model.workspace.focused_project_id.clone()?;
-    let tab_id = model.workspace.focused_tab_id.clone()?;
-    let pane = model.tab(&tab_id)?.focused_pane_id.clone();
-    Some((project, tab_id, pane))
-}
-
-/// Send the focus hints when the shown focus moved since `last`, so the
-/// next window on this workspace opens where this one left off. Focus,
-/// zoom and the active tab stay this window's; only the hint travels.
-pub(super) async fn send_focus_hints_if_changed(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    last: &mut Option<ShownFocus>,
-) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
-        return Ok(());
-    }
-    let Some(focus) = shown_focus(workspace, chrome) else {
-        return Ok(());
-    };
-    if last.as_ref() == Some(&focus) {
-        return Ok(());
-    }
-    let Some(model) = workspace.workspace_model() else {
-        return Ok(());
-    };
-    let op = WorkspaceOp::WorkspaceSetFocusHints {
-        workspace: model.workspace.id.clone(),
-        project_id: Some(focus.0.clone()),
-        tab: Some(focus.1.clone()),
-        pane: focus.2.clone(),
-        node: None,
-    };
-    if send_workspace_op(workspace, chrome, op).await? {
-        *last = Some(focus);
     }
     Ok(())
 }

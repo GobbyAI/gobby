@@ -15,6 +15,7 @@
 
 mod mock_daemon;
 
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -22,14 +23,18 @@ use std::time::Duration;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use crossterm::event::{KeyCode, KeyModifiers};
-use gobby_client::app::run_live_loop;
 use gobby_client::app::run_loop::RENDER_TICK;
-use gobby_client::daemon::LiveDaemon;
+use gobby_client::app::{run_live_loop, spawn_job, JobKey, JobLedger, JobResult, PaneId};
+use gobby_client::daemon::{Generation, LiveDaemon};
+use gobby_client::frame_source::Transport;
 use gobby_client::teardown::TerminalGuard;
 use gobby_client::ui::Chrome;
 use gobby_client::Workspace;
 use gobby_terminal::input::TerminalKey;
-use gobby_terminal::protocol::{write_message, CellData, FrameData, PaneModes, ServerMessage};
+use gobby_terminal::protocol::{
+    read_message_async, write_message, write_message_async, CellData, ClientMessage, FrameData,
+    PaneModes, ServerMessage, MAX_FRAME_SIZE,
+};
 use gobby_terminal::raw_input::RawInputEvent;
 use mock_daemon::MockDaemon;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -37,7 +42,7 @@ use ratatui::buffer::Cell;
 use ratatui::layout::{Position, Size};
 use ratatui::Terminal;
 use serde_json::{json, Value};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Notify};
 use tokio::time::timeout;
 
 /// How long a live loop may take to show one probe's progress.
@@ -259,6 +264,23 @@ impl<'a> LivenessProbe<'a> {
         self.key(KeyCode::Tab, KeyModifiers::NONE).await;
     }
 
+    /// Toggle zoom on the focused pane (`prefix` then `z`).
+    async fn zoom(&self) {
+        self.key(KeyCode::Char('b'), KeyModifiers::CONTROL).await;
+        self.key(KeyCode::Char('z'), KeyModifiers::NONE).await;
+    }
+
+    /// Paste `text` into the focused pane as one bracketed paste.
+    async fn paste(&self, text: String) {
+        timeout(
+            LIVENESS_DEADLINE,
+            self.input.send(RawInputEvent::Paste(text)),
+        )
+        .await
+        .expect("the loop takes the paste")
+        .expect("live loop input");
+    }
+
     /// Feed `terminal_id` a frame per render tick and wait until the last
     /// one is drawn, asserting the loop drew while it ran.
     async fn frames_render(&mut self, terminal_id: &str) {
@@ -322,11 +344,127 @@ fn for_terminal(terminal_id: &'static str) -> impl Fn(&Value) -> bool + Send + '
     move |request| request.get("terminal_id") == Some(&json!(terminal_id))
 }
 
+/// The host epoch a [`StallingHost`] answers with.
+const HOST_EPOCH: &str = "stalling-host-epoch";
+
+/// A terminal host on a real frame socket, the way gterm serves one: it
+/// answers one direct attach, hands on what the client sends, and stops
+/// reading once `stall` is notified, so the client's bounded writer fills
+/// behind it while the socket stays open.
+struct StallingHost {
+    _socket_dir: tempfile::TempDir,
+    socket_path: PathBuf,
+    received: mpsc::UnboundedReceiver<ClientMessage>,
+    stall: Arc<Notify>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl StallingHost {
+    async fn start() -> Self {
+        let socket_dir = tempfile::tempdir().expect("direct socket dir");
+        let socket_path = socket_dir.path().join("frames.sock");
+        let listener =
+            tokio::net::UnixListener::bind(&socket_path).expect("bind direct frame socket");
+        let (received_tx, received) = mpsc::unbounded_channel();
+        let stall = Arc::new(Notify::new());
+        let stalled = Arc::clone(&stall);
+        let task = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("direct client");
+            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                .await
+                .expect("direct hello");
+            write_message_async(
+                &mut stream,
+                &ServerMessage::Welcome {
+                    host_epoch: HOST_EPOCH.into(),
+                },
+            )
+            .await
+            .expect("direct welcome");
+            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+                .await
+                .expect("direct attach");
+            loop {
+                tokio::select! {
+                    biased;
+                    () = stalled.notified() => break,
+                    message = read_message_async(&mut stream, MAX_FRAME_SIZE) => match message {
+                        Ok(message) => {
+                            let _ = received_tx.send(message);
+                        }
+                        Err(_) => return,
+                    },
+                }
+            }
+            // Keep the socket open and unread until the test ends.
+            std::future::pending::<()>().await;
+            drop(stream);
+        });
+        Self {
+            _socket_dir: socket_dir,
+            socket_path,
+            received,
+            stall,
+            task,
+        }
+    }
+
+    /// The roster `attach` block that sends `terminal_id`'s attach direct.
+    fn roster_attach(&self, terminal_id: &str) -> Value {
+        json!({
+            "backend": "native",
+            "frame_host_epoch": HOST_EPOCH,
+            "host_socket": self.socket_path.to_string_lossy(),
+            "host_terminal_id": terminal_id,
+        })
+    }
+
+    /// The `direct` locator the daemon returns with a direct attach result.
+    fn attach_locator(&self, terminal_id: &str) -> Value {
+        json!({
+            "host_epoch": HOST_EPOCH,
+            "host_terminal_id": terminal_id,
+            "frame_socket_path": self.socket_path.to_string_lossy(),
+            "pane": null,
+        })
+    }
+
+    /// Wait until the host reads `data` as typed input.
+    async fn wait_for_input(&mut self, data: &[u8]) {
+        timeout(LIVENESS_DEADLINE, async {
+            loop {
+                match self.received.recv().await {
+                    Some(ClientMessage::Input { data: typed }) if typed == data => break,
+                    Some(_) => {}
+                    None => panic!("the direct host closed before {data:?}"),
+                }
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for the direct host to read {data:?}"));
+    }
+}
+
+impl Drop for StallingHost {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 /// Two live panes in one tab, `terminal-b` focused, so the loop starts by
-/// taking control of `terminal-b`. Keep the returned home alive for the
-/// loop's lifetime.
-async fn two_pane_workspace(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
+/// taking control of `terminal-b`. With `direct_b`, terminal-b attaches over
+/// that host's frame socket and terminal-a stays proxied. Keep the returned
+/// home alive for the loop's lifetime.
+async fn two_pane_workspace(
+    mock: &MockDaemon,
+    direct_b: Option<&StallingHost>,
+) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
     mock.use_unique_attachment_ids();
+    let mut terminal_b = json!({"terminal_id": "terminal-b", "backend": "native", "state": "live"});
+    if let Some(host) = direct_b {
+        terminal_b["attach"] = host.roster_attach("terminal-b");
+        mock.serve_direct_attach(host.attach_locator("terminal-b"));
+    }
     mock.enqueue(
         "GET",
         "/api/terminals?",
@@ -334,7 +472,7 @@ async fn two_pane_workspace(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfi
         json!({
             "items": [
                 {"terminal_id": "terminal-a", "backend": "native", "state": "live"},
-                {"terminal_id": "terminal-b", "backend": "native", "state": "live"}
+                terminal_b
             ],
             "next_cursor": null,
             "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
@@ -345,6 +483,12 @@ async fn two_pane_workspace(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfi
         .expect("connect live daemon");
     let mut workspace = Workspace::live(daemon);
     let home = tempfile::tempdir().expect("gobby home");
+    std::fs::write(
+        home.path()
+            .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
+        "local-token\n",
+    )
+    .expect("write local cli token");
     mock.seed_workspace(
         "project-1",
         &[(&["terminal-a", "terminal-b"][..], "terminal-b")],
@@ -357,7 +501,7 @@ async fn two_pane_workspace(mock: &MockDaemon) -> (Workspace<LiveDaemon>, tempfi
 #[tokio::test]
 async fn held_websocket_request_stays_pending_until_released() {
     let mock = MockDaemon::start("local-token").await;
-    let (mut workspace, _home) = two_pane_workspace(&mock).await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
     let (backend, draws, frames) = DrawRecorder::new(96, 30);
     let mut terminal = Terminal::new(backend).expect("test terminal");
     let mut chrome = Chrome::dark();
@@ -438,4 +582,371 @@ async fn held_websocket_request_stays_pending_until_released() {
     assert!(chrome.ticker > ticker_before, "the render tick advanced");
     assert_eq!(written(&mock, "terminal-b"), ["x", "y", "z"]);
     mock.shutdown().await;
+}
+
+fn is_focus_hint(request: &Value) -> bool {
+    request.get("op") == Some(&json!("workspace.set_focus_hints"))
+}
+
+/// The focus hints the loop reported, in order.
+fn focus_hints(mock: &MockDaemon) -> Vec<Value> {
+    websocket_requests(mock, "workspace_op")
+        .into_iter()
+        .filter(is_focus_hint)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_held_focus_hint_op_never_stalls_frames_or_ticks() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let ticker_before = chrome.ticker;
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let op = "workspace_op";
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        probe.key_reaches("terminal-b", 'x').await;
+        assert!(
+            focus_hints(&mock).is_empty(),
+            "the window opened on the stored focus"
+        );
+
+        // Visiting terminal-a reports its focus, which the mock holds; the
+        // loop keeps drawing terminal-b's frames and typing into terminal-a.
+        let replies = mock.replies(op);
+        let release = mock.hold_ws(op, is_focus_hint);
+        probe.next_pane().await;
+        wait_until("terminal-a's focus hint", || focus_hints(&mock).len() == 1).await;
+        probe.assert_live("terminal-b", "terminal-a", 'y').await;
+        // Back on terminal-b, the newer focus waits behind the held hint
+        // instead of racing it.
+        probe.next_pane().await;
+        probe.assert_live("terminal-a", "terminal-b", 'z').await;
+        assert_eq!(focus_hints(&mock).len(), 1, "one focus hint in flight");
+        assert_eq!(mock.replies(op), replies, "the hint stays held");
+
+        release.notify_one();
+        wait_until("the follow-up focus hint", || focus_hints(&mock).len() == 2).await;
+        let hints = focus_hints(&mock);
+        assert_ne!(
+            hints[1]["pane"], hints[0]["pane"],
+            "the follow-up reports where focus ended"
+        );
+        wait_for_replies(&mock, op, replies + 2).await;
+        probe.assert_live("terminal-a", "terminal-b", 'w').await;
+        assert_eq!(
+            focus_hints(&mock).len(),
+            2,
+            "an acknowledged focus is not reported again"
+        );
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(chrome.ticker > ticker_before, "the render tick advanced");
+    assert_eq!(written(&mock, "terminal-a"), ["y"]);
+    assert_eq!(written(&mock, "terminal-b"), ["x", "z", "w"]);
+    mock.shutdown().await;
+}
+
+/// The `(rows, cols)` each size claim for `terminal_id` carried, in order.
+fn size_claims(mock: &MockDaemon, terminal_id: &str) -> Vec<(u64, u64)> {
+    websocket_requests(mock, "terminal_resize")
+        .iter()
+        .filter(|request| request.get("terminal_id") == Some(&json!(terminal_id)))
+        .map(|request| {
+            (
+                request["rows"].as_u64().expect("resize rows"),
+                request["cols"].as_u64().expect("resize cols"),
+            )
+        })
+        .collect()
+}
+
+/// The viewport and size requests for `terminal_id`, by kind, in the order
+/// the mock received them.
+fn geometry_requests(mock: &MockDaemon, terminal_id: &str) -> Vec<String> {
+    mock.requests()
+        .into_iter()
+        .filter(|request| request.method == "WS")
+        .filter_map(|request| request.body)
+        .filter(|body| body.get("terminal_id") == Some(&json!(terminal_id)))
+        .filter_map(|body| body.get("type").and_then(Value::as_str).map(str::to_string))
+        .filter(|kind| kind == "terminal_set_viewport" || kind == "terminal_resize")
+        .collect()
+}
+
+/// Zoom toggles in one resize burst: odd, so the burst ends zoomed.
+const ZOOM_TOGGLES: usize = 5;
+
+#[tokio::test]
+async fn resize_burst_sends_at_most_one_resize_per_pane_in_flight() {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    // Room for the whole burst, so all of it is queued before the loop runs.
+    let (input_tx, input_rx) = mpsc::channel(ZOOM_TOGGLES * 2);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        probe.key_reaches("terminal-b", 'x').await;
+        let unzoomed = *size_claims(&mock, "terminal-b")
+            .last()
+            .expect("terminal-b sized at startup");
+        let claims_before = size_claims(&mock, "terminal-b").len();
+        let requests_before = geometry_requests(&mock, "terminal-b").len();
+
+        // The whole burst is queued before the loop runs again, so every
+        // geometry change after the first lands while that resize is out.
+        for _ in 0..ZOOM_TOGGLES {
+            for (code, modifiers) in [
+                (KeyCode::Char('b'), KeyModifiers::CONTROL),
+                (KeyCode::Char('z'), KeyModifiers::NONE),
+            ] {
+                input_tx
+                    .try_send(RawInputEvent::Key(TerminalKey::new(code, modifiers)))
+                    .expect("the burst fits the input queue");
+            }
+        }
+        wait_until("terminal-b's zoomed size claim", || {
+            size_claims(&mock, "terminal-b").len() > claims_before
+        })
+        .await;
+        // Zoomed, terminal-b fills the tab; the loop keeps drawing it and
+        // typing into it.
+        probe.assert_live("terminal-b", "terminal-b", 'y').await;
+
+        let burst = size_claims(&mock, "terminal-b").split_off(claims_before);
+        assert!(
+            burst.len() <= 2,
+            "one resize in flight and one latest follow-up, not one per change: {burst:?}"
+        );
+        let zoomed = *burst.last().expect("a zoomed size claim");
+        assert!(
+            zoomed.0 * zoomed.1 > unzoomed.0 * unzoomed.1,
+            "the latest geometry, zoomed, wins: {burst:?} after {unzoomed:?}"
+        );
+        let order = geometry_requests(&mock, "terminal-b").split_off(requests_before);
+        assert!(
+            order
+                .chunks(2)
+                .all(|pair| pair == ["terminal_set_viewport", "terminal_resize"]),
+            "each viewport precedes its size claim: {order:?}"
+        );
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    assert!(chrome.is_zoomed(), "the burst ended zoomed");
+    mock.shutdown().await;
+}
+
+/// A paste larger than both socket buffers, so the direct writer blocks on
+/// it, and under the client's paste limit.
+const STALL_PASTE_BYTES: usize = 900 * 1024;
+
+/// Keys typed behind the blocked paste: more than the direct writer's
+/// bounded queue holds.
+const QUEUE_FILL_KEYS: usize = 300;
+
+#[tokio::test]
+async fn direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop() {
+    let mock = MockDaemon::start("local-token").await;
+    let mut host = StallingHost::start().await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, Some(&host)).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let ticker_before = chrome.ticker;
+    let (input_tx, input_rx) = mpsc::channel(1);
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 1).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        // terminal-b types on its own frame socket, never through the daemon.
+        probe.key(KeyCode::Char('x'), KeyModifiers::NONE).await;
+        host.wait_for_input(b"x").await;
+
+        // The host stops reading: the paste blocks the writer on the socket
+        // and the keys behind it fill the writer's bounded queue.
+        host.stall.notify_one();
+        probe.paste("p".repeat(STALL_PASTE_BYTES)).await;
+        for _ in 0..QUEUE_FILL_KEYS {
+            probe.key(KeyCode::Char('k'), KeyModifiers::NONE).await;
+        }
+        // terminal-b's viewport changes twice while its writer is full.
+        probe.zoom().await;
+        probe.zoom().await;
+        // Frames, ticks and keys on the proxied terminal-a keep flowing.
+        probe.next_pane().await;
+        probe.assert_live("terminal-a", "terminal-a", 'y').await;
+        let batches = probe.batches;
+        drop(input_tx);
+        batches
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, batches) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let pane_b = workspace
+        .pane_for_terminal("terminal-b")
+        .expect("terminal-b pane");
+    assert_eq!(workspace.pane(pane_b).transport(), Some(Transport::Direct));
+    let status = workspace.pane(pane_b).status_message().unwrap_or_default();
+    assert!(
+        status.contains("viewport"),
+        "terminal-b's status names the refused viewport: {status:?}"
+    );
+    assert!(
+        chrome
+            .toasts
+            .iter()
+            .all(|active| !active.toast.title.contains("backlog")),
+        "a backlog is pane status, never a toast"
+    );
+    let pane_a = workspace
+        .pane_for_terminal("terminal-a")
+        .expect("terminal-a pane");
+    assert!(
+        usize::try_from(workspace.pane(pane_a).frames_rendered()).expect("frame count") >= batches,
+        "each frame batch fed to terminal-a rendered"
+    );
+    assert!(chrome.ticker > ticker_before, "the render tick advanced");
+    assert_eq!(written(&mock, "terminal-a"), ["y"]);
+    assert!(
+        written(&mock, "terminal-b").is_empty(),
+        "terminal-b never types through the daemon"
+    );
+    mock.shutdown().await;
+}
+
+/// A job that finishes only once `release` is notified.
+async fn held_job(release: Arc<Notify>, pane: PaneId) -> JobResult {
+    release.notified().await;
+    JobResult::Resized {
+        pane,
+        result: Ok(()),
+    }
+}
+
+#[tokio::test]
+async fn a_late_old_generation_outcome_never_settles_the_reissued_job() {
+    let (jobs, mut outcomes) = mpsc::unbounded_channel();
+    let mut ledger = JobLedger::default();
+    let pane = PaneId(7);
+    let key = JobKey::Geometry(pane);
+
+    let (old_tag, _) = ledger
+        .issue(key.clone(), Generation(1), (24, 80))
+        .expect("an idle key issues");
+    let old_release = Arc::new(Notify::new());
+    spawn_job(
+        &jobs,
+        old_tag.clone(),
+        held_job(Arc::clone(&old_release), pane),
+    );
+
+    // The reconnect frees the slot; the same key is issued anew on the new
+    // generation and gains a coalesced follow-up.
+    ledger.forget_generation(Generation(1));
+    let (new_tag, _) = ledger
+        .issue(key.clone(), Generation(2), (30, 90))
+        .expect("the forgotten key issues anew");
+    assert_ne!(new_tag.id, old_tag.id);
+    let new_release = Arc::new(Notify::new());
+    spawn_job(
+        &jobs,
+        new_tag.clone(),
+        held_job(Arc::clone(&new_release), pane),
+    );
+    assert!(
+        ledger.issue(key.clone(), Generation(2), (31, 91)).is_none(),
+        "a busy key coalesces"
+    );
+    assert!(
+        ledger.issue(key.clone(), Generation(2), (32, 92)).is_none(),
+        "the latest offer replaces the held one"
+    );
+
+    // The old outcome lands first and settles nothing.
+    old_release.notify_one();
+    let old = timeout(LIVENESS_DEADLINE, outcomes.recv())
+        .await
+        .expect("the old outcome lands")
+        .expect("job channel open");
+    assert_eq!(old.tag, old_tag);
+    assert!(
+        ledger.settle(&old.tag, Generation(2)).is_none(),
+        "the late old outcome releases no follow-up"
+    );
+    assert_eq!(
+        ledger.in_flight(&key),
+        Some(new_tag.id),
+        "the reissued job keeps its marker"
+    );
+
+    // The new outcome clears its marker and releases exactly one follow-up.
+    new_release.notify_one();
+    let new = timeout(LIVENESS_DEADLINE, outcomes.recv())
+        .await
+        .expect("the new outcome lands")
+        .expect("job channel open");
+    assert_eq!(new.tag, new_tag);
+    let (follow_up, geometry) = ledger
+        .settle(&new.tag, Generation(2))
+        .expect("the new outcome releases the follow-up");
+    assert_eq!(geometry, (32, 92), "the latest coalesced offer");
+    assert_eq!(follow_up.generation, Generation(2));
+    assert_eq!(ledger.in_flight(&key), Some(follow_up.id));
+    assert!(
+        ledger.settle(&new.tag, Generation(2)).is_none(),
+        "an outcome settles once"
+    );
+    assert!(
+        ledger.settle(&follow_up, Generation(2)).is_none(),
+        "exactly one follow-up"
+    );
+    assert_eq!(ledger.in_flight(&key), None);
 }
