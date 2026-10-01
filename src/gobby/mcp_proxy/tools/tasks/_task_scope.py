@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -15,7 +14,7 @@ from gobby.mcp_proxy.tools.tasks._context import (
     RegistryContext,
     checkout_unresolved_error,
 )
-from gobby.plans.semantic_lint import find_file_paths_in_text
+from gobby.plans.semantic_lint import collect_description_target_inventory
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
@@ -29,9 +28,6 @@ if TYPE_CHECKING:
 MIN_SCOPE_JUSTIFICATION_LENGTH = 20
 MAX_SCOPE_JUSTIFICATION_LENGTH = 1000
 
-_TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
-_ACCEPTANCE_RE = re.compile(r"^\s*Acceptance\s*:", re.IGNORECASE)
-_BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _DECLARED_ANNOTATION_SOURCES = frozenset({"manual", "expansion"})
 _ADVISORY_ANNOTATION_SOURCES = frozenset({"hypothesis"})
 _TESTS_ROOT = "tests/"
@@ -184,11 +180,10 @@ def collect_declared_task_targets(
 ) -> set[str]:
     """Collect normalized paths supplied through Targets or affected_files."""
     declared: set[str] = set()
-    for target_line in _iter_target_block_lines(description or ""):
-        for target in find_file_paths_in_text(target_line):
-            normalized = _normalize_scope_entry(target)
-            if normalized is not None:
-                declared.add(normalized)
+    for target in collect_description_target_inventory(description):
+        normalized = _normalize_scope_entry(target)
+        if normalized is not None:
+            declared.add(normalized)
     for affected_file in affected_files or ():
         normalized = _normalize_scope_entry(affected_file)
         if normalized is not None:
@@ -277,37 +272,6 @@ async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str, *flags: s
 def collect_commit_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     """Offline synchronous facade for direct-library consumers."""
     return asyncio.run(collect_commit_paths_async(commit_shas, repo_path))
-
-
-def _iter_target_block_lines(description: str) -> Iterable[str]:
-    lines = description.splitlines()
-    index = 0
-    while index < len(lines):
-        match = _TARGET_LINE_RE.match(lines[index])
-        if match is None:
-            index += 1
-            continue
-        if rest := match.group("rest").strip():
-            yield rest
-        index += 1
-        while index < len(lines):
-            candidate = lines[index]
-            stripped = candidate.strip()
-            if not stripped:
-                break
-            if (
-                _TARGET_LINE_RE.match(candidate)
-                or _ACCEPTANCE_RE.match(candidate)
-                or stripped.startswith("Consumers unchanged:")
-            ):
-                break
-            if stripped.startswith("#") or stripped.startswith("`kind:"):
-                break
-            if _BULLET_RE.match(candidate) or "`" in candidate or "/" in candidate:
-                yield candidate
-                index += 1
-                continue
-            break
 
 
 def _normalize_scope_entry(value: str) -> str | None:

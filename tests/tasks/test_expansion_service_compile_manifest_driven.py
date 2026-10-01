@@ -15,6 +15,7 @@ from gobby.plans.parser import PlanDocument, parse_plan
 from gobby.storage.expansion_runs import ExpansionRun, LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
+from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager, Task, TaskArtifactManager
 from gobby.tasks.expansion._contract import _assigned_agent_for_entry
 from gobby.tasks.expansion_qa_coverage import run_expansion_qa_coverage
@@ -23,6 +24,81 @@ from gobby.utils.machine_id import require_machine_id
 from tests.fixtures.isolated_checkout import install_isolated_checkout_project
 
 pytestmark = pytest.mark.unit
+
+
+def test_expansion_declares_targets_before_implementation(
+    service: ExpansionService, sample_project: dict[str, Any], tmp_path: Path
+) -> None:
+    plan = _MANIFEST_PLAN.replace(
+        "**Acceptance:**",
+        "Targets:\n- `ops/cron.example` — deployment schedule\n"
+        "- `src/schedule.py` — schedule implementation\n\n**Acceptance:**",
+        1,
+    )
+    parent = _parent(service, sample_project)
+    plan_doc = parse_plan(_write_plan(tmp_path, plan), parse_mode="expansion")
+    spec = service.compile_plan_to_spec(plan_doc, parent)
+    leaf = next(item for item in spec["tasks"] if item["source_section_id"] == "1.1")
+
+    assert {"ops/cron.example", "src/schedule.py"} <= set(leaf["affected_files"])
+    assert service.run_manager is not None
+    run = service.run_manager.create(
+        parent_task_id=parent.id,
+        project_id=parent.project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    service.run_manager.start(run.id)
+    service.run_manager.save_compiled_spec(run.id, spec)
+    applied = service.apply_run(run.id, session_id=None)
+    assert applied.task_id_map is not None
+    annotations = TaskAffectedFileManager(service.db).get_files(applied.task_id_map[leaf["id"]])
+    declared = {item.file_path for item in annotations if item.annotation_source == "expansion"}
+    assert {"ops/cron.example", "src/schedule.py"} <= declared
+
+
+def test_expansion_rejects_targets_missing_from_compiled_scope(service: ExpansionService) -> None:
+    spec = {
+        "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["leaf"]}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Schedule",
+                "category": "code",
+                "description": "Targets:\n- `ops/cron.example`\n- `src/schedule.py`",
+                "affected_files": ["src/schedule.py"],
+            }
+        ],
+        "dependencies": [],
+    }
+    validation = service.validate_compiled_spec(spec)
+
+    assert validation["valid"] is False
+    assert any("leaf" in error and "ops/cron.example" in error for error in validation["errors"])
+
+
+@pytest.mark.parametrize("scope", [["ops/", "src/"], ["./ops/cron.example", "src/schedule.py"]])
+def test_expansion_target_scope_accepts_directory_and_normalized_paths(
+    service: ExpansionService, scope: list[str]
+) -> None:
+    validation = service.validate_compiled_spec(
+        {
+            "phases": [{"id": "phase-1", "title": "Phase", "task_ids": ["leaf"]}],
+            "tasks": [
+                {
+                    "id": "leaf",
+                    "phase_id": "phase-1",
+                    "title": "Schedule",
+                    "category": "code",
+                    "description": "Targets:\n- `ops/cron.example`\n- `src/schedule.py`",
+                    "affected_files": scope,
+                }
+            ],
+            "dependencies": [],
+        }
+    )
+    assert validation["valid"] is True
 
 
 @pytest.fixture

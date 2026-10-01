@@ -216,7 +216,7 @@ def _build_contract_entry_work_task(
 ) -> dict[str, Any]:
     """Build the per-entry work task."""
     body = _contract_section_body(plan_doc, section)
-    affected_files = _contract_affected_files(section)
+    affected_files = _contract_affected_files(plan_doc, section)
     acceptance_lines = _contract_acceptance_lines(section)
     description = f"Plan section `{section.section_id}`.\n\n{body}".strip()
     if acceptance_lines:

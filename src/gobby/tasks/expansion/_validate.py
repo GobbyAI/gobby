@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import Any
 
 from gobby.plans.parser import Kind, ParseMode, PlanDocument, PlanParseError, parse_plan
-from gobby.plans.semantic_lint import lint_plan_document
+from gobby.plans.semantic_lint import (
+    collect_description_target_inventory,
+    lint_plan_document,
+    normalize_target_path,
+)
 from gobby.plans.symbol_targets import (
     CONSUMER_COVERAGE,
     skipped_symbol_validation,
@@ -172,6 +176,24 @@ def validate_compiled_spec(self: Any, compiled_spec: dict[str, Any]) -> dict[str
     valid_task_ids = set(task_ids)
     valid_phase_ids = set(phase_ids)
     for task_item in tasks:
+        targets = collect_description_target_inventory(task_item.get("description"))
+        scope = {
+            path.rstrip("/")
+            for entry in task_item.get("affected_files") or []
+            if (path := normalize_target_path(entry))
+        }
+        missing_targets = sorted(
+            target
+            for target in targets
+            if not any(
+                target.rstrip("/") == entry or target.startswith(f"{entry}/") for entry in scope
+            )
+        )
+        if missing_targets:
+            errors.append(
+                f"Task {task_item.get('id')} Targets missing from affected_files: "
+                f"{', '.join(missing_targets)}. Add these paths to affected_files before applying."
+            )
         if task_item.get("phase_id") not in valid_phase_ids:
             errors.append(
                 f"Task {task_item.get('id')} references unknown phase {task_item.get('phase_id')}"
