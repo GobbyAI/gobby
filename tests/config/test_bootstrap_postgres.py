@@ -483,7 +483,6 @@ def test_write_postgres_defaults_preserves_pending_rotation(temp_dir: Path) -> N
         write_postgres_defaults(
             gobby_home=temp_dir,
             database_url="postgresql://gobby:pending-placeholder@localhost:60891/gobby",
-            clear_credential_rotation=True,
         )
 
     persisted = yaml.safe_load(bootstrap_file.read_text())

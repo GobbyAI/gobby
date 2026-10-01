@@ -428,17 +428,6 @@ def _dsn_with_password(database_url: str, password: str) -> tuple[str, str]:
     return unquote(user), urlunsplit(parts._replace(netloc=netloc))
 
 
-_SCRAM_VERIFIER_PATTERN = re.compile(r"SCRAM-SHA-256\$[^\s'\"]+")
-
-
-def _redact_secrets(text: str, redaction_secrets: tuple[str, ...]) -> str:
-    """Remove every known secret and any SCRAM verifier from operator-facing text."""
-    for secret in redaction_secrets:
-        if secret:
-            text = text.replace(secret, "****")
-    return _SCRAM_VERIFIER_PATTERN.sub("****", text)
-
-
 def _rotation_failure_detail(exc: BaseException) -> str:
     """Report only the exception class: phase codes, classes and guidance, never text."""
     return type(exc).__name__
@@ -552,8 +541,8 @@ def _finalize_postgres_rotation(
         ) from None
 
 
-def _rotate_postgres_password(gobby_home: Path, bootstrap: dict[str, Any]) -> None:
-    # Callers may hold a stale snapshot. The canonical owner is read only after
+def _rotate_postgres_password(gobby_home: Path) -> None:
+    # The canonical owner is read only after
     # the same services→sidecar lock order used by managed service transitions.
     with managed_services_lock(gobby_home, operation="rotate PostgreSQL credentials"):
         with exclusive_file_lock(gobby_home / "bootstrap.yaml"):
@@ -666,7 +655,7 @@ def rotate_password(service: str) -> None:
             "remote clients hold no datastore credentials."
         )
     if service == "postgres":
-        _rotate_postgres_password(gobby_home, bootstrap)
+        _rotate_postgres_password(gobby_home)
     else:
         _rotate_falkordb_password(gobby_home)
     click.echo(f"Run `gobby restart` to apply the new {service} password.")

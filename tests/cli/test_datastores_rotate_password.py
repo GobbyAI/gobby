@@ -297,7 +297,8 @@ def test_pending_writers_cannot_change_credential_state(rotation_home: Path, wri
             write_bootstrap_yaml(path, candidate)
         elif writer == "defaults":
             write_postgres_defaults(
-                gobby_home=rotation_home, database_url=_CURRENT_DSN, clear_credential_rotation=True
+                gobby_home=rotation_home,
+                database_url=_CURRENT_DSN.replace("old-secret", "unexpected-secret"),
             )
         else:
             update_bootstrap_yaml(path, mutate)
@@ -1017,9 +1018,17 @@ def test_postgres_rotation_ignores_stale_bootstrap_argument(
 ) -> None:
     """The locked canonical reread selects the credential used for this rotation."""
     path = rotation_home / "bootstrap.yaml"
-    stale = read_bootstrap_yaml(path)
     fresh_url = _CURRENT_DSN.replace("old-secret", "fresh-primary-secret")
-    update_bootstrap_yaml(path, lambda data: data.__setitem__("database_url", fresh_url))
+
+    def read_then_change_primary(candidate: Path) -> dict[str, Any]:
+        snapshot = read_bootstrap_yaml(candidate)
+        if snapshot["database_url"] == _CURRENT_DSN:
+            update_bootstrap_yaml(
+                candidate, lambda data: data.__setitem__("database_url", fresh_url)
+            )
+        return snapshot
+
+    monkeypatch.setattr(datastores, "read_bootstrap_yaml", read_then_change_primary)
     connection, connects = _patch_connect(monkeypatch)
     previous_passwords: list[str] = []
     original_execute = connection.execute
@@ -1031,8 +1040,9 @@ def test_postgres_rotation_ignores_stale_bootstrap_argument(
 
     monkeypatch.setattr(connection, "execute", observe_prepared_pair)
 
-    datastores._rotate_postgres_password(rotation_home, stale)
+    result = CliRunner().invoke(cli, ["datastores", "rotate-password", "postgres"])
 
+    assert result.exit_code == 0, result.output
     assert connects[0][0] == fresh_url
     assert previous_passwords == ["fresh-primary-secret"]
     assert connection.committed
@@ -1064,7 +1074,7 @@ def test_postgres_rotation_serializes_canonical_writers(
 
     monkeypatch.setattr(datastores, "_observe_hub_alter", observe_alter)
 
-    datastores._rotate_postgres_password(rotation_home, read_bootstrap_yaml(path))
+    datastores._rotate_postgres_password(rotation_home)
 
     assert len(entered) == 1
     assert "credential_rotation" not in read_bootstrap_yaml(path)

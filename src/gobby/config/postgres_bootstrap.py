@@ -75,7 +75,6 @@ def write_postgres_defaults(
     *,
     gobby_home: Path,
     database_url: str,
-    clear_credential_rotation: bool = False,
 ) -> None:
     def _apply(data: dict[str, Any]) -> None:
         data.pop("hub_backend", None)
@@ -86,8 +85,6 @@ def write_postgres_defaults(
         data["postgres_pool"] = postgres_pool_config_from_mapping(
             data.get("postgres_pool")
         ).to_dict()
-        if clear_credential_rotation:
-            data.pop("credential_rotation", None)
 
     update_bootstrap_yaml(bootstrap_path(gobby_home), _apply)
 
