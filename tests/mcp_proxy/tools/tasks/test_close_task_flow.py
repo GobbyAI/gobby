@@ -664,7 +664,11 @@ async def test_ready_leaf_detaches_close_review_and_records_latency() -> None:
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", linked_paths),
-        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(
+            close_finalization,
+            "_committable_task_paths",
+            side_effect=lambda paths, _cwd: set(paths),
+        ),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
         patch.object(
             lifecycle,
