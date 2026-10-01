@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -17,6 +18,9 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
     derive_close_transcript_evidence,
 )
 from gobby.storage.session_models import Session
+from gobby.tasks.acceptance_artifacts import AcceptanceTest
+from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptEvidenceUnavailable,
@@ -640,6 +644,262 @@ def _claude_edit_session(transcript: Path, session_id: str, edited: Path, at: da
         created_at=at,
         updated_at=at,
     )
+
+
+@pytest.mark.asyncio
+async def test_owner_commit_fallback_credits_test_edits_despite_ignored_checkout_ledger(
+    tmp_path: Path,
+) -> None:
+    test_path = "tests/test_named.py"
+    named_test = tmp_path / test_path
+    named_test.parent.mkdir()
+    named_test.write_text("def test_named():\n    assert True\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text(".gobby/evidence/\n", encoding="utf-8")
+    for args in (
+        ("init", "-q"),
+        ("add", ".gitignore", test_path),
+        ("-c", "user.email=t@t", "-c", "user.name=Test", "commit", "-qm", "task work"),
+    ):
+        subprocess.run(["git", *args], cwd=tmp_path, check=True, capture_output=True)
+    start = datetime(2026, 9, 30, 12, tzinfo=UTC)
+    ctx = _context(
+        [_link(IMPLEMENTER, "claimed", start.isoformat())],
+        {
+            IMPLEMENTER: _claude_edit_session(
+                tmp_path / "owner.jsonl",
+                IMPLEMENTER,
+                named_test,
+                start + timedelta(minutes=10),
+            )
+        },
+    )
+    ctx.session_var_manager.get_variables.return_value = {
+        "task_edited_file_checkouts": {"task": {str(tmp_path): [".gobby/evidence/scratch.md"]}}
+    }
+    with (
+        patch(
+            f"{_SUPPORT}.resolve_validation_detection_config",
+            return_value=default_validation_detection_config(),
+        ),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=IMPLEMENTER,
+            closing_session_id=IMPLEMENTER,
+            owner_window_start=start.isoformat(),
+            task_edited_files={test_path},
+            repo_path=str(tmp_path),
+            owner_used_commit_fallback=True,
+        )
+
+    assert [(edit.session_id, edit.path) for edit in evidence.edits] == [(IMPLEMENTER, test_path)]
+    assert not evidence.degraded_capabilities
+
+
+def _claude_shell_records(
+    start: datetime, offset: int, tool_id: str, command: str, output: str, exit_code: int
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "type": "assistant",
+            "timestamp": (start + timedelta(seconds=offset)).isoformat(),
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": "Bash",
+                        "input": {"command": command},
+                    }
+                ],
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": (start + timedelta(seconds=offset + 1)).isoformat(),
+            "message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": {"exit_code": exit_code, "stdout": output},
+                    }
+                ],
+            },
+        },
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("other_task_overlaps", [False, True])
+async def test_transferred_task_credits_released_test_history_without_foreign_task_edits(
+    tmp_path: Path, other_task_overlaps: bool
+) -> None:
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    closing_checkout = tmp_path / "closing"
+    test_path = "crates/gclient/tests/host_upgrade_recovery.rs"
+    production_path = "crates/gclient/src/recovery.rs"
+    foreign_path = "crates/gclient/src/foreign.rs"
+    scratch_path = ".gobby/evidence/scratch.md"
+    python_tests = ("tests/cli/test_cli_daemon.py", "tests/e2e/test_terminal_client_stack.py")
+    names = (
+        "pane_reconnects_to_host_without_daemon",
+        "host_local_failure_falls_back_to_daemon_attach",
+        "host_local_recovery_survives_daemon_attempts",
+    )
+    tests = tuple(
+        AcceptanceTest(
+            reference=f"{test_path}::{name}",
+            path=test_path,
+            symbol=name,
+            body=f"#[test]\nfn {name}() {{ assert!(recovered()); }}",
+        )
+        for name in names
+    )
+    for relative, content in (
+        (test_path, "\n".join(test.body for test in tests)),
+        (production_path, "pub fn recovered() -> bool { true }\n"),
+        (foreign_path, "pub fn unrelated() {}\n"),
+        (".gitignore", ".gobby/evidence/\n"),
+        *((path, "def test_example():\n    assert True\n") for path in python_tests),
+    ):
+        path = primary / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+    for args in (
+        ("init", "-q"),
+        ("add", "crates", "tests", ".gitignore"),
+        ("-c", "user.email=t@t", "-c", "user.name=Test", "commit", "-qm", "task work"),
+        ("worktree", "add", "--detach", str(closing_checkout), "HEAD"),
+    ):
+        subprocess.run(["git", *args], cwd=primary, check=True, capture_output=True)
+    scratch = primary / scratch_path
+    scratch.parent.mkdir(parents=True)
+    scratch.write_text("temporary evidence\n", encoding="utf-8")
+
+    start = datetime(2026, 9, 30, 2, tzinfo=UTC)
+    transcript = tmp_path / "implementer.jsonl"
+    implementer = _claude_edit_session(
+        transcript, IMPLEMENTER, primary / test_path, start + timedelta(seconds=10)
+    )
+    records = [json.loads(transcript.read_text(encoding="utf-8"))]
+    command = f"cd {primary} && cargo nextest run -p gobby-client --test host_upgrade_recovery"
+    records += _claude_shell_records(
+        start,
+        20,
+        "red",
+        command,
+        f"FAIL [0.01s] gobby-client::host_upgrade_recovery {names[0]}\n"
+        f"thread '{names[0]}' panicked at {test_path}:3: assertion failed: recovered()",
+        100,
+    )
+    audit_command = (
+        f"cd {primary} && uv run gobby test-types audit {' '.join(python_tests)} "
+        "--baseline .gobby/test-types-baseline.json --fail-on-new"
+    )
+    for offset, relative in ((30, production_path), (50, scratch_path), (60, foreign_path)):
+        record = json.loads(json.dumps(records[0]))
+        record["timestamp"] = (start + timedelta(seconds=offset)).isoformat()
+        record["message"]["content"][0]["id"] = f"edit-{offset}"
+        record["message"]["content"][0]["input"]["file_path"] = str(primary / relative)
+        records.append(record)
+        if offset == 30:
+            records += _claude_shell_records(
+                start,
+                40,
+                "green",
+                command,
+                "\n".join(
+                    f"PASS [0.01s] gobby-client::host_upgrade_recovery {name}" for name in names
+                ),
+                0,
+            )
+            records += _claude_shell_records(
+                start, 44, "audit", audit_command, "Files scanned: 2\nErrors: 0\nNew errors: 0", 0
+            )
+            records += _claude_shell_records(
+                start,
+                47,
+                "pytest",
+                f"cd {primary} && uv run pytest {' '.join(python_tests)} -q",
+                "2 passed in 0.1s",
+                0,
+            )
+    transcript.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    transfer_at = start + timedelta(hours=1)
+    qa = _claude_edit_session(
+        tmp_path / "qa.jsonl", QA, primary / test_path, transfer_at + timedelta(seconds=10)
+    )
+    ctx = _context(
+        [
+            _link(IMPLEMENTER, "claimed", start.isoformat()),
+            _link(QA, "claimed", transfer_at.isoformat()),
+        ],
+        {IMPLEMENTER: implementer, QA: qa},
+    )
+    ctx.session_var_manager.get_variables.side_effect = {
+        IMPLEMENTER: {
+            "task_edited_file_checkouts": {
+                "task": {str(closing_checkout): [".gobby/evidence/scratch.md"]}
+            },
+            "task_edited_file_checkouts_history": {
+                "task": {str(primary): [test_path, production_path, scratch_path, *python_tests]},
+                "other-task": {
+                    str(primary): [foreign_path, *([test_path] if other_task_overlaps else [])]
+                },
+            },
+        },
+        QA: {"task_edited_file_checkouts": {"other-task": {str(primary): [test_path]}}},
+    }.get
+    with (
+        patch(
+            f"{_SUPPORT}.resolve_validation_detection_config",
+            return_value=default_validation_detection_config(),
+        ),
+        patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
+        patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
+    ):
+        evidence = await derive_close_transcript_evidence(
+            ctx,
+            task_id="task",
+            owner_session_id=QA,
+            closing_session_id=QA,
+            owner_window_start=transfer_at.isoformat(),
+            task_edited_files={test_path, production_path, *python_tests},
+            repo_path=str(closing_checkout),
+            owner_used_commit_fallback=True,
+        )
+
+    result = evaluate_tdd_evidence(tests, evidence)
+    validation = evaluate_validation_commands(
+        task_category="code",
+        evidence=evidence,
+        has_attributed_edits=True,
+        changed_paths=[test_path, production_path, *python_tests],
+    )
+    assert validation.passed, validation.message
+    assert validation.details["latest_test_types_audit"]["command"] == audit_command
+    assert result.passed is not other_task_overlaps, result.findings
+    assert all(
+        edit.session_id == IMPLEMENTER and edit.path != foreign_path for edit in evidence.edits
+    )
+    assert {edit.path for edit in evidence.edits} == (
+        {production_path} if other_task_overlaps else {test_path, production_path}
+    )
+    if not other_task_overlaps:
+        assert result.red_runs == (command,)
+        assert result.green_runs == (command,) * len(names)
+    else:
+        assert result.findings == tuple(
+            f"{test.reference}: transcript has no edit of the named test" for test in tests
+        )
+    assert not evidence.degraded_capabilities
 
 
 @pytest.mark.asyncio

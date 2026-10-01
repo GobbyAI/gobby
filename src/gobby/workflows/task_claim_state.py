@@ -206,6 +206,21 @@ def task_edited_checkout_paths(
     )
 
 
+def task_edited_checkout_history_paths(
+    variables: dict[str, Any], task_id: str
+) -> frozenset[tuple[str, str]]:
+    """Return released task pairs for transcript evidence, not live ownership."""
+    return frozenset(
+        (root, path)
+        for root, files in _task_edited_file_checkouts(
+            variables, "task_edited_file_checkouts_history"
+        )
+        .get(task_id, {})
+        .items()
+        for path in files
+    )
+
+
 def other_task_edited_checkout_paths(
     variables: dict[str, Any],
     task_id: str,
