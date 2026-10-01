@@ -138,6 +138,45 @@ pub struct CarriedIdentity {
 pub(crate) enum UpgradeOutcome {
     Succeeded,
     Fallback,
+    /// The candidate failed its resume probe; nothing was quiesced.
+    Refused,
+    /// The write guard was not free within its retry, or the recheck under
+    /// it found the host busy or draining.
+    Deferred(UpgradeReason),
+    /// A step before exec failed and every pane resumed.
+    Aborted(UpgradeReason),
+    /// `execve` failed with `errno` and every pane resumed.
+    RolledBack {
+        errno: i32,
+    },
+}
+
+/// Why an attempt deferred or aborted, as `ping` and `host_upgrade_failed`
+/// name it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpgradeReason {
+    HostBusy,
+    HostDraining,
+    QuiesceTimeout,
+    SoftDeadline,
+    CaptureFailed,
+    StateWriteFailed,
+    /// The pin no longer hashes to the candidate the probe accepted.
+    PinMismatch,
+}
+
+impl UpgradeReason {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            UpgradeReason::HostBusy => "host_busy",
+            UpgradeReason::HostDraining => "host_draining",
+            UpgradeReason::QuiesceTimeout => "quiesce_timeout",
+            UpgradeReason::SoftDeadline => "soft_deadline",
+            UpgradeReason::CaptureFailed => "capture_failed",
+            UpgradeReason::StateWriteFailed => "state_write_failed",
+            UpgradeReason::PinMismatch => "pin_mismatch",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

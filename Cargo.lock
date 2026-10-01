@@ -2544,7 +2544,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -2559,6 +2559,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "signal-hook 0.3.18",
  "tempfile",
  "tokio",
  "tracing",
