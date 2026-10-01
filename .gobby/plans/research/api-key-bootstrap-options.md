@@ -187,26 +187,29 @@ Josh asked what the DX is for registering a node. The flow has two steps, one on
 - The caller needs the local proof, an enrolled machine certificate, or a web cookie (section 5a table).
 - The hub mints a one-time code (single use, short TTL, stored hashed, bound to the auth epoch).
 - It prints one **invite string**, and the web UI also shows it as a QR code:
-  `gobby-invite:v1:<front-door host:port>:<code>:sha256-<hub cert SPKI fingerprint>`
+  `gobby-invite://<host>:<port>/v1?code=<code>&fp=sha256-<hub cert SPKI fingerprint>`
+  It is an RFC 3986 URI, so it parses without ambiguity. An IPv6 host is bracketed, for example `gobby-invite://[fd7a:115c::1]:60887/v1?...`.
 - The address must be the front door's direct TLS listener (tailnet IP or name plus port), never a `tailscale serve --https` URL, because K1 needs a direct dial (section 5a). The default is the hub's configured non-loopback front-door bind; `--address` overrides it.
 
 **2. Join, on the new node.**
 - Run `gobby node join '<invite string>'`, or `gobby node join` and paste it at the prompt.
 - The node opens TLS to the address and checks the hub certificate against the fingerprint from the invite. This is pinning with no trust-on-first-use prompt, because the fingerprint arrived out of band with the code. Syncthing does the same with exchanged device IDs.
-- The node generates its Ed25519 keypair and sends the code plus its public key.
-- It writes a DSN-free bootstrap (section 4) with the key file at 0600, and prints the assigned machine id.
-- Any failure stops the join and writes nothing:
-  - fingerprint mismatch
-  - code expired or already used, which returns 409
-  - hub unreachable
-- A retry with the same invite and the same key is idempotent until the TTL ends (section 5, F3).
+- Before sending anything, the node generates its Ed25519 keypair and **persists it at 0600 in a pending location**, keyed to the invite. On a retry of the same invite it reuses that pending key.
+- It sends the code plus the public key.
+- On success, the node promotes the pending key to its final path, writes a DSN-free bootstrap (section 4), and prints the assigned machine id.
+- Retrying the same invite with the same pending key is idempotent until the TTL ends (section 5, F3). This covers a lost response: the hub has already consumed the code with that key, so the retry succeeds and does not get a 409.
+- Failures and what they leave behind:
+  - A failure **before the request is sent** (fingerprint mismatch, hub unreachable) deletes the pending key and writes nothing.
+  - A failure **after sending** (timeout, lost response) keeps the pending key so the retry can reuse it.
+  - A definite rejection (code expired, or a 409 for a code used with a *different* key) deletes the pending key, and the user needs a new invite.
+- In every case the bootstrap is written only on success.
 
 **Housekeeping.**
 - `gobby node list` shows label, machine id, last seen and key fingerprint.
 - `gobby node revoke <machine>` sets `revoked_at`.
 - The web UI mirrors both.
 
-**Exposure.** The invite string is a secret until it is used. It is single-use and short-lived, and pinning means a stolen invite cannot be redirected to a fake hub. If a hub regenerates its self-signed certificate, existing pins break and nodes must re-pin. The plan should route certificate rotation through a `gobby node` re-pin step.
+**Exposure.** The invite string is a secret until it is used. It is single-use and short-lived, and pinning means a stolen invite cannot be redirected to a fake hub. If a hub regenerates its self-signed certificate, existing pins break and nodes must re-pin. The plan should route certificate rotation through a `gobby node` re-pin step. That re-pin needs a fresh out-of-band fingerprint, for example from a new invite, and never uses trust on first use.
 
 ## 5a. Machine-bound keys (revision 2)
 
@@ -310,7 +313,7 @@ Before the transaction commits, the front door still rejects any connection or r
 4. 4.5:
    - Replace `gobby auth login` adding three fields to a remote bootstrap (:805, :755-761) with `gobby node join <hub-url> --code`. It generates the keypair and writes a fresh DSN-free bootstrap.
    - Add `gobby auth reset` (section 6) and the F2 first-run on the hub.
-   - Add `gobby node invite`, `list` and `revoke`, plus the web UI **Add machine** button (with QR code) and machines list, and the `gobby-invite:v1` string format (section 5, revision 2b).
+   - Add `gobby node invite`, `list` and `revoke`, plus the web UI **Add machine** button (with QR code) and machines list, the `gobby-invite://` v1 URI format, and the pending-key join with promote-on-success (section 5, revision 2b).
 5. P4 D1 (`local_cli_token` sweep): hub-local clients present the 0600 local proof over loopback plaintext. The front door never treats a loopback peer alone as local authority, because of Tailscale serve and Funnel (section 5a).
 6. 4.6 / #23269: the refusal stays. Nodes are "unsupported until D2".
 7. Promote **D2 relay**, with per-request revocation checks and without the channel, to a prerequisite of any node support. State which of D3, D4 and D5 gate "nodes supported".
