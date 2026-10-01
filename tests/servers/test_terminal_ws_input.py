@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.servers.websocket import terminal_ws
+from gobby.servers.websocket import terminal_ws, terminal_ws_write
 from gobby.servers.websocket.handlers import HandlerMixin
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
@@ -376,7 +376,9 @@ async def test_operator_writes_route_through_coordinator() -> None:
             await takeover_task
         assert websocket.messages_of_type("terminal_write_outcome")[-1]["outcome"] == "delivered"
 
-    source = Path(terminal_ws.__file__).read_text(encoding="utf-8")
+    source = Path(terminal_ws.__file__).read_text(encoding="utf-8") + Path(
+        terminal_ws_write.__file__
+    ).read_text(encoding="utf-8")
     assert ".write_input(" not in source
     assert ".write_paste(" not in source
     assert ".write_text(" not in source

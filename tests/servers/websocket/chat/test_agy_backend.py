@@ -29,6 +29,7 @@ from gobby.servers.websocket.chat._stream_events import (
 )
 from gobby.servers.websocket.chat._stream_persistence import ChatStreamPersistence
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
+from tests.servers.websocket.chat._progress_clock import ClockedStdout, install_fake_loop_clock
 
 pytestmark = pytest.mark.unit
 
@@ -612,17 +613,23 @@ async def test_progress_timeout_emits_one_error_and_stays_reconstructable() -> N
 
 
 @pytest.mark.asyncio
-async def test_progress_clock_renews_on_translated_events() -> None:
+async def test_progress_clock_renews_on_translated_events(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = install_fake_loop_clock(monkeypatch)
     process = _FakeProcess(
-        stdout=_TimedStdout(
+        stdout=ClockedStdout(
+            clock,
             [
                 (0.0, _init()),
-                (0.04, _text("still going")),
-                (0.04, _result(usage=_usage())),
-            ]
+                # Each gap fits the timeout; together they exceed it, so the turn
+                # survives only if each translated event renews the deadline.
+                (2.0, _text("still going")),
+                (2.0, _result(usage=_usage())),
+            ],
         )
     )
-    backend, session = _session(process, prompt_timeout=0.05)
+    backend, session = _session(process, prompt_timeout=3.0)
     which, create = _spawn_patches(process)
     with which, create:
         await backend.attach_session(session)

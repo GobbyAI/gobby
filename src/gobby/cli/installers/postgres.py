@@ -25,6 +25,7 @@ from psycopg.conninfo import conninfo_to_dict
 
 from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.code_index.bm25_health import (
+    bm25_index_presence,
     render_bm25_status,
     unavailable_bm25_status,
     verify_bm25_indexes,
@@ -315,7 +316,7 @@ def _postgres_status_from_database(database: HubDatabase) -> dict[str, Any]:
             for extension in BASELINE_POSTGRES_EXTENSIONS
         }
         payload["preload_libraries"] = _preload_libraries(conn)
-        payload["code_index"] = verify_bm25_indexes(conn)
+        payload["code_index"] = bm25_index_presence(conn)
     payload["healthy"] = True
     return payload
 

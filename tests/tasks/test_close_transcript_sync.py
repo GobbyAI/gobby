@@ -137,7 +137,8 @@ async def test_late_grok_flush_still_credits_the_criterion_command(
     flushes: list[float] = []
 
     async def flush(delay: float) -> None:
-        if flushes:
+        # A zero delay is a cooperative yield inside derivation, not a sync-point wait.
+        if flushes or delay <= 0:
             await real_sleep(delay)
             return
         flushes.append(delay)
@@ -201,7 +202,13 @@ async def test_caught_up_transcript_is_derived_without_waiting(
         ],
     )
 
-    async def fail_on_sleep(_delay: float) -> None:
+    real_sleep = asyncio.sleep
+
+    async def fail_on_sleep(delay: float) -> None:
+        # A zero delay is a cooperative yield inside derivation, not a sync-point wait.
+        if delay <= 0:
+            await real_sleep(delay)
+            return
         raise AssertionError("close waited although the transcript already caught up")
 
     monkeypatch.setattr(f"{_SUPPORT}.asyncio.sleep", fail_on_sleep)

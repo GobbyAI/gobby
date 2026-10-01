@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
@@ -28,6 +29,7 @@ def _runner() -> SimpleNamespace:
             )
         ),
         degraded_services=set(),
+        code_index_bm25_verification=None,
     )
 
 
@@ -41,6 +43,10 @@ async def test_startup_bm25_failure_marks_service_degraded(monkeypatch: Any) -> 
 
     assert ready is False
     assert runner.degraded_services == {"code_index_bm25"}
+    # Daemon status reports this startup verification instead of re-verifying per request.
+    assert runner.code_index_bm25_verification["healthy"] is False
+    verified_at = datetime.fromisoformat(runner.code_index_bm25_verification["verified_at"])
+    assert verified_at.tzinfo is not None
 
 
 @pytest.mark.asyncio
@@ -65,6 +71,7 @@ async def test_startup_bm25_repair_allows_workers(monkeypatch: Any) -> None:
 
     assert ready is True
     assert runner.degraded_services == set()
+    assert runner.code_index_bm25_verification["healthy"] is True
 
 
 @pytest.mark.asyncio

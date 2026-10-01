@@ -152,6 +152,34 @@ async def test_agent_run_list_shares_concurrent_identical_reads(
     assert second_result["runs"] == [{"run_id": "one"}]
 
 
+@pytest.mark.asyncio
+async def test_agent_run_detail_reads_and_projects_off_the_event_loop(
+    server: HTTPServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    route = next(
+        route
+        for route in server.app.routes
+        if isinstance(route, APIRoute) and route.path == "/api/agents/runs/{run_id}"
+    )
+    threads: dict[str, int] = {}
+
+    def project() -> dict[str, str]:
+        threads["to_dict"] = threading.get_ident()
+        return {"run_id": "one"}
+
+    def get(_manager: object, _run_id: str) -> SimpleNamespace:
+        threads["get"] = threading.get_ident()
+        return SimpleNamespace(child_session_id=None, to_dict=project)
+
+    monkeypatch.setattr(LocalAgentRunManager, "get", get)
+
+    result = await route.endpoint("one")
+
+    assert result["run"] == {"run_id": "one"}
+    assert set(threads) == {"get", "to_dict"}
+    assert threading.get_ident() not in threads.values()
+
+
 def test_agent_run_list_is_bounded_and_detail_keeps_large_fields(
     client: TestClient,
     running_agent_run: tuple[LocalAgentRunManager, AgentRun],

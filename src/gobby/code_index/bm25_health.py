@@ -50,6 +50,24 @@ def verify_bm25_indexes(conn: Any) -> dict[str, Any]:
     return _status_payload([_verify_index(conn, name) for name in _required_index_names(conn)])
 
 
+def bm25_index_presence(conn: Any) -> dict[str, Any]:
+    """Report whether every required BM25 index exists, without verifying segments.
+
+    ``pdb.verify_index`` checksums every segment, so per-request daemon status uses
+    this catalog lookup; startup, repair and ``gobby postgres status`` verify fully.
+    """
+    indexes = []
+    for name in _required_index_names(conn):
+        row = conn.execute("SELECT to_regclass(%s)::text AS index_name", (name,)).fetchone()
+        present = row is not None and _row_value(row, "index_name", 0) is not None
+        indexes.append(_index_payload(name, state="present" if present else "missing"))
+    return {
+        "healthy": all(item["state"] == "present" for item in indexes),
+        "repair_command": BM25_REPAIR_COMMAND,
+        "indexes": indexes,
+    }
+
+
 def repair_bm25_indexes(
     dsn: str,
     *,

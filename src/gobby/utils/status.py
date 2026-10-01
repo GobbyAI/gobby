@@ -6,6 +6,7 @@ Provides consistent status display across CLI and MCP server.
 
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Label width for alignment in status sections
 _LW = 18
+_FULL_BM25_CHECK = "gobby postgres status"
 # The managed native binaries, in install-set order. gterm and gclient were
 # absent here while the payload carried them, so a stale gclient reported
 # nothing at all: see #22551.
@@ -168,10 +170,35 @@ def _format_postgres_extensions(payload: dict[str, Any]) -> str | None:
     return "extensions ok"
 
 
+def _format_postgres_code_index(payload: dict[str, Any]) -> str | None:
+    """Say when BM25 segments were last verified; daemon status checks presence only."""
+    code_index = payload.get("code_index")
+    if not isinstance(code_index, dict):
+        return None
+    if not code_index.get("healthy"):
+        return f"BM25 degraded, run {_FULL_BM25_CHECK}"
+    verification = code_index.get("verification")
+    verified_at = (
+        _safe_status_text(verification.get("verified_at"))
+        if isinstance(verification, dict)
+        else None
+    )
+    if verified_at is None:
+        return f"BM25 present, unverified since start, full check: {_FULL_BM25_CHECK}"
+    try:
+        local_time = datetime.fromisoformat(verified_at).astimezone().strftime("%H:%M")
+    except ValueError:
+        local_time = verified_at
+    return f"BM25 verified at startup {local_time}, full check: {_FULL_BM25_CHECK}"
+
+
 def _format_postgres_service_status(payload: Any) -> str | None:
     """Format a compact PostgreSQL hub service status without exposing DSNs."""
     if not isinstance(payload, dict):
         return None
+
+    if payload.get("status") == "unknown":
+        return f"status unknown ({_safe_status_text(payload.get('error')) or 'no detail'})"
 
     mode = _safe_status_text(payload.get("mode")) or "unknown"
     if payload.get("available") is False:
@@ -185,6 +212,7 @@ def _format_postgres_service_status(payload: Any) -> str | None:
     for part in (
         _format_postgres_host_db(payload),
         _format_postgres_extensions(payload),
+        _format_postgres_code_index(payload),
     ):
         if part:
             details.append(part)
@@ -739,11 +767,16 @@ def format_status_message(
 
     postgres = data.get("postgres")
     if isinstance(postgres, dict):
-        if postgres.get("available") is False:
+        code_index = postgres.get("code_index")
+        if postgres.get("status") == "unknown":
+            health_issues.append(f"PostgreSQL: {_format_postgres_service_status(postgres)}")
+        elif postgres.get("available") is False:
             error = _safe_status_text(postgres.get("error")) or "status unavailable"
             health_issues.append(f"PostgreSQL: {error}")
         elif postgres.get("healthy") is False:
             health_issues.append("PostgreSQL: unhealthy")
+        elif isinstance(code_index, dict) and not code_index.get("healthy"):
+            health_issues.append(f"PostgreSQL: code index degraded, run {_FULL_BM25_CHECK}")
 
     if health_issues:
         lines.append("Health Issues:")

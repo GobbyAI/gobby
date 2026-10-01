@@ -87,12 +87,13 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # apply_patch input is freeform patch text, never JSON.
     compact_tool_name = _compact_tool_name(data.get("tool_name"))
     decoded_string = compact_tool_name != "applypatch" and decode_string_tool_input(data, source)
-    # A list, number, or bool sent directly; Write and apply_patch may still recover it below.
-    sent_non_object = (
-        not decoded_string
-        and "tool_name" in data
-        and is_non_object_tool_input(data.get("tool_input"))
-    )
+    # A list, number, or bool, sent directly or as JSON text, is marked before any
+    # Write or apply_patch coercion could turn it into an object (#23179).
+    if decoded_string and "tool_input" in data and not isinstance(data["tool_input"], dict):
+        mark_tool_input_unavailable(data, source, "non_object_json")
+    elif "tool_name" in data and is_non_object_tool_input(data.get("tool_input")):
+        mark_tool_input_unavailable(data, source, "non_object")
+    marked = tool_input_error(data) is not None
 
     # Normalize tool_input internal fields (e.g., path -> file_path)
     tool_input = data.get("tool_input")
@@ -110,19 +111,16 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     if compact_tool_name == "applypatch":
         data.setdefault("_original_tool_name", tool_name)
         data["tool_name"] = "Write"
-        tool_input = _normalize_apply_patch_input(tool_input)
-        data["tool_input"] = tool_input
+        if not marked:
+            tool_input = _normalize_apply_patch_input(tool_input)
+            data["tool_input"] = tool_input
     elif data.get("tool_name") == "Write":
         normalized_input = _normalize_file_change_input(tool_input)
         if normalized_input is not tool_input:
             data["tool_input"] = normalized_input
             tool_input = normalized_input
 
-    if decoded_string and "tool_input" in data and not isinstance(tool_input, dict):
-        mark_tool_input_unavailable(data, source, "non_object_json")
-    elif sent_non_object and (not isinstance(tool_input, dict) or not tool_input):
-        mark_tool_input_unavailable(data, source, "non_object")
-    elif prior_error is not None and "tool_input" not in data:
+    if prior_error is not None and "tool_input" not in data:
         data.setdefault(TOOL_INPUT_ERROR_FIELD, prior_error)
 
     if isinstance(tool_input, dict):

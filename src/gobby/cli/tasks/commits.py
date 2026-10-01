@@ -71,21 +71,12 @@ def unlink_commit(task_id: str, commit_sha: str) -> None:
         raise SystemExit(1)
 
     try:
-        existing_commits = list(task.commits or [])
         cwd = _get_project_cwd()
         normalized = normalize_commit_sha(commit_sha, cwd=cwd)
         if normalized is None:
             raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
         updated_task = manager.unlink_commit(task.id, normalized)
         remaining_commits = list(updated_task.commits or [])
-        if existing_commits == remaining_commits:
-            click.echo(f"Commit {commit_sha} not found on task {task.id}; nothing to unlink")
-            if remaining_commits:
-                click.echo(f"Remaining commits: {len(remaining_commits)}")
-            else:
-                click.echo("No commits linked")
-            return
-
         click.echo(f"Unlinked commit {commit_sha} from task {task.id}")
         if remaining_commits:
             click.echo(f"Remaining commits: {len(remaining_commits)}")

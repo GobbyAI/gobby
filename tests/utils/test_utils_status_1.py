@@ -1,3 +1,4 @@
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -476,6 +477,60 @@ class TestStatusUtils:
         assert "unavailable (native; BootstrapConfigError)" in msg
         assert "Health Issues:" in msg
         assert "PostgreSQL: BootstrapConfigError" in msg
+
+    def test_format_status_message_postgres_collector_timeout_is_unknown(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "status": "unknown",
+                    "available": None,
+                    "healthy": None,
+                    "error": "collector timed out",
+                }
+            },
+        )
+
+        assert "PostgreSQL:       status unknown (collector timed out)" in msg
+        assert "unavailable" not in msg
+        assert "PostgreSQL: status unknown (collector timed out)" in msg
+
+    def test_format_status_message_labels_bm25_startup_verification(self) -> None:
+        verified_at = "2026-10-01T15:54:00+00:00"
+        local_time = datetime.fromisoformat(verified_at).astimezone().strftime("%H:%M")
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "dsn_host": "localhost",
+                    "dsn_db": "gobby",
+                    "healthy": True,
+                    "code_index": {
+                        "healthy": True,
+                        "verification": {"verified_at": verified_at, "healthy": True},
+                    },
+                }
+            },
+        )
+
+        assert (
+            f"healthy (unknown; localhost/gobby; BM25 verified at startup {local_time}, "
+            "full check: gobby postgres status)"
+        ) in msg
+
+    def test_format_status_message_flags_degraded_bm25(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "postgres": {
+                    "healthy": True,
+                    "code_index": {"healthy": False, "verification": None},
+                }
+            },
+        )
+
+        assert "BM25 degraded, run gobby postgres status" in msg
+        assert "PostgreSQL: code index degraded, run gobby postgres status" in msg
 
     def test_format_status_message_config_issues(self) -> None:
         msg = format_status_message(
