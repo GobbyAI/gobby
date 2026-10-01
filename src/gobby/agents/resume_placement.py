@@ -117,14 +117,19 @@ async def launch_resume(
     """
     if snapshot is None:
         return await runtime_spawn(request, plan)
-    resolved = await _preflight(
-        snapshot,
-        reserver=reserver,
-        sandbox_config=request.sandbox_config,
-        sessions=sessions,
-        parent_session_id=parent_session_id,
-        project_id=project_id,
-    )
+    try:
+        resolved = await _preflight(
+            snapshot,
+            reserver=reserver,
+            sandbox_config=request.sandbox_config,
+            sessions=sessions,
+            parent_session_id=parent_session_id,
+            project_id=project_id,
+        )
+    except asyncio.CancelledError:
+        # The caller parks only on Exception, and the successor already exists.
+        await run_to_completion(park())
+        raise
     if isinstance(resolved, str):
         return _refusal(request, resolved)
     assert reserver is not None

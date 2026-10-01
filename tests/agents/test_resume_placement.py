@@ -422,6 +422,48 @@ async def test_placed_resume_cleanup_once(
     _assert_seat_free(h)
 
 
+async def test_placed_resume_cancel_during_preflight_parks_successor(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    finalize: AsyncMock,
+) -> None:
+    runtime = _HeldRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    h = _harness(temp_db, sample_project, tmp_path, monkeypatch, runtime)
+    entered, hold = asyncio.Event(), asyncio.Event()
+    real_preflight = h.reserver.preflight
+
+    async def held_preflight(*args: Any, **kwargs: Any) -> Any:
+        entered.set()
+        await hold.wait()
+        return await real_preflight(*args, **kwargs)
+
+    reserve = AsyncMock(side_effect=h.reserver.reserve)
+    monkeypatch.setattr(h.reserver, "preflight", held_preflight)
+    monkeypatch.setattr(h.reserver, "reserve", reserve)
+    original = _parked_original(h)
+
+    resume = asyncio.create_task(_resume(h, original, _metadata(h, _tab_snapshot(h))))
+    await asyncio.wait_for(entered.wait(), timeout=5)
+    for _ in range(3):
+        resume.cancel()
+        await asyncio.sleep(0)
+    with pytest.raises(asyncio.CancelledError):
+        await resume
+
+    [successor] = h.db.fetchall(
+        "SELECT id FROM agent_runs WHERE parent_session_id = %s AND id <> %s",
+        (h.parent_id, original.id),
+    )
+    assert _successor_status(h, successor["id"]) == ("cancelled", "daemon_stop")
+    assert finalize.await_count == 1
+    reserve.assert_not_awaited()
+    assert runtime.create_calls == 0
+    assert _panes(h) == {} and _tabs(h) == set()
+    _assert_seat_free(h)
+
+
 async def test_placed_resume_cancel_keeps_in_doubt_owner(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
