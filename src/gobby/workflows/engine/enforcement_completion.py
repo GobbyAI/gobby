@@ -7,6 +7,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.adapters.capabilities import hook_supports_model_context
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
@@ -29,8 +30,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
 
 PENDING_STEP_TRANSITION_NOTICE = "_pending_step_transition_notice"
-# Hooks whose response context reaches the model. Turn-end and lifecycle hooks
-# would consume the notice without delivering it.
+# Hook types that may deliver a pending notice; the native hook must also carry
+# model context. Turn-end and lifecycle hooks would consume it undelivered.
 _STEP_NOTICE_DELIVERY_EVENTS = frozenset(
     {HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL}
 )
@@ -289,7 +290,11 @@ class EnforcementCompletionMixin:
                     part for part in (pending, notice) if part
                 )
             return None
-        if not pending or event.event_type not in _STEP_NOTICE_DELIVERY_EVENTS:
+        if (
+            not pending
+            or event.event_type not in _STEP_NOTICE_DELIVERY_EVENTS
+            or not hook_supports_model_context(event)
+        ):
             return notice
         variables[PENDING_STEP_TRANSITION_NOTICE] = ""
         return "\n\n".join(part for part in (pending, notice) if part)

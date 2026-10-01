@@ -162,19 +162,10 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
     assert "Run the deferred code-review Preflight now" in transition.context
 
 
-@pytest.mark.asyncio
-async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
-    db: "HubDatabase",
-    manager: AgentDefinitionManager,
-    engine: RuleEngine,
-    instance_mgr: AgentStepInstanceManager,
-) -> None:
-    """A transition taken on the proxy's direct after_tool reaches the model on its next hook.
-
-    The direct event has no provider response channel, so its notice must survive to the
-    provider's own PostToolUse; a stop attempted after the transition stays held (#23258).
-    """
-    from gobby.workflows.step_context import get_active_step_workflow_context
+def _setup_load_then_review(
+    db: "HubDatabase", manager: AgentDefinitionManager, instance_mgr: AgentStepInstanceManager
+) -> dict[str, Any]:
+    """Install a load_skills -> review workflow; return the get_skill call that moves it."""
     from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
     sync_bundled_rules(db, get_bundled_rules_path())
@@ -212,7 +203,7 @@ async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
             ],
         },
     )
-    call = {
+    return {
         "tool_name": "mcp__gobby__call_tool",
         "tool_input": {
             "server_name": "gobby-skills",
@@ -221,6 +212,23 @@ async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
         },
         "tool_output": {"success": True},
     }
+
+
+@pytest.mark.asyncio
+async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """A transition taken on the proxy's direct after_tool reaches the model on its next hook.
+
+    The direct event has no provider response channel, so its notice must survive to the
+    provider's own PostToolUse; a stop attempted after the transition stays held (#23258).
+    """
+    from gobby.workflows.step_context import get_active_step_workflow_context
+
+    call = _setup_load_then_review(db, manager, instance_mgr)
     # One dict across evaluations stands in for the persisted session variables.
     variables: dict[str, Any] = {"is_spawned_agent": True}
 
@@ -239,7 +247,10 @@ async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
 
     native = await engine.evaluate(
         _make_event(
-            event_type=HookEventType.AFTER_TOOL, data=dict(call), source=SessionSource.CODEX
+            event_type=HookEventType.AFTER_TOOL,
+            data=dict(call),
+            metadata={"_native_hook_type": "PostToolUse"},
+            source=SessionSource.CODEX,
         ),
         session_id=SESSION_ID,
         variables=variables,
@@ -268,6 +279,55 @@ async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
     assert stop.reason is not None
     assert "[require-step-completion]" in stop.reason
     assert "Current step: review. Run the review now." in stop.reason
+
+
+@pytest.mark.asyncio
+async def test_codex_pre_tool_use_leaves_proxy_transition_notice_pending(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """Codex PreToolUse context is a systemMessage the model never sees (#23258).
+
+    A pending proxy transition notice must survive it and reach the following PostToolUse.
+    """
+    call = _setup_load_then_review(db, manager, instance_mgr)
+    variables: dict[str, Any] = {"is_spawned_agent": True}
+    await engine.evaluate(
+        _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data=dict(call),
+            metadata={"_mcp_proxy_direct_after_tool": True},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+
+    pre = await engine.evaluate(
+        _make_event(
+            data={"tool_name": "Bash", "tool_input": {"command": "git status"}},
+            metadata={"_native_hook_type": "PreToolUse"},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert "Step transition" not in (pre.context or "")
+
+    post = await engine.evaluate(
+        _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "git status"}},
+            metadata={"_native_hook_type": "PostToolUse"},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert post.context is not None
+    assert "Step transition: load_skills -> review" in post.context
 
 
 @pytest.fixture
