@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ast
+import warnings
 from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,6 +17,7 @@ from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
+    _parse_source_fragment,
     all_tasks_have_durable_stop_wait,
     all_tasks_have_label,
     first_tdd_code_path,
@@ -1013,3 +1016,20 @@ class TestAllTasksHaveLabel:
         }
 
         assert touches_claude_memory_path({}, tool_input) is False
+
+
+@pytest.mark.parametrize(
+    "fragment",
+    ['x = "a\\$b"\n', 'x = "a\\$b"\nreturn x\n'],
+    ids=["module", "wrapped-return"],
+)
+def test_invalid_escape_in_source_fragment_parses_without_a_syntax_warning(
+    fragment: str,
+) -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        module = _parse_source_fragment(fragment)
+
+    assert [str(warning.message) for warning in caught] == []
+    assert module is not None
+    assert "a\\$b" in [node.value for node in ast.walk(module) if isinstance(node, ast.Constant)]

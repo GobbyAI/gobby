@@ -1,6 +1,7 @@
 """Tests for inline Python pipeline classification."""
 
 import shlex
+import warnings
 from typing import Any
 
 import pytest
@@ -477,3 +478,12 @@ def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
         _PythonExecutionClassification.INDETERMINATE,
         (),
     )
+
+
+def test_invalid_escape_in_agent_source_classifies_without_a_syntax_warning() -> None:
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = _classify_python_source_with_targets('x = "a\\$b"\nprint(x)\n')
+
+    assert [str(warning.message) for warning in caught] == []
+    assert result == (_PythonExecutionClassification.READ_ONLY, ())
