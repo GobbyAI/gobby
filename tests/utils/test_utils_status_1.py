@@ -11,6 +11,7 @@ from gobby.utils.status import (
     format_startup_summary,
     format_status_message,
 )
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
 
@@ -427,7 +428,7 @@ class TestStatusUtils:
                     "mode": "docker",
                     "dsn_host": "localhost",
                     "dsn_db": "gobby",
-                    "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                    "database_url": FAKE_DATABASE_URL,
                     "healthy": True,
                     "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
                 }

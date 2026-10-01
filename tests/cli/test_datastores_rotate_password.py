@@ -24,10 +24,11 @@ from gobby.config.persistence import validate_falkordb_password
 from gobby.storage.config_repository import ConfigRepository
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
+from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
 
-_CURRENT_DSN = "postgresql://gobby:old-secret@localhost:60891/gobby"
+_CURRENT_DSN = fake_database_url("old-secret")
 _URL_SAFE = re.compile(r"[A-Za-z0-9_-]+")
 
 
@@ -112,8 +113,8 @@ def _new_password(home: Path) -> tuple[str, str]:
     assert (parts.username, parts.hostname, parts.port, parts.path) == (
         "gobby",
         "localhost",
-        60891,
-        "/gobby",
+        1,
+        "/gobby_fixture",
     )
     assert parts.password is not None
     return new_url, unquote(parts.password)
@@ -249,9 +250,9 @@ def test_unknown_service_is_rejected() -> None:
     ("database_url", "expected_role", "expected_url"),
     [
         (
-            "postgresql://gobby:old@localhost:60891/gobby",
+            fake_database_url("old"),
             "gobby",
-            "postgresql://gobby:new%2Fpw@localhost:60891/gobby",
+            fake_database_url("new%2Fpw"),
         ),
         (
             "postgresql://ro%40le:old@[::1]:5432/db?sslmode=require",

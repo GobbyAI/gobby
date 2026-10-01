@@ -15,11 +15,12 @@ single-connection model.
 from __future__ import annotations
 
 import contextlib
+import inspect
 import logging
 import os
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -30,6 +31,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.types.json import Jsonb
 
 from gobby.runner_maintenance.storage_hygiene import sweep_orphaned_test_schemas
+from gobby.storage import schema_contract
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.managed_credential_types import auth_schema_for
 from gobby.storage.schema_contract import apply_schema, gdaemon_available
@@ -75,6 +77,20 @@ _TEST_DSN_REQUIRED = (
     "DATABASE_URL must point at an isolated PostgreSQL test database; start one with "
     "`docker compose -f docker-compose.test.yml up -d postgres-test`."
 )
+# The managed hub's install defaults (DEFAULT_POSTGRES_PORT and DEFAULT_POSTGRES_DB in
+# gobby.cli.installers.postgres), refused even on a machine with no bootstrap.
+_LIVE_HUB_DEFAULT_IDENTITY = ("localhost", "60891", "gobby")
+# psycopg connect() options that are not libpq connection parameters.
+_CONNECT_OPTIONS = frozenset(
+    {"autocommit", "prepare_threshold", "context", "row_factory", "cursor_factory"}
+)
+_refused_hub_identities: set[tuple[str, str, str]] = set()
+
+
+class LiveHubConnectionRefused(RuntimeError):
+    """A test tried to reach the live hub's coordinates."""
+
+
 _ISOLATED_SCHEMA_APPLICATION_PREFIX = "gobby-isolated-schema-"
 _SCHEMA_BOOKKEEPING_TABLES = frozenset({"schema_migrations"})
 _CANONICAL_TABLES_BY_SCHEMA: dict[str, frozenset[str]] = {}
@@ -139,18 +155,69 @@ def _live_hub_identity() -> tuple[str, str, str] | None:
     return _dsn_identity(database_url) if database_url else None
 
 
+def _refuse_live_hub(conninfo: str, params: Mapping[str, Any]) -> None:
+    try:
+        url = make_conninfo(
+            conninfo, **{key: value for key, value in params.items() if key not in _CONNECT_OPTIONS}
+        )
+    except psycopg.Error:
+        return  # psycopg rejects the same conninfo itself, before any dial.
+    if _dsn_identity(url) in _refused_hub_identities:
+        raise LiveHubConnectionRefused(
+            f"Refusing to connect to the live Gobby hub under test. {_TEST_DSN_REQUIRED}"
+        )
+
+
+def _install_live_hub_guard(hub_identity: tuple[str, str, str] | None) -> None:
+    """Refuse the live hub's coordinates at every psycopg and gdaemon entry point.
+
+    A fake fixture URL that reaches a real client otherwise dials the live hub,
+    with only its password in the way. Installed once for the process lifetime.
+    """
+    if _refused_hub_identities:
+        return
+    _refused_hub_identities.add(_LIVE_HUB_DEFAULT_IDENTITY)
+    if hub_identity is not None:
+        _refused_hub_identities.add(hub_identity)
+
+    sync_connect = inspect.getattr_static(psycopg.Connection, "connect").__func__
+    async_connect = inspect.getattr_static(psycopg.AsyncConnection, "connect").__func__
+    run_gdaemon = schema_contract._run_gdaemon
+
+    def guarded_connect(cls: type[Any], /, conninfo: str = "", **kwargs: Any) -> Any:
+        _refuse_live_hub(conninfo, kwargs)
+        return sync_connect(cls, conninfo, **kwargs)
+
+    async def guarded_async_connect(cls: type[Any], /, conninfo: str = "", **kwargs: Any) -> Any:
+        _refuse_live_hub(conninfo, kwargs)
+        return await async_connect(cls, conninfo, **kwargs)
+
+    def guarded_run_gdaemon(database_url: str, *args: Any, **kwargs: Any) -> str:
+        _refuse_live_hub(database_url, {})
+        return run_gdaemon(database_url, *args, **kwargs)
+
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(psycopg.Connection, "connect", classmethod(guarded_connect))
+    # The module alias was bound at import, so it does not follow the class.
+    patcher.setattr(psycopg, "connect", psycopg.Connection.connect)
+    patcher.setattr(psycopg.AsyncConnection, "connect", classmethod(guarded_async_connect))
+    patcher.setattr(schema_contract, "_run_gdaemon", guarded_run_gdaemon)
+
+
 def pytest_configure(config: pytest.Config) -> None:
     """Refuse to run any test against the operator's live hub database.
 
     The suite creates, resets, and drops schemas, and hub maintenance terminates
     every backend on the database it fences. Neither is survivable on the hub the
-    running daemon owns, so abort before collection rather than at first connect.
+    running daemon owns, so abort before collection rather than at first connect,
+    and refuse any later connection a fixture URL aims at it.
     """
     del config
+    hub_identity = _live_hub_identity()
+    _install_live_hub_guard(hub_identity)
     url = os.environ.get("DATABASE_URL")
     if not url:
         return
-    hub_identity = _live_hub_identity()
     if hub_identity is not None and _dsn_identity(url) == hub_identity:
         raise pytest.UsageError(
             f"DATABASE_URL points at the live Gobby hub database. {_TEST_DSN_REQUIRED}"

@@ -26,6 +26,7 @@ from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
 from gobby.telemetry.span_store import GobbySpanExporter
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 from tests.runner_helpers import (
     apply_safe_runner_config_defaults,
     create_base_patches,
@@ -616,7 +617,7 @@ class TestInitHubDatabase:
             postgres_database.side_effect = [migration_db, runtime_db]
             config = SimpleNamespace(
                 hub_backend="postgres",
-                database_url="postgresql://gobby:secret@localhost:60891/gobby",
+                database_url=FAKE_DATABASE_URL,
                 postgres_pool=PostgresPoolConfig(min_size=3, max_size=12),
             )
 
@@ -625,11 +626,11 @@ class TestInitHubDatabase:
         assert result is runtime_db
         assert postgres_database.call_args_list == [
             call(
-                "postgresql://gobby:secret@localhost:60891/gobby",
+                FAKE_DATABASE_URL,
                 pool_config=PostgresPoolConfig(min_size=2, max_size=2),
             ),
             call(
-                "postgresql://gobby:secret@localhost:60891/gobby",
+                FAKE_DATABASE_URL,
                 pool_config=PostgresPoolConfig(min_size=2, max_size=2),
                 runtime_role="gobby_daemon_runtime",
             ),
@@ -686,7 +687,7 @@ class TestInitHubDatabase:
         monkeypatch.setattr("gobby.runner_init.helpers.time.sleep", sleeps.append)
         config = SimpleNamespace(
             hub_backend="postgres",
-            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+            database_url=FAKE_DATABASE_URL,
             postgres_pool=PostgresPoolConfig(),
         )
 

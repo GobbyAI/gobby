@@ -22,6 +22,7 @@ from gobby.cli.installers.compose_env import ComposeRuntime
 from gobby.cli.installers.managed_services_lock import managed_services_lock
 from gobby.config.bootstrap_io import read_bootstrap_yaml, write_bootstrap_yaml
 from gobby.storage.config_mutations import ConfigPatch
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
 
@@ -34,7 +35,7 @@ def _write_local_bootstrap(home: Path, bind_address: str = "127.0.0.1") -> None:
         {
             "datastore_mode": "local",
             "files_home": str(files_home),
-            "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+            "database_url": FAKE_DATABASE_URL,
             "services_bind_address": bind_address,
         },
     )
@@ -117,7 +118,7 @@ def test_cold_start_reads_bind_from_bootstrap(
     services = tmp_path / "services"
     services.mkdir()
     (services / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
-    monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(shutil, "which", lambda _name, **_kwargs: "/usr/bin/docker")
     monkeypatch.setattr(
         daemon,
         "resolve_compose_runtime",
@@ -131,9 +132,11 @@ def test_cold_start_reads_bind_from_bootstrap(
     assert daemon._services_stop(tmp_path) is True
 
     order: list[str] = []
-    monkeypatch.setattr(daemon, "get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr("gobby.cli.daemon_start.get_gobby_home", lambda: tmp_path)
     monkeypatch.setattr("gobby.cli.get_gobby_home", lambda: tmp_path)
-    monkeypatch.setattr(daemon, "_start_dependency_errors", lambda: [])
+    monkeypatch.setattr("gobby.cli.daemon_start._start_dependency_errors", lambda: [])
+    monkeypatch.setattr("gobby.cli.daemon_start.worktree_daemon_refusal", lambda: None)
+    monkeypatch.setattr("gobby.storage.schema_divergence.binary_set_apply_refusal", lambda: None)
 
     def start_services(home: Path) -> ServiceStartResult:
         bind = read_bootstrap_yaml(home / "bootstrap.yaml")["services_bind_address"]
@@ -141,22 +144,17 @@ def test_cold_start_reads_bind_from_bootstrap(
         return ServiceStartResult("success", "ready")
 
     class _Runtime:
-        @property
-        def operational_config(self) -> object:
+        def read_only_operational_config(self) -> object:
             order.append("config")
             raise click.ClickException("stop after sequencing check")
 
-        @property
-        def config(self) -> object:
-            return self.operational_config
-
-    monkeypatch.setattr(daemon, "_services_start", start_services)
+    monkeypatch.setattr("gobby.cli.daemon_start._services_start", start_services)
     monkeypatch.setattr("gobby.cli.runtime.get_cli_runtime", lambda _ctx: _Runtime())
 
     result = CliRunner().invoke(cli, ["start"])
 
     assert result.exit_code != 0
-    assert order == ["services:100.64.0.7", "config"]
+    assert order == ["services:100.64.0.7", "config"], result.exception
 
 
 def test_expose_failure_restores_prior_state(

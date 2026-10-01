@@ -7,6 +7,7 @@ import pytest
 
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.hub.runtime import apply_destructive_batch, runtime_hub_database
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
 
@@ -23,7 +24,7 @@ def test_runtime_database_receives_resolved_pool_config(
     )
     config = SimpleNamespace(
         hub_backend="postgres",
-        database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        database_url=FAKE_DATABASE_URL,
         postgres_pool=pool_config,
     )
 
