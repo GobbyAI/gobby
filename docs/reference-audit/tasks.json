@@ -530,6 +530,22 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
+      "tool": "repair_closed_candidate",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_lifecycle_candidate_repair.py",
+        "symbol": "repair_closed_candidate"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "operator-only"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
       "tool": "get_task_stages",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/reviews.md",
       "implementation": {
