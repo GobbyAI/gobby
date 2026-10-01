@@ -2511,6 +2511,7 @@ dependencies = [
  "bytes",
  "clap",
  "gobby-core",
+ "gobby-terminals",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2568,6 +2569,19 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "wmi",
+]
+
+[[package]]
+name = "gobby-terminals"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]
