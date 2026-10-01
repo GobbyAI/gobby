@@ -19,7 +19,7 @@ use std::time::Duration;
 const GOBBY_APPLICATION_NAME: &str = "gobby-cli";
 const MANAGED_APPLICATION_NAME_PREFIX: &str = "gobby-agent-";
 /// Bound for one whole connect attempt when the URL sets no `connect_timeout`.
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
@@ -361,7 +361,7 @@ fn handshake_timeout_message(
 }
 
 /// Host and port of the configured hub, with no user, password or database.
-fn endpoint_label(config: &postgres::Config) -> String {
+pub(crate) fn endpoint_label(config: &postgres::Config) -> String {
     let host = config
         .get_hosts()
         .first()
@@ -407,7 +407,7 @@ fn connect_for_mode(config: &postgres::Config, mode: RequestedSslMode) -> anyhow
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestedSslMode {
+pub(crate) enum RequestedSslMode {
     Disable,
     Prefer,
     Require,
@@ -415,7 +415,7 @@ enum RequestedSslMode {
     VerifyFull,
 }
 
-fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode {
+pub(crate) fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode {
     match config.get_ssl_mode() {
         SslMode::Disable => RequestedSslMode::Disable,
         SslMode::Prefer => RequestedSslMode::Prefer,
@@ -424,7 +424,7 @@ fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode
     }
 }
 
-fn requested_ssl_mode(database_url: &str) -> Option<RequestedSslMode> {
+pub(crate) fn requested_ssl_mode(database_url: &str) -> Option<RequestedSslMode> {
     let value = sslmode_value(database_url)?;
     match value.as_str() {
         "disable" => Some(RequestedSslMode::Disable),
@@ -455,7 +455,7 @@ fn sslmode_value(database_url: &str) -> Option<String> {
         })
 }
 
-fn normalize_sslmode_for_parser(database_url: &str) -> String {
+pub(crate) fn normalize_sslmode_for_parser(database_url: &str) -> String {
     if let Some((base, query)) = database_url.split_once('?') {
         let query = query
             .split('&')
@@ -522,7 +522,7 @@ fn connect_with_tls(config: &postgres::Config, mode: TlsConnectorMode) -> anyhow
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TlsConnectorMode {
+pub(crate) enum TlsConnectorMode {
     Unverified,
     VerifyCa,
     VerifyFull,
@@ -552,7 +552,7 @@ struct TlsConnectorBuilder {
     disables_hostname_verification: bool,
 }
 
-fn tls_connector(mode: TlsConnectorMode) -> anyhow::Result<MakeTlsConnector> {
+pub(crate) fn tls_connector(mode: TlsConnectorMode) -> anyhow::Result<MakeTlsConnector> {
     let builder = tls_connector_builder(mode)?;
     let disables_hostname_verification = builder.disables_hostname_verification;
     let mut connector = MakeTlsConnector::new(builder.builder.build());

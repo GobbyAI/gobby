@@ -43,6 +43,9 @@ pub mod ai;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+#[cfg(feature = "postgres-pool")]
+pub mod postgres_pool;
+
 #[cfg(feature = "postgres")]
 pub mod schema;
 
