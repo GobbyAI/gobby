@@ -17,12 +17,14 @@ from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
+from gobby.llm.model_registry import ModelInfo
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import (
     RETIRED_SYSTEM_CRON_JOBS,
     _send_tmux_session_wake,
 )
 from gobby.runner_lifecycle_subsystems import _start_system_automation_loop
+from gobby.runner_maintenance import storage_hygiene
 from gobby.telemetry.span_store import GobbySpanExporter
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
@@ -128,6 +130,51 @@ class TestGobbyRunnerInit:
             cast(MagicMock, runner.database).resize_pool.assert_called_once_with(64)
             mock_http_cls.assert_called_once()
             mock_ws_cls.assert_called_once()
+
+    def test_construction_skips_model_registry_fetch_and_metadata_write(
+        self,
+        tmp_path: Path,
+        mock_config_with_websocket: MagicMock,
+    ) -> None:
+        """Runner construction under the base patches stays off the network and the hub."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("")
+        registry_model = ModelInfo(
+            id="openai/gpt-test", name="GPT Test", context_length=8192, max_completion_tokens=None
+        )
+
+        with ExitStack() as stack:
+            for runner_patch in create_base_patches(mock_config=mock_config_with_websocket):
+                stack.enter_context(runner_patch)
+            fetch = stack.enter_context(
+                patch("gobby.llm.model_registry.fetch_models_sync", return_value=[registry_model])
+            )
+            runner = GobbyRunner(config_path=config_file, verbose=False)
+
+        fetch.assert_not_called()
+        database_calls = [str(c) for c in cast(MagicMock, runner.database).mock_calls]
+        assert not [c for c in database_calls if "model_metadata" in c]
+
+    async def test_startup_test_schema_sweep_stays_off_gdaemon(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The base patches keep startup's schema sweep from shelling out to gdaemon."""
+        shutdown = iter([False, True])
+        with ExitStack() as stack:
+            for runner_patch in create_base_patches(mock_config=MagicMock()):
+                stack.enter_context(runner_patch)
+            stack.enter_context(
+                patch(
+                    "gobby.runner_maintenance.storage_hygiene.sweep_test_schemas",
+                    side_effect=RuntimeError("gdaemon sweep reached"),
+                )
+            )
+            await storage_hygiene.sweep_test_schemas_loop(
+                "postgresql://gobby:secret@localhost:60891/gobby",
+                lambda: next(shutdown),
+                sleep=AsyncMock(),
+            )
+        assert "Failed to sweep orphaned Postgres test schemas" not in caplog.text
 
     def test_telemetry_uses_phase_two_config(self) -> None:
         runtime_config = apply_safe_runner_config_defaults(MagicMock())
