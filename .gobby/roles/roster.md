@@ -8,7 +8,7 @@
 | release-manager.md | gobby#14968 |
 | lane-1-gclient.md | gobby#14909 |
 | lane-2-stability.md | gobby#14962 |
-| lane-3-hooks.md | gobby#14956 |
+| lane-3-hooks.md | gobby#15060 |
 | lane-3-hooks.md | gobby#14954 |
 | lane-3-hooks.md | gobby#15011 |
 | lane-4-runbooks.md | gobby#14674 |
