@@ -33,6 +33,9 @@ _PYTEST_LOCATION_RE = re.compile(
     r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
     r"| assert(?:\s+.*)?)?\s*$"
 )
+# pytest.fail() reached from a test body. pytest-timeout kills report as
+# `Failed: Timeout`, which proves nothing about the code under test.
+_PYTEST_FAIL_DETAIL_RE = re.compile(r"^\s*E\s+Failed:(?!\s+Timeout\b)", re.MULTILINE)
 _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
     r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
     re.MULTILINE,
@@ -286,16 +289,32 @@ def _find_red_run(
         matched, reason = _has_named_red_failure(core_command, run.output, test)
         matched = matched or source_failure
         if matched:
-            if not require_not_implemented or (
+            if _has_pytest_fail_placeholder(test, evidence, run):
+                reason = "test body is an unconditional pytest.fail placeholder"
+            elif not require_not_implemented or (
                 _has_python_keyword_stub(test, evidence, run)
                 or _has_python_module_stub(test, evidence, run)
             ):
                 return run, None
-            reason = (
-                "post-production red has no attributable NotImplementedError or proven API stub"
-            )
+            else:
+                reason = (
+                    "post-production red has no attributable NotImplementedError or proven API stub"
+                )
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
+
+
+def _has_pytest_fail_placeholder(
+    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+) -> bool:
+    """A top-level pytest.fail() fails the test whatever the code under test does."""
+    node = _original_test_node(test, evidence, run)
+    return node is not None and any(
+        isinstance(statement, ast.Expr)
+        and isinstance(statement.value, ast.Call)
+        and ast.unparse(statement.value.func) in {"pytest.fail", "fail"}
+        for statement in node.body
+    )
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
@@ -790,6 +809,7 @@ def _section_has_artifact_location(section: str, test: AcceptanceTest) -> bool:
 def _section_has_failure_detail(section: str) -> bool:
     return bool(
         _ASSERTION_DETAIL_RE.search(section)
+        or _PYTEST_FAIL_DETAIL_RE.search(section)
         or _PYTHON_EXCEPTION_DETAIL_RE.search(section)
         or _RAISE_EXCEPTION_DETAIL_RE.search(section)
     )

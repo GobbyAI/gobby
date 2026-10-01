@@ -1326,8 +1326,8 @@ def test_tdd_evidence_does_not_borrow_sibling_assertion_after_summary_rejection(
     )
     red_output = (
         "=================================== FAILURES ===================================\n"
-        "E   Failed: something-other-than-DID NOT RAISE\n"
-        "/repo/tests/test_feature.py:24: Failed: something-other-than-DID NOT RAISE\n"
+        "E   Failed: Timeout (>30.0s) from pytest-timeout.\n"
+        "/repo/tests/test_feature.py:24: Failed: Timeout (>30.0s) from pytest-timeout.\n"
         "E   AssertionError: assert 0 == 1\n"
         "/repo/tests/test_other.py:10: AssertionError: assert 0 == 1\n"
         "=========================== short test summary info ============================\n"
@@ -1537,6 +1537,137 @@ def test_tdd_evidence_rejects_documentation_as_production_edit(path: str) -> Non
     assert result.findings == (
         "tests/test_feature.py::test_feature: no production edit follows the test edit",
     )
+
+
+_HELPER_FAIL_BODY = """\
+import pytest
+
+from feature import feature
+
+
+def test_feature(monkeypatch):
+    def unexpected_render(**_context):
+        pytest.fail("no policy may be rendered for a swapped cache grant")
+
+    monkeypatch.setattr("feature.render", unexpected_render)
+    with pytest.raises(PermissionError):
+        feature()
+"""
+_PLACEHOLDER_FAIL_BODY = """\
+import pytest
+
+
+def test_feature():
+    pytest.fail("not written yet")
+"""
+
+
+def _tb_line_red(
+    detail: str, *, node: str = "tests/test_feature.py::test_feature", line: int = 9
+) -> str:
+    return (
+        "=================================== FAILURES ===================================\n"
+        f"E   {detail}\n"
+        f"/repo/tests/test_feature.py:{line}: {detail}\n"
+        "=========================== short test summary info ============================\n"
+        f"FAILED {node}\n"
+        "============================== 1 failed in 0.10s ===============================\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "body,red_output,red_minute,expected",
+    [
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red("Failed: no policy may be rendered for a swapped cache grant"),
+            2,
+            None,
+            id="helper-pytest-fail",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red("Failed: Timeout (>30.0s) from pytest-timeout."),
+            2,
+            "no attributable failure section",
+            id="timeout",
+        ),
+        pytest.param(
+            _PLACEHOLDER_FAIL_BODY,
+            _tb_line_red("Failed: not written yet"),
+            2,
+            "unconditional pytest.fail placeholder",
+            id="placeholder",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red(
+                "Failed: no policy may be rendered for a swapped cache grant",
+                node="tests/test_feature.py::test_other",
+                line=30,
+            ),
+            2,
+            "no attributable failure section",
+            id="summary-names-another-test",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            "==================================== ERRORS ====================================\n"
+            "E   Failed: fixture 'unknown' not found\n"
+            "=========================== short test summary info ============================\n"
+            "ERROR tests/test_feature.py::test_feature\n"
+            "=============================== 1 error in 0.10s ===============================\n",
+            2,
+            "missing assertion or panic failure",
+            id="setup-error",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red("Failed: no policy may be rendered for a swapped cache grant"),
+            4,
+            "missing assertion or panic failure",
+            id="after-implementation",
+        ),
+    ],
+)
+def test_tdd_evidence_credits_pytest_fail_red_only_from_an_exercising_body(
+    body: str, red_output: str, red_minute: int, expected: str | None
+) -> None:
+    started = datetime(2026, 10, 1, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body=body,
+    )
+    red = replace(
+        _run(test, started + timedelta(minutes=red_minute), "failure", red_output, red_minute),
+        command=(
+            "pytest tests/test_feature.py::test_feature tests/test_feature.py::test_other "
+            "-q --tb=line"
+        ),
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(test.path, started, 1),
+                source_after=body,
+                source_confirmed=True,
+                source_confirmed_at=started + timedelta(seconds=1),
+            ),
+            _edit("src/feature.py", started + timedelta(minutes=3), 3),
+        ),
+        validation_runs=(red, _run(test, started + timedelta(minutes=5), "success", "1 passed", 5)),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    if expected is None:
+        assert result.passed is True, result
+        assert result.red_runs == (red.command,)
+    else:
+        assert result.passed is False
+        assert any(expected in finding for finding in result.findings), result.findings
 
 
 def test_tdd_evidence_accepts_did_not_raise_red() -> None:
