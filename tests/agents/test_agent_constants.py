@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.cargo_target import agent_checkout_cargo_target_dir, link_checkout_cargo_target
 from gobby.agents.constants import (
     ALL_TERMINAL_ENV_VARS,
     CARGO_HOME,
@@ -137,9 +137,40 @@ class TestGetTerminalEnvVars:
         assert uv_cache_parts[-1] == _expected_cache_leaf("sess-child", "sess-child")
         shared_cargo_home = tmp_path / "cache" / "cargo-home"
         assert result[CARGO_HOME] == str(shared_cargo_home)
-        checkout_target = checkout_cargo_target_dir(checkout, "proj-abc")
-        assert result[CARGO_TARGET_DIR] == str(checkout_target)
-        assert checkout_target.is_dir()
+        agent_target = agent_checkout_cargo_target_dir(checkout, "proj-abc")
+        assert result[CARGO_TARGET_DIR] == str(agent_target)
+        assert agent_target.is_dir()
+
+    def test_agent_and_operator_builds_never_share_a_target_under_different_homes(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        # #23198: fingerprints embed $CARGO_HOME/registry/src, so the operator's
+        # shell (its own CARGO_HOME, reaching the target through the checkout's
+        # `target` link) and a spawned agent (the shared agent home) must not
+        # alternate in one target dir.
+        monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+        monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)
+        checkout = tmp_path / "checkout"
+        checkout.mkdir()
+        (checkout / "Cargo.toml").write_text("[workspace]\n", encoding="utf-8")
+        assert link_checkout_cargo_target(checkout, "proj-abc")
+
+        agent = get_terminal_env_vars(
+            session_id="sess-child",
+            parent_session_id="sess-parent",
+            agent_run_id="run-123",
+            project_id="proj-abc",
+            checkout_root=checkout,
+        )
+
+        operator_target = (checkout / "target").resolve()
+        agent_target = Path(agent[CARGO_TARGET_DIR]).resolve()
+        assert agent[CARGO_HOME] == str(tmp_path / "gobby-home" / "cache" / "cargo-home")
+        assert agent_target != operator_target
+        assert not agent_target.is_relative_to(operator_target)
+        assert not operator_target.is_relative_to(agent_target)
 
     def test_includes_run_bound_agent_token(
         self,

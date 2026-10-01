@@ -10,12 +10,16 @@ import pytest
 
 from gobby.agents import sandbox_policy
 from gobby.agents.cargo_target import (
+    agent_checkout_cargo_target_dir,
+    cargo_release_dir,
     checkout_cargo_target_dir,
     cleanup_checkout_cargo_target_dir,
-    ensure_checkout_cargo_target_dir,
+    ensure_agent_cargo_target_dir,
     exclude_checkout_target,
     link_checkout_cargo_target,
 )
+from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, get_terminal_env_vars
+from gobby.agents.zig_packages import unsandboxed_zig_cache_dir
 
 pytestmark = pytest.mark.unit
 
@@ -79,11 +83,36 @@ def test_checkout_dir_sanitizes_checkout_name(gobby_home: Path, tmp_path: Path) 
     assert checkout_cargo_target_dir(checkout, "proj-1").name.startswith("a-checkout-name-")
 
 
-def test_ensure_creates_checkout_dir(gobby_home: Path, cargo_checkout: Path) -> None:
-    path = ensure_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+def test_ensure_creates_the_agent_target_beside_the_checkout_target(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    path = ensure_agent_cargo_target_dir(cargo_checkout, "proj-1")
 
-    assert path == str(checkout_cargo_target_dir(cargo_checkout, "proj-1"))
+    agent_target = agent_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    checkout_target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    assert path == str(agent_target)
     assert Path(path).is_dir()
+    assert agent_target != checkout_target
+    assert agent_target.parent == checkout_target.parent
+    assert agent_checkout_cargo_target_dir(cargo_checkout, "proj-1") == agent_target
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ({}, "checkout/target/release"),
+        ({"CARGO_TARGET_DIR": "/elsewhere/agent-target"}, "/elsewhere/agent-target/release"),
+        ({"CARGO_TARGET_DIR": "relative-target"}, "cwd/relative-target/release"),
+    ],
+    ids=["target-link", "absolute-env", "relative-env"],
+)
+def test_release_dir_follows_the_target_cargo_built_into(
+    tmp_path: Path, configured: dict[str, str], expected: str
+) -> None:
+    # Installers read artifacts after `cargo build`, which honors CARGO_TARGET_DIR.
+    release = cargo_release_dir(tmp_path / "checkout", cwd=tmp_path / "cwd", env=configured)
+
+    assert release == tmp_path / expected
 
 
 def test_link_created_for_cargo_checkout(gobby_home: Path, cargo_checkout: Path) -> None:
@@ -175,9 +204,12 @@ def test_cleanup_removes_only_derived_checkout_target(
 ) -> None:
     target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
     (target / "debug").mkdir(parents=True)
+    agent_target = agent_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    (agent_target / "debug").mkdir(parents=True)
 
     assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
     assert not target.exists()
+    assert not agent_target.exists()
     assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
 
 
@@ -209,6 +241,44 @@ def test_cleanup_keeps_what_a_linked_sandbox_target_points_to(
     assert error == f"Refusing to remove symlinked Cargo target path: {run.cargo_target}"
     assert run.cargo_target.is_symlink()
     assert sorted(child.name for child in foreign.iterdir()) == ["debug"]
+
+
+def test_unsandboxed_builds_stay_out_of_the_sandbox_cache_and_cleanup_removes_every_target(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    # #23198: SRT runs can write <gobby-home>/cache/sandbox, so unsandboxed
+    # agents and Guard set G must never build from anything below it.
+    agent = get_terminal_env_vars(
+        session_id="sess-child",
+        parent_session_id="sess-parent",
+        agent_run_id="run-123",
+        project_id="proj-1",
+        checkout_root=cargo_checkout,
+    )
+    run = sandbox_policy.prepare_sandbox_run_paths("run-1", {}, workspace=cargo_checkout)
+    sandbox_target = Path(run.environment("claude")["CARGO_TARGET_DIR"])
+    sandbox_cache = gobby_home / "cache" / "sandbox"
+    unsandboxed = {
+        "cargo home": Path(agent[CARGO_HOME]),
+        "agent target": Path(agent[CARGO_TARGET_DIR]),
+        "zig mirror": unsandboxed_zig_cache_dir(),
+    }
+    checkout_target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    for target in (checkout_target, Path(agent[CARGO_TARGET_DIR]), sandbox_target):
+        (target / "debug").mkdir(parents=True, exist_ok=True)
+
+    escaped = {
+        name: path for name, path in unsandboxed.items() if path.is_relative_to(sandbox_cache)
+    }
+    assert escaped == {}
+    assert sandbox_target.is_relative_to(sandbox_cache)
+    assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
+    remaining = [
+        path
+        for path in (checkout_target, Path(agent[CARGO_TARGET_DIR]), sandbox_target)
+        if path.exists()
+    ]
+    assert remaining == []
 
 
 def test_cleanup_refuses_symlinked_cache_target(
