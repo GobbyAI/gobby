@@ -1,5 +1,6 @@
 """Tests for task commit linking CLI commands."""
 
+from collections.abc import Iterator
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -23,6 +24,15 @@ def mock_task_manager():
     return manager
 
 
+@pytest.fixture(autouse=True)
+def normalize_sha() -> Iterator[MagicMock]:
+    """Resolve SHAs as given: these tests exercise the CLI, not a repository."""
+    with patch(
+        "gobby.cli.tasks.commits.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha
+    ) as normalize:
+        yield normalize
+
+
 # =============================================================================
 # gobby tasks commit link
 # =============================================================================
@@ -31,7 +41,7 @@ def mock_task_manager():
 class TestCommitLink:
     """Tests for 'gobby tasks commit link' command."""
 
-    def test_link_commit_success(self, runner, mock_task_manager) -> None:
+    def test_link_commit_success(self, runner, mock_task_manager, normalize_sha) -> None:
         """Test linking a commit to a task."""
         mock_task = MagicMock()
         mock_task.id = "gt-abc123"
@@ -43,7 +53,8 @@ class TestCommitLink:
             result = runner.invoke(tasks, ["commit", "link", "gt-abc123", "abc123"])
 
             assert result.exit_code == 0
-            mock_task_manager.link_commit.assert_called_with("gt-abc123", "abc123", cwd=ANY)
+            normalize_sha.assert_called_with("abc123", cwd=ANY)
+            mock_task_manager.link_commit.assert_called_with("gt-abc123", "abc123")
             assert "abc123" in result.output
 
     def test_link_commit_echoes_normalized_stored_sha(self, runner, mock_task_manager) -> None:
@@ -64,7 +75,7 @@ class TestCommitLink:
         assert "Linked commit abc to task gt-abc123" not in result.output
 
     def test_link_commit_uses_project_cwd_from_subdirectory(
-        self, runner, mock_task_manager, tmp_path, monkeypatch
+        self, runner, mock_task_manager, normalize_sha, tmp_path, monkeypatch
     ) -> None:
         """Test link resolves commit SHAs against the project root."""
         project_root = tmp_path / "project"
@@ -89,9 +100,8 @@ class TestCommitLink:
 
             assert result.exit_code == 0
             mock_context.assert_called_with(cwd=subdir)
-            mock_task_manager.link_commit.assert_called_with(
-                "gt-abc123", "abc123", cwd=str(project_root)
-            )
+            normalize_sha.assert_called_with("abc123", cwd=str(project_root))
+            mock_task_manager.link_commit.assert_called_with("gt-abc123", "abc123")
 
     def test_link_commit_task_not_found(self, runner, mock_task_manager) -> None:
         """Test error when task not found."""
@@ -124,7 +134,7 @@ class TestCommitLink:
 class TestCommitUnlink:
     """Tests for 'gobby tasks commit unlink' command."""
 
-    def test_unlink_commit_success(self, runner, mock_task_manager) -> None:
+    def test_unlink_commit_success(self, runner, mock_task_manager, normalize_sha) -> None:
         """Test unlinking a commit from a task."""
         mock_task = MagicMock()
         mock_task.id = "gt-abc123"
@@ -138,13 +148,14 @@ class TestCommitUnlink:
             result = runner.invoke(tasks, ["commit", "unlink", "gt-abc123", "abc123"])
 
             assert result.exit_code == 0
-            mock_task_manager.unlink_commit.assert_called_with("gt-abc123", "abc123", cwd=ANY)
+            normalize_sha.assert_called_with("abc123", cwd=ANY)
+            mock_task_manager.unlink_commit.assert_called_with("gt-abc123", "abc123")
             assert "Unlinked commit abc123 from task gt-abc123" in result.output
 
-    def test_unlink_commit_not_found_from_subdirectory_reports_noop(
-        self, runner, mock_task_manager, tmp_path, monkeypatch
+    def test_unlink_commit_not_linked_from_subdirectory_fails(
+        self, runner, mock_task_manager, normalize_sha, tmp_path, monkeypatch
     ) -> None:
-        """Test unchanged unlink reports no-op and resolves against the project root."""
+        """Test an unlinked SHA fails by name and resolves against the project root."""
         project_root = tmp_path / "project"
         subdir = project_root / "nested"
         subdir.mkdir(parents=True)
@@ -153,10 +164,10 @@ class TestCommitUnlink:
         mock_task = MagicMock()
         mock_task.id = "gt-abc123"
         mock_task.commits = ["def456"]
-        updated_task = MagicMock()
-        updated_task.commits = ["def456"]
         mock_task_manager.get_task.return_value = mock_task
-        mock_task_manager.unlink_commit.return_value = updated_task
+        mock_task_manager.unlink_commit.side_effect = ValueError(
+            "Commit abc123 is not linked to task gt-abc123"
+        )
 
         with (
             patch("gobby.cli.tasks.commits.get_task_manager", return_value=mock_task_manager),
@@ -167,12 +178,11 @@ class TestCommitUnlink:
         ):
             result = runner.invoke(tasks, ["commit", "unlink", "gt-abc123", "abc123"])
 
-            assert result.exit_code == 0
+            assert result.exit_code == 1
             mock_context.assert_called_with(cwd=subdir)
-            mock_task_manager.unlink_commit.assert_called_with(
-                "gt-abc123", "abc123", cwd=str(project_root)
-            )
-            assert "Commit abc123 not found on task gt-abc123; nothing to unlink" in result.output
+            normalize_sha.assert_called_with("abc123", cwd=str(project_root))
+            mock_task_manager.unlink_commit.assert_called_with("gt-abc123", "abc123")
+            assert "Error: Commit abc123 is not linked to task gt-abc123" in result.output
             assert "Unlinked commit" not in result.output
 
     def test_unlink_commit_task_not_found(self, runner, mock_task_manager) -> None:
