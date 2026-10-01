@@ -530,7 +530,7 @@ PD review of this revision is required before the Assistant presents the choices
 
 ### Josh's decisions
 
-**Choice 9 is decided:** Josh answered "Yes" on 2026-10-01. An agent removes the stray `falkordb_password` key from the live `~/.gobby/bootstrap.yaml`, with the PD routing the execution. Josh asked for detail on D3-D5 for choice 5, which the Assistant gave him; it is still **pending**. Every other choice, and R0-R7, is still **pending**. Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01.
+**Choice 9 is decided:** Josh answered "Yes" on 2026-10-01. An agent removes the stray `falkordb_password` key from the live `~/.gobby/bootstrap.yaml`, with the PD routing the execution. **Choice 5 is decided:** Josh said "All three are required then." D3 (`gobby-mcp`), D4 (hub HTTP routes for node `gcode index`) and D5 (hook envelope carries edited-file content) must all land before nodes count as supported. Every other choice, and R0-R7, is still **pending**. Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01.
 
 A decision table recorded in `4d8bc01` was **retracted**. The Assistant misread Josh's "Agreed", and Josh said: "I didn't accept yet."
 
