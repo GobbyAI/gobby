@@ -251,9 +251,11 @@ _RUNNER_REPORTING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
     ("ruff", "check"): frozenset({"--output-format"}),
     ("mypy",): frozenset({"--no-error-summary"}),
 }
-# `uv --directory <dir>` and `--project <dir>` run from <dir>, like the `cd <dir> &&`
-# prefix evidence normalization already drops, so both forms scope the same paths.
-# The flags only govern environment syncing and network access, never test selection.
+# `uv --directory <dir>` runs from <dir>, like the `cd <dir> &&` prefix evidence
+# normalization already drops, so both forms scope the same paths. `--project <dir>`
+# keeps the working directory and only picks which project's environment runs, so
+# paths still resolve where they did. The flags only govern environment syncing and
+# network access, never test selection.
 _UV_LOCATION_OPTIONS = frozenset({"--directory", "--project"})
 _UV_NEUTRAL_FLAGS = frozenset({"--no-sync", "--frozen", "--locked", "--offline"})
 # These flags prove a strict superset only when they appear on the executed command.
