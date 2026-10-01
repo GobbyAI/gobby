@@ -6,9 +6,19 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close as lifecycle_close
+from gobby.mcp_proxy.tools.tasks import _lifecycle_close_preview as close_preview
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
+
+
+async def normalized_sha_is_full_identity(sha: str, *, cwd: str) -> str | None:
+    """Stand-in for the close candidate's rev-parse: fake SHAs name no object.
+
+    Normalization still runs against the task repository through the module's
+    (usually patched) normalize_commit_sha, so repo-path assertions keep holding.
+    """
+    return await close_preview.normalize_commit_sha(sha, cwd=cwd)
 
 
 async def complete_close_review(
