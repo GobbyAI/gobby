@@ -13,8 +13,8 @@ message in the session was returned.
 
 Search requires a nonblank query and positive limit. Each call scans a bounded
 number of rendered messages, oldest first within a session; multi-session search
-uses project/status/source filters and walks the listed sessions newest-created
-first. `truncated=true` means the scan stopped early: pass `next_cursor` back as
+uses project/status/source filters and walks matching sessions newest-created
+first, at most 100 per call. `truncated=true` means the scan stopped early: pass `next_cursor` back as
 `cursor` with the same filters to continue, until `next_cursor` is null. An empty
 truncated page is not a miss. A bounded search result is not an exhaustive
 repository history. Use explicit session reads for complete evidence. Commit

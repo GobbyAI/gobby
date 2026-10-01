@@ -208,35 +208,41 @@ def register_message_tools(
                     "error": "Multi-session search requires SessionManager",
                 }
 
-            sessions = session_manager.list(
-                project_id=project_id,
-                status=status,
-                source=source,
-                limit=MAX_SEARCH_SESSIONS,
-            )
-
             # Recency order shifts with every write (the caller's own session
-            # included), so pages walk the listed set newest-created first.
-            ordered = sorted(sessions, key=lambda s: (s.created_at, s.id), reverse=True)
-            ids = [session.id for session in ordered]
-            first, start = 0, 0
+            # included), so pages walk sessions newest-created first and resume
+            # from the cursor session's (created_at, id) key.
+            from_created_at = None
+            from_id = None
             if resume is not None:
-                if resume[0] not in ids:
-                    return {"success": False, "error": "cursor session is no longer listed"}
-                first, start = ids.index(resume[0]), resume[1]
+                anchor = session_manager.get(resume[0])
+                if anchor is None:
+                    return {"success": False, "error": "cursor session no longer exists"}
+                from_created_at, from_id = anchor.created_at, anchor.id
+            ids = [
+                session.id
+                for session in session_manager.list_newest_created(
+                    project_id=project_id,
+                    status=status,
+                    source=source,
+                    limit=MAX_SEARCH_SESSIONS + 1,
+                    from_created_at=from_created_at,
+                    from_id=from_id,
+                )
+            ]
+            start = resume[1] if resume is not None and ids[:1] == [resume[0]] else 0
 
             results: list[dict[str, Any]] = []
             searched_sessions = 0
             next_cursor = None
-            for position in range(first, len(ids)):
-                if len(results) >= result_limit or budget <= 0:
-                    next_cursor = _encode_cursor(ids[position], 0)
+            for position, sid in enumerate(ids):
+                if position == MAX_SEARCH_SESSIONS or len(results) >= result_limit or budget <= 0:
+                    next_cursor = _encode_cursor(sid, 0)
                     break
                 searched_sessions += 1
-                group = await _scan_session(ids[position], start, results)
+                group = await _scan_session(sid, start, results)
                 start = 0
                 if group is not None:
-                    next_cursor = _encode_cursor(ids[position], group)
+                    next_cursor = _encode_cursor(sid, group)
                     break
 
             return _search_response(query, results, searched_sessions, result_limit, next_cursor)

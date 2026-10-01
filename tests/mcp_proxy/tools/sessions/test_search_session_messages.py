@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -76,25 +76,50 @@ def _transcript(path: Path, texts: list[str]) -> Path:
 
 
 def _session(
-    session_id: str, path: Path, *, created_day: int = 1, foreign: bool = False
+    session_id: str,
+    path: Path,
+    *,
+    created_day: int = 1,
+    created_minute: int = 0,
+    foreign: bool = False,
 ) -> SimpleNamespace:
+    created_at = datetime(2026, 9, created_day, tzinfo=UTC) + timedelta(minutes=created_minute)
     return SimpleNamespace(
         id=session_id,
         external_id=f"no-archive-{session_id}",
         source="claude",
         transcript_path=str(path),
         machine_id=LOCAL_MACHINE_ID,
-        created_at=datetime(2026, 9, created_day, tzinfo=UTC),
+        created_at=created_at,
+        updated_at=created_at,
         foreign=foreign,
     )
 
 
 def _manager(sessions: list[SimpleNamespace]) -> MagicMock:
+    """Session manager fake with the storage layer's list orderings."""
     by_id = {session.id: session for session in sessions}
     manager = MagicMock()
     manager.resolve_session_reference.side_effect = lambda ref, _project_id=None: ref
     manager.get.side_effect = by_id.get
-    manager.list.return_value = sessions
+
+    def list_recent(*, limit: int, **_filters: Any) -> list[SimpleNamespace]:
+        return sorted(sessions, key=lambda s: (s.updated_at, s.id), reverse=True)[:limit]
+
+    def list_newest_created(
+        *,
+        limit: int,
+        from_created_at: datetime | None = None,
+        from_id: str | None = None,
+        **_filters: Any,
+    ) -> list[SimpleNamespace]:
+        ordered = sorted(sessions, key=lambda s: (s.created_at, s.id), reverse=True)
+        if from_created_at is not None and from_id is not None:
+            ordered = [s for s in ordered if (s.created_at, s.id) <= (from_created_at, from_id)]
+        return ordered[:limit]
+
+    manager.list.side_effect = list_recent
+    manager.list_newest_created.side_effect = list_newest_created
     return manager
 
 
@@ -236,9 +261,76 @@ async def test_cursor_pages_survive_a_recency_reorder_between_calls(
         if cursor is None:
             break
         # Recency order moves with activity, including the caller's own session.
-        manager.list.return_value = [sessions[2], sessions[0], sessions[1]]
+        sessions[2].updated_at = datetime.now(UTC)
 
     assert found == ["needle x", "needle y", "needle z"]
+
+
+@pytest.mark.asyncio
+async def test_cursor_pages_visit_every_session_once_beyond_the_listing_cap_across_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_messages, "SEARCH_GROUP_BUDGET", 30)
+    total = _messages.MAX_SEARCH_SESSIONS + 20
+    sessions = [
+        _session(
+            f"sess-{i:03d}",
+            _transcript(tmp_path / f"{i:03d}.jsonl", [f"needle {i:03d}"]),
+            created_minute=i,
+        )
+        for i in range(total)
+    ]
+    registry = _registry_for(_manager(sessions))
+
+    found: list[str] = []
+    cursor: str | None = None
+    pages = 0
+    while True:
+        arguments: dict[str, Any] = {"query": "needle"}
+        if cursor is not None:
+            arguments["cursor"] = cursor
+        result = await _search(registry, **arguments)
+        found.extend(_contents(result))
+        cursor = result.get("next_cursor")
+        if cursor is None:
+            break
+        pages += 1
+        # Writes between pages make the oldest sessions the most recently updated.
+        for session in sessions[: pages * 15]:
+            session.updated_at = datetime.now(UTC)
+
+    assert found == [f"needle {i:03d}" for i in reversed(range(total))]
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_session_refuses_another_sessions_cursor(
+    tmp_path: Path, work: _WorkCounter
+) -> None:
+    first = _transcript(tmp_path / "a.jsonl", ["needle a1", "needle a2"])
+    second = _transcript(tmp_path / "b.jsonl", ["needle b1"])
+    registry = _registry([_session("sess-a", first), _session("sess-b", second)])
+    page = await _search(registry, query="needle", session_id="sess-a", limit=1)
+    rendered = work.groups_rendered
+
+    refused = await _search(
+        registry, query="needle", session_id="sess-b", cursor=page["next_cursor"]
+    )
+
+    assert refused == {"success": False, "error": "cursor belongs to another session"}
+    assert work.groups_rendered == rendered
+
+
+@pytest.mark.asyncio
+async def test_a_cursor_for_a_vanished_session_is_rejected(tmp_path: Path) -> None:
+    path = _transcript(tmp_path / "a.jsonl", ["needle 1", "needle 2"])
+    manager = _manager([_session("sess-a", path)])
+    registry = _registry_for(manager)
+    page = await _search(registry, query="needle", limit=1)
+    manager.get.side_effect = lambda _session_id: None
+
+    result = await _search(registry, query="needle", cursor=page["next_cursor"])
+
+    assert result == {"success": False, "error": "cursor session no longer exists"}
 
 
 @pytest.mark.asyncio
