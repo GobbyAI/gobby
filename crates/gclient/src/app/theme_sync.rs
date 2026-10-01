@@ -14,7 +14,8 @@
 //! which would leave a controlled pane on the old colours until someone typed.
 
 use gobby_terminal::protocol::ClientMessage;
-use gobby_terminal::terminal_theme::ThemeDeclaration;
+use gobby_terminal::terminal_theme::{ThemeDeclaration, HOST_COLOR_QUERY_SEQUENCE};
+use std::io::Write;
 
 use super::attach::AttachState;
 use super::pane::Pane;
@@ -26,6 +27,14 @@ use serde_json::json;
 /// The attach-reply capability that says the pane's host accepts
 /// `ClientMessage::SetTerminalTheme`.
 pub(super) const TERMINAL_THEME_CAPABILITY: &str = "terminal_theme";
+
+/// Ask the hosting terminal for its default colours (OSC 10/11). The answer
+/// arrives as `RawInputEvent::HostDefaultColor`, which the live loop records
+/// on the chrome for System mode's declaration.
+pub(crate) fn query_host_colors(output: &mut impl Write) -> std::io::Result<()> {
+    output.write_all(HOST_COLOR_QUERY_SEQUENCE.as_bytes())?;
+    output.flush()
+}
 
 /// Whether an attach reply's `host_capabilities` include terminal themes.
 pub(super) fn host_accepts_themes(reply: &serde_json::Value) -> bool {

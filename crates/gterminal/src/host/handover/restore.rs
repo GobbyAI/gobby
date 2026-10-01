@@ -91,7 +91,6 @@ pub(crate) fn stage(
                 terminals,
                 state.next_host_id,
                 reservations,
-                state.latest_theme,
             ),
         },
         control,

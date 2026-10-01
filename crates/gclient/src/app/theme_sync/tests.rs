@@ -36,6 +36,15 @@ fn only_an_advertised_terminal_theme_capability_counts() {
     assert!(!host_accepts_themes(&json!({})));
 }
 
+/// The query asks the hosting terminal for its default colours alone: the
+/// palette stays gclient's, so 256 OSC 4 answers would be noise.
+#[test]
+fn host_color_query_asks_for_the_default_colours() {
+    let mut output = Vec::new();
+    query_host_colors(&mut output).unwrap();
+    assert_eq!(output, b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
+}
+
 #[test]
 fn a_capable_pane_binds_then_declares_each_new_theme_once() {
     let mut pane = capable_pane();

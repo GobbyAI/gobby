@@ -27,7 +27,6 @@ fn state_with(panes: Vec<CarriedPane>, control: RawFd, frames: RawFd) -> Handove
         control_listener_fd: control,
         frames_listener_fd: frames,
         next_host_id: 42,
-        latest_theme: None,
         events: CarriedEvents {
             cursor: 7,
             ring: vec![

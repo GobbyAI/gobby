@@ -16,7 +16,6 @@ use super::events::HostEvents;
 use super::state::Inner;
 use crate::pane::{ChildExit, PaneCoreHandover};
 use crate::protocol::{ObservationState, PaneLocator};
-use crate::terminal_theme::ThemeDeclaration;
 
 pub(crate) mod fallback;
 pub(crate) mod restore;
@@ -42,7 +41,6 @@ pub struct HandoverState {
     pub control_listener_fd: RawFd,
     pub frames_listener_fd: RawFd,
     pub next_host_id: u64,
-    pub latest_theme: Option<ThemeDeclaration>,
     pub events: CarriedEvents,
     pub panes: Vec<CarriedPane>,
 }
