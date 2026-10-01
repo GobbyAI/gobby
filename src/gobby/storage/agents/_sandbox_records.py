@@ -158,34 +158,31 @@ def _read_violations(
 
 def _recent_violations(path: Path) -> list[Any]:
     """Decode only the newest events; a log can reach gigabytes, so never parse it whole."""
-    chunks: list[bytes] = []
-    newlines = 0
+    recent: list[Any] = []
+    pending = b""
     try:
         with path.open("rb") as handle:
             position = handle.seek(0, os.SEEK_END)
             floor = max(0, position - _MAX_TAIL_BYTES)
-            while position > floor and newlines <= _MAX_EXPOSED_VIOLATIONS:
+            while position > floor and len(recent) < _MAX_EXPOSED_VIOLATIONS:
                 size = min(_TAIL_BLOCK_BYTES, position - floor)
                 position -= size
                 handle.seek(position)
-                chunk = handle.read(size)
-                chunks.append(chunk)
-                newlines += chunk.count(b"\n")
+                lines = (handle.read(size) + pending).split(b"\n")
+                # Above the file start the first piece may continue in the block before it;
+                # at the byte ceiling that partial line is dropped.
+                pending = lines.pop(0) if position > 0 else b""
+                for line in reversed(lines):
+                    if len(recent) == _MAX_EXPOSED_VIOLATIONS:
+                        break
+                    if not line.strip():
+                        continue
+                    try:
+                        recent.append(json.loads(line.decode("utf-8", errors="replace")))
+                    except json.JSONDecodeError:
+                        continue
     except OSError:
         return []
-    lines = b"".join(reversed(chunks)).split(b"\n")
-    if position > 0:
-        lines = lines[1:]  # The window starts mid-line.
-    recent: list[Any] = []
-    for line in reversed(lines):
-        if len(recent) == _MAX_EXPOSED_VIOLATIONS:
-            break
-        if not line.strip():
-            continue
-        try:
-            recent.append(json.loads(line.decode("utf-8", errors="replace")))
-        except json.JSONDecodeError:
-            continue
     recent.reverse()
     return recent
 

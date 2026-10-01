@@ -165,6 +165,31 @@ def test_sandbox_record_decodes_only_the_recent_tail_of_a_long_log(
     assert decoded == 100
 
 
+@pytest.mark.parametrize(
+    "filler",
+    [b"{" + b"x" * 126 + b"\n", b" " * 127 + b"\n"],
+    ids=["malformed", "whitespace"],
+)
+def test_sandbox_record_tail_reads_past_unusable_lines_to_recent_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    filler: bytes,
+) -> None:
+    gobby_home = tmp_path / "gobby-home"
+    violations = _live_violation_log(gobby_home, "run-filler", 100)
+    with violations.open("ab") as handle:
+        handle.write(filler * 600)
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    record = sandbox_record(
+        {"sandbox": {"backend": "srt", "violation_path": str(violations)}},
+        include_events=True,
+    )
+
+    assert record is not None
+    assert record["violations"] == [{"sequence": value} for value in range(100)]
+
+
 def test_sandbox_record_tail_window_drops_the_partial_first_line(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
