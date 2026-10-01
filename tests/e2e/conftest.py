@@ -1937,7 +1937,9 @@ def _cleanup_orphan_gobby_processes() -> None:
                 try:
                     owner = psutil.Process(owner_pid)
                     if (
-                        owner.create_time() == owner_created
+                        # Linux psutil caches /proc/stat btime per process; clock
+                        # adjustments can shift the recomputed start stamp by seconds.
+                        math.isclose(owner.create_time(), owner_created, rel_tol=0.0, abs_tol=2.0)
                         and owner.is_running()
                         and owner.status() not in (psutil.STATUS_ZOMBIE, psutil.STATUS_DEAD)
                     ):

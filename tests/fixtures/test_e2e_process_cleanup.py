@@ -184,10 +184,23 @@ def test_inaccessible_owner_identity_is_preserved(
     assert not runner.killed
 
 
+@pytest.mark.parametrize("created", [118.0, 119.0, 121.0, 122.0])
+def test_live_owner_with_create_time_drift_is_preserved(
+    monkeypatch: pytest.MonkeyPatch, runner: FakeRunner, created: float
+) -> None:
+    _stub_owner(monkeypatch, FakeOwner(created=created))
+
+    e2e_fixtures._cleanup_orphan_gobby_processes()
+
+    assert runner.alive
+    assert not runner.termination_requested
+    assert not runner.killed
+
+
 def test_reused_owner_pid_does_not_hide_an_orphan(
     monkeypatch: pytest.MonkeyPatch, runner: FakeRunner
 ) -> None:
-    _stub_owner(monkeypatch, FakeOwner(created=121.0))
+    _stub_owner(monkeypatch, FakeOwner(created=130.0))
 
     e2e_fixtures._cleanup_orphan_gobby_processes()
 
