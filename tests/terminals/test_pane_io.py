@@ -338,21 +338,21 @@ async def test_stale_empty_frame_does_not_hide_a_held_command(
 
 
 @pytest.mark.asyncio
-async def test_unreadable_composer_after_enter_logs_at_debug(
+async def test_unreadable_composer_after_enter_is_unverified_not_submitted(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """No frame after the Enter is no evidence of a failure.
+    """No frame after the Enter is no evidence either way (#23188).
 
-    The write and the key were both delivered. Retyping into a composer that may have
-    taken them would queue the text twice, so the ladder reports it submitted and
-    says why.
+    The write and the key were both delivered, so nothing is retyped or re-entered,
+    but an unread composer is never reported as a confirmed submit.
     """
     pane = _ScriptedPane([ComposerRead("unknown")])
 
     with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
         result = await _submit(pane, monkeypatch)
 
-    assert result.ok is True
+    assert result.ok is False
+    assert result.error_code == "submit_unverified"
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter"]
     records = [
@@ -361,7 +361,41 @@ async def test_unreadable_composer_after_enter_logs_at_debug(
         if "could not be read after submitting the prompt" in record.getMessage()
     ]
     assert len(records) == 1
-    assert records[0].levelno == logging.DEBUG
+    assert records[0].levelno == logging.WARNING
+
+
+@pytest.mark.asyncio
+async def test_no_composer_reader_is_unverified_not_submitted(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A provider without a composer reader is the same unknown, reported at INFO."""
+    pane = _ScriptedPane([ComposerRead("empty")])
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0)
+    monkeypatch.setattr("gobby.terminals.pane_io.asyncio.sleep", no_sleep)
+    with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
+        result = await submit_text(
+            cast(PaneIO, pane),
+            _TEXT,
+            "session-1",
+            label="the prompt",
+            cli_source="grok",
+            composer_read=None,
+        )
+
+    assert result.ok is False
+    assert result.error_code == "submit_unverified"
+    assert pane.typed == [f"{_TEXT}\n"]
+    assert pane.keys == ["enter"]
+    assert pane.probes == 0
+    records = [
+        record for record in caplog.records if "has no composer reader" in record.getMessage()
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.INFO
 
 
 @pytest.mark.asyncio
@@ -424,7 +458,7 @@ async def test_held_retry_logs_at_debug_and_exhaustion_still_fails(
 
 
 @pytest.mark.asyncio
-async def test_an_unreadable_composer_after_a_held_read_trusts_the_enter(
+async def test_an_unreadable_composer_after_a_held_read_is_unverified(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     pane = _ScriptedPane([ComposerRead("draft", _TEXT), ComposerRead("unknown")])
@@ -432,7 +466,8 @@ async def test_an_unreadable_composer_after_a_held_read_trusts_the_enter(
     with caplog.at_level(logging.DEBUG, logger="gobby.terminals.pane_io"):
         result = await _submit(pane, monkeypatch)
 
-    assert result.ok is True
+    assert result.ok is False
+    assert result.error_code == "submit_unverified"
     assert pane.typed == [f"{_TEXT}\n"]
     assert pane.keys == ["enter", "enter"]
     records = [
@@ -441,4 +476,4 @@ async def test_an_unreadable_composer_after_a_held_read_trusts_the_enter(
         if "re-sending Enter" in record.getMessage()
         or "could not be read after submitting the prompt" in record.getMessage()
     ]
-    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.WARNING]

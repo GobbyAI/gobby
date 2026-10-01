@@ -43,6 +43,7 @@ __all__ = [
     "DEFAULT_SNAPSHOT_LINES",
     "SUBMIT_ENTER_GAP_SECONDS",
     "SUBMIT_HELD_RETRY_SECONDS",
+    "SUBMIT_UNVERIFIED_ERROR_CODE",
     "SUBMIT_VERIFY_SECONDS",
     "TEXT_NOT_SUBMITTED_ERROR_CODE",
     "ComposerReader",
@@ -96,6 +97,9 @@ SUBMIT_ENTER_GAP_SECONDS = 1.5
 COMPOSER_NOT_CLEAN_ERROR_CODE = "composer_not_clean"
 TEXT_NOT_SUBMITTED_ERROR_CODE = "command_not_submitted"
 ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE = "enter_delivery_unconfirmed"
+#: The write and Enter were delivered, but no read proved the draft left the composer.
+#: Callers must not count it as submitted and must not retype it (#23188).
+SUBMIT_UNVERIFIED_ERROR_CODE = "submit_unverified"
 
 
 class PaneIO(Protocol):
@@ -465,9 +469,10 @@ async def submit_text(
     the verify window means the CLI has not accepted the Enter yet, so bare Enters
     are re-sent and verified until the draft leaves or
     ``SUBMIT_HELD_RETRY_SECONDS`` is spent. The text is never retyped. A frame the
-    manifest cannot classify after an Enter is not evidence of a failure: the write
-    and key were both delivered, so the text is reported submitted with a warning.
-    Without a ``composer_read`` the delivered write and key are all there is.
+    manifest cannot classify after an Enter proves nothing either way, and neither
+    does a provider without a ``composer_read``: both return
+    ``SUBMIT_UNVERIFIED_ERROR_CODE`` without another Enter, so a caller never records
+    an unproven submit as delivered and never types the text a second time.
     """
     ok, reason = await pane.type_text(f"{text}\n")
     if not ok:
@@ -487,7 +492,18 @@ async def submit_text(
             return SubmitResult(False, reason, ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE)
         enter_count += 1
         if composer_read is None:
-            return SubmitResult(True)
+            logger.info(
+                "Session %s: %s has no composer reader; submission of %s is unverified",
+                session_id,
+                cli_source or "unknown CLI",
+                label,
+            )
+            return SubmitResult(
+                False,
+                f"{label} was typed and Enter sent, but {cli_source or 'this CLI'} "
+                "has no composer reader to verify it",
+                SUBMIT_UNVERIFIED_ERROR_CODE,
+            )
         verdict = await composer_verdict(
             pane,
             text,
@@ -510,19 +526,24 @@ async def submit_text(
                 )
             continue
         if verdict == "unreadable":
-            logger.debug(
+            logger.warning(
                 "Session %s: composer could not be read after submitting %s; "
-                "trusting the delivered write and Enter",
+                "submission is unverified",
                 session_id,
                 label,
             )
-        else:
-            logger.debug(
-                "Session %s submitted %s after %d Enter(s); the composer left the draft",
-                session_id,
-                label,
-                enter_count,
+            return SubmitResult(
+                False,
+                f"{label} was typed and Enter sent, but the composer could not be read "
+                "to verify it",
+                SUBMIT_UNVERIFIED_ERROR_CODE,
             )
+        logger.debug(
+            "Session %s submitted %s after %d Enter(s); the composer left the draft",
+            session_id,
+            label,
+            enter_count,
+        )
         return SubmitResult(True)
     return SubmitResult(
         False,

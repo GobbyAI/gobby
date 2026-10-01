@@ -312,7 +312,7 @@ async def deliver_staged_compact_handoff(
             terminal_runtime_registry=terminal_runtime_registry,
         )
     clear_queued_context(session_manager, session_id)
-    return {
+    delivered: dict[str, Any] = {
         "compacted": True,
         "command": command,
         "cli": source,
@@ -323,3 +323,7 @@ async def deliver_staged_compact_handoff(
         "handoff_staged": True,
         "handoff_delivered": True,
     }
+    if detail is not None and detail.get("submit_unverified"):
+        # No composer read proved the command submitted; the compact receipt above did.
+        delivered["submit_unverified"] = True
+    return delivered
