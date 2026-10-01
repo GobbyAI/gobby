@@ -21,7 +21,8 @@ services:
       POSTGRES_USER: ${GOBBY_POSTGRES_TEST_USER:-gobby_test}
       POSTGRES_PASSWORD: ${GOBBY_POSTGRES_TEST_PASSWORD:-gobby_test}
     ports:
-      - "${GOBBY_POSTGRES_TEST_PORT:-60892}:5432"
+      # Loopback only: the fixed test password must never be reachable off-host.
+      - "127.0.0.1:${GOBBY_POSTGRES_TEST_PORT:-60892}:5432"
     tmpfs:
       - /var/lib/postgresql:rw,size=3g,nr_inodes=6000000
     healthcheck:

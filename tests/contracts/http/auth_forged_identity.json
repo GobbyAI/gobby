@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "name": "auth_forged_identity",
+  "family": "auth",
+  "credential": "grant",
+  "request": {
+    "method": "POST",
+    "path": "/api/embeddings",
+    "query": {},
+    "headers": {
+      "X-Gobby-Machine-Id": "forged-machine",
+      "X-Gobby-Project-Id": "forged-project"
+    },
+    "body": {
+      "input": [
+        "hi"
+      ]
+    }
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "error": "Request rejected",
+      "code": "forged_identity"
+    }
+  },
+  "mask": []
+}
