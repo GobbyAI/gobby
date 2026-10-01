@@ -1737,6 +1737,13 @@ def _tb_line_red(
                 ("while-test", 'while pytest.fail("not written yet"):\n        pass'),
                 ("assert-test", 'assert pytest.fail("not written yet")'),
                 ("bool-first", 'pytest.fail("not written yet") or feature()'),
+                ("compare-chain-left", 'pytest.fail("not written yet") < 1 < feature()'),
+                ("compare-chain-first", '0 < pytest.fail("not written yet") < feature()'),
+                (
+                    "bare-pytest-decorator",
+                    "@pytest.fixture\n    def pending():\n        feature()\n"
+                    '    pytest.fail("not written yet")',
+                ),
                 ("with-context", 'with pytest.fail("not written yet"):\n        pass'),
                 ("assign-target", 'marker[feature()] = pytest.fail("not written yet")'),
                 ("assign-attribute", 'feature().marker = pytest.fail("not written yet")'),
@@ -1842,6 +1849,10 @@ def _tb_line_red(
                 ("dictcomp-iterator", "marker = {x: x for x in feature()}"),
                 ("lambda-default", "pending = lambda x=feature(): x"),
                 ("nested-def-default", "def pending(x=feature()):\n        return x"),
+                ("compare-chain-later", '1 > 2 < pytest.fail("later")\n    feature()'),
+                ("bare-decorator", "@feature\n    def pending():\n        pass"),
+                ("bare-attribute-decorator", "@feature.wrap\n    def pending():\n        pass"),
+                ("bare-class-decorator", "@feature\n    class Pending:\n        pass"),
             )
         ],
         pytest.param(

@@ -354,7 +354,7 @@ def _has_pytest_fail_placeholder(
                 | ast.Match
                 | ast.Assert
                 | ast.comprehension,
-            ):
+            ) or (isinstance(item, ast.Compare) and len(item.comparators) > 1):
                 return False
             if isinstance(item, ast.Call):
                 if ast.unparse(item.func) in fail_calls:
@@ -386,10 +386,12 @@ def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
         # Starred positional arguments run before keywords, even when written later.
         children = [statement.func, *statement.args, *(kw.value for kw in statement.keywords)]
     elif isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        decorators = getattr(statement, "decorator_list", [])
         children = [
-            *getattr(statement, "decorator_list", ()),
+            *decorators,
             *statement.args.defaults,
             *(value for value in statement.args.kw_defaults if value is not None),
+            *_decorator_applications(decorators),
         ]
     elif isinstance(statement, ast.ClassDef):
         children = [
@@ -397,7 +399,11 @@ def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
             *statement.bases,
             *(kw.value for kw in statement.keywords),
             *statement.body,
+            *_decorator_applications(statement.decorator_list),
         ]
+    elif isinstance(statement, ast.Compare) and len(statement.comparators) > 1:
+        # Later comparators run only when every earlier comparison holds.
+        children = [statement.left, statement.comparators[0]]
     elif isinstance(statement, ast.TypeAlias):
         children = ()
     elif isinstance(statement, ast.If | ast.While | ast.IfExp | ast.Assert):
@@ -423,6 +429,11 @@ def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
     for child in children:
         yield from _executed_python_nodes(child)
     yield statement
+
+
+def _decorator_applications(decorators: list[ast.expr]) -> list[ast.Call]:
+    """Model each decorator's call on the defined object, innermost first."""
+    return [ast.Call(func=decorator, args=[], keywords=[]) for decorator in reversed(decorators)]
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
