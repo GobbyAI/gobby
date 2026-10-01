@@ -112,6 +112,13 @@ class _RetypeOnlyPane(_ComposerPane):
         return _claude_frame(self.typed[-1])
 
 
+class _UnreadableAfterWritePane(_ComposerPane):
+    """Claude pane read empty before the write and unreadable once it is typed."""
+
+    async def snapshot(self, lines: int = 12, *, mode: SnapshotMode = "text") -> str | None:
+        return "output\n> " if self.typed else _claude_frame("")
+
+
 async def _send(
     pane: _ComposerPane,
     observe: Callable[[], bool | None],
@@ -194,14 +201,21 @@ async def test_failed_followup_enter_keeps_codex_compact_attempt_pending() -> No
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("cli_source", "composer_read"),
-    [("grok", None), ("claude", _CLAUDE_READ)],
+    ("cli_source", "composer_read", "pane_type", "clear_keys"),
+    [
+        ("grok", None, _ComposerPane, composer_clear_sequence("grok")),
+        # Both pre-write gates read an empty composer; only the post-Enter read fails.
+        ("claude", _CLAUDE_READ, _UnreadableAfterWritePane, ()),
+    ],
     ids=["no-reader", "unreadable"],
 )
 async def test_unverified_compact_submit_keeps_the_attempt_without_retyping(
-    cli_source: str, composer_read: ComposerReader | None
+    cli_source: str,
+    composer_read: ComposerReader | None,
+    pane_type: type[_ComposerPane],
+    clear_keys: tuple[str, ...],
 ) -> None:
-    pane = _ComposerPane()
+    pane = pane_type()
     mark = MagicMock(return_value=True)
     clear = MagicMock(return_value=True)
     schedule = MagicMock(return_value=True)
@@ -220,7 +234,7 @@ async def test_unverified_compact_submit_keeps_the_attempt_without_retyping(
 
     assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert pane.typed == ["/compact\n"]
-    assert pane.keys == [*composer_clear_sequence(cli_source), "enter"]
+    assert pane.keys == [*clear_keys, "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
     schedule.assert_called_once()
