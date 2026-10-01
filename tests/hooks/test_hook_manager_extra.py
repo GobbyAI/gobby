@@ -408,7 +408,11 @@ class TestDedupMemoryResults:
             envelope_id="env-memory-release",
             staged_payload=staged,
         )
-        released = receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        released = receipts.release_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
         store = _SetStore()
 
         assert released is not None
@@ -538,7 +542,11 @@ class TestDedupSkillResults:
             envelope_id="env-skill-release",
             staged_payload=staged,
         )
-        released = receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        released = receipts.release_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
         store = _SetStore()
         assert released is not None
         assert released.state == "released"

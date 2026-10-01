@@ -25,6 +25,7 @@ from gobby.agents.constants import (
     MCP_TIMEOUT_VALUE,
 )
 from gobby.agents.isolation_code_index import ensure_isolation_code_index
+from gobby.agents.provider_capabilities import codex_launches_headless
 from gobby.agents.sandbox_resolvers import get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn, build_cli_command
 from gobby.agents.spawn_cache_policy import (
@@ -455,8 +456,8 @@ async def prepare_codex_spawn(request: SpawnRequest) -> ProviderSpawnPlan | Spaw
     inject_persona = bool(agent_prompt and request.session_manager is not None)
     if inject_persona:
         prompt_text = f"{agent_prompt}\n\n{prompt_text}" if prompt_text else agent_prompt
-    headless_reviewer = (
-        request.agent_name == "task-close-reviewer" and launch.enforced and launch.backend == "srt"
+    headless_reviewer = codex_launches_headless(
+        request.agent_name, sandbox_enforced=launch.enforced, sandbox_backend=launch.backend
     )
     cmd, _cmd_env = build_cli_command(
         cli="codex",

@@ -24,10 +24,8 @@ from gobby.storage.schema_identity_pin import (
     validate_identity,
 )
 from gobby.utils import spawn
-from gobby.utils.native_bin import native_bin_name
+from gobby.utils.native_bin import IDENTITY_STAMP_NAME, SET_MEMBERS, native_bin_name
 
-SET_MEMBERS = ("gcode", "gdaemon", "ghook")
-IDENTITY_STAMP_NAME = ".gdaemon-schema-identity.json"
 REBUILD_REMEDY = "rebuild and install all three together"
 _PROBE_TIMEOUT_SECONDS = 10
 

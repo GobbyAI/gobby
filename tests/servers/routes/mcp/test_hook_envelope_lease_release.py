@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from gobby.hooks import adapter_execution
+from gobby.hooks import adapter_execution, phase_timing
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
@@ -150,7 +150,7 @@ def test_claim_release_reports_executor_queue_apart_from_work(
     with (
         TestClient(server.app) as client,
         patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
-        patch.object(hooks_route, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+        patch.object(phase_timing, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
         patch.object(hooks_route.logger, "warning") as warning,
     ):
         adapter = MagicMock()
@@ -188,18 +188,12 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
     """A duplicate's replay and marker lookups land in envelope_claim, not `response` (#23063)."""
     server = _server(session_storage)
     lookup_seconds = 0.05
-
-    class LookupClock:
-        # Real wall time plus the lookup's controlled cost; phase timing reads it.
-        offset = 0.0
-
-        def perf_counter(self) -> float:
-            return time.perf_counter() + self.offset
-
-    clock = LookupClock()
+    # Controlled hop clock: the lookup advances wall time by exactly lookup_seconds.
+    clock = SimpleNamespace(wall=0.0)
+    fake_time = SimpleNamespace(perf_counter=lambda: clock.wall)
 
     def slow_terminal_response(envelope_id: str) -> None:
-        clock.offset += lookup_seconds
+        clock.wall += lookup_seconds
 
     with (
         TestClient(server.app) as client,
@@ -213,8 +207,8 @@ def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
         )
         with (
             patch.object(hooks_route, "envelope_terminal_response", slow_terminal_response),
-            patch("gobby.hooks.phase_timing.time", clock),
-            patch.object(hooks_route, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
+            patch.object(phase_timing, "time", fake_time),
+            patch.object(phase_timing, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
             patch.object(hooks_route.logger, "warning") as warning,
         ):
             duplicate = client.post(
@@ -244,6 +238,7 @@ def test_fresh_envelope_claims_and_learns_its_owner_token_in_one_executor_hop(
     server = _server(session_storage)
     phases: list[str] = []
     renewals: list[tuple[str, str]] = []
+
     async def recording_hop(
         phase: str, function: Callable[..., object], /, *args: object, **kwargs: object
     ) -> object:

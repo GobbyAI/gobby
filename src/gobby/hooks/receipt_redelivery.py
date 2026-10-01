@@ -6,6 +6,10 @@ but never acknowledged, or released after an emission failure) is re-prepared
 onto the new envelope and its staged effects are merged into the new response,
 so the provider sees the lost delivery again on its next live hook. When the
 daemon fails to emit a receipted response, the receipt is released at once.
+
+Pending-message ids are never carried: those messages stay undelivered until a
+receipt that rendered them is acknowledged, so a later hook re-reads and
+re-renders a lost batch, and a receipt acknowledges only what its response showed.
 """
 
 from __future__ import annotations
@@ -13,6 +17,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Mapping
 from typing import Any
+from uuid import UUID
 
 from starlette.types import Receive, Scope, Send
 
@@ -24,6 +29,7 @@ from gobby.servers.responses import JSONResponse
 logger = logging.getLogger(__name__)
 
 DELIVERY_RECEIPT_FIELD = "_gobby_delivery_receipt"
+_PENDING_MESSAGE_EFFECT_KEYS = frozenset({"pending_message_ids", "pending_message_session_id"})
 
 
 def receipt_session_id(
@@ -32,19 +38,26 @@ def receipt_session_id(
     payload: dict[str, Any],
     platform_session_id: str,
     envelope_id: str,
-) -> str:
-    """Pick the canonical session identity a receipt is recorded against."""
-    if claim_lease is not None and claim_lease.session_id:
-        return claim_lease.session_id
-    if platform_session_id:
-        return platform_session_id
+) -> str | None:
+    """Pick a session UUID; an envelope id is never a session identity.
+
+    Provider labels can precede a valid session hint. Skip them rather than
+    passing them to the UUID storage column, and leave unidentified hooks
+    without a receipt instead of inventing an identity from ``envelope_id``.
+    """
+    candidates = [claim_lease.session_id if claim_lease is not None else None, platform_session_id]
     input_data = payload.get("input_data")
     if isinstance(input_data, dict):
-        for key in ("session_id", "conversationId", "conversation_id"):
-            value = input_data.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-    return envelope_id
+        candidates.extend(
+            input_data.get(key) for key in ("session_id", "conversationId", "conversation_id")
+        )
+    for candidate in candidates:
+        if isinstance(candidate, str) and candidate.strip():
+            try:
+                return str(UUID(candidate.strip()))
+            except ValueError:
+                continue
+    return None
 
 
 def _carry_forward_staged_effects(
@@ -72,13 +85,18 @@ def _carry_forward_staged_effects(
         return staged_payload, False
     if carried is None:
         return staged_payload, False
-    logger.info(
+    logger.debug(
         "Re-delivering hook receipt %s (generation %s) on envelope %s",
         carried.receipt_id,
         carried.delivery_generation,
         envelope_id,
     )
-    return merge_staged_payloads(carried.staged_payload, staged_payload or {}), True
+    carried_effects = {
+        key: value
+        for key, value in carried.staged_payload.items()
+        if key not in _PENDING_MESSAGE_EFFECT_KEYS
+    }
+    return merge_staged_payloads(carried_effects, staged_payload or {}), True
 
 
 def attach_delivery_receipt(
@@ -86,13 +104,13 @@ def attach_delivery_receipt(
     *,
     db: Any,
     envelope_id: str,
-    session_id: str,
+    session_id: str | None,
     staged_payload: dict[str, Any] | None = None,
     force_continue_execution_num: int | None = None,
     skip_empty_receipt: bool = False,
 ) -> dict[str, Any]:
     """Prepare (or carry forward) the receipt for this envelope and attach it."""
-    if db is None:
+    if db is None or session_id is None:
         return strip_unbudgeted_force_continue(response)
     try:
         from gobby.storage.hook_receipts import prepare_receipt
@@ -144,10 +162,13 @@ def release_receipt_for_response(db: Any, response: Mapping[str, Any]) -> bool:
     receipt_id = receipt.get("receipt_id")
     if not isinstance(receipt_id, str) or not receipt_id:
         return False
+    generation = receipt.get("delivery_generation")
+    if not isinstance(generation, int):
+        return False
     from gobby.storage.hook_receipts import release_receipt
 
     try:
-        released = release_receipt(db, receipt_id=receipt_id)
+        released = release_receipt(db, receipt_id=receipt_id, delivery_generation=generation)
     except Exception:
         logger.warning("Failed to release hook receipt %s", receipt_id, exc_info=True)
         return False

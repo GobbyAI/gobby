@@ -178,18 +178,34 @@ fn step(index: usize, delta: isize, last: usize) -> usize {
 }
 
 /// Keys while a context menu is open: arrows or `j`/`k` move the selection,
-/// enter or space activate it, escape closes it; nothing reaches the keymap.
+/// enter or space activate it, right (`l`) opens a submenu row's menu and
+/// left (`h`) goes back to the menu it cascades from, escape closes them
+/// all; nothing reaches the keymap.
 fn menu_key(chrome: &mut Chrome, key: &KeyEvent) -> ModalOutcome {
+    let opens_submenu = chrome.menu.as_ref().is_some_and(|menu| {
+        matches!(
+            menu.items.get(menu.selected).map(|item| &item.action),
+            Some(MenuAction::OpenSubmenu(_))
+        )
+    });
+    let activates = matches!(key.code, KeyCode::Enter | KeyCode::Char(' '))
+        || (opens_submenu && matches!(key.code, KeyCode::Right | KeyCode::Char('l')));
     let delta = match key.code {
         KeyCode::Esc => {
             close_menu(chrome);
             return ModalOutcome::Close;
         }
-        KeyCode::Enter | KeyCode::Char(' ') => {
+        _ if activates => {
             return match activate_menu(chrome) {
                 Some((kind, action)) => ModalOutcome::Menu { kind, action },
                 None => ModalOutcome::Close,
             };
+        }
+        KeyCode::Left | KeyCode::Char('h') => {
+            if let Some(parent) = chrome.menu.as_mut().and_then(|menu| menu.parent.take()) {
+                chrome.menu = Some(*parent);
+            }
+            return ModalOutcome::Consumed;
         }
         KeyCode::Up | KeyCode::Char('k') => -1,
         KeyCode::Down | KeyCode::Char('j') => 1,
@@ -382,6 +398,10 @@ fn step_settings_row<W: WorkspaceView>(ws: &W, chrome: &mut Chrome, delta: isize
             prefs.theme = choices[next].to_owned();
             let kind = prefs.theme_kind();
             chrome.set_theme(kind);
+        }
+        SettingsRow::Monochrome => {
+            prefs.monochrome = !prefs.monochrome;
+            chrome.set_theme(chrome.theme.kind);
         }
         SettingsRow::MouseCapture => {
             prefs.mouse_capture = !prefs.mouse_capture;

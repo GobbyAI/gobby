@@ -59,11 +59,17 @@ def test_callback_registry_scopes_tokens_and_consumes_valid_selection() -> None:
     )
     callback_data = markup["inline_keyboard"][0][0]["callback_data"]
 
-    wrong_chat = registry.resolve(callback_data, chat_id="999", thread_id="42")
-    resolved = registry.resolve(callback_data, chat_id="2222222", thread_id="42")
-    replayed = registry.resolve(callback_data, chat_id="2222222", thread_id="42")
+    undelivered = registry.resolve(callback_data, chat_id="2222222", thread_id="42", message_id="7")
+    registry.bind_keyboard(markup, "7")
+    wrong_chat = registry.resolve(callback_data, chat_id="999", thread_id="42", message_id="7")
+    # Telegram lets a client send any token from any message; only the carrier counts.
+    crossed = registry.resolve(callback_data, chat_id="2222222", thread_id="42", message_id="8")
+    resolved = registry.resolve(callback_data, chat_id="2222222", thread_id="42", message_id="7")
+    replayed = registry.resolve(callback_data, chat_id="2222222", thread_id="42", message_id="7")
 
+    assert undelivered.status == "invalid"
     assert wrong_chat.status == "invalid"
+    assert crossed.status == "invalid"
     assert resolved.status == "ok"
     assert resolved.session_id == "session-1"
     assert resolved.value == "approve"
@@ -83,7 +89,9 @@ def test_callback_registry_expires_and_bounds_keyboards() -> None:
     callback_data = markup["inline_keyboard"][0][0]["callback_data"]
     clock[0] = 106.0
 
-    assert registry.resolve(callback_data, chat_id="2222222", thread_id=None).status == "expired"
+    registry.bind_keyboard(markup, "7")
+    expired = registry.resolve(callback_data, chat_id="2222222", thread_id=None, message_id="7")
+    assert expired.status == "expired"
     with pytest.raises(ValueError, match="at most"):
         registry.register_keyboard(
             [[{"text": str(index), "value": str(index)} for index in range(9)]],
@@ -302,7 +310,7 @@ async def test_adapter_rejects_expired_callback_without_agent_content() -> None:
         await adapter.acknowledge_webhook_messages([callback])
     post_json.assert_awaited_once_with(
         "answerCallbackQuery",
-        {"callback_query_id": "callback-1", "text": "This action has expired."},
+        {"callback_query_id": "callback-1", "text": "This action has expired.", "show_alert": True},
     )
 
 

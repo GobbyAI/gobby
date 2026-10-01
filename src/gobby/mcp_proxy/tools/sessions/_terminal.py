@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import uuid4
 
-from gobby.agents.provider_capabilities import provider_capabilities
+from gobby.agents.provider_capabilities import agent_run_is_headless
 from gobby.hooks.grok_pending_context import clear_queued_context
 from gobby.mcp_proxy.tools.sessions._handoff import build_feedback_task_resolver
 from gobby.mcp_proxy.tools.sessions._terminal_compaction import (
@@ -559,12 +559,12 @@ def register_terminal_tools(
             }
 
         agent_run = agent_run_manager.get_by_session(resolved_session_id)
-        provider = getattr(agent_run, "provider", None)
-        if isinstance(provider, str) and provider_capabilities(provider).headless_spawn:
+        if agent_run_is_headless(agent_run):
+            provider = getattr(agent_run, "provider", None)
             return {
                 "compacted": False,
                 "reason": (
-                    f"{provider} agent runs are headless: the CLI reads nothing from its "
+                    f"This {provider} agent run is headless: the CLI reads nothing from its "
                     "terminal, so no compaction command can be delivered"
                 ),
                 "error_code": _HEADLESS_AGENT_RUN_ERROR_CODE,

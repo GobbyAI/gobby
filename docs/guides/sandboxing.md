@@ -123,6 +123,15 @@ An invalid existing installation is replaced atomically. Installation failure
 is fatal to `gobby install`, and selecting SRT remains fail-closed until the
 runtime is repaired.
 
+A Gobby build that changes the runner also changes its pinned checksum, and
+every sandboxed launch fails closed with `managed SRT runner checksum mismatch`
+until the installed runner matches. Run `gobby install srt` to activate it. That
+component swaps only the runner, the receipt and the content manifest, each by
+rename of a complete file, after confirming the package tree still matches its
+manifest. Otherwise it falls back to the full staged SRT install. It does not
+claim the daemon singleton and touches no database, managed service, hook or
+binary, so it is safe while the daemon runs.
+
 ## Configuration
 
 ```yaml

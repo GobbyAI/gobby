@@ -240,11 +240,21 @@ async def test_agy_live_child_strips_denied_ambient_credentials(
     del quoted
 
 
-def _process_cmdline(pid: int) -> list[str]:
+def _pane_runs_program(pid: int, program: list[str]) -> bool:
+    """Whether pid is ``program`` exec'd by this test's own Python interpreter.
+
+    A macOS framework Python re-execs its bin/ stub as Python.app/Contents/MacOS/Python
+    on the same PID, so argv[0] never settles on sys.executable. Compare the arguments
+    and the resolved executable against this process, which ran the same re-exec.
+    """
     try:
-        return [str(part) for part in psutil.Process(pid).cmdline()]
+        process = psutil.Process(pid)
+        args = [str(part) for part in process.cmdline()[1:]]
+        executable = str(process.exe())
+        own_executable = str(psutil.Process().exe())
     except psutil.Error:
-        return []
+        return False
+    return args == program[1:] and executable == own_executable
 
 
 @pytest.mark.parametrize("shell", ["/bin/bash", "/bin/zsh"])
@@ -280,7 +290,7 @@ async def test_argv_spawn_pane_pid_is_the_launched_program(
     info = await tmux_manager.get_session(f"argv-{transport}")
     assert info is not None and info.pane_pid is not None
     pane_pid = info.pane_pid
-    await _wait_for(lambda: _process_cmdline(pane_pid) == command)
+    await _wait_for(lambda: _pane_runs_program(pane_pid, command))
     assert await pid_matches_agent_identity(pane_pid, provider="claude", session_id=session_id)
 
 
@@ -305,7 +315,7 @@ async def test_shell_line_spawn_pane_pid_is_the_launched_program(
     info = await tmux_manager.get_session("shell-line")
     assert info is not None and info.pane_pid is not None
     pane_pid = info.pane_pid
-    await _wait_for(lambda: _process_cmdline(pane_pid) == program)
+    await _wait_for(lambda: _pane_runs_program(pane_pid, program))
 
 
 async def _spawn_gobby_terminal(

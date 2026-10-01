@@ -1,0 +1,2188 @@
+{
+  "schema_version": 1,
+  "name": "config_values",
+  "family": "config",
+  "credential": "operator",
+  "request": {
+    "method": "GET",
+    "path": "/api/config/values",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "revision": 3,
+      "desired": {
+        "clones_dir": "~/.gobby/clones",
+        "cors_origins": [
+          "http://localhost:*",
+          "https://localhost:*"
+        ],
+        "daemon_health_check_interval": 10.0,
+        "test_mode": true,
+        "worktrees_dir": "~/.gobby/worktrees",
+        "agent_sandbox": {
+          "allow_git_network": false,
+          "allow_network": false,
+          "allow_package_registries": false,
+          "allow_unix_sockets": [],
+          "allowed_domains": [],
+          "backend": "srt",
+          "denied_domains": [],
+          "enabled": true,
+          "extra_deny_read_paths": [],
+          "extra_deny_write_paths": [],
+          "extra_read_paths": [],
+          "extra_write_paths": [],
+          "mode": "permissive"
+        },
+        "ai": {
+          "model_metadata_aliases": [
+            {
+              "provider": "droid",
+              "provider_model_id": "claude-haiku-4-5-20251001",
+              "openrouter_model_id": "anthropic/claude-haiku-4.5"
+            },
+            {
+              "provider": "droid",
+              "provider_model_id": "deepseek-v4-pro",
+              "openrouter_model_id": "deepseek/deepseek-v4-pro"
+            },
+            {
+              "provider": "droid",
+              "provider_model_id": "grok-4.5",
+              "openrouter_model_id": "x-ai/grok-4.5"
+            },
+            {
+              "provider": "droid",
+              "provider_model_id": "nemotron-3-ultra",
+              "openrouter_model_id": "nvidia/nemotron-3-ultra-550b-a55b"
+            }
+          ],
+          "embeddings": {
+            "api_base": null,
+            "api_key": "@secret@",
+            "catalog_key": null,
+            "dim": 768,
+            "model": "nomic-embed-text",
+            "query_prefix": null
+          },
+          "generation": {
+            "candidate_timeout_seconds": 30.0,
+            "cli_candidate_timeout_seconds": 600.0,
+            "spawn_cold_max_concurrency": 3,
+            "timeout_seconds": 1200.0,
+            "tool_loop": {
+              "loop_timeout_seconds": 1200,
+              "max_bytes_per_tool_result": 16384,
+              "max_tool_calls": 30,
+              "max_turns": null,
+              "tool_timeout_seconds": 300.0
+            }
+          }
+        },
+        "bin_freshness": {
+          "enabled": true,
+          "github_timeout_seconds": 30.0,
+          "initial_delay_seconds": 30.0,
+          "interval_seconds": 3600.0,
+          "jitter_seconds": 300.0
+        },
+        "chat": {
+          "attachment_gc_interval_minutes": 60,
+          "attachment_max_file_bytes": 100000000,
+          "attachment_max_files_per_message": 20,
+          "attachment_max_total_bytes_per_message": 2000000000,
+          "attachment_unbound_retention_hours": 24,
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-sol",
+              "reasoning_effort": "xhigh"
+            },
+            {
+              "candidate": "claude/opus",
+              "reasoning_effort": "high"
+            }
+          ],
+          "default_mode": "plan",
+          "profile": "feature_high"
+        },
+        "chat_history": {
+          "max_message_chars": 2000,
+          "max_total_chars": 30000
+        },
+        "code_index": {
+          "content_retention_days": 1,
+          "embedding_enabled": true,
+          "enabled": false,
+          "graph_enabled": true,
+          "maintenance_index_timeout_seconds": 900,
+          "maintenance_interval_seconds": 3600,
+          "maintenance_log_file": "~/.gobby/logs/code-index-maintenance.log",
+          "missing_root_purge_observations": 3,
+          "nightly_repair_concurrency": 1,
+          "nightly_repair_cron": "0 2 * * *",
+          "nightly_repair_enabled": true,
+          "nightly_repair_timeout_seconds": 28800,
+          "nightly_repair_timezone": null,
+          "sync_worker_batch_size": 50,
+          "sync_worker_breaker_backoff_seconds": 30.0,
+          "sync_worker_breaker_failure_threshold": 5,
+          "sync_worker_breaker_max_backoff_seconds": 900.0,
+          "sync_worker_concurrency": 4,
+          "sync_worker_interval_seconds": 5.0,
+          "sync_worker_projection_timeout_seconds": 300.0,
+          "community_label": {
+            "batch_size": 10,
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "decisions_api_base": null,
+            "decisions_api_key": null,
+            "decisions_min_confidence": 0.5,
+            "decisions_model": "jev-latest",
+            "decisions_timeout_seconds": 30,
+            "enabled": true,
+            "max_concurrency": 2,
+            "max_tokens": 120,
+            "profile": "feature_low"
+          },
+          "symbol_summary": {
+            "batch_size": 20,
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "enabled": true,
+            "max_concurrency": 2,
+            "max_tokens": 100,
+            "profile": "feature_low"
+          }
+        },
+        "communications": {
+          "auto_create_sessions": true,
+          "enabled": false,
+          "webhook_base_url": "",
+          "channel_defaults": {
+            "burst": 5,
+            "poll_interval_seconds": 30,
+            "rate_limit_per_minute": 30,
+            "retention_days": 90,
+            "retry_count": 3
+          }
+        },
+        "context_handoff": {
+          "block_tokens": 256000,
+          "extended_block_tokens": 300000,
+          "extended_warn_tokens": 250000,
+          "extended_window_tokens": 500000,
+          "small_window_block_ratio": 0.75,
+          "small_window_tokens": 256000,
+          "small_window_warn_ratio": 0.5,
+          "warn_every_tool_calls": 5,
+          "warn_tokens": 200000
+        },
+        "cron": {
+          "backoff_delays": [
+            30,
+            60,
+            300,
+            900,
+            3600
+          ],
+          "check_interval_seconds": 60,
+          "cleanup_after_days": 30,
+          "enabled": true,
+          "max_concurrent_jobs": 5,
+          "running_timeout_seconds": 1440,
+          "stale_run_grace_seconds": 120
+        },
+        "database_concurrency": {
+          "coverage_max_concurrency": "auto",
+          "executor_max_workers": "auto",
+          "pool_max_size": "auto"
+        },
+        "databases": {
+          "published_host": null,
+          "falkordb": {
+            "graph_min_score": 0.5,
+            "graph_name": "gobby_kg",
+            "graph_search": true,
+            "host": "127.0.0.1",
+            "password": "@secret@",
+            "port": 16379,
+            "rrf_k": 60
+          },
+          "qdrant": {
+            "api_key": "@secret@",
+            "collection_prefix": "code_symbols_",
+            "port": 6333,
+            "url": null
+          }
+        },
+        "gobby-tasks": {
+          "enabled": true,
+          "show_result_on_create": false,
+          "expansion": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              {
+                "candidate": "claude/opus",
+                "reasoning_effort": "high"
+              }
+            ],
+            "default_strategy": "auto",
+            "enabled": false,
+            "profile": "feature_high",
+            "prompt_path": null,
+            "system_prompt_path": null,
+            "timeout": 300.0
+          },
+          "file_extraction": {
+            "file_extensions": [
+              ".py",
+              ".pyi",
+              ".pyx",
+              ".pxd",
+              ".js",
+              ".jsx",
+              ".ts",
+              ".tsx",
+              ".mjs",
+              ".cjs",
+              ".html",
+              ".htm",
+              ".css",
+              ".scss",
+              ".sass",
+              ".less",
+              ".vue",
+              ".svelte",
+              ".astro",
+              ".json",
+              ".yaml",
+              ".yml",
+              ".toml",
+              ".ini",
+              ".cfg",
+              ".conf",
+              ".env",
+              ".xml",
+              ".csv",
+              ".tsv",
+              ".md",
+              ".markdown",
+              ".rst",
+              ".txt",
+              ".adoc",
+              ".sh",
+              ".bash",
+              ".zsh",
+              ".fish",
+              ".ps1",
+              ".bat",
+              ".cmd",
+              ".go",
+              ".mod",
+              ".sum",
+              ".rs",
+              ".toml",
+              ".java",
+              ".kt",
+              ".kts",
+              ".scala",
+              ".groovy",
+              ".gradle",
+              ".c",
+              ".h",
+              ".cpp",
+              ".hpp",
+              ".cc",
+              ".hh",
+              ".cxx",
+              ".hxx",
+              ".cs",
+              ".csproj",
+              ".sln",
+              ".fs",
+              ".fsx",
+              ".swift",
+              ".m",
+              ".mm",
+              ".rb",
+              ".rake",
+              ".gemspec",
+              ".php",
+              ".phtml",
+              ".pl",
+              ".pm",
+              ".lua",
+              ".r",
+              ".R",
+              ".rmd",
+              ".Rmd",
+              ".jl",
+              ".ex",
+              ".exs",
+              ".erl",
+              ".hrl",
+              ".hs",
+              ".lhs",
+              ".ml",
+              ".mli",
+              ".sql",
+              ".psql",
+              ".mysql",
+              ".graphql",
+              ".gql",
+              ".proto",
+              ".thrift",
+              ".dockerfile",
+              ".tf",
+              ".tfvars",
+              ".hcl",
+              ".k8s",
+              ".nix",
+              ".prisma",
+              ".lock",
+              ".log",
+              ".diff",
+              ".patch"
+            ],
+            "known_files": [
+              "Makefile",
+              "makefile",
+              "GNUmakefile",
+              "Dockerfile",
+              "dockerfile",
+              "Containerfile",
+              "Jenkinsfile",
+              "Vagrantfile",
+              "Rakefile",
+              "rakefile",
+              "Gemfile",
+              "Podfile",
+              "Brewfile",
+              "Procfile",
+              "Taskfile",
+              "Justfile",
+              "justfile",
+              "Earthfile",
+              "Tiltfile",
+              "BUILD",
+              "WORKSPACE",
+              "CMakeLists",
+              "meson.build",
+              "SConstruct",
+              "SConscript",
+              "CHANGELOG",
+              "CHANGES",
+              "HISTORY",
+              "README",
+              "INSTALL",
+              "LICENSE",
+              "COPYING",
+              "AUTHORS",
+              "CONTRIBUTORS",
+              "MAINTAINERS",
+              "CODEOWNERS",
+              ".gitignore",
+              ".gitattributes",
+              ".gitmodules",
+              ".dockerignore",
+              ".editorconfig",
+              ".eslintrc",
+              ".prettierrc",
+              ".stylelintrc",
+              ".babelrc",
+              ".nvmrc",
+              ".node-version",
+              ".python-version",
+              ".ruby-version",
+              "requirements.txt",
+              "constraints.txt",
+              "package.json",
+              "package-lock.json",
+              "yarn.lock",
+              "pnpm-lock.yaml",
+              "Cargo.toml",
+              "Cargo.lock",
+              "go.mod",
+              "go.sum",
+              "composer.json",
+              "composer.lock",
+              "pyproject.toml",
+              "setup.py",
+              "setup.cfg",
+              "poetry.lock",
+              "Pipfile",
+              "Pipfile.lock",
+              "tsconfig.json",
+              "jsconfig.json",
+              "webpack.config.js",
+              "vite.config.js",
+              "rollup.config.js",
+              "jest.config.js",
+              "vitest.config.js",
+              "playwright.config.js",
+              ".env.local",
+              ".env.development",
+              ".env.production",
+              ".env.test"
+            ],
+            "path_prefixes": [
+              "src/",
+              "lib/",
+              "pkg/",
+              "packages/",
+              "test/",
+              "tests/",
+              "spec/",
+              "specs/",
+              "__tests__/",
+              "app/",
+              "apps/",
+              "internal/",
+              "cmd/",
+              "bin/",
+              "scripts/",
+              "tools/",
+              "utils/",
+              "config/",
+              "configs/",
+              "conf/",
+              "settings/",
+              "docs/",
+              "doc/",
+              "documentation/",
+              "assets/",
+              "static/",
+              "public/",
+              "resources/",
+              "components/",
+              "pages/",
+              "views/",
+              "templates/",
+              "models/",
+              "controllers/",
+              "services/",
+              "handlers/",
+              "api/",
+              "routes/",
+              "middleware/",
+              "fixtures/",
+              "mocks/",
+              "stubs/",
+              "fakes/",
+              "migrations/",
+              "seeds/",
+              "schemas/",
+              ".github/",
+              ".circleci/",
+              ".gitlab/",
+              ".gobby/",
+              ".vscode/",
+              ".idea/"
+            ]
+          },
+          "validation": {
+            "auto_generate_on_create": true,
+            "auto_generate_on_expand": true,
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-terra",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/sonnet",
+                "reasoning_effort": null
+              }
+            ],
+            "close_review_max_concurrency_per_project": 3,
+            "close_review_min_severity": "low",
+            "close_review_prompt_max_chars": 256000,
+            "close_review_total_timeout_seconds": 120.0,
+            "close_review_validator_timeout_seconds": 1200.0,
+            "close_validation_escalation_threshold": 5,
+            "criteria_prompt_path": null,
+            "criteria_system_prompt": "You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
+            "enabled": false,
+            "escalation_enabled": true,
+            "escalation_notify": "none",
+            "escalation_webhook_url": null,
+            "max_iterations": 10,
+            "profile": "feature_mid",
+            "require_clean_attributed_paths_on_close": true
+          }
+        },
+        "hooks": {
+          "adapter_timeout": 26.0,
+          "additional_context_limit": 9950,
+          "provider_timeout": 120
+        },
+        "import_mcp_server": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "github_fetch_prompt_path": null,
+          "profile": "feature_low",
+          "prompt_path": null,
+          "search_fetch_prompt_path": null
+        },
+        "indexing": {
+          "extra_excludes": [],
+          "respect_gitignore": true
+        },
+        "knowledge_graph_queue": {
+          "batch_size": 20,
+          "interval_minutes": 30,
+          "max_deterministic_attempts": 3
+        },
+        "logging": {
+          "allow_audit_max_size_mb": 256,
+          "allow_audit_queue_capacity": 8192,
+          "allow_audit_retention_days": 14,
+          "allow_audit_shutdown_timeout_seconds": 2.0,
+          "backup_count": 5,
+          "dir": "~/.gobby/logs",
+          "format": "text",
+          "growth_warn_mb_per_interval": 100,
+          "level": "info",
+          "llm_backup_count": 5,
+          "llm_max_size_mb": 50,
+          "max_size_mb": 10,
+          "runtime_max_size_mb": 50
+        },
+        "mcp_client_proxy": {
+          "connect_timeout": 30.0,
+          "enabled": true,
+          "min_similarity": 0.3,
+          "proxy_timeout": 30,
+          "refresh_on_server_add": true,
+          "refresh_timeout": 300.0,
+          "search_mode": "llm",
+          "tool_timeout": 30,
+          "top_k": 10
+        },
+        "memory": {
+          "access_debounce_seconds": 60,
+          "auto_crossref": false,
+          "backend": "local",
+          "cluster_expansion_per_entity": 3,
+          "cluster_min_cluster_size": 5,
+          "cluster_min_samples": 2,
+          "cluster_recall_expansion": false,
+          "code_link_min_score": 0.82,
+          "crossref_max_links": 5,
+          "crossref_threshold": 0.3,
+          "edge_half_life_days": 30.0,
+          "enabled": true,
+          "graph_edge_decay": false,
+          "graph_edge_weighting": false,
+          "graph_related_expansion_timeout_seconds": 10.0,
+          "index_reshow_after_injections": 5,
+          "materialize_cooccurrence": false,
+          "temporal_decay_half_life_days": 30.0,
+          "dream": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-terra",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/sonnet",
+                "reasoning_effort": null
+              }
+            ],
+            "dry_run_max_candidates": 1000,
+            "enabled": false,
+            "evidence_channel_timeout_seconds": 30.0,
+            "evidence_phase_timeout_seconds": 210.0,
+            "evidence_retry_attempts": 3,
+            "include_global_memories": true,
+            "max_runtime_seconds": 14400,
+            "max_tokens": 8192,
+            "min_action_confidence": 0.72,
+            "min_delete_confidence": 0.85,
+            "min_rescope_confidence": 0.85,
+            "planner_batch_max_chars": 100000,
+            "planner_batch_size": 25,
+            "profile": "feature_mid",
+            "prompt_path": "memory/dream",
+            "purge_delete_after_days": 30,
+            "purge_review_after_days": 90,
+            "reconcile_after_apply": true,
+            "reconcile_after_revert": true,
+            "redream_after_hours": 20,
+            "related_evidence_enabled": true,
+            "related_evidence_fetch_limit": 10,
+            "related_evidence_top_k": 3,
+            "run_retention_days": 30,
+            "schedule_cron": "0 2 * * *",
+            "work_unit_timeout_seconds": 1500.0,
+            "write_supersession_mark_due_enabled": true
+          },
+          "kg": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "max_rebuild_concurrency": 2,
+            "profile": "feature_low"
+          }
+        },
+        "memory_backup": {
+          "backup_path": ".gobby/memories.jsonl",
+          "enabled": true
+        },
+        "merge_resolution": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-terra",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/sonnet",
+              "reasoning_effort": null
+            }
+          ],
+          "profile": "feature_mid"
+        },
+        "message_tracking": {
+          "broadcast_enabled": true,
+          "debounce_delay": 1.0,
+          "enabled": true,
+          "max_message_length": 10000,
+          "poll_interval": 5.0
+        },
+        "metrics": {
+          "list_limit": 10000
+        },
+        "pipelines": {
+          "nesting_depth_limit": 10,
+          "prompt_step": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "profile": "feature_low"
+          }
+        },
+        "project_verification_synthesis": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-terra",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/sonnet",
+              "reasoning_effort": null
+            }
+          ],
+          "confidence_threshold": 0.75,
+          "profile": "feature_mid"
+        },
+        "recommend_tools": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-terra",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/sonnet",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "hybrid_rerank_prompt_path": null,
+          "llm_prompt_path": null,
+          "profile": "feature_mid",
+          "prompt_path": null
+        },
+        "rules": {
+          "aggregate_blocks": true,
+          "enforcement_enabled": true
+        },
+        "search": {
+          "embedding_weight": 0.6,
+          "keyword_weight": 0.4,
+          "mode": "auto",
+          "notify_on_fallback": true
+        },
+        "session_feedback": {
+          "survey": "gobby",
+          "review": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-terra",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/sonnet",
+                "reasoning_effort": null
+              }
+            ],
+            "enabled": true,
+            "max_rows_per_run": 200,
+            "max_tasks_per_run": 10,
+            "max_tokens": 8192,
+            "profile": "feature_mid",
+            "prompt_path": "feedback/review",
+            "schedule_cron": "0 3 * * *"
+          }
+        },
+        "session_lifecycle": {
+          "active_session_pause_minutes": 30,
+          "expire_check_interval_minutes": 60,
+          "stale_session_timeout_hours": 24,
+          "transcript_archive_dir": "~/.gobby/session_transcripts",
+          "transcript_processing_batch_size": 10,
+          "transcript_processing_interval_minutes": 5,
+          "workflow_audit_retention_days": 7
+        },
+        "session_summary": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "profile": "feature_low",
+          "prompt": "Generate a concise session summary for handoff to another agent or future session.\n\n## Session Context\nTranscript Summary:\n{transcript_summary}\n\nGit Status:\n{git_status}\n\nFile Changes:\n{file_changes}\n\n{session_tasks}\n\n## Instructions\nAlways include these two mandatory sections using the exact headings:\n\n## Current State\nState what is working, broken, in progress, or complete. When the session's work is\ncomplete, say so explicitly.\n\n## Next Steps\nList clear continuation actions. When implementation is complete, state the remaining\nhandoff action, such as committing, linking the commit, validating, or closing the task.\n\nOptional sections may describe what was accomplished, files changed, technical decisions,\nor problems encountered. Omit optional sections that have no relevant information.\n\nBe concise. Focus on what the next agent needs to know to continue effectively.",
+          "summary_file_path": ".gobby/session_summaries"
+        },
+        "skill_description": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "profile": "feature_low"
+        },
+        "skills": {
+          "bundled_max_content_size": 15000,
+          "core_skills_path": null,
+          "inject_core_skills": true,
+          "injection_format": "summary",
+          "soft_delete_retention_days": 30
+        },
+        "telemetry": {
+          "metrics_enabled": true,
+          "service_name": "gobby-daemon",
+          "trace_retention_days": 7,
+          "trace_sample_rate": 1.0,
+          "traces_enabled": true,
+          "traces_to_console": false,
+          "exporter": {
+            "otlp_endpoint": null,
+            "otlp_protocol": "grpc",
+            "prometheus_enabled": true
+          },
+          "llm_tracing": {
+            "capture_content": false,
+            "enabled": false,
+            "providers": [
+              "openai"
+            ]
+          }
+        },
+        "terminal_host": {
+          "binary_path": null,
+          "commit_deadline_ms": 30000,
+          "enabled": true,
+          "health_interval_seconds": 5.0,
+          "max_attached_terminals": 64,
+          "max_attachments_per_terminal": 8,
+          "max_attachments_total": 128,
+          "native_scrollback_max_bytes": 8388608,
+          "native_scrollback_max_lines": 10000,
+          "restart_backoff_ceiling_seconds": 30.0,
+          "restart_max_attempts": 5,
+          "shutdown_grace_seconds": 10.0,
+          "socket_dir": "@mask@",
+          "tmux_attach_history_max_bytes": 262144,
+          "tmux_poll_backoff_ceiling_ms": 5000,
+          "tmux_poll_interval_ms": 150
+        },
+        "terminals": {
+          "default_backend": "native",
+          "hook_write_shutdown_timeout_seconds": 5.0,
+          "hook_write_timeout_seconds": 5.0,
+          "spawn_in_doubt_seconds": 150.0,
+          "stop_host_on_shutdown": false
+        },
+        "tmux": {
+          "agent_memory_limit_gb": 16.0,
+          "agent_memory_total_limit_gb": 0.0,
+          "attach_history_lines": 500,
+          "auto_enter_agent_interval_seconds": 30,
+          "auto_enter_agent_terminals": true,
+          "auto_enter_approval_prompts": true,
+          "command": "tmux",
+          "config_file": null,
+          "enabled": true,
+          "history_limit": 10000,
+          "idle_check_enabled": true,
+          "idle_reprompt_delay_seconds": 300,
+          "idle_timeout_seconds": 60,
+          "init_timeout_seconds": 120,
+          "max_reprompt_attempts": 3,
+          "memory_watchdog_action": "kill",
+          "memory_watchdog_consecutive_breaches": 2,
+          "memory_watchdog_enabled": true,
+          "memory_watchdog_grace_seconds": 120.0,
+          "reasoning_watchdog_interrupt_enabled": true,
+          "reasoning_watchdog_settle_seconds": 0.2,
+          "registration_timeout_seconds": 30.0,
+          "session_prefix": "gobby",
+          "socket_name": "gobby",
+          "socket_path": "@mask@",
+          "system_memory_critical_available_percent": 4.0,
+          "system_memory_warn_available_percent": 8.0,
+          "wsl_distribution": null
+        },
+        "tool_approval": {
+          "default_policy": "auto",
+          "enabled": false,
+          "policies": []
+        },
+        "tool_approvals": {
+          "global_rules": []
+        },
+        "tool_result_offload": {
+          "chunk_chars": 2000,
+          "enabled": true,
+          "exempt_tools": [],
+          "intent_match_limit": 5,
+          "max_envelope_chars": 8000,
+          "max_stored_chars": 2000000,
+          "preview_chars": 2000,
+          "retention_days": 7,
+          "threshold_chars": 15000
+        },
+        "tool_summarizer": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "profile": "feature_low",
+          "prompt_path": null,
+          "server_description_prompt_path": null,
+          "server_description_system_prompt_path": null,
+          "system_prompt_path": null
+        },
+        "ui": {
+          "enabled": false,
+          "host": "localhost",
+          "knowledge_graph_limit": 500,
+          "knowledge_graph_relationship_limit": 2000,
+          "mode": "auto",
+          "web_dir": null
+        },
+        "ui_settings": {
+          "defaultChatMode": null,
+          "fontSize": null,
+          "model": null,
+          "planPendingVariant": null,
+          "readingDirection": null,
+          "selectedProjectId": null,
+          "selectedProvider": null,
+          "sttEnabled": null,
+          "theme": null,
+          "ttsEnabled": null,
+          "voiceInputMode": null
+        },
+        "validation_detection": {
+          "builtin_matchers_enabled": true,
+          "custom_matchers": [],
+          "disabled_builtin_matcher_ids": [],
+          "enabled": true,
+          "recognized_wrappers": [
+            "uv run",
+            "rtk",
+            "poetry run",
+            "pipenv run",
+            "pdm run",
+            "hatch run",
+            "rye run",
+            "bundle exec",
+            "npx",
+            "pnpm exec",
+            "yarn exec",
+            "bunx"
+          ],
+          "wrapper_rules": []
+        },
+        "verification_defaults": {
+          "build": null,
+          "code_review": null,
+          "doc_tests": null,
+          "format": null,
+          "integration": null,
+          "lint": null,
+          "security": null,
+          "type_check": null,
+          "unit_tests": null
+        },
+        "voice": {
+          "enabled": false,
+          "openai_compatible_audio": [],
+          "stt_enabled": true,
+          "transcription_timeout_seconds": 120.0,
+          "tts_chatterbox_max_generation_tokens": 1000,
+          "tts_clause_max_chars": 180,
+          "tts_crane_url": "http://127.0.0.1:8080",
+          "tts_device": "auto",
+          "tts_enabled": true,
+          "tts_mps_memory_limit_gb": 12.0,
+          "tts_provider": "chatterbox",
+          "tts_reference_audio": "~/.gobby/voice/reference.wav",
+          "tts_reference_text": null,
+          "tts_temperature": 0.55,
+          "whisper_compute_type": "int8",
+          "whisper_device": "auto",
+          "whisper_model_size": "base",
+          "whisper_prompt": "Gobby",
+          "whisper_vocabulary": [
+            "Gobby",
+            "MCP",
+            "worktree",
+            "Kubernetes",
+            "PostgreSQL",
+            "FastAPI",
+            "Pydantic",
+            "TypeScript",
+            "GraphQL",
+            "WebSocket",
+            "Redis",
+            "MongoDB",
+            "OAuth",
+            "JWT",
+            "REST",
+            "gRPC",
+            "YAML",
+            "JSON",
+            "Docker",
+            "Terraform",
+            "GitHub",
+            "GitLab",
+            "Claude",
+            "Anthropic",
+            "Gemini",
+            "Codex",
+            "npm",
+            "pip",
+            "pytest",
+            "ESLint",
+            "webpack",
+            "Vite"
+          ]
+        },
+        "web_chat_sandbox": {
+          "allow_git_network": true,
+          "allow_network": false,
+          "allow_package_registries": true,
+          "allow_unix_sockets": [],
+          "allowed_domains": [],
+          "backend": "srt",
+          "denied_domains": [],
+          "enabled": true,
+          "extra_deny_read_paths": [],
+          "extra_deny_write_paths": [],
+          "extra_read_paths": [],
+          "extra_write_paths": [],
+          "mode": "permissive"
+        },
+        "websocket": {
+          "enabled": true,
+          "ping_interval": 30,
+          "ping_timeout": 10
+        },
+        "workflow": {
+          "debug_echo_context": false,
+          "enabled": true,
+          "timeout": 24.0
+        },
+        "hook_extensions": {
+          "webhooks": {
+            "async_dispatch": true,
+            "default_timeout": 10.0,
+            "enabled": true,
+            "endpoints": []
+          },
+          "websocket": {
+            "broadcast_events": [
+              "session-start",
+              "session-end",
+              "interrupt",
+              "pre-tool-use",
+              "post-tool-use"
+            ],
+            "enabled": true,
+            "include_payload": true
+          }
+        },
+        "system_loops": {
+          "automation": {
+            "enabled": true,
+            "interval_seconds": 60
+          }
+        }
+      },
+      "active": {
+        "clones_dir": "~/.gobby/clones",
+        "cors_origins": [
+          "http://localhost:*",
+          "https://localhost:*"
+        ],
+        "daemon_health_check_interval": 10.0,
+        "test_mode": true,
+        "worktrees_dir": "~/.gobby/worktrees",
+        "agent_sandbox": {
+          "allow_git_network": false,
+          "allow_network": false,
+          "allow_package_registries": false,
+          "allow_unix_sockets": [],
+          "allowed_domains": [],
+          "backend": "srt",
+          "denied_domains": [],
+          "enabled": true,
+          "extra_deny_read_paths": [],
+          "extra_deny_write_paths": [],
+          "extra_read_paths": [],
+          "extra_write_paths": [],
+          "mode": "permissive"
+        },
+        "ai": {
+          "model_metadata_aliases": [
+            {
+              "provider": "droid",
+              "provider_model_id": "claude-haiku-4-5-20251001",
+              "openrouter_model_id": "anthropic/claude-haiku-4.5"
+            },
+            {
+              "provider": "droid",
+              "provider_model_id": "deepseek-v4-pro",
+              "openrouter_model_id": "deepseek/deepseek-v4-pro"
+            },
+            {
+              "provider": "droid",
+              "provider_model_id": "grok-4.5",
+              "openrouter_model_id": "x-ai/grok-4.5"
+            },
+            {
+              "provider": "droid",
+              "provider_model_id": "nemotron-3-ultra",
+              "openrouter_model_id": "nvidia/nemotron-3-ultra-550b-a55b"
+            }
+          ],
+          "embeddings": {
+            "api_base": null,
+            "api_key": "@secret@",
+            "catalog_key": null,
+            "dim": 768,
+            "model": "nomic-embed-text",
+            "query_prefix": null
+          },
+          "generation": {
+            "candidate_timeout_seconds": 30.0,
+            "cli_candidate_timeout_seconds": 600.0,
+            "spawn_cold_max_concurrency": 3,
+            "timeout_seconds": 1200.0,
+            "tool_loop": {
+              "loop_timeout_seconds": 1200,
+              "max_bytes_per_tool_result": 16384,
+              "max_tool_calls": 30,
+              "max_turns": null,
+              "tool_timeout_seconds": 300.0
+            }
+          }
+        },
+        "bin_freshness": {
+          "enabled": true,
+          "github_timeout_seconds": 30.0,
+          "initial_delay_seconds": 30.0,
+          "interval_seconds": 3600.0,
+          "jitter_seconds": 300.0
+        },
+        "chat": {
+          "attachment_gc_interval_minutes": 60,
+          "attachment_max_file_bytes": 100000000,
+          "attachment_max_files_per_message": 20,
+          "attachment_max_total_bytes_per_message": 2000000000,
+          "attachment_unbound_retention_hours": 24,
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-sol",
+              "reasoning_effort": "xhigh"
+            },
+            {
+              "candidate": "claude/opus",
+              "reasoning_effort": "high"
+            }
+          ],
+          "default_mode": "plan",
+          "profile": "feature_high"
+        },
+        "chat_history": {
+          "max_message_chars": 2000,
+          "max_total_chars": 30000
+        },
+        "code_index": {
+          "content_retention_days": 1,
+          "embedding_enabled": true,
+          "enabled": false,
+          "graph_enabled": true,
+          "maintenance_index_timeout_seconds": 900,
+          "maintenance_interval_seconds": 3600,
+          "maintenance_log_file": "~/.gobby/logs/code-index-maintenance.log",
+          "missing_root_purge_observations": 3,
+          "nightly_repair_concurrency": 1,
+          "nightly_repair_cron": "0 2 * * *",
+          "nightly_repair_enabled": true,
+          "nightly_repair_timeout_seconds": 28800,
+          "nightly_repair_timezone": null,
+          "sync_worker_batch_size": 50,
+          "sync_worker_breaker_backoff_seconds": 30.0,
+          "sync_worker_breaker_failure_threshold": 5,
+          "sync_worker_breaker_max_backoff_seconds": 900.0,
+          "sync_worker_concurrency": 4,
+          "sync_worker_interval_seconds": 5.0,
+          "sync_worker_projection_timeout_seconds": 300.0,
+          "community_label": {
+            "batch_size": 10,
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "decisions_api_base": null,
+            "decisions_api_key": null,
+            "decisions_min_confidence": 0.5,
+            "decisions_model": "jev-latest",
+            "decisions_timeout_seconds": 30,
+            "enabled": true,
+            "max_concurrency": 2,
+            "max_tokens": 120,
+            "profile": "feature_low"
+          },
+          "symbol_summary": {
+            "batch_size": 20,
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "enabled": true,
+            "max_concurrency": 2,
+            "max_tokens": 100,
+            "profile": "feature_low"
+          }
+        },
+        "communications": {
+          "auto_create_sessions": true,
+          "enabled": false,
+          "webhook_base_url": "",
+          "channel_defaults": {
+            "burst": 5,
+            "poll_interval_seconds": 30,
+            "rate_limit_per_minute": 30,
+            "retention_days": 90,
+            "retry_count": 3
+          }
+        },
+        "context_handoff": {
+          "block_tokens": 256000,
+          "extended_block_tokens": 300000,
+          "extended_warn_tokens": 250000,
+          "extended_window_tokens": 500000,
+          "small_window_block_ratio": 0.75,
+          "small_window_tokens": 256000,
+          "small_window_warn_ratio": 0.5,
+          "warn_every_tool_calls": 5,
+          "warn_tokens": 200000
+        },
+        "cron": {
+          "backoff_delays": [
+            30,
+            60,
+            300,
+            900,
+            3600
+          ],
+          "check_interval_seconds": 60,
+          "cleanup_after_days": 30,
+          "enabled": true,
+          "max_concurrent_jobs": 5,
+          "running_timeout_seconds": 1440,
+          "stale_run_grace_seconds": 120
+        },
+        "database_concurrency": {
+          "coverage_max_concurrency": "auto",
+          "executor_max_workers": "auto",
+          "pool_max_size": "auto"
+        },
+        "databases": {
+          "published_host": null,
+          "falkordb": {
+            "graph_min_score": 0.5,
+            "graph_name": "gobby_kg",
+            "graph_search": true,
+            "host": "127.0.0.1",
+            "password": "@secret@",
+            "port": 16379,
+            "rrf_k": 60
+          },
+          "qdrant": {
+            "api_key": "@secret@",
+            "collection_prefix": "code_symbols_",
+            "port": 6333,
+            "url": null
+          }
+        },
+        "gobby-tasks": {
+          "enabled": true,
+          "show_result_on_create": false,
+          "expansion": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-sol",
+                "reasoning_effort": "xhigh"
+              },
+              {
+                "candidate": "claude/opus",
+                "reasoning_effort": "high"
+              }
+            ],
+            "default_strategy": "auto",
+            "enabled": false,
+            "profile": "feature_high",
+            "prompt_path": null,
+            "system_prompt_path": null,
+            "timeout": 300.0
+          },
+          "file_extraction": {
+            "file_extensions": [
+              ".py",
+              ".pyi",
+              ".pyx",
+              ".pxd",
+              ".js",
+              ".jsx",
+              ".ts",
+              ".tsx",
+              ".mjs",
+              ".cjs",
+              ".html",
+              ".htm",
+              ".css",
+              ".scss",
+              ".sass",
+              ".less",
+              ".vue",
+              ".svelte",
+              ".astro",
+              ".json",
+              ".yaml",
+              ".yml",
+              ".toml",
+              ".ini",
+              ".cfg",
+              ".conf",
+              ".env",
+              ".xml",
+              ".csv",
+              ".tsv",
+              ".md",
+              ".markdown",
+              ".rst",
+              ".txt",
+              ".adoc",
+              ".sh",
+              ".bash",
+              ".zsh",
+              ".fish",
+              ".ps1",
+              ".bat",
+              ".cmd",
+              ".go",
+              ".mod",
+              ".sum",
+              ".rs",
+              ".toml",
+              ".java",
+              ".kt",
+              ".kts",
+              ".scala",
+              ".groovy",
+              ".gradle",
+              ".c",
+              ".h",
+              ".cpp",
+              ".hpp",
+              ".cc",
+              ".hh",
+              ".cxx",
+              ".hxx",
+              ".cs",
+              ".csproj",
+              ".sln",
+              ".fs",
+              ".fsx",
+              ".swift",
+              ".m",
+              ".mm",
+              ".rb",
+              ".rake",
+              ".gemspec",
+              ".php",
+              ".phtml",
+              ".pl",
+              ".pm",
+              ".lua",
+              ".r",
+              ".R",
+              ".rmd",
+              ".Rmd",
+              ".jl",
+              ".ex",
+              ".exs",
+              ".erl",
+              ".hrl",
+              ".hs",
+              ".lhs",
+              ".ml",
+              ".mli",
+              ".sql",
+              ".psql",
+              ".mysql",
+              ".graphql",
+              ".gql",
+              ".proto",
+              ".thrift",
+              ".dockerfile",
+              ".tf",
+              ".tfvars",
+              ".hcl",
+              ".k8s",
+              ".nix",
+              ".prisma",
+              ".lock",
+              ".log",
+              ".diff",
+              ".patch"
+            ],
+            "known_files": [
+              "Makefile",
+              "makefile",
+              "GNUmakefile",
+              "Dockerfile",
+              "dockerfile",
+              "Containerfile",
+              "Jenkinsfile",
+              "Vagrantfile",
+              "Rakefile",
+              "rakefile",
+              "Gemfile",
+              "Podfile",
+              "Brewfile",
+              "Procfile",
+              "Taskfile",
+              "Justfile",
+              "justfile",
+              "Earthfile",
+              "Tiltfile",
+              "BUILD",
+              "WORKSPACE",
+              "CMakeLists",
+              "meson.build",
+              "SConstruct",
+              "SConscript",
+              "CHANGELOG",
+              "CHANGES",
+              "HISTORY",
+              "README",
+              "INSTALL",
+              "LICENSE",
+              "COPYING",
+              "AUTHORS",
+              "CONTRIBUTORS",
+              "MAINTAINERS",
+              "CODEOWNERS",
+              ".gitignore",
+              ".gitattributes",
+              ".gitmodules",
+              ".dockerignore",
+              ".editorconfig",
+              ".eslintrc",
+              ".prettierrc",
+              ".stylelintrc",
+              ".babelrc",
+              ".nvmrc",
+              ".node-version",
+              ".python-version",
+              ".ruby-version",
+              "requirements.txt",
+              "constraints.txt",
+              "package.json",
+              "package-lock.json",
+              "yarn.lock",
+              "pnpm-lock.yaml",
+              "Cargo.toml",
+              "Cargo.lock",
+              "go.mod",
+              "go.sum",
+              "composer.json",
+              "composer.lock",
+              "pyproject.toml",
+              "setup.py",
+              "setup.cfg",
+              "poetry.lock",
+              "Pipfile",
+              "Pipfile.lock",
+              "tsconfig.json",
+              "jsconfig.json",
+              "webpack.config.js",
+              "vite.config.js",
+              "rollup.config.js",
+              "jest.config.js",
+              "vitest.config.js",
+              "playwright.config.js",
+              ".env.local",
+              ".env.development",
+              ".env.production",
+              ".env.test"
+            ],
+            "path_prefixes": [
+              "src/",
+              "lib/",
+              "pkg/",
+              "packages/",
+              "test/",
+              "tests/",
+              "spec/",
+              "specs/",
+              "__tests__/",
+              "app/",
+              "apps/",
+              "internal/",
+              "cmd/",
+              "bin/",
+              "scripts/",
+              "tools/",
+              "utils/",
+              "config/",
+              "configs/",
+              "conf/",
+              "settings/",
+              "docs/",
+              "doc/",
+              "documentation/",
+              "assets/",
+              "static/",
+              "public/",
+              "resources/",
+              "components/",
+              "pages/",
+              "views/",
+              "templates/",
+              "models/",
+              "controllers/",
+              "services/",
+              "handlers/",
+              "api/",
+              "routes/",
+              "middleware/",
+              "fixtures/",
+              "mocks/",
+              "stubs/",
+              "fakes/",
+              "migrations/",
+              "seeds/",
+              "schemas/",
+              ".github/",
+              ".circleci/",
+              ".gitlab/",
+              ".gobby/",
+              ".vscode/",
+              ".idea/"
+            ]
+          },
+          "validation": {
+            "auto_generate_on_create": true,
+            "auto_generate_on_expand": true,
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-terra",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/sonnet",
+                "reasoning_effort": null
+              }
+            ],
+            "close_review_max_concurrency_per_project": 3,
+            "close_review_min_severity": "low",
+            "close_review_prompt_max_chars": 256000,
+            "close_review_total_timeout_seconds": 120.0,
+            "close_review_validator_timeout_seconds": 1200.0,
+            "close_validation_escalation_threshold": 5,
+            "criteria_prompt_path": null,
+            "criteria_system_prompt": "You are a QA engineer writing acceptance criteria. Only include requirements explicitly stated in the task — invented values, thresholds, timeouts, or edge cases create false failures. Vague tasks get vague criteria. Use markdown checkboxes.",
+            "enabled": false,
+            "escalation_enabled": true,
+            "escalation_notify": "none",
+            "escalation_webhook_url": null,
+            "max_iterations": 10,
+            "profile": "feature_mid",
+            "require_clean_attributed_paths_on_close": true
+          }
+        },
+        "hooks": {
+          "adapter_timeout": 26.0,
+          "additional_context_limit": 9950,
+          "provider_timeout": 120
+        },
+        "import_mcp_server": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "github_fetch_prompt_path": null,
+          "profile": "feature_low",
+          "prompt_path": null,
+          "search_fetch_prompt_path": null
+        },
+        "indexing": {
+          "extra_excludes": [],
+          "respect_gitignore": true
+        },
+        "knowledge_graph_queue": {
+          "batch_size": 20,
+          "interval_minutes": 30,
+          "max_deterministic_attempts": 3
+        },
+        "logging": {
+          "allow_audit_max_size_mb": 256,
+          "allow_audit_queue_capacity": 8192,
+          "allow_audit_retention_days": 14,
+          "allow_audit_shutdown_timeout_seconds": 2.0,
+          "backup_count": 5,
+          "dir": "~/.gobby/logs",
+          "format": "text",
+          "growth_warn_mb_per_interval": 100,
+          "level": "info",
+          "llm_backup_count": 5,
+          "llm_max_size_mb": 50,
+          "max_size_mb": 10,
+          "runtime_max_size_mb": 50
+        },
+        "mcp_client_proxy": {
+          "connect_timeout": 30.0,
+          "enabled": true,
+          "min_similarity": 0.3,
+          "proxy_timeout": 30,
+          "refresh_on_server_add": true,
+          "refresh_timeout": 300.0,
+          "search_mode": "llm",
+          "tool_timeout": 30,
+          "top_k": 10
+        },
+        "memory": {
+          "access_debounce_seconds": 60,
+          "auto_crossref": false,
+          "backend": "local",
+          "cluster_expansion_per_entity": 3,
+          "cluster_min_cluster_size": 5,
+          "cluster_min_samples": 2,
+          "cluster_recall_expansion": false,
+          "code_link_min_score": 0.82,
+          "crossref_max_links": 5,
+          "crossref_threshold": 0.3,
+          "edge_half_life_days": 30.0,
+          "enabled": true,
+          "graph_edge_decay": false,
+          "graph_edge_weighting": false,
+          "graph_related_expansion_timeout_seconds": 10.0,
+          "index_reshow_after_injections": 5,
+          "materialize_cooccurrence": false,
+          "temporal_decay_half_life_days": 30.0,
+          "dream": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-terra",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/sonnet",
+                "reasoning_effort": null
+              }
+            ],
+            "dry_run_max_candidates": 1000,
+            "enabled": false,
+            "evidence_channel_timeout_seconds": 30.0,
+            "evidence_phase_timeout_seconds": 210.0,
+            "evidence_retry_attempts": 3,
+            "include_global_memories": true,
+            "max_runtime_seconds": 14400,
+            "max_tokens": 8192,
+            "min_action_confidence": 0.72,
+            "min_delete_confidence": 0.85,
+            "min_rescope_confidence": 0.85,
+            "planner_batch_max_chars": 100000,
+            "planner_batch_size": 25,
+            "profile": "feature_mid",
+            "prompt_path": "memory/dream",
+            "purge_delete_after_days": 30,
+            "purge_review_after_days": 90,
+            "reconcile_after_apply": true,
+            "reconcile_after_revert": true,
+            "redream_after_hours": 20,
+            "related_evidence_enabled": true,
+            "related_evidence_fetch_limit": 10,
+            "related_evidence_top_k": 3,
+            "run_retention_days": 30,
+            "schedule_cron": "0 2 * * *",
+            "work_unit_timeout_seconds": 1500.0,
+            "write_supersession_mark_due_enabled": true
+          },
+          "kg": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "max_rebuild_concurrency": 2,
+            "profile": "feature_low"
+          }
+        },
+        "memory_backup": {
+          "backup_path": ".gobby/memories.jsonl",
+          "enabled": true
+        },
+        "merge_resolution": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-terra",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/sonnet",
+              "reasoning_effort": null
+            }
+          ],
+          "profile": "feature_mid"
+        },
+        "message_tracking": {
+          "broadcast_enabled": true,
+          "debounce_delay": 1.0,
+          "enabled": true,
+          "max_message_length": 10000,
+          "poll_interval": 5.0
+        },
+        "metrics": {
+          "list_limit": 10000
+        },
+        "pipelines": {
+          "nesting_depth_limit": 10,
+          "prompt_step": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-luna",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/haiku",
+                "reasoning_effort": null
+              }
+            ],
+            "profile": "feature_low"
+          }
+        },
+        "project_verification_synthesis": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-terra",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/sonnet",
+              "reasoning_effort": null
+            }
+          ],
+          "confidence_threshold": 0.75,
+          "profile": "feature_mid"
+        },
+        "recommend_tools": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-terra",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/sonnet",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "hybrid_rerank_prompt_path": null,
+          "llm_prompt_path": null,
+          "profile": "feature_mid",
+          "prompt_path": null
+        },
+        "rules": {
+          "aggregate_blocks": true,
+          "enforcement_enabled": true
+        },
+        "search": {
+          "embedding_weight": 0.6,
+          "keyword_weight": 0.4,
+          "mode": "auto",
+          "notify_on_fallback": true
+        },
+        "session_feedback": {
+          "survey": "gobby",
+          "review": {
+            "candidates": [
+              {
+                "candidate": "codex/gpt-5.6-terra",
+                "reasoning_effort": null
+              },
+              {
+                "candidate": "claude/sonnet",
+                "reasoning_effort": null
+              }
+            ],
+            "enabled": true,
+            "max_rows_per_run": 200,
+            "max_tasks_per_run": 10,
+            "max_tokens": 8192,
+            "profile": "feature_mid",
+            "prompt_path": "feedback/review",
+            "schedule_cron": "0 3 * * *"
+          }
+        },
+        "session_lifecycle": {
+          "active_session_pause_minutes": 30,
+          "expire_check_interval_minutes": 60,
+          "stale_session_timeout_hours": 24,
+          "transcript_archive_dir": "~/.gobby/session_transcripts",
+          "transcript_processing_batch_size": 10,
+          "transcript_processing_interval_minutes": 5,
+          "workflow_audit_retention_days": 7
+        },
+        "session_summary": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "profile": "feature_low",
+          "prompt": "Generate a concise session summary for handoff to another agent or future session.\n\n## Session Context\nTranscript Summary:\n{transcript_summary}\n\nGit Status:\n{git_status}\n\nFile Changes:\n{file_changes}\n\n{session_tasks}\n\n## Instructions\nAlways include these two mandatory sections using the exact headings:\n\n## Current State\nState what is working, broken, in progress, or complete. When the session's work is\ncomplete, say so explicitly.\n\n## Next Steps\nList clear continuation actions. When implementation is complete, state the remaining\nhandoff action, such as committing, linking the commit, validating, or closing the task.\n\nOptional sections may describe what was accomplished, files changed, technical decisions,\nor problems encountered. Omit optional sections that have no relevant information.\n\nBe concise. Focus on what the next agent needs to know to continue effectively.",
+          "summary_file_path": ".gobby/session_summaries"
+        },
+        "skill_description": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "profile": "feature_low"
+        },
+        "skills": {
+          "bundled_max_content_size": 15000,
+          "core_skills_path": null,
+          "inject_core_skills": true,
+          "injection_format": "summary",
+          "soft_delete_retention_days": 30
+        },
+        "telemetry": {
+          "metrics_enabled": true,
+          "service_name": "gobby-daemon",
+          "trace_retention_days": 7,
+          "trace_sample_rate": 1.0,
+          "traces_enabled": true,
+          "traces_to_console": false,
+          "exporter": {
+            "otlp_endpoint": null,
+            "otlp_protocol": "grpc",
+            "prometheus_enabled": true
+          },
+          "llm_tracing": {
+            "capture_content": false,
+            "enabled": false,
+            "providers": [
+              "openai"
+            ]
+          }
+        },
+        "terminal_host": {
+          "binary_path": null,
+          "commit_deadline_ms": 30000,
+          "enabled": true,
+          "health_interval_seconds": 5.0,
+          "max_attached_terminals": 64,
+          "max_attachments_per_terminal": 8,
+          "max_attachments_total": 128,
+          "native_scrollback_max_bytes": 8388608,
+          "native_scrollback_max_lines": 10000,
+          "restart_backoff_ceiling_seconds": 30.0,
+          "restart_max_attempts": 5,
+          "shutdown_grace_seconds": 10.0,
+          "socket_dir": "@mask@",
+          "tmux_attach_history_max_bytes": 262144,
+          "tmux_poll_backoff_ceiling_ms": 5000,
+          "tmux_poll_interval_ms": 150
+        },
+        "terminals": {
+          "default_backend": "native",
+          "hook_write_shutdown_timeout_seconds": 5.0,
+          "hook_write_timeout_seconds": 5.0,
+          "spawn_in_doubt_seconds": 150.0,
+          "stop_host_on_shutdown": false
+        },
+        "tmux": {
+          "agent_memory_limit_gb": 16.0,
+          "agent_memory_total_limit_gb": 0.0,
+          "attach_history_lines": 500,
+          "auto_enter_agent_interval_seconds": 30,
+          "auto_enter_agent_terminals": true,
+          "auto_enter_approval_prompts": true,
+          "command": "tmux",
+          "config_file": null,
+          "enabled": true,
+          "history_limit": 10000,
+          "idle_check_enabled": true,
+          "idle_reprompt_delay_seconds": 300,
+          "idle_timeout_seconds": 60,
+          "init_timeout_seconds": 120,
+          "max_reprompt_attempts": 3,
+          "memory_watchdog_action": "kill",
+          "memory_watchdog_consecutive_breaches": 2,
+          "memory_watchdog_enabled": true,
+          "memory_watchdog_grace_seconds": 120.0,
+          "reasoning_watchdog_interrupt_enabled": true,
+          "reasoning_watchdog_settle_seconds": 0.2,
+          "registration_timeout_seconds": 30.0,
+          "session_prefix": "gobby",
+          "socket_name": "gobby",
+          "socket_path": "@mask@",
+          "system_memory_critical_available_percent": 4.0,
+          "system_memory_warn_available_percent": 8.0,
+          "wsl_distribution": null
+        },
+        "tool_approval": {
+          "default_policy": "auto",
+          "enabled": false,
+          "policies": []
+        },
+        "tool_approvals": {
+          "global_rules": []
+        },
+        "tool_result_offload": {
+          "chunk_chars": 2000,
+          "enabled": true,
+          "exempt_tools": [],
+          "intent_match_limit": 5,
+          "max_envelope_chars": 8000,
+          "max_stored_chars": 2000000,
+          "preview_chars": 2000,
+          "retention_days": 7,
+          "threshold_chars": 15000
+        },
+        "tool_summarizer": {
+          "candidates": [
+            {
+              "candidate": "codex/gpt-5.6-luna",
+              "reasoning_effort": null
+            },
+            {
+              "candidate": "claude/haiku",
+              "reasoning_effort": null
+            }
+          ],
+          "enabled": true,
+          "profile": "feature_low",
+          "prompt_path": null,
+          "server_description_prompt_path": null,
+          "server_description_system_prompt_path": null,
+          "system_prompt_path": null
+        },
+        "ui": {
+          "enabled": false,
+          "host": "localhost",
+          "knowledge_graph_limit": 500,
+          "knowledge_graph_relationship_limit": 2000,
+          "mode": "auto",
+          "web_dir": null
+        },
+        "ui_settings": {
+          "defaultChatMode": null,
+          "fontSize": null,
+          "model": null,
+          "planPendingVariant": null,
+          "readingDirection": null,
+          "selectedProjectId": null,
+          "selectedProvider": null,
+          "sttEnabled": null,
+          "theme": null,
+          "ttsEnabled": null,
+          "voiceInputMode": null
+        },
+        "validation_detection": {
+          "builtin_matchers_enabled": true,
+          "custom_matchers": [],
+          "disabled_builtin_matcher_ids": [],
+          "enabled": true,
+          "recognized_wrappers": [
+            "uv run",
+            "rtk",
+            "poetry run",
+            "pipenv run",
+            "pdm run",
+            "hatch run",
+            "rye run",
+            "bundle exec",
+            "npx",
+            "pnpm exec",
+            "yarn exec",
+            "bunx"
+          ],
+          "wrapper_rules": []
+        },
+        "verification_defaults": {
+          "build": null,
+          "code_review": null,
+          "doc_tests": null,
+          "format": null,
+          "integration": null,
+          "lint": null,
+          "security": null,
+          "type_check": null,
+          "unit_tests": null
+        },
+        "voice": {
+          "enabled": false,
+          "openai_compatible_audio": [],
+          "stt_enabled": true,
+          "transcription_timeout_seconds": 120.0,
+          "tts_chatterbox_max_generation_tokens": 1000,
+          "tts_clause_max_chars": 180,
+          "tts_crane_url": "http://127.0.0.1:8080",
+          "tts_device": "auto",
+          "tts_enabled": true,
+          "tts_mps_memory_limit_gb": 12.0,
+          "tts_provider": "chatterbox",
+          "tts_reference_audio": "~/.gobby/voice/reference.wav",
+          "tts_reference_text": null,
+          "tts_temperature": 0.55,
+          "whisper_compute_type": "int8",
+          "whisper_device": "auto",
+          "whisper_model_size": "base",
+          "whisper_prompt": "Gobby",
+          "whisper_vocabulary": [
+            "Gobby",
+            "MCP",
+            "worktree",
+            "Kubernetes",
+            "PostgreSQL",
+            "FastAPI",
+            "Pydantic",
+            "TypeScript",
+            "GraphQL",
+            "WebSocket",
+            "Redis",
+            "MongoDB",
+            "OAuth",
+            "JWT",
+            "REST",
+            "gRPC",
+            "YAML",
+            "JSON",
+            "Docker",
+            "Terraform",
+            "GitHub",
+            "GitLab",
+            "Claude",
+            "Anthropic",
+            "Gemini",
+            "Codex",
+            "npm",
+            "pip",
+            "pytest",
+            "ESLint",
+            "webpack",
+            "Vite"
+          ]
+        },
+        "web_chat_sandbox": {
+          "allow_git_network": true,
+          "allow_network": false,
+          "allow_package_registries": true,
+          "allow_unix_sockets": [],
+          "allowed_domains": [],
+          "backend": "srt",
+          "denied_domains": [],
+          "enabled": true,
+          "extra_deny_read_paths": [],
+          "extra_deny_write_paths": [],
+          "extra_read_paths": [],
+          "extra_write_paths": [],
+          "mode": "permissive"
+        },
+        "websocket": {
+          "enabled": true,
+          "ping_interval": 30,
+          "ping_timeout": 10
+        },
+        "workflow": {
+          "debug_echo_context": false,
+          "enabled": true,
+          "timeout": 24.0
+        },
+        "hook_extensions": {
+          "webhooks": {
+            "async_dispatch": true,
+            "default_timeout": 10.0,
+            "enabled": true,
+            "endpoints": []
+          },
+          "websocket": {
+            "broadcast_events": [
+              "session-start",
+              "session-end",
+              "interrupt",
+              "pre-tool-use",
+              "post-tool-use"
+            ],
+            "enabled": true,
+            "include_payload": true
+          }
+        },
+        "system_loops": {
+          "automation": {
+            "enabled": true,
+            "interval_seconds": 60
+          }
+        }
+      },
+      "secret_set": {
+        "ai.embeddings.api_key": {
+          "desired": false,
+          "active": false
+        },
+        "code_index.community_label.decisions_api_key": {
+          "desired": false,
+          "active": false
+        },
+        "databases.falkordb.password": {
+          "desired": false,
+          "active": false
+        },
+        "databases.qdrant.api_key": {
+          "desired": false,
+          "active": false
+        }
+      },
+      "pending_restart_keys": [],
+      "failed_live_keys": {}
+    }
+  },
+  "mask": [
+    "/response/body/desired/terminal_host/socket_dir",
+    "/response/body/desired/tmux/socket_path",
+    "/response/body/active/terminal_host/socket_dir",
+    "/response/body/active/tmux/socket_path"
+  ]
+}

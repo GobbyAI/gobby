@@ -70,6 +70,22 @@ meaningful `override_justification`; it skips only close review, not the other
 gates. Do not escalate merely to get a close exception. `submit_close_review` is
 reviewer-only and is never a shortcut for the implementing session.
 
+Peer evidence a close depends on is recorded by the peer, not the closer:
+`record_close_receipt(task_id, kind, commit_sha, facts)` stores a daemon-attested
+`independent_review_approval` (LAND of an exact commit) or `activation` receipt
+on another session's task, authorized against the locked task row.
+
+When a CLOSED/VALID task's `closed_commit_sha` differs from the explicit
+`commit_sha` its original VALID close review accepted,
+`repair_closed_candidate(task_id, review_id, expected_closed_commit_sha, reason)`
+corrects only that marker to the review's full candidate. It previews by
+default; pass `preview=false` to apply. It refuses unless the caller is a
+registered, machine-identified session in the task's project, the task is
+unclaimed, unescalated and outside integration, the marker still equals
+`expected_closed_commit_sha`, and the linked commits still match the review.
+Closure, review evidence and links are kept, and the correction is recorded as
+a lifecycle event.
+
 Guide: [Close](../../../../../../../../docs/guides/tasks.md#close).
 
 _Last verified: 2026-09-19_

@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -19,6 +21,19 @@ def mock_task_manager() -> MagicMock:
 @pytest.fixture
 def task_registry(mock_task_manager: MagicMock) -> InternalToolRegistry:
     return create_task_registry(mock_task_manager)
+
+
+@contextmanager
+def _commit_tool_boundaries() -> Iterator[None]:
+    """Stub the repository lookup and Git so the tool's delegation is what is tested."""
+    with (
+        patch("gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path", return_value=None),
+        patch(
+            "gobby.mcp_proxy.tools.task_commits.normalize_commit_sha",
+            side_effect=lambda sha, cwd=None: sha,
+        ),
+    ):
+        yield
 
 
 def test_create_task_registry_returns_registry(task_registry: InternalToolRegistry) -> None:
@@ -338,13 +353,14 @@ async def test_link_commit_tool(mock_task_manager: MagicMock) -> None:
     mock_task.to_dict.return_value = {"id": "t1", "commits": ["abc123"]}
     mock_task_manager.link_commit.return_value = mock_task
 
-    with patch("gobby.mcp_proxy.tools.task_commits.get_project_context", return_value=None):
+    with _commit_tool_boundaries():
         result = await registry.call(
             "link_commit",
             {"task_id": "t1", "commit_sha": "abc123"},
         )
 
-    mock_task_manager.link_commit.assert_called_with("t1", "abc123", cwd=None)
+    # The tool normalizes against the task repository, then links the normalized SHA.
+    mock_task_manager.link_commit.assert_called_once_with("t1", "abc123")
     assert result["task_id"] == "t1"
     assert "abc123" in result["commits"]
 
@@ -360,13 +376,13 @@ async def test_unlink_commit_tool(mock_task_manager: MagicMock) -> None:
     mock_task.to_dict.return_value = {"id": "t1", "commits": []}
     mock_task_manager.unlink_commit.return_value = mock_task
 
-    with patch("gobby.mcp_proxy.tools.task_commits.get_project_context", return_value=None):
+    with _commit_tool_boundaries():
         result = await registry.call(
             "unlink_commit",
             {"task_id": "t1", "commit_sha": "abc123"},
         )
 
-    mock_task_manager.unlink_commit.assert_called_with("t1", "abc123", cwd=None)
+    mock_task_manager.unlink_commit.assert_called_once_with("t1", "abc123")
     assert result["task_id"] == "t1"
 
 
@@ -377,7 +393,7 @@ async def test_auto_link_commits_tool(mock_task_manager: MagicMock) -> None:
 
     # Patch before creating registry since functions are captured at creation time
     with (
-        patch("gobby.tasks.commits.auto_link_commits") as mock_auto_link,
+        patch("gobby.tasks.commits.auto_link_commits_async") as mock_auto_link,
         patch("gobby.mcp_proxy.tools.task_commits.resolve_project_repo_path", return_value=None),
     ):
         mock_auto_link.return_value = AutoLinkResult(

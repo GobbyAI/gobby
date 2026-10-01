@@ -48,6 +48,7 @@ def mock_task_manager():
     mock = MagicMock()
     mock_task = MagicMock()
     mock_task.id = "task-uuid-123"
+    mock_task.claimed_by_session_id = SESSION_ID
     mock.get_task.return_value = mock_task
     return mock
 
@@ -680,6 +681,7 @@ class TestDetectTaskClaimClaimOperations:
             title="Update src/gobby/tasks/metadata.py",
             validation_criteria="src/gobby/tasks/metadata.py handles task metadata",
             additional_skills=["python", "context7"],
+            claimed_by_session_id=SESSION_ID,
         )
 
         event = make_after_tool_event(
@@ -744,6 +746,7 @@ class TestDetectTaskClaimClaimOperations:
             labels=labels,
             additional_skills=additional_skills,
             validation_criteria=validation_criteria,
+            claimed_by_session_id=SESSION_ID,
         )
 
         event = make_after_tool_event(

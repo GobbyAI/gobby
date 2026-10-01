@@ -96,7 +96,7 @@ async def test_codex_idle_recovery_rechecks_composer_and_exact_row(race: str) ->
 def test_live_wake_signal_is_neutral() -> None:
     assert "Task completed" not in CONTINUE_WAKE_MESSAGE
     assert "Task completed" not in CONTINUE_WAKE_SIGNAL
-    assert CONTINUE_WAKE_MESSAGE == "Message from Gobby daemon: New activity available."
+    assert CONTINUE_WAKE_MESSAGE == "[Gobby] Check messages"
     assert CONTINUE_WAKE_SIGNAL == f"{CONTINUE_WAKE_MESSAGE}\n"
 
 

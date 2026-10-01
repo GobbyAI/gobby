@@ -38,6 +38,7 @@ from .install_setup_rtk import (
     reconcile_rtk,
     remove_managed_rtk,
 )
+from .install_setup_srt import restage_srt_runner
 from .installers import (
     install_agy,
     install_claude,
@@ -74,6 +75,7 @@ COMPONENTS: tuple[str, ...] = (
     "ide-settings",
     "gclient",
     "gterm",
+    "srt",
 )
 CLI_COMPONENTS: frozenset[str] = frozenset({"claude", "codex", "grok", "qwen", "droid", "agy"})
 # Components that leave something behind to remove; voice, embedding, and
@@ -105,6 +107,7 @@ COMPONENT_LABELS: dict[str, str] = {
     "ide-settings": "IDE settings",
     "gclient": "gclient",
     "gterm": "gterm",
+    "srt": "SRT runner",
 }
 
 _CLI_INSTALLERS: dict[str, Callable[..., dict[str, Any]]] = {
@@ -288,6 +291,14 @@ def run_install_components(
         elif name in {"gclient", "gterm"}:
             target = bin_dir if bin_dir is not None else get_gobby_home() / "bin"
             results[name] = promote_client_binary(name, target)
+        elif name == "srt":
+            srt = restage_srt_runner()
+            results["srt"] = {
+                "success": True,
+                "path": str(srt.path),
+                "version": srt.version,
+                "installed": srt.installed,
+            }
         else:
             raise click.UsageError(f"Unknown component: {name}")
     return results

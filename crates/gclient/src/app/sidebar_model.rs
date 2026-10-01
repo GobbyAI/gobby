@@ -69,7 +69,9 @@ pub struct WorktreeEntry {
     pub path: PathBuf,
     pub task_ref: Option<String>,
     pub role: String,
-    pub state: RowState,
+    /// The rolled-up state of the agents bound to it; none with no agent,
+    /// since a worktree has no state of its own.
+    pub state: Option<RowState>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -405,7 +407,7 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
                     .find_map(|agent| agent.task_ref.clone())
                     .or_else(|| worktree.task_id.clone()),
                 role: worktree.workspace_role.clone(),
-                state: rollup(bound.iter().map(|agent| agent.state)),
+                state: (!bound.is_empty()).then(|| rollup(bound.iter().map(|agent| agent.state))),
             }
         })
         .collect();
@@ -451,11 +453,16 @@ pub fn state_class(state: RowState) -> RowState {
 }
 
 /// A container's state: the most urgent class among its members, needs
-/// you over gone over active over idle, and idle with no members.
+/// you over gone over held over active over idle, and idle with no members.
+/// A held agent still waits on someone, so it outranks work; output unseen
+/// and no state yet count as idle.
 pub fn rollup(states: impl IntoIterator<Item = RowState>) -> RowState {
     states
         .into_iter()
-        .map(state_class)
+        .map(|state| match state {
+            RowState::Paused => state,
+            other => state_class(other),
+        })
         .max_by_key(|state| urgency(*state))
         .unwrap_or(RowState::Idle)
 }

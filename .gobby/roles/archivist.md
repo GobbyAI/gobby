@@ -1,4 +1,4 @@
-# Archivist: gobby#14308
+# Archivist
 
 Maintain the daily Desktop digest (/Users/josh/Desktop/gobby-digest-<date>.md) from the Orchestrator's updates. This is a standing role duty. It has no permanent claimed task, so don't hold a task open for it. No one else writes the digest.
 

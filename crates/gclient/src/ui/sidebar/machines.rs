@@ -1,15 +1,14 @@
 // upstream: none (Gobby's machine axis; herdr runs on one machine)
 //! The machines section: the hub (this machine) first, the other machines
-//! nested under it, each a state dot (the most urgent of its agents), the
-//! machine's name and a mark: `local` on this machine, `all` on every row
-//! while the filter admits every machine. The highlighted rows are the
-//! machines the sessions section lists; a click on a row moves the filter
-//! there (`Hit::Machine`).
+//! nested under it, each a state dot (the most urgent of its agents) and
+//! the machine's name. The highlighted rows are the machines the agents
+//! section lists; a click on a row moves the filter there (`Hit::Machine`),
+//! and View › Sidebar › Machines sets it to this machine or every machine.
 
 use std::sync::OnceLock;
 
 use super::agents::agent_state;
-use super::{render_band, render_section_rows, BandStyle, SidebarHits, ALL_MACHINES};
+use super::{render_band, render_section_rows, SidebarHits, ALL_MACHINES};
 use crate::app::short_terminal_id;
 use crate::app::sidebar_model::rollup;
 use crate::ui::chrome::{Chrome, WorkspaceView};
@@ -17,9 +16,6 @@ use crate::ui::hit::SidebarSection;
 use crate::ui::sidebar_rows::{RowKind, SidebarRow};
 use ratatui::layout::Rect;
 use ratatui::Frame;
-
-/// Mark of this machine's row while the filter is local.
-const LOCAL_LABEL: &str = "local";
 
 /// Names this machine's row instead of the probed host name; the test
 /// runs set it (`.cargo/config.toml`) so rendered frames stay the same on
@@ -104,11 +100,6 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
             } else {
                 short_terminal_id(machine)
             };
-            let detail = match filter {
-                Some(ALL_MACHINES) => ALL_MACHINES,
-                _ if is_local => LOCAL_LABEL,
-                _ => "",
-            };
             let active = match filter {
                 Some(ALL_MACHINES) => true,
                 Some(selected) => selected == machine,
@@ -119,7 +110,6 @@ pub fn machine_rows<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> Vec<SidebarRow
                 label: label.to_string(),
                 kind: RowKind::Machine,
                 state,
-                detail: detail.to_string(),
                 nested: nested.is_some(),
                 last_child: nested.unwrap_or(false),
                 active,
@@ -139,12 +129,6 @@ pub(super) fn render_machines(
     hits: &mut SidebarHits,
 ) {
     let section = SidebarSection::Machines;
-    render_band(
-        frame,
-        area,
-        section.title(),
-        &[],
-        BandStyle::section(&chrome.palette),
-    );
+    render_band(frame, area, section.title(), &chrome.palette);
     render_section_rows(frame, area, section, rows, chrome, hits);
 }

@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import threading
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from typing import TYPE_CHECKING, cast
+from unittest.mock import AsyncMock, MagicMock, Mock
 
 import pytest
 
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.servers.routes.mcp.endpoints.execution import call_mcp_tool
 from tests.mcp_proxy.named_server_test_support import attach_named_servers
+
+if TYPE_CHECKING:
+    from gobby.hooks.hook_manager import HookManager
 
 pytestmark = pytest.mark.unit
 
@@ -43,10 +47,14 @@ def _make_server() -> tuple[MagicMock, MagicMock]:
     internal_manager = MagicMock()
     internal_manager.is_internal.return_value = False
 
-    hook_manager = SimpleNamespace(_session_manager=session_manager)
+    hook_manager = cast("HookManager", SimpleNamespace(_session_manager=session_manager))
 
     server = MagicMock()
     server.session_manager = session_manager
+    # The REST request seam seeds a principal resolver that awaits
+    # ``server.run_db``, so this double must be awaitable.
+    server.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
+    server.auth_service.request_principal = Mock(return_value=None)
     server.tool_proxy = ToolProxyService(
         mcp_manager=mcp_manager,
         internal_manager=internal_manager,

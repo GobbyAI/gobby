@@ -526,7 +526,7 @@ Backup and restore:
 1. Hub backup enters maintenance, stops new issuance, terminates managed runs,
    and revokes every ephemeral agent role before the existing
    `pg_dumpall --globals-only` step
-   (`src/gobby/cli/hub_backup/_stores.py:144-184`).
+   (`src/gobby/cli/hub_backup/_stores.py::dump_postgres`).
 2. Backup aborts when the registry or PostgreSQL catalog still contains a
    reserved-prefix agent login. Stable issuer, daemon runtime, and capability
    roles remain in the globals artifact; ephemeral logins never enter it.
@@ -537,6 +537,16 @@ Backup and restore:
    and counts `gobby%`-named client backends across every attached daemon and
    machine, so invariant 10's naming convention is what makes multi-daemon
    drain observable before the backup proceeds.
+5. Role credentials belong to the restore destination. The globals dump runs
+   with `--no-role-passwords`, so the artifact keeps role attributes,
+   memberships, and ACLs but no password verifiers. Restore also strips any
+   `PASSWORD` clause from an older artifact's `ALTER ROLE ... WITH` lines
+   before replay. The destination's bootstrap role therefore keeps the
+   credential its DSN names. Without this, a restore after a password
+   rotation or a fresh install would reset that role to its backup-time
+   password, and every later host TCP step would fail mid-restore. A stable
+   role the destination lacks comes back with no password. Managed principals
+   are re-minted on demand and never need one.
 
 ### Failure behavior
 

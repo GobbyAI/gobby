@@ -8,9 +8,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from gobby.cli.utils import get_gobby_home
 from gobby.install.bin_freshness_models import is_at_least_version, parse_version_tuple
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
+from gobby.paths import get_gobby_home
 
 SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 SUPPORTED_HOOK_RESPONSE_CAPABILITY = "hook-response.v1"

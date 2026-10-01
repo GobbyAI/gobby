@@ -103,6 +103,13 @@ _ROLE_GRANTOR_RE = re.compile(
     rb" GRANTED BY (?:\"(?:[^\"]|\"\")*\"|[A-Za-z_][A-Za-z0-9_$]*);$",
     re.MULTILINE,
 )
+# pg_dumpall writes each role's attributes as one `ALTER ROLE <name> WITH ...;` line,
+# and its PASSWORD clause is the only place a globals artifact carries a credential.
+_ROLE_ATTRIBUTES_RE = re.compile(
+    rb"^(ALTER ROLE (?:\"(?:[^\"]|\"\")*\"|[A-Za-z_][A-Za-z0-9_$]*) WITH)(.*;)$",
+    re.MULTILINE,
+)
+_ROLE_PASSWORD_RE = re.compile(rb" PASSWORD (?:NULL|E'(?:[^'\\]|''|\\.)*'|'(?:[^']|'')*')(?=[ ;])")
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +241,7 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
     container = _managed_postgres_container(database_url)
     with open_regular_binary(globals_path, label="PostgreSQL globals") as globals_file:
-        replay = _idempotent_global_role_creates(globals_file.read())
+        replay = _idempotent_global_role_creates(_without_role_passwords(globals_file.read()))
         ensure_docker_allowed("hub backup PostgreSQL globals restore", runner=subprocess.run)
         result = subprocess.run(  # nosec B603 - fixed docker/psql argv and verified file input
             _postgres_client_command(
@@ -254,6 +261,17 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
             timeout=_docker_pg_dump_timeout_seconds(),
         )
     _raise_for_subprocess_error(result, "Docker psql globals restore")
+
+
+def _without_role_passwords(script: bytes) -> bytes:
+    """Drop role PASSWORD clauses so replay keeps the destination's own credentials.
+
+    Backups taken before verifiers were excluded still carry them; replaying one
+    would reset the bootstrap role to its backup-time password.
+    """
+    return _ROLE_ATTRIBUTES_RE.sub(
+        lambda match: match.group(1) + _ROLE_PASSWORD_RE.sub(b"", match.group(2)), script
+    )
 
 
 def _idempotent_global_role_creates(script: bytes) -> bytes:
@@ -290,7 +308,9 @@ def dump_postgres(
     """Dump the database and cluster globals, then check the archive is readable.
 
     The dump deliberately keeps ownership and ACLs: roles are restored from the
-    globals dump first, so a stripped dump would silently drop privileges.
+    globals dump first, so a stripped dump would silently drop privileges. The
+    globals dump excludes role passwords: credentials belong to the restore
+    destination, never to the backup.
     """
     drain_ephemeral_principals(database_url)
     user = _dsn_user(database_url) or DEFAULT_POSTGRES_USER
@@ -322,10 +342,11 @@ def dump_postgres(
             "-U",
             user,
             "--globals-only",
+            "--no-role-passwords",
             container=container,
         ),
         globals_path,
-        action="Docker pg_dumpall --globals-only",
+        action="Docker pg_dumpall --globals-only --no-role-passwords",
         timeout=dump_timeout,
     )
 

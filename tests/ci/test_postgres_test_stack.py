@@ -109,7 +109,7 @@ def test_test_compose_defines_ephemeral_postgres_test_service(repo_root: Path) -
         ),
     }
     assert postgres["ports"] == [
-        f"{_compose_default(_POSTGRES_TEST_PORT_ENV, _POSTGRES_TEST_PORT)}:5432"
+        f"127.0.0.1:{_compose_default(_POSTGRES_TEST_PORT_ENV, _POSTGRES_TEST_PORT)}:5432"
     ]
     assert postgres["tmpfs"] == [_POSTGRES_TEST_TMPFS]
 
@@ -164,7 +164,7 @@ def test_ci_test_job_builds_and_runs_local_postgres_test_container(repo_root: Pa
         '-e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}"',
         '-e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}"',
         '-e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}"',
-        '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
+        '-p "127.0.0.1:${GOBBY_POSTGRES_TEST_PORT}:5432"',
         f"--tmpfs {_POSTGRES_TEST_TMPFS}",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",
@@ -215,7 +215,7 @@ def test_ci_build_job_runs_wheel_smoke_against_local_postgres(repo_root: Path) -
         '-e POSTGRES_DB="${GOBBY_POSTGRES_TEST_DB}"',
         '-e POSTGRES_USER="${GOBBY_POSTGRES_TEST_USER}"',
         '-e POSTGRES_PASSWORD="${GOBBY_POSTGRES_TEST_PASSWORD}"',
-        '-p "${GOBBY_POSTGRES_TEST_PORT}:5432"',
+        '-p "127.0.0.1:${GOBBY_POSTGRES_TEST_PORT}:5432"',
         f"--tmpfs {_POSTGRES_TEST_TMPFS}",
         '"${GOBBY_POSTGRES_TEST_IMAGE}"',
         "postgres",

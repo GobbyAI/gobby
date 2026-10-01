@@ -783,6 +783,155 @@ async def test_identityless_row_stays_pending_until_absence_proven(
     assert runtime.create_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_binder_free_retry_refuses_placed_owner_in_settlement_backoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = _StagedStore()
+    runtime = _StagedRuntime(backend="tmux", fail_spawn=True)
+    backoff = _Backoff(monkeypatch)
+    store.down.add("fail_pending_attempt")
+
+    failed = await execute_spawn(_request(store, runtime, binder=_noop_binder))
+    assert failed.success is False
+    assert failed.terminal_id is not None
+    row = store.rows[failed.terminal_id]
+    original = replace(row)
+    retry_runtime = FakeRuntime(backend="tmux", fail_spawn=True)
+    await asyncio.wait_for(backoff.entered.wait(), timeout=2)
+
+    try:
+        assert in_doubt_spawns.holds(row.id)
+        result = await execute_spawn(_request(store, retry_runtime, retry_terminal_id=row.id))
+
+        assert result.error == "terminal_in_doubt"
+        assert result.success is False
+        assert result.terminal_id is None
+        assert retry_runtime.create_calls == 0
+        assert (row.attempt_generation, row.attempt_started_at) == (
+            original.attempt_generation,
+            original.attempt_started_at,
+        )
+        assert row.state == "pending"
+        assert in_doubt_spawns.holds(row.id)
+    finally:
+        # Restore the owner's row during RED teardown if the buggy retry changed it.
+        store.rows[row.id] = original
+        store.down.clear()
+        backoff.resume.set()
+        await _drain_owners()
+
+    assert store.rows[row.id].state == "exited"
+    assert not in_doubt_spawns.holds(row.id)
+
+
+@pytest.mark.asyncio
+async def test_binder_free_retry_refuses_stale_reaper_mid_kill() -> None:
+    kill_resume = asyncio.Event()
+
+    class KillHeldRuntime(_StagedRuntime):
+        async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+            self.terminate_started.set()
+            await kill_resume.wait()
+            await super().terminate(terminal, grace_seconds)
+
+    store = _StagedStore()
+    runtime = KillHeldRuntime(backend="tmux")
+    row = store.create_pending(mint_terminal_id(), "proj", "tmux", "gobby", "reaper-key")
+    pair = (row.attempt_generation, row.attempt_started_at)
+    runtime.live_keys.add("reaper-key")
+    reaper = asyncio.create_task(
+        reap_stale_pending_terminals(
+            cast(TerminalManager, store), runtime_registry(runtime), in_doubt_seconds=0
+        )
+    )
+    retry_runtime = FakeRuntime(backend="tmux")
+    await asyncio.wait_for(runtime.terminate_started.wait(), timeout=2)
+
+    try:
+        assert in_doubt_spawns.holds(row.id)
+        result = await execute_spawn(_request(store, retry_runtime, retry_terminal_id=row.id))
+
+        assert result.error == "terminal_in_doubt"
+        assert result.success is False
+        assert result.terminal_id is None
+        assert retry_runtime.create_calls == 0
+        assert (row.attempt_generation, row.attempt_started_at) == pair
+        assert row.state == "pending"
+        assert in_doubt_spawns.holds(row.id)
+    finally:
+        kill_resume.set()
+        reaped = await asyncio.wait_for(reaper, timeout=2)
+
+    assert reaped == [row.id]
+    assert row.state == "exited"
+    assert not in_doubt_spawns.holds(row.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["tmux", "native"])
+@pytest.mark.parametrize("outcome", ["success", "timeout", "cancelled"])
+async def test_binder_free_retry_retains_claim_until_prepare_settles(
+    handoffs: _Handoffs, backend: str, outcome: str
+) -> None:
+    store = _StagedStore()
+    runtime = _StagedRuntime(backend=cast(Any, backend), spawn_hold=asyncio.Event())
+    row = store.create_pending(mint_terminal_id(), "proj", backend, "gobby", "retry-key")
+    prior = (row.attempt_generation, row.attempt_started_at)
+    request = _request(
+        store,
+        runtime,
+        retry_terminal_id=row.id,
+        timeout_seconds=0.01 if outcome == "timeout" else None,
+    )
+    caller = asyncio.create_task(execute_spawn(request))
+    await asyncio.wait_for(_prepare_dispatched(runtime), timeout=2)
+
+    try:
+        assert row.state == "pending"
+        assert row.attempt_generation == prior[0] + 1
+        assert in_doubt_spawns.holds(row.id)
+        assert (
+            await reap_stale_pending_terminals(
+                cast(TerminalManager, store), runtime_registry(runtime), in_doubt_seconds=0
+            )
+            == []
+        )
+        if outcome == "success":
+            assert runtime.spawn_hold is not None
+            runtime.spawn_hold.set()
+        elif outcome == "cancelled":
+            caller.cancel()
+            caller.cancel()
+        result = await asyncio.wait_for(caller, timeout=2)
+        if outcome == "success":
+            assert result.success is True
+            assert handoffs.stages == []
+            assert row.state == "live"
+        else:
+            assert result.success is False
+            assert result.prior_attempt == prior
+            assert result.error == (
+                "cancelled"
+                if outcome == "cancelled"
+                else "spawn_timeout"
+                if backend == "native"
+                else "spawn timed out"
+            )
+            assert handoffs.stages == ["prepare"]
+            assert row.state == "pending"
+            assert in_doubt_spawns.holds(row.id)
+    finally:
+        assert runtime.spawn_hold is not None
+        runtime.spawn_hold.set()
+        if not caller.done():
+            await asyncio.wait_for(caller, timeout=2)
+        await _drain_owners()
+
+    assert row.state == ("live" if outcome == "success" else "exited")
+    assert not in_doubt_spawns.holds(row.id)
+
+
 @dataclass
 class _DownHost:
     """A gterm host client that cannot be reached after a host restart."""
@@ -1407,6 +1556,8 @@ INDETERMINATE = [
     "create-rolls-back",
     "bump-commits-then-raises",
     "bump-rolls-back",
+    "bump-without-binder-commits-then-raises",
+    "bump-without-binder-rolls-back",
     "read-back-outage",
 ]
 
@@ -1434,7 +1585,8 @@ async def test_indeterminate_create_is_recovered_by_read_back(
     compensation = _Compensation()
 
     with pytest.raises(ConnectionError):
-        await execute_spawn(_request(store, runtime, binder=_noop_binder, **overrides))
+        binder = None if "without-binder" in name else _noop_binder
+        await execute_spawn(_request(store, runtime, binder=binder, **overrides))
     [terminal_id] = handoffs.terminal_ids
     # The owner has not run yet: the claim is held for steps deferred before release.
     assert in_doubt_spawns.defer(terminal_id, compensation)
@@ -1467,7 +1619,7 @@ async def test_indeterminate_create_is_recovered_by_read_back(
     # A step deferred after the release decides from the row the owner settled.
     await isolation.step(store, terminal_id, prior)
     assert isolation.removals == 2
-    if earlier is not None and name == "bump-rolls-back":
+    if earlier is not None and name.endswith("rolls-back"):
         # A row carrying a newer pair keeps created isolation.
         earlier.attempt_generation += 1
         await isolation.step(store, terminal_id, prior)

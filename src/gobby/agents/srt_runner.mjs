@@ -30,15 +30,20 @@ function shellQuote(value) {
   return `'${value.replaceAll("'", `'"'"'`)}'`
 }
 
-function appendViolations(path, violations, start) {
-  for (const violation of violations.slice(start)) {
+// The store keeps only its last 100 violations, so its array length stops
+// growing once the tail is full. Its monotonic total is the cursor instead.
+function appendViolations(path, store, recorded) {
+  const total = store.getTotalCount()
+  const violations = store.getViolations()
+  const fresh = Math.min(total - recorded, violations.length)
+  for (const violation of fresh > 0 ? violations.slice(-fresh) : []) {
     const line = JSON.stringify(violation, (_, value) =>
       typeof value === 'bigint' ? value.toString() : value,
     )
     appendFileSync(path, `${line}\n`, { encoding: 'utf8', mode: 0o600 })
   }
   chmodSync(path, 0o600)
-  return violations.length
+  return total
 }
 
 async function main() {
@@ -73,8 +78,9 @@ async function main() {
   let failure
   try {
     await SandboxManager.initialize(parsed.data, undefined, true)
-    unsubscribe = SandboxManager.getSandboxViolationStore().subscribe(violations => {
-      seenViolations = appendViolations(options.violationsPath, violations, seenViolations)
+    const store = SandboxManager.getSandboxViolationStore()
+    unsubscribe = store.subscribe(() => {
+      seenViolations = appendViolations(options.violationsPath, store, seenViolations)
     })
 
     const command = options.preflight ? [process.execPath, '--version'] : options.command
@@ -133,7 +139,7 @@ async function main() {
     try {
       seenViolations = appendViolations(
         options.violationsPath,
-        SandboxManager.getSandboxViolationStore().getViolations(),
+        SandboxManager.getSandboxViolationStore(),
         seenViolations,
       )
     } catch (error) {

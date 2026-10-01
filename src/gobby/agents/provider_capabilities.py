@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -77,3 +78,41 @@ def provider_supports_terminal_reasoning(provider: str) -> bool:
 def provider_supports_sandbox(provider: str) -> bool:
     """Return whether Gobby has a sandbox resolver for a provider."""
     return provider_capabilities(provider).sandbox
+
+
+def codex_launches_headless(
+    agent_name: str | None, *, sandbox_enforced: bool, sandbox_backend: str | None
+) -> bool:
+    """Return whether a Codex launch runs ``codex exec`` instead of the TUI.
+
+    Only the task-close reviewer under enforced SRT runs headless; every other
+    Codex launch keeps reading its terminal.
+    """
+    return agent_name == "task-close-reviewer" and sandbox_enforced and sandbox_backend == "srt"
+
+
+def agent_run_is_headless(agent_run: object) -> bool:
+    """Return whether a spawned run's CLI exits when its turn ends.
+
+    Such a run reads nothing from its terminal, so terminal-delivered commands and
+    yielded-turn wakes cannot reach it.
+    """
+    provider = getattr(agent_run, "provider", None)
+    if not isinstance(provider, str):
+        return False
+    if provider_capabilities(provider).headless_spawn:
+        return True
+    agent_name = getattr(agent_run, "agent_name", None)
+    if provider != "codex" or agent_name != "task-close-reviewer":
+        return False
+    metadata = getattr(agent_run, "resume_metadata_json", None)
+    sandbox = metadata.get("sandbox") if isinstance(metadata, Mapping) else None
+    if not isinstance(sandbox, Mapping):
+        # Unrecorded launch: refusing a TUI reviewer only forgoes one compaction,
+        # while accepting a headless one ends its turn and with it the process.
+        return True
+    return codex_launches_headless(
+        agent_name,
+        sandbox_enforced=sandbox.get("enforced") is True,
+        sandbox_backend=sandbox.get("backend"),
+    )

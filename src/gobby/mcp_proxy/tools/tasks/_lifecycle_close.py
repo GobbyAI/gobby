@@ -38,6 +38,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization import commit_clo
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
     resolve_close_commit_shas,
+    select_close_candidate,
     unlinked_tagged_commits,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import (
@@ -296,6 +297,17 @@ async def _evaluate_close(
             cwd=repo_path,
             project_name=ctx.get_current_project_name(),
         )
+        (
+            evaluation.candidate_commit_sha,
+            candidate_error,
+        ) = await select_close_candidate(
+            evaluation.commit_shas if commit_sha else [], commit_sha, cwd=repo_path
+        )
+        _commit_error = _commit_error or candidate_error
+        if _commit_error:
+            return evaluation.fail(
+                7, "linked_commits", str(_commit_error["error"]), str(_commit_error["message"])
+            ).block_remaining()
         for item, name in (
             (5, "criteria_present"),
             (6, "changes_summary_present"),
@@ -359,6 +371,11 @@ async def _evaluate_close(
         project_name=ctx.get_current_project_name(),
     )
     evaluation.commit_shas = commit_shas
+    (
+        evaluation.candidate_commit_sha,
+        candidate_error,
+    ) = await select_close_candidate(commit_shas, commit_sha, cwd=repo_path)
+    commit_error = commit_error or candidate_error
     # An unresolved commit set is a prerequisite failure: every later gate judges the
     # delivered change against it, so none of them can be evaluated without it.
     if commit_error:
@@ -659,6 +676,7 @@ async def _evaluate_close(
             criteria=task.validation_criteria or "",
             repo_path=repo_path,
             commit_shas=commit_shas,
+            candidate_commit_sha=evaluation.candidate_commit_sha,
         )
         acceptance_details = artifacts.details()
         if not artifacts.passed:
@@ -819,6 +837,7 @@ async def _evaluate_close(
         checklist_facts={
             "commit_count": len(commit_shas),
             "commit_shas": commit_shas,
+            "candidate_commit_sha": evaluation.candidate_commit_sha,
             "had_attributed_edits": evaluation.had_attributed_edits,
             "attributed_paths": sorted(evaluation.edited_paths),
             "claim_started_at": evaluation.claim_started_at,

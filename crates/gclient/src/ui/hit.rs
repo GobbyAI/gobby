@@ -64,11 +64,6 @@ pub enum Hit {
     Machine(String),
     /// The `▸`/`▾` cell at the right edge of a project card with worktrees.
     GroupToggle(String),
-    /// The `[working]`/`[all]` control of the projects band.
-    ProjectsFilter,
-    /// The `[view]` control of the agents band, which opens the menu
-    /// carrying the scope and the order.
-    AgentsView,
     /// The `│` column between sidebar and content.
     SidebarDivider,
     SidebarEmpty,
@@ -225,16 +220,6 @@ fn sidebar_hit(view: &ViewState, at: Position) -> Hit {
     // The toggle cell sits inside its card's rect, so it is tested first.
     if let Some((id, _)) = find_at(&view.group_toggle_hit_areas, at) {
         return Hit::GroupToggle(id.clone());
-    }
-    let controls = [
-        (view.projects_filter_hit_area, Hit::ProjectsFilter),
-        (view.agents_view_hit_area, Hit::AgentsView),
-    ];
-    if let Some((_, hit)) = controls
-        .into_iter()
-        .find(|(rect, _)| rect.is_some_and(|rect| rect.contains(at)))
-    {
-        return hit;
     }
     if let Some((id, _)) = find_at(&view.worktree_hit_areas, at) {
         return Hit::Worktree(id.clone());

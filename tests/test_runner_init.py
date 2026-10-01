@@ -384,7 +384,7 @@ class TestWakeTmuxSenders:
 
         await _send_tmux_session_wake(
             "gobby-agent-abc",
-            "Message from Gobby daemon: New activity available.",
+            "[Gobby] Check messages",
             submit=True,
             clear_before_submit=True,
             cli_source="claude",
@@ -392,7 +392,7 @@ class TestWakeTmuxSenders:
 
         assert runtime.write_log == [
             *(("key", key) for key in composer_clear_sequence("claude")),
-            ("text", "Message from Gobby daemon: New activity available."),
+            ("text", "[Gobby] Check messages"),
             ("key", "enter"),
         ]
 
@@ -528,7 +528,7 @@ class TestWakeTmuxSenders:
         with pytest.raises(IndeterminateWrite):
             await _send_tmux_session_wake(
                 terminal.id,
-                "Message from Gobby daemon: New activity available.",
+                "[Gobby] Check messages",
                 submit=True,
                 clear_before_submit=True,
                 cli_source="claude",

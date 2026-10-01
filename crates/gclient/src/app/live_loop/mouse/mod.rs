@@ -228,21 +228,24 @@ fn menu_mouse(chrome: &mut Chrome, mouse: &MouseEvent) -> MouseOutcome {
         .menu
         .as_ref()
         .and_then(|menu| menu_hit(menu, mouse.column, mouse.row));
-    // A press on the menu the open one came from goes back to that menu
+    // A press on a menu the open one cascades from goes back to that menu
     // and lands on its row there.
     if hit.is_none() && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
-        let parent_hit = chrome
-            .menu
-            .as_ref()
-            .and_then(|menu| menu.parent.as_deref())
-            .and_then(|parent| menu_hit(parent, mouse.column, mouse.row));
-        if parent_hit.is_some() {
-            chrome.menu = chrome
-                .menu
-                .take()
-                .and_then(|menu| menu.parent)
-                .map(|parent| *parent);
-            hit = parent_hit;
+        let ancestor = std::iter::successors(
+            chrome.menu.as_ref().and_then(|menu| menu.parent.as_deref()),
+            |menu| menu.parent.as_deref(),
+        )
+        .enumerate()
+        .find_map(|(depth, menu)| Some((depth, menu_hit(menu, mouse.column, mouse.row)?)));
+        if let Some((depth, index)) = ancestor {
+            for _ in 0..=depth {
+                chrome.menu = chrome
+                    .menu
+                    .take()
+                    .and_then(|menu| menu.parent)
+                    .map(|parent| *parent);
+            }
+            hit = Some(index);
         }
     }
     match (mouse.kind, hit) {

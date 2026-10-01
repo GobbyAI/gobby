@@ -317,7 +317,11 @@ class TestPendingMessageReceiptCommit:
             envelope_id=f"env-{adapter_type.__name__}-release",
             staged_payload=_staged_pending(response),
         )
-        released = receipts.release_receipt(receipts_db, receipt_id=receipt.receipt_id)
+        released = receipts.release_receipt(
+            receipts_db,
+            receipt_id=receipt.receipt_id,
+            delivery_generation=receipt.delivery_generation,
+        )
         assert released is not None
         assert released.state == "released"
         message_manager.mark_delivered_batch.assert_not_called()

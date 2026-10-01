@@ -111,6 +111,7 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             "mode",
             "permission-mode",
             "pr-link",
+            "frame-link",  # artifact bookkeeping; conversation content lives in messages
             "started",
             "result",
             "worktree-state",

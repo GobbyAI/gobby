@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -10,6 +12,7 @@ from gobby.mcp_proxy._call_tool_wrapper import (
     canonicalize_call_tool_wrapper,
 )
 from gobby.mcp_proxy.server import GobbyDaemonTools
+from gobby.mcp_proxy.services.argument_validation import prepare_arguments
 
 pytestmark = pytest.mark.unit
 
@@ -199,6 +202,127 @@ def test_canonical_call_tool_input_leaves_undispatchable_input_unchanged(
 
     assert canonical == tool_input
     assert canonical is not tool_input
+
+
+_HANDOFF_ROUTE = {"server_name": "gobby-sessions", "tool_name": "set_handoff"}
+
+
+@pytest.mark.parametrize("field", ["arguments", "args"])
+def test_nested_wrapper_string_arguments_are_parsed_once(field: str) -> None:
+    """A nested target payload string parses at the wrapper, like a top-level one (#23125)."""
+    canonical = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={**_HANDOFF_ROUTE, field: '{"clear_session": false}'},
+    )
+
+    assert canonical.arguments == {"clear_session": False}
+
+
+@pytest.mark.parametrize("raw", ["{not-json", "[1, 2]", '"text"'])
+def test_nested_wrapper_unparseable_string_raises_typed(raw: str) -> None:
+    with pytest.raises(CallToolWrapperInputError) as excinfo:
+        canonicalize_call_tool_wrapper(
+            server_name=None,
+            tool_name=None,
+            arguments={**_HANDOFF_ROUTE, "arguments": raw},
+        )
+
+    assert excinfo.value.field_name == "arguments.arguments"
+
+
+@pytest.mark.parametrize(
+    ("arguments", "args"),
+    [
+        ({"clear_session": False}, {"clear_session": True}),
+        ({"clear_session": True}, {"clear_session": True}),
+        ({}, {"clear_session": True}),
+        ("placeholder", '{"content": "real"}'),
+    ],
+    ids=["different", "identical", "empty-arguments", "strings"],
+)
+@pytest.mark.parametrize("routed", [True, False], ids=["top-level-route", "unrouted"])
+def test_both_aliases_raise_typed_ambiguity(
+    arguments: str | dict[str, Any],
+    args: str | dict[str, Any],
+    routed: bool,
+) -> None:
+    """Both spellings present is ambiguous; neither value may be silently dropped."""
+    with pytest.raises(CallToolWrapperInputError, match="'arguments' and 'args'"):
+        canonicalize_call_tool_wrapper(
+            server_name="gobby-sessions" if routed else None,
+            tool_name="set_handoff" if routed else None,
+            arguments=arguments,
+            args=args,
+        )
+
+
+def test_nested_both_aliases_raise_typed_ambiguity() -> None:
+    with pytest.raises(CallToolWrapperInputError, match="'arguments' and 'args'"):
+        canonicalize_call_tool_wrapper(
+            server_name=None,
+            tool_name=None,
+            arguments={**_HANDOFF_ROUTE, "arguments": {}, "args": {"clear_session": True}},
+        )
+
+
+@pytest.mark.parametrize(
+    ("null_alias", "payload_alias"),
+    [("arguments", "args"), ("args", "arguments")],
+)
+def test_nested_null_alias_yields_to_the_other_alias(null_alias: str, payload_alias: str) -> None:
+    """A null nested alias counts as absent, as it does at top level."""
+    payload = {"clear_session": False}
+
+    wrapper = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={**_HANDOFF_ROUTE, null_alias: None, payload_alias: payload},
+    )
+
+    assert wrapper.arguments == payload
+
+
+def test_nested_null_aliases_only_yield_empty_arguments() -> None:
+    wrapper = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={**_HANDOFF_ROUTE, "arguments": None, "args": None},
+    )
+
+    assert wrapper.arguments == {}
+
+
+def test_canonical_call_tool_input_keeps_both_aliases_when_ambiguous() -> None:
+    tool_input = {**_HANDOFF_ROUTE, "arguments": {}, "args": {"clear_session": True}}
+
+    assert canonical_call_tool_input(tool_input) == tool_input
+
+
+@pytest.mark.parametrize(
+    "tool_input",
+    [
+        {**_HANDOFF_ROUTE, "arguments": '{"clear_session": true}'},
+        {**_HANDOFF_ROUTE, "args": '{"clear_session": true}'},
+        {"arguments": {**_HANDOFF_ROUTE, "arguments": '{"clear_session": true}'}},
+        {"args": json.dumps({**_HANDOFF_ROUTE, "args": '{"clear_session": true}'})},
+        {"arguments": {**_HANDOFF_ROUTE, "arguments": {"clear_session": True}}},
+    ],
+    ids=["top-arguments-str", "top-args-str", "nested-arguments-str", "nested-args-str", "dict"],
+)
+def test_hook_input_matches_dispatched_arguments(tool_input: dict[str, Any]) -> None:
+    """Hook consumers and dispatch hold the same target dict for every accepted shape."""
+    wrapper = canonicalize_call_tool_wrapper(
+        server_name=tool_input.get("server_name"),
+        tool_name=tool_input.get("tool_name"),
+        arguments=tool_input.get("arguments"),
+        args=tool_input.get("args"),
+    )
+    dispatched, error = prepare_arguments(wrapper.arguments)
+
+    assert error is None
+    assert dispatched == {"clear_session": True}
+    assert canonical_call_tool_input(tool_input)["arguments"] == dispatched
 
 
 class _SchemaErrorProxy:

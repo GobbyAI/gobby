@@ -16,7 +16,6 @@ from gobby.cli.daemon_preflight import restart_start_refusal
 from gobby.cli.runtime import get_cli_runtime
 from gobby.install.bin_freshness_github import SourceUnavailableError, platform_target
 from gobby.install.bin_set_coherence import (
-    IDENTITY_STAMP_NAME,
     REBUILD_REMEDY,
     BinarySetCoherenceError,
     WorkspacePromotionMetadata,
@@ -25,7 +24,12 @@ from gobby.install.bin_set_coherence import (
 )
 from gobby.sessions.handoff_shutdown import HandoffShutdownBlocked
 from gobby.storage.schema_identity_pin import SchemaIdentityError, validate_identity
-from gobby.utils.native_bin import native_bin_dir, native_bin_name, resolve_native_bin
+from gobby.utils.native_bin import (
+    IDENTITY_STAMP_NAME,
+    native_bin_dir,
+    native_bin_name,
+    resolve_native_bin,
+)
 
 _PACKAGES = ("gobby-code", "gobby-daemon", "gobby-hooks")
 _BINARY_NAMES = ("gcode", "gdaemon", "ghook")

@@ -8,6 +8,7 @@ This module provides operations for managing task lifecycle:
 - delete_task: Delete a task
 """
 
+import json
 import logging
 import re
 from datetime import datetime
@@ -21,6 +22,118 @@ from gobby.storage.tasks._transitions import reopen_task as _reopen_task_transit
 from gobby.utils.datetime import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+def repair_closed_candidate(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    review_id: str,
+    candidate_commit_sha: str,
+    expected_closed_commit_sha: str,
+    by_session_id: str,
+    reason: str,
+    preview: bool = True,
+) -> dict[str, object]:
+    """Correct only the marker of the exact original CLOSED/VALID review, with audit."""
+    if len(reason.strip()) < 20 or not re.fullmatch(r"[0-9a-f]{40}", candidate_commit_sha):
+        raise ValueError("Repair requires an audit reason and a full reviewed candidate SHA.")
+    with db.transaction() as conn:
+        task = conn.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
+        review = conn.execute(
+            "SELECT * FROM task_close_reviews WHERE id = %s FOR SHARE", (review_id,)
+        ).fetchone()
+        if task is None or review is None or review["task_id"] != task_id:
+            raise ValueError("The original close review must belong to this task.")
+        actor = conn.execute(
+            "SELECT project_id FROM sessions WHERE id = %s", (by_session_id,)
+        ).fetchone()
+        if actor is None or actor["project_id"] != task["project_id"]:
+            raise ValueError("Repair requires a registered caller in the task project.")
+        if (
+            task["closed_at"] is None
+            or task["validation_status"] != "valid"
+            or task["claimed_by_session_id"] is not None
+            or task["is_escalated"]
+            or task["merge_in_progress"]
+        ):
+            raise ValueError("Repair requires an unclaimed CLOSED/VALID task outside integration.")
+        if task["closed_commit_sha"] != expected_closed_commit_sha:
+            raise ValueError("The closed marker changed; inspect canonical state before retrying.")
+        if (
+            review["status"] != "closed"
+            or review["error"] is not None
+            or review["completed_at"] is None
+            or not review["created_at"] <= task["closed_at"] <= review["completed_at"]
+            or task["closed_in_session_id"] != review["caller_session_id"]
+        ):
+            raise ValueError("The review does not prove this original closed state.")
+        arguments = review["close_arguments"]
+        payload = review["result_payload"]
+        facts = review["stable_facts"]
+        arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+        payload = json.loads(payload) if isinstance(payload, str) else payload
+        facts = json.loads(facts) if isinstance(facts, str) else facts
+        if (
+            not isinstance(arguments, dict)
+            or not isinstance(payload, dict)
+            or not isinstance(facts, dict)
+        ):
+            raise ValueError("The review's original request and VALID evidence are required.")
+        if (
+            payload.get("closed") is not True
+            or payload.get("validation_status") != "valid"
+            or payload.get("status") != "closed"
+            or payload.get("event") != "task_close_review_completed"
+            or payload.get("review_id") != review_id
+            or payload.get("task_id") != task_id
+            or arguments.get("commit_sha") != candidate_commit_sha
+            or arguments.get("reason") != task["closed_reason"]
+        ):
+            raise ValueError(
+                "Only the exact explicit candidate of a completed VALID review can be repaired."
+            )
+        links = task["commits"] or []
+        links = json.loads(links) if isinstance(links, str) else links
+        reviewed_links = facts.get("commit_shas")
+        if (
+            not isinstance(links, list)
+            or not isinstance(reviewed_links, list)
+            or not all(isinstance(sha, str) for sha in [*links, *reviewed_links])
+            or set(links) != set(reviewed_links)
+            or not any(candidate_commit_sha.startswith(sha) for sha in links)
+        ):
+            raise ValueError("The complete linked commit set must still match the original review.")
+        result: dict[str, object] = {
+            "task_id": task_id,
+            "review_id": review_id,
+            "previous_closed_commit_sha": expected_closed_commit_sha,
+            "candidate_commit_sha": candidate_commit_sha,
+            "closed": True,
+            "validation_status": "valid",
+            "applied": False,
+            "commit_shas": links,
+        }
+        if preview:
+            return result
+        conn.execute(
+            "UPDATE tasks SET closed_commit_sha = %s, updated_at = %s WHERE id = %s",
+            (candidate_commit_sha, utc_now(), task_id),
+        )
+        # One transaction: an audit failure rolls back the marker correction.
+        conn.execute(
+            """INSERT INTO task_lifecycle_events
+               (task_id, from_state, to_state, reason, by_actor)
+               VALUES (%s, 'closed', 'closed', %s, %s)""",
+            (
+                task_id,
+                f"repair_closed_candidate: review={review_id}; "
+                f"{expected_closed_commit_sha} -> {candidate_commit_sha}; {reason.strip()}",
+                by_session_id,
+            ),
+        )
+        result["applied"] = True
+        return result
 
 
 def close_task(

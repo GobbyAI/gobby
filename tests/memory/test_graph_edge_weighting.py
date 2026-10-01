@@ -747,3 +747,122 @@ def test_edge_timestamp_to_iso_handles_epoch_ms_string_and_none() -> None:
     assert _edge_timestamp_to_iso("2026-01-01T00:00:00+00:00") == "2026-01-01T00:00:00+00:00"
     assert _edge_timestamp_to_iso(None) is None
     assert _edge_timestamp_to_iso(object()) is None
+
+
+async def test_related_expansion_reuses_cached_neighbor_rows() -> None:
+    """F4 (#22910): a shared rows cache serves the invariant hop query once.
+
+    Backfill re-runs the graph leg from the same entity seeds every round. The
+    single-hop neighbor query is limit-independent (only the Python admission
+    cap varies), so a request-scoped cache must serve later rounds without
+    re-issuing it while returning identical keys.
+    """
+
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" in cypher:
+            return [
+                {
+                    "source_key": "seed",
+                    "related_entity_key": "neighbor-a",
+                    "edge_weight": 0.8,
+                    "updated_at": None,
+                },
+                {
+                    "source_key": "seed",
+                    "related_entity_key": "neighbor-b",
+                    "edge_weight": 0.6,
+                    "updated_at": None,
+                },
+            ]
+        if "RETURN DISTINCT m.memory_id" in cypher:
+            return [{"memory_id": "memory-1", "updated_at": 1}]
+        return []
+
+    falkor = RecordingFalkor(respond)
+    reader = _reader(falkor)
+    cache: dict[Any, Any] = {}
+
+    first = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5, rows_cache=cache)
+    second = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5, rows_cache=cache)
+
+    assert first.memory_ids == second.memory_ids == ["memory-1"]
+    # The invariant neighbor hop runs once for the request, not once per round.
+    assert len(falkor.find("related_entity_key")) == 1
+
+
+async def test_related_expansion_cache_misses_on_changed_frontier() -> None:
+    """F4 (#22910): the memo keys on the frontier, so a new seed set recomputes.
+
+    The cached rows are only valid for the exact frontier that produced them.
+    A changed frontier must miss, re-run the hop query, and return rows named
+    for the new frontier rather than a stale neighbor set.
+    """
+
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" not in cypher:
+            return []
+        return [
+            {
+                "source_key": source_key,
+                "related_entity_key": f"n-{source_key}",
+                "edge_weight": 0.9,
+                "updated_at": None,
+            }
+            for source_key in (params or {}).get("source_keys") or []
+        ]
+
+    falkor = RecordingFalkor(respond)
+    reader = _reader(falkor)
+    cache: dict[Any, Any] = {}
+
+    keys_a, _, _ = await reader._find_related_entity_keys(
+        ["seed-a"], max_hops=1, limit=5, project_id=None, include_global=True, rows_cache=cache
+    )
+    keys_b, _, _ = await reader._find_related_entity_keys(
+        ["seed-b"], max_hops=1, limit=5, project_id=None, include_global=True, rows_cache=cache
+    )
+
+    # Distinct frontiers -> distinct keys, both stored, and the hop ran per frontier.
+    assert keys_a == ["n-seed-a"]
+    assert keys_b == ["n-seed-b"]
+    assert len(cache) == 2
+    assert len(falkor.find("related_entity_key")) == 2
+
+    # Re-asking the first frontier is now served from the memo, unchanged.
+    keys_a_again, _, _ = await reader._find_related_entity_keys(
+        ["seed-a"], max_hops=1, limit=5, project_id=None, include_global=True, rows_cache=cache
+    )
+    assert keys_a_again == ["n-seed-a"]
+    assert len(falkor.find("related_entity_key")) == 2
+
+
+async def test_related_expansion_cache_is_request_scoped() -> None:
+    """F4 (#22910): a fresh request starts with a fresh memo.
+
+    Two searches must not share cached hop rows, so a request-scoped cache dict
+    sees the invariant query run once per request and returns identical results.
+    """
+
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" in cypher:
+            return [
+                {
+                    "source_key": "seed",
+                    "related_entity_key": "neighbor-a",
+                    "edge_weight": 0.8,
+                    "updated_at": None,
+                }
+            ]
+        if "RETURN DISTINCT m.memory_id" in cypher:
+            return [{"memory_id": "memory-1", "updated_at": 1}]
+        return []
+
+    falkor = RecordingFalkor(respond)
+    reader = _reader(falkor)
+
+    first = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5, rows_cache={})
+    second = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5, rows_cache={})
+
+    assert first.memory_ids == second.memory_ids == ["memory-1"]
+    # Independent per-request memos -> one hop query each, no cross-request reuse.
+    assert len(falkor.find("related_entity_key")) == 2

@@ -12,7 +12,11 @@ import psycopg
 from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
-from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CALL_TOOL_ARGUMENT_FIELDS,
+    call_tool_arguments_refusal,
+    canonical_call_tool_input,
+)
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
 from gobby.storage.hub.protocol import HubDatabase
@@ -121,11 +125,22 @@ class TemplatingMixin:
         # reference inner tool params (commit_sha, reason, etc.) directly. The
         # proxy's canonical routing fields (server_name, tool_name) are overlaid
         # so is_tool_unlocked / schema_lease_key / block reasons key the same pair.
+        # Arguments the proxy will refuse reach conditions as a typed
+        # ``call_tool_arguments_error`` in place of the raw value, so a condition
+        # never calls a mapping method on a string (#23125).
         tool_name = event.data.get("tool_name", "")
         if is_gobby_call_tool(tool_name):
             wrapper_input = canonical_call_tool_input(raw_tool_input)
+            refusal = call_tool_arguments_refusal(raw_tool_input)
             inner_args = wrapper_input.get("arguments")
-            if isinstance(inner_args, dict):
+            if refusal is not None:
+                raw_tool_input = {
+                    key: value
+                    for key, value in wrapper_input.items()
+                    if key not in CALL_TOOL_ARGUMENT_FIELDS
+                }
+                raw_tool_input["call_tool_arguments_error"] = refusal
+            elif isinstance(inner_args, dict):
                 raw_tool_input = dict(inner_args)
                 for field in ("server_name", "tool_name"):
                     if field in wrapper_input:

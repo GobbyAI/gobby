@@ -35,6 +35,7 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.utils.project_context import reset_project_context, set_project_context
+from gobby.utils.session_context import session_context_for_test
 from tests.fixtures.isolated_checkout import write_project_marker
 
 pytestmark = pytest.mark.unit
@@ -1001,14 +1002,18 @@ async def test_apply_plan_review_repairs_registered(
     assert input_schema["properties"]["accepted_finding_ids"]["items"] == {"type": "string"}
 
     expected = {"ok": True, "evidence_id": "evidence-1", "changed": False}
-    with patch(
-        "gobby.plans.review_evidence.PlanReviewEvidenceService.apply_plan_review_repairs",
-        return_value=expected,
-    ) as apply:
+    with (
+        patch(
+            "gobby.plans.review_evidence.PlanReviewEvidenceService.apply_plan_review_repairs",
+            return_value=expected,
+        ) as apply,
+        session_context_for_test("repair-caller"),
+    ):
         result = await registry.call(
             "apply_plan_review_repairs",
             {"evidence_id": "evidence-1", "accepted_finding_ids": ["F1", "F2"]},
         )
 
     assert result == expected
-    apply.assert_called_once_with("evidence-1", ["F1", "F2"])
+    # The caller's session is forwarded so the service can authorize the repair seat.
+    apply.assert_called_once_with("evidence-1", ["F1", "F2"], caller_session_id="repair-caller")

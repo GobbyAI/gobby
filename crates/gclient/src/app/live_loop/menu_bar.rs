@@ -5,8 +5,8 @@ use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
-    agents_view_items, arrange_items, blocked_entry, enabled_if, item, passthrough_label,
-    theme_row_label, MenuAction, MenuItem,
+    arrange_items, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
+    MenuAction, MenuItem, Submenu,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -39,22 +39,20 @@ pub fn menu_bar_items<W: WorkspaceView>(
             enabled_if(act("Detach", Action::Detach), held),
         ],
         MenuBarMenu::Edit => edit_items(ws, chrome),
-        MenuBarMenu::View => {
-            let mut items = agents_view_items(chrome);
-            items.push(act(
-                if chrome.sidebar.all_projects {
-                    "All projects"
-                } else {
-                    "Working projects"
-                },
-                Action::ToggleProjectsFilter,
-            ));
-            items.push(act("Show sidebar", Action::ToggleSidebar));
-            items.push(item("Pin sidebar", MenuAction::PinSidebar));
-            items.push(act("Legend", Action::Help));
-            items.push(item(theme_row_label(chrome), MenuAction::ThemeMenu));
-            items
-        }
+        // Each section's options live under Sidebar ▸ in a submenu of their
+        // own; the state legend is Help › Keys.
+        MenuBarMenu::View => vec![
+            item(
+                theme_row_label(chrome),
+                MenuAction::OpenSubmenu(Submenu::Theme),
+            ),
+            toggle(
+                ("✓ Monochrome", "  Monochrome"),
+                chrome.prefs.monochrome,
+                MenuAction::ToggleMonochrome,
+            ),
+            item("  Sidebar ▸", MenuAction::OpenSubmenu(Submenu::Sidebar)),
+        ],
         MenuBarMenu::Window => {
             let mut items = vec![
                 enabled_if(

@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 import uuid
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -170,6 +171,41 @@ def test_concurrent_resolution_creates_one_project_workspace(
         (LOCAL_MACHINE_ID, project_id),
     )
     assert len(rows) == 1
+
+
+def test_existing_project_workspace_resolves_while_machine_row_is_locked(
+    manager: WorkspaceManager, temp_db: HubDatabase
+) -> None:
+    project_id = _project(temp_db, "Existing project")
+    expected, _created = resolve_launch_workspace(
+        manager, LOCAL_MACHINE_ID, workspace=None, project_id=project_id
+    )
+
+    def resolve() -> tuple[str, bool]:
+        import time
+
+        from gobby.telemetry.query_timing import observe_queries
+
+        # A real conflicting row lock must not delay this read-only lookup.
+        with temp_db.transaction() as conn:
+            conn.execute("SET LOCAL lock_timeout = '200ms'")
+            queries: list[float] = []
+            started = time.perf_counter()
+            with observe_queries(queries.append):
+                workspace, created = resolve_launch_workspace(
+                    manager, LOCAL_MACHINE_ID, workspace=None, project_id=project_id
+                )
+            elapsed = time.perf_counter() - started
+        print(f"locked-machine lookup elapsed_ms={elapsed * 1000:.1f} queries={len(queries)}")
+        return workspace.id, created
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with temp_db.transaction() as conn:
+            conn.execute("SELECT id FROM machines WHERE id = %s FOR UPDATE", (LOCAL_MACHINE_ID,))
+            result = executor.submit(resolve).result(timeout=3)
+
+    assert result == (expected.id, False)
+    assert manager.get(expected.id) == expected
 
 
 def test_snapshot_row_carries_the_association(

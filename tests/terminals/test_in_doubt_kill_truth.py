@@ -710,3 +710,52 @@ async def test_cancelled_reaper_keeps_the_claim_until_its_kill_settles(
     assert settled is True
     assert row.state == "exited"
     assert not in_doubt_spawns.holds(row.id)
+
+
+@dataclass
+class _ParkedStickyRuntime(_ParkedKillRuntime):
+    """A parked tmux kill that returns without removing the session."""
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        del terminal, grace_seconds
+        self.terminate_started.set()
+        await self.kill_hold.wait()
+
+
+@pytest.mark.parametrize(
+    ("runtime_type", "state", "removals"),
+    [(_ParkedKillRuntime, "exited", 1), (_ParkedStickyRuntime, "pending", 0)],
+    ids=["proven", "unproven"],
+)
+async def test_reaper_runs_deferred_isolation_removal_only_after_a_proven_settle(
+    runtime_type: type[_ParkedKillRuntime], state: str, removals: int
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _cleanup_isolation_step
+
+    row = _stale_tmux_row()
+    store = MemoryTerminalStore(row)
+    runtime = runtime_type(live_keys={str(row.spawn_key)})
+    reaping = asyncio.create_task(_reconciliation(store, runtime).reap_stale_pending())
+    await runtime.terminate_started.wait()
+
+    # A concurrent failed spawn on this id hands its isolation removal to the reaper.
+    handler = MagicMock()
+    handler.cleanup_environment = AsyncMock()
+    await _cleanup_isolation_step(
+        handler,
+        MagicMock(),
+        cleanup=True,
+        run_id="run-concurrent",
+        terminal_id=row.id,
+        terminal_manager=store,
+        held=True,
+        settled=False,
+        prior_attempt=None,
+    )
+    handler.cleanup_environment.assert_not_awaited()
+    runtime.kill_hold.set()
+    await reaping
+
+    assert handler.cleanup_environment.await_count == removals
+    assert row.state == state
+    assert not in_doubt_spawns.holds(row.id)
