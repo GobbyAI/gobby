@@ -112,7 +112,7 @@ async def test_grok_compaction_interrupt_uses_ctrl_c(
 
     result, mark, clear = await _send(pane, observe)
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert "escape" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
@@ -129,7 +129,7 @@ async def test_grok_compaction_retries_after_interrupt(
 
     result, mark, clear = await _send(pane, observe, command=_CLEAR)
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
@@ -169,7 +169,7 @@ async def test_grok_retry_resubmits_only_after_the_interrupt_is_confirmed() -> N
 
     result, _mark, _clear = await _send(pane, observe, command=_CLEAR)
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     # The first confirmation precedes both submissions; the second precedes the retry.
     assert typed_at_confirmation == [0, 1]
@@ -227,7 +227,7 @@ async def test_grok_settled_turn_is_compacted_without_an_interrupt() -> None:
 
     result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True)
 
-    assert result == (True, None, True, {"interrupted": False})
+    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
@@ -555,7 +555,7 @@ async def test_compaction_turn_observer_keeps_event_loop_responsive() -> None:
         release.set()
 
     result, _, _ = await delivery
-    assert result == (True, None, True, {"interrupted": False})
+    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert observer_threads
     assert all(thread_id != threading.get_ident() for thread_id in observer_threads)
 
@@ -599,7 +599,7 @@ async def test_compaction_waits_for_a_live_turn_to_settle_before_submitting() ->
     result, mark, clear = await _send(pane, lambda: True, turn_settled=turn_settled)
 
     assert polls["n"] >= 2
-    assert result == (True, None, True, {"interrupted": False})
+    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert pane.keys == [*_DRAIN, "enter"]
     assert "ctrl_c" not in pane.keys
     assert pane.typed == [f"{_COMMAND}\n"]
@@ -619,7 +619,7 @@ async def test_compaction_interrupts_after_the_turn_settle_wait_times_out() -> N
     result, mark, clear = await _send(pane, lambda: True, turn_settled=turn_settled)
 
     assert polls["n"] >= 2
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
@@ -635,7 +635,7 @@ async def test_grok_live_or_unknown_turn_is_interrupted_before_compaction(
 
     result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: settled)
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_COMMAND}\n"]
     mark.assert_called_once()
@@ -652,7 +652,7 @@ async def test_grok_rejection_after_a_settled_submission_interrupts_before_resub
         pane, lambda: True, turn_settled=lambda: next(reads, False), command=_CLEAR
     )
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == [*_DRAIN, "enter", "ctrl_c", *_DRAIN, "enter"]
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
@@ -666,7 +666,7 @@ async def test_grok_rejection_resubmission_checks_idle_before_first_ctrl_c() -> 
     result, mark, clear = await _send(pane, lambda: True, turn_settled=lambda: True, command=_CLEAR)
 
     assert "ctrl_c" not in pane.keys
-    assert result == (True, None, True, {"interrupted": False})
+    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
     assert pane.typed == [f"{_CLEAR}\n", f"{_CLEAR}\n"]
     mark.assert_called_once()
     clear.assert_not_called()

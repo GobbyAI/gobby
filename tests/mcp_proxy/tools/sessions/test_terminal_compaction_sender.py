@@ -141,7 +141,7 @@ async def test_confirmed_interrupt_drains_then_submits_once() -> None:
 
     result, mark, clear = await _send(pane, lambda: True)
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["escape", *composer_clear_sequence("claude"), "enter"]
     assert pane.typed == ["/clear\n"]
     mark.assert_called_once()
@@ -154,7 +154,7 @@ async def test_codex_uses_ctrl_c_and_the_line_drain() -> None:
 
     result, _mark, _clear = await _send(pane, lambda: True, cli_source="codex")
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["ctrl_c", *composer_clear_sequence("codex"), "enter"]
     assert pane.typed == ["/clear\n"]
 
@@ -186,6 +186,40 @@ async def test_failed_followup_enter_keeps_codex_compact_attempt_pending() -> No
     assert result == (True, None, True, {"enter_delivery_unconfirmed": True})
     assert pane.typed == ["/compact\n"]
     assert pane.keys == [*composer_clear_sequence("codex"), "enter"]
+    mark.assert_called_once()
+    clear.assert_not_called()
+    schedule.assert_called_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("cli_source", "composer_read"),
+    [("grok", None), ("claude", _CLAUDE_READ)],
+    ids=["no-reader", "unreadable"],
+)
+async def test_unverified_compact_submit_keeps_the_attempt_without_retyping(
+    cli_source: str, composer_read: ComposerReader | None
+) -> None:
+    pane = _ComposerPane()
+    mark = MagicMock(return_value=True)
+    clear = MagicMock(return_value=True)
+    schedule = MagicMock(return_value=True)
+    result = await _send_terminal_compaction_command(
+        pane,
+        "/compact",
+        "session-1",
+        cli_source=cli_source,
+        mark_continuation_pending=mark,
+        clear_continuation_pending=clear,
+        schedule_continuation_readiness=schedule,
+        turn_settled=lambda: True,
+        settle_seconds=0,
+        composer_read=composer_read,
+    )
+
+    assert result == (True, None, True, {"interrupted": False, "submit_unverified": True})
+    assert pane.typed == ["/compact\n"]
+    assert pane.keys == [*composer_clear_sequence(cli_source), "enter"]
     mark.assert_called_once()
     clear.assert_not_called()
     schedule.assert_called_once()
@@ -235,7 +269,7 @@ async def test_droid_presses_enter_on_the_compress_confirm_modal_only(
 
     result, _mark, _clear = await _send(pane, lambda: True, cli_source="droid", command=command)
 
-    assert result == (True, None, True, None)
+    assert result == (True, None, True, {"submit_unverified": True})
     assert pane.keys == ["escape", *composer_clear_sequence("droid"), "enter", *["enter"] * enters]
     assert pane.typed == [f"{command}\n"]
 

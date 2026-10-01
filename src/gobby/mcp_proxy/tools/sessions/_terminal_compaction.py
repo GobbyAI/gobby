@@ -295,10 +295,6 @@ async def _submit_command(
                 "error_code": result.error_code,
             },
         )
-    if result.error_code == SUBMIT_UNVERIFIED_ERROR_CODE:
-        # The composer cannot prove this submit, but _confirm_compaction_prompt
-        # proves the compaction itself from the provider's own frame.
-        return True, None, None
     if result.ok or result.error_code is None:
         return result.ok, result.reason, None
     return (
@@ -524,6 +520,7 @@ async def _send_terminal_compaction_command(
         readiness_before_command: str | None = None
         rejection: dict[str, str] | None = None
         interrupt_sent = False
+        submit_unverified = False
         # A compact command may have started despite a transient rejection view.
         # Never type it again; only the verified-submit ladder may retry Enter when
         # it can still see the original command in the composer.
@@ -622,6 +619,16 @@ async def _send_terminal_compaction_command(
                 if schedule_continuation_readiness is not None:
                     schedule_continuation_readiness(readiness_before_command)
                 return True, None, continuation_pending, {"enter_delivery_unconfirmed": True}
+            submit_unverified = (
+                not ok
+                and submit_detail is not None
+                and submit_detail.get("error_code") == SUBMIT_UNVERIFIED_ERROR_CODE
+            )
+            if submit_unverified:
+                # Write and Enter were delivered but no read proved the command left the
+                # composer. Never retype it: confirm a modal if one shows, watch for a
+                # rejection, and leave the provider boundary as the only proof.
+                ok = True
             if ok:
                 submit_detail = None
                 ok, reason = await _confirm_compaction_prompt(
@@ -655,7 +662,12 @@ async def _send_terminal_compaction_command(
                 "SessionStart fallback remains pending",
                 session_id,
             )
-        return True, None, continuation_pending, None if interrupt_sent else {"interrupted": False}
+        result_detail: dict[str, Any] = {}
+        if not interrupt_sent:
+            result_detail["interrupted"] = False
+        if submit_unverified:
+            result_detail["submit_unverified"] = True
+        return True, None, continuation_pending, result_detail or None
     except _SeatLeftError:
         if continuation_pending:
             clear_continuation_pending()

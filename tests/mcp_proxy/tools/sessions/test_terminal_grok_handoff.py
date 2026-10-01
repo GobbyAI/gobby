@@ -165,6 +165,8 @@ async def test_settled_grok_turn_is_compacted_without_an_interrupt_key(tmp_path:
 
     assert result["compacted"] is True
     assert result["interrupted"] is False
+    # Grok has no composer reader: the compact receipt, not the submit, proved it.
+    assert result["submit_unverified"] is True
     assert result["command"] == "/compact"
     assert pane.keys == [*_DRAIN, "enter"]
     assert pane.typed == ["/compact\n"]
