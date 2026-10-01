@@ -256,7 +256,7 @@ fn connect_bounded(config: postgres::Config, mode: RequestedSslMode) -> anyhow::
             &endpoint,
             bound,
             mode,
-            &probe_tcp_after_timeout(&probe_config),
+            &probe_tcp_after_timeout(probe_config),
         ))),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
             "the connect to the Gobby PostgreSQL hub at {endpoint} ended without a result"
@@ -270,15 +270,47 @@ enum TcpProbe {
     Reachable,
     Unreachable(String),
     NotApplicable,
+    Unknown(String),
 }
 
-/// Bound for the diagnostic probe, which runs only on the already-failed path.
+/// Bound for the whole diagnostic probe, name resolution included. The probe runs
+/// only on the already-failed path.
 const TCP_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The sync client exposes no connect phases, so a timed-out connect is followed by
 /// one bare TCP connect to the same endpoint. It reports reachability now, not the
 /// phase the original attempt stalled in.
-fn probe_tcp_after_timeout(config: &postgres::Config) -> TcpProbe {
+fn probe_tcp_after_timeout(config: postgres::Config) -> TcpProbe {
+    probe_within(TCP_PROBE_TIMEOUT, move || probe_tcp(&config))
+}
+
+/// Name resolution has no deadline of its own, so the probe runs on a thread and
+/// the caller waits at most `budget`. A probe still running then is abandoned and
+/// ends with the process, as in `connect_bounded`.
+fn probe_within(budget: Duration, probe: impl FnOnce() -> TcpProbe + Send + 'static) -> TcpProbe {
+    let (sender, receiver) = mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("gobby-postgres-probe".to_string())
+        .spawn(move || {
+            // The receiver is gone once the budget has passed; nothing is left to tell.
+            let _ = sender.send(probe());
+        });
+    if let Err(error) = spawned {
+        return TcpProbe::Unknown(format!("probe thread failed to start: {error}"));
+    }
+    match receiver.recv_timeout(budget) {
+        Ok(probe) => probe,
+        Err(mpsc::RecvTimeoutError::Timeout) => TcpProbe::Unknown(format!(
+            "probe did not finish within {:.1}s",
+            budget.as_secs_f64()
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            TcpProbe::Unknown("probe ended without a result".to_string())
+        }
+    }
+}
+
+fn probe_tcp(config: &postgres::Config) -> TcpProbe {
     let port = config.get_ports().first().copied().unwrap_or(5432);
     let address = if let Some(hostaddr) = config.get_hostaddrs().first() {
         Some(SocketAddr::new(*hostaddr, port))
@@ -319,6 +351,7 @@ fn handshake_timeout_message(
         }
         TcpProbe::Unreachable(error) => format!("unreachable ({error})"),
         TcpProbe::NotApplicable => "not_applicable (unix socket)".to_string(),
+        TcpProbe::Unknown(reason) => format!("unknown ({reason})"),
     };
     format!(
         "the Gobby PostgreSQL hub at {endpoint} did not answer the startup handshake \
@@ -880,6 +913,11 @@ mod tests {
                 TcpProbe::NotApplicable,
                 "not_applicable (unix socket)",
             ),
+            (
+                RequestedSslMode::Disable,
+                TcpProbe::Unknown("probe did not finish within 1.0s".to_string()),
+                "unknown (probe did not finish within 1.0s)",
+            ),
         ];
         for (mode, probe, suffix) in cases {
             assert_eq!(
@@ -902,8 +940,28 @@ mod tests {
         ))
         .expect("parse the probe config");
         assert!(
-            matches!(probe_tcp_after_timeout(&config), TcpProbe::Unreachable(_)),
+            matches!(probe_tcp_after_timeout(config), TcpProbe::Unreachable(_)),
             "a closed port must probe as unreachable"
+        );
+    }
+
+    #[test]
+    fn tcp_probe_budget_covers_a_stalled_resolver() {
+        // Stands in for a DNS lookup that never answers: the probe body blocks well
+        // past the budget, and the caller must still return within it.
+        let started = std::time::Instant::now();
+        let probe = probe_within(TCP_PROBE_TIMEOUT, || {
+            std::thread::sleep(Duration::from_secs(30));
+            TcpProbe::Reachable
+        });
+        let elapsed = started.elapsed();
+        assert_eq!(
+            probe,
+            TcpProbe::Unknown("probe did not finish within 1.0s".to_string())
+        );
+        assert!(
+            elapsed < TCP_PROBE_TIMEOUT + Duration::from_millis(500),
+            "a stalled probe must not hold the caller past its budget: {elapsed:?}"
         );
     }
 }
