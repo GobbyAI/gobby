@@ -89,7 +89,7 @@ class _FakeConnection:
         self.closed = False
         self._fail_close = fail_close
         self.pgconn = _FakePGConn(verifier.encode("ascii"))
-        self.info = SimpleNamespace(user="gobby", dbname="gobby", host="localhost", port=60891)
+        self.info = SimpleNamespace(user="gobby", dbname="gobby_fixture", host="localhost", port=1)
 
     async def execute(self, query: Any) -> None:
         self.statements.append(query.as_string(None))
@@ -854,11 +854,11 @@ def test_postgres_rotation_preserves_pending_on_observed_commit_cleanup_failure(
 @pytest.mark.parametrize(
     "database_url",
     [
-        "postgresql://gobby:old-secret@localhost:60891/gobby?user=evil",
-        "postgresql://gobby:old-secret@localhost:60891/gobby?dbname=evil",
-        "postgresql://gobby:old-secret@localhost:60891/gobby?host=evil.example",
-        "postgresql://gobby:old-secret@localhost:60891/gobby?service=evil",
-        "postgresql://gobby:old-secret@localhost:60891/gobby?passfile=evil",
+        f"{_CURRENT_DSN}?user=evil",
+        f"{_CURRENT_DSN}?dbname=evil",
+        f"{_CURRENT_DSN}?host=evil.example",
+        f"{_CURRENT_DSN}?service=evil",
+        f"{_CURRENT_DSN}?passfile=evil",
     ],
 )
 def test_postgres_rotation_rejects_query_indirection(
@@ -906,7 +906,7 @@ def test_postgres_rotation_rejects_query_indirection(
         _CURRENT_DSN + "#",
         _CURRENT_DSN.replace("/gobby", "/go\tbby"),
         _CURRENT_DSN.replace("old-secret", "du?mmy"),
-        _CURRENT_DSN.replace(":60891", ":not-a-port"),
+        _CURRENT_DSN.replace(":1/", ":not-a-port/"),
     ],
 )
 def test_postgres_rotation_rejects_effective_libpq_indirection(
@@ -997,7 +997,7 @@ def test_postgres_rotation_uses_normalized_direct_target(
     monkeypatch: pytest.MonkeyPatch, rotation_home: Path
 ) -> None:
     """Encoded direct URI components address the same libpq role and endpoint."""
-    dsn = "postgresql://g%6Fbby:old-secret@local%68ost:60891/g%6Fbby?sslmode=disable"
+    dsn = "postgresql://g%6Fbby:old-secret@local%68ost:1/g%6Fbby_fixture?sslmode=disable"
     update_bootstrap_yaml(
         rotation_home / "bootstrap.yaml", lambda data: data.__setitem__("database_url", dsn)
     )

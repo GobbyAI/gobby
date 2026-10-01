@@ -417,7 +417,7 @@ def test_pending_rotation_round_trips_and_requires_string_fields(temp_dir: Path)
     from gobby.config.postgres_bootstrap import read_pending_credential_rotation
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    database_url = "postgresql://gobby:old-secret@localhost:60891/gobby"
+    database_url = fake_database_url("old-secret")
     _write_bootstrap(bootstrap_file, f"database_url: {database_url}\n")
 
     assert read_pending_credential_rotation(temp_dir) is None
@@ -470,7 +470,7 @@ def test_write_postgres_defaults_preserves_pending_rotation(temp_dir: Path) -> N
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "database_url: postgresql://gobby:old-secret@localhost:60891/gobby\n",
+        f"database_url: {fake_database_url('old-secret')}\n",
     )
     update_bootstrap_yaml(
         bootstrap_file,
@@ -481,12 +481,12 @@ def test_write_postgres_defaults_preserves_pending_rotation(temp_dir: Path) -> N
     with pytest.raises(BootstrapConfigError, match="pending credential"):
         write_postgres_defaults(
             gobby_home=temp_dir,
-            database_url="postgresql://gobby:pending-placeholder@localhost:60891/gobby",
+            database_url=fake_database_url("pending-placeholder"),
         )
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert bootstrap_file.read_bytes() == before
-    assert persisted["database_url"] == "postgresql://gobby:old-secret@localhost:60891/gobby"
+    assert persisted["database_url"] == fake_database_url("old-secret")
     assert persisted["credential_rotation"]["pending_password"] == "pending-placeholder"
     assert persisted["cosmetic_note"] == "keep me"
 
@@ -500,7 +500,7 @@ def test_concurrent_bootstrap_writers_preserve_unrelated_fields(temp_dir: Path) 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "database_url: postgresql://gobby:old-secret@localhost:60891/gobby\n",
+        f"database_url: {fake_database_url('old-secret')}\n",
     )
 
     def _writer(index: int) -> None:
@@ -514,4 +514,4 @@ def test_concurrent_bootstrap_writers_preserve_unrelated_fields(temp_dir: Path) 
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert {persisted[f"writer_{index}"] for index in range(16)} == set(range(16))
-    assert persisted["database_url"] == "postgresql://gobby:old-secret@localhost:60891/gobby"
+    assert persisted["database_url"] == fake_database_url("old-secret")
