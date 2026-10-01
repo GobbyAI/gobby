@@ -332,8 +332,10 @@ def install(
     runs only those components, in order.
 
     Components: claude, codex, grok, qwen, droid, agy, git-hooks, rtk,
-    impeccable, voice, embedding, ide-settings, gclient, gterm. gclient and
-    gterm promote that binary only and do not claim the daemon singleton.
+    impeccable, voice, embedding, ide-settings, gclient, gterm, srt. gclient and
+    gterm promote that binary only and do not claim the daemon singleton. srt
+    restages the managed SRT runner after a runner change without claiming the
+    daemon singleton, so it is safe while the daemon runs.
     """
     if embedding_provider and not embedding_url:
         raise click.UsageError("--embedding-provider requires --embedding-url.")

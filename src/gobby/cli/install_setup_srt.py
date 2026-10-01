@@ -9,6 +9,7 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections.abc import Mapping
 from dataclasses import dataclass
 from http.client import IncompleteRead
 from pathlib import Path
@@ -17,7 +18,9 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from gobby.agents.srt_runtime import (
+    _CONTENT_MANIFEST_NAME,
     SrtRuntimeError,
+    _verify_srt_content,
     make_srt_installation_immutable,
     srt_install_lock,
     srt_install_root,
@@ -28,6 +31,7 @@ from gobby.utils.dependency_requirements import SRT_RELEASE, node_dependency_sta
 
 _MAX_TARBALL_BYTES = 16 * 1024 * 1024
 _MAX_TARBALL_REQUESTS = 8
+_PACKAGE_JSON_PATH = Path("node_modules/@anthropic-ai/sandbox-runtime/package.json")
 _PACKAGE_JSON = {
     "name": "gobby-managed-srt",
     "version": "0.0.0",
@@ -133,6 +137,118 @@ def _install_srt_runtime() -> SrtInstallResult:
 
         verify_srt_installation_locked()
         return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
+
+
+def restage_srt_runner() -> SrtInstallResult:
+    """Bring the staged runner up to this build, swapping only runner-owned files.
+
+    A runner change bumps ``SRT_RELEASE.runner_sha256`` and leaves every other
+    pinned file alone, so the installed package tree is kept when it still
+    matches its manifest. Anything else falls back to the full staged install.
+    """
+    try:
+        restaged = _restage_srt_runner()
+    except SrtRuntimeError:
+        raise
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SrtRuntimeError(f"failed to restage the managed SRT runner: {exc}") from exc
+    return restaged if restaged is not None else install_srt_runtime()
+
+
+def _restage_srt_runner() -> SrtInstallResult | None:
+    target = srt_install_root()
+    runner = (Path(__file__).parents[1] / "agents" / "srt_runner.mjs").read_bytes()
+    if hashlib.sha256(runner).hexdigest() != SRT_RELEASE.runner_sha256:
+        raise SrtRuntimeError("bundled SRT runner checksum mismatch")
+    with srt_install_lock():
+        if target.is_symlink() or not target.is_dir():
+            return None
+        try:
+            verify_srt_installation_locked()
+        except SrtRuntimeError:
+            pass
+        else:
+            return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=False)
+
+        eligible = _runner_only_drift(target)
+        if eligible is None:
+            return None
+        manifest, receipt = eligible
+        _require_node()
+        manifest["runner.mjs"] = SRT_RELEASE.runner_sha256
+        receipt |= SRT_RELEASE.receipt_fields()
+        root_mode = stat.S_IMODE(target.stat().st_mode)
+        target.chmod(root_mode | stat.S_IWUSR)
+        try:
+            _replace_file(target / "runner.mjs", runner, 0o555)
+            _replace_file(
+                target / "receipt.json",
+                (json.dumps(receipt, indent=2, sort_keys=True) + "\n").encode("utf-8"),
+                0o444,
+            )
+            _replace_file(
+                target / _CONTENT_MANIFEST_NAME,
+                json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8"),
+                0o444,
+            )
+        finally:
+            target.chmod(root_mode)
+        verify_srt_installation_locked()
+        return SrtInstallResult(target.resolve(), SRT_RELEASE.version, installed=True)
+
+
+def _runner_only_drift(target: Path) -> tuple[dict[str, str], dict[str, object]] | None:
+    """Return the installed manifest and receipt when only runner-owned state is stale.
+
+    Every other invariant the verifier enforces must already hold: package
+    content, lockfile pin, package identity, immutable modes, and executable
+    seccomp helpers. Never re-hash or re-permission an invalid tree.
+    """
+    try:
+        manifest = json.loads((target / _CONTENT_MANIFEST_NAME).read_text(encoding="utf-8"))
+        receipt = json.loads((target / "receipt.json").read_text(encoding="utf-8"))
+        package = json.loads((target / _PACKAGE_JSON_PATH).read_text(encoding="utf-8"))
+        runner_sha256 = hashlib.sha256((target / "runner.mjs").read_bytes()).hexdigest()
+    except (OSError, json.JSONDecodeError):
+        return None
+    if (
+        not isinstance(manifest, dict)
+        or not all(
+            isinstance(key, str) and isinstance(value, str) for key, value in manifest.items()
+        )
+        or not isinstance(receipt, dict)
+        or not isinstance(package, dict)
+        or package.get("name") != SRT_RELEASE.package
+        or package.get("version") != SRT_RELEASE.version
+        or manifest.get("package-lock.json") != SRT_RELEASE.lockfile_sha256
+        or _without(receipt, "runner_sha256", "node")
+        != _without(SRT_RELEASE.receipt_fields(), "runner_sha256")
+    ):
+        return None
+    try:
+        _verify_srt_content(target, manifest | {"runner.mjs": runner_sha256})
+    except (OSError, SrtRuntimeError):
+        return None
+    return manifest, receipt
+
+
+def _without(mapping: Mapping[str, object], *keys: str) -> dict[str, object]:
+    return {key: value for key, value in mapping.items() if key not in keys}
+
+
+def _replace_file(path: Path, data: bytes, mode: int) -> None:
+    """Write a complete sibling, then rename it over ``path`` as a new inode."""
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def _require_node() -> Path:
