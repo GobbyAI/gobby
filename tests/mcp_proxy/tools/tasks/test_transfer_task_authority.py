@@ -260,3 +260,84 @@ def test_transfer_preserves_receipts_recorded_before_it(
     fetched = manager.get_task(task.id)
     assert fetched.delegated_by_session_id == fixtures.successor.id
     assert fetched.created_in_session_id == fixtures.filer.id
+
+
+def _set_authority(db: HubDatabase, task: Task, creator: str | None, delegator: str | None) -> None:
+    db.execute(
+        "UPDATE tasks SET created_in_session_id = %s, delegated_by_session_id = %s WHERE id = %s",
+        (creator, delegator, task.id),
+    )
+
+
+def test_transfer_from_an_expired_creator_with_no_delegator(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, fixtures.filer.id, None)
+    _expire(temp_db, fixtures.filer)
+
+    updated = _transfer(manager, task, fixtures.successor, reason="filer expired")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+    assert updated.created_in_session_id == fixtures.filer.id
+    assert updated.delegation_reason == (
+        f"authority transferred from {_seq_ref(temp_db, fixtures.filer.id)} (status=expired) "
+        f"to {_seq_ref(temp_db, fixtures.successor.id)}: filer expired"
+    )
+    assert _activation(temp_db, updated, fixtures.successor.id).author_session_id == (
+        fixtures.successor.id
+    )
+
+
+def test_transfer_names_the_delegator_when_it_differs_from_the_creator(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    delegator = fixtures._add("Delegator")
+    _set_authority(temp_db, task, fixtures.filer.id, delegator.id)
+    _expire(temp_db, fixtures.filer, delegator)
+
+    updated = _transfer(manager, task, fixtures.successor, reason="delegator expired")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+    assert updated.delegation_reason == (
+        f"authority transferred from {_seq_ref(temp_db, delegator.id)} (status=expired) "
+        f"to {_seq_ref(temp_db, fixtures.successor.id)}: delegator expired"
+    )
+    assert _activation(temp_db, updated, fixtures.successor.id).author_session_id == (
+        fixtures.successor.id
+    )
+
+
+def test_transfer_note_falls_back_to_session_ids_without_seq_numbers(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, fixtures.filer.id, None)
+    _expire(temp_db, fixtures.filer)
+    temp_db.execute(
+        "UPDATE sessions SET seq_num = NULL WHERE id = ANY(%s)",
+        ([fixtures.filer.id, fixtures.successor.id],),
+    )
+
+    updated = _transfer(manager, task, fixtures.successor, reason="unnumbered seats")
+
+    assert updated.delegation_reason == (
+        f"authority transferred from {fixtures.filer.id} (status=expired) "
+        f"to {fixtures.successor.id}: unnumbered seats"
+    )
+
+
+def test_transfer_note_records_a_task_with_no_recorded_authority(
+    temp_db: HubDatabase, authority_task: tuple[LocalTaskManager, Task, _Fixtures]
+) -> None:
+    manager, task, fixtures = authority_task
+    _set_authority(temp_db, task, None, None)
+
+    updated = _transfer(manager, task, fixtures.successor, reason="operator-filed task")
+
+    assert updated.delegated_by_session_id == fixtures.successor.id
+    assert updated.delegation_reason == (
+        "authority transferred from no recorded session "
+        f"to {_seq_ref(temp_db, fixtures.successor.id)}: operator-filed task"
+    )
