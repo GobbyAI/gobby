@@ -1617,6 +1617,64 @@ def _tb_line_red(
             "unconditional pytest.fail placeholder",
             id="placeholder",
         ),
+        *[
+            pytest.param(
+                "import pytest\n\ndef test_feature():\n"
+                + padding
+                + '    pytest.fail("not written yet")\n',
+                _tb_line_red("Failed: not written yet"),
+                2,
+                "unconditional pytest.fail placeholder",
+                id=f"placeholder-{name}",
+            )
+            for name, padding in (
+                ("assignment", "    marker = 0\n"),
+                ("pass", "    pass\n"),
+                ("docstring-assignment", '    "Pending test."\n    marker = 0\n'),
+                ("builtin-call", '    print("pending")\n'),
+                ("stdlib-call", "    import time as clock\n    clock.monotonic()\n"),
+                ("uncalled-helper", "    def helper():\n        feature()\n"),
+                ("uncalled-lambda", "    helper = lambda: feature()\n"),
+            )
+        ],
+        pytest.param(
+            "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+            '    feature()\n    pytest.fail("feature returned unexpectedly")\n',
+            _tb_line_red("Failed: feature returned unexpectedly"),
+            2,
+            None,
+            id="fail-after-production-call",
+        ),
+        pytest.param(
+            "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+            '    pytest.fail(f"feature returned {feature()}")\n',
+            _tb_line_red("Failed: feature returned False"),
+            2,
+            None,
+            id="fail-evaluates-production-call",
+        ),
+        *[
+            pytest.param(
+                imports
+                + "\n\ndef test_feature():\n    marker = 0\n"
+                + f'    {fail_call}("not written yet")\n',
+                _tb_line_red("Failed: not written yet"),
+                2,
+                "unconditional pytest.fail placeholder",
+                id=f"placeholder-{name}",
+            )
+            for name, imports, fail_call in (
+                ("pytest-alias", "import pytest as pt", "pt.fail"),
+                ("fail-alias", "from pytest import fail as abort", "abort"),
+            )
+        ],
+        pytest.param(
+            "from feature import fail\n\ndef test_feature():\n    fail()\n",
+            _tb_line_red("Failed: production failure"),
+            2,
+            None,
+            id="application-call-named-fail",
+        ),
         pytest.param(
             _HELPER_FAIL_BODY,
             _tb_line_red(

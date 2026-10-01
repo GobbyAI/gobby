@@ -54,7 +54,8 @@ The task handoff must include:
 
 - Red evidence: exact command and test-attributed failure output from before implementation:
   assertion/panic, pytest `Failed: DID NOT RAISE`, a `pytest.fail()` reached from the test
-  body (never an unconditional top-level placeholder or `Failed: Timeout`), or a test-body
+  body (never a top-level placeholder reached before a conditional or application call,
+  or `Failed: Timeout`), or a test-body
   `*Error`/`*Exception` (including bare `NotImplementedError` after a stub edit).
 - Green evidence: exact command and pass output summary after minimal implementation.
 - Refactor/final-green evidence: exact final command and pass output summary.

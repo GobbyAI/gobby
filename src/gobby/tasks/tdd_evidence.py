@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import shlex
+import sys
 import textwrap
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -307,17 +309,82 @@ def _find_red_run(
 def _has_pytest_fail_placeholder(
     test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
 ) -> bool:
-    """A body that is only pytest.fail() fails whatever the code under test does."""
+    """Reject fail reached before control flow or a call into application code."""
     node = _original_test_node(test, evidence, run)
     if node is None:
         return False
-    body = node.body[1:] if ast.get_docstring(node) is not None else node.body
-    return (
-        len(body) == 1
-        and isinstance(body[0], ast.Expr)
-        and isinstance(body[0].value, ast.Call)
-        and ast.unparse(body[0].value.func) in {"pytest.fail", "fail"}
-    )
+    # Builtins, stdlib and test-framework setup are not calls into code under test.
+    setup_roots = {"pytest", "unittest", "builtins"}
+    fail_calls = {"pytest.fail"}
+    module = _original_test_module(test, evidence, run)
+    for item in [*(module.body if module is not None else ()), *node.body]:
+        if isinstance(item, ast.Import):
+            fail_calls.update(
+                f"{alias.asname or alias.name}.fail"
+                for alias in item.names
+                if alias.name == "pytest"
+            )
+            setup_roots.update(
+                alias.asname or alias.name.split(".")[0]
+                for alias in item.names
+                if alias.name.split(".")[0] in sys.stdlib_module_names | {"pytest"}
+            )
+        elif isinstance(item, ast.ImportFrom) and (item.module or "").split(".")[0] in (
+            sys.stdlib_module_names | {"pytest"}
+        ):
+            setup_roots.update(alias.asname or alias.name for alias in item.names)
+            if item.module == "pytest":
+                fail_calls.update(
+                    alias.asname or alias.name for alias in item.names if alias.name == "fail"
+                )
+    for statement in node.body:
+        is_fail = (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Call)
+            and ast.unparse(statement.value.func) in fail_calls
+        )
+        for item in _executed_python_nodes(statement):
+            if isinstance(
+                item,
+                ast.If
+                | ast.IfExp
+                | ast.BoolOp
+                | ast.For
+                | ast.AsyncFor
+                | ast.While
+                | ast.Try
+                | ast.TryStar
+                | ast.With
+                | ast.AsyncWith
+                | ast.Match
+                | ast.Assert
+                | ast.Return
+                | ast.Raise
+                | ast.comprehension,
+            ):
+                return False
+            if isinstance(item, ast.Call):
+                root = ast.unparse(item.func).split(".", 1)[0]
+                if root not in setup_roots and root not in vars(builtins):
+                    return False
+        if is_fail:
+            return True
+    return False
+
+
+def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
+    """Walk evaluated expressions, excluding uncalled function/lambda bodies."""
+    pending = [statement]
+    while pending:
+        node = pending.pop()
+        yield node
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+            pending.extend(node.args.defaults)
+            pending.extend(value for value in node.args.kw_defaults if value is not None)
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                pending.extend(node.decorator_list)
+        else:
+            pending.extend(ast.iter_child_nodes(node))
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:

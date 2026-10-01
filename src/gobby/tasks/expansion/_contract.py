@@ -263,8 +263,9 @@ def _contract_validation_criteria(entry: ManifestEntry, section: PlanSection) ->
             [
                 "TDD evidence required:",
                 "- Red evidence: test-attributed assertion/panic, pytest "
-                "`Failed: DID NOT RAISE` or `pytest.fail()` (never an unconditional "
-                "top-level placeholder or `Failed: Timeout`), or test-body "
+                "`Failed: DID NOT RAISE` or `pytest.fail()` (never a top-level "
+                "placeholder reached before a conditional or application call, "
+                "or `Failed: Timeout`), or test-body "
                 "`*Error`/`*Exception` output "
                 "captured before implementation (including bare `NotImplementedError` "
                 "after a stub edit).",
