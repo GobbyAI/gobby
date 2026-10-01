@@ -1690,7 +1690,7 @@ fn daemon_503_without_retry_body_keeps_noncritical_fail_open() -> TestResult {
 }
 
 #[test]
-fn codex_stop_without_verdict_stamps_envelope_for_daemon_replay_warning() -> TestResult {
+fn codex_stop_without_verdict_stamps_retained_envelope() -> TestResult {
     let home = tempfile::tempdir()?;
     let gobby_home = tempfile::tempdir()?;
     let body = r#"{"status":"unavailable","backend":{"state":"down","target":"127.0.0.1:60888"}}"#;

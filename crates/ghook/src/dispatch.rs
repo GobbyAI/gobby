@@ -290,13 +290,12 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     emitted.exit_code
 }
 
-/// Inbox-envelope header the daemon's replay reads to WARN about a turn that
-/// ended without a live verdict.
+/// Inbox-envelope header marking a turn that ended without a live verdict.
 const LIVE_DELIVERY_FAILURE_HEADER: &str = "X-Gobby-Live-Delivery-Failure";
 
 /// Stop is noncritical and fails open (#20744), so a failed live POST ends the
 /// turn with no daemon verdict and turn-end gates never run live. Stamp the
-/// retained envelope so its replay is daemon-visible (#23266). An envelope the
+/// retained envelope so the miss stays visible on disk (#23266). An envelope the
 /// drain already consumed is not recreated.
 fn stamp_live_delivery_failure(
     envelope: &Envelope,
