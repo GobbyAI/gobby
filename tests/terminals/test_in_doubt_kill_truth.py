@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -495,6 +496,8 @@ async def test_probe_is_strict_and_reaper_honors_claims() -> None:
         cleanup_handler=MagicMock(),
         run_db=AsyncMock(),
         terminal_manager=store,
+        # The strict listing of a reachable host that lists neither row.
+        runtime_registry=runtime_registry(NativeTerminalRuntime(_HostClient())),
         spawn_in_doubt_seconds=30.0,
     )
 
@@ -507,3 +510,252 @@ async def test_probe_is_strict_and_reaper_honors_claims() -> None:
     assert reaped == 1
     assert free.state == "exited"
     assert held.state == "pending"
+
+
+@pytest.mark.parametrize("listed", [True, False], ids=["host-listed", "host-miss"])
+async def test_stale_native_kill_needs_dead_recorded_group(
+    monkeypatch: pytest.MonkeyPatch, listed: bool
+) -> None:
+    # A stale-epoch kill proves nothing while the recorded group is alive,
+    # whether the current host listed the row or the recorded group was reaped.
+    reaps = _ReapRecorder(monkeypatch, group_alive=True)
+    row = _stale_native_row()
+    row.process = {"pgid": 8383, "start_time": 5.0}
+    client = _HostClient()
+    if listed:
+        client.list_rows = [_host_row(row, "ht-listed")]
+    runtime = NativeTerminalRuntime(client)
+
+    with pytest.raises(TerminalKillUnprovenError):
+        await runtime.terminate(row, 0.05)
+
+    assert client.kills == (["ht-listed"] if listed else [])
+    assert reaps.alive_checks >= 1
+
+
+def _deny_signals(pgid: int, sig: int) -> None:
+    raise PermissionError(pgid, sig)
+
+
+def _no_such_group(pgid: int, sig: int) -> None:
+    raise ProcessLookupError(pgid, sig)
+
+
+@pytest.mark.parametrize("group", ["permission-denied", "dead"])
+async def test_reaper_needs_dead_group_for_hostless_pending_row(
+    monkeypatch: pytest.MonkeyPatch, group: str
+) -> None:
+    signal = _deny_signals if group == "permission-denied" else _no_such_group
+    monkeypatch.setattr("gobby.terminals.host_reap.os.killpg", signal)
+    monkeypatch.setattr("gobby.terminals.host_reap.os.kill", signal)
+    row = _stale_native_row(state="pending")
+    row.process = {"pgid": 9191}
+    row.attempt_started_at = datetime.now(UTC) - timedelta(seconds=120)
+    reconciliation = LifecycleReconciliation(
+        agent_run_manager=MagicMock(),
+        db=MagicMock(),
+        cleanup_handler=MagicMock(),
+        run_db=AsyncMock(),
+        terminal_manager=MemoryTerminalStore(row),
+        # A reachable host that lists nothing: only the recorded group is left.
+        runtime_registry=runtime_registry(NativeTerminalRuntime(_HostClient())),
+        spawn_in_doubt_seconds=30.0,
+    )
+
+    reaped = await reconciliation.reap_stale_pending()
+
+    if group == "permission-denied":
+        assert reaped == 0
+        assert row.state == "pending"
+    else:
+        assert reaped == 1
+        assert row.state == "exited"
+
+
+@dataclass
+class _ParkedKillRuntime(FakeRuntime):
+    """A tmux runtime whose kill parks until the test releases it."""
+
+    kill_hold: asyncio.Event = field(default_factory=asyncio.Event)
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        self.terminate_started.set()
+        await self.kill_hold.wait()
+        await super().terminate(terminal, grace_seconds)
+
+
+def _stale_tmux_row() -> Terminal:
+    row = make_memory_terminal(backend="tmux")
+    row.state = "pending"
+    row.spawn_key = row.session_name
+    row.attempt_started_at = datetime.now(UTC) - timedelta(seconds=120)
+    return row
+
+
+def _reconciliation(
+    store: MemoryTerminalStore, runtime: FakeRuntime | NativeTerminalRuntime
+) -> LifecycleReconciliation:
+    return LifecycleReconciliation(
+        agent_run_manager=MagicMock(),
+        db=MagicMock(),
+        cleanup_handler=MagicMock(),
+        run_db=AsyncMock(),
+        terminal_manager=store,
+        runtime_registry=runtime_registry(runtime),
+        spawn_in_doubt_seconds=30.0,
+    )
+
+
+async def test_reaper_holds_the_claim_for_its_whole_absence_proof() -> None:
+    row = _stale_tmux_row()
+    runtime = _ParkedKillRuntime()
+    reaping = asyncio.create_task(
+        _reconciliation(MemoryTerminalStore(row), runtime).reap_stale_pending()
+    )
+    await runtime.terminate_started.wait()
+
+    # A placed retry of this id cannot claim it while the reaper's kill is in flight.
+    retry_claimed = in_doubt_spawns.claim(row.id)
+    if retry_claimed:
+        in_doubt_spawns.release(row.id)
+    runtime.kill_hold.set()
+    reaped = await reaping
+
+    assert retry_claimed is False
+    assert reaped == 1
+    assert row.state == "exited"
+    assert not in_doubt_spawns.holds(row.id)
+
+
+class _ListedBeforeRetry(MemoryTerminalStore):
+    """A store whose stale listing is a snapshot taken before a retry."""
+
+    def __init__(self, row: Terminal, listed: Terminal) -> None:
+        super().__init__(row)
+        self._listed = listed
+
+    def list_stale_pending(self, max_age_seconds: float) -> list[Terminal]:
+        del max_age_seconds
+        return [self._listed]
+
+
+async def test_reaper_skips_a_row_retried_after_its_listing() -> None:
+    row = _stale_tmux_row()
+    listed = replace(row)
+    # A retry bumped the attempt and went live between the listing and the claim.
+    row.attempt_generation += 1
+    row.state = "live"
+    store = _ListedBeforeRetry(row, listed)
+    runtime = FakeRuntime()
+
+    reaped = await _reconciliation(store, runtime).reap_stale_pending()
+
+    assert reaped == 0
+    assert runtime.killed_ids == set()
+    assert row.state == "live"
+
+
+@pytest.mark.parametrize("backend", ["tmux", "native"])
+async def test_cancelled_reaper_keeps_the_claim_until_its_kill_settles(
+    monkeypatch: pytest.MonkeyPatch, backend: str
+) -> None:
+    from gobby.agents import spawn_executor
+
+    loop = asyncio.get_running_loop()
+    parked = asyncio.Event()
+    unpark: Callable[[], None]
+    runtime: FakeRuntime | NativeTerminalRuntime
+    if backend == "tmux":
+        row = _stale_tmux_row()
+        runtime = _ParkedKillRuntime()
+        parked = runtime.terminate_started
+        unpark = runtime.kill_hold.set
+    else:
+        # A hostless native row whose recorded group proof runs in a worker thread
+        # that cancellation cannot stop; retry_attempt_unsettled accepts this row.
+        row = _stale_native_row(state="pending")
+        row.process = {"pgid": 9191, "start_time": 5.0}
+        row.attempt_started_at = datetime.now(UTC) - timedelta(seconds=120)
+        runtime = NativeTerminalRuntime(_HostClient())
+        worker_release = threading.Event()
+
+        def parked_proof(process: Any, *, grace_seconds: float) -> bool:
+            del process, grace_seconds
+            loop.call_soon_threadsafe(parked.set)
+            worker_release.wait(5)
+            return True
+
+        monkeypatch.setattr(
+            "gobby.agents.spawn_executor.reap_recorded_group_proven_dead", parked_proof
+        )
+        unpark = worker_release.set
+    reaping = asyncio.create_task(
+        _reconciliation(MemoryTerminalStore(row), runtime).reap_stale_pending()
+    )
+    await parked.wait()
+    reaping.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await reaping
+
+    # The kill or proof is still in flight: a placed retry cannot take the id.
+    retry_claimed = in_doubt_spawns.claim(row.id)
+    if retry_claimed:
+        in_doubt_spawns.release(row.id)
+        unpark()
+    assert retry_claimed is False
+    [settlement] = [t for t in spawn_executor._REAP_TASKS if t.get_loop() is loop]
+    unpark()
+    settled = await settlement
+
+    assert settled is True
+    assert row.state == "exited"
+    assert not in_doubt_spawns.holds(row.id)
+
+
+@dataclass
+class _ParkedStickyRuntime(_ParkedKillRuntime):
+    """A parked tmux kill that returns without removing the session."""
+
+    async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        del terminal, grace_seconds
+        self.terminate_started.set()
+        await self.kill_hold.wait()
+
+
+@pytest.mark.parametrize(
+    ("runtime_type", "state", "removals"),
+    [(_ParkedKillRuntime, "exited", 1), (_ParkedStickyRuntime, "pending", 0)],
+    ids=["proven", "unproven"],
+)
+async def test_reaper_runs_deferred_isolation_removal_only_after_a_proven_settle(
+    runtime_type: type[_ParkedKillRuntime], state: str, removals: int
+) -> None:
+    from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import _cleanup_isolation_step
+
+    row = _stale_tmux_row()
+    store = MemoryTerminalStore(row)
+    runtime = runtime_type(live_keys={str(row.spawn_key)})
+    reaping = asyncio.create_task(_reconciliation(store, runtime).reap_stale_pending())
+    await runtime.terminate_started.wait()
+
+    # A concurrent failed spawn on this id hands its isolation removal to the reaper.
+    handler = MagicMock()
+    handler.cleanup_environment = AsyncMock()
+    await _cleanup_isolation_step(
+        handler,
+        MagicMock(),
+        cleanup=True,
+        run_id="run-concurrent",
+        terminal_id=row.id,
+        terminal_manager=store,
+        held=True,
+        settled=False,
+        prior_attempt=None,
+    )
+    handler.cleanup_environment.assert_not_awaited()
+    runtime.kill_hold.set()
+    await reaping
+
+    assert handler.cleanup_environment.await_count == removals
+    assert row.state == state
+    assert not in_doubt_spawns.holds(row.id)

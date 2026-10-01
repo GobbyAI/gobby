@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from types import SimpleNamespace
 from typing import Any
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close as lifecycle_close
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
+from gobby.utils.daemon_git import GitOk
+
+
+async def _rev_parse_echo(argv: tuple[str, ...], **_kwargs: object) -> GitOk:
+    return GitOk(status="ok", argv=argv, stdout=argv[-1], stderr="")
+
+
+# Replaces only the close candidate's rev-parse: fake SHAs name no object, so each
+# normalized SHA stands as its own full identity. Patch it over
+# _lifecycle_close_preview.daemon_git; normalization still runs for real.
+ECHOING_DAEMON_GIT = SimpleNamespace(run=_rev_parse_echo)
 
 
 async def complete_close_review(

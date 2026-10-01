@@ -33,6 +33,7 @@ TASK_ID = "11111111-2222-4333-8444-555555555555"
 PROJECT_ID = "11111111-1111-4111-8111-111111110001"
 OWNER_SESSION_ID = "owner-session"
 COMMITTED_PATHS = frozenset({"src/gobby/memory/recall.py", "tests/memory/test_recall.py"})
+IGNORED_SCRATCH = ".gobby/evidence/scratch.md"
 
 
 @pytest.fixture
@@ -227,3 +228,56 @@ async def test_session_attribution_wins_and_a_commitless_task_is_still_no_edit(
     assert no_edit.raw_paths == frozenset()
     assert no_edit.attributed is False
     assert no_edit.had_attributed_edits is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("ledger_paths", "commit_source", "expected_paths", "expected_fallback"),
+    [
+        pytest.param((IGNORED_SCRATCH,), "linked", COMMITTED_PATHS, True, id="ignored-linked"),
+        pytest.param(
+            (IGNORED_SCRATCH,), "prospective", COMMITTED_PATHS, True, id="ignored-prospective"
+        ),
+        pytest.param(
+            (IGNORED_SCRATCH, "src/gobby/memory/recall.py"),
+            "linked",
+            frozenset({"src/gobby/memory/recall.py"}),
+            False,
+            id="mixed-ledger",
+        ),
+        pytest.param(
+            ("src/gobby/memory/recall.py",),
+            "linked",
+            frozenset({"src/gobby/memory/recall.py"}),
+            False,
+            id="committable-ledger",
+        ),
+        pytest.param((IGNORED_SCRATCH,), "none", frozenset(), True, id="ignored-no-commit"),
+    ],
+)
+async def test_close_attribution_with_ignored_ledger_paths(
+    repo_with_task_commit: tuple[str, str],
+    ledger_paths: tuple[str, ...],
+    commit_source: str,
+    expected_paths: frozenset[str],
+    expected_fallback: bool,
+) -> None:
+    repo_path, commit_sha = repo_with_task_commit
+    root = Path(repo_path)
+    (root / ".gitignore").write_text(".gobby/evidence/\n", encoding="utf-8")
+    scratch = root / IGNORED_SCRATCH
+    scratch.parent.mkdir(parents=True)
+    scratch.write_text("temporary evidence\n", encoding="utf-8")
+
+    snapshot = await capture_attribution(
+        _ctx({"task_edited_files": {TASK_ID: list(ledger_paths)}}),
+        task=_task(commits=[commit_sha] if commit_source == "linked" else None),
+        task_id=TASK_ID,
+        resolved_session_id="closing-session",
+        repo_path=repo_path,
+        prospective_commit_shas=(commit_sha,) if commit_source == "prospective" else (),
+    )
+
+    assert snapshot.edited_paths == expected_paths
+    assert snapshot.used_commit_fallback is expected_fallback
+    assert snapshot.had_attributed_edits is bool(expected_paths)

@@ -70,6 +70,7 @@ def build_agentic_review_prompt(
     criterion_count: int,
     closure_reason: str = "completed",
     validation_commands: Mapping[str, object] | None = None,
+    close_receipts: Sequence[Mapping[str, object]] | None = None,
     prior_requirements: str | None = None,
     coordinator_owned_pending: bool = False,
     close_review_min_severity: str = "low",
@@ -128,6 +129,24 @@ def build_agentic_review_prompt(
             "excluded because their outcome was unknown, they were wrapped, or they were stale "
             "after a later edit; cite that entry when a verdict names a seen-but-uncredited run. "
             "Review every command requirement and report every command gap in one verdict. "
+        )
+    if close_receipts:
+        receipts = json.dumps(list(close_receipts), sort_keys=True, default=str)
+        prompt += (
+            f"close_receipts={receipts}. "
+            "close_receipts are daemon-attested records written by other sessions through "
+            "record_close_receipt. The daemon set each author_session from the recording "
+            "session's own identity, refused the task's claimant and task-close reviewers as "
+            "authors, accepted activation only from the task's creator or delegator "
+            "(author_role), and verified commit_sha as a commit in the task repository. Treat "
+            "a receipt as that session's attestation and weigh it with the linked evidence; it "
+            "is never an automatic verdict. An independent_review_approval receipt with "
+            "verdict LAND is evidence that the independent session approved exactly that "
+            "commit, and still requires your own review of the code. An activation receipt is "
+            "evidence that the named commit was landed and activated; judge its facts (daemon "
+            "PID, health, schema, or a promoted binary's version, sha256, inode, signature) "
+            "against what the criterion requires. A receipt only supports a criterion about "
+            "its own commit when matches_linked_commit is true. "
         )
     if coordinator_owned_pending and closure_reason not in NO_WORK_CLOSE_REASONS:
         prompt += (

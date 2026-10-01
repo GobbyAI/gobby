@@ -102,6 +102,9 @@ class SpawnRequest:
     droid_mode: Literal["exec", "interactive"] = "exec"
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None
+    # Binds the reserved pane to the terminal id after ``create_pending`` and
+    # before exec; set only for a placed spawn.
+    placement_binder: Callable[[str], Awaitable[None]] | None = None
 
 
 @dataclass

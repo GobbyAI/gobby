@@ -16,18 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
-import re
-import secrets
 import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from typing import Any, Literal, TypeVar
+from typing import Any, TypeVar
 
 from psycopg import Error as PsycopgError
 from psycopg.errors import UniqueViolation
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.detection.safe_regex import InvalidPatternError, RegexOutcome, compile_safe_regex
 from gobby.storage.machines import Machine
 from gobby.storage.sessions import SessionManager
 from gobby.storage.terminals import Terminal, TerminalManager
@@ -37,6 +33,7 @@ from gobby.storage.workspaces import (
     InvalidWorkspaceOpError,
     LayoutChange,
     Workspace,
+    WorkspaceBusyError,
     WorkspaceManager,
     WorkspaceNotFoundError,
     WorkspacePane,
@@ -44,19 +41,13 @@ from gobby.storage.workspaces import (
     WorkspaceTarget,
     mint_pane_id,
 )
-from gobby.terminals.key_bytes import normalize_named_key
+from gobby.telemetry.query_timing import observe_queries
 from gobby.terminals.runtime import (
-    InputPayloadTooLargeError,
-    SnapshotResult,
-    TerminalRuntime,
     TerminalRuntimeRegistry,
-    TerminalWriteError,
-    UnregisteredBackendError,
 )
 from gobby.terminals.termination import kill_terminal
 from gobby.terminals.web_spawn import spawn_web_terminal
 from gobby.terminals.workspace_contract import (
-    PaneOutputWait,
     WorkspaceEvent,
     WorkspaceEventKind,
     WorkspaceOpError,
@@ -69,12 +60,8 @@ from gobby.terminals.workspace_contract import (
     storage_errors,
 )
 from gobby.terminals.workspace_pane_access import ShellSpawn, WorkspacePaneAccess
-from gobby.terminals.workspace_writes import (
-    PaneWrite,
-    WorkspacePaneWriteError,
-    write_workspace_pane,
-)
-from gobby.terminals.write_coordinator import IdempotencyConflictError, WriteCoordinator
+from gobby.terminals.workspace_pane_io import WorkspacePaneIOMixin
+from gobby.terminals.write_coordinator import WriteCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -95,14 +82,12 @@ _T = TypeVar("_T")
 PANE_SHELL_COMMAND = ("zsh",)
 PANE_ROWS, PANE_COLS = 24, 80
 PANE_SPAWN_TIMEOUT_SECONDS = 30.0
-WAIT_CAPTURE_LINES = 200
-WAIT_CAPTURE_FAILURE_LIMIT = 3
 SLOW_WORKSPACE_SNAPSHOT_SECONDS = 1.0
-IDEMPOTENCY_KEY_PATTERN = re.compile(r"[A-Za-z0-9._:-]{1,128}\Z")
-_ACTIVE_STATES = frozenset({"pending", "live"})
+# An orphaned terminal's process may still run, so closing its pane retries the kill.
+_KILLABLE_STATES = frozenset({"pending", "live", "orphaned"})
 
 
-class WorkspaceOps:
+class WorkspaceOps(WorkspacePaneIOMixin):
     """Execute ``workspace.*``, ``tab.*``, and ``pane.*`` ops for every surface."""
 
     def __init__(
@@ -171,7 +156,12 @@ class WorkspaceOps:
         target = _workspace_of(await self._enter(workspace, node), workspace)
         panes = await self._db(self._workspaces.list_panes, target.id)
         doomed = await self._db(self._closing, actor, panes)
-        closed = await self._db_guarded(self._workspaces.close, target.id)
+        closed = await self._db_guarded(
+            self._workspaces.close,
+            target.id,
+            refuse_in_flight=True,
+            expected_panes={pane.id: pane.terminal_id for pane in panes},
+        )
         await self._emit("workspace.closed", closed.id, workspace=closed)
         await self._kill(doomed)
         return closed
@@ -222,31 +212,45 @@ class WorkspaceOps:
         workspace publish waiting on the fence stays above the watermark.
         """
         started = time.monotonic()
-        if workspace is None and project_id is None:
-            workspace = (await self.workspace_create(actor, node=node)).id
-        elif workspace is None:
-            machine = await self._db(self._workspaces.resolve_node, node)
-            _require_local(machine)
-            resolved, created = await self._db_guarded(
-                resolve_launch_workspace,
-                self._workspaces,
-                machine.id,
-                workspace=None,
-                project_id=project_id,
-            )
-            if created:
-                await self._emit("workspace.created", resolved.id, workspace=resolved)
-            workspace = resolved.id
-        fence_start = time.monotonic()
-        storage_timing: dict[str, float] = {}
-        async with self._publish_fence:
-            fence_acquired = time.monotonic()
-            snapshot, change = await self._db(
-                self._snapshot_storage, workspace, node, storage_timing
-            )
-            storage_done = time.monotonic()
-            seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
-            published = time.monotonic()
+        query_seconds = pool_seconds = 0.0
+        query_count = pool_acquires = 0
+
+        def observe_query(seconds: float) -> None:
+            nonlocal query_seconds, query_count
+            query_seconds += seconds
+            query_count += 1
+
+        def observe_pool_acquire(seconds: float) -> None:
+            nonlocal pool_seconds, pool_acquires
+            pool_seconds += seconds
+            pool_acquires += 1
+
+        with observe_queries(observe_query, pool_acquire_observer=observe_pool_acquire):
+            if workspace is None and project_id is None:
+                workspace = (await self.workspace_create(actor, node=node)).id
+            elif workspace is None:
+                machine = await self._db(self._workspaces.resolve_node, node)
+                _require_local(machine)
+                resolved, created = await self._db_guarded(
+                    resolve_launch_workspace,
+                    self._workspaces,
+                    machine.id,
+                    workspace=None,
+                    project_id=project_id,
+                )
+                if created:
+                    await self._emit("workspace.created", resolved.id, workspace=resolved)
+                workspace = resolved.id
+            fence_start = time.monotonic()
+            storage_timing: dict[str, float] = {}
+            async with self._publish_fence:
+                fence_acquired = time.monotonic()
+                snapshot, change = await self._db(
+                    self._snapshot_storage, workspace, node, storage_timing
+                )
+                storage_done = time.monotonic()
+                seq = await self._publish_removal(snapshot.workspace.id, change, fenced=False)
+                published = time.monotonic()
         if published - started >= SLOW_WORKSPACE_SNAPSHOT_SECONDS:
             worker_started = storage_timing["worker_started"]
             worker_finished = storage_timing["worker_finished"]
@@ -254,7 +258,8 @@ class WorkspaceOps:
                 "Slow workspace snapshot | workspace_id=%s total_ms=%.1f resolve_ms=%.1f "
                 "fence_wait_ms=%.1f worker_wait_ms=%.1f worker_ms=%.1f "
                 "worker_return_ms=%.1f target_ms=%.1f sweep_ms=%.1f "
-                "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d",
+                "tabs_ms=%.1f panes_ms=%.1f publish_ms=%.1f removed_panes=%d "
+                "query_ms=%.1f query_count=%d pool_wait_ms=%.1f pool_acquires=%d",
                 snapshot.workspace.id,
                 (published - started) * 1000,
                 (fence_start - started) * 1000,
@@ -268,6 +273,10 @@ class WorkspaceOps:
                 storage_timing["panes"],
                 (published - storage_done) * 1000,
                 len(change.removed_panes),
+                query_seconds * 1000,
+                query_count,
+                pool_seconds * 1000,
+                pool_acquires,
             )
         if seq is None:
             return snapshot
@@ -353,6 +362,7 @@ class WorkspaceOps:
             moving.id,
             workspace_id=destination,
             position=position,
+            refuse_in_flight=True,
         )
         await self._emit("tab.moved", destination, tabs=change.tabs)
         if destination != source:
@@ -365,10 +375,14 @@ class WorkspaceOps:
         target = await self._enter(tab, node)
         closing = _tab_of(target, tab)
         panes = await self._db(self._workspaces.list_panes, target.workspace.id)
-        doomed = await self._db(
-            self._closing, actor, [row for row in panes if row.tab_id == closing.id]
+        own = [row for row in panes if row.tab_id == closing.id]
+        doomed = await self._db(self._closing, actor, own)
+        change = await self._db_guarded(
+            self._workspaces.close_tab,
+            closing.id,
+            refuse_in_flight=True,
+            expected_panes={pane.id: pane.terminal_id for pane in own},
         )
-        change = await self._db_guarded(self._workspaces.close_tab, closing.id)
         await self._emit(
             "tab.closed",
             target.workspace.id,
@@ -411,7 +425,13 @@ class WorkspaceOps:
         await self._db(self._workspaces.mark_spawn_in_flight, pane_id)
         try:
             change = await self._db_guarded(
-                self._workspaces.add_pane, pane_id, beside=beside.id, axis=axis
+                self._workspaces.add_pane,
+                pane_id,
+                beside=beside.id,
+                axis=axis,
+                expected_workspace_id=target.workspace.id,
+                expected_tab_id=tab.id,
+                expected_project_id=tab.project_id,
             )
             added = await self._fill(
                 target.node,
@@ -431,7 +451,9 @@ class WorkspaceOps:
     ) -> WorkspaceTab:
         first = _pane_of(await self._enter(pane, node), pane)[1]
         second = _pane_of(await self._db(self._resolve, other, node), other)[1]
-        tab = await self._db_guarded(self._workspaces.swap_panes, first.id, second.id)
+        tab = await self._db_guarded(
+            self._workspaces.swap_panes, first.id, second.id, refuse_in_flight=True
+        )
         await self._emit("pane.swapped", tab.workspace_id, tabs=(tab,))
         return tab
 
@@ -464,6 +486,7 @@ class WorkspaceOps:
             tab_id=destination.id,
             beside=beside_id,
             axis=axis,
+            refuse_in_flight=True,
         )
         for workspace_id in dict.fromkeys((destination.workspace_id, target.workspace.id)):
             own_tabs = [row for row in change.tabs if row.workspace_id == workspace_id]
@@ -493,7 +516,7 @@ class WorkspaceOps:
         return renamed
 
     async def pane_close(self, actor: str, pane: str, *, node: str | None = None) -> LayoutChange:
-        """Remove a pane; kill its terminal when it owns a pending or live one.
+        """Remove a pane; kill its terminal when it owns a pending, live or orphaned one.
 
         An adopted terminal is released. A pane whose terminal already exited is
         pruned by the entry sweep, which is then the whole op.
@@ -505,134 +528,12 @@ class WorkspaceOps:
             return swept
         closing = _pane_of(await self._db(self._resolve, pane, node), pane)[1]
         doomed = await self._db(self._closing, actor, [closing])
-        change = await self._db_guarded(self._workspaces.remove_pane, closing.id)
+        change = await self._db_guarded(
+            self._workspaces.remove_pane, closing.id, refuse_in_flight=True
+        )
         await self._publish_removal(target.workspace.id, change)
         await self._kill(doomed)
         return change
-
-    # -- pane terminal I/O ----------------------------------------------------
-
-    async def pane_send_text(
-        self,
-        actor: str,
-        pane: str,
-        text: str,
-        *,
-        submit: bool = False,
-        idempotency_key: str | None = None,
-        node: str | None = None,
-    ) -> PaneWrite:
-        return await self._write(
-            actor,
-            pane,
-            node,
-            kind="text",
-            payload=text,
-            submit=submit,
-            key=idempotency_key,
-            verify_submit=submit,
-        )
-
-    async def pane_send_keys(
-        self,
-        actor: str,
-        pane: str,
-        keys: str,
-        *,
-        literal: bool = True,
-        idempotency_key: str | None = None,
-        node: str | None = None,
-    ) -> PaneWrite:
-        """Write ``keys`` as ``send_keys`` does: a trailing newline submits, names are keys."""
-        if literal and keys.endswith("\n"):
-            return await self._write(
-                actor,
-                pane,
-                node,
-                kind="text",
-                payload=keys.rstrip("\n"),
-                submit=True,
-                key=idempotency_key,
-            )
-        named = None if literal else normalize_named_key(keys)
-        if not literal and named is None:
-            raise WorkspaceOpError(
-                "invalid_op", f"Unsupported named key for managed terminal: {keys}"
-            )
-        return await self._write(
-            actor,
-            pane,
-            node,
-            kind="key" if named else "text",
-            payload=named or keys,
-            submit=False,
-            key=idempotency_key,
-        )
-
-    async def pane_read(
-        self, actor: str, pane: str, *, lines: int = 50, node: str | None = None
-    ) -> SnapshotResult:
-        if lines < 1:
-            raise WorkspaceOpError("invalid_op", f"Pane read lines must be positive, not {lines}")
-        _row, terminal = await self._pane_terminal(actor, pane, node)
-        runtime = self._runtime(terminal)
-        try:
-            return await runtime.snapshot(terminal, lines)
-        except Exception as exc:
-            raise WorkspaceOpError("terminal_failed", f"Pane read failed: {exc}") from exc
-
-    async def pane_wait_for_output(
-        self,
-        actor: str,
-        pane: str,
-        pattern: str,
-        *,
-        timeout_seconds: float,
-        poll_interval_seconds: float = 2.0,
-        node: str | None = None,
-    ) -> PaneOutputWait:
-        """Poll the pane's terminal until ``pattern`` matches, it ends, or time runs out."""
-        if not (math.isfinite(timeout_seconds) and math.isfinite(poll_interval_seconds)):
-            raise WorkspaceOpError("invalid_op", "Wait durations must be finite numbers")
-        # The websocket op has no MCP clamp. 300s matches wait_for_pane_output.
-        timeout_seconds = min(timeout_seconds, 300.0)
-        try:
-            matcher = compile_safe_regex(pattern)
-        except InvalidPatternError as exc:
-            raise WorkspaceOpError("invalid_op", str(exc)) from exc
-        _row, terminal = await self._pane_terminal(actor, pane, node)
-        runtime = self._runtime(terminal)
-        interval = max(0.1, min(poll_interval_seconds, 30.0))
-        deadline = time.monotonic() + timeout_seconds
-        failures = 0
-        while True:
-            snapshot: SnapshotResult | None = None
-            try:
-                snapshot = await runtime.snapshot(terminal, WAIT_CAPTURE_LINES)
-            except Exception:
-                logger.warning("Failed to capture terminal %s output", terminal.id, exc_info=True)
-            if snapshot is not None:
-                failures = 0
-                match = matcher.search(snapshot.text)
-                if match.outcome is RegexOutcome.PATTERN_TIMEOUT:
-                    raise WorkspaceOpError(
-                        "invalid_op", "pattern execution exceeded its time budget"
-                    )
-                if match.matched:
-                    return PaneOutputWait(True, "matched", snapshot)
-            current = await self._db(self._terminals.get, terminal.id)
-            if current is None or current.state not in _ACTIVE_STATES:
-                return PaneOutputWait(False, "pane_lost", snapshot)
-            if snapshot is None:
-                failures += 1
-                if failures >= WAIT_CAPTURE_FAILURE_LIMIT:
-                    raise WorkspaceOpError(
-                        "terminal_failed", "terminal capture failed three consecutive times"
-                    )
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                return PaneOutputWait(False, "timeout", snapshot)
-            await asyncio.sleep(min(interval, remaining))
 
     # -- internals ------------------------------------------------------------
 
@@ -645,7 +546,10 @@ class WorkspaceOps:
 
         def run() -> _T:
             with storage_errors():
-                return fn(*args, **kwargs)
+                try:
+                    return fn(*args, **kwargs)
+                except WorkspaceBusyError as exc:
+                    raise WorkspaceOpError("busy", str(exc)) from exc
 
         return await asyncio.to_thread(run)
 
@@ -675,17 +579,19 @@ class WorkspaceOps:
     def _snapshot_storage(
         self, reference: str, node: str | None, timing: dict[str, float]
     ) -> tuple[WorkspaceSnapshot, LayoutChange]:
-        """Sweep and read rows on one thread so the watermark matches the rows."""
+        """Reuse one connection and hold sweep locks through the snapshot reads."""
         started = time.monotonic()
-        target = self._resolve(reference, node)
-        resolved = time.monotonic()
-        change = self._sweep_storage(target.workspace.id)
-        swept = time.monotonic()
-        if change.removed_panes:
+        with storage_errors(), self._workspaces.db.transaction():
             target = self._resolve(reference, node)
-        home = _workspace_of(target, reference)
-        target_done = time.monotonic()
-        with storage_errors():
+            resolved = time.monotonic()
+            change = self._sweep_storage(target.workspace.id)
+            swept = time.monotonic()
+            if change.removed_panes:
+                target = self._resolve(reference, node)
+            home = self._workspaces.get(_workspace_of(target, reference).id)
+            if home is None:
+                raise WorkspaceNotFoundError(f"Workspace {reference!r} not found")
+            target_done = time.monotonic()
             tabs = tuple(self._workspaces.list_tabs(home.id))
             tabs_done = time.monotonic()
             panes = tuple(self._workspaces.list_panes(home.id))
@@ -853,17 +759,13 @@ class WorkspaceOps:
             return
 
     def _closing(self, actor: str, panes: Iterable[WorkspacePane]) -> list[Terminal]:
-        """Refuse in-flight panes, then scope-check the owned terminals a close would kill."""
+        """Scope-check the owned terminals a close would kill; storage refuses in-flight panes."""
         doomed: list[Terminal] = []
         for pane in panes:
-            if pane.terminal_id is None:
-                if self._workspaces.is_spawn_in_flight(pane.id):
-                    raise WorkspaceOpError(
-                        "busy", f"Pane {pane.id} is still spawning; retry after its split replies"
-                    )
+            if pane.terminal_id is None or not pane.owns_terminal:
                 continue
-            terminal = self._terminals.get(pane.terminal_id) if pane.owns_terminal else None
-            if terminal is not None and terminal.state in _ACTIVE_STATES:
+            terminal = self._terminals.get(pane.terminal_id)
+            if terminal is not None and terminal.state in _KILLABLE_STATES:
                 doomed.append(terminal)
         if doomed:
             scope = self._pane_access.scope(actor)
@@ -874,19 +776,25 @@ class WorkspaceOps:
     async def _kill(self, terminals: Iterable[Terminal]) -> None:
         """Kill terminals whose pane rows are already gone.
 
-        A failed kill marks a live row orphaned: it stays listed and ``terminal_kill``
-        retries it, where a live row behind no pane would be unreachable.
+        A failed kill, or a refusal because the id is held in doubt, marks a live row
+        orphaned: it stays listed and ``terminal_kill`` retries it, where a live row
+        behind no pane would be unreachable. A pending row stays pending for its owner.
         """
         for terminal in terminals:
             try:
                 await kill_terminal(self._terminals, self._registry, terminal)
             except Exception:
                 logger.warning(
-                    "Failed to kill pane terminal %s; marking it orphaned",
+                    "Failed to kill pane terminal %s; marking the kill failed",
                     terminal.id,
                     exc_info=True,
                 )
-                await self._db(self._terminals.mark_orphaned, terminal.id)
+                await self._db(
+                    self._terminals.mark_kill_failed,
+                    terminal.id,
+                    attempt_generation=terminal.attempt_generation,
+                    attempt_started_at=terminal.attempt_started_at,
+                )
 
     async def _pane_terminal(
         self, actor: str, pane: str, node: str | None
@@ -905,50 +813,3 @@ class WorkspaceOps:
             raise WorkspaceOpError("not_found", f"Pane {row.id} has no terminal")
         self._pane_access.require_admitted(scope, terminal)
         return row, terminal
-
-    def _runtime(self, terminal: Terminal) -> TerminalRuntime:
-        try:
-            return self._registry.resolve(terminal.backend)
-        except UnregisteredBackendError as exc:
-            raise WorkspaceOpError(
-                "terminal_failed", f"No runtime serves {terminal.backend} terminals"
-            ) from exc
-
-    async def _write(
-        self,
-        actor: str,
-        pane: str,
-        node: str | None,
-        *,
-        kind: Literal["text", "key"],
-        payload: str,
-        submit: bool,
-        key: str | None,
-        verify_submit: bool = False,
-    ) -> PaneWrite:
-        resolved_key = key or secrets.token_hex(16)
-        if IDEMPOTENCY_KEY_PATTERN.fullmatch(resolved_key) is None:
-            raise WorkspaceOpError(
-                "invalid_op", "idempotency_key must be 1 to 128 characters from [A-Za-z0-9._:-]"
-            )
-        row, terminal = await self._pane_terminal(actor, pane, node)
-        try:
-            return await write_workspace_pane(
-                self._coordinator,
-                self._sessions,
-                self._detection_registry,
-                self._runtime(terminal),
-                terminal,
-                pane_id=row.id,
-                kind=kind,
-                payload=payload,
-                submit=submit,
-                verify_submit=verify_submit,
-                idempotency_key=resolved_key,
-            )
-        except (IdempotencyConflictError, InputPayloadTooLargeError) as exc:
-            raise WorkspaceOpError("invalid_op", str(exc)) from exc
-        except TerminalWriteError as exc:
-            raise WorkspaceOpError("terminal_failed", str(exc)) from exc
-        except WorkspacePaneWriteError as exc:
-            raise WorkspaceOpError("terminal_failed", str(exc)) from exc

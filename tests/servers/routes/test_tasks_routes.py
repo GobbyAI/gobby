@@ -20,6 +20,7 @@ from starlette.testclient import TestClient
 from gobby.config.app import DaemonConfig
 from gobby.servers.routes.tasks_assignment import MailboxService
 from gobby.storage.hub._ambient import ambient_transaction
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -1466,6 +1467,35 @@ class TestComments:
 
         assert response.status_code == 404
         assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (comment_id,))
+
+    def test_create_comment_refuses_close_receipt_author_type(
+        self, client: TestClient, sample_task: dict[str, Any]
+    ) -> None:
+        response = client.post(
+            f"/api/tasks/{sample_task['id']}/comments",
+            json={
+                "body": '{"kind":"independent_review_approval"}',
+                "author": "sess-1",
+                "author_type": "close_receipt",
+            },
+        )
+
+        assert response.status_code == 403
+        assert "record_close_receipt" in response.json()["detail"]
+        assert client.get(f"/api/tasks/{sample_task['id']}/comments").json()["total"] == 0
+
+    def test_delete_comment_refuses_close_receipt(
+        self, client: TestClient, sample_task: dict[str, Any], temp_db: HubDatabase
+    ) -> None:
+        receipt_id = self._insert_comment(
+            temp_db, sample_task["id"], "{}", "sess-1", author_type="close_receipt"
+        )
+
+        response = client.delete(f"/api/tasks/{sample_task['id']}/comments/{receipt_id}")
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Close receipts cannot be deleted"
+        assert temp_db.fetchone("SELECT id FROM task_comments WHERE id = %s", (receipt_id,))
 
     def test_comments_for_nonexistent_task(self, client: TestClient) -> None:
         response = client.get("/api/tasks/nonexistent-id-000/comments")

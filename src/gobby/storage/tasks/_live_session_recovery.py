@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from gobby.sessions.operator_claim_hold import is_operator_claim_held
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.project_checkouts import (
     CheckoutNotFoundError,
@@ -21,8 +22,8 @@ from gobby.storage.sessions._constants import (
 )
 from gobby.storage.tasks._manager import LocalTaskManager
 from gobby.storage.tasks._transitions import (
-    escalate_task_if_owned,
-    release_task_claim_if_owned,
+    escalate_abandoned_task,
+    release_abandoned_task_claim,
 )
 from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.git_utils import resolve_git_worktree_root_async
@@ -88,6 +89,7 @@ async def recover_expired_live_session_claims(
         if session is not None and (
             session.status in _LIVE_OWNER_STATUSES
             or is_contestable_terminal_expiry(session, variables)
+            or is_operator_claim_held(variables)
         ):
             # Recovery costs more here than a claim release does: a dirty task is
             # escalated and _clear_claim_variables pops the attribution #20789
@@ -116,7 +118,7 @@ async def recover_expired_live_session_claims(
 
         if dirty_paths == set():
             transitioned = await asyncio.to_thread(
-                release_task_claim_if_owned,
+                release_abandoned_task_claim,
                 db,
                 task.id,
                 expected_owner=owner,
@@ -128,7 +130,7 @@ async def recover_expired_live_session_claims(
         else:
             evidence_paths = dirty_paths if dirty_paths is not None else attributed_paths
             transitioned = await asyncio.to_thread(
-                escalate_task_if_owned,
+                escalate_abandoned_task,
                 db,
                 task.id,
                 reason=_escalation_reason(session, owner, evidence_paths, dirty_paths is None),

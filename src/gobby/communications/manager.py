@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from threading import RLock
@@ -34,8 +35,14 @@ from gobby.communications.telegram_access import (
     is_telegram_dm,
     telegram_dm_sender,
 )
+from gobby.communications.telegram_decisions import (
+    DecisionLocks,
+    edit_keyboard_message,
+    publish_answer_status,
+)
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
+from gobby.storage.decision_answers import DecisionAnswerStore
 from gobby.storage.sessions import LIVE_SESSION_STATUSES
 from gobby.utils.datetime import utc_now
 
@@ -49,6 +56,9 @@ if TYPE_CHECKING:
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
     from gobby.storage.sessions import SessionManager
+
+
+logger = logging.getLogger(__name__)
 
 
 def _lookup_adapter_class(channel_type: str) -> type[BaseChannelAdapter] | None:
@@ -69,6 +79,8 @@ class CommunicationsManager:
         store: LocalCommunicationsStore,
         secret_store: SecretStore,
         session_store: SessionManager,
+        *,
+        daemon_epoch: str | None = None,
     ) -> None:
         """Initialize the communications manager.
 
@@ -77,6 +89,8 @@ class CommunicationsManager:
             store: Local communications storage manager.
             secret_store: Secret store for resolving $secret: references.
             session_store: Session store for creating auto-sessions.
+            daemon_epoch: This daemon process's identity; decision-answer turns it
+                claimed are marked in doubt by the next daemon.
         """
         self._config = config
         self._store = store
@@ -101,12 +115,19 @@ class CommunicationsManager:
 
         self.attachment_manager = AttachmentManager()
         self._rate_limiter = TokenBucketRateLimiter.from_defaults(config.channel_defaults)
+        self.decision_locks = DecisionLocks()
         self._polling_manager = PollingManager(self)
 
         self._lifecycle = AdapterLifecycleOperations(self)
         self._outbound = OutboundCommunications(self)
         self._inbound = InboundCommunications(self)
-        self.responder = CommunicationsResponder(self)
+        self.decision_answers = DecisionAnswerStore(store.db, machine_id=store.machine_id)
+        self.responder = CommunicationsResponder(
+            self,
+            answers=self.decision_answers,
+            daemon_epoch=daemon_epoch,
+            answer_status=self._publish_answer_status,
+        )
 
         self.event_callback: Callable[..., Any] | None = None
         self.reaction_handler: Any | None = None
@@ -122,6 +143,13 @@ class CommunicationsManager:
     def _track_thread(self, channel_id: str, session_id: str, platform_thread_id: str) -> None:
         self._thread_manager.track_thread(channel_id, session_id, platform_thread_id)
 
+    async def _publish_answer_status(self, answer: CommsMessage) -> None:
+        """Show a decision answer's delivery status on its Telegram decision message."""
+        channel = self.get_channel(answer.channel_id)
+        adapter = self._adapters.get(channel.name) if channel is not None else None
+        if isinstance(adapter, TelegramAdapter):
+            await publish_answer_status(self, adapter, answer)
+
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
         try:
@@ -129,6 +157,10 @@ class CommunicationsManager:
             self._restore_telegram_targets()
         finally:
             self._startup_complete.set()
+        try:
+            await self.responder.recover_decision_answers()
+        except Exception:
+            logger.exception("Failed to recover undelivered decision answers")
 
     def _restore_telegram_targets(self) -> None:
         """Recover private-chat target selections from channel configuration."""
@@ -270,19 +302,16 @@ class CommunicationsManager:
                 stored_message.session_id if stored_message is not None else None,
             )
             telegram = cast(TelegramAdapter, adapter)
-            if inline_keyboard is None:
-                await telegram.edit_message(
-                    platform_message_id, content, conversation_id, sender_label=label
+            if stored_message is not None and (
+                inline_keyboard is not None or stored_message.metadata_json.get("inline_keyboard")
+            ):
+                await edit_keyboard_message(
+                    self, telegram, stored_message.id, content, conversation_id, inline_keyboard
                 )
-            else:
-                await telegram.edit_message(
-                    platform_message_id,
-                    content,
-                    conversation_id,
-                    sender_label=label,
-                    inline_keyboard=inline_keyboard,
-                    callback_source=stored_message,
-                )
+                return
+            await telegram.edit_message(
+                platform_message_id, content, conversation_id, sender_label=label
+            )
         else:
             await adapter.edit_message(platform_message_id, content, conversation_id)
         if stored_message is not None:

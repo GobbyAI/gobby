@@ -342,6 +342,7 @@ def test_dump_postgres_captures_cluster_globals_only(
         "-U",
         "gobby",
         "--globals-only",
+        "--no-role-passwords",
     ]
 
 
@@ -414,6 +415,51 @@ def test_restore_postgres_globals_targets_protected_test_container(
     assert b"ALTER ROLE gobby WITH LOGIN;" in replay
     assert b"GRANT gobby_runtime TO gobby;" in replay
     assert b"GRANTED BY" not in replay
+
+
+def test_restore_postgres_globals_keeps_destination_role_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    globals_path = tmp_path / "globals.sql"
+    globals_path.write_bytes(
+        b"SET standard_conforming_strings = on;\n"
+        b"ALTER ROLE gobby WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION "
+        b"BYPASSRLS PASSWORD 'SCRAM-SHA-256$4096:c2FsdA==$c3RvcmVk:c2VydmVy';\n"
+        b"ALTER ROLE \"Ops PASSWORD 'x'\" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB "
+        b"LOGIN NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 3 PASSWORD 'it''s; VALID UNTIL' "
+        b"VALID UNTIL '2099-01-01 00:00:00+00';\n"
+        b"ALTER ROLE gobby_runtime WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN "
+        b"NOREPLICATION NOBYPASSRLS PASSWORD NULL;\n"
+        b"ALTER ROLE legacy WITH NOSUPERUSER LOGIN PASSWORD E'back\\\\slash''q';\n"
+        b"COMMENT ON ROLE gobby_runtime IS 'rotate with PASSWORD ''x''';\n"
+        b"ALTER ROLE gobby SET search_path TO 'PASSWORD ''kept''';\n"
+        b"GRANT gobby_runtime TO gobby;\n"
+    )
+    replays: list[bytes] = []
+
+    def run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        replays.append(kwargs["input"])
+        return _completed(args)
+
+    monkeypatch.setattr(subprocess, "run", run)
+
+    stores.restore_postgres_globals(TEST_DATABASE_URL, globals_path)
+
+    assert replays == [
+        b"SET standard_conforming_strings = on;\n"
+        b"ALTER ROLE gobby WITH SUPERUSER INHERIT CREATEROLE CREATEDB LOGIN REPLICATION "
+        b"BYPASSRLS;\n"
+        b"ALTER ROLE \"Ops PASSWORD 'x'\" WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB "
+        b"LOGIN NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 3 "
+        b"VALID UNTIL '2099-01-01 00:00:00+00';\n"
+        b"ALTER ROLE gobby_runtime WITH NOSUPERUSER INHERIT NOCREATEROLE NOCREATEDB NOLOGIN "
+        b"NOREPLICATION NOBYPASSRLS;\n"
+        b"ALTER ROLE legacy WITH NOSUPERUSER LOGIN;\n"
+        b"COMMENT ON ROLE gobby_runtime IS 'rotate with PASSWORD ''x''';\n"
+        b"ALTER ROLE gobby SET search_path TO 'PASSWORD ''kept''';\n"
+        b"GRANT gobby_runtime TO gobby;\n"
+    ]
 
 
 def test_dump_postgres_forwards_maintenance_pgoptions_into_container(

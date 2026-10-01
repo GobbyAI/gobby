@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -31,10 +32,22 @@ from gobby.tasks.transcript_evidence_models import (
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _close_candidate_is_the_linked_sha() -> Iterator[None]:
+    # The fake commit SHAs below are not in any repository; take each as canonical.
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
+        side_effect=lambda sha, **_kwargs: sha,
+    ):
+        yield
+
+
 SESSION_ID = "00000000-0000-4000-8000-000000000301"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 NOW = datetime(2026, 8, 23, 12, 5, tzinfo=UTC)
 WORKTREE = "/worktrees/wt-101"
+CANDIDATE_SHA = "abc123" + "0" * 34
 NO_WORKTREE = CloseWorktreeRoot(None, None, "the task has no registered isolation worktree")
 NAMED_TEST = AcceptanceTest(
     reference="tests/memory/test_recall.py::test_batched_read_failure_injects_nothing",
@@ -232,7 +245,12 @@ async def _evaluate(
             "foreign_owned_dirty_paths",
             return_value=foreign_owners,
         ),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        # The fake /repo has no objects, so the explicit candidate's full identity is given.
+        patch.multiple(
+            lifecycle,
+            resolve_close_commit_shas=AsyncMock(return_value=(["abc123"], None)),
+            select_close_candidate=AsyncMock(return_value=(CANDIDATE_SHA, None)),
+        ),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(

@@ -132,8 +132,8 @@ hub, and fails rather than skipping when no DSN is set under `GOBBY_TEST_PROTECT
 
 The Docker fallback accepts either `docker compose` or `docker-compose`, starts
 the `postgres-test` service, and exports both `DATABASE_URL` and
-`GOBBY_POSTGRES_TEST_DSN` to pytest. The container listens on
-`${GOBBY_POSTGRES_TEST_PORT:-60892}` with default database, user, and password
+`GOBBY_POSTGRES_TEST_DSN` to pytest. The container publishes only on loopback, at
+`127.0.0.1:${GOBBY_POSTGRES_TEST_PORT:-60892}`, with default database, user, and password
 from `GOBBY_POSTGRES_TEST_DB`, `GOBBY_POSTGRES_TEST_USER`, and
 `GOBBY_POSTGRES_TEST_PASSWORD`.
 

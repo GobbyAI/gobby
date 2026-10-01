@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "name": "health_ok",
+  "family": "health",
+  "credential": "none",
+  "request": {
+    "method": "GET",
+    "path": "/api/health",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "status": "@mask@",
+      "mode": "standalone",
+      "degraded_services": [],
+      "hook_runtime": "@mask@",
+      "install_dir": "@mask@",
+      "gterm_host": "@mask@"
+    }
+  },
+  "mask": [
+    "/response/body/status",
+    "/response/body/hook_runtime",
+    "/response/body/install_dir",
+    "/response/body/gterm_host"
+  ]
+}

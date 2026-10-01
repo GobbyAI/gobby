@@ -49,10 +49,10 @@ export default defineConfig({
           { target: `http://localhost:${GOBBY_HTTP_PORT}`, changeOrigin: true },
         ]),
       ),
-      // Proxy WebSocket through the daemon's HTTP /ws route rather than the
-      // raw WebSocket port: the raw server requires a Bearer Authorization
-      // header (unavailable to browser WebSockets), while the HTTP route
-      // authenticates the session cookie and injects the token itself.
+      // Send browser WebSockets to the daemon's HTTP /ws endpoint, which
+      // authenticates the session cookie and handles the connection in-process.
+      // The raw WebSocket port requires a Bearer Authorization header that
+      // browser WebSocket clients cannot set.
       "/ws": {
         target: `ws://localhost:${GOBBY_HTTP_PORT}`,
         ws: true,

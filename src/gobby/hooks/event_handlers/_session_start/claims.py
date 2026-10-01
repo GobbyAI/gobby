@@ -98,7 +98,7 @@ def preserve_task_claim_state(
         )
     if merged_claims and sv_mgr is not None:
         try:
-            sv_mgr.merge_variables(successor_id, merged_claims)
+            sv_mgr.merge_variables(successor_id, merged_claims, reconcile_claims=True)
         except Exception as e:
             _log(handler).warning(
                 "Failed to merge successor claim variables for session=%s: %s",

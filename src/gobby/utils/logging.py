@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any
+from typing import Any, Final
+
+HTTP_CLIENT_LOGGERS: Final = ("httpx", "httpx2", "httpcore")
+
+
+def silence_http_client_loggers() -> None:
+    """Keep third-party per-request INFO lines out of daemon and CLI logs."""
+    for name in HTTP_CLIENT_LOGGERS:
+        logging.getLogger(name).setLevel(logging.WARNING)
 
 
 class ThrottledLogger:

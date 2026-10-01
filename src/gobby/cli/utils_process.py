@@ -19,6 +19,7 @@ from gobby.config.bootstrap import (
     load_bootstrap,
 )
 from gobby.utils.env import is_test_protect_enabled
+from gobby.utils.logging import silence_http_client_loggers
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -30,8 +31,7 @@ def setup_logging(verbose: bool = False) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    silence_http_client_loggers()
 
 
 def format_uptime(seconds: float) -> str:

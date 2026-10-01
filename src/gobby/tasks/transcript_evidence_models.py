@@ -51,6 +51,8 @@ class TranscriptValidationRun:
     unknown_reason: str | None = None
     output: str | None = None
     output_truncated: bool = False
+    output_recovered_from: str | None = None
+    output_recovered_at: datetime | None = None
     #: Every validation segment of ``command`` in order, each with its own
     #: categories; ``categories`` above is their union. Empty only for runs
     #: built without classification.
@@ -76,6 +78,14 @@ class TranscriptEdit:
     timestamp: datetime
     order: int
     tool_name: str
+    #: Exact source reconstructed only from this session's structured edit receipts.
+    source_after: str | None = None
+    source_confirmed: bool = False
+    source_confirmed_at: datetime | None = None
+    source_created: bool = False
+    source_fragment: str | None = None
+    python_stub: tuple[str, tuple[str, ...]] | None = None
+    source_unchanged: bool = False
 
 
 @dataclass(frozen=True)

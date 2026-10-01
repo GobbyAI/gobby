@@ -4,8 +4,8 @@
 00 : bar_ink/bar+b*120
 01 |                                                                                                                        |
 01 : text/panel_bg*120
-02 | alpha      │ ⍾ beta      +                                                                                             |
-02 : text/surface1+b*12 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 overlay1/surface0*3 text/surface0*92
+02 | alpha      │ ⍾ beta     │ +                                                                                            |
+02 : text/surface1+b*12 line/surface0*1 subtext0/surface0*1 yellow/surface0*1 subtext0/surface0*10 line/surface0*1 overlay1/surface0*3 text/surface0*91
 03 |┌ ○ Claude · Focused ──────────────────────────────────────────────────────────────────────────────────────────────────┐|
 03 : accent/panel_bg*1 accent/panel_bg+b*20 accent/panel_bg*99
 04 |│                                                                                                                      │|

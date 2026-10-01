@@ -33,6 +33,13 @@ raw reads until it is loaded.
 
 ## Preflight
 
+When a workflow is still in a skill-loading step, read these instructions only.
+Defer this preflight until every required load is complete and the workflow
+announces its review step. Finish missing loads through the Gobby MCP proxy,
+one outer tool result at a time, including every cursor page. Do not queue
+OCR, Git, file reads, or validation commands alongside those loads. A denied
+native call must be abandoned while loading; continue with the missing loads.
+
 ```bash
 ocr --version
 ```

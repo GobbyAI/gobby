@@ -1,6 +1,5 @@
 """Top-level tool-field normalization orchestration."""
 
-import json as _json
 from typing import Any
 
 from gobby.hooks._normalization_canonical import _compact_tool_name, _set_canonical_tool_metadata
@@ -10,6 +9,14 @@ from gobby.hooks._normalization_paths import (
     _normalize_file_change_input,
 )
 from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
+from gobby.hooks._normalization_tool_input import (
+    TOOL_INPUT_ERROR_FIELD,
+    decode_string_tool_input,
+    is_non_object_tool_input,
+    mark_tool_input_unavailable,
+    tool_input_error,
+    tool_input_source,
+)
 from gobby.hooks.code_navigation_recovery import annotate_navigation_outcome
 from gobby.hooks.tool_outcomes import normalize_tool_outcome
 
@@ -48,6 +55,12 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     """
     # Phase 1: field alias normalization
 
+    # A marker survives only on a repeat pass over input it already replaced;
+    # any sender-supplied marker is re-derived or dropped below.
+    prior_error = tool_input_error(data)
+    data.pop(TOOL_INPUT_ERROR_FIELD, None)
+    source = tool_input_source(data)
+
     # function_name -> tool_name  (ACP typed JSON)
     if "function_name" in data and "tool_name" not in data:
         data["tool_name"] = data["function_name"]
@@ -59,15 +72,9 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     if "tool_name" in data:
         data["tool_name"] = canonicalize_shell_tool_name(data["tool_name"])
 
-    # toolArgs -> tool_input  (may be a JSON string)
+    # toolArgs -> tool_input  (may be a JSON string, decoded below)
     if "toolArgs" in data and "tool_input" not in data:
-        tool_args = data["toolArgs"]
-        if isinstance(tool_args, str):
-            try:
-                tool_args = _json.loads(tool_args)
-            except (ValueError, TypeError):
-                pass
-        data["tool_input"] = tool_args
+        data["tool_input"] = data["toolArgs"]
 
     # parameters -> tool_input  (ACP typed JSON)
     if "parameters" in data and "tool_input" not in data:
@@ -76,6 +83,16 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # args -> tool_input  (ACP typed JSON fallback)
     if "args" in data and "tool_input" not in data:
         data["tool_input"] = data["args"]
+
+    # apply_patch input is freeform patch text, never JSON.
+    compact_tool_name = _compact_tool_name(data.get("tool_name"))
+    decoded_string = compact_tool_name != "applypatch" and decode_string_tool_input(data, source)
+    # A list, number, or bool sent directly; Write and apply_patch may still recover it below.
+    sent_non_object = (
+        not decoded_string
+        and "tool_name" in data
+        and is_non_object_tool_input(data.get("tool_input"))
+    )
 
     # Normalize tool_input internal fields (e.g., path -> file_path)
     tool_input = data.get("tool_input")
@@ -90,7 +107,6 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
             if provider_name in tool_input and canonical_name not in tool_input:
                 tool_input[canonical_name] = tool_input[provider_name]
 
-    compact_tool_name = _compact_tool_name(tool_name)
     if compact_tool_name == "applypatch":
         data.setdefault("_original_tool_name", tool_name)
         data["tool_name"] = "Write"
@@ -101,6 +117,13 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
         if normalized_input is not tool_input:
             data["tool_input"] = normalized_input
             tool_input = normalized_input
+
+    if decoded_string and "tool_input" in data and not isinstance(tool_input, dict):
+        mark_tool_input_unavailable(data, source, "non_object_json")
+    elif sent_non_object and (not isinstance(tool_input, dict) or not tool_input):
+        mark_tool_input_unavailable(data, source, "non_object")
+    elif prior_error is not None and "tool_input" not in data:
+        data.setdefault(TOOL_INPUT_ERROR_FIELD, prior_error)
 
     if isinstance(tool_input, dict):
         if "path" in tool_input and "file_path" not in tool_input:

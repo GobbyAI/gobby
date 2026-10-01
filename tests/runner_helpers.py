@@ -14,6 +14,7 @@ from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.config.logging import LoggingSettings
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import PostgresCapacity
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 TEST_MACHINE_ID = "00000000-0000-4000-8000-000000000001"
 
@@ -56,7 +57,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     defaults = DaemonConfig()
     config.bind_host = "localhost"
     config.hub_backend = "postgres"
-    config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    config.database_url = FAKE_DATABASE_URL
     config.database_concurrency = DatabaseConcurrencyConfig()
     config.postgres_pool = PostgresPoolConfig()
 
@@ -74,9 +75,13 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
         "knowledge_graph_queue",
         "memory",
         "pipelines",
+        "session_feedback",
         "terminals",
     ):
         set_mock_default(config, name, getattr(defaults, name))
+    # A test-supplied memory mock still needs a real cron string for dream registration.
+    if isinstance(config.memory, MagicMock):
+        set_mock_default(config.memory, "dream", defaults.memory.dream)
 
     config.telemetry = getattr(config, "telemetry", MagicMock())
     config.telemetry.traces_enabled = False
@@ -236,6 +241,10 @@ def create_base_patches(
             side_effect=lambda _database, machine_id: machine_id,
         ),
         patch("gobby.runner_init.storage.ensure_system_session"),
+        # Construction otherwise fetches the OpenRouter registry and rewrites model_metadata.
+        patch("gobby.storage.model_metadata.ModelMetadataStore.populate", return_value=0),
+        # Startup otherwise shells out to gdaemon to drop test schemas on config.database_url.
+        patch("gobby.runner_maintenance.storage_hygiene.sweep_orphaned_test_schemas"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),
         patch(
             "gobby.runner_init.helpers.admitted_database_url",

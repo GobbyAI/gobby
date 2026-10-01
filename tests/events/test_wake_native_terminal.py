@@ -20,6 +20,7 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered, IndeterminateWrite
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.events.wake_test_support import PendingWakeLedger
 from tests.terminals.fakes import (
     FakeRuntime,
     MemoryTerminalStore,
@@ -611,13 +612,14 @@ def _managed_terminal_id(dispatcher: WakeDispatcher) -> str:
 async def test_managed_wake_is_withheld_while_the_composer_holds_a_draft() -> None:
     terminal_sender = AsyncMock()
     dispatcher = _managed_dispatcher(_draft, terminal_sender)
+    ledger = PendingWakeLedger(dispatcher)
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
     terminal_sender.assert_not_awaited()
     # No debounce record: the next wake probes the composer again.
-    assert dispatcher._last_live_wake == {}
+    assert ledger.recorded == []
 
 
 @pytest.mark.asyncio
@@ -742,12 +744,13 @@ def _batch_dispatcher(probe: ActivityProbe) -> tuple[WakeDispatcher, AsyncMock]:
 @pytest.mark.asyncio
 async def test_batch_wake_skips_occupied_composer() -> None:
     dispatcher, batch_sender = _batch_dispatcher(_draft)
+    ledger = PendingWakeLedger(dispatcher)
 
     results = await dispatcher.dispatch_live_wakes([WAKE_SESSION_ID])
 
     assert results == [composer_occupied_result(WAKE_SESSION_ID, method="terminal")]
     batch_sender.assert_not_awaited()
-    assert dispatcher._last_live_wake == {}
+    assert ledger.recorded == []
 
 
 @pytest.mark.asyncio
@@ -795,12 +798,13 @@ async def test_native_spawned_agent_wake_is_withheld_for_a_draft(
         terminal_manager=managed_chain.store,
         activity_probe=_draft,
     )
+    ledger = PendingWakeLedger(dispatcher)
 
     result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
     assert result == composer_occupied_result(WAKE_SESSION_ID, method="terminal")
     assert managed_chain.native.write_log == []
-    assert dispatcher._last_live_wake == {}
+    assert ledger.recorded == []
 
 
 @pytest.mark.asyncio

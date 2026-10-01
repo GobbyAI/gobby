@@ -224,10 +224,6 @@ pub struct ViewState {
     pub worktree_hit_areas: Vec<(String, Rect)>,
     /// The `▸`/`▾` cell of each card that has worktrees, by project id.
     pub group_toggle_hit_areas: Vec<(String, Rect)>,
-    /// The `[working]`/`[all]` control of the projects band.
-    pub projects_filter_hit_area: Option<Rect>,
-    /// The `[view]` control of the agents band.
-    pub agents_view_hit_area: Option<Rect>,
     /// Session, agent run and bare terminal rows drawn in the sidebar, by
     /// entry id.
     pub agent_hit_areas: Vec<(String, Rect)>,
@@ -271,7 +267,6 @@ impl ViewState {
             settings,
             // The open menu owns its rows; `Chrome::apply_hits` places them.
             menu_rows: _,
-            parent_menu_rows: _,
             dialog_buttons,
             help_last_scroll,
         } = hits;
@@ -285,8 +280,6 @@ impl ViewState {
         self.project_hit_areas = sidebar.projects;
         self.worktree_hit_areas = sidebar.worktrees;
         self.group_toggle_hit_areas = sidebar.group_toggles;
-        self.projects_filter_hit_area = sidebar.projects_filter;
-        self.agents_view_hit_area = sidebar.agents_view;
         self.agent_hit_areas = sidebar.agents;
         self.machine_hit_areas = sidebar.machines;
         self.sidebar_scrollbar_hit_areas = sidebar.scrollbars;
@@ -394,14 +387,20 @@ impl Chrome {
         Self::new(Theme::new(ThemeKind::Dark))
     }
 
+    /// Draw in `kind`, in grays when `prefs.monochrome` is set.
     pub fn set_theme(&mut self, kind: ThemeKind) {
         self.theme = Theme::new(kind);
-        self.palette = self.theme.palette();
+        self.palette = if self.prefs.monochrome {
+            Palette::monochrome(&self.theme)
+        } else {
+            self.theme.palette()
+        };
     }
 
     /// Adopt loaded prefs: the theme and the sidebar width take effect at
     /// once; the rest is read from `prefs` wherever it applies.
     pub fn apply_prefs(&mut self, prefs: ClientPrefs) {
+        self.prefs.monochrome = prefs.monochrome;
         self.set_theme(prefs.theme_kind());
         self.sidebar.width = prefs.sidebar_width;
         self.sidebar.side = prefs.sidebar_side;
@@ -658,16 +657,11 @@ impl Chrome {
     /// them: the chrome map into `view`, the menu rows into the open menu
     /// and the menu it opened from.
     pub fn apply_hits(&mut self, mut hits: ChromeHits) {
-        if let (Some(menu), Some(rows)) = (self.menu.as_mut(), hits.menu_rows.take()) {
-            menu.item_rects = rows;
-        }
-        if let (Some(parent), Some(rows)) = (
-            self.menu
-                .as_mut()
-                .and_then(|menu| menu.parent.as_deref_mut()),
-            hits.parent_menu_rows.take(),
-        ) {
-            parent.item_rects = rows;
+        let mut menu = self.menu.as_mut();
+        for rows in hits.menu_rows.take().into_iter().flatten() {
+            let Some(level) = menu else { break };
+            level.item_rects = rows;
+            menu = level.parent.as_deref_mut();
         }
         self.view.apply_hits(hits);
     }

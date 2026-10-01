@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -15,6 +16,8 @@ from gobby.communications.models import (
     CommsMessage,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.sessions import ensure_system_session, system_session_id
 from gobby.utils.datetime import to_aware_utc, utc_now
 from gobby.utils.machine_id import require_machine_id
 
@@ -311,54 +314,12 @@ class LocalCommunicationsStore:
         attachments: list[CommsAttachment],
     ) -> tuple[CommsMessage, list[CommsAttachment]]:
         """Save a message and its attachments in one transaction."""
-        if not message.id:
-            message.id = str(uuid.uuid4())
         for attachment in attachments:
             if not attachment.id:
                 attachment.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
-            row = conn.execute(
-                """
-                INSERT INTO comms_messages (
-                    id, channel_id, identity_id, direction, content, content_type,
-                    platform_message_id, platform_thread_id, session_id, status,
-                    error, metadata_json
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (channel_id, platform_message_id)
-                WHERE platform_message_id IS NOT NULL
-                DO NOTHING
-                RETURNING *
-                """,
-                (
-                    message.id,
-                    message.channel_id,
-                    message.identity_id,
-                    message.direction,
-                    message.content,
-                    message.content_type,
-                    message.platform_message_id,
-                    message.platform_thread_id,
-                    message.session_id,
-                    message.status,
-                    message.error,
-                    json.dumps(message.metadata_json),
-                ),
-            ).fetchone()
-            inserted = row is not None
-            if row is None and message.platform_message_id is not None:
-                row = conn.execute(
-                    """
-                    SELECT *
-                      FROM comms_messages
-                     WHERE channel_id = %s AND platform_message_id = %s
-                    """,
-                    (message.channel_id, message.platform_message_id),
-                ).fetchone()
-            if row is None:
-                raise RuntimeError("Failed to create communications message")
-
-            persisted = CommsMessage.from_row(row)
+            persisted, inserted = self._insert_message(conn, message)
             saved_attachments: list[CommsAttachment] = []
             if inserted:
                 for attachment in attachments:
@@ -375,6 +336,53 @@ class LocalCommunicationsStore:
                 )
 
         return persisted, saved_attachments
+
+    def _insert_message(
+        self, conn: Transaction, message: CommsMessage
+    ) -> tuple[CommsMessage, bool]:
+        """Insert a message, or return the existing platform duplicate; True when inserted."""
+        if not message.id:
+            message.id = str(uuid.uuid4())
+        row = conn.execute(
+            """
+                INSERT INTO comms_messages (
+                    id, channel_id, identity_id, direction, content, content_type,
+                    platform_message_id, platform_thread_id, session_id, status,
+                    error, metadata_json
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (channel_id, platform_message_id)
+                WHERE platform_message_id IS NOT NULL
+                DO NOTHING
+                RETURNING *
+                """,
+            (
+                message.id,
+                message.channel_id,
+                message.identity_id,
+                message.direction,
+                message.content,
+                message.content_type,
+                message.platform_message_id,
+                message.platform_thread_id,
+                message.session_id,
+                message.status,
+                message.error,
+                json.dumps(message.metadata_json),
+            ),
+        ).fetchone()
+        inserted = row is not None
+        if row is None and message.platform_message_id is not None:
+            row = conn.execute(
+                """
+                SELECT *
+                  FROM comms_messages
+                 WHERE channel_id = %s AND platform_message_id = %s
+                """,
+                (message.channel_id, message.platform_message_id),
+            ).fetchone()
+        if row is None:
+            raise RuntimeError("Failed to create communications message")
+        return CommsMessage.from_row(row), inserted
 
     def get_message(self, message_id: str) -> CommsMessage | None:
         """Get a message by ID."""
@@ -524,6 +532,171 @@ SELECT
                 (content, message_id),
             )
 
+    # Callback keyboard decisions: metadata_json.callback_state is absent while the
+    # decision is pending and becomes "answered" or "superseded". callback_generation
+    # names the keyboard Telegram should show; every change to it is a CAS on the
+    # generation the caller observed, made before the matching Telegram publish.
+
+    def accept_callback_decision(
+        self, decision_id: str, generation: int, callback: CommsMessage
+    ) -> CommsMessage | None:
+        """Answer a pending decision, persist its callback and record its delivery, atomically.
+
+        The answer gets one mailbox row under the callback row's ID, from the system
+        session with the Telegram sender in its metadata, and is stamped with who
+        consumes it (``CommsMessage.answer_delivery``). A comms asking session has no
+        mailbox reader, so its answer starts ``pending`` in the responder's
+        ``DecisionAnswerStore`` ledger; any other asker reads its mailbox after the
+        caller wakes it. The decision records the answer as ``callback_answer_id``.
+        Returns None, persisting nothing, unless the decision is still pending at
+        ``generation``. A persistence failure rolls the answer back.
+        """
+        ensure_system_session(self.db)
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(metadata_json, '{callback_state}', '"answered"')
+                 WHERE id = %s
+                   AND NOT (metadata_json ? 'callback_state')
+                   AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
+                RETURNING session_id
+                """,
+                (decision_id, generation),
+            ).fetchone()
+            if row is None:
+                return None
+            asker = (
+                conn.execute(
+                    "SELECT id, source FROM sessions WHERE id = %s", (row["session_id"],)
+                ).fetchone()
+                if row["session_id"]
+                else None
+            )
+            if asker is None:
+                return self._insert_message(conn, callback)[0]
+            stamp: dict[str, Any] = (
+                {"answer_delivery": "responder", "answer_outcome": "pending", "answer_attempt": 1}
+                if asker["source"] == "comms"
+                else {"answer_delivery": "mailbox"}
+            )
+            answer = replace(callback, metadata_json={**callback.metadata_json, **stamp})
+            persisted, _ = self._insert_message(conn, answer)
+            conn.execute(
+                """UPDATE comms_messages
+                      SET metadata_json = jsonb_set(metadata_json, '{callback_answer_id}',
+                                                    to_jsonb(%s::text))
+                    WHERE id = %s""",
+                (persisted.id, decision_id),
+            )
+            InterSessionMessageManager(self.db).create_message(
+                from_session=system_session_id(),
+                to_session=str(asker["id"]),
+                content=f"Telegram decision {decision_id} was answered: {persisted.content}",
+                message_type="telegram_message",
+                metadata_json=json.dumps(_decision_answer_metadata(decision_id, persisted)),
+                message_id=persisted.id,
+            )
+        return persisted
+
+    def claim_callback_reissue(self, message_id: str, generation: int) -> bool:
+        """Advance a pending decision's keyboard generation if it is still ``generation``."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(
+                           metadata_json, '{callback_generation}', to_jsonb(%s::int + 1)
+                       )
+                 WHERE id = %s
+                   AND NOT (metadata_json ? 'callback_state')
+                   AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
+                RETURNING id
+                """,
+                (generation, message_id, generation),
+            ).fetchone()
+        return row is not None
+
+    def stage_callback_edit(
+        self,
+        message_id: str,
+        generation: int,
+        content: str,
+        keyboard: list[list[dict[str, str]]] | None,
+    ) -> bool:
+        """Record an edit as ``generation + 1`` before it is published; False when stale.
+
+        A new keyboard replaces the buttons of a pending decision only; a closed one
+        is never reopened. An edit without a keyboard supersedes a pending decision,
+        because Telegram drops buttons an edit does not resend.
+        """
+        keyboard_json = None if keyboard is None else json.dumps(keyboard)
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_messages
+                   SET content = %s,
+                       metadata_json = CASE
+                           WHEN %s::jsonb IS NOT NULL THEN
+                               metadata_json || jsonb_build_object('inline_keyboard', %s::jsonb)
+                           WHEN metadata_json ? 'callback_state' THEN metadata_json
+                           ELSE metadata_json || '{"callback_state": "superseded"}'::jsonb
+                       END || jsonb_build_object('callback_generation', %s::int + 1)
+                 WHERE id = %s
+                   AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
+                   AND (%s::jsonb IS NULL OR NOT metadata_json ? 'callback_state')
+                RETURNING id
+                """,
+                (
+                    content,
+                    keyboard_json,
+                    keyboard_json,
+                    generation,
+                    message_id,
+                    generation,
+                    keyboard_json,
+                ),
+            ).fetchone()
+        return row is not None
+
+    def record_platform_message_ids(self, message_id: str, platform_message_ids: list[str]) -> None:
+        """Record the chunk IDs a published edit left the message on."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE comms_messages
+                   SET metadata_json = jsonb_set(
+                           metadata_json, '{platform_message_ids}', %s::jsonb
+                       )
+                 WHERE id = %s
+                """,
+                (json.dumps(platform_message_ids), message_id),
+            )
+
+    def restore_callback_edit(self, previous: CommsMessage, staged_generation: int) -> bool:
+        """Undo a staged edit that Telegram refused; False when the row moved on."""
+        restored = {
+            key: previous.metadata_json[key]
+            for key in ("inline_keyboard", "callback_state", "callback_generation")
+            if key in previous.metadata_json
+        }
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE comms_messages
+                   SET content = %s,
+                       metadata_json = (
+                           metadata_json - 'inline_keyboard' - 'callback_state'
+                           - 'callback_generation'
+                       ) || %s::jsonb
+                 WHERE id = %s
+                   AND COALESCE((metadata_json->>'callback_generation')::int, 0) = %s
+                RETURNING id
+                """,
+                (previous.content, json.dumps(restored), previous.id, staged_generation),
+            ).fetchone()
+        return row is not None
+
     # --- Routing Rules ---
 
     # --- Attachments ---
@@ -595,3 +768,21 @@ SELECT
                 (message_id, self.machine_id),
             )
             return cursor.rowcount
+
+
+def _decision_answer_metadata(decision_id: str, answer: CommsMessage) -> dict[str, Any]:
+    """Describe a decision answer's mailbox row: who clicked what, on which decision.
+
+    Only a mailbox-read answer requests a wake; wake recovery cannot reach a comms session.
+    """
+    return {
+        "wake_requested": answer.answer_delivery == "mailbox",
+        "comms_decision_id": decision_id,
+        "comms_answer_id": answer.id,
+        "comms_channel_id": answer.channel_id,
+        "comms_identity_id": answer.identity_id,
+        "sender": answer.metadata_json.get("external_user_id"),
+        "sender_username": answer.metadata_json.get("external_username"),
+        "telegram_chat_id": answer.metadata_json.get("chat_id"),
+        "callback_data": answer.metadata_json.get("callback_value"),
+    }

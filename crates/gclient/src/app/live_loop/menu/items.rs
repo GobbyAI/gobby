@@ -2,31 +2,46 @@
 
 use crate::app::{ControlState, PaneId};
 use crate::ui::chrome::attention_pane;
+use crate::ui::hit::SidebarSection;
 use crate::ui::settings::AgentSort;
-use crate::ui::sidebar::agent_blocked;
+use crate::ui::sidebar::{agent_blocked, ALL_MACHINES};
 use crate::ui::{Action, Chrome, WorkspaceView};
 
-use super::{ArrangeLayout, MenuAction, MenuItem};
+use super::{ArrangeLayout, ArrangeTarget, MenuAction, MenuItem, Submenu};
 
-pub(in crate::app::live_loop) fn arrange_items() -> Vec<MenuItem> {
+/// The Arrange ▸ row, opening the layout choices for `target`; disabled
+/// when there is no tab to arrange.
+pub(in crate::app::live_loop) fn arrange_row(target: Option<ArrangeTarget>) -> MenuItem {
+    let enabled = target.is_some();
+    let target = target.unwrap_or(ArrangeTarget {
+        tab: String::new(),
+        pane: None,
+    });
+    enabled_if(
+        item(
+            "Arrange ▸",
+            MenuAction::OpenSubmenu(Submenu::Arrange(target)),
+        ),
+        enabled,
+    )
+}
+
+fn arrange_items(target: &ArrangeTarget) -> Vec<MenuItem> {
+    let arrange = |label, layout| {
+        item(
+            label,
+            MenuAction::Arrange {
+                layout,
+                target: target.clone(),
+            },
+        )
+    };
     vec![
-        item(
-            "Arrange: even horizontal",
-            MenuAction::Arrange(ArrangeLayout::EvenHorizontal),
-        ),
-        item(
-            "Arrange: even vertical",
-            MenuAction::Arrange(ArrangeLayout::EvenVertical),
-        ),
-        item(
-            "Arrange: main horizontal",
-            MenuAction::Arrange(ArrangeLayout::MainHorizontal),
-        ),
-        item(
-            "Arrange: main vertical",
-            MenuAction::Arrange(ArrangeLayout::MainVertical),
-        ),
-        item("Arrange: tiled", MenuAction::Arrange(ArrangeLayout::Tiled)),
+        arrange("Even horizontal", ArrangeLayout::EvenHorizontal),
+        arrange("Even vertical", ArrangeLayout::EvenVertical),
+        arrange("Main horizontal", ArrangeLayout::MainHorizontal),
+        arrange("Main vertical", ArrangeLayout::MainVertical),
+        arrange("Tiled", ArrangeLayout::Tiled),
         item("New grid…", MenuAction::OpenNewGrid),
     ]
 }
@@ -57,7 +72,15 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
             MenuAction::Act(Action::Zoom),
         ),
     ]);
-    items.extend(arrange_items());
+    let tab = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .find(|tab| tab.slot_for(pane).is_some());
+    items.push(arrange_row(tab.map(|tab| ArrangeTarget {
+        tab: tab.id.clone(),
+        pane: Some(pane),
+    })));
     items.push(control_item(state, pane));
     if let Some(entry_id) = blocked_entry(ws, pane) {
         items.push(item("Respond", MenuAction::Respond(entry_id)));
@@ -73,10 +96,15 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
     items
 }
 
-pub(super) fn tab_items() -> Vec<MenuItem> {
+pub(super) fn tab_items(chrome: &Chrome, index: usize) -> Vec<MenuItem> {
+    let tab = chrome.tabs().tabs.get(index);
     vec![
         item("New tab", MenuAction::Act(Action::NewTab)),
         item("Rename tab", MenuAction::Act(Action::RenameTab)),
+        arrange_row(tab.map(|tab| ArrangeTarget {
+            tab: tab.id.clone(),
+            pane: None,
+        })),
         item("Close tab", MenuAction::Act(Action::CloseTab)),
     ]
 }
@@ -203,10 +231,79 @@ pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> 
         .clone()
 }
 
-/// The agents band's `[view]` menu: the scope, then the order, one pair
-/// each. The rows below the band show the view they are in, so the menu
-/// marks which value is in force rather than naming the next one.
-pub(in crate::app::live_loop) fn agents_view_items(chrome: &Chrome) -> Vec<MenuItem> {
+/// A submenu's items.
+pub(super) fn submenu_items(chrome: &Chrome, submenu: &Submenu) -> Vec<MenuItem> {
+    match submenu {
+        Submenu::Arrange(target) => arrange_items(target),
+        Submenu::Theme => theme_items(chrome),
+        Submenu::Sidebar => sidebar_items(chrome),
+        Submenu::Section(SidebarSection::Machines) => {
+            let filter = chrome.sidebar.machine_filter.as_deref();
+            vec![
+                choice(
+                    ("✓ This machine", "  This machine"),
+                    filter.is_none(),
+                    MenuAction::SetMachineScope(false),
+                ),
+                choice(
+                    ("✓ All machines", "  All machines"),
+                    filter == Some(ALL_MACHINES),
+                    MenuAction::SetMachineScope(true),
+                ),
+            ]
+        }
+        Submenu::Section(SidebarSection::Projects) => {
+            let all = chrome.sidebar.all_projects;
+            let filter = MenuAction::Act(Action::ToggleProjectsFilter);
+            vec![
+                choice(
+                    ("✓ Working projects", "  Working projects"),
+                    !all,
+                    filter.clone(),
+                ),
+                choice(("✓ All projects", "  All projects"), all, filter),
+            ]
+        }
+        Submenu::Section(SidebarSection::Agents) => agents_view_items(chrome),
+        Submenu::Section(SidebarSection::Terminals) => vec![
+            item("New terminal", MenuAction::Act(Action::NewTerminal)),
+            item("Destroy orphaned terminals…", MenuAction::DestroyOrphans),
+        ],
+    }
+}
+
+/// View › Sidebar: the column's visibility and pin, then one submenu per
+/// section, in the sidebar's order.
+fn sidebar_items(chrome: &Chrome) -> Vec<MenuItem> {
+    let shown = chrome.sidebar.pinned || chrome.sidebar.overlay;
+    let mut items = vec![
+        toggle(
+            ("✓ Show sidebar", "  Show sidebar"),
+            shown,
+            MenuAction::Act(Action::ToggleSidebar),
+        ),
+        toggle(
+            ("✓ Pin sidebar", "  Pin sidebar"),
+            chrome.sidebar.pinned,
+            MenuAction::PinSidebar,
+        ),
+    ];
+    items.extend(SidebarSection::ALL.into_iter().map(|section| {
+        let label = match section {
+            SidebarSection::Machines => "  Machines ▸",
+            SidebarSection::Projects => "  Projects ▸",
+            SidebarSection::Agents => "  Agents ▸",
+            SidebarSection::Terminals => "  Terminals ▸",
+        };
+        item(label, MenuAction::OpenSubmenu(Submenu::Section(section)))
+    }));
+    items
+}
+
+/// The agents section's options: the scope, then the order, one pair each.
+/// The rows show the view they are in, so the menu marks which value is in
+/// force rather than naming the next one.
+fn agents_view_items(chrome: &Chrome) -> Vec<MenuItem> {
     let all = chrome.sidebar.all_sessions;
     let priority = chrome.prefs.agent_sort == AgentSort::Priority;
     let scope = MenuAction::Act(Action::ToggleSessionsScope);
@@ -228,11 +325,22 @@ fn choice(labels: (&'static str, &'static str), active: bool, action: MenuAction
     enabled_if(item(if active { marked } else { plain }, action), !active)
 }
 
+/// An on/off row, `(marked, plain)` spellings against one margin. Unlike a
+/// `choice` it stays enabled while on: choosing it turns it off.
+pub(in crate::app::live_loop) fn toggle(
+    labels: (&'static str, &'static str),
+    on: bool,
+    action: MenuAction,
+) -> MenuItem {
+    let (marked, plain) = labels;
+    item(if on { marked } else { plain }, action)
+}
+
 /// Each theme preference with its View row and its marked and plain choice.
 const THEMES: [(&str, &str, (&str, &str)); 3] = [
-    ("dark", "Theme: Dark ▸", ("● Dark", "  Dark")),
-    ("light", "Theme: Light ▸", ("● Light", "  Light")),
-    ("system", "Theme: System ▸", ("● System", "  System")),
+    ("dark", "  Theme: Dark ▸", ("● Dark", "  Dark")),
+    ("light", "  Theme: Light ▸", ("● Light", "  Light")),
+    ("system", "  Theme: System ▸", ("● System", "  System")),
 ];
 
 /// The preference in force, read the way `ClientPrefs::theme_kind` reads it:

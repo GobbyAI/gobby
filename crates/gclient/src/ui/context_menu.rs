@@ -20,24 +20,21 @@ use crate::theme::Palette;
 use crate::ui::widgets::render_panel_shell;
 use crate::ui::Chrome;
 
-/// Draw the open menu over the frame, the menu it opened from first and
-/// beneath it, and hand back the row rect of each item as drawn, in item
-/// order: the open menu's, then its parent's; empty when the frame cannot
-/// hold the panel.
-pub fn render_context_menu(
-    frame: &mut Frame,
-    area: Rect,
-    chrome: &Chrome,
-) -> (Vec<Rect>, Vec<Rect>) {
-    let Some(menu) = chrome.menu.as_ref() else {
-        return (Vec::new(), Vec::new());
-    };
-    let parent = menu
-        .parent
-        .as_deref()
-        .map(|parent| draw_menu(frame, area, &chrome.palette, parent))
-        .unwrap_or_default();
-    (draw_menu(frame, area, &chrome.palette, menu), parent)
+/// Draw the open menu over the frame, every menu it cascades from first and
+/// beneath it, outermost first, and hand back the row rect of each item as
+/// drawn: one list per menu in item order, the open menu's first, then its
+/// parent's and so on out; a list is empty when the frame cannot hold that
+/// panel.
+pub fn render_context_menu(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Vec<Vec<Rect>> {
+    let chain: Vec<&ContextMenuState> =
+        std::iter::successors(chrome.menu.as_ref(), |menu| menu.parent.as_deref()).collect();
+    let mut rows: Vec<Vec<Rect>> = chain
+        .iter()
+        .rev()
+        .map(|menu| draw_menu(frame, area, &chrome.palette, menu))
+        .collect();
+    rows.reverse();
+    rows
 }
 
 fn draw_menu(
@@ -123,4 +120,44 @@ fn row_style(palette: &Palette, item: &MenuItem, selected: bool) -> Style {
         }
     }
     style
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{build_menu, ArrangeTarget, ContextMenuKind, Submenu};
+    use crate::Workspace;
+
+    /// Arrange ▸ from a tab menu at the right edge opens to the menu's left,
+    /// and a viewport too narrow for both keeps it whole on screen.
+    #[test]
+    fn arrange_submenu_flips_at_the_right_edge_and_stays_on_screen_when_narrow() {
+        let ws = Workspace::scripted();
+        let chrome = Chrome::dark();
+        let parent = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (66, 2));
+        let target = ArrangeTarget {
+            tab: "tab-1".to_owned(),
+            pane: None,
+        };
+        let mut arrange = build_menu(
+            &ws,
+            &chrome,
+            ContextMenuKind::Submenu(Submenu::Arrange(target)),
+            (80, 4),
+        );
+        arrange.parent = Some(Box::new(parent.clone()));
+
+        let area = Rect::new(0, 0, 80, 24);
+        let menu = popup_rect(area, &parent);
+        let submenu = popup_rect(area, &arrange);
+        assert_eq!(submenu.right(), menu.x, "flush with the menu's left side");
+        assert_eq!(submenu.y, 4, "level with its row");
+
+        let narrow = Rect::new(0, 0, 18, 24);
+        let submenu = popup_rect(narrow, &arrange);
+        assert!(
+            submenu.x >= narrow.x && submenu.right() <= narrow.right(),
+            "{submenu:?} inside {narrow:?}"
+        );
+    }
 }

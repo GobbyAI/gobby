@@ -40,6 +40,7 @@ from tests.servers.conftest import create_http_server
 pytestmark = pytest.mark.unit
 
 _ADAPTER_TIMEOUT_SECONDS = 0.15
+_SESSION_UUID = "a1111111-1111-4111-8111-111111111111"
 
 
 def _processed_dir(gobby_home: Path) -> Path:
@@ -79,7 +80,7 @@ def _rewrite_marker(processed_dir: Path, envelope_id: str, **updates: object) ->
     marker_path.write_text(json.dumps(record, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _agy_pre_invocation_envelope(*, conversation_id: str = "agy-conv-1") -> dict[str, Any]:
+def _agy_pre_invocation_envelope(*, conversation_id: str = _SESSION_UUID) -> dict[str, Any]:
     return {
         "schema_version": 1,
         "enqueued_at": "2026-06-24T12:00:00Z",
@@ -96,7 +97,7 @@ def _agy_pre_invocation_envelope(*, conversation_id: str = "agy-conv-1") -> dict
     }
 
 
-def _agy_pretool_envelope(*, conversation_id: str = "agy-conv-1") -> dict[str, Any]:
+def _agy_pretool_envelope(*, conversation_id: str = _SESSION_UUID) -> dict[str, Any]:
     envelope = _agy_pre_invocation_envelope(conversation_id=conversation_id)
     envelope["hook_type"] = "PreToolUse"
     envelope["input_data"]["hookEventName"] = "PreToolUse"
@@ -105,7 +106,7 @@ def _agy_pretool_envelope(*, conversation_id: str = "agy-conv-1") -> dict[str, A
 
 def _agy_post_invocation_envelope(
     *,
-    conversation_id: str = "agy-conv-1",
+    conversation_id: str = _SESSION_UUID,
     execution_num: int = 1,
 ) -> dict[str, Any]:
     return {
@@ -312,7 +313,7 @@ class TestAgyStartupClaimPreflight:
             session_manager=session_storage,
         )
         matching = SimpleNamespace(
-            id="sess-preflight-2",
+            id=_SESSION_UUID,
             project_id="proj-agy",
             source="agy",
             machine_id="machine-agy",
@@ -364,7 +365,7 @@ class TestAgyStartupClaimPreflight:
                 "/api/hooks/execute",
                 json=_agy_pre_invocation_envelope(),
                 headers={
-                    "X-Gobby-Session-Id": "sess-preflight-2",
+                    "X-Gobby-Session-Id": _SESSION_UUID,
                     ENVELOPE_ID_HEADER: "env-startup-1",
                 },
             )
@@ -376,7 +377,7 @@ class TestAgyStartupClaimPreflight:
         context = staged.get("startup_context") if isinstance(staged, dict) else None
         assert isinstance(context, dict)
         assert context.get("generation") == 9
-        assert context.get("session_id") == "sess-preflight-2"
+        assert context.get("session_id") == _SESSION_UUID
         assert context.get("owner_token")
 
     def test_mismatching_session_hint_is_rejected_without_claim_or_mutation(
@@ -1675,7 +1676,11 @@ class TestExecuteHookReceiptRedelivery:
             )
             assert first.status_code == 200
             first_receipt = first.json()["_gobby_delivery_receipt"]
-            assert release_receipt(session_storage.db, receipt_id=first_receipt["receipt_id"])
+            assert release_receipt(
+                session_storage.db,
+                receipt_id=first_receipt["receipt_id"],
+                delivery_generation=first_receipt["delivery_generation"],
+            )
 
             second = client.post(
                 "/api/hooks/execute",
@@ -1738,7 +1743,14 @@ class TestExecuteHookReceiptRedelivery:
             first_receipt = first.json()["_gobby_delivery_receipt"]
             assert first_receipt["delivery_generation"] == 1
             # Transport loss: the emitted response never reached the hook process.
-            assert release_receipt(db, receipt_id=first_receipt["receipt_id"]) is not None
+            assert (
+                release_receipt(
+                    db,
+                    receipt_id=first_receipt["receipt_id"],
+                    delivery_generation=first_receipt["delivery_generation"],
+                )
+                is not None
+            )
 
             second = client.post(
                 "/api/hooks/execute",

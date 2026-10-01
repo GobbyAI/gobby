@@ -10,7 +10,7 @@ import json
 import logging
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -44,6 +44,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _ALLOWED_UPDATES = ("message", "message_reaction", "message_reaction_count", "callback_query")
 _MAX_TRACKED_EDIT_STATE = 1_024
+# Never registered, so a click resolves invalid and republishes the stored decision.
+_RECOVERY_CALLBACK_DATA = "gobby:recover"
+
+
+class TelegramEditNotApplied(RuntimeError):
+    """An edit failed definitely before any existing chunk of the message changed."""
+
+
+def _recovery_markup(metadata: dict[str, Any]) -> dict[str, list[list[dict[str, str]]]] | None:
+    """The stored decision's button labels on buttons that can never answer it."""
+    keyboard = metadata.get("inline_keyboard")
+    if not isinstance(keyboard, list) or not keyboard:
+        return None
+    return {
+        "inline_keyboard": [
+            [
+                {"text": str(button.get("text", "")), "callback_data": _RECOVERY_CALLBACK_DATA}
+                for button in row
+            ]
+            for row in keyboard
+        ]
+    }
 
 
 def _outbound_message_thread_id(value: str) -> int:
@@ -86,7 +108,9 @@ class TelegramAdapter(BaseChannelAdapter):
         self,
         message_key: tuple[str, str],
         markup: dict[str, list[list[dict[str, str]]]],
+        keyboard_message_id: str,
     ) -> None:
+        self._callback_registry.bind_keyboard(markup, keyboard_message_id)
         previous = self._message_callback_keyboards.pop(message_key, None)
         if previous is not None:
             self._callback_registry.discard_keyboard(previous)
@@ -295,6 +319,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 ttl_seconds=message.metadata_json.get("callback_ttl_seconds", 300),
                 action=message.metadata_json.get("callback_action"),
                 project_id=message.metadata_json.get("callback_project_id"),
+                source_id=message.id or None,
             )
         link_preview_options = resolve_link_preview_options(
             self._link_preview_options,
@@ -336,7 +361,7 @@ class TelegramAdapter(BaseChannelAdapter):
         root_message_id = message_ids[0]
         message_key = (str(chat_id), root_message_id)
         if reply_markup is not None:
-            self._remember_callback_keyboard(message_key, reply_markup)
+            self._remember_callback_keyboard(message_key, reply_markup, message_ids[-1])
         if link_preview_options != self._link_preview_options:
             self._message_link_preview_options[message_key] = link_preview_options
             self._message_link_preview_options.move_to_end(message_key)
@@ -389,19 +414,35 @@ class TelegramAdapter(BaseChannelAdapter):
         *,
         inline_keyboard: list[list[dict[str, str]]] | None = None,
         callback_source: CommsMessage | None = None,
+        callback_generation: int = 0,
+        record_chunk_ids: Callable[[list[str]], Awaitable[None]] | None = None,
     ) -> None:
-        """Replace a Telegram message, maintaining overflow chunks when needed."""
+        """Replace a Telegram message, maintaining overflow chunks when needed.
+
+        The steps run in an order that keeps a clickable button on a recorded chunk
+        throughout. Added chunks go out without buttons and ``record_chunk_ids``
+        records them. The chunk texts are then edited in order, so the new keyboard
+        is published last, next to the full new text. When the new keyboard moves to
+        an added chunk, the chunk that held the old one keeps recovery buttons until
+        then; a recovery button never answers, so a click on it republishes the
+        stored decision. Surplus chunks are deleted only after that.
+
+        Raises ``TelegramEditNotApplied`` when the edit definitely failed before any
+        existing chunk changed.
+        """
         chunks = _labeled_chunks(content, self.max_message_length, sender_label)
         message_key = (conversation_id, platform_message_id)
         target_ids = [
             platform_message_id,
             *self._edit_overflow_ids.get(message_key, []),
         ]
+        existing_ids = list(target_ids)
         link_preview_options = self._message_link_preview_options.get(
             message_key,
             self._link_preview_options,
         )
         reply_markup = None
+        recovery_markup = None
         if inline_keyboard is not None:
             if callback_source is None:
                 raise ValueError("Telegram keyboard edit requires its callback source")
@@ -413,66 +454,77 @@ class TelegramAdapter(BaseChannelAdapter):
                 ttl_seconds=callback_source.metadata_json.get("callback_ttl_seconds", 300),
                 action=callback_source.metadata_json.get("callback_action"),
                 project_id=callback_source.metadata_json.get("callback_project_id"),
+                generation=callback_generation,
+                source_id=callback_source.id or None,
             )
+            if len(chunks) > len(existing_ids):
+                recovery_markup = _recovery_markup(callback_source.metadata_json)
 
-        keyboard_attached = False
+        keyboard_message_id: str | None = None
+        changed = False
         try:
-            for index, chunk in enumerate(chunks):
-                if index < len(target_ids):
-                    payload: dict[str, Any] = {
-                        "chat_id": conversation_id,
-                        "message_id": target_ids[index],
-                        "text": chunk,
-                        "parse_mode": "HTML",
-                    }
-                    if link_preview_options is not None:
-                        payload["link_preview_options"] = link_preview_options
-                    if reply_markup is not None and index == len(chunks) - 1:
-                        payload["reply_markup"] = reply_markup
-                    result = await self._post_json("editMessageText", payload)
-                    if not result.get("ok"):
-                        description = str(result.get("description", "unknown Telegram API error"))
-                        if (
-                            reply_markup is not None
-                            or "message is not modified" not in description.casefold()
-                        ):
-                            raise RuntimeError(f"Telegram editMessageText failed: {description}")
-                    if reply_markup is not None and index == len(chunks) - 1:
-                        keyboard_attached = True
-                    continue
-
-                payload = {
+            for chunk in chunks[len(existing_ids) :]:
+                payload: dict[str, Any] = {
                     "chat_id": conversation_id,
                     "text": chunk,
                     "parse_mode": "HTML",
                 }
                 if link_preview_options is not None:
                     payload["link_preview_options"] = link_preview_options
-                if reply_markup is not None and index == len(chunks) - 1:
-                    payload["reply_markup"] = reply_markup
                 result = await self._post_json("sendMessage", payload)
                 if not result.get("ok"):
                     raise RuntimeError("Telegram sendMessage did not return a message")
-                if reply_markup is not None and index == len(chunks) - 1:
-                    keyboard_attached = True
                 target_ids.append(str(result["result"]["message_id"]))
+            if record_chunk_ids is not None and target_ids != existing_ids:
+                await record_chunk_ids(target_ids)
 
-            for stale_message_id in target_ids[len(chunks) :]:
-                await self._post_json(
-                    "deleteMessage",
-                    {
-                        "chat_id": conversation_id,
-                        "message_id": stale_message_id,
-                    },
-                )
+            for index, chunk in enumerate(chunks):
+                markup = None
+                if index == len(chunks) - 1:
+                    markup = reply_markup
+                elif index == len(existing_ids) - 1:
+                    markup = recovery_markup
+                if index < len(existing_ids):
+                    await self._edit_chunk(
+                        conversation_id, target_ids[index], chunk, link_preview_options, markup
+                    )
+                    changed = True
+                elif markup is not None:
+                    await self._set_chunk_markup(conversation_id, target_ids[index], markup)
+                if index == len(chunks) - 1 and reply_markup is not None:
+                    keyboard_message_id = target_ids[index]
+        except httpx.TransportError:
+            raise
+        except Exception as exc:
+            if not changed:
+                raise TelegramEditNotApplied(str(exc)) from exc
+            raise
         finally:
             if reply_markup is not None:
-                if keyboard_attached:
-                    self._remember_callback_keyboard(message_key, reply_markup)
+                if keyboard_message_id is not None:
+                    self._remember_callback_keyboard(message_key, reply_markup, keyboard_message_id)
                 else:
                     self._callback_registry.discard_keyboard(reply_markup)
 
-        overflow_ids = target_ids[1 : len(chunks)]
+        if recovery_markup is not None:
+            try:
+                await self._set_chunk_markup(conversation_id, existing_ids[-1], None)
+            except (RuntimeError, httpx.HTTPError) as exc:
+                logger.warning("Could not clear recovery buttons on %s: %s", existing_ids[-1], exc)
+        undeleted = [
+            stale_id
+            for stale_id in target_ids[len(chunks) :]
+            if not await self._delete_chunk(conversation_id, stale_id)
+        ]
+        # A chunk Telegram will not delete stays tracked, because it may still carry buttons.
+        target_ids[len(chunks) :] = undeleted
+        if record_chunk_ids is not None and len(target_ids) < len(existing_ids):
+            try:
+                await record_chunk_ids(target_ids)
+            except Exception:
+                logger.exception("Could not record Telegram chunks of %s", platform_message_id)
+
+        overflow_ids = target_ids[1:]
         if overflow_ids:
             self._edit_overflow_ids[message_key] = overflow_ids
             self._edit_overflow_ids.move_to_end(message_key)
@@ -480,6 +532,91 @@ class TelegramAdapter(BaseChannelAdapter):
                 self._edit_overflow_ids.popitem(last=False)
         else:
             self._edit_overflow_ids.pop(message_key, None)
+
+    async def _edit_chunk(
+        self,
+        conversation_id: str,
+        message_id: str,
+        text: str,
+        link_preview_options: dict[str, Any] | None,
+        markup: dict[str, list[list[dict[str, str]]]] | None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "chat_id": conversation_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": "HTML",
+        }
+        if link_preview_options is not None:
+            payload["link_preview_options"] = link_preview_options
+        if markup is not None:
+            payload["reply_markup"] = markup
+        result = await self._post_json("editMessageText", payload)
+        if result.get("ok"):
+            return
+        description = str(result.get("description", "unknown Telegram API error"))
+        if markup is not None or "message is not modified" not in description.casefold():
+            raise RuntimeError(f"Telegram editMessageText failed: {description}")
+
+    async def _set_chunk_markup(
+        self,
+        conversation_id: str,
+        message_id: str,
+        markup: dict[str, list[list[dict[str, str]]]] | None,
+    ) -> None:
+        payload: dict[str, Any] = {"chat_id": conversation_id, "message_id": message_id}
+        if markup is not None:
+            payload["reply_markup"] = markup
+        result = await self._post_json("editMessageReplyMarkup", payload)
+        if not result.get("ok"):
+            raise RuntimeError("Telegram editMessageReplyMarkup failed")
+
+    async def _delete_chunk(self, conversation_id: str, message_id: str) -> bool:
+        try:
+            result = await self._post_json(
+                "deleteMessage", {"chat_id": conversation_id, "message_id": message_id}
+            )
+        except (RuntimeError, httpx.HTTPError) as exc:
+            logger.warning("Could not delete Telegram chunk %s: %s", message_id, exc)
+            return False
+        description = str(result.get("description", "")).casefold()
+        return bool(result.get("ok")) or "message to delete not found" in description
+
+    async def edit_stored_message(
+        self,
+        source: CommsMessage,
+        content: str,
+        conversation_id: str,
+        *,
+        sender_label: str | None,
+        inline_keyboard: list[list[dict[str, str]]] | None,
+        callback_generation: int,
+        record_chunk_ids: Callable[[list[str]], Awaitable[None]],
+    ) -> None:
+        """Edit every chunk of a stored message in place.
+
+        The stored chunk IDs seed the edit, so a multi-chunk message is rewritten as a
+        whole even when this process never sent or edited it (after a restart).
+        """
+        root_id = source.platform_message_id
+        if not root_id:
+            raise ValueError("Cannot edit a stored Telegram message without its platform ID")
+        stored_ids = source.metadata_json.get("platform_message_ids")
+        message_key = (conversation_id, root_id)
+        if isinstance(stored_ids, list) and stored_ids and str(stored_ids[0]) == root_id:
+            overflow = [str(chunk_id) for chunk_id in stored_ids[1:]]
+            if overflow:
+                self._edit_overflow_ids[message_key] = overflow
+        await self.edit_message(
+            root_id,
+            content,
+            conversation_id,
+            sender_label=sender_label,
+            inline_keyboard=inline_keyboard,
+            callback_source=source if inline_keyboard is not None else None,
+            callback_generation=callback_generation,
+            record_chunk_ids=record_chunk_ids,
+        )
 
     async def send_attachment(
         self, message: CommsMessage, attachment: CommsAttachment, file_path: Path
@@ -760,15 +897,25 @@ class TelegramAdapter(BaseChannelAdapter):
             status = message.metadata_json.get("callback_status")
             if status == "ok":
                 text = "Selection received."
+            elif status == "reissued":
+                text = "These buttons were out of date. Current buttons are attached; tap again."
+            elif status == "retrying":
+                text = "Retrying your answer."
+            elif status == "answered":
+                text = "This decision was already answered."
+            elif status == "superseded":
+                text = "This decision was withdrawn."
+            elif status == "retry":
+                text = "These buttons could not be refreshed. Tap again in a moment."
             elif status == "expired":
                 text = "This action has expired."
             else:
                 text = "This action is no longer available."
+            payload: dict[str, Any] = {"callback_query_id": callback_id, "text": text}
+            if status != "ok":
+                payload["show_alert"] = True
             try:
-                await self._post_json(
-                    "answerCallbackQuery",
-                    {"callback_query_id": callback_id, "text": text},
-                )
+                await self._post_json("answerCallbackQuery", payload)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 400:
                     raise

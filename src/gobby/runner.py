@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from gobby.shutdown_intent import ShutdownIntent, write_shutdown_intent
 from gobby.utils.git import disable_optional_git_locks
+from gobby.utils.logging import silence_http_client_loggers
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
@@ -101,9 +102,7 @@ disable_optional_git_locks()
 # was started/restarted from within a Claude Code session.
 os.environ.pop("CLAUDECODE", None)
 
-# Silence noisy third-party HTTP loggers.
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+silence_http_client_loggers()
 
 logger = logging.getLogger(__name__)
 

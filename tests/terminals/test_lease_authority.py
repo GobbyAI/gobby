@@ -197,6 +197,38 @@ async def test_lock_cells_are_refcounted() -> None:
     assert not waiter_entered.is_set()
 
 
+@pytest.mark.asyncio
+async def test_attach_does_not_wait_behind_a_held_terminal_lock() -> None:
+    """A slow lock holder (a write sequence, a holder grant) must not stall attach."""
+    registry = TerminalLeaseRegistry()
+    holder = await registry.attach("term-1")
+    await registry.take_control("term-1", holder.attachment_id)
+    owner_entered = asyncio.Event()
+    release_owner = asyncio.Event()
+
+    async def owner() -> None:
+        async with registry.lock("term-1"):
+            owner_entered.set()
+            await release_owner.wait()
+
+    owner_task = asyncio.create_task(owner())
+    await owner_entered.wait()
+    async with asyncio.timeout(1.0):
+        attached = await registry.attach("term-1", viewer="web")
+    assert registry.get(attached.attachment_id) is attached
+    assert registry.holder("term-1") == holder.attachment_id
+
+    take = asyncio.create_task(registry.take_control("term-1", attached.attachment_id))
+    await asyncio.sleep(0)
+    assert not take.done()
+    release_owner.set()
+    await owner_task
+    result = await take
+    assert result.granted is False
+    assert result.reason == "held"
+    assert registry.holder("term-1") == holder.attachment_id
+
+
 def test_lifecycle_sequence_rotates_epoch_before_overflow() -> None:
     registry = TerminalLeaseRegistry()
     previous_epoch = registry.daemon_epoch

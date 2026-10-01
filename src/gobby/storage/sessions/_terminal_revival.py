@@ -23,6 +23,7 @@ from ._contested_expiry import (
     read_session_variables,
     session_has_active_native_subagent,
 )
+from ._operator_claim_hold import clear_operator_claim_hold
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -110,6 +111,8 @@ class _TerminalRevivalMixin:
             updated = self.get(session_id)
             if updated is not None and updated.status == "active":
                 clear_contested_terminal_expiry(self.db, session_id)
+                # The parked seat is back, so the operator hold has done its job.
+                clear_operator_claim_hold(self.db, session_id)
                 # Expiry released the gterm pane, and a surviving CLI sends no
                 # SessionStart to bind it again, so revival rebinds it here.
                 context = updated.terminal_context or {}
@@ -263,6 +266,7 @@ class _TerminalRevivalMixin:
                 # This candidate just won the contest its marker recorded, so
                 # the marker has nothing left to shield (#20837).
                 clear_contested_terminal_expiry(self.db, candidate.id)
+                clear_operator_claim_hold(self.db, candidate.id)
 
         if owner is None:
             if inconclusive_reason is not None:

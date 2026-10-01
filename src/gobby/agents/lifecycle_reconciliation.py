@@ -26,7 +26,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.telemetry.instruments import inc_counter, observe_histogram
-from gobby.terminals.in_doubt import in_doubt_spawns
 
 logger = logging.getLogger(__name__)
 
@@ -309,19 +308,16 @@ class LifecycleReconciliation:
         return bool(await self._run_db(cooperative_close_handoff_pending, self._db, run))
 
     async def reap_stale_pending(self) -> int:
-        """Fail pending terminals older than the 2.3 in-doubt deadline."""
+        """Reap pending terminals past the in-doubt deadline through the strict reaper."""
+        from gobby.agents.spawn_executor import reap_stale_pending_terminals
+
         manager = self._terminal_manager
-        if manager is None:
+        if manager is None or self._runtime_registry is None:
             return 0
-        stale = manager.list_stale_pending(self._spawn_in_doubt_seconds)
-        reaped = 0
-        for row in stale:
-            if in_doubt_spawns.holds(row.id):
-                continue
-            failed = manager.fail_pending(row.id)
-            if failed is not None:
-                reaped += 1
-        return reaped
+        reaped = await reap_stale_pending_terminals(
+            manager, self._runtime_registry, in_doubt_seconds=self._spawn_in_doubt_seconds
+        )
+        return len(reaped)
 
     async def refresh_active_run_dispatch_mutexes(self, *, machine_id: str) -> int:
         """Extend or restore dispatch mutex leases for local active runs."""

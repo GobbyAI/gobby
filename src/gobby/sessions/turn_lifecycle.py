@@ -380,12 +380,26 @@ class TurnLifecycleReducer:
                 next_status,
             )
 
-        return self._apply(
+        result = self._apply(
             session_id,
             evidence,
             mutate,
             clear_provider_error=disposition == "completed",
         )
+        if result.reason in {"stale_generation", "stale_provider_turn"}:
+            # A rejected turn end can strand the row active, so it stays visible (#23102).
+            logger.info(
+                "Rejected %s turn end for session %s: %s (source=%s evidence_generation=%s "
+                "generation=%s status=%s)",
+                disposition,
+                session_id,
+                result.reason,
+                evidence.source,
+                evidence.generation,
+                result.generation,
+                result.status,
+            )
+        return result
 
     def record_provider_failure(
         self,

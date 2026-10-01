@@ -373,22 +373,24 @@ class TerminalLeaseRegistry:
         backend: str = "native",
         terminal: Terminal | None = None,
     ) -> _Attachment:
-        async with self.lock(terminal_id):
-            delivery = "direct" if frame_delivery == "direct" else "proxy"
-            minted = attachment_id or secrets.token_hex(16)
-            record = _Attachment(
-                attachment_id=minted,
-                terminal_id=terminal_id,
-                frame_delivery=delivery,
-                viewer=viewer,
-                backend=backend,
-                terminal=terminal,
-            )
-            self._attachments[minted] = record
-            self._lease(terminal_id)
-            if websocket is not None:
-                self._by_websocket.setdefault(websocket, set()).add(minted)
-            return record
+        # No terminal lock: this body never awaits and changes no holder, generation
+        # or sizing owner, and no lock holder iterates attachments across an await,
+        # so waiting behind a write sequence or holder grant only stalls the attach.
+        delivery = "direct" if frame_delivery == "direct" else "proxy"
+        minted = attachment_id or secrets.token_hex(16)
+        record = _Attachment(
+            attachment_id=minted,
+            terminal_id=terminal_id,
+            frame_delivery=delivery,
+            viewer=viewer,
+            backend=backend,
+            terminal=terminal,
+        )
+        self._attachments[minted] = record
+        self._lease(terminal_id)
+        if websocket is not None:
+            self._by_websocket.setdefault(websocket, set()).add(minted)
+        return record
 
     def get(self, attachment_id: str) -> _Attachment | None:
         record = self._attachments.get(attachment_id)

@@ -32,7 +32,11 @@ from gobby.tasks.transcript_evidence_models import (
 )
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_sync import transcript_sync_point
-from gobby.workflows.task_dirty_state import committable_task_paths, has_committable_edits
+from gobby.workflows.task_dirty_state import (
+    committable_task_paths,
+    committable_task_paths_async,
+    has_committable_edits,
+)
 
 __all__ = [
     "CloseAttributionSnapshot",
@@ -236,6 +240,7 @@ async def derive_close_transcript_evidence(
     evidence: list[TranscriptEvidence] = []
     from gobby.workflows.task_claim_state import (
         other_task_edited_checkout_paths,
+        task_edited_checkout_history_paths,
         task_edited_checkout_paths,
     )
 
@@ -254,7 +259,21 @@ async def derive_close_transcript_evidence(
         if session_id != owner_session_id:
             effective_window = window_start or session.created_at
         variables = ctx.session_var_manager.get_variables(session_id)
-        task_checkout_paths = task_edited_checkout_paths(variables, task_id)
+        # Released pairs still prove the earlier worker's transcript edits after
+        # a transfer. Live ownership checks continue to use only the live ledger.
+        task_checkout_paths = task_edited_checkout_paths(
+            variables, task_id
+        ) | task_edited_checkout_history_paths(variables, task_id)
+        paths_by_root: dict[str, set[str]] = {}
+        for root, path in task_checkout_paths:
+            paths_by_root.setdefault(root, set()).add(path)
+        committable_pairs: set[tuple[str, str]] = set()
+        for root, paths in paths_by_root.items():
+            committable_pairs.update(
+                (root, path) for path in await committable_task_paths_async(paths, root)
+            )
+        # Scratch edits must not invalidate the earlier worker's clean runs.
+        task_checkout_paths = frozenset(committable_pairs)
         task_links: list[dict[str, Any]] | None = None
         window_end: float | None = None
         if session_id not in required:
@@ -263,12 +282,13 @@ async def derive_close_transcript_evidence(
             )
             window_end = _moved_on_epoch(task_links, task_id, effective_window)
         if (
-            not task_checkout_paths
-            and session_id == owner_session_id
+            session_id == owner_session_id
             and owner_used_commit_fallback
+            and not any(path in task_edited_files for _, path in task_checkout_paths)
         ):
             # Only the owner's commit-recovery attribution proves these task files
-            # in the closing checkout. A ledger-empty linked session may have edited
+            # in the closing checkout. Ignored-only pairs cannot anchor those files.
+            # A linked session with an empty ledger may have edited
             # the same path later for a different task.
             root = os.path.realpath(repo_path)
             task_checkout_paths = frozenset((root, path) for path in task_edited_files)

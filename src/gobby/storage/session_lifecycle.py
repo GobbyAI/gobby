@@ -21,6 +21,10 @@ from gobby.storage.sessions._constants import (
     SESSION_REVIVAL_HORIZON_HOURS,
     SYSTEM_SESSION_SOURCE,
 )
+from gobby.storage.sessions._operator_claim_hold import (
+    LIVE_OPERATOR_CLAIM_HOLD_SQL,
+    live_operator_claim_hold_params,
+)
 from gobby.storage.sql_dialect import older_than_now_expr, table_column_names
 from gobby.utils.datetime import utc_now
 
@@ -309,8 +313,12 @@ def cleanup_expired_session_state(
               AND s.status IN ('expired', 'deleted')
               AND s.source != %s
               AND {stale_sql}
+              -- A live operator hold outlives the session row's own clock: it
+              -- was renewed after the expiry and promised its caller a later
+              -- expires_at, so the row stays until that hold lapses.
+              AND NOT COALESCE(({LIVE_OPERATOR_CLAIM_HOLD_SQL}), FALSE)
             """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_SOURCE, horizon_hours),
+            (SYSTEM_SESSION_SOURCE, horizon_hours, *live_operator_claim_hold_params(utc_now())),
         )
 
     result = SessionStateCleanupResult(

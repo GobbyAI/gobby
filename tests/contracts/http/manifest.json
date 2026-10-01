@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "cases": [
+    "health_ok.json",
+    "config_schema.json",
+    "config_values.json",
+    "tasks_list.json",
+    "runtime_handshake_challenge.json",
+    "runtime_handshake.json",
+    "auth_missing_auth.json",
+    "auth_missing_grant.json",
+    "auth_forged_identity.json",
+    "front_door_backend_down.json"
+  ],
+  "families": {
+    "health": {
+      "parity": "native",
+      "origin": "python"
+    },
+    "config": {
+      "parity": "proxy",
+      "origin": "python"
+    },
+    "tasks": {
+      "parity": "proxy",
+      "origin": "python"
+    },
+    "runtime_handshake": {
+      "parity": "proxy",
+      "origin": "python"
+    },
+    "auth": {
+      "parity": "proxy",
+      "origin": "python"
+    },
+    "front_door": {
+      "parity": "native",
+      "origin": "gdaemon"
+    }
+  }
+}

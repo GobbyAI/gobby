@@ -225,3 +225,40 @@ class TestVectorSearch:
 
         assert await client.vector_search([0.1], limit=0) == []
         client.query.assert_not_called()
+
+
+class TestVectorSearchPayload:
+    async def test_vector_search_omits_entity_properties_payload(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """F2 (#22910): the entity vector query must not select properties(node).
+
+        The caller (KnowledgeGraphReader.search_entities_by_vector) reads only
+        entity_key/name/entity_type/project_id/labels/score and pulls memory links
+        from a separate query, so properties(node) returned the 768-float
+        embedding plus entity metadata that nothing consumed -- 98.5% of the
+        payload and ~21x the query time at limit=80.
+        """
+        client = _client(monkeypatch)
+        client.query.return_value = [
+            {
+                "entity_key": "wanted",
+                "name": "Python",
+                "entity_type": "tool",
+                "project_id": "proj-1",
+                "labels": ["_Entity"],
+                "score": 0.95,
+            }
+        ]
+
+        results = await client.vector_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            limit=5,
+            min_score=0.5,
+            project_id="proj-1",
+        )
+
+        assert [row["entity_key"] for row in results] == ["wanted"]
+        cypher, _params = client.query.call_args.args
+        assert "properties(node)" not in cypher
+        assert "AS props" not in cypher

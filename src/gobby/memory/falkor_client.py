@@ -747,8 +747,7 @@ class FalkorClient:
             "WHERE (1.0 - distance) >= $min_score "
             "RETURN node.entity_key AS entity_key, node.name AS name, "
             "node.entity_type AS entity_type, node.project_id AS project_id, "
-            "labels(node) AS labels, (1.0 - distance) AS score, "
-            "properties(node) AS props "
+            "labels(node) AS labels, (1.0 - distance) AS score "
             "ORDER BY distance ASC "
             "LIMIT $limit"
         )

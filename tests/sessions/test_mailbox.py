@@ -739,6 +739,8 @@ class TestMailboxDirectSend:
             if "Mailbox wake dispatch:" in record.message
         ]
         assert len(dispatch_logs) == 1
+        # #22866: the per-batch start line is DEBUG; the per-session result stays INFO.
+        assert not [record for record in caplog.records if "dispatch started" in record.message]
         assert result.message_ids[0] in dispatch_logs[0]
         assert "delivered=True" in dispatch_logs[0]
         assert "duration_ms=" in dispatch_logs[0]

@@ -29,6 +29,7 @@ from gobby.agents.local_model import (
     ensure_local_model,
     refresh_local_model_context,
 )
+from gobby.agents.provider_capabilities import codex_launches_headless
 from gobby.agents.resume_finalization import (
     finalize_resume_handoff_async,
     notify_parent_of_recovery,
@@ -403,11 +404,8 @@ async def resume_agent_run(
         config_overrides.extend(
             _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
         )
-    headless_reviewer = (
-        provider == "codex"
-        and original_run.agent_name == "task-close-reviewer"
-        and launch.enforced
-        and launch.backend == "srt"
+    headless_reviewer = provider == "codex" and codex_launches_headless(
+        original_run.agent_name, sandbox_enforced=launch.enforced, sandbox_backend=launch.backend
     )
     command, _cmd_env = build_cli_command(
         cli=provider,

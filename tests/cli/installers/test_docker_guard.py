@@ -18,6 +18,7 @@ from gobby.cli.installers.docker_guard import DockerTestProtectError, ensure_doc
 from gobby.cli.pack import _import_docker_volume
 from gobby.cli.postgres_backup import _run_pg_dump
 from gobby.storage.maintenance_epoch import MAINTENANCE_EPOCH_ENV
+from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
 
@@ -94,7 +95,7 @@ def test_postgres_install_fails_closed_before_compose_up(
     monkeypatch.setattr(
         postgres_installer,
         "_resolve_postgres_install_database_url",
-        lambda **_kw: ("postgresql://gobby:pw@127.0.0.1:60891/gobby", runtime),
+        lambda **_kw: (fake_database_url("pw"), runtime),
     )
 
     with pytest.raises(DockerTestProtectError):

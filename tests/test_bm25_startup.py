@@ -9,6 +9,7 @@ import pytest
 from gobby import runner_lifecycle_subsystems as lifecycle
 from gobby import runner_startup_code_index as startup_code_index
 from gobby.code_index import bm25_health
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_hook_replay import HookReplayBarrierOutcome
 
@@ -19,6 +20,7 @@ def _runner() -> SimpleNamespace:
         maintenance_index_timeout_seconds=17,
     )
     return SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         startup_config=SimpleNamespace(database_url="postgres://db"),
         config_runtime=SimpleNamespace(
             capture=lambda: SimpleNamespace(

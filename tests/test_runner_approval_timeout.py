@@ -10,6 +10,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.config.bin_freshness import BinFreshnessConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
 from gobby.runner_maintenance import expire_approval_timeouts_loop
 from gobby.storage.pipelines import LocalPipelineExecutionManager
@@ -51,6 +52,7 @@ async def test_expiry_loop_retries_failed_atomic_transition_on_next_tick() -> No
 def test_periodic_approval_expiry_uses_global_manager_without_startup_project() -> None:
     """Approval expiry starts globally when the daemon has no project context."""
     runner: Any = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         metrics_manager=object(),
         metrics_event_store=object(),
         database=MagicMock(),

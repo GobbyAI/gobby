@@ -13,6 +13,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.found_work_gate import FoundWorkStopFacts
@@ -126,6 +127,12 @@ def _append_ordinary_turn(transcript: Path) -> None:
 
 def _prepare_handler(db: HubDatabase, project_path: Path) -> WorkflowHookHandler:
     _create_session(db)
+    task = LocalTaskManager(db).create_task(
+        project_id=PROJECT_ID,
+        title="Finish interrupt stop-gate fixture",
+        claimed_by_session_id=SESSION_ID,
+        validation_criteria="Interrupt facts reset and stop gates block the next ordinary turn.",
+    )
     _insert_turn_end_rules(db)
     SessionVariableManager(db).merge_variables(
         SESSION_ID,
@@ -133,7 +140,7 @@ def _prepare_handler(db: HubDatabase, project_path: Path) -> WorkflowHookHandler
             "_agent_type": "default",
             "_variable_defaults_loaded": True,
             "baseline_dirty_files": [],
-            "claimed_tasks": {"44444444-4444-4444-8444-444444444444": "#42"},
+            "claimed_tasks": {task.id: f"#{task.seq_num}"},
             "mode_level": 1,
             "session_edited_files": [],
             "stop_attempts": 0,

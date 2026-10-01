@@ -16,6 +16,7 @@ import pytest
 import gobby.runner_lifecycle_agents as lifecycle_agents
 import gobby.tasks.agentic_close_review as agentic_close_review
 import gobby.tasks.close_review_delivery as close_review_delivery
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.storage.task_close_reviews import (
     FINALIZING_ORPHAN_GRACE_SECONDS,
     SUBMITTED_VERDICT_KIND,
@@ -232,6 +233,35 @@ async def test_periodic_reconciliation_expires_review_and_wakes_subscriber(
     assert store.delivered is True
     wake.assert_awaited_once()
     assert subscribers.removed == [("run", ["parent"])]
+
+
+@pytest.mark.asyncio
+async def test_node_mode_skips_close_review_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _Store(_review(status="running", run_id="run"))
+    listed: list[str] = []
+
+    def list_reconcilable() -> list[TaskCloseReview]:
+        listed.append("listed")
+        return []
+
+    monkeypatch.setattr(store, "list_reconcilable", list_reconcilable)
+    _install(monkeypatch, store=store, run=None, subscribers=_Subscribers())
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    runner = _runner(wake, bootstrap_config=BootstrapConfig(datastore_mode="remote"))
+
+    with caplog.at_level("INFO", logger="gobby.runner_lifecycle"):
+        periodic = await lifecycle_agents._reconcile_task_close_reviews(runner)
+        startup = await lifecycle_agents._reconcile_task_close_reviews_on_startup(runner)
+
+    assert (periodic, startup) == (0, 0)
+    assert listed == []
+    wake.assert_not_awaited()
+    assert [r.getMessage() for r in caplog.records].count(
+        "skipping hub-only close-review reconciliation in node mode"
+    ) == 2
 
 
 @pytest.mark.asyncio
@@ -744,8 +774,14 @@ def _install_delivery(
     )
 
 
-def _runner(wake: AsyncMock, *, cleanup: AsyncMock | None = None) -> Any:
+def _runner(
+    wake: AsyncMock,
+    *,
+    cleanup: AsyncMock | None = None,
+    bootstrap_config: BootstrapConfig | None = None,
+) -> Any:
     runner = SimpleNamespace(
+        bootstrap_config=bootstrap_config or BootstrapConfig(),
         database=object(),
         db_executor=None,
         wake_dispatcher=SimpleNamespace(wake=wake),

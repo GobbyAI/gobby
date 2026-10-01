@@ -16,6 +16,7 @@ import time
 import weakref
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.events.live_wake import (
@@ -38,6 +39,7 @@ from gobby.events.wake_terminal_resolution import (
     SessionTerminalRoute,
     resolve_session_terminal_route,
 )
+from gobby.utils.datetime import utc_now
 from gobby.workflows.state_manager import SessionVariableManager
 
 if TYPE_CHECKING:
@@ -47,13 +49,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_MESSAGE = "Message from Gobby daemon: New activity available."
+CONTINUE_WAKE_MESSAGE = "[Gobby] Check messages"
 CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 
-# Coalesce bursty completions targeting an interactive pane: while the user is
-# idle on the same turn, suppress redundant tmux send-keys after the first wake.
-# The 30s ceiling guarantees we resume nudging if turn_count signals get missed.
-PANE_WAKE_DEBOUNCE_SECONDS = 30.0
+# Session variable holding when the last delivered live wake was attempted. The
+# wake stays outstanding, and later wakes of any priority are skipped, while it
+# is fresh, mail sent by then is unread, and nothing has been read since (#23125).
+LIVE_WAKE_SENT_AT_VARIABLE = "live_wake_sent_at"
+# A wake reported delivered but lost (e.g. dropped by the TUI) expires after
+# this, so the next message wakes normally.
+LIVE_WAKE_FRESH_SECONDS = 30.0
 # Bounds SDK-resume and web-chat wakes only, which have no internal timeout.
 # Never wrap the tmux senders in wait_for: every tmux subprocess is already
 # bounded (TmuxTextInjectionTimeout), and an outer cancellation can land
@@ -140,8 +145,6 @@ class WakeDispatcher:
         self._activity_probe = activity_probe
         self._restart_horizon_ms: int | None = None
         self._restart_excluded_session_ids: frozenset[str] = frozenset()
-        # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
-        self._last_live_wake: dict[str, tuple[int, float]] = {}
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
         )
@@ -295,8 +298,8 @@ class WakeDispatcher:
 
         task.add_done_callback(forget)
 
-    async def _pause_idle_prompt(self, session_id: str) -> None:
-        """Drop active when a composer-capable terminal is idle at an empty prompt.
+    async def _pause_idle_prompt(self, session_id: str) -> str:
+        """Drop active at an idle empty prompt; return the reconcile outcome.
 
         ``lifecycle_refresh`` only flushes the transcript. A provider turn can
         end on screen while the row stays active, and the retry would then
@@ -305,12 +308,12 @@ class WakeDispatcher:
         """
         probe = self._activity_probe
         if probe is None:
-            return
+            return "no_probe"
         observed = await self._run_db(self._session_manager.get, session_id)
         if observed is None:
-            return
+            return "no_session"
         route = await self._terminal_route_for_session(observed)
-        await reconcile_idle_prompt_session(
+        return await reconcile_idle_prompt_session(
             session_manager=self._session_manager,
             observed=observed,
             terminal=route.managed_terminal,
@@ -336,10 +339,11 @@ class WakeDispatcher:
             return
         refreshed = time.monotonic()
         try:
-            await self._pause_idle_prompt(session_id)
+            idle = await self._pause_idle_prompt(session_id)
         except asyncio.CancelledError:
             raise
         except Exception:
+            idle = "error"
             logger.warning(
                 "Idle-prompt reconcile failed before retrying wake for session %s",
                 session_id,
@@ -365,13 +369,14 @@ class WakeDispatcher:
         # the only trace of a session stranded as active (#22887).
         logger.log(
             logging.DEBUG if skipped == "debounced" else logging.INFO,
-            "Deferred wake for session %s: delivered=%s method=%s skipped=%s "
+            "Deferred wake for session %s: delivered=%s method=%s skipped=%s idle=%s "
             "duration_ms=%.1f refresh_ms=%.1f reconcile_ms=%.1f lock_wait_ms=%.1f "
             "dispatch_ms=%.1f",
             session_id,
             result.get("delivered"),
             result.get("method"),
             skipped,
+            idle,
             (finished - started) * 1000,
             (refreshed - started) * 1000,
             (reconciled - refreshed) * 1000,
@@ -442,11 +447,12 @@ class WakeDispatcher:
             return state_failure
 
         if session_type == "web_chat":
-            if not bypass_debounce and not self._should_send_live_wake(session_id, session):
+            if not bypass_debounce and not await self._should_send_live_wake(session_id):
                 return wake_debounced_result(session_id, method="web_chat")
+            attempted_at = utc_now()
             result = await self._dispatch_web_chat_wake(session_id, priority=priority)
             if result.get("delivered"):
-                self._record_live_wake(session_id, session)
+                await self._record_live_wake(session_id, attempted_at)
             return result
 
         # The managed terminal row resolves the runtime for native and tmux
@@ -454,7 +460,7 @@ class WakeDispatcher:
         terminal_route = await self._terminal_route_for_session(session)
         terminal = terminal_route.managed_terminal
         if terminal is not None and self._tmux_sender is not None:
-            if not bypass_debounce and not self._should_send_live_wake(session_id, session):
+            if not bypass_debounce and not await self._should_send_live_wake(session_id):
                 return wake_debounced_result(session_id, method="terminal")
             return await self._send_managed_terminal_wake(
                 session_id,
@@ -474,31 +480,24 @@ class WakeDispatcher:
             )
 
         # Terminal agents with no managed row may still have an SDK resume route.
-        if not bypass_debounce and not self._should_send_live_wake(session_id, session):
+        if not bypass_debounce and not await self._should_send_live_wake(session_id):
             return wake_debounced_result(session_id, method="live_wake")
 
         # SDK agent → try resume via sdk_session_id
         if self._sdk_resumer:
             sdk_session_id = await self._resolve_sdk_session_id(session_id)
             if sdk_session_id:
-                current, state_failure = await self._preflight_live_side_effect(
+                _, state_failure = await self._preflight_live_side_effect(
                     session_id, priority=priority
                 )
                 if state_failure is not None:
                     return state_failure
-                if current is not None:
-                    session = current
+                attempted_at = utc_now()
                 try:
                     await asyncio.wait_for(
                         self._sdk_resumer(sdk_session_id, f"{prompt}\n"),
                         timeout=LIVE_WAKE_TIMEOUT_SECONDS,
                     )
-                    self._record_live_wake(session_id, session)
-                    return {
-                        "session_id": session_id,
-                        "delivered": True,
-                        "method": "sdk",
-                    }
                 except Exception:
                     logger.warning(
                         "SDK resume failed for session %s (sdk=%s)",
@@ -514,6 +513,12 @@ class WakeDispatcher:
                         "error_code": "sdk_resume_failed",
                         "error_message": "SDK resume failed",
                     }
+                await self._record_live_wake(session_id, attempted_at)
+                return {
+                    "session_id": session_id,
+                    "delivered": True,
+                    "method": "sdk",
+                }
 
         return wake_failure(
             session_id,
@@ -642,6 +647,7 @@ class WakeDispatcher:
         blocked = await self._composer_blocks_wake(session_id, session, terminal, method="terminal")
         if blocked is not None:
             return blocked
+        attempted_at = utc_now()
         try:
             await send(
                 terminal_id,
@@ -689,7 +695,7 @@ class WakeDispatcher:
                 error_code="terminal_wake_failed",
                 error_message=detail,
             )
-        self._record_live_wake(session_id, session)
+        await self._record_live_wake(session_id, attempted_at)
         return {
             "session_id": session_id,
             "delivered": True,
@@ -751,42 +757,42 @@ class WakeDispatcher:
             "error_message": f"No live web_chat session found for {session_id}",
         }
 
-    def _prune_live_wake_state(self, stale_before: float) -> None:
-        """Drop stale wake timestamps and unused per-session locks."""
-        for recorded_session_id, (_, recorded_ts) in tuple(self._last_live_wake.items()):
-            if recorded_ts >= stale_before:
-                continue
-            lock = self._live_wake_locks.get(recorded_session_id)
-            if lock is not None and lock.locked():
-                continue
-            self._last_live_wake.pop(recorded_session_id, None)
-            self._live_wake_locks.pop(recorded_session_id, None)
+    async def _should_send_live_wake(self, session_id: str) -> bool:
+        """Return False while the last delivered wake to this session is outstanding.
 
-    def _should_send_live_wake(self, session_id: str, session: Any) -> bool:
-        """Decide whether to send a live wake signal to a session.
-
-        Coalesces bursty completions: if a wake was already delivered to
-        this session and the user has not advanced the turn since (and the 30s
-        ceiling has not elapsed), skip the live nudge. Durable ISMs are stored
-        unconditionally, so the agent still sees every completion when it next
-        reads its inbox.
+        A delivered wake is outstanding while it is fresh, mail sent by its
+        attempt is unread, and no message has been read since the attempt; any
+        read consumes it. Durable ISMs are stored unconditionally, so later
+        messages still queue and the agent sees them on that read.
         """
-        now = time.monotonic()
-        self._prune_live_wake_state(now - PANE_WAKE_DEBOUNCE_SECONDS)
 
-        last = self._last_live_wake.get(session_id)
-        if last is None:
-            return True
-        last_turn, last_ts = last
-        current_turn = int(getattr(session, "turn_count", 0) or 0)
-        if current_turn > last_turn:
-            return True
-        return (now - last_ts) >= PANE_WAKE_DEBOUNCE_SECONDS
+        def wake_outstanding() -> bool:
+            variables = SessionVariableManager(self._session_manager.db).get_variables(session_id)
+            sent_at = variables.get(LIVE_WAKE_SENT_AT_VARIABLE)
+            if not isinstance(sent_at, str):
+                return False
+            try:
+                cutoff = datetime.fromisoformat(sent_at)
+            except ValueError:
+                return False
+            if (utc_now() - cutoff).total_seconds() >= LIVE_WAKE_FRESH_SECONDS:
+                return False
+            return self._ism_manager.has_unread_without_read_since(session_id, cutoff)
 
-    def _record_live_wake(self, session_id: str, session: Any) -> None:
-        """Record that a live wake was just delivered to this session."""
-        current_turn = int(getattr(session, "turn_count", 0) or 0)
-        self._last_live_wake[session_id] = (current_turn, time.monotonic())
+        return not await self._run_db(wake_outstanding)
+
+    async def _record_live_wake(self, session_id: str, attempted_at: datetime) -> None:
+        """Record a delivered live wake by the time its attempt started.
+
+        Messages sent after that time did not ride this wake, and a read after
+        it consumes the wake, so the next message wakes the session again.
+        """
+        await self._run_db(
+            SessionVariableManager(self._session_manager.db).set_variable,
+            session_id,
+            LIVE_WAKE_SENT_AT_VARIABLE,
+            attempted_at.isoformat(),
+        )
 
     async def _resolve_sdk_session_id(self, session_id: str) -> str | None:
         """Look up the SDK session ID for a session via agent_runs.

@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluation,
     link_close_commit_shas,
     resolve_close_commit_shas,
+    select_close_candidate,
     unlinked_tagged_commits,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
@@ -148,20 +149,19 @@ async def capture_attribution(
 
     attributed = target_task_has_edits(session_vars, task_id)
     raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
-    used_commit_fallback = not raw_paths
-    if not raw_paths:
-        # Session variables are a volatile cache of what the task edited: escalation,
-        # dead-session recovery, and a fresh claiming session all leave them empty for
-        # a task that really did edit files. Linked commits are the durable record, so
-        # fall back to them instead of reading committed work as a no-edit close --
-        # which would skip gate 10 and starve gate 12 of transcript evidence.
+    edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
+    used_commit_fallback = not edited_paths
+    if used_commit_fallback:
+        # Escalation, recovery, a fresh claimant, or ignored scratch can leave the
+        # volatile ledger without committable paths. Recover the durable commit
+        # paths so validation and transcript gates still receive edit evidence.
         raw_paths = await _linked_commit_paths(
             task,
             repo_path,
             prospective_commit_shas,
         )
         attributed = attributed or bool(raw_paths)
-    edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
+        edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
     clean_proof_paths = edited_paths
     if used_commit_fallback and edited_paths:
         clean_proof_paths = await _linked_commit_clean_proof_paths(
@@ -304,6 +304,16 @@ async def commit_close(
             evaluation,
             "The prospective commit set changed after evaluation; retry close_task.",
         )
+    candidate_commit_sha, candidate_error = await select_close_candidate(
+        commit_shas if commit_sha or not fresh_skip_leaf_checks else [],
+        commit_sha,
+        cwd=evaluation.repo_path,
+    )
+    if candidate_error or candidate_commit_sha != evaluation.candidate_commit_sha:
+        return stale_close_response(
+            evaluation,
+            "The reviewed close candidate is missing or changed; retry close_task with commit_sha.",
+        )
     if not fresh_skip_leaf_checks:
         # The evaluation's gate-7 divergence scan, repeated against fresh git state.
         (unlinked_on_head, _elsewhere), tagged_error = await unlinked_tagged_commits(
@@ -393,7 +403,7 @@ async def commit_close(
     if clean_proof.status == "skipped":
         clean_reason = "Task clean proof: disabled_by_configuration"
         audit_reason = f"{audit_reason}\n\n{clean_reason}" if audit_reason else clean_reason
-    current_commit_sha = commit_shas[-1] if commit_shas else None
+    current_commit_sha = candidate_commit_sha
     closed_ancestors: list[str] = []
     try:
         # Off the loop: the transition runs synchronous psycopg, and

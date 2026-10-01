@@ -3,14 +3,15 @@ mod mock_daemon;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::apply_live_menu_action;
 use gobby_client::app::{
-    build_menu, route_modal_key, route_mouse, ContextMenuKind, ControlState, MenuAction,
-    ModalOutcome, MouseOutcome,
+    build_menu, route_modal_key, route_mouse, ArrangeTarget, ContextMenuKind, ControlState,
+    MenuAction, ModalOutcome, MouseOutcome, Submenu,
 };
 use gobby_client::daemon::LiveDaemon;
 use gobby_client::key_input::KeyInput;
 use gobby_client::prefs::load_prefs;
 use gobby_client::theme::ThemeKind;
 use gobby_client::ui::chrome::Mode;
+use gobby_client::ui::hit::SidebarSection;
 use gobby_client::ui::keymap::BINDINGS;
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::status::Toast;
@@ -121,9 +122,14 @@ fn observable_state(fixture: &LiveMenuFixture) -> String {
         )
     });
     format!(
-        "{:?}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{pane:?}",
+        "{:?}:{:?}:{}:{:?}:{:?}:{}:{:?}:{}:{}:{}:{}:{:?}:{}:{}:{}:{}:{pane:?}",
         fixture.chrome.mode,
+        fixture.chrome.theme.kind,
+        fixture.chrome.prefs.theme,
+        fixture.chrome.menu.as_ref().map(|menu| &menu.kind),
         fixture.chrome.dialog,
+        fixture.chrome.prefs.monochrome,
+        fixture.chrome.sidebar.machine_filter,
         fixture.chrome.sidebar.pinned,
         fixture.chrome.sidebar.overlay,
         fixture.chrome.sidebar.all_projects,
@@ -226,17 +232,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
 
     assert_eq!(
         labels(MenuBarMenu::View),
-        [
-            "✓ This project",
-            "  All projects",
-            "✓ Grouped",
-            "  Priority",
-            "Working projects",
-            "Show sidebar",
-            "Pin sidebar",
-            "Legend",
-            "Theme: Dark ▸",
-        ]
+        ["  Theme: Dark ▸", "  Monochrome", "  Sidebar ▸"]
     );
     assert_eq!(
         labels(MenuBarMenu::Window),
@@ -246,25 +242,39 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
             "Zoom",
             "Close pane",
             "Resize mode",
-            "Arrange: even horizontal",
-            "Arrange: even vertical",
-            "Arrange: main horizontal",
-            "Arrange: main vertical",
-            "Arrange: tiled",
-            "New grid…",
+            "Arrange ▸",
         ]
     );
 
+    // Every menu-bar menu, every View submenu under it and Window › Arrange
+    // for the fixture's tab.
+    let tab = live_menu_fixture(true, false)
+        .await
+        .chrome
+        .active_tab()
+        .expect("fixture tab")
+        .id
+        .clone();
+    let kinds: Vec<ContextMenuKind> = MenuBarMenu::ALL
+        .into_iter()
+        .map(ContextMenuKind::MenuBar)
+        .chain(
+            [
+                Submenu::Theme,
+                Submenu::Sidebar,
+                Submenu::Section(SidebarSection::Machines),
+                Submenu::Section(SidebarSection::Projects),
+                Submenu::Section(SidebarSection::Agents),
+                Submenu::Section(SidebarSection::Terminals),
+                Submenu::Arrange(ArrangeTarget { tab, pane: None }),
+            ]
+            .map(ContextMenuKind::Submenu),
+        )
+        .collect();
     for (focused, held) in [(false, false), (true, false), (true, true)] {
-        for title in MenuBarMenu::ALL {
+        for kind in &kinds {
             let fixture = live_menu_fixture(focused, held).await;
-            let items = build_menu(
-                &fixture.workspace,
-                &fixture.chrome,
-                ContextMenuKind::MenuBar(title),
-                (0, 1),
-            )
-            .items;
+            let items = build_menu(&fixture.workspace, &fixture.chrome, kind.clone(), (0, 1)).items;
             for item in items.into_iter().filter(|item| item.enabled) {
                 let mut fixture = live_menu_fixture(focused, held).await;
                 let before = observable_state(&fixture);
@@ -274,7 +284,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
                 let exit = apply_live_menu_action(
                     &mut fixture.workspace,
                     &mut fixture.chrome,
-                    ContextMenuKind::MenuBar(title),
+                    kind.clone(),
                     action.clone(),
                 )
                 .await
@@ -283,7 +293,7 @@ async fn every_menu_bar_item_dispatches_to_a_handler() {
                     exit || observable_state(&fixture) != before
                         || fixture.mock.requests().len() > requests_before
                         || fixture.mock.workspace_requests().len() > workspace_before,
-                    "{title:?} item {:?} had no effect from {action:?}",
+                    "{kind:?} item {:?} had no effect from {action:?}",
                     item.label,
                 );
             }
@@ -309,34 +319,35 @@ fn draw(terminal: &mut Terminal<TestBackend>, fixture: &mut LiveMenuFixture) {
     fixture.chrome.apply_hits(hits.expect("frame drawn"));
 }
 
-/// Open the View menu from its title, then the row that runs `action`, the
-/// live loop's way: each press routed and its menu outcome applied, a frame
-/// drawn after each. Hands back the row as the View menu drew it.
-async fn pick_view_row(
+/// Open `title`'s menu from the menu bar, then the row that runs `action`,
+/// the live loop's way: each press routed and its menu outcome applied, a
+/// frame drawn after each. Hands back the row as the menu drew it.
+async fn pick_menu_row(
     terminal: &mut Terminal<TestBackend>,
     fixture: &mut LiveMenuFixture,
+    title: MenuBarMenu,
     action: MenuAction,
 ) -> Rect {
     draw(terminal, fixture);
     let view = MenuBarMenu::ALL
         .iter()
-        .position(|menu| *menu == MenuBarMenu::View)
-        .expect("view title");
-    let title = fixture
+        .position(|menu| *menu == title)
+        .expect("menu title");
+    let title_rect = fixture
         .chrome
         .view
         .menu_title_hit_areas
         .iter()
         .find(|(index, _)| *index == view)
         .map(|(_, rect)| *rect)
-        .expect("View title drawn");
-    let press = left_press((title.x + 1, title.y));
+        .expect("menu title drawn");
+    let press = left_press((title_rect.x + 1, title_rect.y));
     assert_eq!(
         route_mouse(&fixture.workspace, &mut fixture.chrome, &press),
         MouseOutcome::Handled
     );
     draw(terminal, fixture);
-    let menu = fixture.chrome.menu.as_ref().expect("View menu open");
+    let menu = fixture.chrome.menu.as_ref().expect("menu open");
     let row = menu
         .items
         .iter()
@@ -353,7 +364,7 @@ async fn pick_view_row(
     else {
         panic!("the row click dispatches: {outcome:?}");
     };
-    assert_eq!(kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
+    assert_eq!(kind, ContextMenuKind::MenuBar(title));
     assert_eq!(picked, action);
     let exit = apply_live_menu_action(&mut fixture.workspace, &mut fixture.chrome, kind, picked)
         .await
@@ -368,7 +379,13 @@ async fn open_the_theme_choices(
     terminal: &mut Terminal<TestBackend>,
     fixture: &mut LiveMenuFixture,
 ) -> Rect {
-    let row = pick_view_row(terminal, fixture, MenuAction::ThemeMenu).await;
+    let row = pick_menu_row(
+        terminal,
+        fixture,
+        MenuBarMenu::View,
+        MenuAction::OpenSubmenu(Submenu::Theme),
+    )
+    .await;
     assert_eq!(
         fixture.chrome.mode,
         Mode::ContextMenu,
@@ -405,7 +422,7 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
     let row = open_the_theme_choices(&mut terminal, &mut fixture).await;
     let choices = fixture.chrome.menu.as_ref().expect("theme choices open");
-    assert_eq!(choices.kind, ContextMenuKind::Theme);
+    assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Theme));
     let labels: Vec<&str> = choices.items.iter().map(|item| item.label).collect();
     assert_eq!(labels, ["● Dark", "  Light", "  System"]);
     assert!(
@@ -415,7 +432,10 @@ async fn clicking_the_theme_row_opens_its_choices_and_a_pick_saves_it() {
     assert_eq!(choices.item_rects[0].y, row.y, "level with the theme row");
     let parent = choices.parent.as_deref().expect("the View menu stays open");
     assert_eq!(parent.kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
-    assert_eq!(parent.items[parent.selected].action, MenuAction::ThemeMenu);
+    assert_eq!(
+        parent.items[parent.selected].action,
+        MenuAction::OpenSubmenu(Submenu::Theme)
+    );
     assert_eq!(
         parent.item_rects[parent.selected], row,
         "drawn where it was"
@@ -455,18 +475,18 @@ async fn the_view_menu_behind_the_theme_choices_stays_live() {
         .as_ref()
         .and_then(|menu| menu.parent.as_deref())
         .expect("View menu behind the choices");
-    let sidebar = parent
+    let monochrome = parent
         .items
         .iter()
-        .position(|item| item.label == "Show sidebar")
+        .position(|item| item.action == MenuAction::ToggleMonochrome)
         .map(|index| parent.item_rects[index])
-        .expect("Show sidebar drawn");
-    let press = left_press((sidebar.x + 1, sidebar.y));
+        .expect("Monochrome drawn");
+    let press = left_press((monochrome.x + 1, monochrome.y));
     assert_eq!(
         route_mouse(&fixture.workspace, &mut fixture.chrome, &press),
         MouseOutcome::Menu {
             kind: ContextMenuKind::MenuBar(MenuBarMenu::View),
-            action: MenuAction::Act(Action::ToggleSidebar),
+            action: MenuAction::ToggleMonochrome,
         }
     );
     assert!(fixture.chrome.menu.is_none(), "the row ran and both closed");
@@ -507,14 +527,20 @@ async fn the_theme_choices_open_left_of_the_view_menu_on_a_narrow_frame() {
     fixture.mock.shutdown().await;
 }
 
-/// A search hides the legend; Help opened again from View › Legend drops
+/// A search hides the legend; Help opened again from Help › Keys drops
 /// that search and shows the legend.
 #[tokio::test]
 async fn help_reopened_from_the_legend_row_drops_the_old_search() {
     let mut fixture = live_menu_fixture(true, false).await;
     let mut terminal = Terminal::new(TestBackend::new(100, 30)).expect("test backend");
     let legend = MenuAction::Act(Action::Help);
-    pick_view_row(&mut terminal, &mut fixture, legend.clone()).await;
+    pick_menu_row(
+        &mut terminal,
+        &mut fixture,
+        MenuBarMenu::Help,
+        legend.clone(),
+    )
+    .await;
     assert_eq!(fixture.chrome.mode, Mode::KeybindHelp);
     assert!(
         screen(&terminal).contains("running a turn"),
@@ -536,7 +562,7 @@ async fn help_reopened_from_the_legend_row_drops_the_old_search() {
     route_modal_key(&fixture.workspace, &mut fixture.chrome, &key(KeyCode::Esc));
     assert_eq!(fixture.chrome.mode, Mode::Terminal, "esc, esc closes Help");
 
-    pick_view_row(&mut terminal, &mut fixture, legend).await;
+    pick_menu_row(&mut terminal, &mut fixture, MenuBarMenu::Help, legend).await;
     assert_eq!(fixture.chrome.keybind_help.query, "");
     assert!(
         screen(&terminal).contains("running a turn"),
@@ -553,7 +579,13 @@ async fn the_first_key_back_from_the_bottom_of_help_scrolls() {
     fixture
         .chrome
         .compute_view(&fixture.workspace, Rect::new(0, 0, 80, 24));
-    pick_view_row(&mut terminal, &mut fixture, MenuAction::Act(Action::Help)).await;
+    pick_menu_row(
+        &mut terminal,
+        &mut fixture,
+        MenuBarMenu::Help,
+        MenuAction::Act(Action::Help),
+    )
+    .await;
     let last = fixture.chrome.view.help_last_scroll;
     assert!(last > 1, "Help overflows at 80x24: {last}");
     for _ in 0..=last {

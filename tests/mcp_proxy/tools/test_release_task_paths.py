@@ -453,6 +453,64 @@ async def test_release_rejects_explicit_unregistered_checkout(
 
 
 @pytest.mark.asyncio
+async def test_release_ignored_primary_checkout_path_preserves_other_checkout_ledger(
+    temp_db: HubDatabase, tmp_path: Path
+) -> None:
+    harness = _harness(temp_db, _committed_repo(tmp_path))
+    scratch_path = ".gobby/evidence/scratch.md"
+    (harness.repo / ".gitignore").write_text(".gobby/evidence/\n", encoding="utf-8")
+    for args in (
+        ("add", ".gitignore"),
+        ("-c", "user.email=t@t", "-c", "user.name=Test", "commit", "-qm", "ignore scratch"),
+    ):
+        subprocess.run(["git", *args], cwd=harness.repo, check=True, capture_output=True)
+    worker = tmp_path / "worker"
+    subprocess.run(
+        ["git", "worktree", "add", "--detach", str(worker), "HEAD"],
+        cwd=harness.repo,
+        check=True,
+        capture_output=True,
+    )
+    LocalWorktreeManager(temp_db).create(
+        project_id=harness.project_id,
+        branch_name=None,
+        worktree_path=str(worker),
+    )
+    primary_root = normalize_task_checkout_root(str(harness.repo))
+    worker_root = normalize_task_checkout_root(str(worker))
+    assert primary_root is not None and worker_root is not None
+    scratch = harness.repo / scratch_path
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    scratch.write_text("temporary evidence\n", encoding="utf-8")
+    harness.variables.merge_variables(
+        harness.owner.id,
+        {
+            "task_edited_files": {harness.task.id: [scratch_path]},
+            "task_edited_file_checkouts": {
+                harness.task.id: {
+                    primary_root: [scratch_path],
+                    worker_root: [scratch_path],
+                }
+            },
+        },
+    )
+    with session_context_for_test(harness.owner.id):
+        result = await harness.registry.call(
+            "release_task_paths",
+            {
+                "task_id": harness.task.id,
+                "paths": [scratch_path],
+                "checkout_path": str(harness.repo),
+            },
+        )
+
+    assert result["success"] is True
+    assert result["released_paths"] == [scratch_path]
+    after = harness.variables.get_variables(harness.owner.id)
+    assert after["task_edited_file_checkouts"][harness.task.id] == {worker_root: [scratch_path]}
+
+
+@pytest.mark.asyncio
 async def test_release_refuses_own_edit_newer_than_the_last_commit_on_a_co_claimed_path(
     temp_db: HubDatabase,
     tmp_path: Path,

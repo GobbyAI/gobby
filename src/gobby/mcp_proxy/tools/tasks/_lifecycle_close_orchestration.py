@@ -54,14 +54,22 @@ def active_review_response(ctx: RegistryContext, task_id: str) -> dict[str, Any]
 def project_busy_review_response(
     ctx: RegistryContext, evaluation: CloseEvaluation
 ) -> dict[str, Any] | None:
-    """Expose another task's active reviewer during an advisory preview."""
+    """Expose the reviewer that admission would refuse beside during an advisory preview."""
     task = evaluation.task
     if task is None:
         return None
-    review = TaskCloseReviewStore(ctx.task_manager.db).get_active_for_project(str(task.project_id))
-    if review is None or (review.task_id == task.id and review.active):
-        return None
-    return busy_review_response(task.id, review, preview=True)
+    review = TaskCloseReviewStore(ctx.task_manager.db).get_admission_blocker(
+        str(task.project_id),
+        task_id=task.id,
+        max_concurrency=project_review_capacity(ctx),
+    )
+    return None if review is None else busy_review_response(task.id, review, preview=True)
+
+
+def project_review_capacity(ctx: RegistryContext) -> int:
+    """Return the configured number of close reviewers a project may run at once."""
+    config = ctx.validation_config or TaskValidationConfig()
+    return config.close_review_max_concurrency_per_project
 
 
 def busy_review_response(
@@ -166,6 +174,7 @@ async def launch_close_review(
         validation_commands=(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
+        close_receipts=_launch_receipts(evaluation),
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
         close_review_min_severity=validation_config.close_review_min_severity,
     )
@@ -190,6 +199,9 @@ async def launch_close_review(
         evaluation.message = "Close-review queue infrastructure is unavailable."
         return evaluation.response(preview=False)
     persisted_arguments = dict(close_arguments)
+    # Freeze full candidate identity for queue promotion and background finalization.
+    # The complete linked set remains independent review input.
+    persisted_arguments["commit_sha"] = evaluation.candidate_commit_sha
     persisted_arguments.update(
         {
             "_review_timeout_seconds": validator_timeout_seconds,
@@ -228,6 +240,7 @@ async def launch_close_review(
                     else None
                 ),
             ),
+            max_concurrency=project_review_capacity(ctx),
         )
     except TaskCloseReviewStaleTaskError:
         evaluation.error = "stale_task_state"
@@ -330,6 +343,7 @@ async def _launch_promoted_review(
         validation_commands=(
             validation_commands if isinstance(validation_commands, Mapping) else None
         ),
+        close_receipts=_launch_receipts(evaluation),
         coordinator_owned_pending=evaluation.extra.get("coordinator_owned_pending") is True,
         close_review_min_severity=validation_config.close_review_min_severity,
     )
@@ -481,7 +495,7 @@ async def promote_close_reviews(
         while True:
             claimed = store.claim_queued(
                 project_id=queued_project_id,
-                max_concurrency=1,
+                max_concurrency=project_review_capacity(ctx),
             )
             if not claimed:
                 break
@@ -841,6 +855,13 @@ def _optional_string(arguments: Mapping[str, Any], key: str) -> str | None:
     if not isinstance(value, str):
         raise ValueError(f"Persisted close argument {key!r} is invalid")
     return value
+
+
+def _launch_receipts(evaluation: CloseEvaluation) -> list[Mapping[str, object]] | None:
+    receipts = evaluation.extra.get("close_receipts")
+    if not isinstance(receipts, list):
+        return None
+    return [receipt for receipt in receipts if isinstance(receipt, Mapping)] or None
 
 
 def _response_detail(arguments: Mapping[str, Any]) -> str:

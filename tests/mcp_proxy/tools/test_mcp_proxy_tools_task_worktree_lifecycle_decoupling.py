@@ -141,6 +141,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         "closed": True,
         "task_id": mock_task.id,
         "commit_shas": ["abc123"],
+        "candidate_commit_sha": None,
         "clean_proof": {"status": "clean"},
     }
     mock_task_manager.close_task.assert_called_once()

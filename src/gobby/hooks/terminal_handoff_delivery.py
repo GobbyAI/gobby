@@ -519,54 +519,66 @@ async def _settle_delivery(
             terminal_runtime_registry=terminal_runtime_registry,
         )
 
+    async def settle() -> None:
+        # Caller cancellation must wait for durable result settlement as well as
+        # the physical writer; otherwise a failed handoff stays delivery_pending.
+        try:
+            result = await deliver()
+        except Exception as exc:
+            logger.warning(
+                "Terminal handoff delivery crashed for session %s",
+                claimed.session_id,
+                exc_info=True,
+            )
+            _compensate_delivery_failure(db, claimed, str(exc))
+            return
+
+        if _delivery_succeeded(result, clear_session=claimed.clear_session):
+            _clear_compact_failure_attention(db, claimed.session_id)
+            if result.get("attempt_pending") is True:
+                SessionVariableManager(db).merge_variables(
+                    claimed.session_id,
+                    {
+                        HANDOFF_DISPATCH_GATE_VARIABLE: {
+                            "attempt_pending": True,
+                            "attempt_id": claimed.attempt_id,
+                            "clear_session": True,
+                        }
+                    },
+                )
+            logger.info(
+                "Terminal handoff delivered for session %s attempt %s (clear_session=%s cli=%s via=%s)",
+                claimed.session_id,
+                claimed.attempt_id,
+                claimed.clear_session,
+                result.get("cli"),
+                result.get("via"),
+            )
+            return
+        reason = result.get("reason") or result.get("error") or "terminal delivery failed"
+        error_code = result.get("error_code")
+        _compensate_delivery_failure(
+            db,
+            claimed,
+            str(reason),
+            error_code=str(error_code) if isinstance(error_code, str) else None,
+        )
+
     try:
-        result = await shielded_terminal_delivery(
+        await shielded_terminal_delivery(
             f"handoff:{claimed.session_id}:{claimed.attempt_id}",
-            deliver,
+            settle,
             raise_if_closed=True,
         )
     except TerminalDeliveryAdmissionClosedError as exc:
         _compensate_delivery_failure(db, claimed, str(exc))
-        return
     except Exception as exc:
         logger.warning(
-            "Terminal handoff delivery crashed for session %s",
+            "Terminal handoff delivery scope failed for session %s",
             claimed.session_id,
             exc_info=True,
         )
         _compensate_delivery_failure(db, claimed, str(exc))
-        return
-
-    if _delivery_succeeded(result, clear_session=claimed.clear_session):
-        _clear_compact_failure_attention(db, claimed.session_id)
-        if result.get("attempt_pending") is True:
-            SessionVariableManager(db).merge_variables(
-                claimed.session_id,
-                {
-                    HANDOFF_DISPATCH_GATE_VARIABLE: {
-                        "attempt_pending": True,
-                        "attempt_id": claimed.attempt_id,
-                        "clear_session": True,
-                    }
-                },
-            )
-        logger.info(
-            "Terminal handoff delivered for session %s attempt %s (clear_session=%s cli=%s via=%s)",
-            claimed.session_id,
-            claimed.attempt_id,
-            claimed.clear_session,
-            result.get("cli"),
-            result.get("via"),
-        )
-        return
-    reason = result.get("reason") or result.get("error") or "terminal delivery failed"
-    error_code = result.get("error_code")
-    _compensate_delivery_failure(
-        db,
-        claimed,
-        str(reason),
-        error_code=str(error_code) if isinstance(error_code, str) else None,
-    )
 
 
 def _delivery_succeeded(result: Mapping[str, Any], *, clear_session: bool) -> bool:

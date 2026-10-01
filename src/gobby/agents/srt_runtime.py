@@ -10,6 +10,7 @@ import os
 import shlex
 import shutil
 import sys
+import threading
 import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -37,6 +38,12 @@ from gobby.utils.dependency_requirements import (
     SRT_RELEASE,
     node_dependency_status,
 )
+from gobby.utils.native_bin import (
+    IDENTITY_STAMP_NAME,
+    SET_MEMBERS,
+    native_bin_dir,
+    native_bin_name,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator, Mapping, MutableMapping, Sequence
@@ -49,6 +56,7 @@ from gobby.utils import spawn
 SRT_POLICY_SCHEMA_VERSION = 1
 
 logger = logging.getLogger(__name__)
+_verification_cache_lock = threading.Lock()
 
 
 class SrtRuntimeError(RuntimeError):
@@ -64,6 +72,9 @@ class SrtInstallation:
     node: Path
     runner: Path
     package_json: Path
+
+
+_verified_srt_cache: tuple[str, SrtInstallation] | None = None
 
 
 @dataclass(frozen=True)
@@ -351,7 +362,7 @@ def verify_srt_installation_locked(
     runner_sha256 = hashlib.sha256(runner_bytes).hexdigest()
     if runner_sha256 != SRT_RELEASE.runner_sha256:
         _raise_srt_lockout(
-            "managed SRT runner checksum mismatch",
+            "managed SRT runner checksum mismatch; run `gobby install srt`",
             run_id=run_id,
             provider=provider,
             policy_hash=policy_hash,
@@ -393,19 +404,95 @@ def verify_srt_installation_locked(
     return SrtInstallation(root=root, node=node, runner=runner.resolve(), package_json=package_json)
 
 
+def _raise_cache_walk_error(error: OSError) -> NoReturn:
+    raise error
+
+
+def _srt_verification_cache_key() -> str:
+    """Identify the pinned runtime, its installed files, Node, and the managed binary set."""
+    root = srt_install_root().resolve(strict=True)
+    node_path = shutil.which("node")
+    if node_path is None:
+        raise FileNotFoundError("Node.js executable is missing")
+    node = Path(node_path).resolve(strict=True)
+    bin_dir = native_bin_dir().resolve(strict=True)
+    digest = hashlib.sha256()
+    digest.update(json.dumps(SRT_RELEASE.receipt_fields(), sort_keys=True).encode())
+
+    def record(path: Path, identity: str) -> None:
+        metadata = path.lstat()
+        digest.update(
+            json.dumps(
+                (
+                    identity,
+                    str(path),
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    metadata.st_mode,
+                    metadata.st_size,
+                    metadata.st_mtime_ns,
+                    metadata.st_ctime_ns,
+                )
+            ).encode()
+        )
+
+    record(node, "node")
+    record(Path(__file__).with_name("srt_runner.mjs"), "bundled_runner")
+    record(bin_dir / IDENTITY_STAMP_NAME, "binary_set_stamp")
+    # Partial binary promotions leave the stamp unchanged.
+    for member in SET_MEMBERS:
+        record(bin_dir / native_bin_name(member), member)
+    record(root, "runtime_root")
+    # The installer replaces this immutable tree by rename. Metadata detects a
+    # replacement or later chmod/write without rehashing every file on a hit.
+    for directory, subdirectories, filenames in os.walk(root, onerror=_raise_cache_walk_error):
+        subdirectories.sort()
+        for name in sorted((*subdirectories, *filenames)):
+            path = Path(directory) / name
+            record(path, str(path.relative_to(root)))
+    return digest.hexdigest()
+
+
 def verify_srt_installation(
     *,
     run_id: str | None = None,
     provider: str | None = None,
     policy_hash: str | None = None,
 ) -> SrtInstallation:
-    """Serialize and verify the pinned package, receipt, runner, and Node runtime."""
-    with srt_install_lock():
-        return verify_srt_installation_locked(
+    """Reuse verification only while the pinned runtime and installed binaries are unchanged."""
+    global _verified_srt_cache
+
+    with _verification_cache_lock, srt_install_lock():
+        try:
+            key = _srt_verification_cache_key()
+        except (OSError, RuntimeError):
+            key = None
+        if key is not None and _verified_srt_cache is not None:
+            cached_key, installation = _verified_srt_cache
+            if cached_key == key:
+                logger.info("Managed SRT verification cache hit key=%s", key)
+                return installation
+
+        _verified_srt_cache = None
+        installation = verify_srt_installation_locked(
             run_id=run_id,
             provider=provider,
             policy_hash=policy_hash,
         )
+        try:
+            verified_key = _srt_verification_cache_key()
+        except (OSError, RuntimeError):
+            verified_key = None
+        if key is not None and verified_key != key:
+            _raise_srt_lockout(
+                "managed SRT or installed binary set changed during verification",
+                run_id=run_id,
+                provider=provider,
+                policy_hash=policy_hash,
+            )
+        if verified_key is not None and verified_key == key:
+            _verified_srt_cache = (verified_key, installation)
+        return installation
 
 
 def render_srt_settings(paths: ResolvedSandboxPaths) -> dict[str, Any]:

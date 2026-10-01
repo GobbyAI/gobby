@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.memory.services._search_constants import (
     _GRAPH_EXPANSION_ENTITY_SEED_LIMIT,
@@ -39,8 +39,13 @@ async def search_graph_scored(
     min_score: float = 0.5,
     project_id: str | None = None,
     include_global: bool = True,
+    rows_cache: dict[tuple[Any, ...], list[dict[str, Any]]] | None = None,
 ) -> GraphScoredResult:
-    """Search FalkorDB graph for memory IDs, each scored by entity-match confidence."""
+    """Search FalkorDB graph for memory IDs, each scored by entity-match confidence.
+
+    ``rows_cache`` is an optional request-scoped memo shared across backfill
+    rounds so the invariant related-expansion hop query runs once (#22910).
+    """
     entity_results = await kg_service.search_entities_by_vector(
         query_embedding=query_embedding,
         limit=limit,
@@ -85,6 +90,7 @@ async def search_graph_scored(
                 project_id=project_id,
                 include_global=include_global,
                 timeout_seconds=related_expansion_timeout_seconds,
+                rows_cache=rows_cache,
             )
             traversed_memory_ids = traversal.memory_ids
             traversal_component_map = traversal.component_map

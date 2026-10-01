@@ -1,9 +1,15 @@
 """Tests for ChatSession SDK hook construction and callback routing."""
 
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from claude_agent_sdk import HookContext, PermissionResultAllow, ToolPermissionContext
+from claude_agent_sdk import (
+    HookContext,
+    PermissionResultAllow,
+    PreToolUseHookInput,
+    ToolPermissionContext,
+)
 
 from gobby.servers.chat_session import ChatSession
 
@@ -76,6 +82,28 @@ class TestChatSessionHooks:
         mock_cb.assert_awaited_once_with({"tool_name": "Read", "tool_input": {"path": "/"}})
         # Verifying standard Dict pass-through format
         assert res is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "raw_input",
+        ['{"file_path": "/repo/a.py", "content": "VAL', ["/repo/a.py"], 7],
+        ids=["truncated-string", "list", "int"],
+    )
+    async def test_pre_tool_hook_hands_non_object_input_to_hooks_unchanged(
+        self, session: ChatSession, raw_input: object
+    ) -> None:
+        """A non-object tool input reaches BEFORE_TOOL as sent, not coerced to {} (#23168, #23179)."""
+        mock_cb = AsyncMock(return_value={"decision": "block", "reason": "input unavailable"})
+        session._on_pre_tool = mock_cb
+        hooks = session._build_sdk_hooks()
+        assert hooks is not None
+        hook_fn = hooks["PreToolUse"][0].hooks[0]
+
+        # The SDK types tool_input as an object; a non-object is the invalid input under test.
+        sdk_input = cast(PreToolUseHookInput, {"tool_name": "Write", "tool_input": raw_input})
+        await hook_fn(sdk_input, "use_2", HookContext(signal=None))
+
+        mock_cb.assert_awaited_once_with({"tool_name": "Write", "tool_input": raw_input})
 
     @pytest.mark.asyncio
     async def test_build_pre_tool_hook_enforces_tool_approval(self, session: ChatSession) -> None:

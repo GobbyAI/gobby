@@ -18,7 +18,7 @@ import pytest
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
-from gobby.agents import spawn_executor_support
+from gobby.agents import spawn_executor, spawn_executor_support
 from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, UV_CACHE_DIR
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
@@ -44,6 +44,7 @@ from gobby.agents.spawn_executor_support import (
 from gobby.agents.spawn_timing import SPAWN_PHASES
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
@@ -4153,7 +4154,7 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tmux_retry_kills_duplicate_session_before_failing() -> None:
+async def test_tmux_retry_owner_proves_duplicate_session_dead_before_settlement() -> None:
     manager = MemoryTerminalStore()
     terminal_id = str(uuid4())
     row = manager.create_pending(terminal_id, "proj", "tmux", "gobby", f"gobby-{terminal_id}")
@@ -4179,9 +4180,21 @@ async def test_tmux_retry_kills_duplicate_session_before_failing() -> None:
     result = await execute_spawn(request)
 
     assert result.success is False
+    assert result.error == "duplicate session"
+    assert row.state == "pending"
+    assert in_doubt_spawns.holds(row.id)
+    owners = [
+        task
+        for task in spawn_executor._TIMEOUT_CLEANUP_TASKS
+        if task.get_loop() is asyncio.get_running_loop()
+    ]
+    assert len(owners) == 1
+    await asyncio.wait_for(asyncio.gather(*owners), timeout=2)
+
     assert row.state == "exited"
     assert row.spawn_key not in runtime.live_keys
     assert runtime.killed == [row.spawn_key]
+    assert not in_doubt_spawns.holds(row.id)
 
 
 @pytest.mark.asyncio

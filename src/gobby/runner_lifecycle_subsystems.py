@@ -38,6 +38,21 @@ AgentLifecycleOperation = Callable[[Any], Awaitable[int]]
 _PROJECT_ENUMERATION_PAGE_SIZE = 100
 _PIPELINE_EXECUTION_PAGE_SIZE = 100
 
+# Startup phases that repair, sweep, or start loops over shared hub rows; a `node`
+# runner skips them. Skipping `code_index_bm25` also skips the code-index tasks.
+HUB_ONLY_STARTUP_PHASES = frozenset(
+    {
+        "code_index_bm25",
+        "metrics_cleanup",
+        "expansion_cleanup",
+        "vector_store",
+        "core_services",
+        "cron_scheduler",
+        "pipeline_recovery",
+        "system_automation_start",
+    }
+)
+
 
 async def _reconcile_agent_lifecycle_state(runner: GobbyRunner) -> int:
     # Rotation goes first so a failing step below cannot starve it: a binding left
@@ -622,6 +637,14 @@ async def init_subsystems(
     ),
 ) -> None:
     """Heavy initialization that runs after HTTP is already serving."""
+    node_mode = runner.bootstrap_config.run_mode() == "node"
+
+    async def hub_only_phase[T](name: str, start: Callable[[], Awaitable[T]]) -> T | None:
+        if node_mode and name in HUB_ONLY_STARTUP_PHASES:
+            logger.info("skipping hub-only %s in node mode", name)
+            return None
+        return await timed_startup_phase(name, start())
+
     monitor = getattr(runner, "agent_lifecycle_monitor", None)
     if monitor is None:
         if getattr(runner, "agent_runner", None) is not None:
@@ -681,27 +704,29 @@ async def init_subsystems(
     except Exception:
         logger.exception("Agent completion subscriber recovery failed during startup")
     await timed_startup_phase("mcp_connections", _connect_mcp_servers(runner, tracker))
-    code_index_bm25_ready = await timed_startup_phase(
-        "code_index_bm25", _repair_code_index_bm25(runner, tracker)
+    code_index_bm25_ready = await hub_only_phase(
+        "code_index_bm25", lambda: _repair_code_index_bm25(runner, tracker)
     )
     await timed_startup_phase("embedding_check", _check_embedding_service(runner, tracker))
-    await timed_startup_phase("metrics_cleanup", _cleanup_metrics_on_startup(runner))
-    await timed_startup_phase("expansion_cleanup", _cleanup_stale_expansion_runs_on_startup(runner))
-    await timed_startup_phase(
-        "vector_store", _initialize_vector_store(runner, rebuild_vector_store, tracker)
+    await hub_only_phase("metrics_cleanup", lambda: _cleanup_metrics_on_startup(runner))
+    await hub_only_phase(
+        "expansion_cleanup", lambda: _cleanup_stale_expansion_runs_on_startup(runner)
     )
-    await timed_startup_phase("core_services", _start_core_services(runner, tracker))
+    await hub_only_phase(
+        "vector_store", lambda: _initialize_vector_store(runner, rebuild_vector_store, tracker)
+    )
+    await hub_only_phase("core_services", lambda: _start_core_services(runner, tracker))
     await timed_startup_phase(
         "agent_lifecycle_monitor", _start_agent_lifecycle_monitor(runner, tracker)
     )
-    await timed_startup_phase("cron_scheduler", _start_cron_scheduler(runner, tracker))
+    await hub_only_phase("cron_scheduler", lambda: _start_cron_scheduler(runner, tracker))
     if code_index_bm25_ready:
         _run_tracked_start(
             lambda: _start_code_index_tasks(runner, tracker),
             "Code index tasks",
             tracker,
         )
-    await timed_startup_phase("pipeline_recovery", _recover_pipelines(runner, tracker))
+    await hub_only_phase("pipeline_recovery", lambda: _recover_pipelines(runner, tracker))
     services = getattr(getattr(runner, "http_server", None), "services", None)
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")
@@ -720,8 +745,8 @@ async def init_subsystems(
             tracker,
         ),
     )
-    await timed_startup_phase(
-        "system_automation_start", _start_system_automation_loop(runner, tracker)
+    await hub_only_phase(
+        "system_automation_start", lambda: _start_system_automation_loop(runner, tracker)
     )
     if services is not None and bool(getattr(services, "shutdown_in_progress", False)):
         logger.info("Subsystem initialization stopped because daemon shutdown is in progress")

@@ -525,10 +525,18 @@ class TestGetDirtyContentTypes:
 
     def test_content_type_dirs_matches_sync_targets(self) -> None:
         """Directory mappings plus explicit file mappings cover synced types."""
-        expected = BUNDLED_SYNC_CONTENT_TYPES
+        from gobby.sync_registry import SYNC_TARGETS
+
+        expected = {target[0] for target in SYNC_TARGETS}
         explicit_file_targets = {"build_profiles"}
+        assert BUNDLED_SYNC_CONTENT_TYPES == expected
         assert set(CONTENT_TYPE_DIRS.values()) | explicit_file_targets == expected
         assert "build_profiles" not in set(CONTENT_TYPE_DIRS.values())
+
+    def test_detection_manifest_tampering_blocks_its_sync_domain(self, tmp_path: Path) -> None:
+        assert get_dirty_content_types(["shared/detection/codex.toml"], tmp_path) == {
+            "detection_manifests"
+        }
 
     def test_every_synced_content_type_maps_a_protected_path(self, tmp_path: Path) -> None:
         from gobby.sync.integrity import _GIT_PROTECTED_PATHS

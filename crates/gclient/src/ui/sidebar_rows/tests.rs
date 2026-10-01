@@ -1,6 +1,7 @@
 use super::*;
 use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
+use crate::theme::ThemeKind;
 use crate::ui::sidebar::agent_rows;
 use serde_json::json;
 
@@ -201,6 +202,19 @@ fn agent_rows_render_three_lines_with_the_model_slug() {
         .spans
         .iter()
         .all(|span| !span.style.add_modifier.contains(Modifier::DIM)));
+    // The model sits a neutral tier below either title tier in every
+    // palette, grays included, and never takes a state hue.
+    let mut mono = Chrome::dark();
+    mono.prefs.monochrome = true;
+    mono.set_theme(ThemeKind::Dark);
+    let mut light = Chrome::dark();
+    light.set_theme(ThemeKind::Light);
+    for chrome in [Chrome::dark(), light, mono] {
+        let p = &chrome.palette;
+        let model = row_third_line(&rows[0], 34, &chrome).spans[1].style.fg;
+        assert_eq!(model, Some(p.overlay1));
+        assert!(model != Some(p.text) && model != Some(p.subtext0));
+    }
     assert_eq!(rows[1].model_slug, "gpt-5");
     let fable = SidebarRow {
         model_slug: "claude-fable-5.1-xhigh".into(),
@@ -298,6 +312,16 @@ fn project_lines_carry_the_toggle_branch_and_counts() {
     assert_eq!(
         line_text(&row_line(&worktree, 30, &chrome, 0)),
         "▸  └─ ○ feature · #123"
+    );
+    // With no agent bound the worktree has no state: a blank holds the
+    // glyph's cell so the branch stays under the card's name.
+    let unbound = SidebarRow {
+        state: RowState::Unknown,
+        ..worktree.clone()
+    };
+    assert_eq!(
+        line_text(&row_line(&unbound, 30, &chrome, 0)),
+        "▸  └─   feature · #123"
     );
     let group = SidebarRow {
         id: "group:proj-alpha".into(),

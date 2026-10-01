@@ -655,6 +655,7 @@ class TestWebSocketServerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
+                mock_server.server_state = SimpleNamespace(connections=set(), tasks=set())
                 mock_server.serve = AsyncMock()
                 mock_server_cls.return_value = mock_server
 
@@ -734,6 +735,61 @@ class TestWebSocketServerShutdown:
             assert mock_ws_server.start.await_count == 1
             assert websocket_started.is_set()
             assert cast(MagicMock, runner.database).close.called is True
+
+    @pytest.mark.asyncio
+    async def test_websocket_shutdown_bounds_startup_task_that_resists_cancellation(
+        self,
+    ) -> None:
+        """The wait and cancel bounds hold when the startup task ignores cancellation."""
+        resisted = asyncio.Event()
+
+        async def resist_cancellation() -> None:
+            try:
+                await _never_complete()
+            except asyncio.CancelledError:
+                resisted.set()
+                await _never_complete()
+
+        websocket_task = asyncio.create_task(resist_cancellation())
+        websocket_server = AsyncMock()
+        runner = SimpleNamespace(_websocket_task=websocket_task, websocket_server=websocket_server)
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown._shutdown_websocket_server(
+                cast("GobbyRunner", runner), timeout=0.01
+            )
+        )
+        try:
+            # Hang guard only: the bounded path returns after about 1s.
+            done, _ = await asyncio.wait({shutdown}, timeout=10.0)
+            assert shutdown in done
+            assert resisted.is_set()
+            websocket_server.stop.assert_awaited_once()
+            assert runner._websocket_task is None
+        finally:
+            shutdown.cancel()
+            websocket_task.cancel()
+            await asyncio.gather(shutdown, websocket_task, return_exceptions=True)
+
+    @pytest.mark.asyncio
+    async def test_websocket_shutdown_propagates_caller_cancellation(self) -> None:
+        """An expiring shutdown budget cancels the step instead of being swallowed."""
+        websocket_task = asyncio.create_task(_never_complete())
+        runner = SimpleNamespace(_websocket_task=websocket_task, websocket_server=AsyncMock())
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown._shutdown_websocket_server(
+                cast("GobbyRunner", runner), timeout=60.0
+            )
+        )
+        await asyncio.sleep(0)  # let the step reach its wait on the startup task
+
+        shutdown.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            assert websocket_task.cancelling() == 1
+        finally:
+            websocket_task.cancel()
+            await asyncio.gather(websocket_task, return_exceptions=True)
 
 
 class TestMetricsCleanupTaskShutdown:

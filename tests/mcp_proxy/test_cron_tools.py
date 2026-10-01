@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
@@ -218,6 +219,19 @@ class TestGetCronJob:
         tool = registry.get_tool("get_cron_job")
         result = tool(job_id="cj-nonexistent")
         assert result["success"] is False
+
+    def test_get_native_cli_cron_id_is_clean_not_found(
+        self, real_registry: InternalToolRegistry, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """#22866: an 8-char CLI-native reminder id reaches no uuid cast or traceback."""
+        tool = real_registry.get_tool("get_cron_job")
+        assert tool is not None
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.cron"):
+            result = tool(job_id="84446b0d")
+
+        assert result == {"success": False, "error": "Cron job not found: 84446b0d"}
+        assert caplog.records == []
 
 
 class TestUpdateCronJob:

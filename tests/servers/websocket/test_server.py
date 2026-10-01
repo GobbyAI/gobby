@@ -880,7 +880,7 @@ async def test_stop_bounds_a_durable_workspace_op() -> None:
     )
     _quiet_disconnect(server)
     server.lease_registry = TerminalLeaseRegistry(daemon_epoch="stop-bound")
-    object.__setattr__(server, "_cleanup_tmux", AsyncMock())
+    object.__setattr__(server, "_cleanup_terminals", AsyncMock())
     object.__setattr__(server, "cleanup_voice", AsyncMock())
     started = asyncio.Event()
     cancelled = asyncio.Event()

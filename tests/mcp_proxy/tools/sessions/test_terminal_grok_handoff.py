@@ -23,7 +23,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.provider_capabilities import provider_capabilities
+from gobby.agents.provider_capabilities import (
+    agent_run_is_headless,
+    codex_launches_headless,
+    provider_capabilities,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions._terminal import register_terminal_tools
 from gobby.mcp_proxy.tools.sessions._terminal_handoff_delivery import (
@@ -321,6 +325,83 @@ def test_set_handoff_refuses_to_stage_delivery_for_a_headless_run(provider: str)
     agent_run_manager.get_by_session.assert_called_once_with(SESSION_ID)
     resolve_pane.assert_not_called()
     stage.assert_not_called()
+
+
+def _close_reviewer_run(sandbox: dict[str, Any] | None) -> SimpleNamespace:
+    return SimpleNamespace(
+        id="run-1",
+        provider="codex",
+        agent_name="task-close-reviewer",
+        resume_metadata_json=None if sandbox is None else {"sandbox": sandbox},
+    )
+
+
+def test_set_handoff_refuses_the_srt_close_reviewer_running_codex_exec() -> None:
+    """#23170: staging ``/compact`` for the headless reviewer killed its run.
+
+    The staged attempt suppressed ``require-step-completion`` at turn end, so the
+    turn ended, ``codex exec`` exited with the review step incomplete, and
+    SessionEnd failed the run without a verdict.
+    """
+    agent_run_manager = MagicMock()
+    agent_run_manager.get_by_session.return_value = _close_reviewer_run(
+        {"backend": "srt", "enforced": True}
+    )
+    set_handoff, _session_manager = _set_handoff_tool(agent_run_manager)
+
+    with (
+        session_context_for_test(SESSION_ID),
+        patch("gobby.mcp_proxy.tools.sessions._terminal._resolve_pane_io") as resolve_pane,
+        patch("gobby.mcp_proxy.tools.sessions._terminal.stage_handoff_attempt") as stage,
+    ):
+        result = asyncio.run(set_handoff(current_state="Reviewing.", next_steps=["Finish."]))
+
+    assert result["compacted"] is False
+    assert result["error_code"] == "headless_agent_run"
+    assert result.get("handoff_staged") is not True
+    resolve_pane.assert_not_called()
+    stage.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("run", "headless"),
+    [
+        (_close_reviewer_run({"backend": "srt", "enforced": True}), True),
+        # Without enforced SRT the reviewer launches the Codex TUI.
+        (_close_reviewer_run({"backend": "srt", "enforced": False}), False),
+        (_close_reviewer_run({"backend": "none", "enforced": False}), False),
+        # An unrecorded launch is refused: accepting would kill a headless run.
+        (_close_reviewer_run(None), True),
+        (
+            SimpleNamespace(provider="codex", agent_name="developer", resume_metadata_json=None),
+            False,
+        ),
+        (SimpleNamespace(provider="grok", agent_name=None, resume_metadata_json=None), True),
+        (SimpleNamespace(provider=None, agent_name=None, resume_metadata_json=None), False),
+    ],
+)
+def test_agent_run_is_headless_follows_the_recorded_launch(
+    run: SimpleNamespace, headless: bool
+) -> None:
+    assert agent_run_is_headless(run) is headless
+
+
+@pytest.mark.parametrize(
+    ("agent_name", "enforced", "backend", "headless"),
+    [
+        ("task-close-reviewer", True, "srt", True),
+        ("task-close-reviewer", False, "srt", False),
+        ("task-close-reviewer", True, "none", False),
+        ("developer", True, "srt", False),
+    ],
+)
+def test_only_the_srt_close_reviewer_launches_codex_exec(
+    agent_name: str, enforced: bool, backend: str, headless: bool
+) -> None:
+    assert (
+        codex_launches_headless(agent_name, sandbox_enforced=enforced, sandbox_backend=backend)
+        is headless
+    )
 
 
 def test_set_handoff_still_stages_delivery_for_a_tui_agent_run() -> None:

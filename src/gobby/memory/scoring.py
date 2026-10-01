@@ -62,6 +62,12 @@ def temporal_decay(
         return 1.0
 
 
+# Division does not round-trip, so a recovered undecayed score carries float
+# noise that flipped the primary ordering key on an exact tie (#22910). Twelve
+# places is far finer than any corpus score and coarse enough to absorb it.
+_UNDECAY_PRECISION = 12
+
+
 def undecay(similarity: float, decay_factor: float | None) -> float:
     """Return ``similarity`` with the age penalty divided back out.
 
@@ -75,7 +81,14 @@ def undecay(similarity: float, decay_factor: float | None) -> float:
     graph-synthetic hit has no raw cosine at all; reading one would delete the
     recall expander (#17104). A candidate that carries no decay factor was never
     decayed, so its score already is the undecayed one.
+
+    The quotient is rounded to ``_UNDECAY_PRECISION`` places because division
+    does not round-trip: two candidates sharing a raw cosine but aged differently
+    recover quotients that differ only by floating-point error (1.0799999999999998
+    against 1.08). This value is the primary ordering key, so that error let a
+    genuine tie invert on wall-clock (#22910). The rounded value is stable for an
+    exact tie and still far finer than any score the corpus produces.
     """
     if decay_factor is None or decay_factor <= 0.0:
         return similarity
-    return similarity / decay_factor
+    return round(similarity / decay_factor, _UNDECAY_PRECISION)

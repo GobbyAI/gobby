@@ -36,7 +36,7 @@ async def _done_stream() -> AsyncIterator[DoneEvent]:
 
 def test_web_chat_wake_prompt_is_neutral() -> None:
     assert "Task completed" not in WEB_CHAT_WAKE_PROMPT
-    assert WEB_CHAT_WAKE_PROMPT == "Message from Gobby daemon: New activity available."
+    assert WEB_CHAT_WAKE_PROMPT == "[Gobby] Check messages"
 
 
 @pytest.mark.unit
