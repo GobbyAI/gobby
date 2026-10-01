@@ -24,6 +24,7 @@ MASK = "@mask@"
 SECRET = "@secret@"
 PARITY_VALUES = frozenset({"proxy", "native"})
 ORIGIN_VALUES = frozenset({"python", "gdaemon"})
+BACKEND_VALUES = frozenset({"up", "down"})
 CREDENTIALS = frozenset({"none", "operator", "grant"})
 RESPONSE_HEADER_ALLOWLIST = (
     "cache-control",
@@ -45,7 +46,16 @@ SECRET_KEYS = frozenset(
         "proof",
     }
 )
-_CASE_KEY_ORDER = ("schema_version", "name", "family", "credential", "request", "response", "mask")
+_CASE_KEY_ORDER = (
+    "schema_version",
+    "name",
+    "family",
+    "backend",
+    "credential",
+    "request",
+    "response",
+    "mask",
+)
 
 
 class CorpusError(ValueError):
@@ -59,10 +69,13 @@ def load_manifest(corpus_dir: Path = CORPUS_DIR) -> dict[str, Any]:
     return manifest
 
 
-def load_cases(corpus_dir: Path = CORPUS_DIR, *, origin: str = "python") -> list[dict[str, Any]]:
-    """Load the manifest's cases whose family has ``origin``, in manifest order.
+def load_cases(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, Any]]:
+    """Load the cases Python records and replays, in manifest order.
 
-    Rejects any case whose ``schema_version`` differs from the manifest's.
+    Those are the ``backend: up`` cases of ``origin: python`` families, because the
+    e2e backend is always up; ``down`` cases are hand-authored and replayed by gdaemon.
+    Rejects any case whose ``schema_version`` differs from the manifest's, whose family
+    the manifest lacks, or whose ``backend`` is missing or neither ``up`` nor ``down``.
     """
     manifest = load_manifest(corpus_dir)
     version = manifest["schema_version"]
@@ -78,7 +91,11 @@ def load_cases(corpus_dir: Path = CORPUS_DIR, *, origin: str = "python") -> list
         family = families.get(case["family"])
         if family is None:
             raise CorpusError(f"{file_name}: family {case['family']!r} is not in the manifest")
-        if family["origin"] == origin:
+        if case.get("backend") not in BACKEND_VALUES:
+            raise CorpusError(
+                f"{file_name}: backend {case.get('backend')!r} is neither 'up' nor 'down'"
+            )
+        if family["origin"] == "python" and case["backend"] == "up":
             cases.append(case)
     return cases
 

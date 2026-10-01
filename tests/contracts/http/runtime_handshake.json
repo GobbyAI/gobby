@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "runtime_handshake",
   "family": "runtime_handshake",
+  "backend": "up",
   "credential": "operator",
   "request": {
     "method": "POST",

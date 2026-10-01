@@ -2,8 +2,8 @@
 //!
 //! The loader, secret redaction, masks, and response normalization mirror
 //! `tests/contracts/http_corpus.py`, so both harnesses compare like with like.
-//! `origin: python` cases run against a case-driven stub backend; `origin: gdaemon`
-//! cases run against a backend address that refuses connections.
+//! Each case replays in its declared `backend` state: `up` against a case-driven stub
+//! backend, `down` against a held backend address that refuses connections.
 
 mod common;
 
@@ -84,6 +84,11 @@ fn load_all_cases(manifest: &Value) -> Vec<Value> {
                 families.contains_key(family),
                 "{file}: family {family:?} is not in the manifest"
             );
+            assert!(
+                matches!(case["backend"].as_str(), Some("up" | "down")),
+                "{file}: backend {:?} is neither \"up\" nor \"down\"",
+                case["backend"]
+            );
             case
         })
         .collect()
@@ -93,23 +98,6 @@ fn family_field<'a>(manifest: &'a Value, family: &str, field: &str) -> &'a str {
     manifest["families"][family][field]
         .as_str()
         .unwrap_or_else(|| panic!("family {family:?} has no {field}"))
-}
-
-/// The manifest cases whose family matches `select(parity, origin)`.
-fn cases_where(select: impl Fn(&str, &str) -> bool) -> Vec<Value> {
-    let manifest = load_manifest();
-    let cases: Vec<Value> = load_all_cases(&manifest)
-        .into_iter()
-        .filter(|case| {
-            let family = case["family"].as_str().expect("case family");
-            select(
-                family_field(&manifest, family, "parity"),
-                family_field(&manifest, family, "origin"),
-            )
-        })
-        .collect();
-    assert!(!cases.is_empty(), "no manifest case matches the selection");
-    cases
 }
 
 fn parity(value: &str) -> RouteBackend {
@@ -375,6 +363,47 @@ fn assert_request_unchanged(case: &Value, seen: &SeenLog) {
     }
 }
 
+/// The backend a case replays against, held until its assertions finish.
+enum CaseBackend {
+    /// The case-driven stub, with the requests it received.
+    Up(SeenLog),
+    /// The bound, non-listening socket that keeps the address refusing connections.
+    Down(TcpSocket),
+}
+
+/// Replay `case` through a front door whose backend is in the case's declared state, assert
+/// the normalized response, and return the response headers.
+///
+/// The routes map holds the case's `{family: parity}`; the synthetic `front_door` family
+/// keeps it empty so the request takes the proxy fallback.
+async fn replay_in_declared_backend_state(manifest: &Value, case: &Value) -> HeaderMap {
+    let name = case["name"].as_str().expect("case name");
+    let (backend_addr, backend) = if case["backend"] == "up" {
+        let (addr, seen) = stub_backend(case).await;
+        (addr, CaseBackend::Up(seen))
+    } else {
+        let (held, addr) = refusing_backend();
+        (addr, CaseBackend::Down(held))
+    };
+    let family = case["family"].as_str().expect("case family");
+    let routes = if family == SYNTHETIC_FAMILY {
+        BTreeMap::new()
+    } else {
+        let backend = parity(family_field(manifest, family, "parity"));
+        BTreeMap::from([(family.to_owned(), backend)])
+    };
+    let front_door = start_front_door(backend_addr, routes).await;
+
+    let (actual, headers) = replay(front_door, case).await;
+
+    assert_eq!(actual, expected_response(case), "{name}");
+    match backend {
+        CaseBackend::Up(seen) => assert_request_unchanged(case, &seen),
+        CaseBackend::Down(held) => drop(held),
+    }
+    headers
+}
+
 /// Every parity violation between the manifest and the families gdaemon registers.
 fn parity_violations(
     manifest_families: &Map<String, Value>,
@@ -413,54 +442,41 @@ fn parity_violations(
 }
 
 #[tokio::test]
-async fn proxy_families_replay_equal() {
-    for case in cases_where(|parity, origin| parity == "proxy" && origin == "python") {
-        let family = case["family"].as_str().expect("case family");
-        let (backend, seen) = stub_backend(&case).await;
-        let routes = BTreeMap::from([(family.to_owned(), RouteBackend::Proxy)]);
-        let front_door = start_front_door(backend, routes).await;
-
-        let (actual, _) = replay(front_door, &case).await;
-
-        assert_eq!(actual, expected_response(&case), "{}", case["name"]);
-        assert_request_unchanged(&case, &seen);
+async fn cases_replay_in_declared_backend_state() {
+    let manifest = load_manifest();
+    let cases = load_all_cases(&manifest);
+    for state in ["up", "down"] {
+        assert!(
+            cases.iter().any(|case| case["backend"] == state),
+            "the corpus has no {state} case"
+        );
+    }
+    for case in &cases {
+        replay_in_declared_backend_state(&manifest, case).await;
     }
 }
 
 #[tokio::test]
-async fn native_health_replays_equal() {
-    for case in cases_where(|_, origin| origin == "python") {
-        if case["family"] != "health" {
-            continue;
-        }
-        assert_eq!(family_field(&load_manifest(), "health", "parity"), "native");
-        let (backend, seen) = stub_backend(&case).await;
-        let routes = BTreeMap::from([("health".to_owned(), RouteBackend::Native)]);
-        let front_door = start_front_door(backend, routes).await;
+async fn native_health_replays_equal_up_and_down() {
+    let manifest = load_manifest();
+    assert_eq!(family_field(&manifest, "health", "parity"), "native");
+    let cases: Vec<Value> = load_all_cases(&manifest)
+        .into_iter()
+        .filter(|case| case["family"] == "health")
+        .collect();
+    let states: BTreeSet<&str> = cases
+        .iter()
+        .map(|case| case["backend"].as_str().expect("case backend"))
+        .collect();
+    assert_eq!(states, BTreeSet::from(["down", "up"]));
 
-        let (actual, headers) = replay(front_door, &case).await;
+    for case in &cases {
+        let headers = replay_in_declared_backend_state(&manifest, case).await;
 
-        assert_eq!(actual, expected_response(&case), "{}", case["name"]);
         assert_eq!(headers[SERVED_BY_HEADER], "gdaemon", "{}", case["name"]);
-        assert_request_unchanged(&case, &seen);
-    }
-}
-
-#[tokio::test]
-async fn front_door_backend_down_replays_equal() {
-    let cases = cases_where(|_, origin| origin == "gdaemon");
-    assert!(
-        cases.iter().any(|case| case["family"] == SYNTHETIC_FAMILY),
-        "the corpus has no front_door case"
-    );
-    for case in cases {
-        let (held, backend) = refusing_backend();
-        let front_door = start_front_door(backend, BTreeMap::new()).await;
-
-        let (actual, _) = replay(front_door, &case).await;
-
-        assert_eq!(actual, expected_response(&case), "{}", case["name"]);
-        drop(held);
+        if case["backend"] == "down" {
+            assert_eq!(case["response"]["status"], 503, "{}", case["name"]);
+        }
     }
 }
 

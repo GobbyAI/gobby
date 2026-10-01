@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "auth_missing_grant",
   "family": "auth",
+  "backend": "up",
   "credential": "operator",
   "request": {
     "method": "POST",

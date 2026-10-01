@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
-  "name": "front_door_backend_down",
-  "family": "front_door",
+  "name": "health_backend_down",
+  "family": "health",
   "backend": "down",
   "credential": "none",
   "request": {
     "method": "GET",
-    "path": "/api/sessions",
+    "path": "/api/health",
     "query": {},
     "headers": {},
     "body": null
