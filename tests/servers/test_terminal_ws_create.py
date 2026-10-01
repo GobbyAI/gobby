@@ -18,6 +18,8 @@ from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import TerminalRuntime
 from gobby.terminals.web_spawn import WebSpawnResult, spawn_web_terminal
 from tests.servers.terminal_fakes import MockWebSocket
+from tests.servers.test_terminal_ws_golden import TERMINAL_ID as GOLDEN_TERMINAL_ID
+from tests.servers.test_terminal_ws_golden import _server as _golden_server
 from tests.storage.test_terminals import LOCAL_MACHINE_ID, _create_pending, _manager
 
 pytestmark = pytest.mark.unit
@@ -437,3 +439,34 @@ async def test_create_and_kill_run_storage_on_the_executor(
     assert len(read_threads) == 2
     assert all(thread != loop_thread for thread in read_threads)
     await server.lease_registry.shutdown_lifecycle_publication()
+
+    # A live kill reaches kill_terminal, whose reread and mark_exited are storage too.
+    live_server, live_manager, live_runtime = _golden_server(backend="native")
+    live_manager.row.state = "live"
+    cast(Any, live_runtime).terminate = AsyncMock()
+    cast(Any, live_server).broadcast_tmux_session_event = AsyncMock()
+    storage_calls: list[tuple[str, int]] = []
+    live_get, live_mark_exited = live_manager.get, live_manager.mark_exited
+
+    def recording_live_get(terminal_id: str) -> Any:
+        storage_calls.append(("get", threading.get_ident()))
+        return live_get(terminal_id)
+
+    def recording_mark_exited(terminal_id: str) -> Any:
+        storage_calls.append(("mark_exited", threading.get_ident()))
+        return live_mark_exited(terminal_id)
+
+    monkeypatch.setattr(live_manager, "get", recording_live_get)
+    monkeypatch.setattr(live_manager, "mark_exited", recording_mark_exited)
+    live_socket = MockWebSocket()
+
+    await TerminalCreateMixin._handle_terminal_kill(
+        live_server,
+        live_socket,
+        {"type": "terminal_kill", "request_id": "live", "terminal_id": GOLDEN_TERMINAL_ID},
+    )
+
+    assert live_socket.last_message()["success"] is True
+    assert live_manager.row.state == "exited"
+    assert {name for name, _ in storage_calls} == {"get", "mark_exited"}
+    assert all(thread != loop_thread for _, thread in storage_calls)
