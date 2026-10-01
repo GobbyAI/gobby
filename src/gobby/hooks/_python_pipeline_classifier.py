@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from gobby.hooks.code_navigation import shell_command_name
+from gobby.utils.python_source import parse_agent_source
 
 _PYTHON_PIPELINE_MODULES = frozenset({"json", "sys"})
 # Pure stdlib modules: no filesystem, process, network, or string-addressed
@@ -727,7 +728,7 @@ def _classify_python_source_with_targets(
 ) -> tuple[_PythonExecutionClassification, tuple[str, ...]]:
     """Classify ``script``; a MUTATION carries its literal targets when all are known."""
     try:
-        tree = ast.parse(script)
+        tree = parse_agent_source(script)
     except SyntaxError:
         return _PythonExecutionClassification.INDETERMINATE, ()
     rebound_names = _rebound_names(tree)
