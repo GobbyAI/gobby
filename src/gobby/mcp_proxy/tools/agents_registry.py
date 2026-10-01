@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
     from gobby.workflows.dry_run import MCPInventoryProtocol
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.git import WorktreeGitManager
@@ -53,6 +54,7 @@ def create_agents_registry(
     code_index: CodeIndexContext | None = None,
     transcript_reader: TranscriptReader | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
+    agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -114,6 +116,7 @@ def create_agents_registry(
         code_index=code_index,
         transcript_reader=transcript_reader,
         detection_registry=detection_registry,
+        agent_pane_reserver_resolver=agent_pane_reserver_resolver,
         agent_run_manager=agent_run_manager,
         resolve_session_id=_resolve_session_id,
         get_current_session_id=get_current_session_id,

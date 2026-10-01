@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.tasks.validation import TaskValidator
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
     from gobby.terminals.workspace_ops import WorkspaceOps
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.pipeline_loader import PipelineLoader
@@ -87,6 +88,7 @@ def setup_internal_registries(
     write_coordinator: Any | None = None,
     workspace_manager: WorkspaceManager | None = None,
     workspace_ops_resolver: Callable[[], WorkspaceOps | None] | None = None,
+    agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -338,6 +340,7 @@ def setup_internal_registries(
             code_index=code_index,
             transcript_reader=transcript_reader,
             detection_registry=detection_registry,
+            agent_pane_reserver_resolver=agent_pane_reserver_resolver,
         )
 
         # Add inter-agent messaging tools if dependencies are available

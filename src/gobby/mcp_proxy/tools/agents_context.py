@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
     from gobby.workflows.dry_run import MCPInventoryProtocol
     from gobby.workflows.pipeline_loader import PipelineLoader
     from gobby.worktrees.git import WorktreeGitManager
@@ -51,6 +52,7 @@ class AgentsRegistryContext:
     code_index: CodeIndexContext | None = None
     transcript_reader: TranscriptReader | None = None
     detection_registry: DetectionManifestRegistry | None = None
+    agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None
 
     @property
     def daemon_config(self) -> DaemonConfig | None:

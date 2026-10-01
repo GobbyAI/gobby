@@ -94,6 +94,7 @@ def register_agent_spawn_tools(
         config_resolver=lambda: ctx.daemon_config,
         code_index=ctx.code_index,
         detection_registry=ctx.detection_registry,
+        agent_pane_reserver_resolver=ctx.agent_pane_reserver_resolver,
     )
 
     registry.merge_from(spawn_registry)
