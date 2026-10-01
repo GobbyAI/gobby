@@ -173,7 +173,8 @@ async def test_prewarmed_pool_runs_four_first_stops_concurrently(tmp_path: Path)
         assert len(set(pids)) == 4
         assert all(pid > 0 for pid in pids)
     finally:
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        # A drain that outlives its test can stop the tracker under later tests' pools.
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
 
 async def test_process_pool_oserror_falls_back_and_warns_once(
@@ -240,11 +241,15 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
 def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
+    tracker_stopped = threading.Event()
     fake = _RecordingExecutor(events, block_on_wait=release)
     monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
-    monkeypatch.setattr(
-        transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
-    )
+
+    def record_tracker_stop() -> None:
+        events.append("tracker")
+        tracker_stopped.set()
+
+    monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", record_tracker_stop)
 
     started = time.monotonic()
     transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
@@ -253,7 +258,11 @@ def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) 
     assert elapsed < 1.0
     assert events == ["shutdown:wait=True:cancel=True"]
     assert transcript_evidence_pool._pool is None
+    # The released drain must finish while the stub is patched in; after monkeypatch
+    # undo it would stop the process-wide tracker and unlink live pool semaphores.
     release.set()
+    assert tracker_stopped.wait(5)
+    assert events == ["shutdown:wait=True:cancel=True", "tracker"]
 
 
 def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -336,7 +345,7 @@ def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
 
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
         assert _resource_tracker_pid() is None
         assert transcript_evidence_pool._pool is None
