@@ -406,6 +406,40 @@ async def test_broadcast_event_normalizes_structured_effort(
     assert not any("Failed to broadcast event" in record.message for record in caplog.records)
 
 
+async def test_broadcast_carries_unavailable_tool_input_marker(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A truncated string tool input broadcasts its marker instead of being dropped (#23168)."""
+    from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+
+    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
+    if "pre-tool-use" not in default_config.hook_extensions.websocket.broadcast_events:
+        default_config.hook_extensions.websocket.broadcast_events.append("pre-tool-use")
+    event = CodexHooksAdapter().translate_to_hook_event(
+        {
+            "hook_type": "PreToolUse",
+            "input_data": {
+                "session_id": "codex-session",
+                "tool_name": "Bash",
+                "tool_input": '{"command": "rm -rf /repo/bu',
+            },
+            "source": "codex",
+        }
+    )
+    assert event is not None
+
+    await HookEventBroadcaster(mock_websocket_server, default_config).broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    payload = mock_websocket_server.broadcast.call_args.args[0]
+    assert payload["data"]["tool_input"] == {}
+    assert payload["data"]["tool_input_error"] == {"field": "tool_input", "code": "invalid_json"}
+    assert "rm -rf" not in str(payload)
+    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("event_type", "event_data", "expected_event_type"),

@@ -40,7 +40,10 @@ from gobby.servers.websocket.chat.backends.base import (
     _log_upstream_error_event,
     launch_sandbox_config,
 )
-from gobby.servers.websocket.chat.backends.droid_permissions import DroidPermissionResolver
+from gobby.servers.websocket.chat.backends.droid_permissions import (
+    DroidPermissionResolver,
+    raw_string_tool_input,
+)
 from gobby.servers.websocket.chat.backends.droid_plan import (
     _closes_plan_capture,
     _extract_plan_from_tool_args,
@@ -264,7 +267,7 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                         if stream_event.data.get("kind") != "permission_request":
                             await self._apply_pre_tool_lifecycle(
                                 chat_event.tool_name,
-                                chat_event.arguments,
+                                raw_string_tool_input(stream_event.data) or chat_event.arguments,
                             )
                     elif isinstance(chat_event, ToolResultEvent):
                         pending = pending_tool_calls.pop(chat_event.tool_call_id, {})

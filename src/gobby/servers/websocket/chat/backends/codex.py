@@ -128,7 +128,7 @@ class CodexManagedChatSession(
         self,
         dedup_key: str | None,
         tool_name: str,
-        tool_input: dict[str, Any],
+        tool_input: dict[str, Any] | str,
     ) -> dict[str, Any] | None:
         if not dedup_key:
             return await self._apply_pre_tool_lifecycle(tool_name, tool_input)

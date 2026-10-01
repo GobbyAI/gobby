@@ -6,12 +6,13 @@ integration, and helper function construction.
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NoReturn
 
 import psycopg
 from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import ToolInputError, tool_input_error
 from gobby.mcp_proxy._call_tool_wrapper import canonical_call_tool_input
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.hub.operation_deadline import DatabaseOperationDeadlineExceeded
@@ -36,6 +37,30 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condit
 from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
+
+
+class ToolInputUnavailableError(RuntimeError):
+    """A rule read a tool input that arrived as a string that is not a JSON object."""
+
+
+class UnavailableToolInput(dict[str, Any]):
+    """Rule-context stand-in for a tool input marked unavailable by normalization.
+
+    It stays a ``dict`` so ``isinstance`` guards pass, but every read raises:
+    ``_evaluate_condition`` then fails closed for block effects and open for others.
+    """
+
+    def __init__(self, error: ToolInputError) -> None:
+        super().__init__()
+        self.error = error
+
+    def _unavailable(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise ToolInputUnavailableError(
+            f"tool input unavailable ({self.error['code']} in {self.error['field']})"
+        )
+
+    __getitem__ = __contains__ = __iter__ = __len__ = __eq__ = __ne__ = _unavailable
+    get = keys = items = values = copy = _unavailable
 
 
 class TemplatingMixin:
@@ -113,6 +138,9 @@ class TemplatingMixin:
     @staticmethod
     def _rule_tool_input(event: HookEvent) -> dict[str, Any]:
         """Return the tool input seen by rule conditions, including proxy arguments."""
+        unavailable = tool_input_error(event.data)
+        if unavailable is not None:
+            return UnavailableToolInput(unavailable)
         raw_tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
         if not isinstance(raw_tool_input, dict):
             raw_tool_input = {}

@@ -231,7 +231,7 @@ def _permission_request_line(
     request_id: str = "permission-1",
     tool_id: str = "tool-1",
     tool_name: str = "Read",
-    tool_input: dict[str, Any] | None = None,
+    tool_input: dict[str, Any] | str | None = None,
 ) -> str:
     return json.dumps(
         {
@@ -784,6 +784,80 @@ async def test_plan_mode_batch_blocks_destructive_tool_before_exit_spec() -> Non
     assert result == "cancel"
     assert broadcasts == []
     assert session.has_blocking_plan_decision is False
+
+
+@pytest.mark.asyncio
+async def test_permission_request_hands_string_input_to_pre_tool_unchanged() -> None:
+    """A string tool input reaches BEFORE_TOOL as sent, not coerced to {} (#23168)."""
+    truncated = '{"command": "rm -rf /repo/bu'
+    backend = DroidWebChatBackend()
+    session = _droid_session(backend)
+    pre_tool_calls: list[dict[str, Any]] = []
+
+    async def block_pre_tool(payload: dict[str, Any]) -> dict[str, Any]:
+        pre_tool_calls.append(payload)
+        return {"decision": "block", "reason": "input unavailable"}
+
+    session._on_pre_tool = block_pre_tool
+    events = parse_droid_stream_line(
+        _permission_request_line(tool_name="Execute", tool_input=truncated)
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": truncated}]
+
+
+@pytest.mark.asyncio
+async def test_streamed_tool_call_hands_string_input_to_pre_tool_unchanged() -> None:
+    """A streamed tool call's string input reaches BEFORE_TOOL as sent (#23168)."""
+    truncated = '{"command": "rm -rf /repo/bu'
+    tool_call_line = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "type": "notification",
+            "factoryApiVersion": "1.0.0",
+            "factoryProtocolVersion": "1.25.0",
+            "method": "droid.session_notification",
+            "params": {
+                "notification": {
+                    "type": "tool_call",
+                    "toolUse": {
+                        "type": "tool_use",
+                        "id": "tool-1",
+                        "name": "Execute",
+                        "input": truncated,
+                    },
+                }
+            },
+        }
+    )
+    turn = _turn_response_lines("Done")
+    process = _FakeProcess([_session_init_line(), turn[0], tool_call_line, *turn[1:]])
+    backend = DroidWebChatBackend()
+    session = _droid_session(backend)
+    session.project_path = str(Path.cwd())
+    pre_tool_calls: list[dict[str, Any]] = []
+
+    async def record_pre_tool(payload: dict[str, Any]) -> None:
+        pre_tool_calls.append(payload)
+
+    session._on_pre_tool = record_pre_tool
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        _ = [event async for event in session.send_message("run a command")]
+
+    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": truncated}]
 
 
 def _exit_spec_session(
