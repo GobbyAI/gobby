@@ -30,6 +30,7 @@ from gobby.agents.sandbox_policy import (
     managed_grant_lock_path,
     prepare_sandbox_run_paths,
     previous_run_write_paths,
+    sandbox_cache_path,
     srt_mux_tmpdir,
 )
 from gobby.paths import get_gobby_home
@@ -663,6 +664,17 @@ async def prepare_sandbox_launch(
         )
     finally:
         finish_spawn_phase(phase_timings_ms, "compute_sandbox_paths", compute_paths_started)
+    # Every live sandboxed run holds these grants, so one can swap a link in while
+    # this policy renders; refuse unless each grant is still the cache path itself.
+    for cache_path in (run_paths.cargo_home, run_paths.cargo_target):
+        try:
+            granted = sandbox_cache_path(cache_path)
+        except PermissionError as exc:
+            raise SrtRuntimeError(str(exc)) from exc
+        if granted not in paths.write_paths:
+            raise SrtRuntimeError(
+                f"Sandbox cache grant {cache_path} resolved outside the sandbox cache"
+            )
     paths.read_paths.append(str(run_paths.assets.resolve()))
     if config.backend == "srt" and sys.platform == "linux":
         # bwrap masks denied temp roots before executing SRT's seccomp helper.

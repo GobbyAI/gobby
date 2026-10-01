@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -939,6 +940,77 @@ async def test_srt_verification_does_not_run_on_the_event_loop(
 
     assert len(verified_on) == 1
     assert verified_on[0] != threading.get_ident()
+
+
+async def _swap_then_compute(
+    swap: Callable[[], None], *args: Any, **kwargs: Any
+) -> ResolvedSandboxPaths:
+    swap()
+    return await compute_sandbox_paths(*args, **kwargs)
+
+
+async def _compute_then_swap(
+    swap: Callable[[], None], *args: Any, **kwargs: Any
+) -> ResolvedSandboxPaths:
+    paths = await compute_sandbox_paths(*args, **kwargs)
+    swap()
+    return paths
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "race", [_swap_then_compute, _compute_then_swap], ids=["before-grants", "after-grants"]
+)
+async def test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    race: Callable[..., Awaitable[ResolvedSandboxPaths]],
+) -> None:
+    """Every concurrent sandboxed run holds the cargo-home grant, so one can swap the
+    entry for a link between run-path preparation and policy rendering. The launch
+    must fail closed instead of granting the link's target (#23194)."""
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    unsandboxed = tmp_path / "unsandboxed-cargo-home"
+    unsandboxed.mkdir()
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    provider = shim_dir / "claude"
+    provider.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider.chmod(0o755)
+    cargo_home = gobby_home / "cache" / "sandbox" / "cargo-home"
+
+    def swap() -> None:
+        cargo_home.rmdir()
+        cargo_home.symlink_to(unsandboxed, target_is_directory=True)
+
+    def unexpected_verify(**_context: str | None) -> SrtInstallation:
+        pytest.fail("no policy may be rendered for a swapped cache grant")
+
+    monkeypatch.setattr(
+        "gobby.agents.sandbox.compute_sandbox_paths",
+        lambda *args, **kwargs: race(swap, *args, **kwargs),
+    )
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verify)
+
+    with pytest.raises(SrtRuntimeError, match="outside the sandbox cache"):
+        await prepare_sandbox_launch(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            provider="claude",
+            workspace_path=str(workspace),
+            run_id="run-1",
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={"PATH": str(shim_dir)},
+        )
+
+    assert cargo_home.is_symlink()
+    assert list(unsandboxed.iterdir()) == []
+    assert list(gobby_home.rglob("settings.json")) == []
 
 
 @pytest.mark.asyncio

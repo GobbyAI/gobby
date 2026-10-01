@@ -538,6 +538,57 @@ def test_sandboxed_runs_share_cargo_caches_that_unsandboxed_builds_never_use(
     assert second.shared_cache == first.shared_cache
 
 
+def _listing(path: Path) -> list[str] | None:
+    return sorted(child.name for child in path.iterdir()) if path.exists() else None
+
+
+@pytest.mark.parametrize("link_to", ["unsandboxed", "missing"], ids=["existing", "dangling"])
+@pytest.mark.parametrize("entry", ["cargo_home", "cargo_target"])
+def test_run_paths_refuse_a_sandbox_cache_entry_linked_outside(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    entry: str,
+    link_to: str,
+) -> None:
+    """A run may write its cargo home and target entries, so it can swap either for a
+    link into a cache unsandboxed builds use. The next run must refuse the link rather
+    than create through it or grant it (#23194)."""
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    workspace = _workspace(tmp_path)
+    first, _destination = _run_cache(monkeypatch, tmp_path, workspace=workspace, run_id="run-1")
+    unsandboxed = tmp_path / "unsandboxed"
+    unsandboxed.mkdir()
+    (unsandboxed / "config.toml").write_text("unsandboxed\n", encoding="utf-8")
+    planted = getattr(first, entry)
+    shutil.rmtree(planted)
+    planted.symlink_to(tmp_path / link_to, target_is_directory=True)
+
+    with pytest.raises(PermissionError, match="resolves outside the sandbox cache"):
+        _run_cache(monkeypatch, tmp_path, workspace=workspace, run_id="run-2")
+
+    assert planted.is_symlink()
+    assert _listing(unsandboxed) == ["config.toml"]
+    assert _listing(tmp_path / "missing") is None
+
+
+def test_run_paths_refuse_a_sandbox_cache_root_linked_outside(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """The shared root itself must not lead out of <gobby-home>/cache/sandbox (#23194)."""
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (gobby_home / "cache").mkdir(parents=True)
+    (gobby_home / "cache" / "sandbox").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(PermissionError, match="resolves outside the sandbox cache"):
+        _run_cache(monkeypatch, tmp_path, workspace=_workspace(tmp_path))
+
+    assert _listing(outside) == []
+
+
 def test_ghostty_dependency_host_grant() -> None:
     ghostty_host = "deps.files.ghostty.org"
     control_host = "example.com"
