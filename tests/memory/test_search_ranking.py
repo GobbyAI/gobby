@@ -1348,12 +1348,14 @@ def test_undecay_round_trips_equal_raw_cosines_to_one_score() -> None:
 
     from gobby.memory.scoring import temporal_decay, undecay
 
-    now = datetime.now(UTC)
+    # A pinned clock keeps the ages exact: unrounded, 1 day recovers 0.9 and
+    # 2 days recovers 0.8999999999999999.
+    now = datetime(2026, 1, 1, tzinfo=UTC)
     half_life = 30.0
     raw = 0.9
     scores = []
-    for age in (timedelta(days=1), timedelta(days=90)):
-        decay = temporal_decay(now - age, half_life)
+    for age in (timedelta(days=1), timedelta(days=2)):
+        decay = temporal_decay(now - age, half_life, now=now)
         scores.append(undecay(raw * decay, decay))
 
     assert scores[0] == scores[1]
@@ -1361,15 +1363,21 @@ def test_undecay_round_trips_equal_raw_cosines_to_one_score() -> None:
 
 def test_order_results_keeps_earlier_hit_on_equal_undecayed_scores() -> None:
     """#22910 found work: an exact undecayed tie must keep input order."""
+    from datetime import UTC, datetime, timedelta
+
+    from gobby.memory.scoring import temporal_decay, undecay
     from gobby.memory.services._search_ranking import HitScores, order_results
 
-    hits = ["first", "second"]
-    scores = {
-        "first": HitScores(1.08, 0.977, 0.5),
-        "second": HitScores(1.08, 0.125, 0.5),
-    }
+    # Unrounded, the older hit recovers 0.9 and the younger 0.8999999999999999,
+    # so the noise alone would put the older hit first.
+    now = datetime(2026, 1, 1, tzinfo=UTC)
+    scores = {}
+    for hit, days in (("younger", 2), ("older", 3)):
+        decay = temporal_decay(now - timedelta(days=days), 30.0, now=now)
+        similarity = 0.9 * decay
+        scores[hit] = HitScores(undecay(similarity, decay), similarity, 0.5)
 
-    assert order_results(hits, lambda hit: scores[hit]) == ["first", "second"]
+    assert order_results(["younger", "older"], lambda hit: scores[hit]) == ["younger", "older"]
 
 
 def test_collapse_near_duplicates_matches_pairwise_cosine_reference() -> None:
