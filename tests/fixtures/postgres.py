@@ -15,6 +15,7 @@ single-connection model.
 from __future__ import annotations
 
 import contextlib
+import getpass
 import inspect
 import logging
 import os
@@ -129,17 +130,28 @@ logger = logging.getLogger(__name__)
 
 
 def _dsn_identity(url: str) -> tuple[str, str, str] | None:
-    """Return the (host, port, dbname) a DSN resolves to, or None if unparseable."""
+    """Return the (host, port, dbname) a DSN resolves to, or None if unparseable.
+
+    Missing fields fall back the way libpq fills them: PG* environment, then defaults.
+    """
     try:
         fields = conninfo_to_dict(url)
     except psycopg.Error:
         return None
-    host = str(fields.get("host") or "")
-    port = str(fields.get("port") or "") or _DEFAULT_POSTGRES_PORT
+    env = os.environ
+    host = str(
+        fields.get("hostaddr")
+        or env.get("PGHOSTADDR")
+        or fields.get("host")
+        or env.get("PGHOST")
+        or ""
+    )
+    port = str(fields.get("port") or env.get("PGPORT") or "") or _DEFAULT_POSTGRES_PORT
+    user = fields.get("user") or env.get("PGUSER") or getpass.getuser()
     return (
         "localhost" if host in _LOOPBACK_HOSTS else host,
         port,
-        str(fields.get("dbname") or ""),
+        str(fields.get("dbname") or env.get("PGDATABASE") or user),
     )
 
 

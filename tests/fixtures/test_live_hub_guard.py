@@ -41,6 +41,15 @@ def test_sync_connect_refuses_the_live_hub_named_by_keywords() -> None:
         psycopg.connect(host="127.0.0.1", port=60891, dbname="gobby", connect_timeout=1)
 
 
+def test_sync_connect_refuses_the_live_hub_named_by_libpq_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PGHOST", "127.0.0.1")
+    monkeypatch.setenv("PGPORT", "60891")
+    with pytest.raises(LiveHubConnectionRefused, match="live Gobby hub"):
+        psycopg.connect("dbname=gobby connect_timeout=1")
+
+
 @pytest.mark.parametrize("url", _LIVE_URLS)
 def test_async_connect_refuses_the_live_hub(url: str) -> None:
     with pytest.raises(LiveHubConnectionRefused, match="live Gobby hub"):
