@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal
 from uuid import uuid4
 
 from psycopg.errors import UniqueViolation
@@ -28,6 +28,24 @@ from gobby.storage.machines import (
     parse_node_ref,
 )
 from gobby.storage.terminals import truncate_title
+from gobby.storage.workspace_layout import InvalidWorkspaceOpError as InvalidWorkspaceOpError
+from gobby.storage.workspace_layout import LayoutAxis as LayoutAxis
+from gobby.storage.workspace_layout import LayoutLeaf as LayoutLeaf
+from gobby.storage.workspace_layout import (
+    LayoutNode,
+    _axis,
+    _leaf,
+    _map_leaves,
+    _place,
+    _ratio,
+    _with_ratio,
+    _without_panes,
+)
+from gobby.storage.workspace_layout import LayoutSplit as LayoutSplit
+from gobby.storage.workspace_layout import WorkspaceNotFoundError as WorkspaceNotFoundError
+from gobby.storage.workspace_layout import layout_pane_ids as layout_pane_ids
+from gobby.storage.workspace_layout import validate_layout as validate_layout
+from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.uuid_validation import parse_uuid_reference
 
@@ -37,7 +55,6 @@ DEFAULT_WORKSPACE_NAME = "default"
 _REF_RE = re.compile(r"[0-9]+(?::[0-9]+){0,3}")
 _DIGITS_RE = re.compile(r"[0-9]+")
 
-type LayoutAxis = Literal["horizontal", "vertical"]
 type _Table = Literal["machines", "workspaces", "workspace_tabs", "workspace_panes"]
 _PARENT_COLUMN: dict[_Table, str] = {
     "workspaces": "machine_id",
@@ -46,142 +63,12 @@ _PARENT_COLUMN: dict[_Table, str] = {
 }
 
 
-class WorkspaceNotFoundError(LookupError):
-    """A workspace, tab, pane, or node reference matched no row."""
-
-
 class InvalidWorkspaceRefError(ValueError):
     """A reference is malformed: not a uuid, a name, or ``w``/``n:w``/``n:w:t``/``n:w:t:p``."""
 
 
-class InvalidWorkspaceOpError(ValueError):
-    """A mutation's arguments would break a row or layout invariant."""
-
-
-class LayoutLeaf(TypedDict):
-    kind: Literal["pane"]
-    pane_id: str
-
-
-class LayoutSplit(TypedDict):
-    kind: Literal["split"]
-    axis: LayoutAxis
-    ratio: float
-    children: list[LayoutNode]
-
-
-type LayoutNode = LayoutLeaf | LayoutSplit
-
-
-def validate_layout(value: object) -> LayoutNode:
-    """Return ``value`` as a tab's split tree, or raise when it is not one.
-
-    A tree is a ``pane`` leaf naming a pane uuid, or a ``split`` with an axis, a
-    ratio strictly between 0 and 1, and exactly two children. No pane repeats.
-    """
-    return _validate_node(value, set())
-
-
-def layout_pane_ids(layout: LayoutNode) -> list[str]:
-    """Return the tree's pane ids in reading order."""
-    if layout["kind"] == "pane":
-        return [layout["pane_id"]]
-    return [pane_id for child in layout["children"] for pane_id in layout_pane_ids(child)]
-
-
-def _validate_node(value: object, seen: set[str]) -> LayoutNode:
-    if not isinstance(value, Mapping):
-        raise InvalidWorkspaceOpError("Layout node must be an object")
-    kind = value.get("kind")
-    if kind == "pane":
-        pane_id = parse_uuid_reference(value.get("pane_id"))
-        if pane_id is None or str(pane_id) in seen:
-            raise InvalidWorkspaceOpError("Layout leaf needs a pane uuid that appears once")
-        seen.add(str(pane_id))
-        return _leaf(str(pane_id))
-    if kind == "split":
-        children = value.get("children")
-        if not isinstance(children, list) or len(children) != 2:
-            raise InvalidWorkspaceOpError("Layout split needs exactly two children")
-        return _split(
-            _axis(value.get("axis")),
-            _ratio(value.get("ratio")),
-            [_validate_node(child, seen) for child in children],
-        )
-    raise InvalidWorkspaceOpError(f"Unknown layout node kind {kind!r}")
-
-
-def _axis(value: object) -> LayoutAxis:
-    if value == "horizontal":
-        return "horizontal"
-    if value == "vertical":
-        return "vertical"
-    raise InvalidWorkspaceOpError(f"Split axis must be horizontal or vertical, not {value!r}")
-
-
-def _ratio(value: object) -> float:
-    if isinstance(value, bool) or not isinstance(value, int | float) or not 0 < value < 1:
-        raise InvalidWorkspaceOpError(f"Split ratio must be between 0 and 1, not {value!r}")
-    return float(value)
-
-
-def _leaf(pane_id: str) -> LayoutLeaf:
-    return {"kind": "pane", "pane_id": pane_id}
-
-
-def _split(axis: LayoutAxis, ratio: float, children: list[LayoutNode]) -> LayoutSplit:
-    return {"kind": "split", "axis": axis, "ratio": ratio, "children": children}
-
-
-def _map_leaves(layout: LayoutNode, replace: Callable[[LayoutLeaf], LayoutNode]) -> LayoutNode:
-    if layout["kind"] == "pane":
-        return replace(layout)
-    children = [_map_leaves(child, replace) for child in layout["children"]]
-    return _split(layout["axis"], layout["ratio"], children)
-
-
-def _without_panes(layout: LayoutNode, pane_ids: Collection[str]) -> LayoutNode | None:
-    """Drop leaves; a split left with one child collapses to that survivor."""
-    if layout["kind"] == "pane":
-        return None if layout["pane_id"] in pane_ids else layout
-    kept = [
-        survivor
-        for child in layout["children"]
-        if (survivor := _without_panes(child, pane_ids)) is not None
-    ]
-    if len(kept) == 2:
-        return _split(layout["axis"], layout["ratio"], kept)
-    return kept[0] if kept else None
-
-
-def _place(
-    layout: LayoutNode | None, pane_id: str, beside: str | None, axis: LayoutAxis
-) -> LayoutNode:
-    """Split ``beside`` (the whole tree when None) to hold ``pane_id`` second."""
-    leaf = _leaf(pane_id)
-    if layout is None:
-        return leaf
-    if beside is None:
-        return _split(axis, 0.5, [layout, leaf])
-    if beside not in layout_pane_ids(layout):
-        raise WorkspaceNotFoundError(f"Pane {beside} is not in the target tab")
-    return _map_leaves(
-        layout,
-        lambda node: _split(axis, 0.5, [node, leaf]) if node["pane_id"] == beside else node,
-    )
-
-
-def _with_ratio(layout: LayoutNode, pane_id: str, ratio: float) -> LayoutNode:
-    """Set the ratio of the split whose direct child is ``pane_id``'s leaf."""
-    if layout["kind"] == "pane":
-        return layout
-    children = layout["children"]
-    is_parent = any(child["kind"] == "pane" and child["pane_id"] == pane_id for child in children)
-    return _split(
-        layout["axis"],
-        ratio if is_parent else layout["ratio"],
-        [_with_ratio(child, pane_id, ratio) for child in children],
-    )
+class WorkspaceBusyError(InvalidWorkspaceOpError):
+    """A guarded mutation would touch a pane whose spawn is in flight or in doubt."""
 
 
 def _uuid(value: str) -> str:
@@ -616,11 +503,29 @@ class WorkspaceManager:
             raise InvalidWorkspaceOpError(f"Workspace name {clean_name!r} is taken") from exc
         return Workspace.from_row(_required(row, f"Workspace {workspace_id}"))
 
-    def close(self, workspace_id: str) -> Workspace:
-        """Delete a workspace with its tabs and panes; its ref becomes free."""
-        row = self.db.fetchone(
-            "DELETE FROM workspaces WHERE id = %s RETURNING *", (_uuid(workspace_id),)
-        )
+    def close(
+        self,
+        workspace_id: str,
+        *,
+        refuse_in_flight: bool = False,
+        expected_panes: Mapping[str, str | None] | None = None,
+    ) -> Workspace:
+        """Delete a workspace with its tabs and panes; its ref becomes free.
+
+        ``expected_panes`` maps the pane ids the caller read to their terminal ids;
+        a workspace whose panes or bindings differ now refuses busy.
+        """
+        workspace_id = _uuid(workspace_id)
+        with self.db.transaction() as conn:
+            _lock_rows(conn, "workspaces", workspace_id)
+            conn.execute(
+                "SELECT id FROM workspace_tabs WHERE workspace_id = %s ORDER BY id FOR UPDATE",
+                (workspace_id,),
+            )
+            self._guard(conn, "t.workspace_id = %s", workspace_id, refuse_in_flight, expected_panes)
+            row = conn.execute(
+                "DELETE FROM workspaces WHERE id = %s RETURNING *", (workspace_id,)
+            ).fetchone()
         return Workspace.from_row(_required(row, f"Workspace {workspace_id}"))
 
     def create_tab(
@@ -670,7 +575,9 @@ class WorkspaceManager:
         )
         return WorkspaceTab.from_row(_required(row, f"Tab {tab_id}"))
 
-    def move_tab(self, tab_id: str, *, workspace_id: str, position: int) -> LayoutChange:
+    def move_tab(
+        self, tab_id: str, *, workspace_id: str, position: int, refuse_in_flight: bool = False
+    ) -> LayoutChange:
         """Move a tab to ``position`` in a workspace; a new workspace gives it a free ref."""
         tab_id, target_id = _uuid(tab_id), _uuid(workspace_id)
         with self.db.transaction() as conn:
@@ -694,6 +601,7 @@ class WorkspaceManager:
                 "ORDER BY id FOR UPDATE",
                 (target_id, tab_id),
             )
+            self._guard(conn, "p.tab_id = %s", tab_id, refuse_in_flight)
             conn.execute(
                 """
                 UPDATE workspace_tabs SET workspace_id = %s, ref = %s
@@ -731,11 +639,18 @@ class WorkspaceManager:
             )
         return LayoutChange(tabs=tabs)
 
-    def close_tab(self, tab_id: str) -> LayoutChange:
+    def close_tab(
+        self,
+        tab_id: str,
+        *,
+        refuse_in_flight: bool = False,
+        expected_panes: Mapping[str, str | None] | None = None,
+    ) -> LayoutChange:
         """Delete a tab with its panes; its ref becomes free."""
         tab_id = _uuid(tab_id)
         with self.db.transaction() as conn:
             tab = _lock_tabs(conn, tab_id)[tab_id]
+            self._guard(conn, "p.tab_id = %s", tab_id, refuse_in_flight, expected_panes)
             panes = conn.execute(
                 "DELETE FROM workspace_panes WHERE tab_id = %s RETURNING *", (tab_id,)
             ).fetchall()
@@ -745,7 +660,16 @@ class WorkspaceManager:
             removed_tabs=(tab,),
         )
 
-    def add_pane(self, pane_id: str, *, beside: str, axis: str) -> LayoutChange:
+    def add_pane(
+        self,
+        pane_id: str,
+        *,
+        beside: str,
+        axis: str,
+        expected_workspace_id: str | None = None,
+        expected_tab_id: str | None = None,
+        expected_project_id: str | None = None,
+    ) -> LayoutChange:
         """Insert a pane in a new split beside ``beside`` along ``axis``.
 
         The caller mints ``pane_id`` and calls ``mark_spawn_in_flight`` first; the
@@ -754,17 +678,26 @@ class WorkspaceManager:
         pane_id, beside_id, split_axis = _uuid(pane_id), _uuid(beside), _axis(axis)
         with self.db.transaction() as conn:
             (home,), tabs = _lock_pane_tabs(conn, [beside_id])
+            # A tab keeps its id across workspaces, so both ids are checked.
+            expected = (expected_workspace_id, expected_tab_id, expected_project_id)
+            current = (tabs[home].workspace_id, home, tabs[home].project_id)
+            if any(
+                want is not None and _uuid(want) != have
+                for want, have in zip(expected, current, strict=True)
+            ):
+                raise WorkspaceNotFoundError(f"Pane {beside_id} left its preflighted tab; retry")
             pane = _insert_pane(conn, home, pane_id)
             tab = _write_layout(
                 conn, home, _place(tabs[home].layout, pane_id, beside_id, split_axis)
             )
         return LayoutChange(panes=(pane,), tabs=(tab,))
 
-    def remove_pane(self, pane_id: str) -> LayoutChange:
+    def remove_pane(self, pane_id: str, *, refuse_in_flight: bool = False) -> LayoutChange:
         """Delete a pane, collapsing its split to the survivor; an emptied tab goes too."""
         pane_id = _uuid(pane_id)
         with self.db.transaction() as conn:
             (home,), tabs = _lock_pane_tabs(conn, [pane_id])
+            self._guard(conn, "p.id = ANY(%s::uuid[])", [pane_id], refuse_in_flight)
             removed = conn.execute(
                 "DELETE FROM workspace_panes WHERE id = %s RETURNING *", (pane_id,)
             ).fetchall()
@@ -775,12 +708,15 @@ class WorkspaceManager:
             removed_tabs=(tabs[home],) if tab is None else (),
         )
 
-    def swap_panes(self, first_pane_id: str, second_pane_id: str) -> WorkspaceTab:
+    def swap_panes(
+        self, first_pane_id: str, second_pane_id: str, *, refuse_in_flight: bool = False
+    ) -> WorkspaceTab:
         """Swap two panes' places within one tab's layout."""
         first, second = _uuid(first_pane_id), _uuid(second_pane_id)
         swapped = {first: second, second: first}
         with self.db.transaction() as conn:
             homes, tabs = _lock_pane_tabs(conn, [first, second])
+            self._guard(conn, "p.id = ANY(%s::uuid[])", [first, second], refuse_in_flight)
             if homes[0] != homes[1]:
                 raise InvalidWorkspaceOpError("Only panes in the same tab can swap")
             layout = _map_leaves(
@@ -796,6 +732,7 @@ class WorkspaceManager:
         tab_id: str,
         beside: str | None = None,
         axis: str = "horizontal",
+        refuse_in_flight: bool = False,
     ) -> LayoutChange:
         """Move a pane beside ``beside`` in ``tab_id`` (splitting the whole tab when None).
 
@@ -808,6 +745,7 @@ class WorkspaceManager:
             raise InvalidWorkspaceOpError("A pane cannot move beside itself")
         with self.db.transaction() as conn:
             (home,), tabs = _lock_pane_tabs(conn, [pane_id], [target_id])
+            self._guard(conn, "p.id = ANY(%s::uuid[])", [pane_id], refuse_in_flight)
             source: WorkspaceTab | None = None
             if home == target_id:
                 layout = _without_panes(tabs[target_id].layout, {pane_id})
@@ -921,8 +859,9 @@ class WorkspaceManager:
     def sweep_dead_panes(self, workspace_id: str) -> LayoutChange:
         """Prune the workspace's dead panes; read-time derivation, never a hook.
 
-        A pane is dead when its terminal is neither ``pending`` nor ``live``, or its
-        terminal_id is NULL and its spawn is not in flight here. Splits collapse to
+        A pane is dead when its terminal is not ``pending``, ``live`` or ``orphaned``
+        (whose process may still run), or its terminal_id is NULL and its spawn is
+        not in flight here. Splits collapse to
         their survivors and emptied tabs are removed; the workspace itself survives.
         """
         workspace_id = _uuid(workspace_id)
@@ -941,7 +880,7 @@ class WorkspaceManager:
                 JOIN workspace_tabs t ON t.id = p.tab_id
                 LEFT JOIN terminals term ON term.id = p.terminal_id
                 WHERE t.workspace_id = %s
-                  AND (term.state IS NULL OR term.state NOT IN ('pending', 'live'))
+                  AND (term.state IS NULL OR term.state NOT IN ('pending', 'live', 'orphaned'))
                 """,
                 (workspace_id,),
             ).fetchall()
@@ -962,7 +901,8 @@ class WorkspaceManager:
                     WHERE p.id = ANY(%s::uuid[])
                       AND NOT EXISTS (
                           SELECT 1 FROM terminals term
-                          WHERE term.id = p.terminal_id AND term.state IN ('pending', 'live')
+                          WHERE term.id = p.terminal_id
+                            AND term.state IN ('pending', 'live', 'orphaned')
                       )
                     RETURNING p.*
                     """,
@@ -983,6 +923,37 @@ class WorkspaceManager:
         return LayoutChange(
             tabs=tuple(kept), removed_panes=tuple(removed), removed_tabs=tuple(dropped)
         )
+
+    def _guard(
+        self,
+        conn: Transaction,
+        pane_filter: str,
+        param: object,
+        refuse_in_flight: bool,
+        expected_panes: Mapping[str, str | None] | None = None,
+    ) -> None:
+        """Lock the affected pane rows and raise busy if the mutation may not touch them.
+
+        The caller already holds their workspace and tab rows, so no insert or move
+        changes the set. A pane is in flight from its mark until its spawn returns,
+        and its bound terminal's in-doubt claim covers it until the owner settles.
+        """
+        if not refuse_in_flight and expected_panes is None:
+            return
+        rows = conn.execute(
+            "SELECT p.id, p.terminal_id FROM workspace_panes p "
+            f"JOIN workspace_tabs t ON t.id = p.tab_id WHERE {pane_filter} "
+            "ORDER BY p.id FOR UPDATE OF p",
+            (param,),
+        ).fetchall()
+        panes = {str(row["id"]): _optional_str(row["terminal_id"]) for row in rows}
+        if expected_panes is not None and panes != dict(expected_panes):
+            raise WorkspaceBusyError("Panes changed since they were read; retry")
+        for pane_id, terminal_id in panes.items() if refuse_in_flight else ():
+            if pane_id in self._spawns_in_flight or (
+                terminal_id is not None and in_doubt_spawns.holds(terminal_id)
+            ):
+                raise WorkspaceBusyError(f"Pane {pane_id} has a spawn in flight; retry")
 
     def mark_spawn_in_flight(self, pane_id: str) -> None:
         """Spare ``pane_id``'s NULL terminal from the sweep until it is cleared."""

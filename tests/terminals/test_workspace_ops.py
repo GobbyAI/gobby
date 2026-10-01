@@ -1512,7 +1512,8 @@ async def test_workspace_close_writes_storage_off_the_event_loop() -> None:
         seen.append(threading.get_ident())
         return ()
 
-    def close(_workspace_id: str) -> SimpleNamespace:
+    def close(_workspace_id: str, **guard: object) -> SimpleNamespace:
+        assert guard == {"refuse_in_flight": True, "expected_panes": {}}
         seen.append(threading.get_ident())
         return workspace
 
@@ -1740,8 +1741,8 @@ async def test_pane_wait_for_output_caps_a_huge_timeout(
         if clock["now"] > 300:
             raise AssertionError(f"wait reached {clock['now']} past the cap")
 
-    monkeypatch.setattr("gobby.terminals.workspace_ops.time.monotonic", monotonic)
-    monkeypatch.setattr("gobby.terminals.workspace_ops.asyncio.sleep", advance)
+    monkeypatch.setattr("gobby.terminals.workspace_pane_io.time.monotonic", monotonic)
+    monkeypatch.setattr("gobby.terminals.workspace_pane_io.asyncio.sleep", advance)
     waited = await h.ops.pane_wait_for_output(
         OPERATOR,
         pane.id,
@@ -1751,3 +1752,84 @@ async def test_pane_wait_for_output_caps_a_huge_timeout(
     )
     assert waited.matched is False
     assert waited.reason == "timeout"
+
+
+async def test_ops_refuse_in_flight_and_retry_orphaned_kill(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    created = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    tab, root = created.tabs[0], created.panes[0]
+    other = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).tabs[0]
+    hot = str(uuid.uuid4())
+    h.workspaces.mark_spawn_in_flight(hot)
+    h.workspaces.add_pane(hot, beside=root.id, axis="vertical")
+    rows = (
+        tuple(h.workspaces.list_tabs(workspace.id)),
+        tuple(h.workspaces.list_panes(workspace.id)),
+    )
+    kills = list(h.native.terminated_host_ids)
+
+    refused: list[Callable[[], Awaitable[object]]] = [
+        lambda: h.ops.workspace_close(OPERATOR, workspace.id),
+        lambda: h.ops.tab_close(OPERATOR, tab.id),
+        lambda: h.ops.tab_move(OPERATOR, tab.id, 1),
+        lambda: h.ops.pane_swap(OPERATOR, root.id, hot),
+        lambda: h.ops.pane_move(OPERATOR, hot, other.id),
+        lambda: h.ops.pane_close(OPERATOR, hot),
+    ]
+    for operation in refused:
+        await _raises("busy", operation())
+    assert (
+        tuple(h.workspaces.list_tabs(workspace.id)),
+        tuple(h.workspaces.list_panes(workspace.id)),
+    ) == rows
+    assert list(h.native.terminated_host_ids) == kills
+
+    # An orphaned seat keeps its pane, so closing it retries the kill.
+    h.workspaces.clear_spawn_in_flight(hot)
+    h.workspaces.remove_pane(hot)
+    assert h.terminals.mark_orphaned(str(root.terminal_id)) is not None
+    await h.ops.pane_close(OPERATOR, root.id)
+    killed = h.terminals.get(str(root.terminal_id))
+    assert killed is not None and killed.state == "exited"
+    assert ("ht-1", killed.id) in h.native.terminated_host_ids
+    assert root.id not in {pane.id for pane in h.workspaces.list_panes(workspace.id)}
+
+
+@pytest.mark.parametrize("closing", ["workspace", "tab"])
+async def test_close_refuses_membership_drift_since_read(
+    harness: _Harness, monkeypatch: pytest.MonkeyPatch, closing: str
+) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    created = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    tab, root = created.tabs[0], created.panes[0]
+    settled = _live_terminal(h.terminals, h.project_id, "native")
+    read = h.workspaces.list_panes
+    reserved: list[str] = []
+
+    def reserve_after_read(workspace_id: str) -> list[WorkspacePane]:
+        panes = read(workspace_id)
+        if not reserved:
+            # A reservation inserts, binds and settles its pane before the close runs.
+            agent = str(uuid.uuid4())
+            h.workspaces.mark_spawn_in_flight(agent)
+            h.workspaces.add_pane(agent, beside=root.id, axis="vertical")
+            h.workspaces.set_pane_terminal(agent, settled.id, owns_terminal=True)
+            h.workspaces.clear_spawn_in_flight(agent)
+            reserved.append(agent)
+        return panes
+
+    monkeypatch.setattr(h.workspaces, "list_panes", reserve_after_read)
+    kills = list(h.native.terminated_host_ids)
+    if closing == "workspace":
+        await _raises("busy", h.ops.workspace_close(OPERATOR, workspace.id))
+    else:
+        await _raises("busy", h.ops.tab_close(OPERATOR, tab.id))
+    monkeypatch.undo()
+
+    assert {pane.id for pane in h.workspaces.list_panes(workspace.id)} == {root.id, *reserved}
+    for terminal_id in (str(root.terminal_id), settled.id):
+        kept = h.terminals.get(terminal_id)
+        assert kept is not None and kept.state == "live"
+    assert list(h.native.terminated_host_ids) == kills
