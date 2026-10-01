@@ -300,7 +300,8 @@ impl EventCursor {
     }
 
     /// Adopt a resubscription made with `since()`. A changed epoch or a host
-    /// that cannot replay from the cursor requires reconciliation.
+    /// that cannot replay from the cursor requires reconciliation. Resubscribe
+    /// on a fresh connection: see [`ControlClient::subscribe_events`].
     pub fn resume(&mut self, subscription: &Subscription) -> Result<(), EventError> {
         if subscription.epoch != self.epoch {
             return Err(EventError::EpochChanged {
@@ -331,6 +332,14 @@ const UNCONSUMED_SEQ_ERRORS: &[&str] =
 /// a time, so state-changing verbs carry this connection's monotonic
 /// `operation_seq` in order. Event lines that arrive while a reply is awaited
 /// are buffered within gterm's event queue ceilings.
+///
+/// Not cancellation-safe: dropping an in-flight request future can leave a
+/// partial line, an unread reply, or `operation_seq` out of step with the
+/// host's ledger. Discard the client after a cancelled request or a ledger
+/// error (`operation_expired`, `operation_conflict`). One known divergence:
+/// the host can return `host_draining` for `spawn` after it has recorded the
+/// seq; this client treats that error as unconsumed, so its next state-changing
+/// request reuses the seq and gets `operation_conflict` once.
 #[derive(Debug)]
 pub struct ControlClient<S> {
     stream: BufReader<S>,
@@ -532,6 +541,10 @@ impl<S: AsyncRead + AsyncWrite + Unpin> ControlClient<S> {
     }
 
     /// Subscribe this connection to host events, replaying after `since`.
+    /// Subscribe once per connection. Each call adds another host-side
+    /// subscriber on this connection, so a second subscribe double-delivers
+    /// every later event and its replay collides with events already
+    /// buffered here; resume with [`EventCursor::resume`] on a fresh client.
     pub async fn subscribe_events(
         &mut self,
         since: Option<u64>,
