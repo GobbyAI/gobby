@@ -22,6 +22,7 @@ from gobby.agents.zig_packages import (
     ZIG_PACKAGES,
     machine_zig_packages,
     materialize_zig_packages,
+    unsandboxed_zig_cache_dir,
     vendored_libghostty_vt,
 )
 
@@ -41,7 +42,6 @@ _ISOLATED_ENV_KEYS = (_RUN_ROOT_ENV, "CLAUDE_CODE_TMPDIR")
 _UNIX_SOCKET_MAX = 104
 _SOCKET_NEST = Path(".tmpxxxxxx") / "gterm-control.sock"
 _RUN_ROOT_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789"
-_RUN_ZIG_CACHE = "zig-cache"
 
 CommandRunner = Callable[[Sequence[str], Mapping[str, str]], int]
 HostSnapshot = Callable[[], dict[int, Path]]
@@ -704,8 +704,10 @@ def _isolated_child_env(
     env["CLAUDE_CODE_TMPDIR"] = root
     repo_root = repo if repo is not None else Path.cwd()
     machine_pkgs = machine_zig_packages()
-    if machine_pkgs.is_dir():
-        cache_root = run_root / _RUN_ZIG_CACHE
+    # An inherited system dir is already a mirror, and a sandboxed run may not
+    # write Gobby home.
+    if not env.get("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR", "").strip() and machine_pkgs.is_dir():
+        cache_root = unsandboxed_zig_cache_dir()
         vendored_zig_pkg = vendored_libghostty_vt(repo_root) / "zig-pkg"
         try:
             complete = materialize_zig_packages(
@@ -716,7 +718,7 @@ def _isolated_child_env(
         else:
             if not env.get("ZIG_GLOBAL_CACHE_DIR", "").strip():
                 env["ZIG_GLOBAL_CACHE_DIR"] = str(cache_root)
-            if complete and not env.get("LIBGHOSTTY_VT_ZIG_SYSTEM_DIR", "").strip():
+            if complete:
                 env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] = str(cache_root / ZIG_PACKAGES)
     return env
 

@@ -126,9 +126,17 @@ def test_materialize_reports_incomplete_for_unrecognized_entry(tmp_path: Path) -
     assert not (cache_root / "p" / "mystery.entry").exists()
 
 
-def test_isolated_child_env_materializes_run_scoped_zig_package_cache(
+@pytest.fixture
+def gobby_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(home))
+    return home
+
+
+def test_isolated_child_env_materializes_a_stable_zig_package_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    gobby_home: Path,
 ) -> None:
     home = tmp_path / "home"
     machine_pkgs = home / ".cache" / "zig" / "p"
@@ -146,7 +154,7 @@ def test_isolated_child_env_materializes_run_scoped_zig_package_cache(
 
     env = _isolated_child_env(run_root, {"PATH": "/bin"}, repo=tmp_path / "repo")
 
-    cache_root = run_root / "zig-cache"
+    cache_root = gobby_home / "cache" / "zig-packages"
     assert env["ZIG_GLOBAL_CACHE_DIR"] == str(cache_root)
     assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == str(cache_root / "p")
     packages = cache_root / "p"
@@ -162,9 +170,58 @@ def test_isolated_child_env_materializes_run_scoped_zig_package_cache(
     ]
 
 
+def test_isolated_child_env_gives_every_run_the_same_zig_system_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gobby_home: Path,
+) -> None:
+    # gterminal's build script reruns whenever LIBGHOSTTY_VT_ZIG_SYSTEM_DIR changes (#23198).
+    home = tmp_path / "home"
+    machine_pkgs = home / ".cache" / "zig" / "p"
+    machine_pkgs.mkdir(parents=True)
+    _make_extracted_package(machine_pkgs, "uucode-0.2.0-ZZjBPXXXX", "extracted-payload")
+    monkeypatch.setenv("HOME", str(home))
+    first_root = tmp_path / "run-a"
+    second_root = tmp_path / "run-b"
+    first_root.mkdir()
+    second_root.mkdir()
+
+    first = _isolated_child_env(first_root, {"PATH": "/bin"})
+    second = _isolated_child_env(second_root, {"PATH": "/bin"})
+
+    system_dir = Path(first["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"])
+    assert second["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == str(system_dir)
+    assert first["ZIG_GLOBAL_CACHE_DIR"] == second["ZIG_GLOBAL_CACHE_DIR"]
+    assert not system_dir.is_relative_to(gobby_home / "cache" / "sandbox")
+    assert not system_dir.is_relative_to(first_root)
+
+
+def test_isolated_child_env_keeps_an_inherited_zig_system_dir_without_materializing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    gobby_home: Path,
+) -> None:
+    # A sandboxed run already carries its own mirror and may not write Gobby home.
+    home = tmp_path / "home"
+    machine_pkgs = home / ".cache" / "zig" / "p"
+    machine_pkgs.mkdir(parents=True)
+    _make_extracted_package(machine_pkgs, "uucode-0.2.0-ZZjBPXXXX", "extracted-payload")
+    monkeypatch.setenv("HOME", str(home))
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    inherited = str(tmp_path / "sandbox-mirror" / "p")
+
+    env = _isolated_child_env(run_root, {"PATH": "/bin", "LIBGHOSTTY_VT_ZIG_SYSTEM_DIR": inherited})
+
+    assert env["LIBGHOSTTY_VT_ZIG_SYSTEM_DIR"] == inherited
+    assert "ZIG_GLOBAL_CACHE_DIR" not in env
+    assert not (gobby_home / "cache" / "zig-packages").exists()
+
+
 def test_isolated_child_env_leaves_system_dir_unset_when_materialization_is_incomplete(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    gobby_home: Path,
 ) -> None:
     home = tmp_path / "home"
     machine_pkgs = home / ".cache" / "zig" / "p"
@@ -177,13 +234,14 @@ def test_isolated_child_env_leaves_system_dir_unset_when_materialization_is_inco
 
     env = _isolated_child_env(run_root, {"PATH": "/bin"})
 
-    assert env["ZIG_GLOBAL_CACHE_DIR"] == str(run_root / "zig-cache")
+    assert env["ZIG_GLOBAL_CACHE_DIR"] == str(gobby_home / "cache" / "zig-packages")
     assert "LIBGHOSTTY_VT_ZIG_SYSTEM_DIR" not in env
 
 
 def test_isolated_child_env_omits_system_dir_when_machine_cache_is_empty(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    gobby_home: Path,
 ) -> None:
     home = tmp_path / "home"
     (home / ".cache" / "zig" / "p").mkdir(parents=True)
@@ -193,13 +251,14 @@ def test_isolated_child_env_omits_system_dir_when_machine_cache_is_empty(
 
     env = _isolated_child_env(run_root, {"PATH": "/bin"})
 
-    assert env["ZIG_GLOBAL_CACHE_DIR"] == str(run_root / "zig-cache")
+    assert env["ZIG_GLOBAL_CACHE_DIR"] == str(gobby_home / "cache" / "zig-packages")
     assert "LIBGHOSTTY_VT_ZIG_SYSTEM_DIR" not in env
 
 
 def test_isolated_child_env_leaves_zig_cache_vars_unset_without_machine_packages(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    gobby_home: Path,
 ) -> None:
     home = tmp_path / "home"
     home.mkdir()
@@ -211,7 +270,7 @@ def test_isolated_child_env_leaves_zig_cache_vars_unset_without_machine_packages
 
     assert "ZIG_GLOBAL_CACHE_DIR" not in env
     assert "LIBGHOSTTY_VT_ZIG_SYSTEM_DIR" not in env
-    assert not (run_root / "zig-cache").exists()
+    assert not (gobby_home / "cache" / "zig-packages").exists()
 
 
 def test_vendored_libsystem_override_creates_tmpdir_under_run_tmpdir(tmp_path: Path) -> None:

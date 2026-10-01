@@ -50,9 +50,14 @@ cargo build --release -p gobby-terminal --features vt-engine --bin gterm
 
 Builds land in deterministic checkout-specific directories under
 `~/.gobby/cache/cargo-target-v2/<project_id>/`. Gobby links each registered
-checkout's `target` there and sets the same `CARGO_TARGET_DIR` for spawned agents.
-The Cargo home remains shared, so registry and Git inputs are reused without
-allowing different checkout revisions to exchange compiled artifacts. A pre-existing
+checkout's `target` there for your shell's builds. Unsandboxed spawned agents build
+with Gobby's shared Cargo home (`~/.gobby/cache/cargo-home`), and Cargo
+fingerprints embed the home's registry paths, so their `CARGO_TARGET_DIR` is a
+sibling `<checkout>-agent` directory; sharing one target across two homes would
+rebuild every dependency on each alternation. Installers and `gobby cutover` read
+release artifacts from `CARGO_TARGET_DIR` when it is set. Each Cargo home is shared
+across checkouts, so registry and Git inputs are reused without allowing different
+checkout revisions to exchange compiled artifacts. A pre-existing
 real `target/` directory or foreign symlink is left alone. On macOS, large concurrent
 target trees can still require a higher vnode ceiling; see
 `docs/guides/system-requirements.md`, Troubleshooting.

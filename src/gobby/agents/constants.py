@@ -144,10 +144,11 @@ def shared_agent_cargo_home_dir() -> Path:
 
     Cargo fingerprints embed dependency source paths under
     ``$CARGO_HOME/registry/src``, so a per-session home invalidates every
-    dependency in each checkout's ``CARGO_TARGET_DIR`` and makes agents rebuild
-    the whole graph. This lives beside the checkout-specific target roots under
-    Gobby home; the operator's own ``~/.cargo`` is untouched. Sandboxed runs
-    never write it: they build from ``sandbox_agent_cache_dir`` instead.
+    dependency in each checkout's agent target and makes agents rebuild the
+    whole graph. This lives beside the checkout-specific target roots under
+    Gobby home; the operator's own ``~/.cargo`` is untouched, which is why agents
+    build into their own target rather than the operator's. Sandboxed runs never
+    write it: they build from ``sandbox_agent_cache_dir`` instead.
     """
     return get_gobby_home() / "cache" / "cargo-home"
 
@@ -205,7 +206,7 @@ def get_terminal_env_vars(
         parent_session_id: The parent session ID for context resolution.
         agent_run_id: The agent run record ID.
         project_id: The project ID.
-        checkout_root: Checkout whose Cargo artifacts the child owns.
+        checkout_root: Checkout whose agent Cargo target the child builds into.
         workflow_name: Optional workflow to activate.
         agent_depth: Current nesting depth (default: 1).
         max_agent_depth: Maximum allowed depth (default: 5).
@@ -217,7 +218,7 @@ def get_terminal_env_vars(
     Returns:
         Dict of environment variable name to value.
     """
-    from gobby.agents.cargo_target import ensure_checkout_cargo_target_dir
+    from gobby.agents.cargo_target import ensure_agent_cargo_target_dir
     from gobby.agents.spawn_cache_policy import build_spawn_cache_env
     from gobby.utils.daemon_url import daemon_url
 
@@ -230,7 +231,7 @@ def get_terminal_env_vars(
         GOBBY_AGENT_DEPTH: str(agent_depth),
         GOBBY_MAX_AGENT_DEPTH: str(max_agent_depth),
         **build_spawn_cache_env(session_id),
-        CARGO_TARGET_DIR: ensure_checkout_cargo_target_dir(
+        CARGO_TARGET_DIR: ensure_agent_cargo_target_dir(
             Path(checkout_root) if checkout_root is not None else Path.cwd(),
             project_id,
         ),

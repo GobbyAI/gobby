@@ -9,6 +9,8 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+from gobby.paths import get_gobby_home
+
 ZIG_PACKAGES = "p"
 _ZIG_TARBALL_SUFFIX = ".tar.gz"
 _VENDORED_LIBGHOSTTY_VT = Path("crates") / "gterminal" / "vendor" / "libghostty-vt"
@@ -20,6 +22,17 @@ def vendored_libghostty_vt(checkout: Path) -> Path:
 
 def machine_zig_packages() -> Path:
     return Path.home() / ".cache" / "zig" / ZIG_PACKAGES
+
+
+def unsandboxed_zig_cache_dir() -> Path:
+    """Return the Zig mirror unsandboxed builds share across runs.
+
+    gterminal's build script reruns whenever ``LIBGHOSTTY_VT_ZIG_SYSTEM_DIR``
+    changes, so a per-run mirror rebuilds libghostty-vt on every run (#23198).
+    It sits beside the sandbox cache rather than under it: sandboxed runs keep
+    their own mirror and never write this one.
+    """
+    return get_gobby_home() / "cache" / "zig-packages"
 
 
 def _extract_zig_package(tarball: Path, dest: Path, *, staging_parent: Path) -> None:
