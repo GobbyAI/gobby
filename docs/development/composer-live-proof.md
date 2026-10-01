@@ -92,8 +92,10 @@ through or replace an auth reference, so the execution grant must cover refresh
 of that exact reference. Credential state is never exported as proof evidence.
 
 Claude starts with built-in and MCP tools disabled. Codex starts with a read-only
-sandbox and approval policy `never`. Both receive a fixed prompt to answer READY
-and acknowledge notices briefly, without edits or tools. Unsupported flags or
+sandbox, approval policy `never`, and `mcp_servers.gobby.enabled=false`, using the
+[MCP enable setting](https://learn.chatgpt.com/docs/config-file/config-reference).
+Both receive a fixed prompt to answer READY and acknowledge notices briefly,
+without edits or tools. Unsupported flags or
 unprepared onboarding refuse the proof; there is no permissive fallback. See
 [Claude CLI reference](https://code.claude.com/docs/en/cli-reference) and
 [Codex CLI reference](https://developers.openai.com/codex/cli/reference/).
@@ -112,7 +114,7 @@ uv run pytest tests/e2e/test_composer_live_proof.py -q --no-cov --tb=short -p no
 ```
 
 Never set the opt-in variables during normal unit validation. The whole matrix
-has a 28-minute bound, excluding fixture setup and bounded cleanup. It reuses the
+has a 90-minute bound, excluding fixture setup and bounded cleanup. It reuses the
 existing isolated e2e daemon, native host, public terminal WebSocket and MCP tools.
 The two real provider sessions bind through their real hooks. Binding requires
 the exact provider/session/terminal/project/host epoch and disjoint exclusion map.
@@ -131,6 +133,21 @@ For each provider, the order is:
    Require actual retry submission and durable readback within 250 seconds.
 3. Repeat occupied preservation/recovery for an urgent notice.
 4. Empty composer, urgent notice: the same real submission and durability checks.
+5. Compact and clear with each original lock order, with and without cancellation
+   of the actual handoff caller. Stage through bound public MCP and relay its real
+   completion through the public hook endpoint. These are controller transports;
+   all provider lifecycle events must come from the real CLI.
+6. Repeat those eight race cases on fresh owned terminals, killing each through
+   the public terminal API while its original text dispatch is held. Require
+   confirmed exited readback, settled failure, two identical non-consuming public
+   recovery reads, and zero canonical delivery receipts.
+
+The complete matrix has 32 race cases and 40 unique durable notices. Successful
+cases retain the immutable notice target through canonical clear rebinding,
+consume the authored handoff once, then return empty on the second pull. They
+require one canonical receipt before and after consumption, separate command and
+continuation text/Enter writes, one continuation prompt submission, and no extra
+provider boundary or concatenated prompt.
 
 Drafts are `R2_22915_CLAUDE_DRAFT_ABCD_EFGH` and
 `R2_22915_CODEX_DRAFT_ABCD_EFGH`. The fixture checks exact text and cursor before
@@ -154,11 +171,16 @@ A pytest failure or refusal cannot be reported as a passing criterion.
 
 ## Cleanup
 
-Before any terminal kill, a private fixture-only handshake marks automatic input
+Before final cleanup, a private fixture-only handshake marks automatic input
 quiescent, cancels and awaits the daemon's owned composer/deferred retry tasks,
 and awaits in-flight wake locks. An unowned retry or changed binding refuses it.
 Then reread each terminal's authoritative binding and epoch before sending the
 existing public kill request. Close and await frame/WebSocket readers.
+The physical-failure cases kill only their exact owned terminal before the held
+original dispatch proceeds. A private retirement handshake independently rereads
+the original coordinator's exited row and drains that session's retry owners.
+It leaves later cases enabled. Final cleanup accepts an already terminated row
+only with the fixture's recorded public kill acknowledgement and exited readback.
 
 Whole-host shutdown requires the same host epoch and an empty host inventory.
 Only after confirmed provider/host cleanup may the owned daemon process tree and
@@ -167,24 +189,26 @@ or cleanup, preserve the isolated process/state and record their paths and PID
 for the owner. Never signal an unknown target or run broad machine cleanup.
 The test schema remains owned by existing e2e fixtures; no production state is used.
 
-## Staged compact/clear criterion remains pending
+## Staged compact/clear proof boundary
 
-This driver does **not** establish criterion 6. The trace gate matches the actual
-command-plus-newline write. `LiveProof.held_boundary` requires that gate to remain
-held, a fresh native frame showing the exact command, unchanged surface binding,
-and no submission/compact/session-start hook since the supplied baseline. It
-releases the gate and refuses if the real held frame is unavailable. The observer
-never starts a race and is not called by the base wake matrix.
+`submit_text` writes command plus newline before delayed Enter. A short command
+may submit from that newline, so the race controller pauses immediately **before**
+the unchanged original text dispatch, with the original composer lock held. It
+requires two fresh native empty frames with the same cursor, unchanged physical
+binding, and no early submission or lifecycle event. The existing post-text draft
+observer remains available where that state can actually be observed.
 
-A Delivered receipt alone cannot show a held command: `submit_text` writes command
-plus newline before delayed Enter, and a short `/compact` or `/clear` may already
-submit from that newline. Synthetic snapshots or a timing-only pause cannot stand
-in for the real frame.
+For handoff first, a pre-admitted wake joins the original lock's actual waiter
+queue while the original command dispatch is held. For wake first, the controller
+holds the acquired original wake lock, queues the actual handoff waiter, then
+releases the wake's source preflight. The staged handoff's actual protected wake
+outcome must remain non-writing. Both schedules require the same opaque original
+lock identity and the observed acquisition order. No lock, acquire task, physical
+write or provider lifecycle is replaced by a simulation in the admitted run.
 
-A later extension must observe the actual held boundary through the real native
-frame, then race a durable normal/urgent wake through the actual public handoff
-path while the existing physical composer lock remains held. It must account for
-clear successors, submission confirmation, failed handoff recovery, cancellation,
-unique durable notice delivery, and ownership-safe cleanup. Until those outcomes
-are observed for both providers, report criterion 6 PENDING and keep #22915 open.
-Likewise, criterion 5 remains PENDING until this real matrix passes under admission.
+The controller releases the source's command/newline and separate Enter unchanged.
+Canonical storage, actual caller settlement, provider lifecycle, continuation
+submission and durable message readback determine acceptance. Failed or incomplete
+cases preserve unresolved owned state for recovery. Artifacts report criterion 6
+PASSED only after every real race case and cleanup pass. Until an admitted run
+proves those outcomes, criteria 5 and 6 remain PENDING and #22915 stays open.

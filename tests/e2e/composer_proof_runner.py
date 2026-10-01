@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -20,6 +19,7 @@ from gobby.terminals.runtime import WriteOutcome
 from gobby.terminals.write_coordinator import WriteCoordinator, WriteRequest
 from tests.e2e.composer_proof import ProofRefused, require_private_root
 from tests.e2e.composer_proof_cleanup import CleanupControl
+from tests.e2e.composer_proof_race_observer import RaceObservation
 from tests.e2e.composer_proof_trace import exchange_trace, observe_dispatch
 
 
@@ -28,7 +28,17 @@ def main() -> None:
         raise ProofRefused("isolated execution grant required")
     socket = Path(os.environ["GOBBY_COMPOSER_PROOF_SOCKET"])
     require_private_root(socket.parent)
-    cleanup = CleanupControl(socket.parent / "cleanup.sock")
+
+    async def exchange(event: dict[str, object]) -> None:
+        await exchange_trace(socket, event)
+
+    observer = RaceObservation(exchange)
+    cleanup = CleanupControl(
+        socket.parent / "cleanup.sock",
+        cancel_handoff=observer.cancel,
+        drain_handoffs=observer.quiesce,
+        terminal_lookup=observer.lookup_terminal,
+    )
     import gobby
 
     runtime: dict[str, Any] = {
@@ -76,9 +86,6 @@ def main() -> None:
         async def original(write: WriteRequest, row: Terminal | None) -> WriteOutcome:
             return await dispatch(coordinator, write, row)
 
-        async def exchange(event: dict[str, object]) -> None:
-            await exchange_trace(socket, event)
-
         return await observe_dispatch(request, terminal, original, exchange)
 
     async def refuse_batch(*args: object, **kwargs: object) -> WriteOutcome:
@@ -97,35 +104,15 @@ def main() -> None:
     ) -> dict[str, Any]:
         if cleanup.quiesced:
             return {"delivered": False, "skipped": "proof_quiesced"}
-        started = time.monotonic()
-        result = await wake(
+        return await observer.observe_wake(
             dispatcher,
+            wake,
             session_id,
             session=session,
             priority=priority,
             bypass_debounce=bypass_debounce,
             prompt=prompt,
         )
-        observed = await asyncio.to_thread(dispatcher._session_manager.get, session_id)
-        route = await dispatcher._terminal_route_for_session(observed)
-        row = route.managed_terminal
-        if not isinstance(row, Terminal):
-            raise ProofRefused("proof wake has no exact managed terminal")
-        await exchange_trace(
-            socket,
-            {
-                "phase": "wake",
-                "terminal_id": row.id,
-                "session_id": row.session_id,
-                "project_id": row.project_id,
-                "host_epoch": row.host_epoch,
-                "delivered": result.get("delivered") is True,
-                "skipped": result.get("skipped"),
-                "priority": priority,
-                "monotonic": started,
-            },
-        )
-        return result
 
     from gobby.runner import main as run
 
@@ -135,6 +122,7 @@ def main() -> None:
         patch.object(WakeDispatcher, "_dispatch_live_wake_unlocked", traced_wake),
         patch.object(WakeDispatcher, "bind_owner_loop", bound),
         patch.object(DetectionManifestRegistry, "for_provider", observed_manifest),
+        observer.install(),
     ):
         run(config_path=Path(os.environ["GOBBY_CONFIG"]))
 

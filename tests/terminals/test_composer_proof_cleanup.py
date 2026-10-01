@@ -4,20 +4,84 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from dataclasses import replace
 from pathlib import Path
-from unittest.mock import MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from gobby.events.wake import WakeDispatcher
-from tests.e2e.composer_proof import ProofRefused
+from tests.e2e import composer_proof_cleanup as cleanup_module
+from tests.e2e.composer_proof import ProofRefused, Surface
 from tests.e2e.composer_proof_cleanup import CleanupControl, cancel_proof_retries, quiesce_proof
+from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
 
 async def pending_retry() -> None:
     await asyncio.Event().wait()
+
+
+@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("retire", [False, True])
+async def test_cleanup_accepts_only_exact_owned_exited_readback(
+    changed: bool, retire: bool
+) -> None:
+    terminal = replace(
+        make_memory_terminal(),
+        state="exited",
+        session_id=str(uuid4()),
+        project_id="00000000-0000-0000-0000-000000000e2e",
+        host_epoch=str(uuid4()),
+    )
+    surface = Surface(
+        "claude",
+        str(terminal.session_id),
+        terminal.id,
+        str(terminal.host_epoch),
+        str(terminal.project_id),
+    )
+    lookup = AsyncMock(
+        return_value=replace(terminal, host_epoch=str(uuid4())) if changed else terminal
+    )
+    dispatcher = WakeDispatcher(MagicMock(), MagicMock())
+    retry = asyncio.create_task(pending_retry())
+    dispatcher._composer_retries[surface.session_id] = retry
+    with tempfile.TemporaryDirectory(prefix="p22915-clean-", dir="/tmp") as root:
+        control = CleanupControl(Path(root) / "clean.sock", terminal_lookup=lookup)
+        with patch.object(
+            dispatcher,
+            "_terminal_route_for_session",
+            AsyncMock(return_value=SimpleNamespace(managed_terminal=None)),
+        ):
+            server = asyncio.create_task(control.serve(dispatcher))
+            try:
+                await asyncio.wait_for(control.started.wait(), 1)
+
+                async def clean() -> None:
+                    if retire:
+                        await cleanup_module.retire_terminal(control.socket, surface)
+                    else:
+                        await quiesce_proof(control.socket, [surface])
+
+                if changed:
+                    with pytest.raises(ProofRefused, match="cleanup"):
+                        await clean()
+                    assert not control.quiesced
+                    assert not retry.done()
+                else:
+                    await clean()
+                    assert control.quiesced is not retire
+                    assert retry.cancelled()
+                lookup.assert_awaited_once_with(surface)
+            finally:
+                retry.cancel()
+                await asyncio.gather(retry, return_exceptions=True)
+                server.cancel()
+                await asyncio.gather(server, return_exceptions=True)
 
 
 async def test_cancellation_awaits_both_retry_owners() -> None:

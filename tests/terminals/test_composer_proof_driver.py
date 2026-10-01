@@ -21,9 +21,45 @@ from tests.e2e.composer_proof import ProofRefused, ProofScope, Surface, require_
 from tests.e2e.composer_proof_frames import ProofFrame
 from tests.e2e.composer_proof_live import Frames, LiveProof, Seat
 from tests.e2e.composer_proof_setup import verify_setup
-from tests.e2e.composer_proof_trace import ProofTrace
+from tests.e2e.composer_proof_trace import WAKE_TEXT, ProofTrace
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exited", [False, True])
+async def test_owned_termination_requires_public_ack_and_exited_readback(
+    tmp_path: Path, exited: bool
+) -> None:
+    own = Surface("codex", str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
+    proof = LiveProof.__new__(LiveProof)
+    proof.scope = ProofScope(tmp_path, own.project_id, frozenset({str(uuid4())}), "a" * 40)
+    proof.terminated = {}
+    proof.evidence = []
+    send, wait = AsyncMock(), AsyncMock(return_value={"success": True})
+    seat = cast(Seat, SimpleNamespace(surface=own, ws=SimpleNamespace(send=send, wait_for=wait)))
+    proof.seats = [seat]
+    with (
+        patch.object(
+            proof, "validate", AsyncMock(return_value={"state": "exited" if exited else "live"})
+        ),
+    ):
+        if not exited:
+            with pytest.raises(ProofRefused, match="termination"):
+                await proof.terminate(seat)
+            assert not proof.terminated
+        else:
+            await proof.terminate(seat)
+            await proof.terminate(seat)
+            assert proof.terminated == {own.terminal_id: own}
+            assert proof.evidence[-1]["case"] == "owned_terminal_terminated"
+    send.assert_awaited_once()
+    assert send.await_args is not None and wait.await_args is not None
+    request = send.await_args.args[0]
+    assert request["type"] == "terminal_kill" and request["terminal_id"] == own.terminal_id
+    predicate = wait.await_args.args[0]
+    assert predicate({"type": "terminal_kill_result", "request_id": request["request_id"]})
+    assert not predicate({"type": "terminal_kill_result", "request_id": "foreign"})
 
 
 def test_sealed_home_remains_a_valid_private_fixture_root(
@@ -217,13 +253,16 @@ async def test_rebound_surface_receives_zero_editor_input(tmp_path: Path, field:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["claude", "codex"])
-@pytest.mark.parametrize("command", ["/compact", "/clear"])
+@pytest.mark.parametrize("command", ["/compact", "/clear", WAKE_TEXT])
 @pytest.mark.parametrize("state", ["held", "left", "submitted", "changed"])
+@pytest.mark.parametrize("before_write", [False, True])
 async def test_compact_boundary_requires_fresh_held_frame_before_any_race(
-    tmp_path: Path, provider: str, command: str, state: str
+    tmp_path: Path, provider: str, command: str, state: str, before_write: bool
 ) -> None:
     own = Surface(provider, str(uuid4()), str(uuid4()), "proof-epoch", str(uuid4()))
     frame = ProofFrame("empty" if state == "left" else command, (len(command), 0))
+    if before_write:
+        frame = ProofFrame(command if state == "left" else "empty", (0, 0))
 
     async def frame_wait(
         predicate: Callable[[ProofFrame], bool], *, after: int, timeout: float
@@ -239,13 +278,13 @@ async def test_compact_boundary_requires_fresh_held_frame_before_any_race(
         ProofScope(tmp_path, own.project_id, frozenset({str(uuid4())}), "a" * 40), tmp_path
     )
     proof.trace.register(own)
-    proof.trace.arm(own, command)
+    (proof.trace.arm_before if before_write else proof.trace.arm)(own, command)
     proof.trace.staged.set()
     seat = cast(
         Seat,
         SimpleNamespace(
             surface=own,
-            frames=SimpleNamespace(wait_for=frame_wait, latest=frame),
+            frames=SimpleNamespace(wait_for=frame_wait, latest=frame, client=AsyncMock()),
             external_id="proof-external",
             ws=SimpleNamespace(
                 require_events=lambda: None,
@@ -269,16 +308,23 @@ async def test_compact_boundary_requires_fresh_held_frame_before_any_race(
 
     async def validate(_: Seat) -> None:
         if state == "changed":
-            seat.frames.latest = ProofFrame("empty", (0, 0))
+            seat.frames.latest = ProofFrame(command if before_write else "empty", (0, 0))
 
     with patch.object(proof, "validate", AsyncMock(side_effect=validate)):
         if state == "held":
-            assert await proof.held_boundary(seat, command, after=12, hooks_after=0) == frame
+            assert (
+                await proof.held_boundary(
+                    seat, command, after=12, hooks_after=0, before_write=before_write
+                )
+                == frame
+            )
             assert proof.evidence[0]["held_command"] == command
             assert not proof.trace.release.is_set()
         else:
             with pytest.raises(ProofRefused, match="held boundary"):
-                await proof.held_boundary(seat, command, after=12, hooks_after=0)
+                await proof.held_boundary(
+                    seat, command, after=12, hooks_after=0, before_write=before_write
+                )
             assert proof.evidence == []
             assert proof.trace.release.is_set()
 

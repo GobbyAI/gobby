@@ -173,6 +173,7 @@ async def test_retry_attempt_receipts_carry_real_outcome_without_message_content
     event = {key: write[key] for key in ("terminal_id", "session_id", "project_id", "host_epoch")}
     event.update(
         phase="wake",
+        requested_session_id=write["session_id"],
         delivered=False,
         skipped="composer_occupied",
         priority="urgent",
@@ -180,6 +181,7 @@ async def test_retry_attempt_receipts_carry_real_outcome_without_message_content
     )
     await trace.accept(event)
     assert trace.events[0]["skipped"] == "composer_occupied"
+    assert trace.events[0]["requested_session_id"] == write["session_id"]
     with pytest.raises(ProofRefused, match="binding"):
         await trace.accept({**event, "host_epoch": "foreign-epoch"})
     assert len(trace.events) == 1

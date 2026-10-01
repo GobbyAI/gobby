@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict
 from pathlib import Path
 from typing import cast
@@ -26,10 +27,20 @@ async def cancel_proof_retries(dispatcher: WakeDispatcher, allowed: frozenset[st
 
 
 class CleanupControl:
-    """One cleanup operation on the isolated daemon's owner loop."""
+    """Private cancellation and cleanup on the isolated daemon's owner loop."""
 
-    def __init__(self, socket: Path) -> None:
+    def __init__(
+        self,
+        socket: Path,
+        *,
+        cancel_handoff: Callable[[Surface, str], bool] | None = None,
+        drain_handoffs: Callable[[list[Surface]], Awaitable[None]] | None = None,
+        terminal_lookup: Callable[[Surface], Awaitable[Terminal | None]] | None = None,
+    ) -> None:
         self.socket = socket
+        self.cancel_handoff = cancel_handoff
+        self.drain_handoffs = drain_handoffs
+        self.terminal_lookup = terminal_lookup
         self.quiesced = False
         self.task: asyncio.Task[None] | None = None
         self.started = asyncio.Event()
@@ -48,9 +59,59 @@ class CleanupControl:
             if task is not None:
                 self.handlers.add(task)
             accepted = False
+            reply = {"quiesced": False}
             try:
                 async with asyncio.timeout(20):
                     value = json.loads(await reader.readline())
+                    if isinstance(value, dict) and set(value) == {"retired_surface"}:
+                        reply = {"retired": False}
+                        surface = Surface(**value["retired_surface"])
+                        if (
+                            surface.provider not in {"claude", "codex"}
+                            or surface.project_id != "00000000-0000-0000-0000-000000000e2e"
+                            or self.terminal_lookup is None
+                        ):
+                            raise ProofRefused("invalid retired proof surface")
+                        row = await self.terminal_lookup(surface)
+                        if (
+                            not isinstance(row, Terminal)
+                            or row.state != "exited"
+                            or (row.id, row.session_id, row.project_id, row.host_epoch)
+                            != (
+                                surface.terminal_id,
+                                surface.session_id,
+                                surface.project_id,
+                                surface.host_epoch,
+                            )
+                        ):
+                            raise ProofRefused("retired cleanup binding changed")
+                        await cancel_proof_retries(dispatcher, frozenset({surface.session_id}))
+                        lock = dispatcher._live_wake_locks.get(surface.session_id)
+                        if lock is not None:
+                            async with lock:
+                                pass
+                        await cancel_proof_retries(dispatcher, frozenset({surface.session_id}))
+                        reply["retired"] = True
+                        return
+                    if isinstance(value, dict) and set(value) == {"surface", "attempt_id"}:
+                        reply = {"cancel_requested": False}
+                        if (
+                            self.cancel_handoff is None
+                            or not isinstance(value["surface"], dict)
+                            or not isinstance(value["attempt_id"], str)
+                            or not value["attempt_id"].strip()
+                        ):
+                            raise ProofRefused("invalid caller cancellation request")
+                        surface = Surface(**value["surface"])
+                        if (
+                            surface.provider not in {"claude", "codex"}
+                            or surface.project_id != "00000000-0000-0000-0000-000000000e2e"
+                        ):
+                            raise ProofRefused("invalid cancellation project/provider")
+                        reply["cancel_requested"] = self.cancel_handoff(
+                            surface, value["attempt_id"]
+                        )
+                        return
                     if not isinstance(value, dict) or set(value) != {"surfaces"}:
                         raise ProofRefused("invalid cleanup request")
                     items = value["surfaces"]
@@ -68,6 +129,10 @@ class CleanupControl:
                         )
                         route = await dispatcher._terminal_route_for_session(session)
                         row = route.managed_terminal
+                        if row is None and self.terminal_lookup is not None:
+                            row = await self.terminal_lookup(surface)
+                            if row is None or row.state != "exited":
+                                raise ProofRefused("cleanup has no confirmed exited terminal")
                         if not isinstance(row, Terminal) or (
                             row.id,
                             row.session_id,
@@ -81,6 +146,8 @@ class CleanupControl:
                         ):
                             raise ProofRefused("cleanup binding changed")
                     self.quiesced = True
+                    if self.drain_handoffs is not None:
+                        await self.drain_handoffs(surfaces)
                     await cancel_proof_retries(
                         dispatcher, frozenset(surface.session_id for surface in surfaces)
                     )
@@ -96,7 +163,9 @@ class CleanupControl:
                 accepted = False
             finally:
                 try:
-                    writer.write(json.dumps({"quiesced": accepted}).encode() + b"\n")
+                    if "quiesced" in reply:
+                        reply["quiesced"] = accepted
+                    writer.write(json.dumps(reply).encode() + b"\n")
                     await writer.drain()
                 finally:
                     writer.close()
@@ -133,6 +202,39 @@ async def quiesce_proof(socket: Path, surfaces: list[Surface]) -> None:
                 "quiesced": True
             }:
                 raise ProofRefused("proof retry cleanup unconfirmed")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+
+async def cancel_caller(socket: Path, surface: Surface, attempt_id: str) -> None:
+    require_private_root(socket.parent)
+    async with asyncio.timeout(10):
+        reader, writer = await asyncio.open_unix_connection(socket)
+        try:
+            writer.write(
+                json.dumps({"surface": asdict(surface), "attempt_id": attempt_id}).encode() + b"\n"
+            )
+            await writer.drain()
+            result = json.loads(await reader.readline())
+            if result != {"cancel_requested": True}:
+                raise ProofRefused("actual handoff caller cancellation unconfirmed")
+        finally:
+            writer.close()
+            await writer.wait_closed()
+
+
+async def retire_terminal(socket: Path, surface: Surface) -> None:
+    """Drain retries for one proven exited owned terminal, leaving the next case enabled."""
+    require_private_root(socket.parent)
+    async with asyncio.timeout(25):
+        reader, writer = await asyncio.open_unix_connection(socket)
+        try:
+            writer.write(json.dumps({"retired_surface": asdict(surface)}).encode() + b"\n")
+            await writer.drain()
+            result = json.loads(await reader.readline())
+            if result != {"retired": True}:
+                raise ProofRefused("retired proof retry cleanup unconfirmed")
         finally:
             writer.close()
             await writer.wait_closed()

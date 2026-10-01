@@ -21,6 +21,7 @@ import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
+from gobby.workflows.state_manager import SessionVariableManager
 from tests.e2e.composer_proof import (
     ProofRefused,
     ProofScope,
@@ -36,6 +37,7 @@ from tests.e2e.composer_proof_admission import (
     verify_binary_set,
 )
 from tests.e2e.composer_proof_live import LiveProof
+from tests.e2e.composer_proof_races import ComposerRaces
 from tests.e2e.composer_proof_trace import ProofTrace
 from tests.e2e.conftest import (
     DaemonInstance,
@@ -206,6 +208,8 @@ async def composer_fixture(
         if not await asyncio.to_thread(wait_for_daemon_websocket, ws_port, home, timeout=10):
             raise ProofRefused("isolated WebSocket did not become healthy")
         proof = LiveProof(daemon, scope, trace, DetectionManifestRegistry(postgres_db))
+        proof.races = ComposerRaces(proof, SessionVariableManager(postgres_db))
+        trace.authorize_clear = proof.races.authorize_clear
         await proof.initialize()
         yield proof
     finally:
@@ -243,7 +247,9 @@ async def composer_fixture(
                     if clean and proof is not None and proof.matrix_passed
                     else "FAILED_OR_REFUSED",
                     "cleanup_confirmed": clean,
-                    "criterion6": "PENDING: requires observed real held compact/clear boundary",
+                    "criterion6": "PASSED"
+                    if clean and proof is not None and proof.races_passed
+                    else "PENDING_OR_REFUSED: full real race matrix has not passed",
                     "surfaces": []
                     if proof is None
                     else [seat.surface.__dict__ for seat in proof.seats],
@@ -270,7 +276,7 @@ async def composer_fixture(
 async def test_real_claude_and_codex_composer_matrix(
     composer_fixture: LiveProof, composer_admission: Admission
 ) -> None:
-    async with asyncio.timeout(28 * 60):
+    async with asyncio.timeout(90 * 60):
         for provider in ("claude", "codex"):
             await asyncio.to_thread(verify_binary_set, composer_admission)
             binary = composer_admission.providers[provider]
@@ -286,19 +292,13 @@ async def test_real_claude_and_codex_composer_matrix(
                     "read-only",
                     "--ask-for-approval",
                     "never",
+                    "-c",
+                    "mcp_servers.gobby.enabled=false",
                     prompt,
                 ]
             )
             seat = await composer_fixture.bind(provider, command)
             await composer_fixture.matrix(seat)
-        assert {seat.surface.provider for seat in composer_fixture.seats} == {"claude", "codex"}
-        notices = [
-            item["message_id"]
-            for item in composer_fixture.evidence
-            if item.get("case") in {"normal", "urgent"} and "message_id" in item
-        ]
-        assert len(notices) == 8 and len(set(notices)) == 8
-        for seat in composer_fixture.seats:
             submissions = [
                 item
                 for item in composer_fixture.evidence
@@ -306,5 +306,34 @@ async def test_real_claude_and_codex_composer_matrix(
                 and "submitted_prompt_sha256" in item
             ]
             assert len(submissions) == 4, "all empty/occupied normal/urgent submissions required"
+            for fail in (False, True):
+                for clear in (False, True):
+                    for first in ("wake", "handoff"):
+                        for cancel in (False, True):
+                            target = (
+                                await composer_fixture.bind(provider, command) if fail else seat
+                            )
+                            await composer_fixture.races.race(
+                                target, clear=clear, first=first, cancel=cancel, fail=fail
+                            )
+        assert {seat.surface.provider for seat in composer_fixture.seats} == {"claude", "codex"}
+        notices = [
+            item["message_id"]
+            for item in composer_fixture.evidence
+            if item.get("case") in {"normal", "urgent"} and "message_id" in item
+        ]
+        assert len(notices) == 40 and len(set(notices)) == 40
+        races = [item for item in composer_fixture.evidence if item.get("case") == "handoff_race"]
+        assert len(races) == 32 and len({item["attempt_id"] for item in races}) == 32
+        assert (
+            len(
+                {
+                    (item["provider"], item["clear"], item["first"], item["cancel"], item["failed"])
+                    for item in races
+                }
+            )
+            == 32
+        )
         await asyncio.to_thread(verify_binary_set, composer_admission)
         composer_fixture.matrix_passed = True
+        composer_fixture.races_passed = True

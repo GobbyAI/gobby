@@ -9,7 +9,7 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 import httpx
@@ -32,6 +32,9 @@ from tests.e2e.composer_proof_frames import ProofFrame, read_frame
 from tests.e2e.composer_proof_trace import WAKE_TEXT, ProofTrace
 from tests.e2e.conftest import DaemonInstance, MCPTestClient, daemon_token
 from tests.e2e.test_terminal_client_stack import WsSession, _attach_locator, _ws_create
+
+if TYPE_CHECKING:
+    from tests.e2e.composer_proof_races import ComposerRaces
 
 
 class ProofWsSession(WsSession):
@@ -159,8 +162,12 @@ class LiveProof:
         self.evidence: list[dict[str, object]] = []
         self.created_terminal_ids: list[str] = []
         self.creation_uncertain = False
+        self.handoffs_pending: set[str] = set()
+        self.terminated: dict[str, Surface] = {}
         self.detection_registry = detection_registry
         self.matrix_passed = False
+        self.races_passed = False
+        self.races: ComposerRaces
 
     async def call(self, server: str, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
         if (server, tool) not in self.leases:
@@ -284,7 +291,7 @@ class LiveProof:
             raise ProofRefused("native host binding outside private proof root")
         return locator
 
-    async def validate(self, seat: Seat) -> None:
+    async def validate(self, seat: Seat) -> dict[str, Any]:
         row = await self.terminal(seat.surface.terminal_id)
         locator = _attach_locator(row)
         observed = Surface(
@@ -297,6 +304,7 @@ class LiveProof:
         self.scope.require_surface(seat.surface, observed)
         if self.locator(row) != seat.locator:
             raise ProofRefused("native attachment binding changed")
+        return row
 
     async def empty(self, seat: Seat, *, timeout: float = 30, after: int = -1) -> ProofFrame:
         await seat.frames.wait_for(
@@ -352,20 +360,42 @@ class LiveProof:
             raise ProofRefused("owned editor input unconfirmed")
 
     async def held_boundary(
-        self, seat: Seat, command: str, *, after: int, hooks_after: int
+        self,
+        seat: Seat,
+        command: str,
+        *,
+        after: int,
+        hooks_after: int,
+        before_write: bool = False,
     ) -> ProofFrame:
         """Observe an armed actual write; this never starts or claims a race."""
-        if command not in {"/compact", "/clear"}:
+        if command not in {"/compact", "/clear", WAKE_TEXT}:
             raise ProofRefused("unsupported held boundary command")
-        gate = (seat.surface.terminal_id, hashlib.sha256((command + "\n").encode()).hexdigest())
+        transport = command + "\n" if command in {"/compact", "/clear"} else command
+        gate = (seat.surface.terminal_id, hashlib.sha256(transport.encode()).hexdigest())
+        phase = "before" if before_write else "after"
+
+        def held(value: ProofFrame) -> bool:
+            read = seat.detector.composer_read(value.ansi)
+            return (
+                read.state == "empty"
+                if before_write
+                else (read.state == "draft" and read.line == command)
+            )
+
         try:
             seat.ws.require_events()
-            if self.trace.gate != gate or self.trace.release.is_set():
+            if (
+                self.trace.gate != gate
+                or self.trace.release.is_set()
+                or self.trace.gate_phase != phase
+            ):
                 raise ProofRefused("held boundary is not armed")
             await asyncio.wait_for(self.trace.staged.wait(), 10)
+            if before_write:
+                await seat.frames.client.set_scroll_offset(0)
             frame = await seat.frames.wait_for(
-                lambda value: seat.detector.composer_read(value.ansi).state == "draft"
-                and seat.detector.composer_read(value.ansi).line == command,
+                held,
                 after=after,
                 timeout=10,
             )
@@ -377,8 +407,7 @@ class LiveProof:
                 or self.trace.release.is_set()
                 or current is None
                 or current.cursor != frame.cursor
-                or seat.detector.composer_read(current.ansi).state != "draft"
-                or seat.detector.composer_read(current.ansi).line != command
+                or not held(current)
                 or any(
                     event.get("type") == "hook_event"
                     and event.get("session_id") == seat.external_id
@@ -393,7 +422,11 @@ class LiveProof:
             self.trace.release.set()
             raise ProofRefused("real held boundary unavailable; refuse timing-only race") from exc
         self.evidence.append(
-            {"held_command": command, **safe_evidence(seat.surface, frame.ansi, frame.cursor)}
+            {
+                "held_command": command,
+                "before_write": before_write,
+                **safe_evidence(seat.surface, frame.ansi, frame.cursor),
+            }
         )
         return frame
 
@@ -431,12 +464,13 @@ class LiveProof:
         )
         return str(ids[0])
 
-    async def durable(self, seat: Seat, message_id: str) -> None:
+    async def durable(self, target: Surface, message_id: str) -> None:
+        self.scope.require_surface(target, target)
         result = await self.call(
             "gobby-agents", "get_inter_session_message", {"message_id": message_id}
         )
         message = result.get("message", result)
-        if message.get("id") != message_id or message.get("to_session") != seat.surface.session_id:
+        if message.get("id") != message_id or message.get("to_session") != target.session_id:
             raise ProofRefused("durable proof notice missing or rebound")
         self.evidence.append(
             {"message_id": message_id, "durable": True, "delivered_at": message.get("delivered_at")}
@@ -492,7 +526,7 @@ class LiveProof:
         start, hooks = len(self.trace.events), len(seat.ws.messages)
         message = await self.notice(seat, priority)
         await self.submitted(seat, writes_after=start, hooks_after=hooks, timeout=30)
-        await self.durable(seat, message)
+        await self.durable(seat.surface, message)
 
     async def occupied_wake(self, seat: Seat, priority: str) -> None:
         await self.empty(seat)
@@ -543,7 +577,7 @@ class LiveProof:
             for item in self.trace.events[start:]
         ):
             raise ProofRefused("automatic bytes reached occupied composer")
-        await self.durable(seat, message)
+        await self.durable(seat.surface, message)
         self.evidence.append(
             {
                 "case": f"occupied-{priority}",
@@ -560,7 +594,7 @@ class LiveProof:
         await self.empty(seat, after=revision)
         async with asyncio.timeout(250):
             await self.submitted(seat, writes_after=start, hooks_after=hooks, timeout=250)
-        await self.durable(seat, message)
+        await self.durable(seat.surface, message)
 
     async def matrix(self, seat: Seat) -> None:
         await self.empty_wake(seat, "normal")
@@ -584,14 +618,50 @@ class LiveProof:
             raise ProofRefused("active daemon detection identity mismatch")
         self.evidence.append({"runtime": runtime})
 
+    async def terminate(self, seat: Seat) -> None:
+        self.scope.require_surface(seat.surface, seat.surface)
+        if seat not in self.seats:
+            raise ProofRefused("unowned proof termination")
+        await self.validate(seat)
+        recorded = self.terminated.get(seat.surface.terminal_id)
+        if recorded is not None and recorded != seat.surface:
+            raise ProofRefused("terminated proof binding changed")
+        if recorded is None:
+            request = f"kill-{uuid4()}"
+            await seat.ws.send(
+                {
+                    "type": "terminal_kill",
+                    "terminal_id": seat.surface.terminal_id,
+                    "request_id": request,
+                }
+            )
+            outcome = await seat.ws.wait_for(
+                lambda event: event.get("type") == "terminal_kill_result"
+                and event.get("request_id") == request,
+                timeout=10,
+                description="owned proof termination",
+            )
+            if outcome.get("success") is not True:
+                raise ProofRefused("owned proof termination unconfirmed")
+        row = await self.validate(seat)
+        if row.get("state") != "exited":
+            raise ProofRefused("owned proof termination has no exited readback")
+        if recorded is None:
+            self.terminated[seat.surface.terminal_id] = seat.surface
+            self.evidence.append({"case": "owned_terminal_terminated", **seat.surface.__dict__})
+
     async def close(self) -> None:
         self.trace.release.set()
+        self.trace.admission_release.set()
+        self.trace.acquisition_release.set()
         failures: list[Exception] = []
         quiesced = False
         try:
             await quiesce_proof(
                 self.trace.socket.parent / "cleanup.sock", [seat.surface for seat in self.seats]
             )
+            if self.handoffs_pending:
+                raise ProofRefused("unsettled proof handoff; preserve owned terminal")
             quiesced = True
         except (ProofRefused, TimeoutError, OSError, ValueError) as exc:
             failures.append(exc)
@@ -599,23 +669,7 @@ class LiveProof:
             try:
                 if not quiesced:
                     raise ProofRefused("retry cleanup unconfirmed; preserve owned terminal")
-                await self.validate(seat)
-                request = f"kill-{uuid4()}"
-                await seat.ws.send(
-                    {
-                        "type": "terminal_kill",
-                        "terminal_id": seat.surface.terminal_id,
-                        "request_id": request,
-                    }
-                )
-                outcome = await seat.ws.wait_for(
-                    lambda event, expected=request: event.get("type") == "terminal_kill_result"
-                    and event.get("request_id") == expected,
-                    timeout=10,
-                    description="owned proof cleanup",
-                )
-                if outcome.get("success") is not True:
-                    raise ProofRefused("owned proof termination unconfirmed")
+                await self.terminate(seat)
             except (
                 RuntimeError,
                 TimeoutError,
