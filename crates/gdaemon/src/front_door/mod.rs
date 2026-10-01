@@ -4,13 +4,15 @@
 pub mod health;
 pub mod proxy;
 pub mod routes;
+pub mod tls;
 pub mod ws;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::{Request, Response};
+use axum::http::header::{HeaderName, HeaderValue};
+use axum::http::{HeaderMap, Request, Response};
 
 use health::BackendState;
 use proxy::ProxyClient;
@@ -49,11 +51,45 @@ impl FrontDoor {
         }
     }
 
-    pub async fn handle(&self, request: Request<Body>) -> Response<Body> {
+    /// Serve one request from `peer`, the address the connection was accepted
+    /// from; `https` says whether it arrived over TLS.
+    pub async fn handle(
+        &self,
+        mut request: Request<Body>,
+        peer: SocketAddr,
+        https: bool,
+    ) -> Response<Body> {
+        observe_peer(request.headers_mut(), peer, https);
         if ws::is_upgrade(request.headers()) {
             ws::splice(&self.state, request).await
         } else {
             self.table.dispatch(&self.state, request).await
         }
     }
+}
+
+/// Client-supplied forwarding headers. Each is dropped before any route or
+/// splice sees the request, so the backend only learns the observed peer.
+const FORWARDING_HEADERS: [&str; 5] = [
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "x-real-ip",
+];
+
+/// Replace every forwarding header with the transport's own view: the peer's
+/// IP in `X-Forwarded-For` and the scheme in `X-Forwarded-Proto`.
+fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
+    for name in FORWARDING_HEADERS {
+        headers.remove(name);
+    }
+    if let Ok(value) = HeaderValue::try_from(peer.ip().to_canonical().to_string()) {
+        headers.insert(HeaderName::from_static("x-forwarded-for"), value);
+    }
+    let scheme = if https { "https" } else { "http" };
+    headers.insert(
+        HeaderName::from_static("x-forwarded-proto"),
+        HeaderValue::from_static(scheme),
+    );
 }

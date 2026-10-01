@@ -35,10 +35,13 @@ def test_default_url_when_file_missing(tmp_path: Path) -> None:
     assert resolve_daemon_url(tmp_path / "missing.yaml", env={}) == "http://127.0.0.1:60887"
 
 
+_TLS_BLOCK = "front_door:\n  tls:\n    mode: self-signed\n"
+
+
 @pytest.mark.parametrize("host", ["", "0.0.0.0", "::", "::0", "[::]"])
 def test_wildcard_hosts_normalize_to_loopback(tmp_path: Path, host: str) -> None:
     path = _write_bootstrap(
-        tmp_path / "bootstrap.yaml", f"daemon_port: 60887\nbind_host: {host!r}\n"
+        tmp_path / "bootstrap.yaml", f"daemon_port: 60887\nbind_host: {host!r}\n{_TLS_BLOCK}"
     )
 
     assert resolve_daemon_url(path, env={}) == "http://127.0.0.1:60887"
@@ -52,12 +55,33 @@ def test_localhost_normalizes_to_numeric_loopback(tmp_path: Path) -> None:
     assert resolve_daemon_url(path, env={}) == "http://127.0.0.1:60887"
 
 
-def test_custom_port_and_host_compose(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("0.0.0.0", "127.0.0.1"),
+        ("localhost", "127.0.0.1"),
+        ("10.0.0.5", "127.0.0.1"),
+        ("hub.example.test", "127.0.0.1"),
+        ("2001:db8::1", "[::1]"),
+        ("[2001:db8::1]", "[::1]"),
+        ("::1", "[::1]"),
+    ],
+)
+def test_dial_host_is_always_loopback(tmp_path: Path, host: str, expected: str) -> None:
+    """Mirrors gcore `daemon_url::tests::dial_host_is_always_loopback`."""
     path = _write_bootstrap(
-        tmp_path / "bootstrap.yaml", "daemon_port: 61234\nbind_host: 10.0.0.5\n"
+        tmp_path / "bootstrap.yaml", f"daemon_port: 61234\nbind_host: {host!r}\n{_TLS_BLOCK}"
     )
 
-    assert resolve_daemon_url(path, env={}) == "http://10.0.0.5:61234"
+    assert normalize_dial_host(host) == expected
+    assert resolve_daemon_url(path, env={}) == f"http://{expected}:61234"
+
+    (tmp_path / "explicit").mkdir()
+    explicit = _write_bootstrap(
+        tmp_path / "explicit" / "bootstrap.yaml",
+        f"daemon_url: https://hub.example.test:7443\nbind_host: {host!r}\n{_TLS_BLOCK}",
+    )
+    assert resolve_daemon_url(explicit, env={}) == "https://hub.example.test:7443"
 
 
 @pytest.mark.parametrize("host", ["::1", "[::1]"])
@@ -116,7 +140,8 @@ def test_gobby_port_wins_over_deprecated_daemon_port_alias(tmp_path: Path) -> No
 def test_bootstrap_daemon_url_beats_bind_host_endpoint(tmp_path: Path) -> None:
     path = _write_bootstrap(
         tmp_path / "bootstrap.yaml",
-        "daemon_url: https://remote.invalid:7443/\ndaemon_port: 61111\nbind_host: 0.0.0.0\n",
+        "daemon_url: https://remote.invalid:7443/\ndaemon_port: 61111\nbind_host: 0.0.0.0\n"
+        f"{_TLS_BLOCK}",
     )
 
     assert resolve_daemon_url(path, env={}) == "https://remote.invalid:7443"
@@ -169,7 +194,3 @@ def test_daemon_url_uses_current_environment(
     monkeypatch.delenv("GOBBY_DAEMON_PORT", raising=False)
 
     assert daemon_url() == "http://127.0.0.1:61999"
-
-
-def test_normalize_dial_host_brackets_bare_ipv6() -> None:
-    assert normalize_dial_host("2001:db8::1") == "[2001:db8::1]"

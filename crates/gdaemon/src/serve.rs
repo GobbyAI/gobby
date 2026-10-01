@@ -3,8 +3,10 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::future::Future;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use axum::body::Body;
@@ -16,12 +18,22 @@ use gobby_core::bootstrap::{
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper_util::rt::TokioIo;
-use tokio::net::TcpListener;
+use tokio::io::{AsyncRead, AsyncWrite};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::task::JoinSet;
+use tokio_rustls::TlsAcceptor;
+use tokio_rustls::rustls::ServerConfig;
 
 use crate::front_door::health::BackendState;
 use crate::front_door::routes::{FAMILIES, RouteTable, unimplemented_families};
-use crate::front_door::{FrontDoor, FrontDoorState};
+use crate::front_door::{FrontDoor, FrontDoorState, tls};
+
+/// How long an accepted connection may take to send its first byte and, for
+/// TLS, finish the handshake before it is dropped.
+const PREAUTH_DEADLINE: Duration = Duration::from_secs(10);
+
+/// First byte of a TLS record carrying a handshake (a ClientHello).
+const TLS_HANDSHAKE: u8 = 0x16;
 
 /// A bound public listener and the loopback backend it proxies to.
 pub struct PublicListener {
@@ -40,6 +52,16 @@ pub fn run() -> Result<()> {
             "gdaemon serve: front_door.routes.{name} requests a native backend gdaemon does not implement; proxying"
         );
     }
+    let tls = tls::load(&bootstrap.front_door.tls, &bootstrap.bind_host)?;
+    if let Some(loaded) = &tls {
+        for name in &loaded.missing_sans {
+            eprintln!(
+                "gdaemon serve: front_door.tls.sans entry {name} is missing from the existing certificate; \
+                 remove both certificate files and restart to regenerate (nodes must log in again)"
+            );
+        }
+        eprintln!("front door certificate {}", loaded.fingerprint);
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -47,10 +69,8 @@ pub fn run() -> Result<()> {
         .context("failed to start the tokio runtime")?;
     runtime.block_on(async {
         let host = bootstrap.bind_host.as_str();
-        let listeners = vec![
-            bind(host, bootstrap.daemon_port, backend_http).await?,
-            bind(host, bootstrap.websocket_port, backend_ws).await?,
-        ];
+        let mut listeners = bind(host, bootstrap.daemon_port, backend_http).await?;
+        listeners.extend(bind(host, bootstrap.websocket_port, backend_ws).await?);
         let parent_gone = watch_parent_fd()?;
         let shutdown = async move {
             match parent_gone {
@@ -61,7 +81,8 @@ pub fn run() -> Result<()> {
                 None => shutdown_signal().await,
             }
         };
-        serve(listeners, &bootstrap.front_door.routes, shutdown).await
+        let tls = tls.map(|loaded| loaded.config);
+        serve(listeners, &bootstrap.front_door.routes, tls, shutdown).await
     })
 }
 
@@ -142,14 +163,45 @@ pub fn load_enabled_bootstrap(path: &Path) -> Result<HubDatabaseBootstrap> {
     Ok(bootstrap)
 }
 
-async fn bind(host: &str, port: u16, backend_port: u16) -> Result<PublicListener> {
+/// Bind `host:port`, plus a same-port loopback companion when `host` is a
+/// concrete non-loopback address, so a local client dialing loopback always
+/// reaches the front door.
+pub async fn bind(host: &str, port: u16, backend_port: u16) -> Result<Vec<PublicListener>> {
+    let backend = SocketAddr::from(([127, 0, 0, 1], backend_port));
     let listener = TcpListener::bind(bind_addr(host, port).await?)
         .await
         .with_context(|| format!("failed to bind {host}:{port}"))?;
-    Ok(PublicListener {
-        listener,
-        backend: SocketAddr::from(([127, 0, 0, 1], backend_port)),
-    })
+    let bound = listener
+        .local_addr()
+        .context("bound listener has no address")?;
+    let mut listeners = vec![PublicListener { listener, backend }];
+    if let Some(companion) = companion_addr(bound) {
+        let listener = TcpListener::bind(companion)
+            .await
+            .with_context(|| format!("failed to bind the loopback companion {companion}"))?;
+        listeners.push(PublicListener { listener, backend });
+    }
+    Ok(listeners)
+}
+
+/// The loopback address of the same family and port a concrete non-loopback
+/// bind adds. A wildcard or loopback bind already accepts loopback and gets none.
+pub fn companion_addr(bound: SocketAddr) -> Option<SocketAddr> {
+    let ip = bound.ip();
+    if ip.is_unspecified() || ip.is_loopback() {
+        return None;
+    }
+    let loopback = match ip {
+        IpAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+        IpAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+    };
+    Some(SocketAddr::new(loopback, bound.port()))
+}
+
+/// Whether a connection that did not open with a TLS handshake may be served
+/// in plaintext: only from loopback, counting IPv4-mapped IPv6 peers.
+pub fn plaintext_allowed(peer: IpAddr) -> bool {
+    peer.to_canonical().is_loopback()
 }
 
 /// The address `host` binds, chosen as the Python daemon's uvicorn chooses it: an
@@ -167,17 +219,25 @@ async fn bind_addr(host: &str, port: u16) -> Result<SocketAddr> {
         })
 }
 
-/// Serve every listener until `shutdown` resolves.
+/// Serve every listener until `shutdown` resolves. With `tls`, a connection
+/// opening with a TLS handshake is served over TLS from any peer, and any
+/// other connection is served in plaintext only to a loopback peer.
 pub async fn serve(
     listeners: Vec<PublicListener>,
     routes: &BTreeMap<String, RouteBackend>,
+    tls: Option<Arc<ServerConfig>>,
     shutdown: impl Future<Output = ()>,
 ) -> Result<()> {
+    let acceptor = tls.map(TlsAcceptor::from);
     let mut accept_loops = JoinSet::new();
     for PublicListener { listener, backend } in listeners {
         let state = FrontDoorState::new(backend, BackendState::Down);
         let table = RouteTable::new(FAMILIES, routes, &state);
-        accept_loops.spawn(accept(listener, FrontDoor::new(state, table)));
+        accept_loops.spawn(accept(
+            listener,
+            FrontDoor::new(state, table),
+            acceptor.clone(),
+        ));
     }
     tokio::select! {
         () = shutdown => Ok(()),
@@ -187,21 +247,72 @@ pub async fn serve(
     }
 }
 
-async fn accept(listener: TcpListener, front_door: FrontDoor) -> Result<()> {
+/// Accept connections forever. The loop itself never reads: the first-byte
+/// peek and TLS handshake run in each connection's own task, under
+/// [`PREAUTH_DEADLINE`], so a stalled peer cannot hold up the listener.
+async fn accept(
+    listener: TcpListener,
+    front_door: FrontDoor,
+    acceptor: Option<TlsAcceptor>,
+) -> Result<()> {
     loop {
-        let (stream, _) = listener.accept().await.context("accept failed")?;
+        let (stream, peer) = listener.accept().await.context("accept failed")?;
         let front_door = front_door.clone();
+        let acceptor = acceptor.clone();
         tokio::spawn(async move {
-            let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-                let front_door = front_door.clone();
-                async move { Ok::<_, Infallible>(front_door.handle(request.map(Body::new)).await) }
-            });
-            let _ = http1::Builder::new()
-                .serve_connection(TokioIo::new(stream), service)
-                .with_upgrades()
-                .await;
+            let Some(acceptor) = acceptor else {
+                return serve_connection(stream, peer, false, front_door).await;
+            };
+            match tokio::time::timeout(PREAUTH_DEADLINE, preauth(stream, peer, &acceptor)).await {
+                Ok(Ok(Preauth::Tls(stream))) => {
+                    serve_connection(stream, peer, true, front_door).await
+                }
+                Ok(Ok(Preauth::Plain(stream))) => {
+                    serve_connection(stream, peer, false, front_door).await
+                }
+                Ok(Ok(Preauth::Refused) | Err(_)) | Err(_) => {}
+            }
         });
     }
+}
+
+enum Preauth {
+    Tls(Box<tokio_rustls::server::TlsStream<TcpStream>>),
+    Plain(TcpStream),
+    Refused,
+}
+
+async fn preauth(
+    stream: TcpStream,
+    peer: SocketAddr,
+    acceptor: &TlsAcceptor,
+) -> std::io::Result<Preauth> {
+    let mut first = [0_u8; 1];
+    if stream.peek(&mut first).await? == 0 {
+        return Ok(Preauth::Refused);
+    }
+    if first[0] == TLS_HANDSHAKE {
+        return Ok(Preauth::Tls(Box::new(acceptor.accept(stream).await?)));
+    }
+    if plaintext_allowed(peer.ip()) {
+        Ok(Preauth::Plain(stream))
+    } else {
+        Ok(Preauth::Refused)
+    }
+}
+
+async fn serve_connection<S>(stream: S, peer: SocketAddr, https: bool, front_door: FrontDoor)
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    let service = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
+        let front_door = front_door.clone();
+        async move { Ok::<_, Infallible>(front_door.handle(request.map(Body::new), peer, https).await) }
+    });
+    let _ = http1::Builder::new()
+        .serve_connection(TokioIo::new(stream), service)
+        .with_upgrades()
+        .await;
 }
 
 async fn shutdown_signal() {

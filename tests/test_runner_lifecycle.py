@@ -24,7 +24,7 @@ from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
+from gobby.config.bootstrap import BootstrapConfig, BootstrapConfigError, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
@@ -455,21 +455,22 @@ def _init_servers_runner(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("front_door", "expected"),
+    ("front_door", "bind_host", "expected"),
     [
-        (True, ("127.0.0.1", 60987, 60988)),
-        (False, ("0.0.0.0", 60887, 60888)),  # nosec B104 # asserted, never bound
+        (True, "0.0.0.0", ("127.0.0.1", 60987, 60988)),  # nosec B104 # asserted, never bound
+        # A disabled front door is loopback-only, so Python takes the public pair itself.
+        (False, "127.0.0.1", ("127.0.0.1", 60887, 60888)),
     ],
 )
 async def test_backend_ports_behind_front_door(
-    mock_config: MagicMock, front_door: bool, expected: tuple[str, int, int]
+    mock_config: MagicMock, front_door: bool, bind_host: str, expected: tuple[str, int, int]
 ) -> None:
     """Behind the front door the runner binds the +100 pair on loopback; off, the public pair."""
     from gobby.ai import build_daemon_text_generation_service
     from gobby.runner_init.servers import init_servers
 
     bootstrap = BootstrapConfig(
-        bind_host="0.0.0.0",  # nosec B104 # the public host gdaemon would take
+        bind_host=bind_host,
         daemon_port=60887,
         websocket_port=60888,
         front_door=FrontDoorConfig(enabled=front_door),
@@ -516,6 +517,9 @@ async def test_backend_ports_behind_front_door(
         await daemon.run(ownership_resolution=FailOpenPidOwnership("test"))
 
     assert uvicorn_config.call_args.kwargs["host"] == host
+    # request.client is the front door's observed peer, trusted only from loopback.
+    assert uvicorn_config.call_args.kwargs["proxy_headers"] is True
+    assert uvicorn_config.call_args.kwargs["forwarded_allow_ips"] == "127.0.0.1,::1"
 
 
 class TestInitSubsystems:
@@ -5352,6 +5356,40 @@ def test_main_refuses_linked_worktree_before_bootstrap(
     assert refusal in capsys.readouterr().err
     load_bootstrap.assert_not_called()
     run_gobby.assert_not_called()
+
+
+def test_disabled_front_door_on_public_bind_refuses_before_bind(tmp_path: Path) -> None:
+    """A disabled front door on a public bind_host would serve plaintext Python publicly."""
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        "bind_host: 100.64.0.10\n"
+        "front_door:\n"
+        "  enabled: false\n"
+        "  tls:\n"
+        "    mode: self-signed\n"
+        f"files_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    forbidden = AssertionError("a refused bootstrap must not reach the health probe or a bind")
+    with (
+        patch("gobby.utils.dev.worktree_daemon_refusal", return_value=None),
+        patch("gobby.runner._healthy_daemon_running", side_effect=forbidden) as probe,
+        patch("gobby.runner.run_gobby", side_effect=forbidden) as run_gobby,
+        patch("gobby.runner_lifecycle.run_daemon", side_effect=forbidden) as run_daemon,
+        pytest.raises(BootstrapConfigError) as refused,
+    ):
+        main(config_path=bootstrap_path)
+
+    assert str(refused.value) == (
+        "front_door.enabled: false requires a loopback bind_host (got '100.64.0.10'); "
+        "set bind_host to a loopback address, or enable the front door"
+    )
+    probe.assert_not_called()
+    run_gobby.assert_not_called()
+    run_daemon.assert_not_called()
 
 
 def _worktree_package(tmp_path: Path) -> tuple[Path, Path]:

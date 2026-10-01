@@ -9,11 +9,16 @@ Tests verify:
 5. Stop on non-running daemon is idempotent
 """
 
+import hashlib
 import os
+import re
 import shutil
 import signal
+import socket
+import ssl
 import subprocess
 import sys
+from collections.abc import Generator
 from pathlib import Path
 
 import httpx
@@ -29,14 +34,33 @@ from gobby.utils.native_bin import IDENTITY_STAMP_NAME, NATIVE_BIN_DIR_ENV, nati
 from tests._timing import wait_for_condition
 from tests.e2e.conftest import (
     DaemonInstance,
+    authenticated_daemon_client,
     authenticated_daemon_request,
     daemon_health_unavailable,
     prepare_daemon_env,
+    spawn_daemon_instance,
     terminate_process_tree,
     wait_for_daemon_health,
 )
 
 pytestmark = pytest.mark.e2e
+
+# Runs a lifecycle case against a plaintext daemon and one whose front door
+# serves a self-signed certificate.
+plaintext_and_tls = pytest.mark.parametrize(
+    "daemon_instance", [None, "self-signed"], indirect=True, ids=["plaintext", "tls"]
+)
+
+
+@pytest.fixture(scope="function")
+def tls_daemon_instance(
+    e2e_project_dir: Path,
+    e2e_config: tuple[Path, int, int],
+    e2e_pre_daemon_setup: None,
+) -> Generator[DaemonInstance]:
+    """The isolated daemon with its front door on a self-signed certificate."""
+    _ = e2e_pre_daemon_setup
+    yield from spawn_daemon_instance(e2e_project_dir, e2e_config, tls="self-signed")
 
 
 class TestDaemonStart:
@@ -55,6 +79,7 @@ class TestDaemonStart:
         except psutil.NoSuchProcess:
             pytest.fail("Daemon process not found via psutil")
 
+    @plaintext_and_tls
     def test_daemon_health_endpoint_responds(
         self, daemon_instance: DaemonInstance, daemon_client: httpx.Client
     ) -> None:
@@ -66,6 +91,7 @@ class TestDaemonStart:
         assert data.get("status") == "healthy"
         assert "uptime_seconds" in data or "version" in data or "status" in data
 
+    @plaintext_and_tls
     def test_daemon_listens_on_configured_ports(self, daemon_instance: DaemonInstance) -> None:
         """Verify daemon is listening on both HTTP and WebSocket ports."""
         import socket
@@ -91,6 +117,7 @@ class TestDaemonStart:
 class TestDaemonStop:
     """Tests for daemon stop behavior."""
 
+    @plaintext_and_tls
     def test_daemon_stops_gracefully_on_sigterm(self, daemon_instance: DaemonInstance) -> None:
         """Verify daemon stops gracefully when sent SIGTERM."""
         pid = daemon_instance.pid
@@ -171,76 +198,25 @@ class TestDaemonStop:
 class TestDaemonRestart:
     """Tests for daemon restart behavior."""
 
-    def test_daemon_can_restart_after_stop(
-        self,
-        e2e_project_dir,
-        e2e_config,
-    ) -> None:
-        """Verify daemon can be started again after being stopped."""
-        import subprocess
-        import sys
+    @plaintext_and_tls
+    def test_daemon_can_restart_after_stop(self, daemon_instance: DaemonInstance) -> None:
+        """Verify daemon can be started again on the same ports after SIGTERM."""
+        first_pid = daemon_instance.pid
+        os.kill(first_pid, signal.SIGTERM)
+        daemon_instance.process.wait(timeout=25)
+        wait_for_condition(
+            lambda: daemon_health_unavailable(daemon_instance.http_port),
+            timeout=5.0,
+            description="first daemon shutdown",
+        )
 
-        config_path, http_port, ws_port = e2e_config
-        gobby_home = config_path.parent
-        log_dir = gobby_home / "logs"
+        daemon_instance.restart()
 
-        log_file = log_dir / "daemon.log"
-        error_log_file = log_dir / "daemon_error.log"
-
-        # Use helper to properly prepare env (PYTHONPATH, API keys, HOME override)
-        env = prepare_daemon_env(home_dir=gobby_home)
-        env["GOBBY_CONFIG"] = str(config_path)
-        env["GOBBY_HOME"] = str(gobby_home)
-
-        # Start first daemon
-        with open(log_file, "w") as log_f, open(error_log_file, "w") as err_f:
-            process1 = subprocess.Popen(
-                [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
-                stdout=log_f,
-                stderr=err_f,
-                stdin=subprocess.DEVNULL,
-                cwd=str(e2e_project_dir),
-                env=env,
-                start_new_session=True,
-            )
-
-        try:
-            # Wait for first daemon to be healthy
-            wait_for_daemon_health(http_port, log_file=log_file)
-
-            # Stop first daemon
-            os.kill(process1.pid, signal.SIGTERM)
-            process1.wait(timeout=25)
-            wait_for_condition(
-                lambda: daemon_health_unavailable(http_port),
-                timeout=5.0,
-                description="first daemon shutdown",
-            )
-
-            # Start second daemon on same ports
-            with open(log_file, "a") as log_f, open(error_log_file, "a") as err_f:
-                process2 = subprocess.Popen(
-                    [sys.executable, "-m", "gobby.runner", "--config", str(config_path)],
-                    stdout=log_f,
-                    stderr=err_f,
-                    stdin=subprocess.DEVNULL,
-                    cwd=str(e2e_project_dir),
-                    env=env,
-                    start_new_session=True,
-                )
-
-            try:
-                # Wait for second daemon to be healthy
-                wait_for_daemon_health(http_port, log_file=log_file)
-
-                # Verify it's a different process
-                assert process2.pid != process1.pid, "Restarted daemon should have different PID"
-
-            finally:
-                terminate_process_tree(process2.pid)
-        finally:
-            if process1.poll() is None:
-                terminate_process_tree(process1.pid)
+        assert daemon_instance.pid != first_pid, "Restarted daemon should have different PID"
+        with authenticated_daemon_client(daemon_instance) as client:
+            response = client.get("/api/admin/status")
+        assert response.status_code == 200
+        assert response.json().get("status") == "healthy"
 
     def test_restart_has_no_state_leakage(
         self,
@@ -604,3 +580,44 @@ class TestFrontDoor:
 def _is_terminal_host(process: psutil.Process) -> bool:
     argv = process.cmdline()
     return bool(argv) and Path(argv[0]).name == "gterm" and argv[1:2] == ["host"]
+
+
+class TestFrontDoorTls:
+    """The front door on a self-signed certificate (plan 4.1.8)."""
+
+    def test_daemon_serves_over_self_signed_tls(self, tls_daemon_instance: DaemonInstance) -> None:
+        """The served certificate is the one printed at start, and survives a restart."""
+        instance = tls_daemon_instance
+        assert instance.http_url.startswith("https://")
+
+        first = _served_fingerprint(instance)
+        assert _printed_fingerprints(instance) == [first]
+
+        instance.stop()
+        instance.restart()
+
+        assert _served_fingerprint(instance) == first
+        printed = _printed_fingerprints(instance)
+        assert len(printed) >= 2 and set(printed) == {first}, printed
+        with authenticated_daemon_client(instance) as client:
+            response = client.get("/api/admin/status")
+        assert response.status_code == 200
+        assert response.json().get("status") == "healthy"
+
+
+def _served_fingerprint(instance: DaemonInstance) -> str:
+    """`sha256:<hex>` of the leaf the front door serves, fetched with the pinned cert."""
+    assert instance.cert_path is not None
+    context = ssl.create_default_context(cafile=str(instance.cert_path))
+    with (
+        socket.create_connection(("127.0.0.1", instance.http_port), timeout=5.0) as raw,
+        context.wrap_socket(raw, server_hostname="localhost") as tls,
+    ):
+        der = tls.getpeercert(binary_form=True)
+    assert der is not None
+    return f"sha256:{hashlib.sha256(der).hexdigest()}"
+
+
+def _printed_fingerprints(instance: DaemonInstance) -> list[str]:
+    """Every fingerprint gdaemon printed to the runner's stderr, oldest first."""
+    return re.findall(r"front door certificate (sha256:[0-9a-f]{64})", instance.read_error_logs())
