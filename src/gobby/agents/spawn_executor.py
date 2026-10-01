@@ -564,7 +564,10 @@ async def reap_stale_pending_terminals(
 async def _reap_stale_row(
     manager: TerminalManager, runtime_registry: TerminalRuntimeRegistry, listed: Terminal
 ) -> bool:
-    if not in_doubt_spawns.claim(listed.id):
+    # Naming the listed attempt resumes a claim an earlier reap of it suspended.
+    if not in_doubt_spawns.claim(
+        listed.id, attempt=(listed.attempt_generation, listed.attempt_started_at)
+    ):
         return False
     # The claim moves to a retained settlement task that releases it only after
     # its kill, proof and settlement finish: cancelling the caller (monitor stop)
@@ -581,9 +584,9 @@ async def _reap_claimed_row(
     from gobby.agents.spawn_in_doubt_owner import release_claim
 
     settled = False
+    pair = (listed.attempt_generation, listed.attempt_started_at)
     try:
         row = manager.get(listed.id)
-        pair = (listed.attempt_generation, listed.attempt_started_at)
         if row is None or row.state != "pending":
             return False
         if (row.attempt_generation, row.attempt_started_at) != pair:
@@ -607,9 +610,10 @@ async def _reap_claimed_row(
         settled = result is not None
         return settled
     finally:
-        # Deferred compensation runs only after a proven settle; an unproven exit
-        # keeps the row pending, so its process may still use it and no step runs.
+        # Deferred compensation runs only after a proven settle; an unsettled exit
+        # keeps the row pending, so its process may still use it. The claim stays
+        # suspended with its steps until a later reap of this attempt settles it.
         if settled:
             await release_claim(listed.id, proven=True)
         else:
-            in_doubt_spawns.release(listed.id)
+            in_doubt_spawns.suspend(listed.id, pair)

@@ -6,7 +6,7 @@ import asyncio
 import logging
 import signal
 from collections.abc import Awaitable, Callable, Coroutine
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import datetime
 from types import SimpleNamespace
@@ -15,10 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents import spawn_executor
 from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
 from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
-from gobby.storage.terminals import Terminal
+from gobby.storage.terminals import Terminal, TerminalManager
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.worktrees.git import WorktreeGitManager
 from tests.terminals.fakes import (
@@ -831,12 +832,14 @@ async def _cleanup(
     cleanup_isolation: bool = True,
     prior_attempt: tuple[int, datetime] | None = None,
     terminalize: Callable[..., Awaitable[bool]] | None = None,
+    child_sessions: object | None = None,
 ) -> None:
     runner = SimpleNamespace(
         run_storage=_Runs(),
         terminal_manager=store,
         terminal_runtime_registry=runtime_registry(runtime),
         agent_lifecycle_monitor=None,
+        child_session_manager=SimpleNamespace(_storage=child_sessions),
     )
     with patch(
         "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
@@ -851,6 +854,7 @@ async def _cleanup(
             completion_registry=None,
             cleanup_isolation=cleanup_isolation,
             task_manager=None,
+            child_session_id=None if child_sessions is None else "child-1",
             terminal_id=terminal_id,
             prior_attempt=prior_attempt,
         )
@@ -932,6 +936,84 @@ async def test_held_terminal_defers_rollback_and_isolation_to_owner(proven: bool
     # A kept orphan still rolls back the run; only a proven exit removes isolation.
     terminalize.assert_awaited_once()
     assert handler.removed == int(proven)
+
+
+class _ChildSessions:
+    def __init__(self) -> None:
+        self.deleted: list[str] = []
+
+    def delete(self, child_session_id: str) -> None:
+        self.deleted.append(child_session_id)
+
+
+@pytest.mark.parametrize("first_reap", ["absence_unproven", "cas_miss", "settle_raises"])
+async def test_unsettled_reap_keeps_deferred_cleanup_for_the_proven_reap(first_reap: str) -> None:
+    row = _row("pending")
+    store = MemoryTerminalStore(row)
+    registry = runtime_registry(FakeRuntime())
+    handler = _Isolation()
+    children = _ChildSessions()
+    terminalize = AsyncMock(return_value=True)
+    entered, resume = asyncio.Event(), asyncio.Event()
+
+    async def first_absence(*_args: object) -> bool:
+        entered.set()
+        await resume.wait()
+        return first_reap != "absence_unproven"
+
+    manager = cast(TerminalManager, store)
+    settle_failure: AbstractContextManager[object] = nullcontext()
+    if first_reap == "cas_miss":
+        settle_failure = patch.object(store, "fail_pending_attempt", return_value=None)
+    elif first_reap == "settle_raises":
+        settle_failure = patch.object(
+            store, "fail_pending_attempt", side_effect=RuntimeError("settle failed")
+        )
+    with patch.object(spawn_executor, "_stale_pending_absent", first_absence), settle_failure:
+        reaping = asyncio.create_task(spawn_executor._reap_stale_row(manager, registry, row))
+        await entered.wait()
+        # Cleanup lands while the reaper holds the id, so its steps wait on that claim.
+        await _cleanup(
+            store,
+            FakeRuntime(),
+            row.id,
+            handler,
+            terminalize=terminalize,
+            child_sessions=children,
+        )
+        resume.set()
+        if first_reap == "settle_raises":
+            with pytest.raises(RuntimeError, match="settle failed"):
+                await reaping
+        else:
+            assert await reaping is False
+
+    # The unsettled reap ran nothing and stays suspended on its attempt with the steps,
+    # so no other owner (a placed retry, another attempt) can claim and settle the row.
+    assert in_doubt_spawns.holds(row.id)
+    assert not in_doubt_spawns.claim(row.id)
+    assert not in_doubt_spawns.claim(
+        row.id, attempt=(row.attempt_generation + 1, row.attempt_started_at)
+    )
+    assert store.rows[row.id].state == "pending"
+    terminalize.assert_not_awaited()
+    assert (handler.removed, children.deleted) == (0, [])
+
+    with (
+        patch.object(spawn_executor, "_stale_pending_absent", AsyncMock(return_value=True)),
+        patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            terminalize,
+        ),
+    ):
+        assert await spawn_executor._reap_stale_row(manager, registry, row) is True
+        # The settled row is no longer reaped, so nothing runs twice.
+        assert await spawn_executor._reap_stale_row(manager, registry, row) is False
+
+    assert store.rows[row.id].state == "exited"
+    terminalize.assert_awaited_once()
+    assert (handler.removed, children.deleted) == (1, ["child-1"])
+    assert not in_doubt_spawns.holds(row.id)
 
 
 async def test_held_terminal_defers_isolation_to_owner() -> None:
