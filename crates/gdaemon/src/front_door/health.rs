@@ -1,6 +1,6 @@
 //! Typed backend unavailability and the native `health` route family.
 
-use std::fmt::Display;
+use std::error::Error;
 use std::net::SocketAddr;
 
 use axum::Router;
@@ -45,11 +45,19 @@ pub fn unavailable(target: SocketAddr, state: BackendState) -> Response<Body> {
 }
 
 /// The 502 returned when the backend accepted the connection but answered malformed.
-pub fn bad_gateway(target: SocketAddr, error: impl Display) -> Response<Body> {
+/// `error` carries its whole source chain, so a hyper send failure names its cause.
+pub fn bad_gateway(target: SocketAddr, error: impl Error) -> Response<Body> {
+    let mut message = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(": ");
+        message.push_str(&cause.to_string());
+        source = cause.source();
+    }
     let body = json!({
         "status": "bad_gateway",
         "backend": {"target": target.to_string()},
-        "error": error.to_string(),
+        "error": message,
     });
     json_response(StatusCode::BAD_GATEWAY, body, false)
 }
@@ -89,4 +97,52 @@ async fn native_health(State(state): State<FrontDoorState>, request: Request) ->
         .headers_mut()
         .insert(SERVED_BY_HEADER, HeaderValue::from_static("gdaemon"));
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fmt;
+
+    use http_body_util::BodyExt;
+
+    use super::*;
+
+    #[derive(Debug)]
+    struct Wrapped(std::io::Error);
+
+    impl fmt::Display for Wrapped {
+        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("client error (SendRequest)")
+        }
+    }
+
+    impl Error for Wrapped {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    #[tokio::test]
+    async fn bad_gateway_error_names_its_source_chain() {
+        let cause = std::io::Error::other("connection closed before message completed");
+        let target = SocketAddr::from(([127, 0, 0, 1], 60987));
+        let response = bad_gateway(target, Wrapped(cause));
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("json body");
+        assert_eq!(
+            body,
+            json!({
+                "status": "bad_gateway",
+                "backend": {"target": "127.0.0.1:60987"},
+                "error": "client error (SendRequest): connection closed before message completed",
+            })
+        );
+    }
 }

@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "name": "front_door_backend_down",
+  "family": "front_door",
+  "credential": "none",
+  "request": {
+    "method": "GET",
+    "path": "/api/sessions",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 503,
+    "headers": {
+      "content-type": "application/json",
+      "retry-after": "1"
+    },
+    "body": {
+      "status": "unavailable",
+      "backend": {
+        "state": "down",
+        "target": "@mask@"
+      }
+    }
+  },
+  "mask": [
+    "/response/body/backend/target"
+  ]
+}

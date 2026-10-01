@@ -1,5 +1,7 @@
 //! Streaming HTTP proxy to the Python backend.
 
+use std::time::Duration;
+
 use axum::body::Body;
 use axum::http::header::CONNECTION;
 use axum::http::{HeaderMap, HeaderName, Request, Response, Uri, Version};
@@ -8,7 +10,7 @@ use http_body_util::BodyExt;
 use hyper::body::Frame;
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
-use hyper_util::rt::TokioExecutor;
+use hyper_util::rt::{TokioExecutor, TokioTimer};
 
 use super::FrontDoorState;
 use super::health::{bad_gateway, unavailable};
@@ -25,8 +27,15 @@ const HOP_BY_HOP: [&str; 6] = [
     "upgrade",
 ];
 
+/// Idle pooled backend connections close before uvicorn's 5s keep-alive
+/// expiry, so the proxy never reuses a connection the backend is closing.
+const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+
 pub fn client() -> ProxyClient {
-    Client::builder(TokioExecutor::new()).build_http()
+    Client::builder(TokioExecutor::new())
+        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
+        .pool_timer(TokioTimer::new())
+        .build_http()
 }
 
 /// Forward `request` to the listener's backend. Bodies stream in both directions;

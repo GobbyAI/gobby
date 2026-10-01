@@ -6,6 +6,7 @@ use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use bytes::Bytes;
 use common::{
@@ -242,6 +243,78 @@ async fn refused_backend_returns_typed_503() {
 }
 
 /// Read one chunked HTTP/1.1 message, head through the trailer section.
+/// A keep-alive backend that, like uvicorn at its keep-alive expiry, closes a
+/// connection without answering when a request arrives after `idle_limit` idle.
+async fn expiring_keep_alive_backend(idle_limit: Duration) -> std::net::SocketAddr {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind backend");
+    let addr = listener.local_addr().expect("backend addr");
+    tokio::spawn(async move {
+        loop {
+            let (mut stream, _) = listener.accept().await.expect("accept");
+            tokio::spawn(async move {
+                let mut answered: Option<tokio::time::Instant> = None;
+                let mut buffer = Vec::new();
+                loop {
+                    while !buffer.windows(4).any(|window| window == b"\r\n\r\n") {
+                        let mut chunk = [0_u8; 1024];
+                        match stream.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(read) => buffer.extend_from_slice(&chunk[..read]),
+                        }
+                    }
+                    buffer.clear();
+                    if answered.is_some_and(|at| at.elapsed() >= idle_limit) {
+                        return;
+                    }
+                    let reply = b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok";
+                    if stream.write_all(reply).await.is_err() {
+                        return;
+                    }
+                    answered = Some(tokio::time::Instant::now());
+                }
+            });
+        }
+    });
+    addr
+}
+
+#[tokio::test]
+async fn backend_keep_alive_expiry_does_not_surface_502() {
+    // Outlasts the front door's pooled-connection idle timeout.
+    let idle_gap = Duration::from_millis(2500);
+    let backend = expiring_keep_alive_backend(idle_gap).await;
+    let front_door = start_front_door(backend).await;
+
+    for attempt in 0..2 {
+        if attempt > 0 {
+            // Let the pool reclaim the first connection, then idle it on the paused
+            // clock that both the pool timer and the backend read.
+            tokio::task::yield_now().await;
+            tokio::time::pause();
+            tokio::time::advance(idle_gap).await;
+            tokio::time::resume();
+        }
+        let request = Request::get("/api/hooks/execute")
+            .header("host", "localhost")
+            .body(Full::new(Bytes::new()))
+            .expect("request");
+        let response = tokio::time::timeout(TIMEOUT, send(front_door, request))
+            .await
+            .expect("response timed out");
+        let status = response.status();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("body")
+            .to_bytes();
+        assert_eq!(status, StatusCode::OK, "attempt {attempt}: {body:?}");
+        assert_eq!(body, "ok", "attempt {attempt}");
+    }
+}
+
 async fn read_chunked_message(stream: &mut TcpStream) -> String {
     let mut buffer = Vec::new();
     loop {
@@ -417,18 +490,34 @@ fn spawn_serve(parent_fd: Option<&str>, reader: std::io::PipeReader) -> (ServeCh
     (child, ports)
 }
 
+/// The child's exit status if it exits within `within`; `None` if it is still running.
+#[cfg(unix)]
+fn wait_for_exit(
+    process: &mut std::process::Child,
+    within: Duration,
+) -> Option<std::process::ExitStatus> {
+    let deadline = std::time::Instant::now() + within;
+    loop {
+        if let Some(status) = process.try_wait().expect("poll serve") {
+            return Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[cfg(unix)]
 #[test]
 fn parent_fd_eof_stops_serve() {
-    use std::time::{Duration, Instant};
-
     // Without GOBBY_PARENT_FD there is no watch: EOF on the same pipe changes nothing.
     let (reader, writer) = std::io::pipe().expect("pipe");
     let (mut unwatched, ports) = spawn_serve(None, reader);
     drop(writer);
-    std::thread::sleep(Duration::from_millis(500));
-    assert!(
-        unwatched.process.try_wait().expect("poll serve").is_none(),
+    assert_eq!(
+        wait_for_exit(&mut unwatched.process, Duration::from_millis(500)),
+        None,
         "serve without GOBBY_PARENT_FD must keep running"
     );
     assert!(std::net::TcpStream::connect(("127.0.0.1", ports[0])).is_ok());
@@ -438,14 +527,7 @@ fn parent_fd_eof_stops_serve() {
     let (reader, writer) = std::io::pipe().expect("pipe");
     let (mut watched, ports) = spawn_serve(Some("0"), reader);
     drop(writer);
-    let deadline = Instant::now() + TIMEOUT;
-    let status = loop {
-        if let Some(status) = watched.process.try_wait().expect("poll serve") {
-            break status;
-        }
-        assert!(Instant::now() < deadline, "serve ignored parent EOF");
-        std::thread::sleep(Duration::from_millis(50));
-    };
+    let status = wait_for_exit(&mut watched.process, TIMEOUT).expect("serve ignored parent EOF");
     assert!(status.success(), "serve exited with {status}");
     for port in ports {
         assert!(
