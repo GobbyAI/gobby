@@ -32,3 +32,14 @@ def isolate_native_bin_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> N
     unless it installs its own stubs there.
     """
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(tmp_path / "native-bin"))
+
+
+@pytest.fixture(autouse=True)
+def isolate_cargo_target_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep workspace builds on the workspace's own ``target`` entry.
+
+    Spawned agents inherit their own ``CARGO_TARGET_DIR`` (#23198), and artifact
+    readers follow it, so fixtures that stage ``<workspace>/target/release`` would
+    otherwise depend on which seat runs the suite.
+    """
+    monkeypatch.delenv("CARGO_TARGET_DIR", raising=False)

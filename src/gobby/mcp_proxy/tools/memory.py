@@ -33,7 +33,6 @@ from gobby.mcp_proxy.tools.memory_session import resolve_claimed_task_id, resolv
 from gobby.mcp_proxy.tools.memory_surface import register_memory_surface_tools
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
 from gobby.memory.manager import MemoryManager
-from gobby.memory.scoring import undecay
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.workflows.state_manager import SessionVariableManager
@@ -180,11 +179,7 @@ def create_memory_registry(
             undecayed_scores: list[float] = []
             for m in candidates:
                 similarity = getattr(m, "similarity", None)
-                undecayed_similarity = (
-                    undecay(similarity, getattr(m, "temporal_decay_factor", None))
-                    if isinstance(similarity, int | float) and not isinstance(similarity, bool)
-                    else None
-                )
+                undecayed_similarity = getattr(m, "undecayed_similarity", None)
                 if undecayed_similarity is not None:
                     undecayed_scores.append(undecayed_similarity)
                     if effective_min_score > 0 and undecayed_similarity < effective_min_score:

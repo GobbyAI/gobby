@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import cast
 
+from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_set_coherence import (
     BinarySetCoherenceError,
@@ -103,7 +104,7 @@ def _install_from_workspace(binary: Path) -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    source = manifest.parent / "target" / "release" / _BINARY_NAME
+    source = cargo_release_dir(manifest.parent) / _BINARY_NAME
     if result.returncode != 0 or not source.is_file():
         return False
     try:

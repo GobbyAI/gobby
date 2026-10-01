@@ -208,12 +208,8 @@ def test_postgres_database_delegates_exact_conninfo_to_gdaemon(
     database._conninfo = "postgresql://object.example/gobby?options=-csearch_path%3Dworker"
 
     database.apply_migrations()
-    database.apply_destructive_migrations()
 
-    assert apply.call_args_list == [
-        ((database._conninfo,), {}),
-        ((database._conninfo,), {"destructive": True}),
-    ]
+    assert apply.call_args_list == [((database._conninfo,), {})]
 
 
 def test_apply_reports_database_identity_failure_without_leaking_database_url(

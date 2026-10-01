@@ -333,7 +333,6 @@ def test_start_preflight_tolerates_retired_config_before_runner_reconciles_it() 
     [
         ("src/gobby/runner.py", "verify_schema"),
         ("src/gobby/cli/schema.py", "apply_schema"),
-        ("src/gobby/storage/hub/runtime.py", "apply_destructive_migrations"),
     ],
 )
 def test_fail_closed_paths_still_call_the_identity_gate(relative_path: str, expected: str) -> None:

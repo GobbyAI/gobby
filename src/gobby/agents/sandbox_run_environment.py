@@ -3,11 +3,12 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-# CARGO_TARGET_DIR is deliberately absent: it is checkout-specific
-# (gobby.agents.cargo_target), not privatized per run.
+# CARGO_HOME and CARGO_TARGET_DIR are deliberately absent: Cargo fingerprints
+# embed $CARGO_HOME/registry/src, so a per-run home rebuilds the whole
+# dependency graph on every run (#23194). Runs share the pair below
+# `SandboxRunPaths.shared_cache` instead.
 RUN_CACHE_ENV_VARS = (
     "UV_CACHE_DIR",
-    "CARGO_HOME",
     "GOCACHE",
     "GOMODCACHE",
     "npm_config_cache",
@@ -36,6 +37,13 @@ class SandboxRunPaths:
     hooks: Path
     logs: Path
     cache: Path
+    # Stable caches every sandboxed run shares and nothing unsandboxed builds from
+    # (constants.sandbox_agent_cache_dir). Runs may write only cargo_home and
+    # cargo_target: the daemon rebuilds the Zig mirror here before each run, so
+    # no run may plant links in it for the daemon to follow.
+    shared_cache: Path
+    # This checkout's target below shared_cache (cargo_target.sandbox_checkout_cargo_target_dir).
+    cargo_target: Path
     # Complete `zig build --system` package dir; None leaves libghostty-vt fetching.
     zig_system_dir: Path | None = None
 
@@ -43,10 +51,16 @@ class SandboxRunPaths:
     def writable(self) -> tuple[Path, Path, Path, Path]:
         return (self.tmp, self.hooks, self.logs, self.cache)
 
+    @property
+    def cargo_home(self) -> Path:
+        return self.shared_cache / "cargo-home"
+
     def environment(self, provider: str) -> dict[str, str]:
         values = {
             name: str(self.cache / name.replace("_", "-").lower()) for name in RUN_CACHE_ENV_VARS
         }
+        values["CARGO_HOME"] = str(self.cargo_home)
+        values["CARGO_TARGET_DIR"] = str(self.cargo_target)
         # Every provider child, and everything it spawns, must land temp files in
         # the run's writable tmp. Claude alone used to get only CLAUDE_CODE_TMPDIR,
         # so its children kept the ambient system temp, which is not a write grant:

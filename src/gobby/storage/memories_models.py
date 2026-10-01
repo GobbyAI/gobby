@@ -130,6 +130,11 @@ class Memory:
     ranking_score: float | None = None  # Hybrid retrieval rank, not persisted
     raw_semantic_score: float | None = None  # Raw Qdrant score, not persisted
     temporal_decay_factor: float | None = None  # Search-time decay, not persisted
+    # The score before age decay -- cosine times source boost, or an expander
+    # find's discounted confidence -- that the search floor and ordering read.
+    # Consumers read it here: dividing `similarity` by the decay does not
+    # round-trip, and dropped hits sitting exactly on a floor (#22910).
+    undecayed_similarity: float | None = None  # Set at search time, not persisted
     ranking_mode: str | None = None  # Search-time scoring mode, not persisted
     # Entity-match confidence for a hit the graph expander found and the vector
     # leg missed. It is the admission axis for that hit at both floors, while
@@ -231,6 +236,8 @@ class Memory:
             data["raw_semantic_score"] = self.raw_semantic_score
         if self.temporal_decay_factor is not None:
             data["temporal_decay_factor"] = self.temporal_decay_factor
+        if self.undecayed_similarity is not None:
+            data["undecayed_similarity"] = self.undecayed_similarity
         if self.ranking_mode is not None:
             data["ranking_mode"] = self.ranking_mode
         return data

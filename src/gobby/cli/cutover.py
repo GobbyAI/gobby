@@ -9,6 +9,7 @@ from pathlib import Path
 
 import click
 
+from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli._daemon_handoffs import protect_pending_handoffs
 from gobby.cli._daemon_protected_runs import clear_protected_runs, fetch_protected_runs
 from gobby.cli.daemon import restart
@@ -95,7 +96,7 @@ def _build_artifacts(root: Path) -> dict[str, Path]:
     _run(args, cwd=root, label="release build", timeout=1800)
 
     artifacts = {
-        name: root / "target" / "release" / native_bin_name(name) for name in _BINARY_NAMES
+        name: cargo_release_dir(root, cwd=root) / native_bin_name(name) for name in _BINARY_NAMES
     }
     missing = [str(path) for path in artifacts.values() if not path.is_file()]
     if missing:

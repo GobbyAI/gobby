@@ -97,7 +97,9 @@ class HookSessionManager(Protocol):
         activity_confirmed: bool = False,
     ) -> bool: ...
 
-    def revive_expired_terminal_session(self, session_id: str) -> Session | None: ...
+    def revive_expired_terminal_session(
+        self, session_id: str, current: Session | None = None
+    ) -> Session | None: ...
 
     def register_session(
         self,
@@ -123,6 +125,14 @@ class HookSessionManager(Protocol):
         project_id: str | None = None,
         session_type: str = "terminal",
     ) -> str | None: ...
+
+    def get_cached_session(
+        self,
+        external_id: str,
+        source: str,
+        project_id: str | None = None,
+        session_type: str = "terminal",
+    ) -> Session | None: ...
 
     def lookup_session_id(
         self,
@@ -155,6 +165,7 @@ class HookSessionManager(Protocol):
         self,
         session_id: str,
         terminal_context: dict[str, Any] | None,
+        current: Session | None = None,
     ) -> tuple[Session | None, bool]: ...
 
     def reset_transcript_processed(self, session_id: str) -> Session | None: ...

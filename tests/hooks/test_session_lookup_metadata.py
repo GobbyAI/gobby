@@ -99,6 +99,10 @@ def test_valid_platform_session_metadata_is_preserved_and_enriched() -> None:
     session_manager.backfill_terminal_context.assert_called_once_with(
         "platform-session",
         {"tmux_pane": "%1"},
+        session_manager.get.return_value,
+    )
+    session_manager.revive_expired_terminal_session.assert_called_once_with(
+        "platform-session", None
     )
     session_task_manager.get_session_tasks.assert_called_once_with("platform-session")
 
@@ -128,6 +132,10 @@ def test_terminal_context_backfill_adds_cwd_and_renames_empty_title() -> None:
     session_manager.backfill_terminal_context.assert_called_once_with(
         "platform-session",
         {"tmux_pane": "%1", "cwd": "/work/repos/gobby"},
+        session_manager.get.return_value,
+    )
+    session_manager.revive_expired_terminal_session.assert_called_once_with(
+        "platform-session", updated_session
     )
     mock_schedule.assert_called_once()
     assert mock_schedule.call_args.args == (updated_session, "")
@@ -265,6 +273,10 @@ def test_user_prompt_submit_weak_context_recovers_tmux_session_without_registeri
     session_manager.backfill_terminal_context.assert_called_once_with(
         "tmux-capable-session",
         {"cwd": "/work/repos/gobby"},
+        None,
+    )
+    session_manager.revive_expired_terminal_session.assert_called_once_with(
+        "tmux-capable-session", recovered_session
     )
 
 

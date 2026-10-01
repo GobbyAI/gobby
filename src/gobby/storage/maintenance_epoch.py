@@ -19,7 +19,6 @@ from psycopg.types.json import Jsonb
 from gobby.utils.sql import render_internal_sql
 
 type Campaign = Literal[
-    "schema-apply",
     "purge",
     "reconcile",
 ]
@@ -29,7 +28,6 @@ type JsonValue = None | bool | int | float | str | list[JsonValue] | dict[str, J
 type JsonObject = dict[str, JsonValue]
 
 CAMPAIGNS: tuple[Campaign, ...] = (
-    "schema-apply",
     "purge",
     "reconcile",
 )

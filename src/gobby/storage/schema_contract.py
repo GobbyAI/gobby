@@ -156,14 +156,11 @@ def apply_schema(
     database_url: str,
     *,
     schema: str | None = None,
-    destructive: bool = False,
 ) -> None:
     """Apply the installed gdaemon's embedded schema assets."""
     args = ["schema", "apply"]
     if schema is not None:
         args.extend(["--schema", schema])
-    if destructive:
-        args.append("--destructive")
     _run_gdaemon(database_url, args, action="schema apply")
     logger.info("gdaemon schema apply completed for schema %s", schema or "connection default")
 

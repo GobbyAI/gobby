@@ -48,11 +48,8 @@ Cutover additionally refuses to build from uncommitted schema inputs
 (`crates/gcore/assets/schema`, `crates/gcore/src/schema`, and the identity pin)
 unless `--allow-dirty` is passed.
 
-A destructive schema change uses `gobby hub-maintenance run schema-apply`.
-The campaign stops the daemon, opens a maintenance epoch, obtains a verified
-epoch-bound hub backup, applies the guarded schema change, verifies its
-postcondition, and releases maintenance before starting the daemon.
-Failure leaves the epoch available for `gobby hub-maintenance resume`.
+Every migration applies through the same `schema apply` chain, including one
+that drops or rewrites data; there is no separate destructive-migration path.
 
 ## Files and client credentials
 
