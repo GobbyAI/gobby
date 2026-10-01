@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.agents import sandbox_policy
 from gobby.agents.cargo_target import (
     checkout_cargo_target_dir,
     cleanup_checkout_cargo_target_dir,
@@ -178,6 +179,36 @@ def test_cleanup_removes_only_derived_checkout_target(
     assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
     assert not target.exists()
     assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
+
+
+def test_cleanup_removes_the_target_sandboxed_runs_built_into(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    """Sandboxed runs build into their own target, which must not outlive the checkout."""
+    run = sandbox_policy.prepare_sandbox_run_paths("run-1", {}, workspace=cargo_checkout)
+    sandbox_target = Path(run.environment("claude")["CARGO_TARGET_DIR"])
+    (sandbox_target / "debug").mkdir(parents=True, exist_ok=True)
+
+    assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
+    assert not sandbox_target.exists()
+    assert run.cargo_home.is_dir()
+
+
+def test_cleanup_keeps_what_a_linked_sandbox_target_points_to(
+    gobby_home: Path, cargo_checkout: Path, tmp_path: Path
+) -> None:
+    """A sandboxed run can swap its own target for a link; cleanup must not follow it."""
+    run = sandbox_policy.prepare_sandbox_run_paths("run-1", {}, workspace=cargo_checkout)
+    foreign = tmp_path / "unsandboxed-target"
+    (foreign / "debug").mkdir(parents=True)
+    run.cargo_target.rmdir()
+    run.cargo_target.symlink_to(foreign, target_is_directory=True)
+
+    error = cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1")
+
+    assert error == f"Refusing to remove symlinked Cargo target path: {run.cargo_target}"
+    assert run.cargo_target.is_symlink()
+    assert sorted(child.name for child in foreign.iterdir()) == ["debug"]
 
 
 def test_cleanup_refuses_symlinked_cache_target(

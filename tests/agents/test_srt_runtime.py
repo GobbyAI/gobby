@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import threading
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -378,13 +379,21 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         return None if result is None else str(result)
 
     monkeypatch.setattr(shutil, "which", fake_which)
+    # A spawn hands the run the unsandboxed Cargo home and checkout target with grants.
+    unsandboxed_cargo = {
+        "CARGO_HOME": gobby_home / "cache" / "cargo-home",
+        "CARGO_TARGET_DIR": gobby_home / "cache" / "cargo-target-v2" / "project" / "workspace",
+    }
+    spawn_env = {"PATH": str(shim_dir)} | {
+        name: str(path) for name, path in unsandboxed_cargo.items()
+    }
 
     launch = await prepare_sandbox_launch(
         config=SandboxConfig(
             enabled=True,
             backend="srt",
             allow_network=False,
-            extra_write_paths=[str(hook_inbox)],
+            extra_write_paths=[str(hook_inbox), *map(str, unsandboxed_cargo.values())],
             allow_unix_sockets=[str(workspace / "operator.sock")],
         ),
         provider=provider,
@@ -394,7 +403,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         daemon_port=60887,
         websocket_port=60888,
         api_base=None,
-        env={"PATH": str(shim_dir)},
+        env=spawn_env,
         allow_run_unix_sockets=allow_run_sockets,
     )
 
@@ -422,7 +431,10 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert mux_dir.is_dir()
     assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
-    assert Path(launch.provider_env["CARGO_HOME"]).is_relative_to(expected_parent / "cache")
+    sandbox_cache = gobby_home / "cache" / "sandbox"
+    for name in unsandboxed_cargo:
+        assert Path(launch.provider_env[name]).is_relative_to(sandbox_cache)
+    assert not (expected_parent / "cache" / "cargo-home").exists()
     for writable_name in ("hooks", "logs", "cache"):
         writable = expected_parent / writable_name
         assert writable.is_dir()
@@ -436,7 +448,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     preflight_launch, preflight_cwd, preflight_env = preflights[0]
     assert preflight_launch is launch
     assert preflight_cwd == str(workspace)
-    assert preflight_env == {"PATH": str(shim_dir), **launch.provider_env}
+    assert preflight_env == {**spawn_env, **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     socket_grants = policy["network"]["allowUnixSockets"]
     assert str((workspace / "operator.sock").resolve()) in socket_grants
@@ -448,6 +460,12 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     allowed_reads = policy["filesystem"]["allowRead"]
     allowed_writes = policy["filesystem"]["allowWrite"]
     assert str(hook_inbox.resolve()) in allowed_writes
+    for name, unsandboxed_path in unsandboxed_cargo.items():
+        assert allowed_writes.count(str(Path(launch.provider_env[name]).resolve())) == 1
+        assert str(unsandboxed_path.resolve()) not in allowed_writes
+    # The daemon rebuilds the Zig mirror below this root before each run, so no run
+    # may plant links there for the next one to follow.
+    assert str(sandbox_cache.resolve()) not in allowed_writes
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads
@@ -922,6 +940,77 @@ async def test_srt_verification_does_not_run_on_the_event_loop(
 
     assert len(verified_on) == 1
     assert verified_on[0] != threading.get_ident()
+
+
+async def _swap_then_compute(
+    swap: Callable[[], None], *args: Any, **kwargs: Any
+) -> ResolvedSandboxPaths:
+    swap()
+    return await compute_sandbox_paths(*args, **kwargs)
+
+
+async def _compute_then_swap(
+    swap: Callable[[], None], *args: Any, **kwargs: Any
+) -> ResolvedSandboxPaths:
+    paths = await compute_sandbox_paths(*args, **kwargs)
+    swap()
+    return paths
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "race", [_swap_then_compute, _compute_then_swap], ids=["before-grants", "after-grants"]
+)
+async def test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    race: Callable[..., Awaitable[ResolvedSandboxPaths]],
+) -> None:
+    """Every concurrent sandboxed run holds the cargo-home grant, so one can swap the
+    entry for a link between run-path preparation and policy rendering. The launch
+    must fail closed instead of granting the link's target (#23194)."""
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    unsandboxed = tmp_path / "unsandboxed-cargo-home"
+    unsandboxed.mkdir()
+    shim_dir = tmp_path / "bin"
+    shim_dir.mkdir()
+    provider = shim_dir / "claude"
+    provider.write_text("#!/bin/sh\n", encoding="utf-8")
+    provider.chmod(0o755)
+    cargo_home = gobby_home / "cache" / "sandbox" / "cargo-home"
+
+    def swap() -> None:
+        cargo_home.rmdir()
+        cargo_home.symlink_to(unsandboxed, target_is_directory=True)
+
+    def unexpected_verify(**_context: str | None) -> SrtInstallation:
+        pytest.fail("no policy may be rendered for a swapped cache grant")
+
+    monkeypatch.setattr(
+        "gobby.agents.sandbox.compute_sandbox_paths",
+        lambda *args, **kwargs: race(swap, *args, **kwargs),
+    )
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation", unexpected_verify)
+
+    with pytest.raises(SrtRuntimeError, match="outside the sandbox cache"):
+        await prepare_sandbox_launch(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            provider="claude",
+            workspace_path=str(workspace),
+            run_id="run-1",
+            resolver=None,
+            daemon_port=60887,
+            websocket_port=60888,
+            api_base=None,
+            env={"PATH": str(shim_dir)},
+        )
+
+    assert cargo_home.is_symlink()
+    assert list(unsandboxed.iterdir()) == []
+    assert list(gobby_home.rglob("settings.json")) == []
 
 
 @pytest.mark.asyncio
