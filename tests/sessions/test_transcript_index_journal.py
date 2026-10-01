@@ -339,3 +339,57 @@ async def test_queued_reader_keeps_the_transcript_lock_until_it_finishes(
         release[1].set()
         await asyncio.gather(second, third)
     assert maximum_active == 1, "a fresh reader bypassed the queued reader's transcript lock"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_twice", [False, True])
+async def test_cancelled_reader_finishes_and_publishes_before_next_extension(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cancel_twice: bool
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "home"))
+    indexes.clear_index_cache()
+    path = tmp_path / "transcript.jsonl"
+    path.write_text(_message(0))
+    await _read(path)
+    with path.open("a") as handle:
+        handle.write(_message(1))
+    entered = [threading.Event(), threading.Event()]
+    release = threading.Event()
+    counter_lock = threading.Lock()
+    calls = active = maximum_active = 0
+    original = resumes.extend_index_from_file
+
+    def gated_extend(*args: Any, **kwargs: Any) -> indexes.TranscriptIndex | None:
+        nonlocal calls, active, maximum_active
+        with counter_lock:
+            number = calls
+            calls += 1
+            active += 1
+            maximum_active = max(maximum_active, active)
+        entered[number].set()
+        try:
+            if not release.wait(5):
+                raise RuntimeError("extension gate timed out")
+            return original(*args, **kwargs)
+        finally:
+            with counter_lock:
+                active -= 1
+
+    monkeypatch.setattr(resumes, "extend_index_from_file", gated_extend)
+    first = asyncio.create_task(_read(path))
+    assert await asyncio.to_thread(entered[0].wait, 5)
+    first.cancel()
+    second = asyncio.create_task(_read(path))
+    try:
+        second_entered = await asyncio.to_thread(entered[1].wait, 1)
+        if cancel_twice:
+            first.cancel()
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await first
+    current = await second
+    assert not second_entered, "a cancelled reader released its lock before its worker finished"
+    assert maximum_active == 1
+    assert calls == 1, "completed extension was not published before cancellation propagated"
+    assert current.raw_record_count == current.total_groups == len(current.boundaries) == 2

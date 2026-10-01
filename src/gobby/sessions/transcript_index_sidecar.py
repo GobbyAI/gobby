@@ -780,6 +780,52 @@ async def get_or_build_index(
     mtime_ns: int,
     size: int,
 ) -> TranscriptIndex:
+    """Finish and publish an index operation before propagating caller cancellation.
+
+    Cancelling a to_thread await cannot stop its worker. Keep the entire operation
+    alive so its lock covers shared mutations and its completed snapshot reaches
+    the cache before another reader can extend the same resident containers.
+    """
+    operation = asyncio.create_task(
+        _get_or_build_index(
+            path,
+            source,
+            session_id,
+            seek_mode=seek_mode,
+            lines=lines,
+            raw_lines=raw_lines,
+            logical_size=logical_size,
+            mtime_ns=mtime_ns,
+            size=size,
+        )
+    )
+    try:
+        return await asyncio.shield(operation)
+    except asyncio.CancelledError:
+        while not operation.done():
+            try:
+                await asyncio.shield(operation)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not operation.cancelled():
+            operation.exception()
+        raise
+
+
+async def _get_or_build_index(
+    path: str,
+    source: str,
+    session_id: str | None,
+    *,
+    seek_mode: str = "byte",
+    lines: Iterable[str] | None = None,
+    raw_lines: Iterable[RawLine] | None = None,
+    logical_size: int | None = None,
+    mtime_ns: int,
+    size: int,
+) -> TranscriptIndex:
     """Return a cached index for the snapshot, building once off the event loop."""
     from gobby.sessions.transcript_index import (
         _require_gzip_logical_size,
