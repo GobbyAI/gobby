@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.servers.websocket.terminal_input import WriteOutcome, record_turn_observation
+# WRITE_FAULT_NAME is re-exported: e2e fixtures import it from this module.
+from gobby.servers.websocket.terminal_ws_write import WRITE_FAULT_NAME as WRITE_FAULT_NAME
+from gobby.servers.websocket.terminal_ws_write import TerminalWriteMixin
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 from gobby.storage.terminals import AttachLocator, HostEpochMismatchError
 from gobby.terminals.foreground import (
@@ -23,14 +23,8 @@ from gobby.terminals.leases import (
     LifecyclePublicationError,
     SizingDecision,
     TerminalLeaseRegistry,
-    paste_oversize,
 )
-from gobby.terminals.runtime import (
-    Delivered,
-    IndeterminateWrite,
-    TerminalWriteError,
-    UnregisteredBackendError,
-)
+from gobby.terminals.runtime import UnregisteredBackendError
 from gobby.terminals.ws_protocol import (
     TERMINAL_LIST_DEFAULT_PAGE_SIZE,
     TERMINAL_LIST_MAX_PAGE_SIZE,
@@ -59,8 +53,6 @@ def _list_states(raw: object) -> tuple[str, ...] | None:
         return None
     return tuple(dict.fromkeys(raw))
 
-
-WRITE_FAULT_NAME = "terminal_write_fault"
 
 # The gterm host capability for `SetTerminalTheme` on its frame streams.
 TERMINAL_THEME_CAPABILITY = "terminal_theme"
@@ -120,15 +112,7 @@ async def _close_frame_quietly(frame: Any) -> None:
         logger.debug("closing failed proxy frame raised", exc_info=True)
 
 
-def write_handler_faulted() -> bool:
-    """True when the isolated-daemon write-handler fault file is present."""
-    home = os.environ.get("GOBBY_HOME")
-    if not home:
-        return False
-    return Path(home).joinpath(WRITE_FAULT_NAME).is_file()
-
-
-class TerminalWsMixin:
+class TerminalWsMixin(TerminalWriteMixin):
     """Observe-only attach, lease-gated writes, and inventory."""
 
     clients: dict[Any, dict[str, Any]]
@@ -215,7 +199,7 @@ class TerminalWsMixin:
             log_slow("terminal_gone", None, started, started, started)
             return
         manager = getattr(self, "terminal_manager", None)
-        row = None if manager is None else manager.get(terminal_id)
+        row = None if manager is None else await asyncio.to_thread(manager.get, terminal_id)
         row_loaded = time.monotonic()
         if row is None:
             await self._send_json(
@@ -535,9 +519,10 @@ class TerminalWsMixin:
         applied = self._leases().set_scroll_offset(attachment_id, requested, max_rows)
         frame = self._proxy().frame_for(attachment_id)
         setter = getattr(frame, "set_scroll_offset", None)
+        # The attach snapshot carries the backend, so a scroll event never
+        # reads the terminals row.
         record = self._leases().get(attachment_id)
-        manager = getattr(self, "terminal_manager", None)
-        row = None if record is None or manager is None else manager.get(record.terminal_id)
+        row = None if record is None else record.terminal
         if callable(setter) and (row is None or row.backend == "native"):
             await setter(applied.applied_rows)
         await self._send_json(
@@ -548,182 +533,6 @@ class TerminalWsMixin:
                 "attachment_id": attachment_id,
                 "applied_rows": applied.applied_rows,
                 "max_rows": applied.max_rows,
-            },
-        )
-
-    async def _handle_terminal_input(self, websocket: Any, data: dict[str, Any]) -> None:
-        await self._handle_operator_write(websocket, data, kind="input")
-
-    async def _handle_terminal_paste(self, websocket: Any, data: dict[str, Any]) -> None:
-        text = data.get("text")
-        if isinstance(text, str) and paste_oversize(text):
-            await self._write_outcome(
-                websocket,
-                data,
-                outcome="refused",
-                reason="oversize",
-            )
-            return
-        await self._handle_operator_write(websocket, data, kind="paste")
-
-    async def _handle_operator_write(
-        self,
-        websocket: Any,
-        data: dict[str, Any],
-        *,
-        kind: Literal["input", "paste", "text"],
-    ) -> None:
-        terminal_id = data.get("terminal_id")
-        attachment_id = data.get("attachment_id")
-        seq = data.get("client_write_seq")
-        payload = data.get("data") if kind == "input" else data.get("text")
-        if not isinstance(attachment_id, str) or not attachment_id:
-            await self._write_outcome(
-                websocket,
-                data,
-                outcome="refused",
-                reason="attachment_required",
-            )
-            return
-        if not isinstance(terminal_id, str):
-            return
-        if not isinstance(payload, str):
-            payload = ""
-        record = self._leases().get(attachment_id)
-        generation = None if record is None else self._leases().generation(terminal_id)
-        admitted = self._leases().admit_write(
-            terminal_id,
-            attachment_id=attachment_id,
-            expected_lease_generation=generation
-            if self._leases().holder(terminal_id) == attachment_id
-            else -1,
-            seq=seq,
-            kind=kind,
-            payload=payload.encode("utf-8"),
-        )
-        if not admitted.ok:
-            await self._write_outcome(websocket, data, outcome="refused", reason=admitted.reason)
-            return
-        if admitted.recorded_outcome is not None:
-            await self._write_outcome(
-                websocket, data, outcome=admitted.recorded_outcome, reason=admitted.reason
-            )
-            return
-        if admitted.join_inflight and isinstance(seq, int):
-            joined = await self._wait_joined_write(attachment_id, seq)
-            await self._write_outcome(websocket, data, outcome=joined[0], reason=joined[1])
-            return
-        if write_handler_faulted():
-            if isinstance(seq, int):
-                self._leases().complete_write(attachment_id, seq, "refused", "write_handler_fault")
-            await self._write_outcome(
-                websocket, data, outcome="refused", reason="write_handler_fault"
-            )
-            return
-        outcome = "indeterminate"
-        reason: str | None = "indeterminate_backend"
-        try:
-            outcome, reason = await self._deliver_operator_write(
-                terminal_id,
-                attachment_id,
-                kind=kind,
-                payload=payload,
-                generation=generation,
-                seq=seq,
-            )
-        finally:
-            if isinstance(seq, int):
-                self._leases().complete_write(attachment_id, seq, outcome, reason)
-        try:
-            await self._write_outcome(websocket, data, outcome=outcome, reason=reason)
-        finally:
-            # The observer looks the terminal row up for an interrupt key; the
-            # client's reply must not wait on that.
-            await record_turn_observation(
-                self,
-                terminal_id,
-                kind=kind,
-                payload=payload,
-                outcome=outcome,
-                seq=seq,
-            )
-
-    async def _deliver_operator_write(
-        self,
-        terminal_id: str,
-        attachment_id: str,
-        *,
-        kind: Literal["input", "paste", "text"],
-        payload: str,
-        generation: int | None,
-        seq: object = None,
-    ) -> tuple[WriteOutcome, str | None]:
-        """Deliver an admitted write to the backend; returns (outcome, reason)."""
-        outcome: WriteOutcome = "delivered"
-        reason: str | None = None
-        coordinator = getattr(self, "write_coordinator", None)
-        if coordinator is None:
-            return "refused", "runtime_unavailable"
-        try:
-            from gobby.terminals.write_coordinator import (
-                RuntimeUnavailableError,
-                StaleTerminalLeaseError,
-                WriteRequest,
-            )
-
-            record = self._leases().get(attachment_id)
-            result = await coordinator.write(
-                WriteRequest(
-                    terminal_id=terminal_id,
-                    action_key=f"ws:{attachment_id}:{seq}",
-                    origin="operator",
-                    kind=kind,
-                    payload=payload,
-                    attachment_id=attachment_id,
-                    expected_lease_generation=generation,
-                    terminal=None if record is None else record.terminal,
-                )
-            )
-        except RuntimeUnavailableError:
-            return "refused", "runtime_unavailable"
-        except StaleTerminalLeaseError:
-            return "refused", "lease_lost"
-        except TerminalWriteError as exc:
-            if exc.stage == "partial":
-                reason = (
-                    f"indeterminate_partial_delivered:{exc.delivered_bytes}"
-                    if exc.delivered_bytes is not None
-                    else "indeterminate_backend"
-                )
-                return "indeterminate", reason
-            return "refused", "held"
-        except (ConnectionError, OSError):
-            return "indeterminate", "indeterminate_backend"
-        if isinstance(result, IndeterminateWrite):
-            outcome = "indeterminate"
-            reason = "indeterminate_backend"
-        elif not isinstance(result, Delivered):
-            outcome = "refused"
-            reason = "held"
-        return outcome, reason
-
-    async def _write_outcome(
-        self,
-        websocket: Any,
-        data: dict[str, Any],
-        *,
-        outcome: str,
-        reason: str | None,
-    ) -> None:
-        await self._send_json(
-            websocket,
-            {
-                "type": "terminal_write_outcome",
-                "terminal_id": data.get("terminal_id"),
-                "attachment_id": data.get("attachment_id"),
-                "client_write_seq": data.get("client_write_seq"),
-                "outcome": outcome,
-                "reason": reason,
             },
         )
 
@@ -874,15 +683,6 @@ class TerminalWsMixin:
             if not handed_off:
                 await asyncio.shield(_close_frame_quietly(frame))
         return None
-
-    async def _wait_joined_write(self, attachment_id: str, seq: int) -> tuple[str, str | None]:
-        deadline = asyncio.get_running_loop().time() + 2.0
-        while asyncio.get_running_loop().time() < deadline:
-            completed = self._leases().completed_write(attachment_id, seq)
-            if completed is not None:
-                return completed
-            await asyncio.sleep(0.01)
-        return "indeterminate", "indeterminate_backend"
 
     def _leases(self) -> TerminalLeaseRegistry:
         registry = getattr(self, "lease_registry", None)

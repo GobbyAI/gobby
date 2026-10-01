@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 import uuid
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
@@ -393,4 +394,46 @@ async def test_create_forwards_the_client_theme_object_only(
         )
         assert spawn.await_args is not None
         assert spawn.await_args.kwargs["terminal_theme"] == forwarded
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+@pytest.mark.asyncio
+async def test_create_and_kill_run_storage_on_the_executor(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D1a.4: the create and kill handlers read terminal rows on a worker thread."""
+    server, _runtime = _create_server(temp_db)
+    manager = _manager(temp_db)
+    server.terminal_manager = manager
+    created_id = str(uuid.uuid4())
+    _create_pending(manager, GLOBAL_PROJECT_ID, terminal_id=created_id)
+    monkeypatch.setattr(
+        "gobby.terminals.web_spawn.spawn_web_terminal",
+        AsyncMock(return_value=WebSpawnResult(True, created_id)),
+    )
+    read_threads: list[int] = []
+    read_row = manager.get
+
+    def recording_get(terminal_id: str) -> Any:
+        read_threads.append(threading.get_ident())
+        return read_row(terminal_id)
+
+    monkeypatch.setattr(manager, "get", recording_get)
+    monkeypatch.setattr(server, "broadcast_tmux_session_event", AsyncMock())
+    websocket = MockWebSocket()
+    server.clients[websocket] = {}
+    loop_thread = threading.get_ident()
+
+    await server._handle_terminal_create(
+        websocket, {"type": "terminal_create", "request_id": "c", "rows": 24, "cols": 80}
+    )
+    await server._handle_terminal_kill(
+        websocket, {"type": "terminal_kill", "request_id": "k", "terminal_id": str(uuid.uuid4())}
+    )
+
+    assert websocket.messages_of_type("terminal_create_result")[-1]["success"] is True
+    assert websocket.last_message()["code"] == "terminal_not_live"
+    assert len(read_threads) == 2
+    assert all(thread != loop_thread for thread in read_threads)
     await server.lease_registry.shutdown_lifecycle_publication()
