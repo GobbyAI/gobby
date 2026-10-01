@@ -464,7 +464,7 @@ Targets:
 - `src/gobby/servers/routes/api_keys.py`
 - `src/gobby/servers/_app_routes.py::*` — scope-reason: mount the api_keys router
 - `src/gobby/cli/install.py::_provision_local_api_token`
-- `src/gobby/runner_init/storage.py::*` — scope-reason: calls `ensure_local_api_key` right after `ensure_machine_identity`
+- `src/gobby/runner_init/storage.py::*` — scope-reason: calls `ensure_local_api_key` right after `ensure_machine_identity` and logs a failure without failing startup
 - `src/gobby/config/bootstrap.py::*` — scope-reason: `BootstrapConfig` and `bootstrap_from_mapping` gain `api_key`, `api_key_id`, and `hub_cert`, all absent by default so constructor sites need no edit; `resolve_bootstrap_path` is extracted from `load_bootstrap`
 - `src/gobby/storage/auth.py::*` — scope-reason: `AuthStore` gains the method `session_user_id(token)`; no existing symbol changes
 - `tests/storage/test_storage_auth.py::*` — scope-reason: gains the `session_user_id` valid, expired, and unknown cases
@@ -611,6 +611,11 @@ Adoption:
   otherwise the expanded `config_path`. The write therefore lands in the file
   startup read, and a legacy `config.yaml` is never written. A node never reaches this code
   (4.6). `ensure_machine_identity` itself is unchanged.
+  Startup adoption is non-fatal — PD ruling (gobby#14972, 2026-10-01, L7 gobby#14682 finding):
+  the call catches any exception (a missing or broken `api_keys` table, a database error, a
+  bootstrap write error), logs it at warning with the exception, and startup continues. The
+  next start retries, and `ensure_local_api_key`'s own revoke-before-rename rule still holds.
+  `gobby install` keeps reporting the failure to the operator.
 
 Consumers unchanged:
 - `src/gobby/runner_init/helpers.py` — no-edit-reason: `ensure_machine_identity` keeps its signature and body.
@@ -642,6 +647,7 @@ are regenerated outputs of the one migration.
 - 4.2.4 - Startup adoption mints the local machine's key into bootstrap once; a failure before the rename revokes the new key, and a failure injected after `os.replace` (at the directory fsync and at the readback) keeps the committed key live, so a retry mints nothing and bootstrap never names a revoked key. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_follows_publication_point`.
 - 4.2.12 - Two synchronized `ensure_local_api_key` callers on one bootstrap leave exactly one live key, matching the bootstrap `api_key` and `api_key_id`. test: `tests/storage/test_api_keys.py::test_concurrent_adoption_mints_one_key`.
 - 4.2.13 - A legacy `config.yaml` with no sibling `bootstrap.yaml` mints nothing, writes nothing, and logs the migration warning. test: `tests/storage/test_api_keys.py::test_legacy_config_path_skips_adoption`.
+- 4.2.15 - When `ensure_local_api_key` raises (missing `api_keys` table or a database error), startup logs the failure and the daemon still starts. test: `tests/test_runner_init.py::test_failing_local_key_adoption_does_not_block_start`.
 - 4.2.14 - Through a real daemon behind gdaemon, repeated bad bootstrap passwords with varying forged `X-Forwarded-For` values cannot reset the caller's lockout from `127.0.0.1`, and a caller from `::1` (a distinct real peer) still has its own bucket. test: `tests/e2e/test_api_key_bootstrap_lockout.py::test_forged_forwarding_cannot_reset_lockout`.
 - 4.2.10 - Through the full app, the management routes answer 401 for an absent, invalid, expired-cookie, or managed-agent credential; a cookie and the operator token each resolve to their user and this machine; the operator token answers 403 when the install has two users; and a mint for a machine owned by another user answers 403. test: `tests/servers/routes/test_api_keys.py::test_management_routes_admit_only_resolved_principals`.
 - 4.2.11 - A real isolated daemon launched with `--config config.yaml` mints one key bound to its machine into the sibling `bootstrap.yaml`, leaves `config.yaml` byte-identical, and mints nothing on a second start. test: `tests/e2e/test_local_api_key_adoption.py::test_startup_adopts_local_key_once`.
@@ -786,7 +792,19 @@ contract corpus)), because the cutover bumps the corpus manifest and every
 manifest-listed case to `schema_version` 2 in the same commit. The approved
 corpus contract requires each case's version to equal the manifest's, so every
 `origin: python` case is re-recorded with the 3.1 recorder, and any
-`origin: gdaemon` case already present is updated and re-verified. The settled design, refreshed against
+`origin: gdaemon` case already present is updated and re-verified.
+
+**Opening gate — PD decision (gobby#14972, 2026-10-01, L7 gobby#14682 finding):** D1 does
+not open until both of these hold:
+1. A loopback break-glass exists: a local operator path that authenticates when key
+   verification is wedged (an unreachable hub, a broken `api_keys` table, or a resolver
+   error). It admits only a loopback peer presenting a host-local credential readable only by
+   the install owner (0600), has no network exposure, and survives the shared-token cutover.
+   D1.12 tests it.
+2. A rollback rehearsal has passed: on an isolated install at schema 456, revert the D1 code,
+   start the daemon, and authenticate through the break-glass (D1.13).
+
+The settled design, refreshed against
 `0.5.0` at 069e70d, is below; the planning pass that opens this task re-sweeps
 Targets against the code at that time.
 
@@ -858,6 +876,11 @@ Acceptance items D1.1 to D1.11, carried from the plan of record:
 - D1.9: the Rust key-format helper matches 4.2's shared vectors.
 - D1.10 (4.5.2 of the plan of record): rotate verifies before revoking and rolls back on verify failure.
 - D1.11: list and revoke through the key-authenticated CLI are owner-scoped.
+- D1.12: with key verification forced to fail, the break-glass admits a loopback operator
+  holding the host-local credential and refuses a non-loopback peer and a loopback peer
+  without it.
+- D1.13: the rollback rehearsal reverts the D1 code at schema 456, starts, and authenticates
+  through the break-glass.
 
 ```yaml
 deferral:
@@ -876,6 +899,8 @@ deferral:
     - D1.9
     - D1.10
     - D1.11
+    - D1.12
+    - D1.13
 ```
 
 ## D2 Node channel, relay backend, and `/api/machines` (depends: 4.1, 4.5)
@@ -1101,6 +1126,12 @@ uv run gobby plans validate .gobby/plans/gdaemon-api-keys-nodes.md -p .
 ```
 
 Run these from the worktree root. Do not run the full pytest suite.
+
+Rollback — PD ruling (L7 gobby#14682 finding): a code revert after migration 456 has applied
+keeps the schema at 456 and reverts behavior only. The revert keeps `456_add_api_keys.sql`, its
+`MIGRATIONS` entry, and the identity carriers, because
+`crates/gcore/src/schema/runner_plan.rs` (42-46) refuses a database schema newer than the
+runner. No down-migration exists.
 
 ## M1 Task Manifest
 `kind: manifest`
