@@ -1,0 +1,766 @@
+header:
+  plan_id: gdaemon-api-keys-nodes
+  plan_hash: 26549a7494f1b57faf710ae7325b0d78357f58006ef1e8bbceb293515e76a9b9
+  root_task_ref: '21555'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-01T18:11:57Z'
+  task_tree_source: db
+  task_tree_source_hash: d3481ec12b76ba5158dbc2fb6a80a33d9f52598a32ccb18f1f49d1449cac7c32
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '4.6'
+  item_id: 4.6.1
+  plan_node_hash: 994dc454062a4c6403625255db226c8e6f9176b66f8ee81ee6c4919bd5e1b81a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23269'
+    validation_criteria_snippet: '4.6.1: `run_gobby` with a `datastore_mode: remote`
+      bootstrap raises the refusal before constructing `ActiveDaemonLease`, starting
+      the front door, or verifying ...'
+    matched_artifact_ref: tests/test_runner_lease_lifecycle.py::test_node_bootstrap_refuses_before_lease
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.2
+  plan_node_hash: 0b08805704c9aaaec5bcbf0dfc37e177ea8e85ad89b73214539faaa77d977029
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23269'
+    validation_criteria_snippet: '4.6.1: `run_gobby` with a `datastore_mode: remote`
+      bootstrap raises the refusal before constructing `ActiveDaemonLease`, starting
+      the front door, or verifying ...'
+    matched_artifact_ref: tests/cli/test_daemon_remote_mode.py::test_start_refuses_node_bootstrap
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.3
+  plan_node_hash: 66be83560701c9cce3d171726d944ceecd1d8f25fe0d602f994257c6d8843838
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23269'
+    validation_criteria_snippet: '4.6.1: `run_gobby` with a `datastore_mode: remote`
+      bootstrap raises the refusal before constructing `ActiveDaemonLease`, starting
+      the front door, or verifying ...'
+    matched_artifact_ref: tests/cli/test_daemon_preflight.py::test_restart_refuses_node_bootstrap
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.4
+  plan_node_hash: 6b71e09cafca7d90ff07628f5928eeb74c8bcddc5d5c95589812347b6f4716db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23269'
+    validation_criteria_snippet: '4.6.1: `run_gobby` with a `datastore_mode: remote`
+      bootstrap raises the refusal before constructing `ActiveDaemonLease`, starting
+      the front door, or verifying ...'
+    matched_artifact_ref: tests/test_runner_lease_lifecycle.py::test_local_bootstrap_still_takes_lease
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.5
+  plan_node_hash: e03b188be97ef301ae7eca3cbdb118d35e46c41bc5ba461b39d4e01eb805abf6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23269'
+    validation_criteria_snippet: '4.6.1: `run_gobby` with a `datastore_mode: remote`
+      bootstrap raises the refusal before constructing `ActiveDaemonLease`, starting
+      the front door, or verifying ...'
+    matched_artifact_ref: docs/guides/shared-stack.md
+  deferral_target: null
+  detail: ''
+- section_id: '4.6'
+  item_id: 4.6.6
+  plan_node_hash: de8ce9d035c9bb1d9fcf7c1e01a97906273833ff9669d30e8094ca4554e53fe2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23269'
+    validation_criteria_snippet: '4.6.1: `run_gobby` with a `datastore_mode: remote`
+      bootstrap raises the refusal before constructing `ActiveDaemonLease`, starting
+      the front door, or verifying ...'
+    matched_artifact_ref: tests/cli/test_cutover.py::test_cutover_refuses_node_bootstrap_before_build
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.1
+  plan_node_hash: c4284ef6b2e5519681c201b0f959174f62682e59c91f87bd10d7d706b2fd5072
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: tests/config/test_bootstrap.py::test_front_door_tls_default_and_refusal
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.9
+  plan_node_hash: 1fd48bb0302f29ffc43870b44ea0f5e8f5e1f099964938323457d839f7573514
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gcore/src/bootstrap.rs::tests::front_door_tls_default_and_refusal
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.2
+  plan_node_hash: 7070f1ac4678f039935539770527569a95b1499297e78fd741b06dcfe91a8467
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::self_signed_generated_once_and_reused
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.14
+  plan_node_hash: 14aba26951d52ec3a892975051b3db25b3d5297c00d892f2c6ae2fe3b7042ee6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::self_signed_san_policy
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.10
+  plan_node_hash: 44a6dcc58ac3240050a54e87a62fe38c09b565190ac95bacb841020d96a7d482
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::tls_pair_load_or_refuse
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.3
+  plan_node_hash: 7c4a7eec9c39aaa741a3323467119a6d46d0fe43874d4a9d03876dc4bbe87520
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::ws_splice_over_self_signed_tls
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.4
+  plan_node_hash: d7a4c019e293e612010bdbb18fc3af8ca577ca9cb0da03d96dbc29b866e43732
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::pinned_client_rejects_unpinned_cert
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.5
+  plan_node_hash: 401a9206e2f3c8d12f136c02903ff7d702e2418b0c0fb02cdb6f5e7ded7db9df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::plaintext_only_from_loopback_peers
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.6
+  plan_node_hash: ba94781cdd4e37ca196a1284cac225278d6afec95b3603b28beb881688a9f6ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::concrete_bind_adds_loopback_listener
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.7
+  plan_node_hash: 075d3c1c96f74014fc7d0da2adb9a7607f9db177fbcfbde13021a4610d17833f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: tests/utils/test_daemon_url.py::test_dial_host_is_always_loopback
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.11
+  plan_node_hash: 4a9e5c3b6e6d2bec541fc998aa8f108cf28171c142cfbb3456ed311bad7958dd
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gcore/src/daemon_url.rs::tests::dial_host_is_always_loopback
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.12
+  plan_node_hash: 6c208ece8f6071ac62614b2fc4d6ab1987ef02ed8a17505368665e8b359b35f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::forwarding_headers_carry_only_observed_peer
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.13
+  plan_node_hash: 128ce522b04a5a571f3eac3292306e21dc6bc04633fde257e7fbab476f7b36f0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gdaemon/tests/front_door.rs::stalled_preauth_connections_expire_without_blocking
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.15
+  plan_node_hash: 9ee15ca834bea5770970f7eb75d392a74018c393175a07a028bb8be0d4479fa9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: tests/config/test_bootstrap.py::test_disabled_front_door_is_loopback_only
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.16
+  plan_node_hash: 08e0ae4e62b355c38dea24957aaa4df743bf493342ff95cadc6ac8e2484b4269
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: crates/gcore/src/bootstrap.rs::tests::disabled_front_door_is_loopback_only
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.17
+  plan_node_hash: c02102e53cb7c2f148e164800acdf61a76f8ed53f9d8ac5726cfd79d08c6e47a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: tests/test_runner_lifecycle.py::test_disabled_front_door_on_public_bind_refuses_before_bind
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.18
+  plan_node_hash: f1465c77f09f0aba6c1dcca6dcac687152c1efac564f6a80404e40c9b8a5d4ef
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: loopback-only
+  deferral_target: null
+  detail: ''
+- section_id: '4.1'
+  item_id: 4.1.8
+  plan_node_hash: 67f02ef4b49b9e0e91f256381932d894bdd5add472433d67952bd63c8053f26e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23270'
+    validation_criteria_snippet: '4.1.1: The Python parser defaults `tls.mode` to
+      `off` on a loopback bind, whether `front_door` is absent or present, refuses
+      `off` or an absent mode on a non-l...'
+    matched_artifact_ref: tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.1
+  plan_node_hash: 5d80f973cf88751eadfc20c837ee393f1f64c399a64bb85c827893bedccd9c75
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/456_add_api_keys.sql
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.2
+  plan_node_hash: 5bf6fcf101e9097be7698106784b82af7ac143aacd207988f5a773429bed9e7a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/utils/test_api_key_format.py::test_shared_vectors_and_rejections
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.3
+  plan_node_hash: 119692da88777a534e4f66248c74a56525b1131d0da4df5c89b8d229afe3832b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.4
+  plan_node_hash: 6fd773f35da57d86679c2dcfc65c552069b56889a05bfc2b5bab0a6cdd931fa1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_follows_publication_point
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.12
+  plan_node_hash: 072a3f3ce93919e0202519841269f6f53f7ef1f00cfd899a917034b26bb0e3a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/storage/test_api_keys.py::test_concurrent_adoption_mints_one_key
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.13
+  plan_node_hash: 8af1ccce2dcd426f242628a3bf1971506270de4fd686532595cce4cc87628182
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/storage/test_api_keys.py::test_legacy_config_path_skips_adoption
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.15
+  plan_node_hash: 6d757c84d7c350858719958c7cefc129bd5614cfbcf654964ffbc2c0d0d7dfea
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/test_runner_init.py::test_failing_local_key_adoption_does_not_block_start
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.14
+  plan_node_hash: 1056f5ffe257d6748cef3ceadc16c5332070d80b459da7253c45bbbf17ca72df
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/e2e/test_api_key_bootstrap_lockout.py::test_forged_forwarding_cannot_reset_lockout
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.10
+  plan_node_hash: 79933ce72e70d41d6708a35e8f67b73657797fae46d564380a2167dd778cd888
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_management_routes_admit_only_resolved_principals
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.11
+  plan_node_hash: 34aa7620a898677a1a4c9743acdda11168e0333d392b52faf0da0639c93ac33a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/e2e/test_local_api_key_adoption.py::test_startup_adopts_local_key_once
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.5
+  plan_node_hash: 7f080a9c68426988acba8a17a334d7b2c662c7fdd24a7baa5b4b2c130dbc174e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/cli/test_cli_install.py::test_install_mints_local_api_key
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.6
+  plan_node_hash: f69bc40d66691e21c37ae2a8e8c03df64a7bd3011f5d9b2a4183391e7b6ebcd4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.7
+  plan_node_hash: d8398e1d7b9f54466a888b485ee9f2ca02bea4a10541a7f6d40dee0e1c3e81f3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.8
+  plan_node_hash: 23a7c6991287eb3e15b73b6cd95815f56836096e27eea040132c526a97fa8d9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/runtime_grants/golden/brokered_datastores.json
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.9
+  plan_node_hash: f85a56f19ab89fb54af636805676da906ad1d9fb2d5552a11e89121871051ed2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: crates/gcore/assets/config/runtime_config_contract.json
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.16
+  plan_node_hash: e2ae4914a4ec4de643e77268b554aea6796e38fda622ab9fa4045404abea41db
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/cli/test_pack.py::test_unpack_drops_machine_bound_api_key
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.17
+  plan_node_hash: 8f0bfec728e0309a100a8a17680a4c761082efe8b05051410901e96cf7c5396e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/cli/test_pack.py::test_unpack_restore_identity_keeps_api_key_pair
+  deferral_target: null
+  detail: ''
+- section_id: '4.2'
+  item_id: 4.2.18
+  plan_node_hash: f0aad08acdededf5fae35ad18a7aeca8e0af10ad508c207091702163720c156b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23271'
+    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    matched_artifact_ref: tests/storage/test_api_keys.py::test_ensure_local_api_key_replaces_stale_bootstrap_key
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.1
+  plan_node_hash: 4efa23eacf6d9458dfe159b7394ec620a735241b1b400ea9b67177acff67763a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.7
+  plan_node_hash: 29b5cae3cafb81f30ea4f98e1b178f0f2aee5698e172f985bc5ec6a8a1309851
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/e2e/test_auth_login.py::test_login_refuses_host_outside_sans
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.8
+  plan_node_hash: 92f395a31cb2060df0480d3130ce02e6b1e5bba44b189dca3c663419be7dc2a0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_login_validates_enrollment_response
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.9
+  plan_node_hash: d36a8fbdca74c5d9046375cd57e8ee9d227b336064acbd98dfa1e6eeb77a9a82
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_concurrent_enrollments_keep_winner
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.2
+  plan_node_hash: 380eb26504d4dad52696f263c6815c14d51e4610fa35b6fda0224e34c457ee29
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.3
+  plan_node_hash: d4a3542b139fea1f734fe0f12f2ecc636a918ccdb0f1515bf6f41d60cce5b7c1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_login_http_branches
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.5
+  plan_node_hash: a7e77f81401e03698a249498eafb3df26a6f53cbab6e8b24655deeb9e37e3626
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_login_failures_preserve_prior_enrollment
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.6
+  plan_node_hash: 68ff57c74ee1fa9b226b09faf30f7bb84e897620a4372ee82e44a284c39dafc6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_login_compensation_follows_publication_point
+  deferral_target: null
+  detail: ''
+- section_id: '4.5'
+  item_id: 4.5.4
+  plan_node_hash: 6193ba24a37fa073119f2bec2735f23229db86731e2e9af82e440642ee8a0685
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23272'
+    validation_criteria_snippet: '4.5.1: `gobby auth login` pins by fingerprint against
+      a self-signed hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch,
+      and writes bootstrap...'
+    matched_artifact_ref: tests/cli/test_auth_login.py::test_key_show_prints_hint_only
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: D1.1
+  plan_node_hash: 355c27fc205b29ab47298483ecf5edf30e8a4497fc88001b8ee7acf1375368a4
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.2
+  plan_node_hash: 9099a07e8e523c9823309f7d63765d8e810a09b6c5b2c1eccc65fbe6427f567f
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.3
+  plan_node_hash: 93ea7538f85a2b590833021b8d44119fcd375d0c70bd1b256e5932406c475c75
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.4
+  plan_node_hash: f91846ae06af20e71d15390236bff7d157e8f8dab3afa9de4a3e3c6fbfa84346
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.5
+  plan_node_hash: 5fee887775f04a195c8d018e3243564d25da810f15973740ae4ca0c208728260
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.6
+  plan_node_hash: f6100d58a482d4dcdfb8cf15255ff1c5679870c6757f6ddc92503a2e00b66b1c
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.7
+  plan_node_hash: dfc88dd9ca2768e90339f08f0ff624c65598840b98d1a847bcc18b0e3954c120
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.8
+  plan_node_hash: edd3faaab44d57c7666592516b198b28201ede0ef28abc29bdd9f166b590d0eb
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.9
+  plan_node_hash: 35c161cb0c6f56284e5dd6d92237449f73bcc201bf7d6428fdd118b58e76a63a
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.10
+  plan_node_hash: aa39706d0426dde384807ada1bbdd34051190b64ee7600eb826443149e6f20f8
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.11
+  plan_node_hash: 9e37e9cd49c91b528455027c1bae6ecbba4d3378693b852ec86390857e6129ee
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.12
+  plan_node_hash: 1cd11ecf2f4b603207c825b0735774807154790a4ee82ca99e7aaedee6a17c58
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D1
+  item_id: D1.13
+  plan_node_hash: a4c4310dfd23cce637641788ead24ba50a8802466c34f6a1ca2037e47af37a07
+  status: deferred
+  leaves: []
+  deferral_target: '#23273'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.1
+  plan_node_hash: 0184a39128cf3ad2b07b249a41af9cbe4b2162b7a9de55a15d8162c065d1b1cc
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.2
+  plan_node_hash: 669cfee5a301927a0c8f184713fa751d941068ea275e7fdd3e068e2f15e47663
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.3
+  plan_node_hash: bfff95a0862f3cf940d6661f29db634e60f37f9a8a29fd508b2c0a3e7516193b
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.4
+  plan_node_hash: 402752a8895a41a89a6f82c6dc817218283c6ebf886d47a6d505ebeeb5f3dd2e
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.5
+  plan_node_hash: ab667c2e8391d284df53b237d7c28c087da649ef0883e0cc698ba8cdda19bf4e
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.6
+  plan_node_hash: a261c9c2a8852e05c4bf6d0da563fe60b813f8c106d6cc9fd5ab74e1a3181617
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D2
+  item_id: D2.7
+  plan_node_hash: 6dbca54f37c4d52de75a8cd48b6e559acf83b0d71e687121302cf638be233e57
+  status: deferred
+  leaves: []
+  deferral_target: '#23274'
+  detail: deferral is valid
+- section_id: D3
+  item_id: D2.5
+  plan_node_hash: 32b0177c8632441d0deee69c2b613165ab8e4d90fa80492c96cc30464eae3be4
+  status: deferred
+  leaves: []
+  deferral_target: '#23275'
+  detail: deferral is valid
+- section_id: D4
+  item_id: D2.5
+  plan_node_hash: 0a4eccac99ba0847241db671b6cbce6eeeaf2370dc8887c2809b8d96ee49f3a1
+  status: deferred
+  leaves: []
+  deferral_target: '#23276'
+  detail: deferral is valid
+- section_id: D5
+  item_id: D1.7
+  plan_node_hash: 9989905bffdf1078ffcd3cd95ce4a3a1d6066cba9e729877c7f7b482eaf110d5
+  status: deferred
+  leaves: []
+  deferral_target: '#23277'
+  detail: deferral is valid
