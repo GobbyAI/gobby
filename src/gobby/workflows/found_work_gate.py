@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -606,8 +607,28 @@ class FoundWorkStopAnalyzer:
                     project_path=project_path,
                 ),
             )
-        unresolved = unresolved_validation_failures(
+        # The cover check grows with the runs since the window start and the
+        # disposition check reads storage, so keep both off the loop.
+        return await asyncio.to_thread(
+            self._uncovered_failure_commands,
             evidence.validation_runs,
+            session_id=session_id,
+            owner_handoff=owner_handoff,
+            foreign_paths=foreign_paths,
+            project_path=project_path,
+        )
+
+    def _uncovered_failure_commands(
+        self,
+        runs: Sequence[TranscriptValidationRun],
+        *,
+        session_id: str,
+        owner_handoff: bool,
+        foreign_paths: AbstractSet[str],
+        project_path: str,
+    ) -> tuple[str, ...]:
+        unresolved = unresolved_validation_failures(
+            runs,
             owner_handoff=owner_handoff,
             foreign_paths=foreign_paths,
             project_path=project_path,
@@ -617,7 +638,7 @@ class FoundWorkStopAnalyzer:
             paths = _reported_failure_paths(failed)
             later_greens = (
                 run
-                for run in evidence.validation_runs
+                for run in runs
                 if run.order > failed.order
                 and run.outcome == "success"
                 and set(run.categories) & set(failed.categories)
