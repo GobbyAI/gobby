@@ -17,7 +17,7 @@
 | lane-7-front-door.md | gobby#14682 |
 | lane-8-communications.md | gobby#14683 |
 | lane-9-memory.md | gobby#14948 |
-| lane-10-openrouter.md | gobby#14747 |
+| lane-10-openrouter.md | gobby#14979 |
 | lane-manager.md | gobby#14930 |
 | code-reviewer.md | gobby#14641 |
 | code-reviewer.md | gobby#14680 |
