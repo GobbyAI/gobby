@@ -304,7 +304,7 @@ class TestTmuxTextInjection:
 
         await submit_literal_text_to_tmux_target(
             "%12",
-            "Message from Gobby daemon: New activity available.",
+            "[Gobby] Check messages",
             enter_delay_seconds=0,
         )
 
@@ -316,7 +316,7 @@ class TestTmuxTextInjection:
                 "-b",
                 buffer_name,
                 "--",
-                "Message from Gobby daemon: New activity available.",
+                "[Gobby] Check messages",
             ],
             [
                 "tmux",
@@ -377,7 +377,7 @@ class TestTmuxTextInjection:
 
         await submit_literal_text_to_tmux_target(
             "%12",
-            "Message from Gobby daemon: New activity available.",
+            "[Gobby] Check messages",
             enter_delay_seconds=0,
             clear_before_submit=True,
             cli_source="claude",
@@ -401,7 +401,7 @@ class TestTmuxTextInjection:
                 "-b",
                 buffer_name,
                 "--",
-                "Message from Gobby daemon: New activity available.",
+                "[Gobby] Check messages",
             ],
             [
                 "tmux",

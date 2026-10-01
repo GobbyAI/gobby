@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CONTINUE_WAKE_MESSAGE = "Message from Gobby daemon: New activity available."
+CONTINUE_WAKE_MESSAGE = "[Gobby] Check messages"
 CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 
 # Coalesce bursty completions targeting an interactive pane: while the user is
