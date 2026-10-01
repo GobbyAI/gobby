@@ -8,6 +8,7 @@ import json
 import logging
 import multiprocessing
 import os
+import pickle
 import signal
 import subprocess
 import sys
@@ -25,12 +26,19 @@ import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
 from gobby.storage.session_models import Session
-from gobby.tasks import transcript_evidence_pool, transcript_outcomes
+from gobby.tasks import (
+    transcript_evidence,
+    transcript_evidence_pool,
+    transcript_evidence_transfer,
+    transcript_outcomes,
+)
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.tdd_evidence import evaluate_tdd_evidence
 from gobby.tasks.transcript_evidence import (
     WINDOW_LOOKBACK,
+    _derive_chunked_transcript_evidence,
+    _derive_transcript_evidence_sync,
     _resolve_transcript_path,
     derive_transcript_evidence,
     merge_transcript_evidence,
@@ -43,12 +51,14 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
     TranscriptValidationSegment,
 )
+from gobby.tasks.transcript_evidence_snapshots import EvidenceSnapshot, load_snapshot
+from gobby.tasks.transcript_evidence_transfer import CHUNK_RECORDS, ChunkedPayload, decode, encode
 from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
-_LARGE_TRANSCRIPT_MIN_BYTES = 20 * 1024 * 1024
+_LARGE_TRANSCRIPT_MIN_BYTES = 80 * 1024 * 1024
 
 
 class _BrokenExecutor:
@@ -4398,7 +4408,9 @@ async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: P
     transcript = tmp_path / "large-claude.jsonl"
     padding = "validation output " + ("x" * 3_400)
     records: list[dict[str, Any]] = []
-    for index in range(6_200):
+    # Large enough that decoding the whole result in one GIL hold costs well over the
+    # 100 ms bound below, so an unchunked transfer fails it even on an idle host.
+    for index in range(24_800):
         records.extend(
             _claude_tool_pair(
                 command=f"printf filler-{index}",
@@ -4419,13 +4431,20 @@ async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: P
     _write_jsonl(transcript, records)
     assert transcript.stat().st_size >= _LARGE_TRANSCRIPT_MIN_BYTES
 
+    # The daemon prewarms the pool before admitting Stop hooks; a cold spawn here
+    # would charge one-time pool startup to the derivation.
+    await transcript_evidence_pool.prewarm_transcript_evidence_pool()
     loop = asyncio.get_running_loop()
     started = asyncio.Event()
     stop = asyncio.Event()
-    heartbeat_gaps: list[float] = []
+    # Wall-clock gaps also include host scheduling delay, which no code change can
+    # remove. Each gap is attributed instead: CPU spent by the loop thread, plus CPU
+    # spent by this process's other threads, which covers GIL-holding work such as
+    # unpickling pool results in the executor manager thread.
+    gap_cpu: list[tuple[float, float, float]] = []
 
     async def heartbeat() -> None:
-        previous = loop.time()
+        previous = (loop.time(), time.thread_time(), time.process_time())
         started.set()
         while not stop.is_set():
             tick = asyncio.Event()
@@ -4434,8 +4453,10 @@ async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: P
                 await tick.wait()
             finally:
                 timer.cancel()
-            current = loop.time()
-            heartbeat_gaps.append(current - previous)
+            current = (loop.time(), time.thread_time(), time.process_time())
+            loop_cpu = current[1] - previous[1]
+            other_cpu = (current[2] - previous[2]) - loop_cpu
+            gap_cpu.append((current[0] - previous[0], loop_cpu, other_cpu))
             previous = current
 
     heartbeat_task = asyncio.create_task(heartbeat())
@@ -4452,6 +4473,140 @@ async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: P
         stop.set()
         await heartbeat_task
 
-    assert heartbeat_gaps
-    assert max(heartbeat_gaps) < 0.5
+    assert gap_cpu
+    # A tick's lateness counts against the derivation only as far as this process
+    # spent CPU in that gap; lateness with no CPU behind it is host scheduling. The
+    # bound sits above the rare 49-82 ms record-reconstruction spikes a contended host
+    # adds to a single chunk, and below the whole-result hold this test guards against.
+    attributed = [gap for gap in gap_cpu if min(gap[0] - 0.05, gap[1] + gap[2]) >= 0.1]
+    assert not attributed, f"(wall, loop_cpu, other_cpu) per attributed gap: {attributed}"
     assert validation_command in [run.command for run in evidence.validation_runs]
+
+
+def _chunked_transfer_transcript(tmp_path: Path, filler_runs: int) -> Path:
+    transcript = tmp_path / "chunked-claude.jsonl"
+    records: list[dict[str, Any]] = []
+    for index in range(filler_runs):
+        records.extend(
+            _claude_tool_pair(
+                command=f"printf filler-{index}",
+                call_id=f"filler-{index}",
+                start=BASE_TIME + timedelta(microseconds=index * 2),
+                result={"exit_code": 0, "stdout": f"filler {index}"},
+            )
+        )
+    records.extend(
+        _claude_tool_pair(
+            command="uv run pytest tests/tasks/test_chunked.py -q",
+            call_id="validation-final",
+            start=BASE_TIME + timedelta(seconds=1),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    _write_jsonl(transcript, records)
+    return transcript
+
+
+def _derivation_args(
+    transcript: Path, tmp_path: Path
+) -> tuple[Session, datetime, Any, set[str], str, None, None, str]:
+    return (
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+        None,
+        None,
+        LOCAL_MACHINE_ID,
+    )
+
+
+async def _run_pool_entry_in_process(function: Any, /, *args: object) -> object:
+    return function(*args)
+
+
+def test_chunked_derivation_matches_unchunked_derivation_in_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Both derivations start cold so neither resumes from the other's checkpoint.
+    monkeypatch.setattr(transcript_evidence, "load_durable_snapshot", lambda _session_id: None)
+    monkeypatch.setattr(transcript_evidence, "store_durable_snapshot", lambda *_args: None)
+    args = _derivation_args(_chunked_transfer_transcript(tmp_path, 3 * CHUNK_RECORDS), tmp_path)
+
+    direct = _derive_transcript_evidence_sync(*args, None)
+    payload = _derive_chunked_transcript_evidence(*args, None)
+
+    assert len(payload.chunks) > 1
+    assert decode(payload) == direct
+    evidence, snapshot = cast(tuple[TranscriptEvidence, EvidenceSnapshot], decode(payload))
+    assert [run.order for run in evidence.command_runs] == [
+        run.order for run in direct[0].command_runs
+    ]
+    assert [run.command for run in evidence.validation_runs] == [
+        "uv run pytest tests/tasks/test_chunked.py -q"
+    ]
+    # A resume snapshot crosses the boundary through the same codec.
+    resumed = decode(_derive_chunked_transcript_evidence(*args, encode(snapshot)))
+    assert resumed == _derive_transcript_evidence_sync(*args, snapshot)
+
+
+def _drop_last_chunk(payload: ChunkedPayload) -> ChunkedPayload:
+    return replace(payload, chunks=payload.chunks[:-1])
+
+
+def _foreign_chunk(payload: ChunkedPayload) -> ChunkedPayload:
+    return replace(payload, chunks=(pickle.dumps(["not a record"]), *payload.chunks[1:]))
+
+
+@pytest.mark.parametrize("corrupt", [_drop_last_chunk, _foreign_chunk])
+async def test_chunked_derivation_fails_closed_on_invalid_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, corrupt: Any
+) -> None:
+    async def corrupting_pool(function: Any, /, *args: object) -> object:
+        return corrupt(function(*args))
+
+    monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", corrupting_pool)
+    session = _session("claude", _chunked_transfer_transcript(tmp_path, 2 * CHUNK_RECORDS))
+
+    with pytest.raises(pickle.UnpicklingError):
+        await derive_transcript_evidence(
+            session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
+        )
+
+    assert load_snapshot(session.id) is None
+
+
+async def test_chunked_derivation_cancelled_mid_decode_stores_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first_chunk = asyncio.Event()
+    finished = False
+    decode_steps = transcript_evidence_transfer._decode_steps
+
+    def observed_decode_steps(payload: ChunkedPayload) -> Any:
+        nonlocal finished
+        steps = decode_steps(payload)
+        yield next(steps)
+        first_chunk.set()
+        yield from steps
+        finished = True
+
+    monkeypatch.setattr(
+        transcript_evidence, "run_in_transcript_evidence_pool", _run_pool_entry_in_process
+    )
+    monkeypatch.setattr(transcript_evidence_transfer, "_decode_steps", observed_decode_steps)
+    session = _session("claude", _chunked_transfer_transcript(tmp_path, 4 * CHUNK_RECORDS))
+
+    derivation = asyncio.create_task(
+        derive_transcript_evidence(
+            session, BASE_TIME, default_validation_detection_config(), set(), str(tmp_path)
+        )
+    )
+    await first_chunk.wait()
+    derivation.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await derivation
+
+    assert not finished
+    assert load_snapshot(session.id) is None

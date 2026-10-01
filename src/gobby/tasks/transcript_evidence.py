@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
@@ -54,6 +54,13 @@ from gobby.tasks.transcript_evidence_snapshots import (
     read_transcript_suffix,
     store_durable_snapshot,
     store_snapshot,
+)
+from gobby.tasks.transcript_evidence_transfer import (
+    ChunkedPayload,
+    decode,
+    decode_cooperatively,
+    encode,
+    encode_cooperatively,
 )
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
@@ -189,8 +196,9 @@ async def derive_transcript_evidence(
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
-    evidence, snapshot = await run_in_transcript_evidence_pool(
-        _derive_transcript_evidence_sync,
+    resume = load_snapshot(session.id)
+    payload = await run_in_transcript_evidence_pool(
+        _derive_chunked_transcript_evidence,
         session,
         _coerce_datetime(window_start),
         detection_config,
@@ -199,7 +207,11 @@ async def derive_transcript_evidence(
         task_checkout_paths,
         archive_dir,
         local_machine_id,
-        load_snapshot(session.id),
+        None if resume is None else await encode_cooperatively(resume),
+    )
+    evidence, snapshot = cast(
+        tuple[TranscriptEvidence, EvidenceSnapshot | None],
+        await decode_cooperatively(payload),
     )
     if snapshot is not None:
         store_snapshot(session.id, snapshot)
@@ -296,6 +308,33 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
             ),
             default=None,
         ),
+    )
+
+
+def _derive_chunked_transcript_evidence(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
+    archive_dir: str | None,
+    local_machine_id: str,
+    resume: ChunkedPayload | None,
+) -> ChunkedPayload:
+    """Pool entry: records cross the boundary in chunks the event loop decodes."""
+    return encode(
+        _derive_transcript_evidence_sync(
+            session,
+            window_start,
+            detection_config,
+            task_edited_files,
+            repo_path,
+            task_checkout_paths,
+            archive_dir,
+            local_machine_id,
+            None if resume is None else cast(EvidenceSnapshot, decode(resume)),
+        )
     )
 
 
