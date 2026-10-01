@@ -14,6 +14,7 @@
 //! which would leave a controlled pane on the old colours until someone typed.
 
 use gobby_terminal::protocol::ClientMessage;
+use gobby_terminal::raw_input::HostColorQueryArm;
 use gobby_terminal::terminal_theme::{ThemeDeclaration, HOST_COLOR_QUERY_SEQUENCE};
 use std::io::Write;
 
@@ -30,8 +31,13 @@ pub(super) const TERMINAL_THEME_CAPABILITY: &str = "terminal_theme";
 
 /// Ask the hosting terminal for its default colours (OSC 10/11). The answer
 /// arrives as `RawInputEvent::HostDefaultColor`, which the live loop records
-/// on the chrome for System mode's declaration.
-pub(crate) fn query_host_colors(output: &mut impl Write) -> std::io::Result<()> {
+/// on the chrome for System mode's declaration. `arm` readies the input
+/// reader first, so a reply split at its ESC never leaks as an Escape key.
+pub(crate) fn query_host_colors(
+    arm: &HostColorQueryArm,
+    output: &mut impl Write,
+) -> std::io::Result<()> {
+    arm.query_sent();
     output.write_all(HOST_COLOR_QUERY_SEQUENCE.as_bytes())?;
     output.flush()
 }

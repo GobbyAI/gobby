@@ -41,7 +41,7 @@ fn only_an_advertised_terminal_theme_capability_counts() {
 #[test]
 fn host_color_query_asks_for_the_default_colours() {
     let mut output = Vec::new();
-    query_host_colors(&mut output).unwrap();
+    query_host_colors(&HostColorQueryArm::default(), &mut output).unwrap();
     assert_eq!(output, b"\x1b]10;?\x1b\\\x1b]11;?\x1b\\");
 }
 

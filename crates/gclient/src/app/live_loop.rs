@@ -568,7 +568,8 @@ pub async fn run_live_loop<B: Backend>(
                         }
                     }
                     if std::mem::take(&mut host_colors_due) {
-                        super::theme_sync::query_host_colors(&mut std::io::stdout())?;
+                        let arm = &chrome.host_color_query;
+                        super::theme_sync::query_host_colors(arm, &mut std::io::stdout())?;
                     }
                 } else if let Some(watcher) = &system_theme_watcher {
                     for _ in watcher.try_iter() {}

@@ -93,6 +93,8 @@ pub fn parse_raw_input_bytes_sync(data: &[u8]) -> Vec<RawInputEvent> {
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::input::{parse_terminal_key_sequence, TerminalKey, TextCommit};
@@ -207,7 +209,27 @@ fn input_flush_timeout_ms(framer: &RawInputFramer) -> i32 {
     }
 }
 
-pub fn spawn_input_reader() -> mpsc::Receiver<RawInputEvent> {
+/// Tells the input reader that the client sent a host colour query (OSC
+/// 10/11) after startup, so a reply split at its ESC introducer is held and
+/// stitched instead of reaching the focused pane as an Escape keypress
+/// (#23286). A lone-ESC flush disarms the startup window for good.
+#[derive(Clone, Debug, Default)]
+pub struct HostColorQueryArm(Arc<AtomicBool>);
+
+impl HostColorQueryArm {
+    /// Call before writing the query, so its reply cannot beat the arm.
+    pub fn query_sent(&self) {
+        self.0.store(true, Ordering::Release);
+    }
+
+    fn rearm(&self, framer: &mut RawInputFramer) {
+        if self.0.swap(false, Ordering::AcqRel) {
+            framer.host_color_query_sent();
+        }
+    }
+}
+
+pub fn spawn_input_reader(query_arm: HostColorQueryArm) -> mpsc::Receiver<RawInputEvent> {
     let (tx, rx) = mpsc::channel(256);
 
     std::thread::spawn(move || {
@@ -223,6 +245,7 @@ pub fn spawn_input_reader() -> mpsc::Receiver<RawInputEvent> {
             match reader.read(&mut scratch) {
                 Ok(0) => break,
                 Ok(n) => {
+                    query_arm.rearm(&mut framer);
                     send_raw_input_events(framer.push(&scratch[..n]), &tx, &mut pending_palette);
 
                     if stdin_read_ready(&reader, input_flush_timeout_ms(&framer)) == Some(false) {

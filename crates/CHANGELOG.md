@@ -161,6 +161,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   queries the hosting terminal's own colours (OSC 10/11) on entering System
   and after each appearance flip, and declares those, or nothing until they
   are known, instead of the theme's `panel_bg` on a ground it never paints.
+  Each query re-arms the input reader through
+  `gobby_terminal::raw_input::HostColorQueryArm`, so a reply split at its ESC
+  is stitched rather than sent to the focused pane as an Escape key.
 
 ## [0.8.1] — gobby-core — 2026-07-14
 

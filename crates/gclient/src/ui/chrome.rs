@@ -23,6 +23,7 @@ use crate::ui::sidebar;
 use crate::ui::sidebar_rows;
 use crate::ui::status::{ActiveToast, Toast};
 use gobby_terminal::layout::{self, Node, PaneInfo, SplitBorder, TileLayout};
+use gobby_terminal::raw_input::HostColorQueryArm;
 use gobby_terminal::selection::Selection;
 use gobby_terminal::terminal_theme::{DefaultColorKind, RgbColor, TerminalTheme};
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
@@ -349,6 +350,9 @@ pub struct Chrome {
     /// The hosting terminal's own foreground and background, from its answer
     /// to gclient's OSC 10/11 query; System mode leaves them as the ground.
     pub host_colors: TerminalTheme,
+    /// Shared with the input reader so a runtime OSC 10/11 query's reply is
+    /// framed as a reply, never as keystrokes.
+    pub host_color_query: HostColorQueryArm,
 }
 
 /// A palette colour as the RGB a host declaration carries; palettes paint
@@ -394,6 +398,7 @@ impl Chrome {
             menu: None,
             ticker: 0,
             host_colors: TerminalTheme::default(),
+            host_color_query: HostColorQueryArm::default(),
         }
     }
 
