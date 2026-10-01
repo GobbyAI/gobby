@@ -3,10 +3,11 @@
 | Role file | Session |
 | --- | --- |
 | assistant.md | gobby#14069 |
-| orchestrator.md | gobby#14737 |
+| orchestrator.md | gobby#14972 |
 | merge-manager.md | gobby#14894 |
+| release-manager.md | gobby#14968 |
 | lane-1-gclient.md | gobby#14909 |
-| lane-2-stability.md | gobby#14925 |
+| lane-2-stability.md | gobby#14962 |
 | lane-3-hooks.md | gobby#14956 |
 | lane-3-hooks.md | gobby#14954 |
 | lane-4-runbooks.md | gobby#14674 |
@@ -26,7 +27,7 @@
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14949 |
-| monitor.md | gobby#14573 |
+| monitor.md | gobby#14965 |
 | plan-writer.md | gobby#14578 |
 | plan-adversary.md | gobby#14579 |
 

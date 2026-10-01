@@ -6,4 +6,4 @@ Your session is the one named for this file in `roster.md`. Own the memory lane,
 - Claim each task and work in an isolated worktree. Spawn nothing.
 - Preserve search ranking and the boundaries callers depend on.
 - Make no live schema changes. Any later migration's number needs Orchestrator reconciliation against the live schema version first.
-- Validate and commit, then submit to the Orchestrator, who reviews, lands and restarts. Run heavy commands and close reviews only in a Lane Manager slot (seat named in `roster.md`). Don't restart the daemon or promote binaries.
+- Validate and commit, then submit to the Orchestrator, who routes the candidate to a Code Reviewer. The reviewer's LAND goes to the Merge Manager, which lands it; the Release Manager activates it; restarts stay with the Orchestrator. Run heavy commands and close reviews only in a Lane Manager slot (seat named in `roster.md`). Don't restart the daemon or promote binaries.
