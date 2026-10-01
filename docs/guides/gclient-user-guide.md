@@ -87,7 +87,7 @@ when those conditions are absent. Slashes below separate alternative labels:
 | File | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | Edit | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name (when named), Send right-clicks to pane / Use gclient menu |
 | View | Theme: Dark / Light / System ▸, Monochrome, Sidebar ▸ |
-| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange: even horizontal, Arrange: even vertical, Arrange: main horizontal, Arrange: main vertical, Arrange: tiled, New grid… |
+| Window | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (Even horizontal, Even vertical, Main horizontal, Main vertical, Tiled, New grid…) |
 | Agent | Respond, Mark seen, Take control, Release control, Take back, Detach, Open alert target, Next attention, Previous attention |
 | Help | Keys, Alerts…, Daemon, About Gobby |
 
@@ -125,8 +125,11 @@ explicit colours, so a terminal setting that applies opacity to explicit cells
 terminal's own background and foreground and only picks the palette from the
 OS appearance.
 
-The five **Window › Arrange: …** items redistribute the panes in the active
-tab into the chosen layout. **Window › New grid…** asks for rows and columns
+The five layouts under **Arrange ▸** redistribute a tab's panes into the
+chosen layout. Window › Arrange ▸ arranges the active tab; the same submenu in
+a tab's or a pane's right-click menu arranges that tab, bringing it forward
+first. A choice whose tab has closed, or whose pane has left it, is refused
+with a notice. **Arrange ▸ › New grid…** asks for rows and columns
 and starts a terminal in each new cell. **Help › Daemon** shows the daemon URL, client and daemon
 versions, health, last roster refresh, and completed startup timings. **Help ›
 About Gobby** shows the versions, URL, and machine.
@@ -806,8 +809,8 @@ close.
 
 | Target | Items |
 | --- | --- |
-| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange: even horizontal / even vertical / main horizontal / main vertical / tiled, New grid…, Take / Release control, Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
-| Tab | New tab, Rename tab, Close tab |
+| Pane | Rename pane, Clear pane name, Swap with focused pane, Split right, Split down, Zoom / Unzoom, Arrange ▸ (for the pane's tab), Take / Release control, Respond (when it needs you), Copy mode, Send right-clicks to pane / Use gclient menu, Close pane |
+| Tab | New tab, Rename tab, Arrange ▸ (for that tab), Close tab |
 | Project card | Rename, Close, New worktree, Open worktree…, Collapse / Expand |
 | Worktree row | Rename, Close, Delete worktree checkout… |
 | Agent or bare terminal row | Focus, Open in new tab, Respond (when it needs you), Mark seen, Take / Release control, Close terminal / Destroy orphaned terminal (when orphaned) |
@@ -816,7 +819,7 @@ close.
 | **File** on the menu bar (click) | New terminal, New tab, New workspace…, Rename tab, Close tab, Destroy orphaned terminals…, Detach |
 | **Edit** on the menu bar (click) | Copy mode, Rename pane, Rename tab, Rename terminal, Clear pane name, Send right-clicks to pane / Use gclient menu |
 | **View** on the menu bar (click) | Theme ▸, Monochrome, Sidebar ▸ (Show sidebar, Pin sidebar, Machines ▸, Projects ▸, Agents ▸, Terminals ▸) |
-| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, five Arrange layouts, New grid… |
+| **Window** on the menu bar (click) | Split right, Split down, Zoom / Unzoom, Close pane, Resize mode, Arrange ▸ (five layouts, New grid…) |
 | **Agent** on the menu bar (click) | Respond, Mark seen, Take / Release control, Take back, Detach, Open alert target, Next / Previous attention |
 | **Help** on the menu bar (click) | Keys, Alerts…, Daemon, About Gobby |
 

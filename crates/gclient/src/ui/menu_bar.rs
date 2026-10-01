@@ -68,7 +68,9 @@ pub fn render_menu_bar(frame: &mut Frame, rect: Rect, chrome: &Chrome) -> MenuBa
         .bg(p.bar)
         .fg(p.bar_ink)
         .add_modifier(Modifier::BOLD);
-    let open = chrome.menu.as_ref().and_then(|menu| match menu.kind {
+    // The title stays open while a submenu cascades from its menu.
+    let root = std::iter::successors(chrome.menu.as_ref(), |menu| menu.parent.as_deref()).last();
+    let open = root.and_then(|menu| match menu.kind {
         ContextMenuKind::MenuBar(open) => Some(open),
         _ => None,
     });
@@ -163,7 +165,8 @@ mod tests {
     }
 
     /// The title whose menu is open reads in the open colours across its
-    /// whole cell; every other cell keeps the bar's colours.
+    /// whole cell, also while a submenu cascades from it; every other cell
+    /// keeps the bar's colours.
     #[test]
     fn the_open_title_reads_in_the_open_colours() {
         let mut chrome = Chrome::new(Theme::new(ThemeKind::Light));
@@ -186,5 +189,19 @@ mod tests {
             };
             assert_eq!((cell.fg, cell.bg), expected, "x={x}");
         }
+
+        // View › Theme open in front keeps View's title open.
+        let view_menu = chrome.menu.take().expect("view menu");
+        chrome.menu = Some(ContextMenuState {
+            kind: ContextMenuKind::Submenu(crate::app::Submenu::Theme),
+            anchor: (8, 1),
+            items: Vec::new(),
+            selected: 0,
+            item_rects: Vec::new(),
+            parent: Some(Box::new(view_menu)),
+        });
+        let (_, buffer) = draw(&chrome);
+        let cell = &buffer[(view.x, 0)];
+        assert_eq!((cell.fg, cell.bg), (palette.bar_open_ink, palette.bar_ink));
     }
 }

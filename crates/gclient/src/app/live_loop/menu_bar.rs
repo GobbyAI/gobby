@@ -5,8 +5,8 @@ use crate::ui::menu_bar::MenuBarMenu;
 use crate::ui::{Action, Chrome, WorkspaceView};
 
 use super::menu::{
-    arrange_items, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
-    MenuAction, MenuItem, Submenu,
+    arrange_row, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
+    ArrangeTarget, MenuAction, MenuItem, Submenu,
 };
 
 pub fn menu_bar_items<W: WorkspaceView>(
@@ -79,7 +79,10 @@ pub fn menu_bar_items<W: WorkspaceView>(
                     chrome.focused_pane().is_some(),
                 ),
             ];
-            items.extend(arrange_items());
+            items.push(arrange_row(chrome.active_tab().map(|tab| ArrangeTarget {
+                tab: tab.id.clone(),
+                pane: None,
+            })));
             items
         }
         MenuBarMenu::Agent => {

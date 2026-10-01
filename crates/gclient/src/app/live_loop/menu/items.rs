@@ -7,27 +7,41 @@ use crate::ui::settings::AgentSort;
 use crate::ui::sidebar::{agent_blocked, ALL_MACHINES};
 use crate::ui::{Action, Chrome, WorkspaceView};
 
-use super::{ArrangeLayout, MenuAction, MenuItem, Submenu};
+use super::{ArrangeLayout, ArrangeTarget, MenuAction, MenuItem, Submenu};
 
-pub(in crate::app::live_loop) fn arrange_items() -> Vec<MenuItem> {
+/// The Arrange ▸ row, opening the layout choices for `target`; disabled
+/// when there is no tab to arrange.
+pub(in crate::app::live_loop) fn arrange_row(target: Option<ArrangeTarget>) -> MenuItem {
+    let enabled = target.is_some();
+    let target = target.unwrap_or(ArrangeTarget {
+        tab: String::new(),
+        pane: None,
+    });
+    enabled_if(
+        item(
+            "Arrange ▸",
+            MenuAction::OpenSubmenu(Submenu::Arrange(target)),
+        ),
+        enabled,
+    )
+}
+
+fn arrange_items(target: &ArrangeTarget) -> Vec<MenuItem> {
+    let arrange = |label, layout| {
+        item(
+            label,
+            MenuAction::Arrange {
+                layout,
+                target: target.clone(),
+            },
+        )
+    };
     vec![
-        item(
-            "Arrange: even horizontal",
-            MenuAction::Arrange(ArrangeLayout::EvenHorizontal),
-        ),
-        item(
-            "Arrange: even vertical",
-            MenuAction::Arrange(ArrangeLayout::EvenVertical),
-        ),
-        item(
-            "Arrange: main horizontal",
-            MenuAction::Arrange(ArrangeLayout::MainHorizontal),
-        ),
-        item(
-            "Arrange: main vertical",
-            MenuAction::Arrange(ArrangeLayout::MainVertical),
-        ),
-        item("Arrange: tiled", MenuAction::Arrange(ArrangeLayout::Tiled)),
+        arrange("Even horizontal", ArrangeLayout::EvenHorizontal),
+        arrange("Even vertical", ArrangeLayout::EvenVertical),
+        arrange("Main horizontal", ArrangeLayout::MainHorizontal),
+        arrange("Main vertical", ArrangeLayout::MainVertical),
+        arrange("Tiled", ArrangeLayout::Tiled),
         item("New grid…", MenuAction::OpenNewGrid),
     ]
 }
@@ -58,7 +72,15 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
             MenuAction::Act(Action::Zoom),
         ),
     ]);
-    items.extend(arrange_items());
+    let tab = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .find(|tab| tab.slot_for(pane).is_some());
+    items.push(arrange_row(tab.map(|tab| ArrangeTarget {
+        tab: tab.id.clone(),
+        pane: Some(pane),
+    })));
     items.push(control_item(state, pane));
     if let Some(entry_id) = blocked_entry(ws, pane) {
         items.push(item("Respond", MenuAction::Respond(entry_id)));
@@ -74,10 +96,15 @@ pub(super) fn pane_items<W: WorkspaceView>(ws: &W, chrome: &Chrome, pane: PaneId
     items
 }
 
-pub(super) fn tab_items() -> Vec<MenuItem> {
+pub(super) fn tab_items(chrome: &Chrome, index: usize) -> Vec<MenuItem> {
+    let tab = chrome.tabs().tabs.get(index);
     vec![
         item("New tab", MenuAction::Act(Action::NewTab)),
         item("Rename tab", MenuAction::Act(Action::RenameTab)),
+        arrange_row(tab.map(|tab| ArrangeTarget {
+            tab: tab.id.clone(),
+            pane: None,
+        })),
         item("Close tab", MenuAction::Act(Action::CloseTab)),
     ]
 }
@@ -205,8 +232,9 @@ pub fn attention_id<W: WorkspaceView>(ws: &W, entry_id: &str) -> Option<String> 
 }
 
 /// A submenu's items.
-pub(super) fn submenu_items(chrome: &Chrome, submenu: Submenu) -> Vec<MenuItem> {
+pub(super) fn submenu_items(chrome: &Chrome, submenu: &Submenu) -> Vec<MenuItem> {
     match submenu {
+        Submenu::Arrange(target) => arrange_items(target),
         Submenu::Theme => theme_items(chrome),
         Submenu::Sidebar => sidebar_items(chrome),
         Submenu::Section(SidebarSection::Machines) => {
