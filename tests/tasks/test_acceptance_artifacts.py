@@ -1326,8 +1326,8 @@ def test_tdd_evidence_does_not_borrow_sibling_assertion_after_summary_rejection(
     )
     red_output = (
         "=================================== FAILURES ===================================\n"
-        "E   Failed: something-other-than-DID NOT RAISE\n"
-        "/repo/tests/test_feature.py:24: Failed: something-other-than-DID NOT RAISE\n"
+        "E   Failed: Timeout (>30.0s) from pytest-timeout.\n"
+        "/repo/tests/test_feature.py:24: Failed: Timeout (>30.0s) from pytest-timeout.\n"
         "E   AssertionError: assert 0 == 1\n"
         "/repo/tests/test_other.py:10: AssertionError: assert 0 == 1\n"
         "=========================== short test summary info ============================\n"
@@ -1537,6 +1537,350 @@ def test_tdd_evidence_rejects_documentation_as_production_edit(path: str) -> Non
     assert result.findings == (
         "tests/test_feature.py::test_feature: no production edit follows the test edit",
     )
+
+
+_HELPER_FAIL_BODY = """\
+import pytest
+
+from feature import feature
+
+
+def test_feature(monkeypatch):
+    def unexpected_render(**_context):
+        pytest.fail("no policy may be rendered for a swapped cache grant")
+
+    monkeypatch.setattr("feature.render", unexpected_render)
+    with pytest.raises(PermissionError):
+        feature()
+"""
+_CONDITIONAL_FAIL_BODY = """\
+import pytest
+
+from feature import feature
+
+
+def test_feature():
+    if feature():
+        return
+    pytest.fail("feature false")
+"""
+_PLACEHOLDER_FAIL_BODY = """\
+import pytest
+
+
+def test_feature():
+    pytest.fail("not written yet")
+"""
+
+
+def _tb_line_red(
+    detail: str, *, node: str = "tests/test_feature.py::test_feature", line: int = 9
+) -> str:
+    return (
+        "=================================== FAILURES ===================================\n"
+        f"E   {detail}\n"
+        f"/repo/tests/test_feature.py:{line}: {detail}\n"
+        "=========================== short test summary info ============================\n"
+        f"FAILED {node}\n"
+        "============================== 1 failed in 0.10s ===============================\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "body,red_output,red_minute,expected",
+    [
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red("Failed: no policy may be rendered for a swapped cache grant"),
+            2,
+            None,
+            id="helper-pytest-fail",
+        ),
+        pytest.param(
+            _CONDITIONAL_FAIL_BODY,
+            _tb_line_red("Failed: feature false"),
+            2,
+            None,
+            id="fail-after-success-return",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red("Failed: Timeout (>30.0s) from pytest-timeout."),
+            2,
+            "no attributable failure section",
+            id="timeout",
+        ),
+        pytest.param(
+            _PLACEHOLDER_FAIL_BODY,
+            _tb_line_red("Failed: not written yet"),
+            2,
+            "unconditional pytest.fail placeholder",
+            id="placeholder",
+        ),
+        *[
+            pytest.param(
+                "import pytest\n\ndef test_feature():\n"
+                + padding
+                + '    pytest.fail("not written yet")\n',
+                _tb_line_red("Failed: not written yet"),
+                2,
+                "unconditional pytest.fail placeholder",
+                id=f"placeholder-{name}",
+            )
+            for name, padding in (
+                ("assignment", "    marker = 0\n"),
+                ("pass", "    pass\n"),
+                ("docstring-assignment", '    "Pending test."\n    marker = 0\n'),
+                ("builtin-call", '    print("pending")\n'),
+                ("stdlib-call", "    import time as clock\n    clock.monotonic()\n"),
+                ("uncalled-helper", "    def helper():\n        feature()\n"),
+                ("uncalled-lambda", "    helper = lambda: feature()\n"),
+            )
+        ],
+        pytest.param(
+            "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+            '    feature()\n    pytest.fail("feature returned unexpectedly")\n',
+            _tb_line_red("Failed: feature returned unexpectedly"),
+            2,
+            None,
+            id="fail-after-production-call",
+        ),
+        *[
+            pytest.param(
+                "import pytest\n\ndef test_feature():\n    " + statement + "\n",
+                _tb_line_red("Failed: not written yet"),
+                2,
+                "unconditional pytest.fail placeholder",
+                id=f"placeholder-expression-{name}",
+            )
+            for name, statement in (
+                ("assign", 'result = pytest.fail("not written yet")'),
+                ("annassign", 'result: object = pytest.fail("not written yet")'),
+                ("augassign", 'result += pytest.fail("not written yet")'),
+                ("return", 'return pytest.fail("not written yet")'),
+                ("raise", 'raise pytest.fail("not written yet")'),
+                ("nested-call", 'print(pytest.fail("not written yet"))'),
+                ("application-argument", 'feature(pytest.fail("not written yet"))'),
+                ("tuple", '(pytest.fail("not written yet"), feature())'),
+                ("walrus", '(result := pytest.fail("not written yet"))'),
+                ("if-test", 'if pytest.fail("not written yet"):\n        pass'),
+                ("while-test", 'while pytest.fail("not written yet"):\n        pass'),
+                ("assert-test", 'assert pytest.fail("not written yet")'),
+                ("bool-first", 'pytest.fail("not written yet") or feature()'),
+                ("with-context", 'with pytest.fail("not written yet"):\n        pass'),
+                ("assign-target", 'marker[feature()] = pytest.fail("not written yet")'),
+                ("assign-attribute", 'feature().marker = pytest.fail("not written yet")'),
+                ("assign-targets", 'marker = feature().marker = pytest.fail("not written yet")'),
+                ("annassign-target", 'marker[feature()]: object = pytest.fail("not written yet")'),
+                (
+                    "annassign-attribute",
+                    'feature().marker: object = pytest.fail("not written yet")',
+                ),
+                ("local-annotation", 'marker: feature() = 0\n    pytest.fail("not written yet")'),
+                ("local-annotation-only", 'marker: feature()\n    pytest.fail("not written yet")'),
+                ("dict-values", 'result = {0: pytest.fail("not written yet"), feature(): 1}'),
+                ("dict-unpack", 'result = {**{0: pytest.fail("not written yet")}, feature(): 1}'),
+                (
+                    "augassign-value",
+                    'marker[0] += {0: pytest.fail("not written yet"), feature(): 1}',
+                ),
+                ("keyword-value", 'feature(key={0: pytest.fail("not written yet"), feature(): 1})'),
+                ("starred-value", 'feature(*{0: pytest.fail("not written yet"), feature(): 1})'),
+                (
+                    "listcomp-iterator",
+                    'result = [x for x in {0: pytest.fail("not written yet"), feature(): 1}]',
+                ),
+                (
+                    "setcomp-iterator",
+                    'result = {x for x in {0: pytest.fail("not written yet"), feature(): 1}}',
+                ),
+                (
+                    "dictcomp-iterator",
+                    'result = {x: x for x in {0: pytest.fail("not written yet"), feature(): 1}}',
+                ),
+                (
+                    "generator-iterator",
+                    'result = (x for x in {0: pytest.fail("not written yet"), feature(): 1})',
+                ),
+                (
+                    "generator-body",
+                    'pending = (feature() for _ in ())\n    pytest.fail("not written yet")',
+                ),
+                (
+                    "generator-later-iterator",
+                    "pending = (x for x in () for y in feature())\n"
+                    '    pytest.fail("not written yet")',
+                ),
+                (
+                    "generator-filter",
+                    'pending = (x for x in () if feature())\n    pytest.fail("not written yet")',
+                ),
+                (
+                    "lambda-default",
+                    'pending = lambda x={0: pytest.fail("not written yet"), feature(): 1}: x',
+                ),
+                (
+                    "nested-def-default",
+                    'def pending(x={0: pytest.fail("not written yet"), feature(): 1}):\n'
+                    "        feature()",
+                ),
+                (
+                    "nested-def-keyword-default",
+                    'def pending(*, x={0: pytest.fail("not written yet"), feature(): 1}):\n'
+                    "        feature()",
+                ),
+                (
+                    "nested-async-def-default",
+                    'async def pending(x={0: pytest.fail("not written yet"), feature(): 1}):\n'
+                    "        feature()",
+                ),
+                (
+                    "class-decorator",
+                    '@pytest.fail("not written yet")\n    class Pending:\n'
+                    "        marker = feature()",
+                ),
+                (
+                    "type-alias",
+                    'type Pending = feature()\n    pytest.fail("not written yet")',
+                ),
+            )
+        ],
+        *[
+            pytest.param(
+                "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+                "    marker = {0: 0}\n    "
+                + statement
+                + '\n    pytest.fail("feature returned unexpectedly")\n',
+                _tb_line_red("Failed: feature returned unexpectedly"),
+                2,
+                None,
+                id=f"evaluated-application-{name}",
+            )
+            for name, statement in (
+                ("annassign-value", "marker: object = feature()"),
+                ("annassign-target", "feature().marker: object = 0"),
+                ("augassign-subscript", "marker[feature()] += 0"),
+                ("augassign-attribute", "feature().marker += 0"),
+                ("dict-key", "marker = {feature(): 0}"),
+                ("dict-value", "marker = {0: feature()}"),
+                ("keyword", "dict(key=feature())"),
+                ("starred-before-keyword", 'dict(key=pytest.fail("later"), *(feature(),))'),
+                ("keyword-after-starred", "dict(*(), key=feature())"),
+                ("generator-iterator", "pending = (x for x in feature())"),
+                ("listcomp-iterator", "marker = [x for x in feature()]"),
+                ("setcomp-iterator", "marker = {x for x in feature()}"),
+                ("dictcomp-iterator", "marker = {x: x for x in feature()}"),
+                ("lambda-default", "pending = lambda x=feature(): x"),
+                ("nested-def-default", "def pending(x=feature()):\n        return x"),
+            )
+        ],
+        pytest.param(
+            "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+            '    result = pytest.fail(f"feature returned {feature()}")\n',
+            _tb_line_red("Failed: feature returned False"),
+            2,
+            None,
+            id="assigned-fail-evaluates-production-call",
+        ),
+        pytest.param(
+            "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+            '    pytest.fail(f"feature returned {feature()}")\n',
+            _tb_line_red("Failed: feature returned False"),
+            2,
+            None,
+            id="fail-evaluates-production-call",
+        ),
+        *[
+            pytest.param(
+                imports
+                + "\n\ndef test_feature():\n    marker = 0\n"
+                + f'    {fail_call}("not written yet")\n',
+                _tb_line_red("Failed: not written yet"),
+                2,
+                "unconditional pytest.fail placeholder",
+                id=f"placeholder-{name}",
+            )
+            for name, imports, fail_call in (
+                ("pytest-alias", "import pytest as pt", "pt.fail"),
+                ("fail-alias", "from pytest import fail as abort", "abort"),
+            )
+        ],
+        pytest.param(
+            "from feature import fail\n\ndef test_feature():\n    fail()\n",
+            _tb_line_red("Failed: production failure"),
+            2,
+            None,
+            id="application-call-named-fail",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red(
+                "Failed: no policy may be rendered for a swapped cache grant",
+                node="tests/test_feature.py::test_other",
+                line=30,
+            ),
+            2,
+            "no attributable failure section",
+            id="summary-names-another-test",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            "==================================== ERRORS ====================================\n"
+            "E   Failed: fixture 'unknown' not found\n"
+            "=========================== short test summary info ============================\n"
+            "ERROR tests/test_feature.py::test_feature\n"
+            "=============================== 1 error in 0.10s ===============================\n",
+            2,
+            "missing assertion or panic failure",
+            id="setup-error",
+        ),
+        pytest.param(
+            _HELPER_FAIL_BODY,
+            _tb_line_red("Failed: no policy may be rendered for a swapped cache grant"),
+            4,
+            "missing assertion or panic failure",
+            id="after-implementation",
+        ),
+    ],
+)
+def test_tdd_evidence_credits_pytest_fail_red_only_from_an_exercising_body(
+    body: str, red_output: str, red_minute: int, expected: str | None
+) -> None:
+    started = datetime(2026, 10, 1, tzinfo=UTC)
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body=body,
+    )
+    red = replace(
+        _run(test, started + timedelta(minutes=red_minute), "failure", red_output, red_minute),
+        command=(
+            "pytest tests/test_feature.py::test_feature tests/test_feature.py::test_other "
+            "-q --tb=line"
+        ),
+    )
+    evidence = TranscriptEvidence(
+        edits=(
+            replace(
+                _edit(test.path, started, 1),
+                source_after=body,
+                source_confirmed=True,
+                source_confirmed_at=started + timedelta(seconds=1),
+            ),
+            _edit("src/feature.py", started + timedelta(minutes=3), 3),
+        ),
+        validation_runs=(red, _run(test, started + timedelta(minutes=5), "success", "1 passed", 5)),
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    if expected is None:
+        assert result.passed is True, result
+        assert result.red_runs == (red.command,)
+    else:
+        assert result.passed is False
+        assert any(expected in finding for finding in result.findings), result.findings
 
 
 def test_tdd_evidence_accepts_did_not_raise_red() -> None:
