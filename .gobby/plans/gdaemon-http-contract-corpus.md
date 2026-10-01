@@ -319,8 +319,8 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 `kind: deliverable`
 
 Targets:
-- `crates/gdaemon/tests/http_contracts.rs`
-- `tests/contracts/http/front_door_backend_down.json`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: created by this leaf (landed in #23109 at `1be86e9e85`, package 3 `b1dc981f1f`)
+- `tests/contracts/http/front_door_backend_down.json::*` — scope-reason: created by this leaf (landed in #23109 at `1be86e9e85`, package 3 `b1dc981f1f`)
 - `tests/contracts/http/manifest.json::*` — scope-reason: registers the `front_door` family and its `front_door_backend_down` case
 
 **Research context:**
@@ -436,9 +436,9 @@ Targets:
 - `tests/contracts/http/auth_missing_auth.json::*` — scope-reason: gains `"backend": "up"` after `family`
 - `tests/contracts/http/auth_missing_grant.json::*` — scope-reason: gains `"backend": "up"` after `family`
 - `tests/contracts/http/auth_forged_identity.json::*` — scope-reason: gains `"backend": "up"` after `family`
-- `tests/contracts/http/front_door_backend_down.json`
+- `tests/contracts/http/front_door_backend_down.json::*` — scope-reason: gains `"backend": "down"` after `family`
 - `tests/contracts/http/health_backend_down.json`
-- `crates/gdaemon/tests/http_contracts.rs`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: the harness dispatches each case on its declared `backend` and gains the 3.3 replay tests
 
 **Granularity:** one deliverable. The case field, the Python loader rule, and the Rust
 state dispatch are one contract; the new health case exercises it in both languages.
@@ -566,6 +566,13 @@ Verification planned: `cargo test -p gobby-daemon --test http_contracts`, then
   is resolved, and the Ask drops, the unsupervised in-process harness, and the 3.3
   backend-state contract are accepted. The Adversary derives the fresh M1 from these
   bytes. #23109 stays frozen.
+- 2026-10-01: Index drift repair under #23192 (PD gobby#14972). #23109 landed
+  `crates/gdaemon/tests/http_contracts.rs` and
+  `tests/contracts/http/front_door_backend_down.json` in package 3 (`b1dc981f1f`), so
+  both are indexed and base validation rejected their bare-path Targets. 3.2 names them
+  `::*` with a landed-in reason, and 3.3 names its edits on them `::*` with a reason.
+  Targets only; acceptance items and criteria are unchanged, so #23248 keeps its
+  criteria.
 
 ## V2: Verification
 `kind: verification`

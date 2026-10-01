@@ -641,6 +641,9 @@ Consumers unchanged:
 - `src/gobby/config/postgres_bootstrap.py` — no-edit-reason: passes its own updater; the writer's signature is unchanged and only 4.2's callers write the new keys.
 - `src/gobby/ui_exposure.py` — no-edit-reason: same.
 - `tests/config/test_files_home.py` — no-edit-reason: same.
+- `src/gobby/cli/hub_backup/files_home.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
+- `tests/cli/test_datastores_rotate_password.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
+- `tests/config/test_bootstrap_postgres.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 
 **Acceptance:**
 
@@ -815,6 +818,7 @@ Targets:
 - `tests/servers/routes/test_runtime_handshake.py::*` — scope-reason: challenge and handshake against forwarded identity
 - `tests/servers/routes/test_runtime_config.py::*` — scope-reason: consumers of `AuthService.local_token`, `issue_for_operator`, and `verify_agent_api_token`; use the signing secret
 - `tests/servers/test_mcp_programmatic_boundary.py::*` — scope-reason: consumer of `AuthService.local_token`; uses the signing secret
+- `tests/servers/routes/test_agents_routes.py::*` — scope-reason: consumer of `AuthService.local_token`; builds `AuthService` from an operator token file and signs agent tokens with it, so it uses the signing secret
 - `tests/mcp_proxy/test_workspaces_registry.py::*` — scope-reason: builds `AuthService` with a token file and patches `authenticate`; same
 - `tests/servers/test_grant_auth.py::*` — scope-reason: `bearer_matches_grant` cases compare against the forwarded machine header
 - `tests/servers/routes/test_configuration_routes.py::*` — scope-reason: drop verify_bearer usage
@@ -861,7 +865,7 @@ Targets:
 - `tests/contracts/http/tasks_list.json::*` — scope-reason: re-recorded at `schema_version` 2; only the version changes
 - `tests/contracts/http/runtime_handshake_challenge.json::*` — scope-reason: re-recorded at `schema_version` 2; only the version changes
 - `tests/contracts/http/runtime_handshake.json::*` — scope-reason: re-recorded at `schema_version` 2; only the version changes
-- `tests/contracts/http/front_door_backend_down.json`
+- `tests/contracts/http/front_door_backend_down.json::*` — scope-reason: advanced by hand to `schema_version` 2, keeping `backend: down` and its body
 - `tests/contracts/http/health_backend_down.json`
 - `crates/gcore/src/grant/tests.rs::*` — scope-reason: managed-token signing secret changes
 - `tests/runtime_grants/test_golden_vectors.py::*` — scope-reason: same
@@ -1291,7 +1295,7 @@ Targets:
 - `crates/gdaemon/src/front_door/health.rs::*` — scope-reason: public health reports the backend's `refused` state
 - `crates/gdaemon/tests/pid_file_golden.rs`
 - `crates/gdaemon/tests/lifecycle.rs`
-- `crates/gdaemon/tests/http_contracts.rs`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: adapts the in-process `serve` call site if its signature changes; adds no supervisor
 - `tests/fixtures/pid_file_records/daemon_claim.json`
 - `tests/fixtures/pid_file_records/service_reservation.json`
 - `src/gobby/cli/daemon_start.py::*` — scope-reason: `start` spawns `gdaemon serve` after its admissions
@@ -1941,6 +1945,17 @@ built and installed binaries:
   is resolved, and the Ask drops, the unsupervised in-process harness, and the 3.3
   backend-state contract are accepted. The Adversary derives the fresh M1 from these
   bytes. #23109 stays frozen.
+- 2026-10-01: Index drift repair under #23192 (PD gobby#14972), on `0.5.0` `a670a9681b`.
+  #23109 landed `crates/gdaemon/tests/http_contracts.rs` and
+  `tests/contracts/http/front_door_backend_down.json` in package 3 (`b1dc981f1f`), so
+  4.3 and 5.2 name them `::*` with a reason. Callers landed since `4cc206f4d9` were
+  missing from consumer coverage. 4.2's Consumers unchanged block gains three
+  `update_bootstrap_yaml` callers: `src/gobby/cli/hub_backup/files_home.py`,
+  `tests/cli/test_datastores_rotate_password.py`, and
+  `tests/config/test_bootstrap_postgres.py`. 4.3 targets
+  `tests/servers/routes/test_agents_routes.py`, which builds `AuthService` from a token
+  file and must move to the signing secret like its sibling route tests. Targets and
+  Consumers only; acceptance items and criteria are unchanged.
 
 **Round 1** `kind: enhancement`
 
