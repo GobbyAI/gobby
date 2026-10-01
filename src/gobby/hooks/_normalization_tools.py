@@ -142,6 +142,11 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # Phase 2: MCP prefix/inner extraction + output aliases
     normalize_mcp_fields(data)
 
+    # Native command fields can retain a shell wrapper or a stale command.
+    tool_input = data.get("tool_input")
+    if isinstance(tool_input, dict) and "command" in tool_input:
+        data["command"] = tool_input["command"]
+
     # Phase 2.5: infer canonical read/search/write semantics
     _set_canonical_tool_metadata(data)
 
