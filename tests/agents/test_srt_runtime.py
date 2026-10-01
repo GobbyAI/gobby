@@ -378,13 +378,21 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         return None if result is None else str(result)
 
     monkeypatch.setattr(shutil, "which", fake_which)
+    # A spawn hands the run the unsandboxed Cargo home and checkout target with grants.
+    unsandboxed_cargo = {
+        "CARGO_HOME": gobby_home / "cache" / "cargo-home",
+        "CARGO_TARGET_DIR": gobby_home / "cache" / "cargo-target-v2" / "project" / "workspace",
+    }
+    spawn_env = {"PATH": str(shim_dir)} | {
+        name: str(path) for name, path in unsandboxed_cargo.items()
+    }
 
     launch = await prepare_sandbox_launch(
         config=SandboxConfig(
             enabled=True,
             backend="srt",
             allow_network=False,
-            extra_write_paths=[str(hook_inbox)],
+            extra_write_paths=[str(hook_inbox), *map(str, unsandboxed_cargo.values())],
             allow_unix_sockets=[str(workspace / "operator.sock")],
         ),
         provider=provider,
@@ -394,7 +402,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
         daemon_port=60887,
         websocket_port=60888,
         api_base=None,
-        env={"PATH": str(shim_dir)},
+        env=spawn_env,
         allow_run_unix_sockets=allow_run_sockets,
     )
 
@@ -422,8 +430,9 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert mux_dir.is_dir()
     assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
-    shared_cargo_home = gobby_home / "cache" / "cargo-home"
-    assert launch.provider_env["CARGO_HOME"] == str(shared_cargo_home)
+    sandbox_cache = gobby_home / "cache" / "sandbox"
+    for name in unsandboxed_cargo:
+        assert Path(launch.provider_env[name]).is_relative_to(sandbox_cache)
     assert not (expected_parent / "cache" / "cargo-home").exists()
     for writable_name in ("hooks", "logs", "cache"):
         writable = expected_parent / writable_name
@@ -438,7 +447,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     preflight_launch, preflight_cwd, preflight_env = preflights[0]
     assert preflight_launch is launch
     assert preflight_cwd == str(workspace)
-    assert preflight_env == {"PATH": str(shim_dir), **launch.provider_env}
+    assert preflight_env == {**spawn_env, **launch.provider_env}
     policy = json.loads(policy_path.read_text(encoding="utf-8"))
     socket_grants = policy["network"]["allowUnixSockets"]
     assert str((workspace / "operator.sock").resolve()) in socket_grants
@@ -450,7 +459,12 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     allowed_reads = policy["filesystem"]["allowRead"]
     allowed_writes = policy["filesystem"]["allowWrite"]
     assert str(hook_inbox.resolve()) in allowed_writes
-    assert allowed_writes.count(str(shared_cargo_home.resolve())) == 1
+    for name, unsandboxed_path in unsandboxed_cargo.items():
+        assert allowed_writes.count(str(Path(launch.provider_env[name]).resolve())) == 1
+        assert str(unsandboxed_path.resolve()) not in allowed_writes
+    # The daemon rebuilds the Zig mirror below this root before each run, so no run
+    # may plant links there for the next one to follow.
+    assert str(sandbox_cache.resolve()) not in allowed_writes
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads

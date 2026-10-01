@@ -6,6 +6,8 @@ in the cache key, so a main checkout, worktree, and clone never exchange build
 artifacts. Interactive shells reach the directory through a ``target`` symlink;
 spawned agents receive the same path as ``CARGO_TARGET_DIR``. The shared
 ``CARGO_HOME`` remains separate and continues to reuse registry and Git inputs.
+Sandboxed runs build with their own Cargo home into a sibling per-checkout
+target under the sandbox cache, and checkout cleanup removes both targets.
 
 The link is added to the repository's local exclude file because the conventional
 ``target/`` ignore pattern matches directories and leaves a symlink untracked.
@@ -23,6 +25,7 @@ import shutil
 import uuid
 from pathlib import Path
 
+from gobby.agents.constants import sandbox_agent_cache_dir
 from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
@@ -61,8 +64,7 @@ def _legacy_cargo_target_dir(project_id: str) -> Path:
     return get_gobby_home() / "cache" / "cargo-target" / safe_id
 
 
-def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
-    """Return the deterministic Cargo target directory for one checkout."""
+def _checkout_component(checkout: Path) -> str:
     canonical = checkout.expanduser().resolve(strict=False)
     safe_name = _safe_component(
         canonical.name,
@@ -70,7 +72,27 @@ def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
         fallback="checkout",
     )
     path_hash = hashlib.sha256(os.fsencode(canonical)).hexdigest()[:_PATH_HASH_LENGTH]
-    return _project_cache_root(project_id) / f"{safe_name}-{path_hash}"
+    return f"{safe_name}-{path_hash}"
+
+
+def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
+    """Return the deterministic Cargo target directory for one checkout."""
+    return _project_cache_root(project_id) / _checkout_component(checkout)
+
+
+def _sandbox_target_root() -> Path:
+    return sandbox_agent_cache_dir() / "cargo-target"
+
+
+def sandbox_checkout_cargo_target_dir(checkout: Path) -> Path:
+    """Return the Cargo target that sandboxed runs in one checkout build into.
+
+    Sandboxed runs build with their own ``CARGO_HOME``, and fingerprints embed
+    that home's registry source paths, so sharing the checkout's target with
+    unsandboxed builds would rebuild every dependency on each alternation. Keyed
+    by checkout path alone: a run knows its workspace but not always its project.
+    """
+    return _sandbox_target_root() / _checkout_component(checkout)
 
 
 def ensure_checkout_cargo_target_dir(checkout: Path, project_id: str) -> str:
@@ -81,13 +103,25 @@ def ensure_checkout_cargo_target_dir(checkout: Path, project_id: str) -> str:
 
 
 def cleanup_checkout_cargo_target_dir(checkout: Path, project_id: str) -> str | None:
-    """Remove one Gobby-owned checkout target, returning an error message on failure."""
-    project_root = _project_cache_root(project_id)
-    target_dir = checkout_cargo_target_dir(checkout, project_id)
-    if target_dir.parent != project_root or target_dir == project_root:
+    """Remove one checkout's Gobby-owned targets, returning an error message on failure."""
+    errors = [
+        error
+        for error in (
+            _remove_target_dir(
+                _project_cache_root(project_id), checkout_cargo_target_dir(checkout, project_id)
+            ),
+            _remove_target_dir(_sandbox_target_root(), sandbox_checkout_cargo_target_dir(checkout)),
+        )
+        if error is not None
+    ]
+    return "; ".join(errors) or None
+
+
+def _remove_target_dir(cache_root: Path, target_dir: Path) -> str | None:
+    if target_dir.parent != cache_root or target_dir == cache_root:
         return f"Refusing to remove unguarded Cargo target path: {target_dir}"
-    if project_root.is_symlink():
-        return f"Refusing to remove Cargo target below symlinked project cache: {project_root}"
+    if cache_root.is_symlink():
+        return f"Refusing to remove Cargo target below symlinked project cache: {cache_root}"
     try:
         if target_dir.is_symlink():
             return f"Refusing to remove symlinked Cargo target path: {target_dir}"

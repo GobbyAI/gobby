@@ -11,6 +11,8 @@ from pathlib import Path
 import pytest
 
 from gobby.agents import sandbox_policy
+from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.constants import shared_agent_cargo_home_dir
 from gobby.agents.sandbox import SandboxConfig, compute_sandbox_paths
 from gobby.agents.sandbox_run_environment import SandboxRunPaths
 from gobby.utils.daemon_git import GitFailed
@@ -504,20 +506,36 @@ def test_prepare_sandbox_run_paths_skips_missing_operator_pre_commit_store(
     assert not destination.exists()
 
 
-def test_prepare_sandbox_run_paths_shares_the_agent_cargo_home(
+def test_sandboxed_runs_share_cargo_caches_that_unsandboxed_builds_never_use(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Cargo fingerprints embed $CARGO_HOME/registry/src, so a per-run home
-    invalidates the checkout's warm target and rebuilds every dependency (#23194)."""
-    shared_cargo_home = tmp_path / "gobby-home" / "cache" / "cargo-home"
+    """Cargo fingerprints embed $CARGO_HOME/registry/src, so a per-run home rebuilds
+    every dependency on each run, and a target shared with a build under another home
+    rebuilds on every alternation. Sandboxed runs share their own stable pair, under a
+    write grant that reaches nothing an unsandboxed build reads or executes (#23194)."""
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    workspace = _workspace(tmp_path)
+    unsandboxed = {
+        "CARGO_HOME": shared_agent_cargo_home_dir(),
+        "CARGO_TARGET_DIR": checkout_cargo_target_dir(workspace, "project-1"),
+    }
 
-    paths, _destination = _run_cache(monkeypatch, tmp_path, workspace=_workspace(tmp_path))
+    first, _destination = _run_cache(monkeypatch, tmp_path, workspace=workspace, run_id="run-1")
+    second, _destination = _run_cache(monkeypatch, tmp_path, workspace=workspace, run_id="run-2")
 
-    assert paths.environment("claude")["CARGO_HOME"] == str(shared_cargo_home)
-    assert shared_cargo_home.is_dir()
-    assert not (paths.cache / "cargo-home").exists()
+    first_env = first.environment("claude")
+    second_env = second.environment("codex")
+    for name, unsandboxed_path in unsandboxed.items():
+        sandboxed_path = Path(first_env[name])
+        assert sandboxed_path != unsandboxed_path
+        assert Path(second_env[name]) == sandboxed_path
+        assert sandboxed_path.is_dir()
+        assert not sandboxed_path.is_relative_to(first.cache)
+        assert sandboxed_path.is_relative_to(first.shared_cache)
+        assert not unsandboxed_path.is_relative_to(first.shared_cache)
+        assert not first.shared_cache.is_relative_to(unsandboxed_path)
+    assert second.shared_cache == first.shared_cache
 
 
 def test_ghostty_dependency_host_grant() -> None:

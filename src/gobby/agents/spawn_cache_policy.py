@@ -48,8 +48,8 @@ def _session_cache_ensurer(dir_name: str) -> Callable[[str], str]:
 
 # Sandboxed spawns lose write access to shared toolchain caches
 # (sandbox_policy grants them read-only), so every env-redirectable
-# toolchain cache except the shared Cargo home (SandboxRunPaths.cargo_home)
-# is rerouted to a per-run directory. Non-sandboxed
+# toolchain cache is rerouted to a per-run directory, except Cargo's, which
+# moves to the sandbox-only SandboxRunPaths.shared_cache. Non-sandboxed
 # spawns keep the shared caches. pnpm's store resolves under $PNPM_HOME;
 # npm_config_store_dir is avoided because npm warns on unknown env
 # configs. Flag-based redirects (Maven -Dmaven.repo.local, sbt/Ivy

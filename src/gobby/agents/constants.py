@@ -140,19 +140,31 @@ def ensure_agent_uv_cache_dir(session_id: str) -> str:
 
 
 def shared_agent_cargo_home_dir() -> Path:
-    """Return the one Cargo home that every spawned agent shares.
+    """Return the one Cargo home that every unsandboxed spawned agent shares.
 
     Cargo fingerprints embed dependency source paths under
     ``$CARGO_HOME/registry/src``, so a per-session home invalidates every
     dependency in each checkout's ``CARGO_TARGET_DIR`` and makes agents rebuild
     the whole graph. This lives beside the checkout-specific target roots under
-    Gobby home; the operator's own ``~/.cargo`` is untouched.
+    Gobby home; the operator's own ``~/.cargo`` is untouched. Sandboxed runs
+    never write it: they build from ``sandbox_agent_cache_dir`` instead.
     """
     return get_gobby_home() / "cache" / "cargo-home"
 
 
+def sandbox_agent_cache_dir() -> Path:
+    """Return the cache root that sandboxed runs share and nothing else builds from.
+
+    It holds their Cargo home, their per-checkout Cargo targets and their Zig
+    package mirror, so each stays warm across runs. Sandboxed runs write the
+    Cargo home and their own checkout's target, so no unsandboxed build may read
+    or execute anything below this root.
+    """
+    return get_gobby_home() / "cache" / "sandbox"
+
+
 def get_agent_cargo_home_dir(session_id: str) -> str:
-    """Return the shared Cargo home directory for sandboxed agents.
+    """Return the shared Cargo home directory for unsandboxed agents.
 
     ``session_id`` is deliberately unused: the home is shared on purpose. The
     parameter stays so this keeps satisfying the ``Callable[[str], str]``

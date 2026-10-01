@@ -1855,6 +1855,7 @@ class TestExecuteSpawnSandbox:
         )
         resolved_config = mock_resolver.resolve.call_args.args[0]
         assert "/tmp/gobby/uv-cache/child-session-id" not in resolved_config.extra_write_paths
+        sandbox_target = Path(_spawn_kwargs(request)["env"][CARGO_TARGET_DIR])
         assert {Path(path).name for path in resolved_config.extra_write_paths} == {
             "tmp",
             "hooks",
@@ -1862,6 +1863,7 @@ class TestExecuteSpawnSandbox:
             "logs",
             "cache",
             "cargo-home",
+            sandbox_target.name,
         }
         assert _runtime_of(request).last_request is not None
         call_kwargs = _spawn_kwargs(request)
@@ -1877,8 +1879,10 @@ class TestExecuteSpawnSandbox:
                 )
             )
         )
-        assert call_kwargs["env"][CARGO_HOME] == str(shared_agent_cargo_home_dir())
-        assert resolved_config.extra_write_paths.count(call_kwargs["env"][CARGO_HOME]) == 1
+        for name in (CARGO_HOME, CARGO_TARGET_DIR):
+            assert resolved_config.extra_write_paths.count(call_kwargs["env"][name]) == 1
+        assert Path(call_kwargs["env"][CARGO_HOME]).parent == sandbox_target.parent.parent
+        assert str(shared_agent_cargo_home_dir()) not in resolved_config.extra_write_paths
         # Command should include sandbox args
         command = call_kwargs.get("command")
         assert "--dangerously-skip-permissions" in command
