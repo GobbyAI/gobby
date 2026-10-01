@@ -6,6 +6,9 @@ summary of completed behavior and the proxy's caller identity. The task must be
 closed in that session or a spawned descendant and belong to the caller project.
 Do not invent closure state or mark tracking variables manually.
 
+Candidates with `source: "accessed"` come first. They are memories fetched with
+`get_memory` while working the task, and they are the likeliest to need an update.
+`source: "search"` hits related to the task follow them.
 Read each returned candidate against the completed work. Retain valid entries,
 update stale content with a fresh rationale, or delete obsolete entries. Record
 new knowledge only when durable value warrants it; most tasks need no write.
@@ -27,4 +30,4 @@ before claiming review success.
 Guide: [Post-task review](../../../../../../../../docs/guides/memory.md#post-task-review)
 and [Lifecycle rules](../../../../../../../../docs/guides/memory.md#lifecycle-rules).
 
-_Last verified: 2026-09-12_
+_Last verified: 2026-09-29_

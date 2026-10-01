@@ -1473,7 +1473,7 @@ def test_hook_manager_reconciles_before_rules(
     with (
         patch("gobby.hooks.hook_manager.HookManagerFactory.create", return_value=components),
         patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
-        patch("gobby.hooks.hook_manager.record_session_activity"),
+        patch("gobby.hooks.hook_manager_ingress.record_session_activity"),
         patch(
             "gobby.hooks.hook_manager.resolve_hook_project_context",
             return_value=HookProjectResolution("proj"),

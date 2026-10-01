@@ -29,7 +29,11 @@ from gobby.mcp_proxy.tools.memory_scope import (
     memory_owned_by_current_project,
     resolve_current_memory_id,
 )
-from gobby.mcp_proxy.tools.memory_session import resolve_claimed_task_id, resolve_session
+from gobby.mcp_proxy.tools.memory_session import (
+    ACCESSED_MEMORY_IDS_VARIABLE,
+    resolve_claimed_task_id,
+    resolve_session,
+)
 from gobby.mcp_proxy.tools.memory_surface import register_memory_surface_tools
 from gobby.mcp_proxy.tools.memory_write import register_memory_write_tools
 from gobby.memory.manager import MemoryManager
@@ -45,7 +49,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SEARCH_CALLER = "mcp_proxy.memory.search_memories"
-ACCESSED_MEMORY_IDS_VARIABLE = "accessed_memory_ids"
 # One record per (memory, fetching task); the oldest is evicted at the cap.
 _ACCESSED_MEMORY_IDS_MAX = 1000
 

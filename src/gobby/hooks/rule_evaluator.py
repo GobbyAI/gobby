@@ -26,7 +26,6 @@ def process_dispatch_results(
     extra_context: list[ContextPart],
     *,
     format_discovery_result: FormatDiscoveryResult,
-    dedup_memory_results: DedupDiscoveryResult | None = None,
     dedup_skill_results: DedupDiscoveryResult | None = None,
 ) -> HookResponse | None:
     """Apply captured MCP results to hook context and blocking decisions."""
@@ -36,8 +35,6 @@ def process_dispatch_results(
 
     for result in dispatch_results:
         if result.get("inject_result") and result.get("result"):
-            if result.get("tool") == "search_memories" and session_id and dedup_memory_results:
-                result["result"] = dedup_memory_results(result["result"], session_id)
             if result.get("tool") == "search_skills" and session_id and dedup_skill_results:
                 result["result"] = dedup_skill_results(result["result"], session_id)
             extra_context.append(
@@ -219,7 +216,6 @@ class WorkflowRuleEvaluator:
             dispatch_results,
             extra_context,
             format_discovery_result=self.format_discovery_result,
-            dedup_memory_results=self.dedup_memory_results,
             dedup_skill_results=self.dedup_skill_results,
         )
 
@@ -306,37 +302,6 @@ class WorkflowRuleEvaluator:
             self.logger.info(message)
         else:
             self.logger.debug(message)
-
-    def dedup_memory_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
-        """Filter already-injected memories and stage newly-injected IDs."""
-        try:
-            from gobby.hooks.receipt_effects import (
-                stage_append_set_variables,
-                staged_append_set_values,
-            )
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            sv_mgr = SessionVariableManager(self.database)
-            memories = result.get("memories", [])
-            id_less = [m for m in memories if not m.get("id")]
-            if id_less:
-                self.logger.warning(
-                    "Memory dedup: %d memories lack 'id' field and cannot be tracked",
-                    len(id_less),
-                )
-            if not memories:
-                return result
-
-            memory_ids = [m["id"] for m in memories if m.get("id")]
-            already = _committed_set_values(sv_mgr, session_id, "injected_memory_ids")
-            already |= staged_append_set_values("injected_memory_ids")
-            new_ids = [memory_id for memory_id in memory_ids if memory_id not in already]
-            filtered = [m for m in memories if not m.get("id") or m["id"] in new_ids]
-            stage_append_set_variables(session_id, "injected_memory_ids", new_ids)
-            return {**result, "memories": filtered}
-        except Exception as exc:
-            self.logger.debug("Memory injection dedup failed (fail-open): %s", exc)
-            return result
 
     def dedup_skill_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
         """Filter already-suggested skills and stage newly-suggested names."""
