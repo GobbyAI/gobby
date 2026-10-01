@@ -12,6 +12,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
+from gobby.config.validation_detection import is_validation_command
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
@@ -769,12 +770,10 @@ def test_uv_directory_with_no_cov_keeps_its_path_scope() -> None:
 
 
 @pytest.mark.parametrize("flag", ["--co", "--collect-only", "--setup-only", "--setup-plan"])
-def test_pytest_runs_that_execute_no_tests_credit_no_target(flag: str) -> None:
-    command = f"uv run pytest {flag} -q tests/tasks/test_close_checklist.py"
-    gate = _changed_test_gate(command)
+def test_pytest_runs_that_execute_no_tests_are_not_validation(flag: str) -> None:
+    command = f"uv run pytest {flag} tests/tasks/test_close_checklist.py -q"
 
-    assert pytest_targets(command) == ()
-    assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
+    assert is_validation_command(command) is False
 
 
 @pytest.mark.parametrize(
