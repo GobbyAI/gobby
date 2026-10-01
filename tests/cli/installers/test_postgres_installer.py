@@ -13,6 +13,8 @@ import click
 import pytest
 import yaml
 
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
+
 pytestmark = pytest.mark.unit
 
 
@@ -409,7 +411,7 @@ def test_write_bootstrap_defaults_surfaces_bootstrap_errors_as_click_error(
     with pytest.raises(click.ClickException, match="bootstrap is invalid"):
         installer._write_bootstrap_defaults(
             gobby_home=tmp_path,
-            database_url="postgresql://gobby:secret@localhost:60891/gobby",
+            database_url=FAKE_DATABASE_URL,
         )
 
 

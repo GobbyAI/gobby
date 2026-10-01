@@ -13,6 +13,7 @@ import yaml
 from gobby.cli.installers import compose_env, falkor, qdrant
 from gobby.config.persistence import DatabasesConfig
 from gobby.storage.config_mutations import ConfigPatch
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
 
@@ -71,7 +72,7 @@ def test_resolve_compose_runtime_reads_bind_from_bootstrap_without_database(
         yaml.safe_dump(
             {
                 "datastore_mode": "local",
-                "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                "database_url": FAKE_DATABASE_URL,
                 "services_bind_address": "100.64.0.7",
                 "files_home": str(files_home),
             }

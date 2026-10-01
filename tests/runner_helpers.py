@@ -14,6 +14,7 @@ from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.config.logging import LoggingSettings
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import PostgresCapacity
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 TEST_MACHINE_ID = "00000000-0000-4000-8000-000000000001"
 
@@ -56,7 +57,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     defaults = DaemonConfig()
     config.bind_host = "localhost"
     config.hub_backend = "postgres"
-    config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    config.database_url = FAKE_DATABASE_URL
     config.database_concurrency = DatabaseConcurrencyConfig()
     config.postgres_pool = PostgresPoolConfig()
 

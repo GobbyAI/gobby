@@ -25,6 +25,7 @@ from gobby.cli.hub_backup import _verify
 from gobby.cli.hub_backup import cli as hub_cli
 from gobby.cli.hub_backup._content import archive_inventory
 from gobby.cli.hub_backup._verify import RoleExpectation
+from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
 
@@ -521,7 +522,7 @@ def test_verify_postgres_restore_ignores_managed_principals_drained_before_dump(
         psycopg, "connect", lambda *_args, **_kwargs: _SourceRoleConnection(source_rows)
     )
     expected_roles = hub_cli._role_expectations(
-        stores.collect_source_roles("postgresql://gobby:pw@localhost:60891/gobby")
+        stores.collect_source_roles(fake_database_url("pw"))
     )
     assert [role.rolname for role in expected_roles] == ["gobby"]
 
