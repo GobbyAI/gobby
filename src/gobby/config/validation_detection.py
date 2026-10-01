@@ -26,10 +26,13 @@ _EVIDENCE_ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 _EVIDENCE_RTK_PREFIX = re.compile(r"^(uv\s+run\s+)?rtk\s+")
 # Every entry consumes the token after it, so an option missing here is read as
 # the command and the run goes uncredited. List both forms of a spelling pair;
-# `-C` is uv's `--config-setting`, and `--directory` has no short form.
+# `-C` is uv's `--config-setting`, and `--directory` has no short form. uv's
+# global options may also sit between `uv` and `run`.
 _UV_RUN_OPTIONS_WITH_VALUES = [
+    "--allow-insecure-host",
     "--cache-dir",
     "--color",
+    "--config-file",
     "--config-setting",
     "--directory",
     "--env-file",
@@ -38,6 +41,7 @@ _UV_RUN_OPTIONS_WITH_VALUES = [
     "--package",
     "--project",
     "--python",
+    "--python-preference",
     "--with",
     "--with-editable",
     "--with-requirements",
@@ -446,8 +450,8 @@ def _apply_wrapper_rule(
         _matching_wrapper_prefixes(tokens, wrappers),
         key=lambda match: (-len(match[2]), match[0]),
     )
-    for _, wrapper, prefix_tokens in matches:
-        normalized = _unwrap_matched_rule(tokens, wrapper, prefix_tokens)
+    for _, wrapper, _, consumed in matches:
+        normalized = _unwrap_matched_rule(tokens, wrapper, consumed)
         if normalized is not None:
             unwrapped, shell_operators = normalized
             return unwrapped, wrapper.id, shell_operators
@@ -457,21 +461,44 @@ def _apply_wrapper_rule(
 def _matching_wrapper_prefixes(
     tokens: list[str],
     wrappers: list[ValidationCommandWrapper],
-) -> Iterable[tuple[int, ValidationCommandWrapper, list[str]]]:
+) -> Iterable[tuple[int, ValidationCommandWrapper, list[str], int]]:
     for index, wrapper in enumerate(wrappers):
+        options_with_values = set(wrapper.strip_options_with_values)
         for prefix in wrapper.prefixes:
             prefix_tokens = safe_split(prefix)
-            if prefix_tokens and _starts_with_command_prefix(tokens, prefix_tokens):
-                yield index, wrapper, prefix_tokens
+            consumed = _consume_wrapper_prefix(tokens, prefix_tokens, options_with_values)
+            if consumed is not None:
+                yield index, wrapper, prefix_tokens, consumed
+
+
+def _consume_wrapper_prefix(
+    tokens: list[str], prefix: list[str], options_with_values: set[str]
+) -> int | None:
+    """Return how many tokens ``prefix`` spans in ``tokens``, or None when absent.
+
+    A wrapper that declares its value-taking options also accepts options between
+    its prefix words, so ``uv --directory <wt> run`` matches ``uv run`` while
+    ``uv --directory <wt> pip`` matches nothing.
+    """
+    if not prefix or not tokens or not _matches_command_token(tokens[0], prefix[0]):
+        return None
+    index = 1
+    for expected in prefix[1:]:
+        while options_with_values and index < len(tokens) and tokens[index].startswith("-"):
+            index += 2 if tokens[index] in options_with_values else 1
+        if index >= len(tokens) or tokens[index] != expected:
+            return None
+        index += 1
+    return index
 
 
 def _unwrap_matched_rule(
     tokens: list[str],
     wrapper: ValidationCommandWrapper,
-    prefix_tokens: list[str],
+    consumed: int,
 ) -> tuple[list[list[str]], tuple[str, ...]] | None:
     if wrapper.kind == "prefix":
-        remaining = tokens[len(prefix_tokens) :]
+        remaining = tokens[consumed:]
         if wrapper.strip_options_with_values:
             remaining = _strip_wrapper_options(remaining, set(wrapper.strip_options_with_values))
         return [remaining], ()
@@ -481,12 +508,12 @@ def _unwrap_matched_rule(
             nice_command = _unwrap_nice_tokens(tokens)
             return ([nice_command], ()) if nice_command is not None else None
         try:
-            delimiter_index = tokens.index(wrapper.delimiter, len(prefix_tokens))
+            delimiter_index = tokens.index(wrapper.delimiter, consumed)
         except ValueError:
             return None
         return [tokens[delimiter_index + 1 :]], ()
 
-    command_tokens = tokens[len(prefix_tokens) :]
+    command_tokens = tokens[consumed:]
     if not command_tokens:
         return [[]], ()
     if len(command_tokens) == 1:

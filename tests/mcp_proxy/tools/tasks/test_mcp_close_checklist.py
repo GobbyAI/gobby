@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -30,6 +31,17 @@ from gobby.tasks.transcript_evidence_models import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _close_candidate_is_the_linked_sha() -> Iterator[None]:
+    # The fake commit SHAs below are not in any repository; take each as canonical.
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
+        side_effect=lambda sha, **_kwargs: sha,
+    ):
+        yield
+
 
 SESSION_ID = "00000000-0000-4000-8000-000000000301"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
