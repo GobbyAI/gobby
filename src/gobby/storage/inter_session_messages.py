@@ -303,15 +303,25 @@ class InterSessionMessageManager:
         )
         return [InterSessionMessage.from_row(row) for row in rows]
 
-    def has_undelivered_sent_at_or_before(self, to_session: str, cutoff: datetime) -> bool:
-        """Return whether any message sent at or before ``cutoff`` is still unread."""
+    def has_unread_without_read_since(self, to_session: str, cutoff: datetime) -> bool:
+        """Return whether mail sent by ``cutoff`` is unread and nothing was read since.
+
+        Any delivery at or after ``cutoff`` counts as a read, even when a
+        rendering budget deferred older rows.
+        """
         row = self.db.fetchone(
-            """SELECT 1 FROM inter_session_messages
-               WHERE to_session = %s AND delivered_at IS NULL AND sent_at <= %s
-               LIMIT 1""",
-            (to_session, cutoff),
+            """SELECT
+                 EXISTS (
+                   SELECT 1 FROM inter_session_messages
+                   WHERE to_session = %s AND delivered_at IS NULL AND sent_at <= %s
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1 FROM inter_session_messages
+                   WHERE to_session = %s AND delivered_at >= %s
+                 ) AS pending""",
+            (to_session, cutoff, to_session, cutoff),
         )
-        return row is not None
+        return bool(row and row["pending"])
 
     def get_undelivered_wake_messages(self, to_session: str) -> list[InterSessionMessage]:
         """Return pending mailbox rows whose sender requested a live wake."""

@@ -1,25 +1,28 @@
 """At most one unread live wake per session until the mailbox is read (#23125).
 
-A delivered wake stays pending while any message sent at or before it is
-undelivered. Later messages queue durably without another live wake; reading
-the mailbox acknowledges the wake and the next message may wake again. The
-pending wake is stored with the session, so a fresh dispatcher keeps it.
+A delivered wake stays outstanding while it is fresh, mail sent by its attempt
+is unread, and nothing has been read since. Later messages queue durably
+without another live wake; any read consumes the wake and the next message may
+wake again. The outstanding wake is stored with the session, so a fresh
+dispatcher keeps it.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import pytest
 
-from gobby.events.wake import WakeDispatcher
+from gobby.events.wake import LIVE_WAKE_FRESH_SECONDS, WakeDispatcher
 from gobby.sessions.mailbox import MailboxService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.utils.datetime import utc_now
 from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
 
 pytestmark = pytest.mark.unit
@@ -188,3 +191,50 @@ async def test_pending_wake_survives_a_dispatcher_restart(harness: Harness) -> N
     assert held["skipped"] == "debounced"
     assert woken["delivered"] is True
     assert sender.submitted == [harness.terminal_id, harness.terminal_id]
+
+
+@pytest.mark.asyncio
+async def test_partial_read_of_a_deferred_backlog_consumes_the_wake(harness: Harness) -> None:
+    """A rendering budget may defer older rows; reading any one consumes the wake."""
+    sender = RecordingSender()
+    dispatcher = harness.dispatcher(sender)
+    for content in ("one", "two", "three"):
+        await harness.send(dispatcher, content)
+    first, *_deferred = harness.messages.get_undelivered_messages(harness.recipient)
+    harness.messages.mark_delivered(first.id, harness.recipient)
+
+    woken = await harness.send(dispatcher, "after partial read")
+
+    assert woken["delivered"] is True
+    assert sender.submitted == [harness.terminal_id, harness.terminal_id]
+
+
+@pytest.mark.asyncio
+async def test_lost_wake_expires_and_the_next_message_wakes(
+    harness: Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A wake reported delivered but never read stops suppressing once stale."""
+    sender = RecordingSender()
+    dispatcher = harness.dispatcher(sender)
+    await harness.send(dispatcher, "lost")
+    later = utc_now() + timedelta(seconds=LIVE_WAKE_FRESH_SECONDS)
+    monkeypatch.setattr("gobby.events.wake.utc_now", lambda: later)
+
+    woken = await harness.send(dispatcher, "after expiry")
+
+    assert woken["delivered"] is True
+    assert sender.submitted == [harness.terminal_id, harness.terminal_id]
+
+
+@pytest.mark.asyncio
+async def test_urgent_wake_is_suppressed_while_a_fresh_wake_is_outstanding(
+    harness: Harness,
+) -> None:
+    sender = RecordingSender()
+    dispatcher = harness.dispatcher(sender)
+    await harness.send(dispatcher, "first")
+
+    urgent = await dispatcher.dispatch_live_wake(harness.recipient, priority="urgent")
+
+    assert urgent["skipped"] == "debounced"
+    assert sender.submitted == [harness.terminal_id]

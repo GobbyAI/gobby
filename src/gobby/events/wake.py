@@ -53,9 +53,12 @@ CONTINUE_WAKE_MESSAGE = "Message from Gobby daemon: New activity available."
 CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 
 # Session variable holding when the last delivered live wake was attempted. The
-# wake stays pending, and later wakes are skipped, while any message sent at or
-# before it is unread (#23125).
+# wake stays outstanding, and later wakes of any priority are skipped, while it
+# is fresh, mail sent by then is unread, and nothing has been read since (#23125).
 LIVE_WAKE_SENT_AT_VARIABLE = "live_wake_sent_at"
+# A wake reported delivered but lost (e.g. dropped by the TUI) expires after
+# this, so the next message wakes normally.
+LIVE_WAKE_FRESH_SECONDS = 30.0
 # Bounds SDK-resume and web-chat wakes only, which have no internal timeout.
 # Never wrap the tmux senders in wait_for: every tmux subprocess is already
 # bounded (TmuxTextInjectionTimeout), and an outer cancellation can land
@@ -755,15 +758,15 @@ class WakeDispatcher:
         }
 
     async def _should_send_live_wake(self, session_id: str) -> bool:
-        """Return False while the last delivered wake to this session is unread.
+        """Return False while the last delivered wake to this session is outstanding.
 
-        A delivered wake stays pending while any message sent at or before its
-        attempt is undelivered; reading the mailbox acknowledges it. Durable
-        ISMs are stored unconditionally, so later messages still queue and the
-        agent sees them on that read.
+        A delivered wake is outstanding while it is fresh, mail sent by its
+        attempt is unread, and no message has been read since the attempt; any
+        read consumes it. Durable ISMs are stored unconditionally, so later
+        messages still queue and the agent sees them on that read.
         """
 
-        def pending_wake_unread() -> bool:
+        def wake_outstanding() -> bool:
             variables = SessionVariableManager(self._session_manager.db).get_variables(session_id)
             sent_at = variables.get(LIVE_WAKE_SENT_AT_VARIABLE)
             if not isinstance(sent_at, str):
@@ -772,15 +775,17 @@ class WakeDispatcher:
                 cutoff = datetime.fromisoformat(sent_at)
             except ValueError:
                 return False
-            return self._ism_manager.has_undelivered_sent_at_or_before(session_id, cutoff)
+            if (utc_now() - cutoff).total_seconds() >= LIVE_WAKE_FRESH_SECONDS:
+                return False
+            return self._ism_manager.has_unread_without_read_since(session_id, cutoff)
 
-        return not await self._run_db(pending_wake_unread)
+        return not await self._run_db(wake_outstanding)
 
     async def _record_live_wake(self, session_id: str, attempted_at: datetime) -> None:
         """Record a delivered live wake by the time its attempt started.
 
-        Messages sent after that time did not ride this wake, so reading the
-        earlier ones lets the next message wake the session again.
+        Messages sent after that time did not ride this wake, and a read after
+        it consumes the wake, so the next message wakes the session again.
         """
         await self._run_db(
             SessionVariableManager(self._session_manager.db).set_variable,
