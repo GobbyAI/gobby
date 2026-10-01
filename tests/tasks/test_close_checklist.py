@@ -12,6 +12,7 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
+from gobby.config.validation_detection import is_validation_command
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
@@ -696,6 +697,83 @@ def test_cd_prefixed_pytest_covers_the_changed_python_test() -> None:
     assert pytest_targets(core_command) == ("tests/tasks/test_close_checklist.py",)
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
+
+
+def test_no_cov_before_paths_credits_every_path() -> None:
+    command = (
+        "uv run pytest --no-cov tests/tasks/test_close_checklist.py "
+        "tests/tasks/test_transcript_outcomes.py -q"
+    )
+    gate = _changed_test_gate(command)
+
+    assert pytest_targets(command) == (
+        "tests/tasks/test_close_checklist.py",
+        "tests/tasks/test_transcript_outcomes.py",
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        # Valueless pytest and pytest-cov flags leave the next path as a target.
+        *[
+            (flag, ("tests/x.py",))
+            for flag in (
+                "--no-cov",
+                "--no-cov-on-fail",
+                "--cov-append",
+                "--cov-branch",
+                "--cov-reset",
+                "-x",
+                "--exitfirst",
+                "--lf",
+                "--last-failed",
+                "--ff",
+                "--failed-first",
+                "--nf",
+                "--new-first",
+                "--sw",
+                "--stepwise",
+                "--sw-skip",
+                "--stepwise-skip",
+                "--no-header",
+                "--no-summary",
+                "--cache-clear",
+                "--showlocals",
+                "--full-trace",
+                "--strict-markers",
+                "--strict-config",
+                "--disable-warnings",
+                "--runxfail",
+            )
+        ],
+        # Options that take a value still consume it.
+        ("--cov src", ("tests/x.py",)),
+        ("--cov=src --no-cov-on-fail", ("tests/x.py",)),
+        ("-k expr", ("tests/x.py",)),
+        ("-m marker", ("tests/x.py",)),
+        ("-p no:cacheprovider", ("tests/x.py",)),
+    ],
+)
+def test_pytest_options_before_a_path_keep_it_a_target(
+    options: str, expected: tuple[str, ...]
+) -> None:
+    assert pytest_targets(f"uv run pytest {options} tests/x.py -q") == expected
+
+
+def test_uv_directory_with_no_cov_keeps_its_path_scope() -> None:
+    command = "uv run --directory /repo pytest --no-cov tests/x.py tests/y.py -q"
+
+    assert pytest_targets(command) == ("tests/x.py", "tests/y.py")
+
+
+@pytest.mark.parametrize("flag", ["--co", "--collect-only", "--setup-only", "--setup-plan"])
+def test_pytest_runs_that_execute_no_tests_are_not_validation(flag: str) -> None:
+    command = f"uv run pytest {flag} tests/tasks/test_close_checklist.py -q"
+
+    assert is_validation_command(command) is False
 
 
 @pytest.mark.parametrize(
