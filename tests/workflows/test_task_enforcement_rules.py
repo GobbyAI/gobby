@@ -65,6 +65,7 @@ INTERACTIVE_TASK_MUTATIONS = (
     "repair_closed_candidate",
     "restore_tasks",
     "submit_close_review",
+    "transfer_task_authority",
     "unlink_commit",
     "update_observed_files",
     "update_task",

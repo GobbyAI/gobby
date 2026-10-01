@@ -59,6 +59,7 @@ TASK_MUTATION_TOOLS_BY_SERVER = {
             "repair_closed_candidate",
             "restore_tasks",
             "submit_close_review",
+            "transfer_task_authority",
             "unlink_commit",
             "update_observed_files",
             "update_task",
