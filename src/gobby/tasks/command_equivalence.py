@@ -225,8 +225,41 @@ _VALUELESS_OPTIONS = frozenset(
         "--no-header",
         "--all-targets",
         "--",
+        # pytest and pytest-cov flags agents put in front of path targets. Without
+        # them here the next path would be read as the flag's value.
+        "--no-cov",
+        "--no-cov-on-fail",
+        "--cov-append",
+        "--cov-branch",
+        "--cov-reset",
+        "--exitfirst",
+        "--lf",
+        "--last-failed",
+        "--ff",
+        "--failed-first",
+        "--nf",
+        "--new-first",
+        "--sw",
+        "--stepwise",
+        "--sw-skip",
+        "--stepwise-skip",
+        "--no-summary",
+        "--cache-clear",
+        "--showlocals",
+        "--full-trace",
+        "--strict-markers",
+        "--strict-config",
+        "--disable-warnings",
+        "--runxfail",
+        "--co",
+        "--collect-only",
+        "--setup-only",
+        "--setup-plan",
     }
 )
+# Pytest options that exit 0 without running any test, so their path targets earn
+# no credit.
+_PYTEST_NO_EXECUTION_OPTIONS = frozenset({"--co", "--collect-only", "--setup-only", "--setup-plan"})
 # Pytest options that only change reporting or stop after early failures. A run that
 # still exits 0 executed and passed every selected test, so they cannot change what
 # passing evidence proves. -r<chars> is matched by prefix.
@@ -405,7 +438,8 @@ def pytest_targets(command: str) -> tuple[str, ...] | None:
     """Return path targets for a pytest command.
 
     ``None`` means the command is not pytest. No path arguments cover the
-    whole tree. A node id covers its file.
+    whole tree. A node id covers its file. A run that executes no test covers
+    nothing.
     """
     scoped = _path_scope(command)
     if scoped is None:
@@ -413,6 +447,8 @@ def pytest_targets(command: str) -> tuple[str, ...] | None:
     prefix, paths = scoped
     if "pytest" not in prefix:
         return None
+    if any(word.split("=", 1)[0] in _PYTEST_NO_EXECUTION_OPTIONS for word in prefix):
+        return ()
     if not paths:
         return (".",)
     normalized: list[str] = []
