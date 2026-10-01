@@ -74,7 +74,9 @@ def test_repeat_verification_hits_cache_and_logs_key(
     assert "cache hit key=" in caplog.text
 
 
-@pytest.mark.parametrize("member", ["node", "gcode", "gdaemon", "ghook"])
+@pytest.mark.parametrize(
+    "member", ["node", "gcode", "gdaemon", "ghook", ".gdaemon-schema-identity.json"]
+)
 def test_binary_replacement_invalidates_cache(
     installed_runtime: tuple[Path, Path, Path],
     monkeypatch: pytest.MonkeyPatch,
@@ -152,5 +154,56 @@ def test_missing_binary_never_uses_stale_cache(
     monkeypatch.setattr(srt_runtime, "verify_srt_installation_locked", refuse)
     with pytest.raises(SrtRuntimeError, match="full verification required"):
         srt_runtime.verify_srt_installation()
+
+    assert len(calls) == 2
+
+
+def test_binary_set_change_during_verification_locks_out_and_caches_nothing(
+    installed_runtime: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root, bin_dir, node = installed_runtime
+    calls: list[int] = []
+
+    def verify(**_context: str | None) -> SrtInstallation:
+        calls.append(1)
+        if len(calls) == 1:
+            replacement = bin_dir / ".gdaemon.new"
+            replacement.write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+            replacement.chmod(0o755)
+            replacement.replace(bin_dir / "gdaemon")
+        return SrtInstallation(
+            root=root,
+            node=node,
+            runner=root / "runner.mjs",
+            package_json=root / "package.json",
+        )
+
+    monkeypatch.setattr(srt_runtime, "verify_srt_installation_locked", verify)
+    with pytest.raises(SrtRuntimeError, match="changed during verification"):
+        srt_runtime.verify_srt_installation()
+    srt_runtime.verify_srt_installation()
+
+    assert len(calls) == 2
+
+
+def test_bundled_runner_change_invalidates_cache(
+    installed_runtime: tuple[Path, Path, Path],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root, _, node = installed_runtime
+    package_dir = tmp_path / "package"
+    package_dir.mkdir()
+    bundled = package_dir / "srt_runner.mjs"
+    bundled.write_text("runner v1", encoding="utf-8")
+    monkeypatch.setattr(srt_runtime, "__file__", str(package_dir / "srt_runtime.py"))
+    calls = _counting_verifier(monkeypatch, root, node)
+    srt_runtime.verify_srt_installation()
+    replacement = package_dir / ".srt_runner.mjs.new"
+    replacement.write_text("runner v2", encoding="utf-8")
+    replacement.replace(bundled)
+
+    srt_runtime.verify_srt_installation()
 
     assert len(calls) == 2
