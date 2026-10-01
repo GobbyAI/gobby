@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolInputUnavailableError(RuntimeError):
-    """A rule read a tool input that arrived as a string that is not a JSON object."""
+    """A rule read a tool input that arrived as invalid JSON, non-object JSON, or a non-object."""
 
 
 class UnavailableToolInput(dict[str, Any]):
