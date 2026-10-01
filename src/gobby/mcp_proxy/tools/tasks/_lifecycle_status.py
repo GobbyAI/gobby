@@ -174,7 +174,26 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
             return denied
 
         projected_state = projected_task_state(task)
-        if projected_state in {"escalated", "closed"}:
+        if projected_state == "escalated":
+            # Escalated plus claimed is legal (override closes hold it), but it still
+            # counts as the session's open claim. Escalating again releases that claim
+            # and keeps the original escalation (#23204).
+            if prior_owner_session_id and ctx.task_manager.release_escalated_task_claim(
+                resolved_id, expected_owner=prior_owner_session_id
+            ):
+                clear_prior_claim_session_variables(
+                    ctx, resolved_id, prior_owner_session_id, action="escalate"
+                )
+                return {}
+            task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
+            return _state_error(
+                f"Cannot escalate task {task_ref}: it is already escalated and this session "
+                "does not hold its claim. "
+                f'Use de_escalate_task(task_id="{task_ref}", reason="<why it can resume>") '
+                "to resume it.",
+                projected_state,
+            )
+        if projected_state == "closed":
             return _state_error(
                 f"Cannot escalate task in state '{projected_state}'.",
                 projected_state,
