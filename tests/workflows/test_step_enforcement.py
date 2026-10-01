@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 from gobby.adapters.capabilities import GROK_MODEL_REASON_WINDOW_CHARS
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -3157,7 +3158,12 @@ class TestProviderToolNameNormalization:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "mcp_key",
-    ["gobby-sessions:set_handoff", "gobby-sessions:feedback", "gobby-memory:get_memory"],
+    [
+        "gobby-sessions:set_handoff",
+        "gobby-sessions:feedback",
+        "gobby-memory:search_memories",
+        "gobby-memory:get_memory",
+    ],
 )
 async def test_capability_neutral_tools_pass_step_allowlist(
     db: "HubDatabase",
@@ -3179,6 +3185,50 @@ async def test_capability_neutral_tools_pass_step_allowlist(
     )
     response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
     assert response.decision == "allow"
+
+
+_PLAN_ENHANCER_TASKLESS = (
+    Path(__file__).resolve().parents[2]
+    / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml"
+)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mcp_tool", "decision"),
+    [
+        ("search_memories", "allow"),
+        ("get_memory", "allow"),
+        ("create_memory", "block"),
+        ("update_memory", "block"),
+        ("delete_memory", "block"),
+    ],
+)
+async def test_bundled_plan_enhancer_enhance_step_reads_memory_but_never_writes(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+    mcp_tool: str,
+    decision: str,
+) -> None:
+    """Rule 14 memory reads pass the bundled enhance step's allowlist; writes stay refused."""
+    bundled = yaml.safe_load(_PLAN_ENHANCER_TASKLESS.read_text())
+    workflow_data = {
+        **{key: value for key, value in bundled.items() if key != "step_workflow"},
+        **bundled["step_workflow"],
+    }
+    _setup_step_workflow(
+        db, manager, instance_mgr, current_step="enhance", workflow_data=workflow_data
+    )
+    event = _make_event(
+        data={
+            "tool_name": "mcp__gobby__call_tool",
+            "tool_input": {"server_name": "gobby-memory", "tool_name": mcp_tool},
+        }
+    )
+    response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+    assert response.decision == decision
 
 
 @pytest.mark.asyncio

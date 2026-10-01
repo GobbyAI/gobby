@@ -36,8 +36,9 @@ _CAPABILITY_NEUTRAL_MCP_TOOLS = frozenset(
     {
         "gobby-sessions:set_handoff",
         "gobby-sessions:feedback",
-        # Records the fetch as access, so it is not read-only, yet every step
-        # must be able to read the memories its index points at.
+        # Both record access, so neither is read-only, yet every step must be
+        # able to search memories and read the ones its index points at.
+        "gobby-memory:search_memories",
         "gobby-memory:get_memory",
     }
 )
