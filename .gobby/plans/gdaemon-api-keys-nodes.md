@@ -1267,3 +1267,296 @@ keeps the schema at 456 and reverts behavior only. The revert keeps `456_add_api
 `MIGRATIONS` entry, and the identity carriers, because
 `crates/gcore/src/schema/runner_plan.rs` (42-46) refuses a database schema newer than the
 runner. No down-migration exists.
+
+## M1 Task Manifest
+`kind: manifest`
+
+```yaml
+- title: Node bootstraps refuse the Python daemon
+  category: code
+  task_type: feature
+  depends_on: []
+  validation_criteria: '4.6.1: `run_gobby` with a `datastore_mode: remote` bootstrap
+    raises the refusal before constructing `ActiveDaemonLease`, starting the front
+    door, or verifying the schema, and releases the PID claim it holds. test: `tests/test_runner_lease_lifecycle.py::test_node_bootstrap_refuses_before_lease`.
+
+    4.6.2: `gobby start` on a node bootstrap prints the refusal and launches no process.
+    test: `tests/cli/test_daemon_remote_mode.py::test_start_refuses_node_bootstrap`.
+
+    4.6.3: The real `gobby restart` command on a node bootstrap prints the refusal
+    and never calls stop, service launch, or runner launch. test: `tests/cli/test_daemon_preflight.py::test_restart_refuses_node_bootstrap`.
+
+    4.6.4: `standalone` and local bootstraps start as today. test: `tests/test_runner_lease_lifecycle.py::test_local_bootstrap_still_takes_lease`.
+
+    4.6.5: The shared-stack guide''s Client setup no longer starts a client daemon
+    and names the refusal. file: `docs/guides/shared-stack.md`.
+
+    4.6.6: The real `gobby cutover` command on a node bootstrap prints the refusal
+    and never calls the workspace build, binary promotion, stop, or launch. test:
+    `tests/cli/test_cutover.py::test_cutover_refuses_node_bootstrap_before_build`.'
+  labels:
+  - covers:gdaemon-api-keys-nodes:4.6:4.6.1
+  - covers:gdaemon-api-keys-nodes:4.6:4.6.2
+  - covers:gdaemon-api-keys-nodes:4.6:4.6.3
+  - covers:gdaemon-api-keys-nodes:4.6:4.6.4
+  - covers:gdaemon-api-keys-nodes:4.6:4.6.5
+  - covers:gdaemon-api-keys-nodes:4.6:4.6.6
+  tdd: true
+  source_section: '4.6'
+  implementation_domain: backend
+- title: Front-door TLS for remote peers with loopback plaintext
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.6'
+  validation_criteria: '4.1.1: The Python parser defaults `tls.mode` to `off` on a
+    loopback bind, whether `front_door` is absent or present, refuses `off` or an
+    absent mode on a non-loopback bind, and reads quoted `"off"` and boolean `false`
+    as `off`. test: `tests/config/test_bootstrap.py::test_front_door_tls_default_and_refusal`.
+
+    4.1.9: The Rust parser gives the same default, refusal, and `off` readings, with
+    `bind_host` threaded from `parse_hub_database_bootstrap`. test: `crates/gcore/src/bootstrap.rs::tests::front_door_tls_default_and_refusal`.
+
+    4.1.2: First `serve` in `self-signed` mode generates key and certificate 0600
+    and prints the fingerprint; a second `serve` reuses the pair with the same fingerprint
+    and a pinned request succeeds. test: `crates/gdaemon/tests/front_door.rs::self_signed_generated_once_and_reused`.
+
+    4.1.14: A generated certificate''s SANs are exactly `localhost`, the hostname,
+    `127.0.0.1`, `::1`, a concrete `bind_host` IP, and the `tls.sans` entries; a wildcard
+    bind adds no other address; both parsers reject an unspecified address in `tls.sans`;
+    and a `tls.sans` entry missing from an existing certificate draws the named warning.
+    test: `crates/gdaemon/tests/front_door.rs::self_signed_san_policy`.
+
+    4.1.10: `serve` fails naming the path on a missing half, a corrupt file, or a
+    mismatched key in `self-signed` mode and leaves the files untouched, and `files`
+    mode serves a valid operator pair and refuses a mismatched one. test: `crates/gdaemon/tests/front_door.rs::tls_pair_load_or_refuse`.
+
+    4.1.3: HTTP passthrough, typed 503, and WS splice pass over TLS with the pinned
+    client config. test: `crates/gdaemon/tests/front_door.rs::ws_splice_over_self_signed_tls`.
+
+    4.1.4: The pinned client config rejects a different certificate and consults no
+    system roots. test: `crates/gdaemon/tests/front_door.rs::pinned_client_rejects_unpinned_cert`.
+
+    4.1.5: With TLS on, a loopback peer is served in plaintext and over TLS on the
+    same port, and a non-loopback plaintext peer is closed, for IPv4, IPv6, and IPv4-mapped
+    peers. test: `crates/gdaemon/tests/front_door.rs::plaintext_only_from_loopback_peers`.
+
+    4.1.6: A wildcard bind serves loopback on its own listener, and a concrete non-loopback
+    bind adds a same-port loopback listener of the same family. test: `crates/gdaemon/tests/front_door.rs::concrete_bind_adds_loopback_listener`.
+
+    4.1.7: Python local dial hosts are loopback for wildcard, named, concrete IPv4,
+    and IPv6 binds, and an explicit `daemon_url` still wins. test: `tests/utils/test_daemon_url.py::test_dial_host_is_always_loopback`.
+
+    4.1.11: Rust `dial_host` and `endpoint_to_url` give the same loopback mapping
+    and explicit-`daemon_url` precedence. test: `crates/gcore/src/daemon_url.rs::tests::dial_host_is_always_loopback`.
+
+    4.1.12: Forged `Forwarded`, `X-Forwarded-For`, and `X-Real-IP` request headers
+    never reach the backend on the proxy, native-health, or WS paths; the backend
+    receives `X-Forwarded-For` equal to the observed peer. test: `crates/gdaemon/tests/front_door.rs::forwarding_headers_carry_only_observed_peer`.
+
+    4.1.13: With TLS on, a zero-byte connection and a partial-ClientHello connection
+    are closed after `PREAUTH_DEADLINE` while a concurrent health request on the same
+    listener succeeds. test: `crates/gdaemon/tests/front_door.rs::stalled_preauth_connections_expire_without_blocking`.
+
+    4.1.15: Both parsers refuse `front_door.enabled: false` on a non-loopback `bind_host`
+    with `tls.mode` absent, `off`, `self-signed`, and `files`, naming the loopback
+    and enabled fixes; they accept it on `localhost`, `127.0.0.1`, and `::1`; and
+    an absent `front_door` on a non-loopback bind takes the enabled TLS rules. test:
+    `tests/config/test_bootstrap.py::test_disabled_front_door_is_loopback_only`.
+
+    4.1.16: The Rust parser gives the same disabled-front-door refusals and acceptances.
+    test: `crates/gcore/src/bootstrap.rs::tests::disabled_front_door_is_loopback_only`.
+
+    4.1.17: Runner startup from a bootstrap file with `enabled: false` on a non-loopback
+    `bind_host` exits with the parse error before `run_daemon` binds any port, and
+    `test_backend_ports_behind_front_door` builds its disabled case on a loopback
+    host. test: `tests/test_runner_lifecycle.py::test_disabled_front_door_on_public_bind_refuses_before_bind`.
+
+    4.1.18: The configuration guide states that a disabled front door is loopback-only
+    and that the TLS block applies only with the front door enabled. behavior: "loopback-only"
+    in `docs/guides/configuration.md`.
+
+    4.1.8: The e2e fixture serves `https` with `tls="self-signed"`, keeps its fingerprint
+    across a restart, and the four parametrized lifecycle cases pass over it through
+    the pinned shared clients. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls`.'
+  labels:
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.1
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.9
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.2
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.14
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.10
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.3
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.4
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.5
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.6
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.7
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.11
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.12
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.13
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.15
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.16
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.17
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.18
+  - covers:gdaemon-api-keys-nodes:4.1:4.1.8
+  tdd: true
+  source_section: '4.1'
+  implementation_domain: backend
+- title: '`api_keys`, key format, issuance routes, and local-key adoption'
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  validation_criteria: '4.2.1: Migration 456 creates `api_keys` and the two `machines`
+    columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_api_keys.sql`.
+
+    4.2.2: `generate`, `parse`, and `hash` match the shared vectors and `parse` rejects
+    a bad checksum, bad alphabet, and wrong length. test: `tests/utils/test_api_key_format.py::test_shared_vectors_and_rejections`.
+
+    4.2.3: Through the full app and its middleware, the bootstrap route verifies the
+    password, binds the machine, and returns the plaintext once with `no-store`; a
+    foreign-owned machine gets 403; repeated bad passwords hit `_LoginRateLimiter`
+    lockout keyed by `_login_client_id`, and a success resets it. test: `tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key`.
+
+    4.2.4: Startup adoption mints the local machine''s key into bootstrap once; a
+    failure before the rename revokes the new key, and a failure injected after `os.replace`
+    (at the directory fsync and at the readback) keeps the committed key live, so
+    a retry mints nothing and bootstrap never names a revoked key. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_follows_publication_point`.
+
+    4.2.12: Two synchronized `ensure_local_api_key` callers on one bootstrap leave
+    exactly one live key, matching the bootstrap `api_key` and `api_key_id`. test:
+    `tests/storage/test_api_keys.py::test_concurrent_adoption_mints_one_key`.
+
+    4.2.13: A legacy `config.yaml` with no sibling `bootstrap.yaml` mints nothing,
+    writes nothing, and logs the migration warning. test: `tests/storage/test_api_keys.py::test_legacy_config_path_skips_adoption`.
+
+    4.2.15: When `ensure_local_api_key` raises (missing `api_keys` table or a database
+    error), startup logs the failure and the daemon still starts. test: `tests/test_runner_init.py::test_failing_local_key_adoption_does_not_block_start`.
+
+    4.2.14: Through a real daemon behind gdaemon, repeated bad bootstrap passwords
+    with varying forged `X-Forwarded-For` values cannot reset the caller''s lockout
+    from `127.0.0.1`, and a caller from `::1` (a distinct real peer) still has its
+    own bucket. test: `tests/e2e/test_api_key_bootstrap_lockout.py::test_forged_forwarding_cannot_reset_lockout`.
+
+    4.2.10: Through the full app, the management routes answer 401 for an absent,
+    invalid, expired-cookie, or managed-agent credential; a cookie and the operator
+    token each resolve to their user and this machine; the operator token answers
+    403 when the install has two users; and a mint for a machine owned by another
+    user answers 403. test: `tests/servers/routes/test_api_keys.py::test_management_routes_admit_only_resolved_principals`.
+
+    4.2.11: A real isolated daemon launched with `--config config.yaml` mints one
+    key bound to its machine into the sibling `bootstrap.yaml`, leaves `config.yaml`
+    byte-identical, and mints nothing on a second start. test: `tests/e2e/test_local_api_key_adoption.py::test_startup_adopts_local_key_once`.
+
+    4.2.5: `gobby install` with a reachable hub writes the minted key to bootstrap.
+    test: `tests/cli/test_cli_install.py::test_install_mints_local_api_key`.
+
+    4.2.6: Through the full app with two distinct users, list and revoke are owner-scoped
+    and redacted: a foreign revoke answers 404 with a body identical to an absent
+    id''s, and list responses carry neither `key_hash` nor plaintext. test: `tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted`.
+
+    4.2.7: The catalog manifest, `grant/bundle.rs` golden checksums, `schema_contract.rs`,
+    and `schema_expected_identity.json` name migration 456. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+
+    4.2.8: The five signed goldens under `tests/runtime_grants/golden/` carry the
+    new schema identity and the golden-vector tests pass. file: `tests/runtime_grants/golden/brokered_datastores.json`.
+
+    4.2.9: Bootstrap parses and writes `api_key`, `api_key_id`, and `hub_cert`, and
+    the config carrier is regenerated. file: `crates/gcore/assets/config/runtime_config_contract.json`.
+
+    4.2.16: An ordinary cross-machine unpack of an archive whose bootstrap names an
+    `api_key` restores a bootstrap with neither the archived nor the destination''s
+    `api_key` and `api_key_id`, and a `remote` archive prints the `gobby auth login`
+    re-enrollment line. test: `tests/cli/test_pack.py::test_unpack_drops_machine_bound_api_key`.
+
+    4.2.17: `--restore-identity` restores the archived `api_key` and `api_key_id`
+    together with the archived `machine_id`. When that archive''s `machine_id` member
+    is absent or malformed, unpack refuses before stopping services, and the destination
+    bootstrap, `machine_id`, and services are unchanged. test: `tests/cli/test_pack.py::test_unpack_restore_identity_keeps_api_key_pair`.
+
+    4.2.18: `ensure_local_api_key` mints nothing when the bootstrap key is live for
+    this machine. It mints and publishes a replacement when the bootstrap names a
+    key whose row is absent, revoked, hash-mismatched, or bound to another machine,
+    and it leaves that row unrevoked. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_replaces_stale_bootstrap_key`.'
+  labels:
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.1
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.2
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.3
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.4
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.12
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.13
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.15
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.14
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.10
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.11
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.5
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.6
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.7
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.8
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.9
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.16
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.17
+  - covers:gdaemon-api-keys-nodes:4.2:4.2.18
+  tdd: true
+  source_section: '4.2'
+  implementation_domain: backend
+- title: '`gobby auth login` and `gobby auth key --show`'
+  category: code
+  task_type: feature
+  depends_on:
+  - '4.1'
+  - '4.2'
+  validation_criteria: '4.5.1: `gobby auth login` pins by fingerprint against a self-signed
+    hub at `https://127.0.0.1` and at `https://[::1]`, refuses a mismatch, and writes
+    bootstrap. test: `tests/e2e/test_auth_login.py::test_login_pins_self_signed_hub`.
+
+    4.5.7: Against a `files`-mode hub whose certificate''s SANs exclude the dialed
+    host, login fails the handshake before sending the password and leaves the prior
+    enrollment byte-identical. test: `tests/e2e/test_auth_login.py::test_login_refuses_host_outside_sans`.
+
+    4.5.8: A 2xx with malformed JSON, a missing field, a key failing `parse`, a mismatched
+    hint, a `machine_id` other than the requested one, or a `key_id` equal to the
+    prior enrollment''s `api_key_id` publishes nothing, prints no secret, and sends
+    no revoke request; the prior key stays live and the prior bootstrap and `hub.pem`
+    stay byte-identical; a valid response still enrolls. test: `tests/cli/test_auth_login.py::test_login_validates_enrollment_response`.
+
+    4.5.9: Two synchronized logins A and B run while A''s bootstrap publication is
+    failed before rename: B''s bootstrap, `api_key_id`, and matching `hub.pem` survive
+    whichever order the lock grants, A restores nothing over B''s files, and only
+    A''s new key is revoked. test: `tests/cli/test_auth_login.py::test_concurrent_enrollments_keep_winner`.
+
+    4.5.2: Login refuses a `datastore_mode: local` bootstrap and a `--hub` that differs
+    from `hub_daemon_url`, before any network call and with bootstrap byte-identical.
+    test: `tests/cli/test_auth_login.py::test_login_refuses_local_bootstrap_and_hub_mismatch`.
+
+    4.5.3: Login refuses an `http://` non-loopback hub without `--insecure` and `--fingerprint`
+    with any `http://` hub, and enrolls over plain HTTP to a loopback hub and to a
+    non-loopback hub with `--insecure`, fetching no certificate and writing no `hub_cert`.
+    test: `tests/cli/test_auth_login.py::test_login_http_branches`.
+
+    4.5.5: A declined confirmation, a fingerprint mismatch, a rejected password, a
+    network failure, and a certificate probe against a listener that accepts and never
+    answers each exit non-zero before any bootstrap or `hub.pem` change, the first
+    two and the stalled probe without sending the password. test: `tests/cli/test_auth_login.py::test_login_failures_preserve_prior_enrollment`.
+
+    4.5.6: A failure before the bootstrap rename restores the prior `hub.pem`, revokes
+    only the new key through a password session, and leaves the prior key live and
+    the prior bootstrap byte-identical; a failure injected after the bootstrap `os.replace`
+    (at the directory fsync and at the readback) keeps the committed new key and revokes
+    nothing; a failed restore or cleanup prints the new key id. test: `tests/cli/test_auth_login.py::test_login_compensation_follows_publication_point`.
+
+    4.5.4: `gobby auth key --show` prints the hint and id and never the key. test:
+    `tests/cli/test_auth_login.py::test_key_show_prints_hint_only`.'
+  labels:
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.1
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.7
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.8
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.9
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.2
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.3
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.5
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.6
+  - covers:gdaemon-api-keys-nodes:4.5:4.5.4
+  tdd: true
+  source_section: '4.5'
+  implementation_domain: backend
+```
