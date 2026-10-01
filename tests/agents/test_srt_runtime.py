@@ -422,7 +422,9 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     assert mux_dir.is_dir()
     assert mux_dir.stat().st_mode & 0o777 == 0o700
     assert Path(launch.provider_env["UV_CACHE_DIR"]).is_relative_to(expected_parent / "cache")
-    assert Path(launch.provider_env["CARGO_HOME"]).is_relative_to(expected_parent / "cache")
+    shared_cargo_home = gobby_home / "cache" / "cargo-home"
+    assert launch.provider_env["CARGO_HOME"] == str(shared_cargo_home)
+    assert not (expected_parent / "cache" / "cargo-home").exists()
     for writable_name in ("hooks", "logs", "cache"):
         writable = expected_parent / writable_name
         assert writable.is_dir()
@@ -448,6 +450,7 @@ async def test_prepare_srt_launch_writes_private_policy_and_keeps_ghook_inbox_wr
     allowed_reads = policy["filesystem"]["allowRead"]
     allowed_writes = policy["filesystem"]["allowWrite"]
     assert str(hook_inbox.resolve()) in allowed_writes
+    assert allowed_writes.count(str(shared_cargo_home.resolve())) == 1
     assert str(provider_target.resolve()) in allowed_reads
     assert str(provider_root.resolve()) in allowed_reads
     assert str(untrusted_mcp_root.resolve()) not in allowed_reads

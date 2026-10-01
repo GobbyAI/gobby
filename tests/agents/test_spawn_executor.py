@@ -19,7 +19,12 @@ if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
 from gobby.agents import spawn_executor, spawn_executor_support
-from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, UV_CACHE_DIR
+from gobby.agents.constants import (
+    CARGO_HOME,
+    CARGO_TARGET_DIR,
+    UV_CACHE_DIR,
+    shared_agent_cargo_home_dir,
+)
 from gobby.agents.sandbox import ResolvedSandboxPaths, SandboxConfig
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import (
@@ -1856,6 +1861,7 @@ class TestExecuteSpawnSandbox:
             "inbox",
             "logs",
             "cache",
+            "cargo-home",
         }
         assert _runtime_of(request).last_request is not None
         call_kwargs = _spawn_kwargs(request)
@@ -1871,14 +1877,8 @@ class TestExecuteSpawnSandbox:
                 )
             )
         )
-        assert call_kwargs["env"][CARGO_HOME]
-        assert Path(call_kwargs["env"][CARGO_HOME]).is_relative_to(
-            Path(
-                next(
-                    path for path in resolved_config.extra_write_paths if Path(path).name == "cache"
-                )
-            )
-        )
+        assert call_kwargs["env"][CARGO_HOME] == str(shared_agent_cargo_home_dir())
+        assert resolved_config.extra_write_paths.count(call_kwargs["env"][CARGO_HOME]) == 1
         # Command should include sandbox args
         command = call_kwargs.get("command")
         assert "--dangerously-skip-permissions" in command

@@ -504,6 +504,22 @@ def test_prepare_sandbox_run_paths_skips_missing_operator_pre_commit_store(
     assert not destination.exists()
 
 
+def test_prepare_sandbox_run_paths_shares_the_agent_cargo_home(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Cargo fingerprints embed $CARGO_HOME/registry/src, so a per-run home
+    invalidates the checkout's warm target and rebuilds every dependency (#23194)."""
+    shared_cargo_home = tmp_path / "gobby-home" / "cache" / "cargo-home"
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+
+    paths, _destination = _run_cache(monkeypatch, tmp_path, workspace=_workspace(tmp_path))
+
+    assert paths.environment("claude")["CARGO_HOME"] == str(shared_cargo_home)
+    assert shared_cargo_home.is_dir()
+    assert not (paths.cache / "cargo-home").exists()
+
+
 def test_ghostty_dependency_host_grant() -> None:
     ghostty_host = "deps.files.ghostty.org"
     control_host = "example.com"

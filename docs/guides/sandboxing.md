@@ -255,7 +255,10 @@ Local Git commits need filesystem access only. Network Git operations require
 `allow_git_network: true`. Package downloads require the effective
 `allow_package_registries` capability. Enabled managed-agent spawns add private
 validation caches and set this capability to true in `sandbox_config_for_spawn`,
-even when the base daemon configuration is false. Inspect effective run policy;
+even when the base daemon configuration is false. Cargo is the exception to
+private caches: every run writes the one shared `<gobby-home>/cache/cargo-home`,
+because Cargo fingerprints embed `$CARGO_HOME/registry/src` and a per-run home
+would rebuild the checkout's whole dependency graph. Inspect effective run policy;
 Git network access remains independent. Web chat has its own configured defaults.
 
 ## Launch And Lifecycle

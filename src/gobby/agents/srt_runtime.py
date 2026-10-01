@@ -642,6 +642,7 @@ async def prepare_sandbox_launch(
             "extra_write_paths": [
                 *retained_writes,
                 *(str(path) for path in run_paths.writable),
+                str(run_paths.cargo_home),
                 *([str(grant_lock)] if grant_lock is not None else []),
             ]
         }

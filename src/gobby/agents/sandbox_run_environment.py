@@ -4,10 +4,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # CARGO_TARGET_DIR is deliberately absent: it is checkout-specific
-# (gobby.agents.cargo_target), not privatized per run.
+# (gobby.agents.cargo_target), not privatized per run. CARGO_HOME is absent
+# too: Cargo fingerprints embed $CARGO_HOME/registry/src, so a per-run home
+# invalidates every dependency in the checkout's warm target and rebuilds the
+# whole graph (#23194). Runs share `SandboxRunPaths.cargo_home` instead.
 RUN_CACHE_ENV_VARS = (
     "UV_CACHE_DIR",
-    "CARGO_HOME",
     "GOCACHE",
     "GOMODCACHE",
     "npm_config_cache",
@@ -36,6 +38,8 @@ class SandboxRunPaths:
     hooks: Path
     logs: Path
     cache: Path
+    # The one Cargo home every spawned agent shares (constants.shared_agent_cargo_home_dir).
+    cargo_home: Path
     # Complete `zig build --system` package dir; None leaves libghostty-vt fetching.
     zig_system_dir: Path | None = None
 
@@ -47,6 +51,7 @@ class SandboxRunPaths:
         values = {
             name: str(self.cache / name.replace("_", "-").lower()) for name in RUN_CACHE_ENV_VARS
         }
+        values["CARGO_HOME"] = str(self.cargo_home)
         # Every provider child, and everything it spawns, must land temp files in
         # the run's writable tmp. Claude alone used to get only CLAUDE_CODE_TMPDIR,
         # so its children kept the ambient system temp, which is not a write grant:
