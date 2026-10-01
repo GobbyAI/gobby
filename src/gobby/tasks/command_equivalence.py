@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
 import shlex
 from collections import Counter
+from pathlib import Path
 
 from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.config.validation_detection import normalize_validation_evidence_command
@@ -270,7 +272,7 @@ def _path_scope(
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return None
-    tokens = _drop_neutral_uv_options(list(parsed.segments[0]))
+    tokens, _location = _drop_neutral_uv_options(list(parsed.segments[0]))
     start = 2 if tokens[:2] == ["uv", "run"] else 0
     if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
         start += 2
@@ -318,17 +320,19 @@ def _path_scope(
     return tokens[:end] + [shlex.join(option) for option in options], paths
 
 
-def _drop_neutral_uv_options(tokens: list[str]) -> list[str]:
+def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], str | None]:
     """Rewrite ``uv [options] run [options] <rest>`` as ``uv run <rest>``.
 
     Only options that keep the run's test selection are dropped, before or after
     ``run``. Any other option stays in place, so the runner is not recognized and
-    the command earns no path-scope credit.
+    the command earns no path-scope credit. The second value is the last dropped
+    ``--directory``/``--project`` location, if any.
     """
     if tokens[:1] != ["uv"]:
-        return tokens
+        return tokens, None
     index = 1
     seen_run = False
+    location: str | None = None
     while index < len(tokens):
         token = tokens[index]
         if token == "run" and not seen_run:
@@ -337,12 +341,32 @@ def _drop_neutral_uv_options(tokens: list[str]) -> list[str]:
         elif token in _UV_NEUTRAL_FLAGS:
             index += 1
         elif token in _UV_LOCATION_OPTIONS and index + 1 < len(tokens):
+            location = tokens[index + 1]
             index += 2
         elif token.split("=", 1)[0] in _UV_LOCATION_OPTIONS and "=" in token:
+            location = token.split("=", 1)[1]
             index += 1
         else:
             break
-    return ["uv", "run", *tokens[index:]] if seen_run else tokens
+    if not seen_run:
+        return tokens, None
+    return ["uv", "run", *tokens[index:]], location
+
+
+def runs_outside_root(command: str, root: str) -> bool:
+    """Whether a ``uv`` location option points the command away from ``root``.
+
+    Only an absolute ``--directory``/``--project`` outside ``root`` counts. With no
+    location, or a relative one whose cwd was never recorded, the scope is
+    unresolvable and the command is judged as running in ``root``.
+    """
+    parsed = parse_validation_shell(command)
+    if len(parsed.segments) != 1:
+        return False
+    _tokens, location = _drop_neutral_uv_options(list(parsed.segments[0]))
+    if location is None or not os.path.isabs(location):
+        return False
+    return not Path(location).resolve().is_relative_to(Path(root).resolve())
 
 
 def _path_scope_runner(tokens: list[str], start: int) -> tuple[tuple[str, ...], int] | None:

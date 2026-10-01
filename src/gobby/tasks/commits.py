@@ -76,6 +76,8 @@ def collect_task_diff_text(
 # `git hash-object -t tree /dev/null`: the base for a root commit's net patch.
 _EMPTY_TREE_SHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
 _NET_PATCH_GIT_TIMEOUT_SECONDS = 30
+_PATCH_OUTPUT = ("--binary",)
+_NAME_STATUS_OUTPUT = ("--name-status", "-z")
 
 
 async def collect_commit_diff_text_async(
@@ -115,6 +117,15 @@ async def collect_commit_diff_text_async(
 def collect_commit_diff_text(commit_shas: list[str], *, cwd: str | Path) -> str:
     """Offline synchronous facade for CLI and direct-library consumers."""
     return asyncio.run(collect_commit_diff_text_async(commit_shas, cwd=cwd))
+
+
+async def collect_net_name_status_async(commit_shas: list[str], *, cwd: str | Path) -> str | None:
+    """Return the close set's net ``--name-status -z`` listing against the review's base.
+
+    ``None`` means the set cannot be netted, where the review patch would fall
+    back to streaming each commit.
+    """
+    return await _net_commit_patch(commit_shas, cwd=cwd, output=_NAME_STATUS_OUTPUT)
 
 
 async def _git_bytes(
@@ -239,14 +250,16 @@ async def _is_sync_merge(sha: str, ordered: list[str], *, cwd: str | Path) -> bo
     return True
 
 
-async def _show_one_commit(sha: str, ordered: list[str], *, cwd: str | Path) -> str | None:
+async def _show_one_commit(
+    sha: str, ordered: list[str], *, cwd: str | Path, output: tuple[str, ...] = _PATCH_OUTPUT
+) -> str | None:
     merges = (
         ["--remerge-diff"]
         if await _is_sync_merge(sha, ordered, cwd=cwd)
         else ["--diff-merges=first-parent"]
     )
     raw = await _git_bytes(
-        ["show", *merges, "--format=", "--find-renames", "--find-copies", "--binary", sha],
+        ["show", *merges, "--format=", "--find-renames", "--find-copies", *output, sha],
         cwd=cwd,
     )
     if raw is None:
@@ -259,13 +272,14 @@ async def _stream_commit_patches(
     *,
     cwd: str | Path,
     classify_against: list[str] | None = None,
+    output: tuple[str, ...] = _PATCH_OUTPUT,
 ) -> str | None:
     # A one-commit subset is not a lone merge. Classify against the full linked
     # set so a sync merge still shows its remerge diff.
     basis = shas if classify_against is None else classify_against
     parts: list[str] = []
     for sha in shas:
-        patch = await _show_one_commit(sha, basis, cwd=cwd)
+        patch = await _show_one_commit(sha, basis, cwd=cwd, output=output)
         if patch is None:
             return None
         if patch.strip():
@@ -273,7 +287,9 @@ async def _stream_commit_patches(
     return "\n".join(parts)
 
 
-async def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes | None:
+async def _landing_merge_patch(
+    ordered: list[str], *, cwd: str | Path, output: tuple[str, ...] = _PATCH_OUTPUT
+) -> bytes | None:
     """First-parent patch of a merge that lands every other linked commit.
 
     A landing merge reaches the other commits only through its second parent,
@@ -289,17 +305,22 @@ async def _landing_merge_patch(ordered: list[str], *, cwd: str | Path) -> bytes 
         if await _git_bytes(["merge-base", "--is-ancestor", sha, f"{tip}^1"], cwd=cwd) is not None:
             return None
     return await _git_bytes(
-        ["diff", "--find-renames", "--find-copies", "--binary", f"{tip}^1", tip],
+        ["diff", "--find-renames", "--find-copies", *output, f"{tip}^1", tip],
         cwd=cwd,
     )
 
 
-async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str | None:
-    """Replay the commits onto a temporary index and diff it against their base."""
+async def _net_commit_patch(
+    commit_shas: list[str], *, cwd: str | Path, output: tuple[str, ...] = _PATCH_OUTPUT
+) -> str | None:
+    """Replay the commits onto a temporary index and diff it against their base.
+
+    ``output`` selects the diff format; the replay itself always applies binary patches.
+    """
     ordered = await _ancestry_order(commit_shas, cwd=cwd)
     if not ordered:
         return None
-    landing = await _landing_merge_patch(ordered, cwd=cwd)
+    landing = await _landing_merge_patch(ordered, cwd=cwd, output=output)
     if landing is not None:
         return landing.decode("utf-8", errors="replace").strip()
     syncs = [sha for sha in ordered if await _is_sync_merge(sha, ordered, cwd=cwd)]
@@ -307,7 +328,7 @@ async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str |
     if any([await _is_merge(sha, cwd=cwd) for sha in replayable]):
         return None
     if not replayable:
-        return await _stream_commit_patches(ordered, cwd=cwd)
+        return await _stream_commit_patches(ordered, cwd=cwd, output=output)
     parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{replayable[0]}^"], cwd=cwd)
     base = parent.decode("ascii", errors="replace").strip() if parent else _EMPTY_TREE_SHA
     with tempfile.TemporaryDirectory(prefix="gobby-close-index-") as scratch:
@@ -332,7 +353,7 @@ async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str |
             if applied is None:
                 return None
         net = await _git_bytes(
-            ["diff", "--cached", "--find-renames", "--find-copies", "--binary", base],
+            ["diff", "--cached", "--find-renames", "--find-copies", *output, base],
             cwd=cwd,
             env=env,
         )
@@ -341,7 +362,7 @@ async def _net_commit_patch(commit_shas: list[str], *, cwd: str | Path) -> str |
     text = net.decode("utf-8", errors="replace").strip()
     if not syncs:
         return text
-    authored = await _stream_commit_patches(syncs, cwd=cwd, classify_against=ordered)
+    authored = await _stream_commit_patches(syncs, cwd=cwd, classify_against=ordered, output=output)
     if authored is None:
         return None
     return "\n".join(part for part in (text, authored.strip()) if part)

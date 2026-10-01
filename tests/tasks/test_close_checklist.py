@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,7 +15,7 @@ import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult
 from gobby.tasks.close_checklist import (
@@ -754,6 +755,60 @@ def test_failing_uv_run_no_sync_pytest_earns_no_credit() -> None:
     )
 
     assert gate.status == "failed"
+
+
+def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:
+    """Close task A after a passing run in A's worktree and a later failing run."""
+    own = tmp_path / "task-a"
+    own.mkdir()
+    test_path = "tests/tasks/test_close_checklist.py"
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, test_path),
+                _run(2, command=f"uv run --directory {own} pytest {test_path}"),
+                _run(3, command=failing_command.format(own=own, tmp=tmp_path), outcome="failure"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(test_path,),
+        close_root=str(own),
+    )
+
+
+def test_failing_pytest_scoped_to_another_worktree_does_not_fail_the_close(
+    tmp_path: Path,
+) -> None:
+    # The #23010/#23188 shape: a RED run for task B lands after task A's clean run.
+    (tmp_path / "task-b").mkdir()
+    foreign = (
+        "rtk uv run --directory {tmp}/task-b --no-sync pytest tests/tasks/test_close_checklist.py"
+    )
+
+    gate = _scoped_pytest_gate(tmp_path, foreign)
+
+    assert gate.status == "passed"
+    assert gate.details["foreign_scope_runs"] == [foreign.format(tmp=tmp_path)]
+
+
+@pytest.mark.parametrize(
+    "failing_command",
+    [
+        "uv run --directory {own} pytest tests/tasks/test_close_checklist.py",
+        "uv run --project={own}/tests pytest tests/tasks/test_close_checklist.py",
+        "uv run --directory ../task-b pytest tests/tasks/test_close_checklist.py",
+        "uv run pytest tests/tasks/test_close_checklist.py",
+    ],
+    ids=["own-worktree", "own-subdirectory", "relative-scope", "no-scope"],
+)
+def test_failing_pytest_in_own_or_unresolvable_scope_still_fails(
+    tmp_path: Path, failing_command: str
+) -> None:
+    gate = _scoped_pytest_gate(tmp_path, failing_command)
+
+    assert gate.status == "failed"
+    assert gate.details["unresolved_failure_categories"] == ["test"]
 
 
 @pytest.mark.parametrize(
@@ -2066,7 +2121,7 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
@@ -2161,7 +2216,7 @@ async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failu
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),

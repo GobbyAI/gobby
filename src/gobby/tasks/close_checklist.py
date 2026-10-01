@@ -23,6 +23,7 @@ from gobby.tasks.close_test_coverage import (
 from gobby.tasks.close_test_coverage import (
     uncovered_test_paths as _uncovered_test_paths,
 )
+from gobby.tasks.command_equivalence import runs_outside_root
 from gobby.tasks.criterion_commands import (
     SCOPE_MISMATCH_REASON,
     criterion_command_gap_message,
@@ -132,10 +133,29 @@ def evaluate_validation_commands(
     validation_criteria: str = "",
     changed_paths: Iterable[str] = (),
     deleted_paths: Iterable[str] = (),
+    close_root: str | None = None,
 ) -> CloseGateResult:
-    """Keep credit decisions separate from observed-run explanations."""
+    """Keep credit decisions separate from observed-run explanations.
+
+    A run whose ``uv`` location points outside ``close_root`` validated another
+    checkout, so it neither credits nor fails this task.
+    """
     from gobby.tasks.validation_diagnostics import excluded_validation_records, observed_message
 
+    foreign: list[str] = []
+    if close_root is not None:
+
+        def in_scope(run: TranscriptValidationRun) -> bool:
+            if runs_outside_root(run.core_command or run.command, close_root):
+                foreign.append(run.command)
+                return False
+            return True
+
+        evidence = replace(
+            evidence,
+            validation_runs=tuple(filter(in_scope, evidence.validation_runs)),
+            command_runs=tuple(filter(in_scope, evidence.command_runs)),
+        )
     paths = tuple(changed_paths)
     gate = _evaluate_validation_commands(
         task_category=task_category,
@@ -208,6 +228,9 @@ def evaluate_validation_commands(
         **gate.details,
         "excluded_runs": excluded_runs,
         "nearest_observed_run": nearest_observed,
+        "foreign_scope_runs": [
+            _failure_command_description(command) for command in dict.fromkeys(foreign)
+        ],
     }
     if len(records) > 16:
         details["omitted_excluded_run_count"] = len(records) - 16

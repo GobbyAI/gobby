@@ -10,6 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task
 from gobby.tasks.validation import PreparedCloseReview
@@ -136,8 +137,8 @@ def _linked_commits_exist() -> Iterator[None]:
             new=ECHOING_DAEMON_GIT,
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-            return_value=set(),
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+            return_value=NetCommitPaths(),
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.collect_commit_paths",
