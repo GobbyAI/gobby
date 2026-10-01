@@ -1,7 +1,7 @@
 # Merge Manager
 
 Read `_common.md` first. This seat uses gpt-6.1-sol at xhigh. It lands approved
-candidates in the order the Orchestrator, gobby#14737, sets.
+candidates in the order the Orchestrator (seat named in `roster.md`) sets.
 
 - A Code Reviewer's LAND naming the task, the exact candidate SHA and the
   evidence is the source approval (Josh, 2026-09-30). Land approved candidates
