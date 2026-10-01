@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner_lifecycle_periodic import _default_loops, start_periodic_tasks
 from gobby.runner_maintenance import cleanup_comms_messages_loop, storage_hygiene
 from gobby.runner_maintenance_recurring import (
@@ -145,6 +146,7 @@ async def test_periodic_start_schedules_schema_and_progress_cleanup_loops() -> N
     runner = cast(
         "GobbyRunner",
         SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             config_runtime=SimpleNamespace(
                 capture=lambda: SimpleNamespace(
                     snapshot=SimpleNamespace(active=DaemonConfig(database_url=database_url))
@@ -196,6 +198,7 @@ async def test_periodic_start_schedules_hook_quarantine_retention_loop() -> None
     runner = cast(
         "GobbyRunner",
         SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             config_runtime=SimpleNamespace(
                 capture=lambda: SimpleNamespace(
                     snapshot=SimpleNamespace(active=DaemonConfig(database_url="postgresql://test"))
@@ -245,6 +248,7 @@ async def test_periodic_start_schedules_hook_receipt_retention_loop() -> None:
     runner = cast(
         "GobbyRunner",
         SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             config_runtime=SimpleNamespace(
                 capture=lambda: SimpleNamespace(
                     snapshot=SimpleNamespace(active=DaemonConfig(database_url="postgresql://test"))

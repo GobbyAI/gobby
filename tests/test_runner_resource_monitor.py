@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.logging import LoggingSettings
 from gobby.hooks.runtime_compat import GhookRuntimeDiagnostic, GhookRuntimeState
 from gobby.runner_lifecycle_periodic import start_periodic_tasks
@@ -173,6 +174,7 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
 
     logging_config = LoggingSettings(dir="/tmp/gobby-resource-monitor-test")
     runner: Any = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),

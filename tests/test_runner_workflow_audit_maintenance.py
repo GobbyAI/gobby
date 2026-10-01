@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner_lifecycle_periodic import _default_loops, start_periodic_tasks
 
 
@@ -23,6 +24,7 @@ async def test_periodic_start_schedules_configured_workflow_audit_retention() ->
     loops = dict.fromkeys(_default_loops(), complete_loop)
     loops["workflow_audit_cleanup_loop"] = capture_audit_loop
     runner = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         config_runtime=SimpleNamespace(
             capture=lambda: SimpleNamespace(
                 snapshot=SimpleNamespace(
