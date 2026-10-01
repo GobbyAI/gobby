@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
+from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.state_manager import SessionVariableManager
@@ -75,6 +76,13 @@ async def test_escalate_task_releases_an_escalated_task_the_caller_holds(
     variables = SessionVariableManager(temp_db).get_variables(canonical_task_session.id)
     assert variables["claimed_tasks"] == {}
     assert variables["task_claimed"] is False
+    # Handoff summaries treat a claimed link without a terminal action as the active task.
+    actions = {
+        link["action"]
+        for link in SessionTaskManager(temp_db).get_session_tasks(canonical_task_session.id)
+        if link["task"].id == held.id
+    }
+    assert "escalated" in actions
 
 
 @pytest.mark.asyncio

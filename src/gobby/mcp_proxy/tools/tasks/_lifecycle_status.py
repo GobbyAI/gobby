@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
     clear_prior_claim_session_variables,
     coordinate_task_escalation,
+    link_escalating_session,
 )
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
@@ -184,6 +185,7 @@ def register_escalate_task(registry: InternalToolRegistry, ctx: RegistryContext)
                 clear_prior_claim_session_variables(
                     ctx, resolved_id, prior_owner_session_id, action="escalate"
                 )
+                link_escalating_session(ctx, resolved_id, session_id)
                 return {}
             task_ref = f"#{task.seq_num}" if task.seq_num else resolved_id
             return _state_error(
