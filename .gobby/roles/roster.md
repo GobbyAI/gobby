@@ -10,9 +10,11 @@
 | lane-2-stability.md | gobby#14962 |
 | lane-3-hooks.md | gobby#14956 |
 | lane-3-hooks.md | gobby#14954 |
+| lane-3-hooks.md | gobby#15011 |
 | lane-4-runbooks.md | gobby#14674 |
 | lane-4-runbooks.md | gobby#14953 |
 | lane-5-functional.md | gobby#14768 |
+| lane-5-functional.md | gobby#15012 |
 | rust-migration.md | gobby#14920 |
 | lane-7-front-door.md | gobby#14682 |
 | lane-8-communications.md | gobby#14683 |
@@ -24,6 +26,8 @@
 | code-reviewer.md | gobby#14681 |
 | code-reviewer.md | gobby#14944 |
 | code-reviewer.md | gobby#14945 |
+| code-reviewer.md | gobby#15009 |
+| code-reviewer.md | gobby#15010 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14949 |

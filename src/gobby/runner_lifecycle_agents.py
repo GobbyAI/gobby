@@ -96,12 +96,15 @@ async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) ->
 
     subscriber_manager = CompletionSubscriberManager(db)
     run_manager = LocalAgentRunManager(db)
+    machine_id = require_machine_id()
     delivered_count = 0
     completion_ids = await _run_db(runner, subscriber_manager.list_completion_ids)
     for run_id in completion_ids:
         run = await _run_db(runner, run_manager.get, run_id)
+        # Each machine recovers only its own runs; a foreign run's rows wait for it.
         if (
             run is None
+            or run.machine_id != machine_id
             or run.status not in TERMINAL_AGENT_RUN_STATUSES
             or is_daemon_stop_parked(run)
         ):
@@ -158,6 +161,9 @@ async def _reconcile_task_close_reviews(
     startup: bool = False,
 ) -> int:
     """Reconcile close reviews, including durable expiry and terminal delivery."""
+    if runner.bootstrap_config.run_mode() == "node":
+        logger.info("skipping hub-only close-review reconciliation in node mode")
+        return 0
     db = getattr(runner, "database", None)
     wake_dispatcher = getattr(runner, "wake_dispatcher", None)
     wake = getattr(wake_dispatcher, "wake", None)

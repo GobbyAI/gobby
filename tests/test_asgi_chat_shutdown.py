@@ -16,6 +16,7 @@ from gobby.runner_lifecycle_shutdown import (
 from gobby.servers.websocket.models import WebSocketConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.terminals.leases import TerminalLeaseRegistry
 
 
 @pytest.mark.asyncio
@@ -23,6 +24,7 @@ async def test_asgi_stop_ends_chat_without_standalone_listener() -> None:
     server = WebSocketServer(
         config=WebSocketConfig(), mcp_manager=MagicMock(), auth_callback=AsyncMock()
     )
+    server.lease_registry = TerminalLeaseRegistry(daemon_epoch="test-epoch")
     chat = MagicMock()
     chat.stop = AsyncMock()
     server._chat_sessions["conversation"] = chat
@@ -32,7 +34,7 @@ async def test_asgi_stop_ends_chat_without_standalone_listener() -> None:
     assert server._server is None
 
     with (
-        patch.object(server, "_cleanup_tmux", new_callable=AsyncMock),
+        patch.object(server, "_cleanup_terminals", new_callable=AsyncMock),
         patch.object(server, "cleanup_voice", new_callable=AsyncMock),
         patch.object(server, "_fire_session_end", new_callable=AsyncMock) as session_end,
         patch.object(server, "_cancel_active_chat", new_callable=AsyncMock),

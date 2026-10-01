@@ -6,7 +6,6 @@ import asyncio
 import gc
 import json
 import logging
-import weakref
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -26,6 +25,7 @@ from gobby.storage.session_models import Session
 from gobby.terminals.runtime import AutomaticWriteDeclined, AutomaticWriteQuarantined
 from tests._timing import drain_asyncio_tasks
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.events.wake_test_support import PendingWakeLedger
 
 WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
 WAKE_RUN_ID = "ac314d27-4314-5fe3-a0ab-01645086e137"
@@ -173,6 +173,7 @@ class TestWakeDispatch:
             terminal_manager=terminal_manager,
             activity_probe=activity_probe,
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
@@ -185,7 +186,7 @@ class TestWakeDispatch:
             "error_code": f"session_{status}",
             "decline_reason": f"session_{status}",
         }
-        assert dispatcher._last_live_wake == {}
+        assert ledger.recorded == []
         terminal_manager.resolve_live_for_session.assert_not_called()
         tmux_sender.assert_not_awaited()
         sdk_resumer.assert_not_awaited()
@@ -799,6 +800,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
             result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -808,7 +810,7 @@ class TestWakeDispatch:
         assert result["error_code"] == "automatic_write_quarantined"
         assert result["decline_reason"] == "automatic_write_quarantined"
         tmux_sender.assert_awaited_once()
-        assert WAKE_SESSION_ID not in dispatcher._last_live_wake
+        assert ledger.recorded == []
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
 
@@ -1291,6 +1293,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
@@ -1304,6 +1307,7 @@ class TestWakeDispatch:
             cli_source=ANY,
         )
         assert ism_manager.create_message.call_count == 3
+        assert ledger.recorded == [WAKE_SESSION_ID]
 
     @pytest.mark.asyncio
     async def test_concurrent_terminal_wakes_coalesce_before_sending_text(
@@ -1341,6 +1345,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         async def run_wakes() -> list[None]:
             return await asyncio.gather(
@@ -1375,6 +1380,7 @@ class TestWakeDispatch:
             cli_source=ANY,
         )
         assert ism_manager.create_message.call_count == 3
+        assert ledger.recorded == [WAKE_SESSION_ID]
 
     @pytest.mark.asyncio
     async def test_concurrent_terminal_agent_wakes_coalesce_to_one_live_signal(
@@ -1412,6 +1418,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         async def run_wakes() -> list[None]:
             return await asyncio.gather(
@@ -1446,6 +1453,7 @@ class TestWakeDispatch:
             cli_source=ANY,
         )
         assert ism_manager.create_message.call_count == 3
+        assert ledger.recorded == [WAKE_SESSION_ID]
 
     @pytest.mark.asyncio
     async def test_terminal_wake_resumes_after_turn_advances(
@@ -1489,82 +1497,6 @@ class TestWakeDispatch:
         assert tmux_sender.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_terminal_wake_resumes_after_debounce_ceiling(
-        self,
-        session_manager: MagicMock,
-        ism_manager: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Stuck idle longer than the 30s ceiling → next completion fires again."""
-        session_manager.get.return_value = FakeSession(
-            id=WAKE_SESSION_ID,
-            agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
-            turn_count=5,
-        )
-        tmux_sender = AsyncMock()
-        dispatcher = WakeDispatcher(
-            session_manager=session_manager,
-            ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
-            terminal_manager=_managed_terminal(),
-        )
-
-        clock = [1000.0]
-
-        def fake_monotonic() -> float:
-            return clock[0]
-
-        monkeypatch.setattr("gobby.events.wake.time.monotonic", fake_monotonic)
-
-        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
-        clock[0] += 5.0
-        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
-        assert tmux_sender.await_count == 1
-        clock[0] += 31.0
-        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r3"})
-
-        assert tmux_sender.await_count == 2
-
-    @pytest.mark.asyncio
-    async def test_live_wake_prunes_stale_timestamps_and_unused_locks(
-        self,
-        session_manager: MagicMock,
-        ism_manager: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Stale wake state cleanup removes idle locks but leaves active dispatch locks."""
-        dispatcher = WakeDispatcher(
-            session_manager=session_manager,
-            ism_manager=ism_manager,
-        )
-        locked = asyncio.Lock()
-        await locked.acquire()
-        stale_lock = asyncio.Lock()
-        fresh_lock = asyncio.Lock()
-        dispatcher._last_live_wake = {
-            "stale": (1, 900.0),
-            "locked": (1, 900.0),
-            "fresh": (1, 990.0),
-        }
-        dispatcher._live_wake_locks = weakref.WeakValueDictionary(
-            {"stale": stale_lock, "locked": locked, "fresh": fresh_lock}
-        )
-        monkeypatch.setattr("gobby.events.wake.time.monotonic", lambda: 1000.0)
-
-        try:
-            assert dispatcher._should_send_live_wake("new", FakeSession(id="new")) is True
-        finally:
-            locked.release()
-
-        assert "stale" not in dispatcher._last_live_wake
-        assert "stale" not in dispatcher._live_wake_locks
-        assert "locked" in dispatcher._last_live_wake
-        assert "locked" in dispatcher._live_wake_locks
-        assert "fresh" in dispatcher._last_live_wake
-        assert "fresh" in dispatcher._live_wake_locks
-
-    @pytest.mark.asyncio
     async def test_terminal_wake_decline_does_not_record_timestamp(
         self,
         session_manager: MagicMock,
@@ -1590,6 +1522,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
             await dispatcher.wake(
@@ -1598,7 +1531,7 @@ class TestWakeDispatch:
                 {"status": "completed", "run_id": "r1"},
             )
 
-        assert WAKE_SESSION_ID not in dispatcher._last_live_wake
+        assert ledger.recorded == []
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
 
@@ -1674,6 +1607,7 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
             web_chat_session_registry=registry,
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         async def run_wakes() -> list[dict[str, object]]:
             return await asyncio.gather(
@@ -1690,6 +1624,7 @@ class TestWakeDispatch:
 
         registry.wake_session.assert_awaited_once_with("web-1")
         assert [result.get("skipped") for result in results].count("debounced") == 2
+        assert ledger.recorded == ["web-1"]
 
     @pytest.mark.asyncio
     async def test_web_chat_session_without_live_registry_returns_explicit_failure(
@@ -1737,6 +1672,7 @@ class TestWakeDispatch:
             terminal_manager=_managed_terminal(),
             activity_probe=probe,
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         first = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
         debounced = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -1755,6 +1691,7 @@ class TestWakeDispatch:
         assert retried["delivered"] is True
         assert tmux_sender.await_count == 2
         assert tmux_sender.await_args.args[1] == retry_prompt
+        assert ledger.recorded == [WAKE_SESSION_ID, WAKE_SESSION_ID]
         assert ism_manager.create_message.call_args.kwargs["content"] == retry_prompt
 
         probe.return_value = TerminalActivity(ComposerRead("draft", "operator draft"))
@@ -1794,6 +1731,7 @@ class TestComposerGate:
         pane_sender = AsyncMock()
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
         dispatcher = self._dispatcher(probe, pane_sender)
+        ledger = PendingWakeLedger(dispatcher)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
@@ -1806,7 +1744,7 @@ class TestComposerGate:
             "ism_persisted": True,
         }
         pane_sender.assert_not_awaited()
-        assert dispatcher._last_live_wake == {}
+        assert ledger.recorded == []
 
     @pytest.mark.asyncio
     async def test_urgent_wake_defers_when_the_composer_holds_a_draft(self) -> None:

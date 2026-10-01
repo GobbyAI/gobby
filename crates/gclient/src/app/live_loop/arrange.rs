@@ -1,14 +1,15 @@
 //! Client-side layout plans for daemon workspace tabs.
 
-use crate::app::ArrangeLayout;
+use crate::app::{ArrangeLayout, ArrangeTarget};
 use crate::daemon::{Daemon, DaemonError, LayoutAxis, LiveDaemon, WorkspaceOp};
 use crate::frame_source::FrameError;
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 use crate::Workspace;
 
+use super::actions::activate_live_tab;
 use super::control::focus_live_pane;
-use super::workspace_actions::{active_daemon_tab, daemon_pane_id, send_workspace_op};
+use super::workspace_actions::{daemon_pane_id, send_workspace_op};
 
 fn push_move(ops: &mut Vec<WorkspaceOp>, tab_id: &str, pane: &str, beside: &str, axis: LayoutAxis) {
     ops.push(WorkspaceOp::PaneMove {
@@ -112,16 +113,26 @@ pub fn plan_arrange(layout: ArrangeLayout, tab_id: &str, panes: &[String]) -> Ve
     ops
 }
 
-pub(super) async fn apply_arrange(
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &mut Chrome,
-    layout: ArrangeLayout,
-) -> Result<(), FrameError> {
-    let Some(tab) = active_daemon_tab(chrome) else {
-        chrome.notify(Toast::warning("Cannot arrange a local tab"));
-        return Ok(());
+/// The target tab's index and daemon pane ids, or the notice refusing to
+/// arrange it. Never falls back to another tab.
+fn arrange_panes(chrome: &Chrome, target: &ArrangeTarget) -> Result<(usize, Vec<String>), Toast> {
+    let Some((index, tab)) = chrome
+        .tabs()
+        .tabs
+        .iter()
+        .enumerate()
+        .find(|(_, tab)| tab.id == target.tab)
+    else {
+        return Err(Toast::warning("Cannot arrange: that tab has closed"));
     };
-    let tab_id = tab.id.clone();
+    if tab.is_local() {
+        return Err(Toast::warning("Cannot arrange a local tab"));
+    }
+    if target.pane.is_some_and(|pane| tab.slot_for(pane).is_none()) {
+        return Err(Toast::warning(
+            "Cannot arrange: that pane has moved or closed",
+        ));
+    }
     let panes: Option<Vec<_>> = tab
         .layout
         .pane_ids()
@@ -129,15 +140,41 @@ pub(super) async fn apply_arrange(
         .map(|slot| daemon_pane_id(chrome, slot))
         .collect();
     let Some(panes) = panes else {
-        chrome.notify(Toast::warning("Cannot arrange: pane mapping unavailable"));
-        return Ok(());
+        return Err(Toast::warning("Cannot arrange: pane mapping unavailable"));
     };
     if panes.len() < 2 {
-        chrome.notify(Toast::info("Nothing to arrange: one pane"));
-        return Ok(());
+        return Err(Toast::info("Nothing to arrange: one pane"));
     }
+    Ok((index, panes))
+}
+
+/// Arrange the target tab, showing it first when it is not the active one.
+/// The target is checked again once it shows, before any op goes out.
+pub(super) async fn apply_arrange(
+    workspace: &mut Workspace<LiveDaemon>,
+    chrome: &mut Chrome,
+    layout: ArrangeLayout,
+    target: &ArrangeTarget,
+) -> Result<(), FrameError> {
+    let index = match arrange_panes(chrome, target) {
+        Ok((index, _)) => index,
+        Err(notice) => {
+            chrome.notify(notice);
+            return Ok(());
+        }
+    };
+    if index != chrome.active_index() {
+        activate_live_tab(workspace, chrome, index).await?;
+    }
+    let panes = match arrange_panes(chrome, target) {
+        Ok((_, panes)) => panes,
+        Err(notice) => {
+            chrome.notify(notice);
+            return Ok(());
+        }
+    };
     let focused = chrome.focused_pane();
-    for op in plan_arrange(layout, &tab_id, &panes) {
+    for op in plan_arrange(layout, &target.tab, &panes) {
         if !send_workspace_op(workspace, chrome, op).await? {
             return Ok(());
         }

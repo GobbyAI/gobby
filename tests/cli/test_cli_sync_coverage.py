@@ -451,6 +451,7 @@ class TestSyncProductionMode:
 # --type filtering
 # ---------------------------------------------------------------------------
 class TestSyncTypeFilter:
+    @pytest.mark.parametrize("selected", [("skills",), ("agents", "skills")])
     @patch("gobby.sync_registry.sync_bundled_content_to_db")
     @patch("gobby.cli.runtime.require_cli_database")
     @patch("gobby.cli.sync.get_install_dir", return_value=Path("/fake/install"))
@@ -463,6 +464,7 @@ class TestSyncTypeFilter:
         mock_sync: MagicMock,
         runner: CliRunner,
         tmp_path: Path,
+        selected: tuple[str, ...],
     ) -> None:
         mock_config = MagicMock()
         mock_config.database_url = str(tmp_path / "test.db")
@@ -470,12 +472,18 @@ class TestSyncTypeFilter:
         (tmp_path / "test.db").write_text("")
 
         mock_sync.return_value = {"total_synced": 1, "errors": [], "details": {}}
-        result = runner.invoke(sync, ["--type", "skills"], catch_exceptions=False)
+        result = runner.invoke(
+            sync,
+            [arg for content_type in selected for arg in ("--type", content_type)],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0
         mock_sync.assert_called_once()
-        # Verify sync was called with skip_types excluding 'skills'
+        from gobby.sync_registry import SYNC_TARGETS
+
+        # Every unselected real registry target must be excluded from the CLI fan-out.
         call_kwargs = mock_sync.call_args[1]
-        assert "skills" not in (call_kwargs.get("skip_types") or set())
+        assert call_kwargs["skip_types"] == {target[0] for target in SYNC_TARGETS} - set(selected)
 
 
 # ---------------------------------------------------------------------------

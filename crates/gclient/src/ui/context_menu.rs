@@ -121,3 +121,43 @@ fn row_style(palette: &Palette, item: &MenuItem, selected: bool) -> Style {
     }
     style
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::{build_menu, ArrangeTarget, ContextMenuKind, Submenu};
+    use crate::Workspace;
+
+    /// Arrange ▸ from a tab menu at the right edge opens to the menu's left,
+    /// and a viewport too narrow for both keeps it whole on screen.
+    #[test]
+    fn arrange_submenu_flips_at_the_right_edge_and_stays_on_screen_when_narrow() {
+        let ws = Workspace::scripted();
+        let chrome = Chrome::dark();
+        let parent = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (66, 2));
+        let target = ArrangeTarget {
+            tab: "tab-1".to_owned(),
+            pane: None,
+        };
+        let mut arrange = build_menu(
+            &ws,
+            &chrome,
+            ContextMenuKind::Submenu(Submenu::Arrange(target)),
+            (80, 4),
+        );
+        arrange.parent = Some(Box::new(parent.clone()));
+
+        let area = Rect::new(0, 0, 80, 24);
+        let menu = popup_rect(area, &parent);
+        let submenu = popup_rect(area, &arrange);
+        assert_eq!(submenu.right(), menu.x, "flush with the menu's left side");
+        assert_eq!(submenu.y, 4, "level with its row");
+
+        let narrow = Rect::new(0, 0, 18, 24);
+        let submenu = popup_rect(narrow, &arrange);
+        assert!(
+            submenu.x >= narrow.x && submenu.right() <= narrow.right(),
+            "{submenu:?} inside {narrow:?}"
+        );
+    }
+}

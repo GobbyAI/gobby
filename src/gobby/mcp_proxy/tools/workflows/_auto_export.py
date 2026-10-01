@@ -16,6 +16,7 @@ from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.env import ENV_VAR_PATTERN
 from gobby.workflows.template_writer import (
     delete_template_file,
     write_agent_template,
@@ -42,14 +43,28 @@ class _Exportable(Protocol):
     definition_json: str | dict[str, Any]
 
 
+def require_exportable_endpoint_token(name: str, definition: dict[str, Any]) -> None:
+    """Keep endpoint credentials out of committed templates without losing references."""
+    token = definition.get("api_token")
+    if isinstance(token, str) and token:
+        reference = ENV_VAR_PATTERN.fullmatch(token)
+        if reference is None or reference.group(2) is not None:
+            raise ValueError(
+                f"Agent {name!r} cannot export a literal api_token; use an environment reference"
+            )
+
+
 def _definition_payload(row: _Exportable) -> dict[str, Any]:
     raw = row.definition_json
     if isinstance(raw, str):
         parsed = json.loads(raw)
         if isinstance(parsed, dict):
+            require_exportable_endpoint_token(row.name, parsed)
             return parsed
         return {}
-    return dict(raw)
+    definition = dict(raw)
+    require_exportable_endpoint_token(row.name, definition)
+    return definition
 
 
 def has_gobby_name_collision(db: HubDatabase, name: str, kind: DefinitionKind) -> bool:

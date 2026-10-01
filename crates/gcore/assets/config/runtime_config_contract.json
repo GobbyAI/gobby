@@ -1996,6 +1996,17 @@
     },
     {
       "activation": "live",
+      "default": 3,
+      "description": "Maximum active close reviewers per project. Other tasks' reviews count against it at admission and promotion; a task never runs two reviews at once.",
+      "key": "gobby-tasks.validation.close_review_max_concurrency_per_project",
+      "machineExport": false,
+      "namespace": "gobby-tasks",
+      "secrecy": "none",
+      "type": "integer",
+      "visibility": "public"
+    },
+    {
+      "activation": "live",
       "default": "low",
       "description": "Minimum close-review code-finding severity that blocks closure. Criterion gaps always block regardless of this setting.",
       "key": "gobby-tasks.validation.close_review_min_severity",

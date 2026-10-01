@@ -26,6 +26,7 @@ from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 from gobby.runner_front_door import PORT_REUSE_WAIT_SECONDS
 from gobby.ui_exposure import UiExposeError, UiExposeResult
 from gobby.utils.status import RichStatusProbe
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
 
@@ -2475,7 +2476,7 @@ class TestEdgeCases:
                     "mode": "docker",
                     "dsn_host": "localhost",
                     "dsn_db": "gobby",
-                    "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+                    "database_url": FAKE_DATABASE_URL,
                     "healthy": True,
                     "extensions": {"pg_search": True, "pgaudit": True, "pgcrypto": True},
                 },

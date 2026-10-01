@@ -40,22 +40,26 @@ fn menus_list_items_per_target_and_state() {
             "Split right",
             "Split down",
             "Zoom",
-            "Arrange: even horizontal",
-            "Arrange: even vertical",
-            "Arrange: main horizontal",
-            "Arrange: main vertical",
-            "Arrange: tiled",
-            "New grid…",
+            "Arrange ▸",
             "Take control",
             "Copy mode",
             "Send right-clicks to pane",
             "Close pane",
         ]
     );
+    let tab_id = chrome.tabs().tabs[0].id.clone();
     assert_eq!(menu.items[1].action, MenuAction::SwapWithFocused(other));
-    assert_eq!(menu.items[11].action, MenuAction::TakeControl(other));
-    assert_eq!(menu.items[13].action, MenuAction::TogglePassthrough(other));
-    assert_eq!(menu.items[14].action, MenuAction::Act(Action::ClosePane));
+    assert_eq!(
+        menu.items[5].action,
+        MenuAction::OpenSubmenu(Submenu::Arrange(ArrangeTarget {
+            tab: tab_id.clone(),
+            pane: Some(other),
+        })),
+        "the pane's Arrange targets its own tab and remembers the pane"
+    );
+    assert_eq!(menu.items[6].action, MenuAction::TakeControl(other));
+    assert_eq!(menu.items[8].action, MenuAction::TogglePassthrough(other));
+    assert_eq!(menu.items[9].action, MenuAction::Act(Action::ClosePane));
     assert_eq!(
         (menu.kind, menu.anchor, menu.selected),
         (ContextMenuKind::Pane(other), (10, 5), 0)
@@ -85,12 +89,7 @@ fn menus_list_items_per_target_and_state() {
             "Split right",
             "Split down",
             "Unzoom",
-            "Arrange: even horizontal",
-            "Arrange: even vertical",
-            "Arrange: main horizontal",
-            "Arrange: main vertical",
-            "Arrange: tiled",
-            "New grid…",
+            "Arrange ▸",
             "Release control",
             "Respond",
             "Copy mode",
@@ -99,12 +98,27 @@ fn menus_list_items_per_target_and_state() {
         ]
     );
     assert_eq!(menu.items[1].action, MenuAction::ClearPaneName(focused));
-    assert_eq!(menu.items[11].action, MenuAction::ReleaseControl(focused));
-    assert_eq!(menu.items[12].action, MenuAction::Respond(entry_id));
+    assert_eq!(menu.items[6].action, MenuAction::ReleaseControl(focused));
+    assert_eq!(menu.items[7].action, MenuAction::Respond(entry_id));
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Tab(0), (3, 0));
-    assert_eq!(labels(&menu), ["New tab", "Rename tab", "Close tab"]);
-    assert_eq!(menu.items[2].action, MenuAction::Act(Action::CloseTab));
+    assert_eq!(
+        labels(&menu),
+        ["New tab", "Rename tab", "Arrange ▸", "Close tab"]
+    );
+    assert_eq!(
+        menu.items[2].action,
+        MenuAction::OpenSubmenu(Submenu::Arrange(ArrangeTarget {
+            tab: tab_id,
+            pane: None,
+        }))
+    );
+    assert_eq!(menu.items[3].action, MenuAction::Act(Action::CloseTab));
+    let gone = build_menu(&ws, &chrome, ContextMenuKind::Tab(9), (3, 0));
+    assert!(
+        !gone.items[2].enabled,
+        "a tab index with no tab offers no Arrange"
+    );
 
     let menu = build_menu(&ws, &chrome, ContextMenuKind::Global, (40, 12));
     assert_eq!(
@@ -277,14 +291,13 @@ fn menu_bar_menus_regroup_items_per_title() {
             "Zoom",
             "Close pane",
             "Resize mode",
-            "Arrange: even horizontal",
-            "Arrange: even vertical",
-            "Arrange: main horizontal",
-            "Arrange: main vertical",
-            "Arrange: tiled",
-            "New grid…",
+            "Arrange ▸",
         ]
     );
+    let active = ArrangeTarget {
+        tab: chrome.active_tab().expect("active tab").id.clone(),
+        pane: None,
+    };
     assert_eq!(
         actions(&window),
         [
@@ -293,13 +306,59 @@ fn menu_bar_menus_regroup_items_per_title() {
             MenuAction::Act(Action::Zoom),
             MenuAction::Act(Action::ClosePane),
             MenuAction::Act(Action::ResizeMode),
-            MenuAction::Arrange(ArrangeLayout::EvenHorizontal),
-            MenuAction::Arrange(ArrangeLayout::EvenVertical),
-            MenuAction::Arrange(ArrangeLayout::MainHorizontal),
-            MenuAction::Arrange(ArrangeLayout::MainVertical),
-            MenuAction::Arrange(ArrangeLayout::Tiled),
+            MenuAction::OpenSubmenu(Submenu::Arrange(active.clone())),
+        ]
+    );
+    // The submenu holds the existing choices, each fixed to that tab.
+    let arrange = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::Submenu(Submenu::Arrange(active.clone())),
+        (0, 0),
+    );
+    assert_eq!(
+        labels(&arrange),
+        [
+            "Even horizontal",
+            "Even vertical",
+            "Main horizontal",
+            "Main vertical",
+            "Tiled",
+            "New grid…",
+        ]
+    );
+    let arrange_to = |layout| MenuAction::Arrange {
+        layout,
+        target: active.clone(),
+    };
+    assert_eq!(
+        actions(&arrange),
+        [
+            arrange_to(ArrangeLayout::EvenHorizontal),
+            arrange_to(ArrangeLayout::EvenVertical),
+            arrange_to(ArrangeLayout::MainHorizontal),
+            arrange_to(ArrangeLayout::MainVertical),
+            arrange_to(ArrangeLayout::Tiled),
             MenuAction::OpenNewGrid,
         ]
+    );
+    let bare = menu(&ws, &Chrome::dark(), MenuBarMenu::Window);
+    assert!(
+        !bare.items[5].enabled,
+        "with no tab open, Window offers no Arrange"
+    );
+    let mut empty = Chrome::dark();
+    open_menu(
+        &ws,
+        &mut empty,
+        ContextMenuKind::MenuBar(MenuBarMenu::Window),
+        (0, 1),
+    );
+    empty.menu.as_mut().expect("window menu").selected = 5;
+    assert_eq!(activate_menu(&mut empty), None);
+    assert!(
+        empty.menu.is_none() && empty.mode == Mode::Terminal,
+        "a disabled Arrange ▸ closes the menu like any disabled row"
     );
 
     let help = menu(&ws, &chrome, MenuBarMenu::Help);
@@ -829,10 +888,10 @@ fn sidebar_submenus_cascade_and_hold_one_section_each() {
     assert!(apply_local_menu_action(
         &mut ws,
         &mut chrome,
-        &MenuAction::OpenSubmenu(machines)
+        &MenuAction::OpenSubmenu(machines.clone())
     ));
     let open = chrome.menu.as_ref().expect("machines submenu");
-    assert_eq!(open.kind, ContextMenuKind::Submenu(machines));
+    assert_eq!(open.kind, ContextMenuKind::Submenu(machines.clone()));
     assert_eq!(labels(open), ["✓ This machine", "  All machines"]);
     let sidebar = open.parent.as_deref().expect("sidebar submenu behind");
     assert_eq!(sidebar.kind, ContextMenuKind::Submenu(Submenu::Sidebar));
@@ -889,6 +948,166 @@ fn sidebar_submenus_cascade_and_hold_one_section_each() {
     );
     apply_local_menu_action(&mut ws, &mut chrome, &MenuAction::SetMachineScope(false));
     assert_eq!(chrome.sidebar.machine_filter, None);
+}
+
+/// Window, a tab's menu and a pane's menu each cascade Arrange ▸ from
+/// themselves, by keyboard and by mouse, and every choice keeps the tab the
+/// opening menu was built for even after another tab becomes active.
+#[test]
+fn arrange_submenu_cascades_from_window_tab_and_pane_menus() {
+    use super::super::modal_input::{route_modal_key, ModalOutcome};
+    use crate::app::{route_mouse, MouseOutcome};
+    use crate::key_input::KeyInput;
+    use crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
+    let key = |code| KeyInput {
+        key: KeyEvent::new(code, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    let click = |column, row| MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    let mut ws = Workspace::scripted();
+    let [alpha, beta, gamma] = ["term-alpha", "term-beta", "term-gamma"].map(|id| {
+        ws.open_terminal(id, "native", "epoch")
+            .expect("open terminal")
+    });
+    let mut chrome = Chrome::dark();
+    chrome.prefs.mouse_capture = true;
+    chrome.open_pane(alpha, "alpha");
+    chrome.open_pane(beta, "beta");
+    chrome.open_tab(gamma, "gamma");
+    assert!(chrome.activate_tab(0));
+    let first = chrome.tabs().tabs[0].id.clone();
+    let second = chrome.tabs().tabs[1].id.clone();
+    let open_on_arrange = |ws: &Workspace, chrome: &mut Chrome, kind: &ContextMenuKind| {
+        open_menu(ws, chrome, kind.clone(), (10, 3));
+        let menu = chrome.menu.as_mut().expect("open menu");
+        menu.selected = menu
+            .items
+            .iter()
+            .position(|item| item.label == "Arrange ▸")
+            .expect("arrange row");
+        menu.item_rects[menu.selected]
+    };
+
+    for (kind, target) in [
+        (
+            ContextMenuKind::MenuBar(MenuBarMenu::Window),
+            ArrangeTarget {
+                tab: first.clone(),
+                pane: None,
+            },
+        ),
+        (
+            ContextMenuKind::Tab(1),
+            ArrangeTarget {
+                tab: second.clone(),
+                pane: None,
+            },
+        ),
+        (
+            ContextMenuKind::Pane(beta),
+            ArrangeTarget {
+                tab: first.clone(),
+                pane: Some(beta),
+            },
+        ),
+    ] {
+        let submenu = ContextMenuKind::Submenu(Submenu::Arrange(target.clone()));
+
+        // Keyboard: right opens it beside the row, left goes back, right
+        // again, then j and Enter pick the second choice.
+        let row = open_on_arrange(&ws, &mut chrome, &kind);
+        let ModalOutcome::Menu { kind: from, action } =
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Right))
+        else {
+            panic!("right opens Arrange from {kind:?}");
+        };
+        assert_eq!(from, kind);
+        assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
+        let open = chrome.menu.as_ref().expect("arrange submenu");
+        assert_eq!(open.kind, submenu);
+        assert_eq!(
+            open.parent.as_deref().map(|parent| &parent.kind),
+            Some(&kind),
+            "it cascades from the menu that offered it"
+        );
+        assert_eq!(open.item_rects[0].x, row.right() + 2, "beside the border");
+        assert_eq!(open.item_rects[0].y, row.y, "level with the row");
+        route_modal_key(&ws, &mut chrome, &key(KeyCode::Left));
+        assert_eq!(chrome.menu.as_ref().map(|menu| &menu.kind), Some(&kind));
+        let ModalOutcome::Menu { action, .. } =
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Char('l')))
+        else {
+            panic!("l opens Arrange again");
+        };
+        apply_local_menu_action(&mut ws, &mut chrome, &action);
+        // Another tab becoming active does not move the choice.
+        chrome.activate_tab(if target.tab == first { 1 } else { 0 });
+        route_modal_key(&ws, &mut chrome, &key(KeyCode::Char('j')));
+        let ModalOutcome::Menu { kind: from, action } =
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Enter))
+        else {
+            panic!("enter picks a layout");
+        };
+        assert_eq!(from, submenu);
+        assert_eq!(
+            action,
+            MenuAction::Arrange {
+                layout: ArrangeLayout::EvenVertical,
+                target: target.clone(),
+            }
+        );
+        assert!(chrome.menu.is_none(), "a pick closes the cascade");
+        chrome.activate_tab(0);
+
+        // Esc dismisses the whole cascade.
+        open_on_arrange(&ws, &mut chrome, &kind);
+        let ModalOutcome::Menu { action, .. } =
+            route_modal_key(&ws, &mut chrome, &key(KeyCode::Right))
+        else {
+            panic!("right opens Arrange");
+        };
+        apply_local_menu_action(&mut ws, &mut chrome, &action);
+        route_modal_key(&ws, &mut chrome, &key(KeyCode::Esc));
+        assert!(chrome.menu.is_none());
+        assert_eq!(chrome.mode, Mode::Terminal);
+
+        // Mouse: a click on the row opens it, a click on a choice picks it,
+        // and a click outside dismisses it.
+        let row = open_on_arrange(&ws, &mut chrome, &kind);
+        let MouseOutcome::Menu { action, .. } = route_mouse(&ws, &mut chrome, &click(row.x, row.y))
+        else {
+            panic!("a click on the row opens Arrange");
+        };
+        apply_local_menu_action(&mut ws, &mut chrome, &action);
+        let tiled = chrome.menu.as_ref().expect("arrange submenu").item_rects[4];
+        let MouseOutcome::Menu { action, .. } =
+            route_mouse(&ws, &mut chrome, &click(tiled.x, tiled.y))
+        else {
+            panic!("a click picks a layout");
+        };
+        assert_eq!(
+            action,
+            MenuAction::Arrange {
+                layout: ArrangeLayout::Tiled,
+                target: target.clone(),
+            }
+        );
+        let row = open_on_arrange(&ws, &mut chrome, &kind);
+        let MouseOutcome::Menu { action, .. } = route_mouse(&ws, &mut chrome, &click(row.x, row.y))
+        else {
+            panic!("a click on the row opens Arrange");
+        };
+        apply_local_menu_action(&mut ws, &mut chrome, &action);
+        route_mouse(&ws, &mut chrome, &click(0, 29));
+        assert!(chrome.menu.is_none(), "a click outside dismisses it");
+    }
 }
 
 /// View › Monochrome redraws the chrome in grays at once, keeps the theme,

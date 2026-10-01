@@ -8,7 +8,7 @@ import threading
 from contextlib import suppress
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -16,6 +16,7 @@ import pytest
 import gobby.runner_init.embedding_lease as embedding_lease
 import gobby.runner_init.services as services
 from gobby.ai.embedding_switch import CompletedSwitchRecord
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.config.embedding_keys import EMBEDDING_SWITCH_COMPLETED_KEY
 from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationLeaseExpired,
@@ -24,6 +25,7 @@ from gobby.storage.embedding_generation_state import (
     EmbeddingGenerationState,
     EmbeddingServingLease,
 )
+from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
 
@@ -666,7 +668,9 @@ async def test_rebuild_request_reconciles_and_reprepares_current_revision() -> N
             rebuilt.set()
             return snapshot
 
-    runner = cast(Any, SimpleNamespace(config_runtime=Runtime()))
+    runner = cast(
+        Any, SimpleNamespace(bootstrap_config=BootstrapConfig(), config_runtime=Runtime())
+    )
 
     services._request_memory_services_rebuild(runner, asyncio.get_running_loop(), None)
     await asyncio.wait_for(rebuilt.wait(), timeout=1.0)
@@ -708,7 +712,9 @@ async def test_rebuild_request_schedules_projection_repair_when_healthy() -> Non
         async def reprepare_subscriber(self, name: str) -> object:
             return snapshot
 
-    runner = cast(Any, SimpleNamespace(config_runtime=Runtime()))
+    runner = cast(
+        Any, SimpleNamespace(bootstrap_config=BootstrapConfig(), config_runtime=Runtime())
+    )
 
     services._request_memory_services_rebuild(runner, asyncio.get_running_loop(), None)
     await asyncio.wait_for(repaired.wait(), timeout=1.0)
@@ -743,7 +749,9 @@ async def test_rebuild_request_skips_reprepare_when_reconcile_replaces_service()
             subscribers.append(name)
             return snapshot
 
-    runner = cast(Any, SimpleNamespace(config_runtime=Runtime()))
+    runner = cast(
+        Any, SimpleNamespace(bootstrap_config=BootstrapConfig(), config_runtime=Runtime())
+    )
 
     services._request_memory_services_rebuild(runner, asyncio.get_running_loop(), None)
     await asyncio.wait_for(replacement_visible.wait(), timeout=1.0)
@@ -960,3 +968,64 @@ async def test_renew_loop_fences_reacquires_and_resumes(
             handle.renewal_stop.set()
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(loop_task, timeout=5.0)
+
+
+async def _settle_background_runtime_tasks() -> None:
+    for _ in range(3):
+        await drain_asyncio_tasks(cycles=3)
+        await asyncio.gather(*list(services._background_runtime_tasks))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bootstrap_config", "repairs"),
+    [(BootstrapConfig(hub=True), True), (BootstrapConfig(datastore_mode="remote"), False)],
+    ids=["hub", "node"],
+)
+async def test_node_mode_skips_projection_repair(
+    bootstrap_config: BootstrapConfig,
+    repairs: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    memory_manager = MagicMock()
+    memory_manager.reconcile_stores = AsyncMock(return_value=None)
+    bundle = services.MemoryServiceBundle(
+        vector_store=MagicMock(),
+        _memory_manager=memory_manager,
+        memory_backup_manager=None,
+        semantic_search=MagicMock(),
+    )
+    snapshot = SimpleNamespace(revision=7, failed_live_keys={})
+    reprepared: list[str] = []
+
+    class Runtime:
+        def capture(self) -> object:
+            return SimpleNamespace(snapshot=snapshot, services={"memory_services": bundle})
+
+        async def reconcile_revision(self, _revision: int) -> None:
+            return None
+
+        async def reprepare_subscriber(self, name: str) -> object:
+            reprepared.append(name)
+            return snapshot
+
+    runner = cast(Any, SimpleNamespace(bootstrap_config=bootstrap_config, config_runtime=Runtime()))
+    loop = asyncio.get_running_loop()
+
+    with caplog.at_level(logging.INFO, logger=services.__name__):
+        services._request_memory_projection_repair(runner, loop)
+        await _settle_background_runtime_tasks()
+        services._request_memory_services_rebuild(runner, loop, None)
+        await _settle_background_runtime_tasks()
+
+    assert reprepared == ["memory_services"]
+    skip = "skipping hub-only memory projection repair in node mode"
+    if repairs:
+        assert memory_manager.reconcile_stores.await_args_list == [
+            ((), {"dry_run": False}),
+            ((), {"dry_run": False}),
+        ]
+        assert skip not in caplog.messages
+    else:
+        memory_manager.reconcile_stores.assert_not_awaited()
+        assert caplog.messages.count(skip) == 2

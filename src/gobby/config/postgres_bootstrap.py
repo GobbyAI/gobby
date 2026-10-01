@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +18,57 @@ from .postgres_pool import postgres_pool_config_from_mapping
 __all__ = [
     "bootstrap_path",
     "clear_postgres_fields",
+    "PendingCredentialRotation",
     "read_bootstrap_database_url",
+    "read_pending_credential_rotation",
     "read_bootstrap_yaml",
     "set_bootstrap_field",
     "update_bootstrap_yaml",
     "write_bootstrap_yaml",
     "write_postgres_defaults",
 ]
+
+_PENDING_ROTATION_KEY = "credential_rotation"
+
+
+@dataclass(frozen=True, slots=True)
+class PendingCredentialRotation:
+    """A durable old/new hub password pair awaiting ALTER plus final publication."""
+
+    role: str
+    pending_password: str
+    previous_password: str
+
+
+def _require_present_string(data: dict[str, Any], key: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value:
+        raise BootstrapConfigError(f"credential_rotation.{key} must be a non-empty string")
+    return value
+
+
+def read_pending_credential_rotation(gobby_home: Path) -> PendingCredentialRotation | None:
+    """Return the parser-validated pending pair, or ``None`` when no rotation is in flight."""
+    data = read_bootstrap_yaml(bootstrap_path(gobby_home))
+    return pending_credential_rotation_from_mapping(data)
+
+
+def pending_credential_rotation_from_mapping(
+    data: dict[str, Any],
+) -> PendingCredentialRotation | None:
+    """Validate recovery state at both the publication and recovery boundaries."""
+    raw = data.get(_PENDING_ROTATION_KEY)
+    if raw is None:
+        return None
+    if data.get("datastore_mode", "local") != "local":
+        raise BootstrapConfigError("pending credential rotation requires local datastore mode")
+    if not isinstance(raw, dict):
+        raise BootstrapConfigError(f"{_PENDING_ROTATION_KEY} must be a mapping")
+    return PendingCredentialRotation(
+        role=_require_present_string(raw, "role"),
+        pending_password=_require_present_string(raw, "pending_password"),
+        previous_password=_require_present_string(raw, "previous_password"),
+    )
 
 
 def write_postgres_defaults(

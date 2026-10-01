@@ -2029,6 +2029,10 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
         # "/repo" is not a repository, so the candidate cannot be canonicalized by git.
         patch.object(lifecycle, "select_close_candidate", return_value=("abc123", None)),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
+            side_effect=lambda sha, **_kwargs: sha,
+        ),
         patch.object(
             lifecycle,
             "validate_commit_requirements",

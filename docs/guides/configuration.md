@@ -63,6 +63,7 @@ available:
 
 ```yaml
 datastore_mode: local
+hub: false
 database_url: "postgresql://gobby:<generated-on-first-install>@localhost:60891/gobby"
 files_home: "/absolute/path/to/gobby-files"
 postgres_pool:
@@ -86,6 +87,12 @@ mode instead requires `hub_daemon_url`, the owning hub's HTTP origin, and reject
 `files_home`. Local mode rejects `hub_daemon_url`. These checks are defined by
 `_parse_mode_owner_fields` in `src/gobby/config/bootstrap.py`.
 Startup fails when the DSN or managed service configuration is missing.
+
+`datastore_mode` and `hub` together derive one of three run modes
+(`BootstrapConfig.run_mode()`), reported by `GET /api/health` as `mode`:
+`standalone` (`local`, `hub: false`), `hub` (`local`, `hub: true`), and `node`
+(`remote`). `gobby datastores expose` sets `hub: true` when it promotes the
+machine to hub. `hub: true` with `datastore_mode: remote` is rejected.
 
 `postgres_pool` configures the daemon's PostgreSQL client pool. All three values
 must be positive. These bootstrap values are resolved before `config_store` is

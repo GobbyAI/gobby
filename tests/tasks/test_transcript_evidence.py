@@ -416,6 +416,494 @@ def _claude_tool_pair(
     ]
 
 
+def _claude_edit_pair(
+    name: str, arguments: dict[str, Any], call_id: str, seconds: int
+) -> list[dict[str, Any]]:
+    records = _claude_tool_pair(
+        command="", call_id=call_id, start=BASE_TIME + timedelta(seconds=seconds), result="Done"
+    )
+    block = records[0]["message"]["content"][0]
+    block["name"] = name
+    block["input"] = arguments
+    return records
+
+
+@pytest.mark.parametrize(
+    "original_source,failure_line,expected",
+    [
+        pytest.param(True, 5, True, id="original-test-body"),
+        pytest.param(True, 2, False, id="fixture-body"),
+        pytest.param(True, 8, False, id="sibling-body"),
+        pytest.param(False, 5, False, id="missing-original-source"),
+    ],
+)
+async def test_tb_line_red_uses_original_transcript_source_not_later_test_lines(
+    tmp_path: Path, original_source: bool, failure_line: int, expected: bool
+) -> None:
+    test_path, product_path = "tests/test_feature.py", "src/feature.py"
+    source = (
+        "def fixture_helper():\n    assert False\n\n"
+        "def test_original():\n    assert feature() == 1\n\n"
+        "def test_sibling():\n    assert other() == 1\n"
+    )
+    command = f"uv run pytest {test_path} -q --tb=line"
+    transcript = tmp_path / "source-proof.jsonl"
+    records = _claude_edit_pair(
+        "Write" if original_source else "Edit",
+        {"file_path": str(tmp_path / test_path), "content": source}
+        if original_source
+        else {"file_path": str(tmp_path / test_path), "old_string": "pass", "new_string": source},
+        "original-tests",
+        0,
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=2),
+            result={
+                "exit_code": 1,
+                "stdout": f"{test_path}:{failure_line}: AssertionError: assert 0 == 1\n1 failed",
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": "return 0",
+                "new_string": "return 1",
+            },
+            "behavior",
+            4,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=6),
+            result={"exit_code": 0, "stdout": "2 passed"},
+        )
+    )
+    # A post-implementation full Write cannot establish the source at RED.
+    records.extend(
+        _claude_edit_pair(
+            "Write",
+            {"file_path": str(tmp_path / test_path), "content": "\n" * 20 + source},
+            "later-tests",
+            8,
+        )
+    )
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original",
+        path=test_path,
+        symbol="test_original",
+        body="def test_original():\n    assert feature() == 1\n",
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is expected, result
+
+
+@pytest.mark.parametrize(
+    "case,expected",
+    [
+        ("ignored-new-keyword", True),
+        ("leading-test-context", True),
+        ("comment-only-after-stub", True),
+        ("other-method-after-stub", True),
+        ("partial-method-after-stub", True),
+        ("changed-partial-method-after-stub", False),
+        ("guarded-helper", True),
+        ("unused-guarded-helper", False),
+        ("changed-old-body", False),
+        ("keyword-already-existed", False),
+        ("test-does-not-use-keyword", False),
+        ("behavior-after-stub", False),
+        ("denied-stub", False),
+        ("effectful-default", False),
+    ],
+)
+async def test_python_keyword_stub_red_requires_original_test_and_unchanged_old_body(
+    tmp_path: Path, case: str, expected: bool
+) -> None:
+    test_path, product_path = "tests/test_workspaces.py", "src/gobby/storage/workspaces.py"
+    body = (
+        "def test_original(workspaces):\n"
+        "    with pytest.raises(WorkspaceBusyError):\n"
+        "        workspaces.close('workspace', refuse_in_flight=True)\n"
+    )
+    if case == "test-does-not-use-keyword":
+        body = body.replace(", refuse_in_flight=True", "")
+    if case in {"guarded-helper", "unused-guarded-helper"}:
+        body = (
+            "_GUARDED = [lambda workspaces: workspaces.close('workspace', refuse_in_flight=True)]\n\n"
+            "def test_original(workspaces):\n"
+            "    with pytest.raises(WorkspaceBusyError):\n"
+            "        for operation in _GUARDED:\n"
+            "            operation(workspaces)\n"
+        )
+        if case == "unused-guarded-helper":
+            body = body.replace(
+                "for operation in _GUARDED:\n            operation(workspaces)",
+                "workspaces.close('workspace')",
+            )
+    test_fragment = (
+        "    assert previous_test()\n\n\n" + body if case == "leading-test-context" else body
+    )
+    old = '    def close(self, workspace_id: str) -> Workspace:\n        """Close."""\n        row = self.db.fetchone(\n'
+    new = (
+        "    def close(self, workspace_id: str, *, refuse_in_flight: bool = False) -> Workspace:\n"
+        '        """Close."""\n        del refuse_in_flight\n        row = self.db.fetchone(\n'
+    )
+    if case == "changed-old-body":
+        new = new.replace("row = self.db.fetchone(", "row = self.db.changed(")
+    if case == "keyword-already-existed":
+        old = old.replace(
+            "workspace_id: str)", "workspace_id: str, *, refuse_in_flight: bool = False)"
+        )
+    if case == "effectful-default":
+        new = new.replace("= False)", "= compute_default())")
+    records = _claude_edit_pair(
+        "Edit",
+        {
+            "file_path": str(tmp_path / test_path),
+            "old_string": "# end",
+            "new_string": test_fragment,
+        },
+        "tests",
+        0,
+    )
+    # An earlier mechanical or unrelated edit cannot implement the newly ignored input.
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": "class Old: pass",
+                "new_string": "class New: pass",
+            },
+            "earlier-source",
+            2,
+        )
+    )
+    stub = _claude_edit_pair(
+        "Edit",
+        {"file_path": str(tmp_path / product_path), "old_string": old, "new_string": new},
+        "api-shape",
+        4,
+    )
+    if case == "denied-stub":
+        stub[1]["message"]["content"][0].update(content=_HOOK_BLOCKED, is_error=True)
+    records.extend(stub)
+    if case in {
+        "other-method-after-stub",
+        "partial-method-after-stub",
+        "changed-partial-method-after-stub",
+    }:
+        other_old, other_new = (
+            old.replace("def close", "def remove"),
+            new.replace("def close", "def remove"),
+        )
+        if case != "other-method-after-stub":
+            other_old = '        beside: str | None = None,\n    ) -> Workspace:\n        """Move."""\n        row = self.db.fetchone(\n'
+            other_new = '        beside: str | None = None,\n        refuse_in_flight: bool = False,\n    ) -> Workspace:\n        """Move."""\n        del refuse_in_flight\n        row = self.db.fetchone(\n'
+        if case == "changed-partial-method-after-stub":
+            other_new = other_new.replace("self.db.fetchone", "self.db.changed")
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": other_old,
+                    "new_string": other_new,
+                },
+                "other-api-shape",
+                6,
+            )
+        )
+    if case in {"comment-only-after-stub", "behavior-after-stub"}:
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": "from module import name\n# comment\n",
+                    "new_string": "from module import name\n",
+                }
+                if case == "comment-only-after-stub"
+                else {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": "return row",
+                    "new_string": "return changed(row)",
+                },
+                "after-stub",
+                6,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": f"____ test_original ____\n{test_path}:3: in test_original\nE   Failed: DID NOT RAISE <class 'WorkspaceBusyError'>\n1 failed",
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": "del refuse_in_flight",
+                "new_string": "if refuse_in_flight: raise WorkspaceBusyError()",
+            },
+            "behavior",
+            10,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    transcript = tmp_path / "stub-proof.jsonl"
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is expected, result
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("created-noop", True),
+        ("late-test-confirmation", False),
+        ("late-stub-confirmation", False),
+        ("helper-wiring", True),
+        ("constant-api-shape", True),
+        ("unrelated-constant", False),
+        ("unused-helper-wiring", False),
+        ("wrong-wiring-alias", False),
+        ("created-noop-ni", True),
+        ("overwrite-ni", False),
+        ("previous-behavior-ni", False),
+        ("behavior-before-red-ni", False),
+        ("overwrite", False),
+        ("previous-behavior", False),
+        ("constructor-side-effect", False),
+        ("effectful-default", False),
+        ("behavior-before-red", False),
+        ("unrelated-import", False),
+        ("denied-creation", False),
+    ],
+)
+async def test_python_created_noop_module_red_requires_native_creation_and_original_import(
+    tmp_path: Path, case: str, expected: bool
+) -> None:
+    test_path = "tests/test_upgrade.py"
+    product_path = "src/gobby/terminals/host_upgrade.py"
+    wiring_path = "src/gobby/terminals/host_manager.py"
+    body = (
+        "from gobby.terminals.host_upgrade import Coordinator\n\n"
+        "async def test_original():\n"
+        "    coord = Coordinator(installed='binary')\n"
+        "    await coord.observe()\n"
+        "    assert coord.is_open\n"
+    )
+    if case == "unrelated-import":
+        body = body.replace("gobby.terminals.host_upgrade", "other.module")
+    if case in {"constant-api-shape", "unrelated-constant"}:
+        body = (
+            "from gobby.terminals.host_upgrade import BUDGET\n\n"
+            "async def test_original():\n"
+            "    assert feature_ready(BUDGET)\n"
+        )
+        if case == "unrelated-constant":
+            body = body.replace("import BUDGET", "import OTHER_BUDGET as BUDGET")
+    if case in {"helper-wiring", "unused-helper-wiring", "wrong-wiring-alias"}:
+        body = (
+            "from gobby.terminals.host_manager import Manager\n\n"
+            "def make_manager():\n"
+            "    return Manager()\n\n"
+            "async def test_original():\n"
+            "    coord = make_manager()\n"
+            "    assert coord.api.window is not None\n"
+        )
+        if case == "unused-helper-wiring":
+            body = body.replace("coord = make_manager()", "coord = unrelated()")
+    stub_source = (
+        "from __future__ import annotations\n\n"
+        "class Coordinator:\n"
+        "    def __init__(self, *, installed: str) -> None:\n"
+        "        self.installed = installed\n"
+        "        self.window: str | None = None\n\n"
+        "    @property\n"
+        "    def is_open(self) -> bool:\n"
+        "        return False\n\n"
+        "    async def observe(self) -> None:\n"
+        "        return None\n"
+    )
+    if case == "constructor-side-effect":
+        stub_source = stub_source.replace("self.installed = installed", "activate(installed)")
+    if case == "effectful-default":
+        stub_source = stub_source.replace("installed: str", "installed: str = activate()")
+    if case == "created-noop-ni":
+        stub_source = stub_source.replace("return False", "raise NotImplementedError")
+    if case in {"constant-api-shape", "unrelated-constant"}:
+        stub_source += "\nBUDGET = 15\n"
+    records = _claude_edit_pair(
+        "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 0
+    )
+    if case == "late-test-confirmation":
+        records[1]["timestamp"] = (BASE_TIME + timedelta(seconds=9)).isoformat()
+    records.extend(
+        _claude_edit_pair(
+            "Write",
+            {"file_path": str(tmp_path / wiring_path), "content": "# API wiring placeholder\n"},
+            "earlier-source",
+            2,
+        )
+    )
+    if case in {"previous-behavior", "previous-behavior-ni"}:
+        records.extend(
+            _claude_edit_pair(
+                "Write",
+                {"file_path": str(tmp_path / product_path), "content": "activate()\n"},
+                "previous-behavior",
+                2,
+            )
+        )
+    creation = _claude_edit_pair(
+        "Write",
+        {"file_path": str(tmp_path / product_path), "content": stub_source},
+        "api-shape",
+        4,
+    )
+    creation[1]["message"]["content"][0]["content"] = (
+        f"The file {tmp_path / product_path} has been updated successfully."
+        if case in {"overwrite", "overwrite-ni"}
+        else f"File created successfully at: {tmp_path / product_path}"
+    )
+    if case == "denied-creation":
+        creation[1]["message"]["content"][0].update(content=_HOOK_BLOCKED, is_error=True)
+    if case == "late-stub-confirmation":
+        creation[1]["timestamp"] = (BASE_TIME + timedelta(seconds=9)).isoformat()
+    records.extend(creation)
+    if case in {"helper-wiring", "unused-helper-wiring", "wrong-wiring-alias"}:
+        wiring = (
+            "from gobby.terminals.host_upgrade import Coordinator\n\n"
+            "class Manager:\n"
+            "    def __init__(self):\n"
+            "        self.api = Coordinator(installed='binary')\n"
+        )
+        if case == "wrong-wiring-alias":
+            wiring = wiring.replace("import Coordinator", "import Coordinator as API")
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / wiring_path),
+                    "old_string": "# API wiring placeholder\n",
+                    "new_string": wiring,
+                },
+                "api-wiring",
+                6,
+            )
+        )
+    if case in {"behavior-before-red", "behavior-before-red-ni"}:
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": "return False",
+                    "new_string": "return bool(self.window)",
+                },
+                "behavior-before-red",
+                6,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": (
+                    f"____ test_original ____\n{test_path}:6: in test_original\n"
+                    + (
+                        "E   NotImplementedError\n"
+                        if case.endswith("-ni")
+                        else "E   assert False\n"
+                    )
+                    + "1 failed"
+                ),
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Write",
+            {"file_path": str(tmp_path / product_path), "content": "# implemented\n"},
+            "behavior",
+            10,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    transcript = tmp_path / "module-stub-proof.jsonl"
+    records.sort(key=lambda record: record["timestamp"])
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path, wiring_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is expected, result
+
+
 @pytest.mark.asyncio
 async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) -> None:
     transcript = tmp_path / "claude.jsonl"
@@ -470,6 +958,76 @@ _HOOK_BLOCKED = (
 )
 _PERMISSION_DENIED = "Permission to use Bash has been denied."
 _UNEXECUTED_VALIDATION_COMMAND = "uv run ruff check src/ tests/sync/test_jsonl_io.py"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "tool_name"),
+    [("claude", "Edit"), ("claude", "Write"), ("claude", "Bash"), ("codex", "apply_patch")],
+)
+@pytest.mark.parametrize(
+    "denial",
+    [
+        pytest.param(_CLAUDE_USER_REJECTED, id="user-rejection"),
+        pytest.param(_HOOK_BLOCKED, id="hook-block"),
+        pytest.param(_PERMISSION_DENIED, id="permission-denial"),
+    ],
+)
+async def test_unexecuted_edit_is_not_credit_but_later_same_path_edit_is(
+    tmp_path: Path, source: str, tool_name: str, denial: str
+) -> None:
+    transcript = tmp_path / f"{source}.jsonl"
+    path = str(tmp_path / "src" / "changed.py")
+    arguments: dict[str, Any] = {"file_path": path, "old_string": "old", "new_string": "new"}
+    if tool_name == "Write":
+        arguments = {"file_path": path, "content": "new"}
+    elif tool_name == "Bash":
+        arguments = {"command": f"cat > {path} <<'PY'\nnew\nPY"}
+    records: list[dict[str, Any]] = []
+    for index, result in enumerate([denial, "Successfully edited the file."]):
+        call_id = f"edit-{index}"
+        start = BASE_TIME + timedelta(seconds=index * 2)
+        if source == "claude":
+            pair = _claude_tool_pair(
+                command="", call_id=call_id, start=start, result=result, is_error=index == 0
+            )
+            block = pair[0]["message"]["content"][0]
+            block.update(name=tool_name, input=arguments)
+            records.extend(pair)
+        else:
+            patch = (
+                "*** Begin Patch\n*** Update File: src/changed.py\n@@\n-old\n+new\n*** End Patch\n"
+            )
+            records.extend(
+                [
+                    _codex_response_item(
+                        {
+                            "type": "custom_tool_call",
+                            "call_id": call_id,
+                            "name": tool_name,
+                            "input": patch,
+                        },
+                        start,
+                    ),
+                    _codex_response_item(
+                        {"type": "custom_tool_call_output", "call_id": call_id, "output": result},
+                        start + timedelta(seconds=1),
+                    ),
+                ]
+            )
+    _write_jsonl(transcript, records)
+
+    evidence = await derive_transcript_evidence(
+        _session(source, transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {"src/changed.py"},
+        str(tmp_path),
+    )
+
+    assert [(edit.path, edit.tool_name, edit.timestamp) for edit in evidence.edits] == [
+        ("src/changed.py", tool_name, BASE_TIME + timedelta(seconds=2))
+    ]
 
 
 @pytest.mark.asyncio
@@ -1163,6 +1721,188 @@ Failures:
     assert result.red_runs == (rewritten,)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("recall_command", "retrieval", "duplicate_red", "expected"),
+    [
+        pytest.param("rtk recall d1965a04eb04", "success", False, True, id="original-receipt"),
+        pytest.param(
+            "rtk recall d1965a04eb04", "indented", False, True, id="indented-native-reference"
+        ),
+        pytest.param("rtk recall d1965a04eb04", "embedded", False, False, id="embedded-reference"),
+        pytest.param("rtk recall d1965a04eb04", "large", False, True, id="bounded-large-recall"),
+        pytest.param("rtk recall d1965a04eb04", "oversized", False, False, id="oversized-recall"),
+        pytest.param("rtk recall 0123456789ab", "success", False, False, id="wrong-id"),
+        pytest.param("rtk recall d1965a04eb04", "failed", False, False, id="failed-retrieval"),
+        pytest.param("rtk recall d1965a04eb04", "blocked", False, False, id="unexecuted"),
+        pytest.param("rtk recall d1965a04eb04 | cat", "success", False, False, id="wrapped"),
+        pytest.param("rtk recall d1965a04eb04", "success", True, False, id="ambiguous-id"),
+    ],
+)
+async def test_rtk_recall_preserves_original_red_chronology_and_exact_reference(
+    tmp_path: Path, recall_command: str, retrieval: str, duplicate_red: bool, expected: bool
+) -> None:
+    path = "tests/hooks/test_session_coordinator.py"
+    command = f"uv run pytest {path}::test_original -q --tb=line"
+    compacted = "Pytest: 0 passed, 1 failed\n[full output: rtk recall d1965a04eb04]"
+    if retrieval == "indented":
+        compacted = compacted.replace("\n[full output:", "\n  [full output:")
+    elif retrieval == "embedded":
+        compacted = compacted.replace("\n[full output:", "\nquoted [full output:")
+    raw = f"{path}:3: AssertionError: assert False\n1 failed in 0.01s"
+    if retrieval in {"large", "oversized"}:
+        raw = "Captured setup diagnostic\n" * (1000 if retrieval == "large" else 3000) + raw
+    before = await _derive_claude_tdd_cycle(
+        tmp_path, red_command=command, red_output=compacted, green_command=command
+    )
+    original = next(run for run in before.validation_runs if run.outcome == "failure")
+    transcript = tmp_path / "claude-tdd.jsonl"
+    records = [json.loads(line) for line in transcript.read_text().splitlines()]
+    if duplicate_red:
+        records.extend(
+            _claude_tool_pair(
+                command=command,
+                call_id="duplicate-red",
+                start=BASE_TIME + timedelta(seconds=6),
+                result={"exit_code": 1, "stdout": compacted},
+                is_error=True,
+            )
+        )
+    # The native tool's is_error=false certifies retrieval success; the recalled
+    # original pytest output still reports a failure and has no process-exit envelope.
+    records.extend(
+        _claude_tool_pair(
+            command=recall_command,
+            call_id="recall",
+            start=BASE_TIME + timedelta(seconds=8),
+            result=_HOOK_BLOCKED if retrieval == "blocked" else raw,
+            is_error=retrieval not in {"success", "indented", "embedded", "large", "oversized"},
+        )
+    )
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {path, "src/gobby/hooks/session_coordinator.py"},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{path}::test_original",
+        path=path,
+        symbol="test_original",
+        body="def test_original():\n    assert False\n",
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    red = evidence.validation_runs[0]
+    source_edit = next(edit for edit in evidence.edits if edit.path.startswith("src/"))
+
+    assert result.passed is expected, result
+    assert (red.started_at, red.completed_at, red.order) == (
+        original.started_at,
+        original.completed_at,
+        original.order,
+    )
+    assert red.order < source_edit.order
+    if expected:
+        receipt = next(run for run in evidence.command_runs if run.command == recall_command)
+        assert red.output == receipt.output
+        assert raw in (red.output or "")
+        assert red.output_recovered_from == recall_command
+        assert red.output_recovered_at == receipt.completed_at
+    else:
+        assert red.output == original.output
+
+
+@pytest.mark.asyncio
+async def test_recovered_rtk_reference_remains_ambiguous_for_a_later_duplicate(
+    tmp_path: Path,
+) -> None:
+    path = "tests/hooks/test_session_coordinator.py"
+    command = f"uv run pytest {path}::test_original -q --tb=line"
+    compacted = "Pytest: 0 passed, 1 failed\n[full output: rtk recall d1965a04eb04]"
+    raw = f"{path}:3: AssertionError: assert False\n1 failed"
+    await _derive_claude_tdd_cycle(
+        tmp_path, red_command=command, red_output=compacted, green_command=command
+    )
+    transcript = tmp_path / "claude-tdd.jsonl"
+    records = [json.loads(line) for line in transcript.read_text().splitlines()]
+    records.extend(
+        _claude_tool_pair(
+            command="rtk recall d1965a04eb04",
+            call_id="first-recall",
+            start=BASE_TIME + timedelta(seconds=8),
+            result=raw,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="later-red",
+            start=BASE_TIME + timedelta(seconds=10),
+            result={"exit_code": 1, "stdout": compacted},
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command="uv run rtk recall d1965a04eb04",
+            call_id="second-recall",
+            start=BASE_TIME + timedelta(seconds=12),
+            result=raw,
+        )
+    )
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {path, "src/gobby/hooks/session_coordinator.py"},
+        str(tmp_path),
+    )
+    reds = [run for run in evidence.validation_runs if run.outcome == "failure"]
+    assert len(reds) == 2
+    assert reds[0].output_recovered_from == "rtk recall d1965a04eb04"
+    assert reds[1].output_recovered_from is None
+    assert compacted in (reds[1].output or "")
+
+
+async def test_codex_native_recall_keeps_the_failed_execution_outcome(tmp_path: Path) -> None:
+    transcript = tmp_path / "codex-recall.jsonl"
+    compacted = "Pytest: 0 passed, 1 failed\n[full output: rtk recall d1965a04eb04]"
+    raw = "tests/test_original.py:3: AssertionError: assert False\n1 failed in 0.01s"
+    records = _codex_direct_exec_pair(
+        command="uv run pytest tests/test_original.py -q",
+        call_id="original-red",
+        result=_pty_chunk(f"Process exited with code 1\nOutput:\n{compacted}"),
+    )
+    recalled = _codex_direct_exec_pair(
+        command="rtk recall d1965a04eb04",
+        call_id="recall",
+        result=_pty_chunk(f"Process exited with code 0\nOutput:\n{raw}"),
+    )
+    recalled[0]["timestamp"] = (BASE_TIME + timedelta(seconds=2)).isoformat()
+    recalled[1]["timestamp"] = (BASE_TIME + timedelta(seconds=3)).isoformat()
+    _write_jsonl(transcript, [*records, *recalled])
+    evidence = await derive_transcript_evidence(
+        _session("codex", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+
+    (red,) = evidence.validation_runs
+    (receipt,) = evidence.command_runs
+    assert (red.outcome, red.exit_code) == ("failure", 1)
+    assert (receipt.outcome, receipt.exit_code) == ("success", 0)
+    assert red.order < receipt.order
+    assert red.output == receipt.output
+    assert raw in (red.output or "")
+    assert red.output_recovered_from == receipt.command
+    assert red.output_recovered_at == receipt.completed_at
+
+
 async def _derive_claude_tdd_cycle(
     tmp_path: Path,
     *,
@@ -1292,6 +2032,42 @@ async def test_claude_tdd_gate_accepts_default_pytest_test_body_exception(
     green = next(run for run in evidence.validation_runs if run.outcome == "success")
 
     assert test_edit.order < red.order < source_edit.order < green.order
+    assert result.passed is True, result
+    assert result.red_runs == (command,)
+
+
+async def test_tdd_gate_credits_uv_directory_before_run(tmp_path: Path) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    node_id = f"{test_path}::TestAgentRunCompletion::test_activity_direct"
+    command = f"uv --directory {tmp_path} run pytest {node_id} -q"
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output="""\
+__________ TestAgentRunCompletion.test_activity_direct __________
+    def test_activity_direct() -> None:
+>       raise TypeError("direct")
+E       TypeError: direct
+/deleted/worktree/tests/hooks/test_session_coordinator.py:620: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestAgentRunCompletion::test_activity_direct
+""",
+        green_command=command,
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion",
+        path=test_path,
+        symbol="TestAgentRunCompletion",
+        body="class TestAgentRunCompletion: ...",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert evidence.command_runs == ()
+    assert [(run.outcome, run.categories) for run in evidence.validation_runs] == [
+        ("failure", ("test",)),
+        ("success", ("test",)),
+    ]
     assert result.passed is True, result
     assert result.red_runs == (command,)
 

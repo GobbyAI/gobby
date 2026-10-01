@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
+from gobby.config.bootstrap import BootstrapConfig
 from gobby.events.wake_recovery import WakeReplayCoordinator
 from gobby.runner_hook_replay import HookReplayBarrierOutcome
 from gobby.storage.hub.protocol import HubDatabase
@@ -57,6 +58,7 @@ def _patch_init_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
 def _minimal_init_runner() -> SimpleNamespace:
     services = SimpleNamespace(shutdown_in_progress=False, startup_ready=False)
     return SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
         agent_lifecycle_monitor=None,
         agent_runner=None,
         http_bound_at_ms=1_700_000_000_000,
@@ -338,3 +340,108 @@ async def test_wake_replay_gate_opens_after_reconciliation(
     )
     terminal_write.assert_awaited_once_with(recipient.id, priority="normal")
     assert runner.http_server.services.startup_ready is True
+
+
+HUB_ONLY_PHASES = {
+    "code_index_bm25": "_repair_code_index_bm25",
+    "metrics_cleanup": "_cleanup_metrics_on_startup",
+    "expansion_cleanup": "_cleanup_stale_expansion_runs_on_startup",
+    "vector_store": "_initialize_vector_store",
+    "core_services": "_start_core_services",
+    "cron_scheduler": "_start_cron_scheduler",
+    "pipeline_recovery": "_recover_pipelines",
+    "system_automation_start": "_start_system_automation_loop",
+}
+EVERY_MODE_STEPS = (
+    "_start_terminal_host",
+    "_run_agent_hook_replay_barrier",
+    "_connect_mcp_servers",
+    "_check_embedding_service",
+    "_start_agent_lifecycle_monitor",
+    "_start_websocket_server",
+)
+
+
+async def _run_init_recording_steps(
+    monkeypatch: pytest.MonkeyPatch, bootstrap_config: BootstrapConfig
+) -> set[str]:
+    _patch_init_dependencies(monkeypatch)
+    called: set[str] = set()
+
+    def record_async(name: str, result: object = None) -> AsyncMock:
+        async def step(*_args: object, **_kwargs: object) -> object:
+            called.add(name)
+            return result
+
+        return AsyncMock(side_effect=step)
+
+    def record_sync(name: str) -> Mock:
+        return Mock(side_effect=lambda *_args, **_kwargs: called.add(name))
+
+    for name in (*HUB_ONLY_PHASES.values(), *EVERY_MODE_STEPS):
+        if name == "_start_websocket_server":
+            monkeypatch.setattr(lifecycle_subsystems, name, record_sync(name))
+        elif name == "_run_agent_hook_replay_barrier":
+            monkeypatch.setattr(lifecycle_subsystems, name, record_async(name, SAFE_BARRIER))
+        elif name == "_repair_code_index_bm25":
+            monkeypatch.setattr(lifecycle_subsystems, name, record_async(name, True))
+        else:
+            monkeypatch.setattr(lifecycle_subsystems, name, record_async(name))
+    monkeypatch.setattr(
+        lifecycle_subsystems, "_start_code_index_tasks", record_sync("_start_code_index_tasks")
+    )
+    monkeypatch.setattr(lifecycle_subsystems, "_maybe_start_ui_dev_server", lambda _runner: None)
+    runner = _minimal_init_runner()
+    runner.bootstrap_config = bootstrap_config
+
+    await lifecycle_subsystems.init_subsystems(
+        cast("GobbyRunner", runner),
+        AsyncMock(),
+        None,
+        reap_orphaned_srt_runners=AsyncMock(),
+        recover_agent_completion_subscribers=AsyncMock(return_value=0),
+    )
+    assert runner.http_server.services.startup_ready is True
+    return called
+
+
+def _phase_skips(caplog: pytest.LogCaptureFixture) -> list[str]:
+    return sorted(
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("skipping hub-only ")
+    )
+
+
+@pytest.mark.asyncio
+async def test_node_mode_skips_hub_only_phases(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"):
+        called = await _run_init_recording_steps(
+            monkeypatch, BootstrapConfig(datastore_mode="remote")
+        )
+
+    assert called == set(EVERY_MODE_STEPS)
+    assert _phase_skips(caplog) == sorted(
+        f"skipping hub-only {phase} in node mode" for phase in HUB_ONLY_PHASES
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hub", [False, True], ids=["standalone", "hub"])
+async def test_standalone_and_hub_run_every_phase(
+    hub: bool,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"):
+        called = await _run_init_recording_steps(monkeypatch, BootstrapConfig(hub=hub))
+
+    assert called == {
+        *HUB_ONLY_PHASES.values(),
+        *EVERY_MODE_STEPS,
+        "_start_code_index_tasks",
+    }
+    assert _phase_skips(caplog) == []

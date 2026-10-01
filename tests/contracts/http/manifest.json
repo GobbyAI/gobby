@@ -9,7 +9,8 @@
     "runtime_handshake.json",
     "auth_missing_auth.json",
     "auth_missing_grant.json",
-    "auth_forged_identity.json"
+    "auth_forged_identity.json",
+    "front_door_backend_down.json"
   ],
   "families": {
     "health": {
@@ -31,6 +32,10 @@
     "auth": {
       "parity": "proxy",
       "origin": "python"
+    },
+    "front_door": {
+      "parity": "native",
+      "origin": "gdaemon"
     }
   }
 }

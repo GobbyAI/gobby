@@ -36,6 +36,10 @@ def older_worktree(tmp_path: Path) -> tuple[Path, Path]:
     _git("-C", str(main), "commit", "-qm", "base")
     _git("-C", str(main), "worktree", "add", "-qb", "old", str(old))
     shutil.copytree(REPO_ROOT / ".gobby/roles", main / ".gobby/roles")
+    # Seats rotate in the live roster; bind a fixed one so only the lookup is under test.
+    (main / ".gobby/roles/roster.md").write_text(
+        "| Role file | Session |\n| --- | --- |\n| rust-migration.md | gobby#14549 |\n"
+    )
     assert not (old / ".gobby/roles").exists()
     return old, main
 

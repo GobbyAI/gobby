@@ -13,6 +13,8 @@ import pytest
 import yaml
 from click.testing import CliRunner
 
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL, fake_database_url
+
 pytestmark = pytest.mark.unit
 
 
@@ -21,6 +23,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 
     assert "postgres" in cli.commands
     postgres_group = cli.commands["postgres"]
+    assert isinstance(postgres_group, click.Group)
     assert {"install", "backup", "restore", "status"} <= set(postgres_group.commands)
     assert "activate" not in postgres_group.commands
     assert "uninstall" not in postgres_group.commands
@@ -59,7 +62,7 @@ def test_postgres_install_command_calls_installer_and_renders_success(
         calls.append(kwargs)
         return {
             "success": True,
-            "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
+            "database_url": FAKE_DATABASE_URL,
             "message": "PostgreSQL configured",
         }
 
@@ -183,7 +186,7 @@ def test_postgres_restore_command_invokes_restore_helper(
     def _restore(source: Path, **kwargs: Any) -> dict[str, Any]:
         calls.append({"source": source, **kwargs})
         return {
-            "database_url": "postgresql://gobby:****@localhost:60891/gobby",
+            "database_url": fake_database_url("****"),
             "dump_sha256": "b" * 64,
             "sha256_verified": True,
             "probes": {

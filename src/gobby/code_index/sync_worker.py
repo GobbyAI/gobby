@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 _pool_outage_log = ThrottledLogger()
 
 _EMBEDDING_CONFIG_UNAVAILABLE = "embedding config is required for vector lifecycle commands"
+# gcore's bounded hub connect (crates/gcore/src/postgres.rs::connect_bounded) keeps
+# this phrase in every handshake timeout, whichever connect phase stalled.
+_HUB_HANDSHAKE_TIMEOUT = "did not answer the startup handshake"
 _VECTOR_SYNC_RETRY_BACKOFF_SECONDS = (1.0, 2.0)
 _GRAPH_SYNC_RETRY_BACKOFF_SECONDS = _VECTOR_SYNC_RETRY_BACKOFF_SECONDS
 
@@ -84,7 +87,9 @@ def _is_transient_vector_error(error: Exception) -> bool:
         return False
     stderr = error.stderr.casefold()
     return (
-        _EMBEDDING_CONFIG_UNAVAILABLE in stderr or "daemon could not be reached (timeout)" in stderr
+        _EMBEDDING_CONFIG_UNAVAILABLE in stderr
+        or "daemon could not be reached (timeout)" in stderr
+        or _HUB_HANDSHAKE_TIMEOUT in stderr
     )
 
 

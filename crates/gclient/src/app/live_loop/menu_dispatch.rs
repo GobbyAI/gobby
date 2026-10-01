@@ -41,8 +41,8 @@ pub async fn apply_live_menu_action(
             chrome.dialog = Some(Dialog::NewGrid { rows: 2, cols: 2 });
             chrome.mode = Mode::ProjectDialog;
         }
-        MenuAction::Arrange(layout) => {
-            super::arrange::apply_arrange(workspace, chrome, layout).await?;
+        MenuAction::Arrange { layout, target } => {
+            super::arrange::apply_arrange(workspace, chrome, layout, &target).await?;
         }
         MenuAction::Act(action) => {
             focus_menu_target(workspace, chrome, &kind).await?;

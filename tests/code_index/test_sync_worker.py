@@ -1140,6 +1140,73 @@ async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
     assert "vector sync retries exhausted for src/app.py" in errors[0].getMessage()
 
 
+class HubHandshakeTimeoutOnceGateway(RecordingGcodeGateway):
+    """Fails the first vector sync the way gcode reports a slow hub handshake."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.handshake_failures = 0
+
+    async def vector_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        if self.handshake_failures == 0:
+            self.handshake_failures += 1
+            raise GcodeCommandError(
+                ["gcode", "vector", "sync-file"],
+                1,
+                "Error: the Gobby PostgreSQL hub at localhost:60891 did not answer the "
+                "startup handshake within 5.0s",
+            )
+        return await super().vector_sync_file(project_root, file_path, timeout=timeout)
+
+
+@pytest.mark.asyncio
+async def test_hub_handshake_timeout_takes_the_fast_retry_with_one_warning(
+    caplog: pytest.LogCaptureFixture,
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stalled hub handshake is transient: retried in process, one WARNING, no traceback."""
+    monkeypatch.setattr(
+        "gobby.code_index.sync_worker._VECTOR_SYNC_RETRY_BACKOFF_SECONDS",
+        (0.0, 0.0),
+    )
+    _write_source(tmp_path)
+    indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    code_storage.upsert_project_stats(
+        IndexedProject(id=PROJECT_ID, root_path=str(tmp_path), total_files=1, total_symbols=1),
+        mode=IndexWriteMode.OVERLAY,
+    )
+    code_storage.upsert_file(indexed_file, root_path=str(tmp_path), mode=IndexWriteMode.OVERLAY)
+    gcode_gateway = HubHandshakeTimeoutOnceGateway()
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=code_storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+            project_id=PROJECT_ID,
+            root=tmp_path,
+            file=indexed_file,
+        )
+
+    assert did_sync is True
+    assert gcode_gateway.vector_synced_files == [(tmp_path, "src/app.py")]
+    synced_file = code_storage.get_file(PROJECT_ID, "src/app.py")
+    assert synced_file is not None
+    assert synced_file.vectors_synced is True
+    assert [(record.levelno, bool(record.exc_info)) for record in caplog.records] == [
+        (logging.WARNING, False)
+    ]
+    assert "did not answer the startup handshake" in caplog.records[0].getMessage()
+
+
 @pytest.mark.asyncio
 async def test_sync_file_leaves_vectors_unsynced_when_indexed_row_disappears(
     caplog: pytest.LogCaptureFixture,

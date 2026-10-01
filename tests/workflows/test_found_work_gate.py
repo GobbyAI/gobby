@@ -866,6 +866,123 @@ class TestTerminalValidationFailures:
         assert derive.await_args.args[1] == created_at
 
 
+_WIDGET = "tests/unit/test_widget.py"
+_BASE_RED = f"uv run --directory /base pytest {_WIDGET} -q"
+_CANDIDATE_GREEN = f"uv --directory /candidate run pytest {_WIDGET} -q"
+
+
+class TestCrossTreeCover:
+    """A green of the same selectors on another source tree confines the red to its tree."""
+
+    @pytest.mark.parametrize("green_first", [False, True], ids=["red_then_green", "green_then_red"])
+    def test_cross_tree_green_covers_red_in_either_order(self, green_first: bool) -> None:
+        red_order, green_order = (2, 1) if green_first else (1, 2)
+        runs = [
+            _run(red_order, "failure", _BASE_RED),
+            _run(green_order, "success", _CANDIDATE_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path="/repo") == ()
+
+    def test_same_tree_green_before_red_still_blocks(self) -> None:
+        runs = [
+            _run(1, "success", f"uv run --directory /base pytest {_WIDGET}"),
+            _run(2, "failure", _BASE_RED),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path="/repo") == (
+            runs[1],
+        )
+
+    def test_cross_tree_green_with_narrower_selectors_does_not_cover(self) -> None:
+        runs = [
+            _run(1, "success", f"uv --directory /candidate run pytest {_WIDGET}::test_case"),
+            _run(2, "failure", _BASE_RED),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path="/repo") == (
+            runs[1],
+        )
+
+    @pytest.mark.parametrize(
+        ("green", "covered"),
+        [
+            (f"cd /candidate && uv run pytest {_WIDGET}", True),
+            (f"uv --directory /candidate run pytest {_WIDGET}", True),
+            (f"uv --directory=/candidate run pytest {_WIDGET}", True),
+            (f"uv run --project /candidate pytest {_WIDGET}", True),
+            (f"uv run --directory ../candidate pytest {_WIDGET}", True),
+            (f"uv run pytest {_WIDGET} -o pythonpath=/scratch/src", True),
+            (f"PYTHONPATH=/scratch/src uv run pytest {_WIDGET}", True),
+            (f"uv run --directory /repo pytest {_WIDGET}", False),
+            (f"cd /repo/sub && uv run --directory .. pytest {_WIDGET}", False),
+        ],
+        ids=[
+            "cd",
+            "uv_global_directory",
+            "uv_global_directory_equals",
+            "uv_run_project",
+            "relative_directory",
+            "pytest_pythonpath_override",
+            "pythonpath_env",
+            "explicit_session_tree",
+            "relative_session_tree",
+        ],
+    )
+    def test_source_tree_identity_decides_earlier_green_cover(
+        self, green: str, covered: bool
+    ) -> None:
+        runs = [_run(1, "success", green), _run(2, "failure", f"uv run pytest {_WIDGET}")]
+        expected = () if covered else (runs[1],)
+        assert (
+            unresolved_validation_failures(runs, owner_handoff=False, project_path="/repo")
+            == expected
+        )
+
+    async def test_claim_free_base_reproduction_then_candidate_green_does_not_block(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        _window_bound_derive(
+            monkeypatch,
+            _run(1, "success", _CANDIDATE_GREEN),
+            _run(2, "failure", _BASE_RED),
+        )
+        facts = await _analyzer_with_session_tasks().analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+        assert facts.terminal_validation_failures == ()
+
+    @pytest.mark.parametrize("claimed", [False, True], ids=["claim_free", "claimed"])
+    async def test_red_without_green_on_any_tree_still_blocks(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        claimed: bool,
+    ) -> None:
+        _window_bound_derive(monkeypatch, _run(1, "failure", _BASE_RED))
+        links = [_claimed_task_link()] if claimed else []
+        facts = await _analyzer_with_session_tasks(*links).analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+        assert facts.terminal_validation_failures == (_BASE_RED,)
+
+
+def _claimed_task_link() -> dict[str, Any]:
+    """Mirror a ``get_session_tasks`` link for a task this session holds open."""
+    task = SimpleNamespace(
+        closed_in_session_id=None,
+        closed_at=None,
+        created_in_session_id=SESSION_ID,
+        labels=[],
+    )
+    return {"task": task, "action": "claimed", "link_created_at": datetime.now(UTC)}
+
+
 def _closed_task_link(closed_in_session_id: str, closed_at: datetime) -> dict[str, Any]:
     """Mirror a ``get_session_tasks`` link for a task this or another session closed."""
     task = SimpleNamespace(

@@ -126,10 +126,8 @@ def _write_child(
     step_workflow: Mapping[str, Any] | None,
 ) -> bool:
     existing = txn.execute(
-        """
-        SELECT steps_json, variables_json, exit_condition
-        FROM agent_step_workflows WHERE agent_definition_id = %s
-        """,
+        "SELECT id, steps_json, variables_json, exit_condition FROM agent_step_workflows "
+        "WHERE agent_definition_id = %s FOR UPDATE",
         (agent_definition_id,),
     ).fetchone()
     if step_workflow is None:
@@ -140,7 +138,6 @@ def _write_child(
             (agent_definition_id,),
         )
         return True
-    now = utc_now()
     steps, variables, exit_condition = _child_columns(step_workflow)
     if existing is None:
         txn.execute(
@@ -159,14 +156,14 @@ def _write_child(
             ),
         )
         return True
-    # Compare decoded JSON so jsonb key order and tuple/list spelling never
-    # register as a change; an unchanged row gets no write, revision or notify.
-    stored = (
+    stored_columns = (
         _decode_json_array(existing["steps_json"]),
         decode_json_object(existing["variables_json"]) or {},
         existing["exit_condition"],
     )
-    if stored == (json.loads(json.dumps(steps)), json.loads(json.dumps(variables)), exit_condition):
+    if json.dumps(stored_columns, sort_keys=True) == json.dumps(
+        (steps, variables, exit_condition), sort_keys=True
+    ):
         return False
     txn.execute(
         """
@@ -178,7 +175,7 @@ def _write_child(
             encode_json_value(steps),
             encode_json_value(variables),
             exit_condition,
-            now,
+            utc_now(),
             agent_definition_id,
         ),
     )

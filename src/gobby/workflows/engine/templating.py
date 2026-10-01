@@ -6,12 +6,17 @@ integration, and helper function construction.
 
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NoReturn
 
 import psycopg
 from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import (
+    ToolInputError,
+    is_non_object_tool_input,
+    tool_input_error,
+)
 from gobby.mcp_proxy._call_tool_wrapper import (
     CALL_TOOL_ARGUMENT_FIELDS,
     call_tool_arguments_refusal,
@@ -40,6 +45,30 @@ from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condit
 from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
+
+
+class ToolInputUnavailableError(RuntimeError):
+    """A rule read a tool input that arrived as invalid JSON, non-object JSON, or a non-object."""
+
+
+class UnavailableToolInput(dict[str, Any]):
+    """Rule-context stand-in for a tool input marked unavailable by normalization.
+
+    It stays a ``dict`` so ``isinstance`` guards pass, but every read raises:
+    ``_evaluate_condition`` then fails closed for block effects and open for others.
+    """
+
+    def __init__(self, error: ToolInputError) -> None:
+        super().__init__()
+        self.error = error
+
+    def _unavailable(self, *_args: object, **_kwargs: object) -> NoReturn:
+        raise ToolInputUnavailableError(
+            f"tool input unavailable ({self.error['code']} in {self.error['field']})"
+        )
+
+    __getitem__ = __contains__ = __iter__ = __len__ = __eq__ = __ne__ = _unavailable
+    get = keys = items = values = copy = _unavailable
 
 
 class TemplatingMixin:
@@ -117,7 +146,14 @@ class TemplatingMixin:
     @staticmethod
     def _rule_tool_input(event: HookEvent) -> dict[str, Any]:
         """Return the tool input seen by rule conditions, including proxy arguments."""
-        raw_tool_input = event.data.get("tool_input") or event.data.get("arguments") or {}
+        unavailable = tool_input_error(event.data)
+        if unavailable is not None:
+            return UnavailableToolInput(unavailable)
+        tool_input = event.data.get("tool_input")
+        if is_non_object_tool_input(tool_input):
+            # A non-object that skipped normalization is unusable, never an empty object.
+            return UnavailableToolInput({"field": "tool_input", "code": "non_object"})
+        raw_tool_input = tool_input or event.data.get("arguments") or {}
         if not isinstance(raw_tool_input, dict):
             raw_tool_input = {}
 
@@ -234,7 +270,7 @@ class TemplatingMixin:
         self, template: str, ctx: dict[str, Any], allowed_funcs: dict[str, Callable[..., Any]]
     ) -> str:
         """Render a Jinja2 template string with eval context and helper functions."""
-        if "{{" not in template:
+        if "{{" not in template and "{%" not in template:
             return template
         try:
             render_ctx = {**ctx, **allowed_funcs}
@@ -242,6 +278,9 @@ class TemplatingMixin:
             return engine.render(template, render_ctx)
         except (SecurityError, DatabaseOperationDeadlineExceeded, psycopg.errors.QueryCanceled):
             raise
+        except ToolInputUnavailableError as e:
+            # Raw Jinja is no explanation; say why the input could not be read.
+            return f"{e}: resend the call with its complete arguments as a JSON object."
         except Exception as e:
             logger.warning("Failed to render template: %s", e)
             return template

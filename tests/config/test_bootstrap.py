@@ -1,10 +1,12 @@
 """Bootstrap configuration tests."""
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import yaml
 
+from gobby.cli.install_setup import ensure_daemon_config
 from gobby.config.bootstrap import (
     BootstrapConfig,
     BootstrapConfigError,
@@ -12,6 +14,7 @@ from gobby.config.bootstrap import (
     backend_ports,
     load_bootstrap,
 )
+from gobby.config.bootstrap_io import _merge_owner_fields, inject_local_files_home
 
 
 def _write_bootstrap(path: Path, content: str) -> None:
@@ -270,3 +273,47 @@ def test_backend_ports_offset() -> None:
     assert backend_ports(61000, 61001) == (61100, 61101)
     with pytest.raises(BootstrapConfigError, match="exceed 65535"):
         backend_ports(65500, 60888)
+
+
+def test_run_mode_from_datastore_mode_and_hub(tmp_path: Path) -> None:
+    """2.1.1: run_mode() derives the three modes; (remote, true) is rejected."""
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+
+    _write_bootstrap(bootstrap_path, "datastore_mode: local\n")
+    assert load_bootstrap(str(bootstrap_path)).run_mode() == "standalone"
+
+    _write_bootstrap(bootstrap_path, "datastore_mode: local\nhub: true\n")
+    assert load_bootstrap(str(bootstrap_path)).run_mode() == "hub"
+
+    _write_bootstrap(bootstrap_path, "datastore_mode: remote\n")
+    assert load_bootstrap(str(bootstrap_path)).run_mode() == "node"
+
+    _write_bootstrap(bootstrap_path, "datastore_mode: remote\nhub: true\n")
+    with pytest.raises(BootstrapConfigError, match="hub: true requires datastore_mode: local"):
+        load_bootstrap(str(bootstrap_path))
+
+
+def test_writers_emit_hub_flag(tmp_path: Path) -> None:
+    """2.1.2: fresh and injected bootstraps carry hub: false; remote drops hub."""
+    fresh = tmp_path / "fresh.yaml"
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    with (
+        patch("gobby.cli.install_setup.Path.expanduser", return_value=fresh),
+        patch("gobby.cli.install_setup.get_install_dir", return_value=tmp_path / "missing-install"),
+    ):
+        ensure_daemon_config(files_home=files_home)
+    assert yaml.safe_load(fresh.read_text(encoding="utf-8"))["hub"] is False
+    assert load_bootstrap(str(fresh)).hub is False
+    assert load_bootstrap(str(fresh)).run_mode() == "standalone"
+
+    injected = tmp_path / "injected.yaml"
+    injected.write_text("datastore_mode: local\ndaemon_port: 61111\n", encoding="utf-8")
+    injected.chmod(0o600)
+    inject_local_files_home(injected, files_home)
+    assert yaml.safe_load(injected.read_text(encoding="utf-8"))["hub"] is False
+
+    merged = _merge_owner_fields(
+        {"datastore_mode": "local", "hub": True}, {"datastore_mode": "remote"}
+    )
+    assert "hub" not in merged

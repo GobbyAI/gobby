@@ -19,7 +19,9 @@
 
 use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::startup_stages::{ConnectionView, StageState, StartupStages};
-use gobby_client::app::{route_mouse, ContextMenuKind, ControlState};
+use gobby_client::app::{
+    apply_local_menu_action, route_mouse, ContextMenuKind, ControlState, MouseOutcome, Submenu,
+};
 use gobby_client::daemon::{
     Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
@@ -48,7 +50,7 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 15] = [
+const STATES: [(&str, ScriptedState); 18] = [
     ("empty_workspace", empty_workspace),
     ("splash_connecting", splash_connecting),
     ("splash_attach_running", splash_attach_running),
@@ -61,6 +63,9 @@ const STATES: [(&str, ScriptedState); 15] = [
     ("unnamed_pane", unnamed_pane),
     ("pane_edges", pane_edges),
     ("menu_bar", menu_bar),
+    ("arrange_window", arrange_window),
+    ("arrange_tab", arrange_tab),
+    ("arrange_pane_edge", arrange_pane_edge),
     ("sidebar_overlay", sidebar_overlay),
     ("status_segments", status_segments),
     ("monochrome", monochrome),
@@ -527,6 +532,102 @@ fn menu_bar() -> (Workspace, Chrome) {
         Some(&ContextMenuKind::MenuBar(MenuBarMenu::View))
     );
     (ws, chrome)
+}
+
+/// Two tabs, the first split in two, with Arrange ▸ opened by a click from
+/// the menu that a press at the button and cell `locate` picks opens.
+fn arrange_from(locate: fn(&Chrome) -> (MouseButton, u16, u16)) -> (Workspace, Chrome) {
+    let mut ws = Workspace::scripted();
+    let [alpha, beta, gamma] = ["term-alpha", "term-beta", "term-gamma"].map(|id| {
+        ws.open_terminal(id, "native", "epoch")
+            .expect("open terminal")
+    });
+    let mut chrome = Chrome::dark();
+    chrome.open_tab(alpha, "build");
+    chrome.open_pane(beta, "tests");
+    chrome.open_tab(gamma, "logs");
+    chrome.activate_tab(0);
+    chrome.compute_view(&ws, Rect::new(0, 0, WIDTH, HEIGHT));
+    let mut terminal = Terminal::new(TestBackend::new(WIDTH, HEIGHT)).expect("test backend");
+    let mut hits = None;
+    terminal
+        .draw(|frame| hits = Some(render_workspace(frame, &ws, &chrome)))
+        .expect("draw frame");
+    chrome.view.apply_hits(hits.expect("frame drawn"));
+    let press = |button, column, row| MouseEvent {
+        kind: MouseEventKind::Down(button),
+        column,
+        row,
+        modifiers: KeyModifiers::NONE,
+    };
+    let (button, column, row) = locate(&chrome);
+    route_mouse(&ws, &mut chrome, &press(button, column, row));
+    let menu = chrome.menu.as_ref().expect("menu opened");
+    let row = menu
+        .items
+        .iter()
+        .position(|item| item.label == "Arrange ▸")
+        .map(|index| menu.item_rects[index])
+        .expect("Arrange ▸ row");
+    let MouseOutcome::Menu { action, .. } =
+        route_mouse(&ws, &mut chrome, &press(MouseButton::Left, row.x, row.y))
+    else {
+        panic!("a click on Arrange ▸ opens it");
+    };
+    apply_local_menu_action(&mut ws, &mut chrome, &action);
+    assert!(matches!(
+        chrome.menu.as_ref().map(|menu| &menu.kind),
+        Some(ContextMenuKind::Submenu(Submenu::Arrange(_)))
+    ));
+    (ws, chrome)
+}
+
+/// Window › Arrange ▸, opened from the Window title.
+fn arrange_window() -> (Workspace, Chrome) {
+    arrange_from(|chrome| {
+        let window = MenuBarMenu::ALL
+            .iter()
+            .position(|menu| *menu == MenuBarMenu::Window)
+            .and_then(|index| {
+                chrome
+                    .view
+                    .menu_title_hit_areas
+                    .iter()
+                    .find(|(drawn, _)| *drawn == index)
+            })
+            .map(|(_, rect)| *rect)
+            .expect("Window title drawn");
+        (MouseButton::Left, window.x + 1, window.y)
+    })
+}
+
+/// Arrange ▸ from the right-click menu of the second, inactive tab.
+fn arrange_tab() -> (Workspace, Chrome) {
+    arrange_from(|chrome| {
+        let tab = chrome
+            .view
+            .tab_hit_areas
+            .iter()
+            .find(|(index, _)| *index == 1)
+            .map(|(_, rect)| *rect)
+            .expect("second tab drawn");
+        (MouseButton::Right, tab.x + 1, tab.y)
+    })
+}
+
+/// Arrange ▸ from a pane's right-click menu at the screen's right edge,
+/// where the submenu opens to the left of its menu.
+fn arrange_pane_edge() -> (Workspace, Chrome) {
+    arrange_from(|chrome| {
+        let pane = chrome
+            .view
+            .pane_infos
+            .iter()
+            .map(|info| info.inner_rect)
+            .max_by_key(|rect| rect.x)
+            .expect("panes drawn");
+        (MouseButton::Right, pane.right() - 3, pane.y + 1)
+    })
 }
 
 // ------------------------------------------------------------- the capture

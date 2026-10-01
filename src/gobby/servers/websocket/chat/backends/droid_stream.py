@@ -17,6 +17,11 @@ def _content_delta(kind: str, **data: Any) -> StreamEvent:
     return StreamEvent(event_type="content_delta", data=payload)
 
 
+def _tool_input(value: Any) -> Any:
+    """Keep the sender's value; hook normalization marks a non-object unavailable."""
+    return value if value is not None else {}
+
+
 def _token_usage_data(token_usage: Any) -> dict[str, Any]:
     if not isinstance(token_usage, dict):
         return {}
@@ -77,7 +82,7 @@ def _events_from_content_blocks(content: Any) -> list[StreamEvent]:
                     "tool_use",
                     call_id=block.get("id") or "unknown",
                     tool_name=block.get("name"),
-                    tool_input=block.get("input") if isinstance(block.get("input"), dict) else {},
+                    tool_input=_tool_input(block.get("input")),
                 )
             )
         elif block_type == "tool_result":
@@ -152,9 +157,7 @@ def _stream_events_from_droid_jsonrpc_record(record: dict[str, Any]) -> list[Str
                         "permission_request",
                         id=tool_use.get("id") or record.get("id") or "unknown",
                         tool_name=tool_use.get("name"),
-                        tool_input=(
-                            tool_use.get("input") if isinstance(tool_use.get("input"), dict) else {}
-                        ),
+                        tool_input=_tool_input(tool_use.get("input")),
                         request_id=record.get("id"),
                         options=params.get("options"),
                         confirmation_type=item.get("confirmationType"),
@@ -187,7 +190,7 @@ def _stream_events_from_droid_jsonrpc_record(record: dict[str, Any]) -> list[Str
                 "tool_use",
                 call_id=tool_use.get("id") or "unknown",
                 tool_name=tool_use.get("name"),
-                tool_input=tool_use.get("input") if isinstance(tool_use.get("input"), dict) else {},
+                tool_input=_tool_input(tool_use.get("input")),
             )
         ]
     if notification_type == "tool_result":
@@ -283,9 +286,7 @@ def _stream_events_from_droid_record(record: dict[str, Any]) -> list[StreamEvent
                 "tool_use",
                 call_id=record.get("id") or "unknown",
                 tool_name=record.get("toolName") or record.get("tool_name"),
-                tool_input=record.get("parameters")
-                if isinstance(record.get("parameters"), dict)
-                else {},
+                tool_input=_tool_input(record.get("parameters")),
             )
         ]
     if record_type == "tool_result":

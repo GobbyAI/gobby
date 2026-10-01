@@ -1261,16 +1261,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/test_install_setup.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 86,
-      "message": "Function is missing a type annotation",
-      "occurrences": 45,
-      "path": "tests/cli/test_install_setup.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/test_memory_coverage.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 41,
@@ -1297,16 +1287,6 @@
       "message": "Item \"None\" of \"IO[bytes] | None\" has no attribute \"read\"",
       "occurrences": 1,
       "path": "tests/cli/test_pack.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/cli/test_postgres_cli.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 24,
-      "message": "\"Command\" has no attribute \"commands\"",
-      "occurrences": 5,
-      "path": "tests/cli/test_postgres_cli.py",
       "severity": "high",
       "test_name": ""
     },

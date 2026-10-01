@@ -17,6 +17,7 @@
     },
     "body": {
       "status": "@mask@",
+      "mode": "standalone",
       "degraded_services": [],
       "hook_runtime": "@mask@",
       "install_dir": "@mask@",

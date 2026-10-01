@@ -368,6 +368,7 @@ def create_health_router(server: "HTTPServer") -> APIRouter:
         degraded_services = _get_degraded_services(server)
         payload: dict[str, Any] = {
             "status": "degraded" if hook_runtime.is_degraded or degraded_services else "ok",
+            "mode": server.bootstrap_config.run_mode(),
             "degraded_services": degraded_services,
             "hook_runtime": hook_runtime.to_dict(),
             "install_dir": install_dir,

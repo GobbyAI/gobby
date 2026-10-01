@@ -63,7 +63,7 @@ class CodexTurnSession(Protocol):
         self,
         dedup_key: str | None,
         tool_name: str,
-        tool_input: dict[str, Any],
+        tool_input: object,
     ) -> dict[str, Any] | None: ...
 
     async def _apply_post_tool_lifecycle(

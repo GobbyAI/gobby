@@ -1040,3 +1040,33 @@ class TestGetInstallDir:
 
                 result = get_install_dir()
                 assert isinstance(result, Path)
+
+
+def test_redact_dsn_masks_query_passwords_everywhere() -> None:
+    """Shared redaction masks query credentials, including URIs with no userinfo."""
+    assert (
+        _redact_dsn("postgresql://gobby:secret@localhost:5432/gobby?password=querysecret")
+        == "postgresql://gobby:****@localhost:5432/gobby?password=****"
+    )
+    assert (
+        _redact_dsn("postgresql://localhost:5432/gobby?password=querysecret")
+        == "postgresql://localhost:5432/gobby?password=****"
+    )
+    assert (
+        _redact_dsn(
+            "postgresql://localhost:5432/gobby?host=h&password=q1&sslmode=require&password=q2"
+        )
+        == "postgresql://localhost:5432/gobby?host=h&password=****&sslmode=require&password=****"
+    )
+    assert (
+        _redact_dsn("postgresql://localhost:5432/gobby?pass%77ord=encoded")
+        == "postgresql://localhost:5432/gobby?pass%77ord=****"
+    )
+
+
+def test_redact_dsn_fails_closed_on_malformed_input() -> None:
+    """Malformed input must never echo credential material."""
+    for malformed in ("postgresql://gobby:sec ret@localhost:5432/gobby", ""):
+        redacted = _redact_dsn(malformed)
+        assert "sec ret" not in redacted
+        assert "sec" not in redacted or redacted == ""
