@@ -706,11 +706,81 @@ def test_structured_evidence_accepts_locally_provable_run(tmp_path: Path) -> Non
     assert findings == ()
 
 
+def test_file_evidence_reads_the_close_candidate_not_the_latest_link(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    workflow = Path(repo, ".github", "workflows", "weekly.yml")
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text("name: Weekly Producer\non: workflow_dispatch\n", encoding="utf-8")
+    cited_sha = _commit(repo, "producer")
+    path = Path(repo, "docs", "evidence.md")
+    path.parent.mkdir()
+    evidence = f"""## Run
+- workflow_name: Weekly Producer
+- run_url: https://github.com/GobbyAI/gobby/actions/runs/123
+- commit_sha: {cited_sha}
+- utc_timestamp: 2099-01-01T00:00:00Z
+"""
+    path.write_text(evidence, encoding="utf-8")
+    candidate_sha = _commit(repo, "reviewed evidence")
+    # A later link backdates the run before its cited commit, which gate 11 rejects.
+    path.write_text(evidence.replace("2099-01-01", "2000-01-01"), encoding="utf-8")
+    later_sha = _commit(repo, "later linked commit")
+
+    result = evaluate_acceptance_artifacts(
+        criteria="Evidence holds.\nfile: docs/evidence.md",
+        repo_path=str(repo),
+        commit_shas=[candidate_sha, later_sha],
+        candidate_commit_sha=candidate_sha,
+    )
+
+    assert result.findings == ()
+    assert result.passed is True
+
+
+def test_file_evidence_without_a_close_candidate_is_refused(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    Path(repo, "docs").mkdir()
+    Path(repo, "docs", "evidence.md").write_text("first\n", encoding="utf-8")
+    first_sha = _commit(repo, "first link")
+    Path(repo, "docs", "evidence.md").write_text("second\n", encoding="utf-8")
+    second_sha = _commit(repo, "second link")
+
+    findings = validate_structured_file_evidence(
+        evidence_files=("docs/evidence.md",),
+        repo_path=str(repo),
+        commit_shas=[first_sha, second_sha],
+    )
+
+    assert findings == ("docs/evidence.md: an explicit linked close candidate is required",)
+
+
+def test_file_evidence_missing_at_the_close_candidate_names_it(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    Path(repo, "README.md").write_text("candidate\n", encoding="utf-8")
+    candidate_sha = _commit(repo, "candidate without evidence")
+    Path(repo, "docs").mkdir()
+    # Present in the working tree and a later link, but not at the reviewed candidate.
+    Path(repo, "docs", "evidence.md").write_text("later\n", encoding="utf-8")
+    later_sha = _commit(repo, "later link adds evidence")
+
+    findings = validate_structured_file_evidence(
+        evidence_files=("docs/evidence.md",),
+        repo_path=str(repo),
+        commit_shas=[candidate_sha, later_sha],
+        candidate_commit_sha=candidate_sha,
+    )
+
+    assert findings == (
+        f"docs/evidence.md: referenced evidence file is missing at close candidate {candidate_sha}",
+    )
+
+
 def test_native_backend_evidence_regression_fails_on_local_contradictions() -> None:
     findings = validate_structured_file_evidence(
         evidence_files=("docs/evidence/native-backend-flip.md",),
         repo_path=str(REPO_ROOT),
         commit_shas=["d07111cf2d", "6b4e032125"],
+        candidate_commit_sha="6b4e032125",
     )
 
     assert any("89f7b404" in finding and "newer" in finding for finding in findings)
