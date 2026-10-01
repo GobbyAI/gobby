@@ -530,7 +530,7 @@ PD review of this revision is required before the Assistant presents the choices
 
 ### Josh's decisions
 
-**Pending.** Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01, and no choice is decided yet.
+**Choice 9 is decided:** Josh answered "Yes" on 2026-10-01. An agent removes the stray `falkordb_password` key from the live `~/.gobby/bootstrap.yaml`, with the PD routing the execution. Josh asked for detail on D3-D5 for choice 5, which the Assistant gave him; it is still **pending**. Every other choice, and R0-R7, is still **pending**. Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01.
 
 A decision table recorded in `4d8bc01` was **retracted**. The Assistant misread Josh's "Agreed", and Josh said: "I didn't accept yet."
 
