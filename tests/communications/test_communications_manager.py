@@ -2913,6 +2913,53 @@ async def test_telegram_stream_edit_keeps_the_agent_name() -> None:
     store.get_message_by_platform_id.assert_called_once_with(
         channel.name, "platform-1", platform_destination="99"
     )
+    store.supersede_callback_decision.assert_not_called()
+
+
+async def test_telegram_edit_supersedes_or_replaces_decision_keyboard(
+    temp_db: HubDatabase,
+) -> None:
+    channel = make_channel(
+        channel_id="00000000-0000-0000-0000-000000000201", channel_type="telegram"
+    )
+    store = LocalCommunicationsStore(temp_db, project_id="00000000-0000-0000-0000-000000000000")
+    store.create_channel(channel)
+    decision_id = "00000000-0000-0000-0000-000000000202"
+    store.create_message(
+        CommsMessage(
+            id=decision_id,
+            channel_id=channel.id,
+            direction="outbound",
+            content="Approve?",
+            platform_message_id="platform-1",
+            metadata_json={
+                "platform_destination": "99",
+                "inline_keyboard": [[{"text": "Approve", "value": "approve"}]],
+            },
+            created_at=datetime.now(UTC),
+        )
+    )
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._channel_by_name[channel.name] = channel
+    adapter = make_adapter(channel_type="telegram")
+    adapter.supports_message_edit = True
+    adapter.edit_stored_message = AsyncMock(return_value=["platform-1"])
+    manager._adapters[channel.name] = adapter
+    replacement = [[{"text": "Ship", "value": "ship"}]]
+
+    await manager.edit_message(
+        channel.name, "platform-1", "Approve v2?", "99", inline_keyboard=replacement
+    )
+    replaced = store.get_message(decision_id)
+    assert replaced is not None
+    assert replaced.metadata_json["inline_keyboard"] == replacement
+    assert replaced.metadata_json.get("callback_state") is None
+    assert replaced.content == "Approve v2?"
+
+    await manager.edit_message(channel.name, "platform-1", "Withdrawn", "99")
+    withdrawn = store.get_message(decision_id)
+    assert withdrawn is not None
+    assert withdrawn.metadata_json["callback_state"] == "superseded"
 
 
 @pytest.mark.unit

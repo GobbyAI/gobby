@@ -45,6 +45,17 @@ class TelegramActionController:
         if channel is None or channel.channel_type != "telegram":
             return False
 
+        if message.answer_delivery == "responder":
+            return False  # the responder turn is this answer's delivery
+        if message.answer_delivery == "mailbox":
+            # Accepting the answer already committed its mailbox row; only the wake is
+            # left, and it is best effort because wake recovery retries the row.
+            try:
+                await self._mailbox.wake_committed(message.id)
+            except Exception:
+                logger.exception("Failed to wake the session for decision answer %s", message.id)
+            return False
+
         action = message.metadata_json.get("callback_action")
         if message.content_type == "callback" and action == _AGENT_TARGET_ACTION:
             await self._consume_safely(

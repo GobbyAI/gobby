@@ -759,6 +759,7 @@ def init_orchestration(runner: GobbyRunner, config: DaemonConfig) -> None:
                 store=comms_store,
                 secret_store=runner.secret_store,
                 session_store=runner.session_manager,
+                daemon_epoch=getattr(getattr(runner, "lease_registry", None), "daemon_epoch", None),
             )
             logger.debug("CommunicationsManager initialized")
         except Exception:
