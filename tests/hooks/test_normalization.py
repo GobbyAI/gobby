@@ -2090,11 +2090,24 @@ class TestHeredocTokenization:
         assert shell_token_values(scan.tokens) == ["x", "a\nb\tcAAé\n\x1b\\q", "\x04g"]
 
     def test_scan_follows_bash_ansi_c_limits(self) -> None:
-        # Octal stops after three digits, a bare `\x` or `\8` stays literal, and a
-        # decoded NUL ends the quoted text the way bash's C string does.
+        # Octal stops after three digits and a bare `\x` or `\8` stays literal. A
+        # decoded NUL stays: zsh keeps it, and `eval` runs what follows it.
         scan = scan_shell_command("x $'\\0101' $'\\x\\8' $'ab\\0cd\\'ef'g $'\\ca\\cß'")
 
-        assert shell_token_values(scan.tokens) == ["x", "\b1", "\\x\\8", "abg", "\x01\x1f"]
+        assert shell_token_values(scan.tokens) == [
+            "x",
+            "\b1",
+            "\\x\\8",
+            "ab\0cd'efg",
+            "\x01\x1f",
+        ]
+
+    def test_scan_ansi_c_control_escape_keeps_quote_pairs(self) -> None:
+        # The lexer pairs each backslash with the next character first, so `\c`
+        # never consumes the closing quote and `\c\'` keeps the quote as text.
+        scan = scan_shell_command("x $'\\c'Z $'\\c\\'y' ; z")
+
+        assert shell_token_values(scan.tokens) == ["x", "\\cZ", "\x1c'y", ";", "z"]
 
     def test_scan_records_an_unterminated_body_as_live_input(self) -> None:
         command = "cat <<EOF > out.txt\nstill > body\nnever closed"

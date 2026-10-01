@@ -190,6 +190,8 @@ def test_blocks_command_after_ansi_c_escaped_quote(
         "echo $'a\\n" + _MUTATION + "'",
         # bash stops at the unterminated quote the decoded script opens; nothing runs.
         "bash -c $'echo it\\'s; " + _MUTATION + "'",
+        # `\c\'` keeps the apostrophe inside the quote, so the rest is echo data.
+        "echo $'\\c\\'; " + _MUTATION + " #'",
     ],
 )
 def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect, command: str) -> None:
@@ -228,6 +230,10 @@ def test_allows_ansi_c_quoted_data(db: HubDatabase, effect: RuleEffect, command:
         "bash -c $'echo hi\\cJ" + _MUTATION + "'",
         "bash -c $'echo hi\\u000a" + _MUTATION + "'",
         "bash -c $'\\x67" + _MUTATION[1:] + "'",
+        # zsh keeps a decoded NUL, so `eval` still runs the command after it.
+        "eval $'true\\0; " + _MUTATION + "'",
+        "eval $'true\\x00; " + _MUTATION + "'",
+        "eval $'true\\c@; " + _MUTATION + "'",
     ],
 )
 def test_blocks_wrapped_mutating_script(

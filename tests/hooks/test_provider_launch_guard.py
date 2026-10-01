@@ -134,6 +134,8 @@ def test_provider_launches(provider: str, prefix: str, args: str) -> None:
         "x=\"$(cat <<-'EOF' |\n tr a b\n\tit's (text\n\tEOF\n)\"",
         # ANSI-C quoting escapes its apostrophe; the string is data (#23134).
         "echo $'it\\'s'",
+        # `\c` does not consume the closing quote; the word is data.
+        "echo $'\\c'Z",
     ],
 )
 def test_administration_and_documentation(command: str) -> None:
@@ -238,6 +240,9 @@ def test_help_does_not_exempt_launch_operands(command: str) -> None:
         "bash -c $'echo hi\\012claude -p hi'",
         "bash -c $'echo hi\\cJclaude -p hi'",
         "bash -c $'\\x63laude -p hi'",
+        # zsh keeps a decoded NUL, so `eval` still runs the command after it.
+        "eval $'true\\0; claude -p hi'",
+        "eval $'true\\x00; claude -p hi'",
     ],
 )
 def test_execution_contexts(command: str) -> None:

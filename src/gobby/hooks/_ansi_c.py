@@ -38,8 +38,9 @@ def _digits(text: str, start: int, alphabet: str, width: int) -> int:
 def decode_ansi_c_escape(text: str, index: int) -> tuple[str, int]:
     """Decode the escape whose backslash is at ``index``; return it and the next index.
 
-    A decoded NUL comes back as ``"\\0"``: bash ends the quoted text there. An
-    escape bash does not recognise keeps its backslash.
+    A decoded NUL stays in the text: bash would cut the string there, but zsh
+    keeps it and ``eval`` runs what follows. An escape bash does not recognise
+    keeps its backslash.
     """
     kind = text[index + 1 : index + 2]
     if kind in _SIMPLE:
@@ -51,13 +52,17 @@ def decode_ansi_c_escape(text: str, index: int) -> tuple[str, int]:
         end = _digits(text, index + 2, _HEX, _HEX_WIDTH[kind])
         if end > index + 2 and (value := int(text[index + 2 : end], 16)) <= 0x10FFFF:
             return chr(value), end
-    if kind == "c" and index + 2 < len(text):
+    # The lexer pairs each backslash with the next character before decoding, so
+    # `\c` never takes the closing quote, and `\c\X` keeps X from the `\X` pair.
+    if kind == "c" and index + 2 < len(text) and text[index + 2] != "'":
         target = text[index + 2]
-        end = index + 3
-        if target == "\\" and text[end : end + 1] == "\\":
-            end += 1
-        # The mask clears the case bit, so `\ca` and `\cA` are both ^A.
-        return chr(0x7F if target == "?" else ord(target) & 0x1F), end
+        if target == "\\":
+            pair = text[index + 3 : index + 4]
+            if pair:
+                return "\x1c" + ("" if pair == "\\" else pair), index + 4
+        else:
+            # The mask clears the case bit, so `\ca` and `\cA` are both ^A.
+            return chr(0x7F if target == "?" else ord(target) & 0x1F), index + 3
     return text[index : index + 2], index + 2
 
 

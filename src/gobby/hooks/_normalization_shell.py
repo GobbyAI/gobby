@@ -139,7 +139,6 @@ def scan_shell_command(command: str) -> ShellScan:
     quoted = False
     in_single_quote = False
     ansi_c = False
-    ansi_c_cut = False
     in_double_quote = False
     escaped = False
     token_start: int | None = None
@@ -191,15 +190,11 @@ def scan_shell_command(command: str) -> ShellScan:
         if in_single_quote:
             if ansi_c and char == "\\" and index + 1 < len(command):
                 decoded, index = decode_ansi_c_escape(command, index)
-                # A decoded NUL ends bash's C string: the rest of the quote is lost.
-                ansi_c_cut = ansi_c_cut or decoded == "\0"
-                if not ansi_c_cut:
-                    current.append(decoded)
+                current.append(decoded)
                 continue
             if char == "'":
                 in_single_quote = False
-                ansi_c_cut = False
-            elif not ansi_c_cut:
+            else:
                 current.append(char)
             index += 1
             continue
