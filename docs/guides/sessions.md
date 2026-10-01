@@ -231,7 +231,7 @@ calls.
 | `session_stats` | Count sessions by status and source. |
 | `get_usage_breakdown` | Aggregate token usage by source and model. |
 | `get_session_messages` | Read rendered transcript messages. |
-| `search_session_messages` | Search rendered transcript messages by substring. |
+| `search_session_messages` | Search rendered transcript messages by substring. Each call scans a bounded number of messages; a `truncated` result carries `next_cursor` to pass back as `cursor`. |
 | `set_handoff` | Stage an authored handoff and dispatch the current session's compact or clear boundary. |
 | `get_handoff` | Consume the current session's pending handoff; with `failed_attempt_id`, read the caller's undelivered attempt; with `agent_run_id`, read a child run's final handoff. |
 | `feedback` | Submit the current epoch survey without marking it human-reviewed. |
