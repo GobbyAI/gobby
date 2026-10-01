@@ -437,7 +437,12 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 description=body.description,
                 source="installed",
                 enabled=body.enabled,
-                tags=request.tags,
+                # "gobby" marks rows bundled sync owns; reinstall deletes them.
+                tags=(
+                    None
+                    if request.tags is None
+                    else [tag for tag in request.tags if tag != "gobby"]
+                ),
                 create_only=True,
             )
             return {"status": "success", "definition": row.to_dict()}
@@ -519,7 +524,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 if "name" in fields:
                     update_fields["name"] = fields["name"]
                 if "tags" in fields:
-                    update_fields["tags"] = fields["tags"]
+                    update_fields["tags"] = (
+                        None
+                        if fields["tags"] is None
+                        else [tag for tag in fields["tags"] if tag != "gobby"]
+                    )
 
                 row = manager.update(definition_id, **update_fields)
             return {"status": "success", "definition": row.to_dict()}

@@ -620,6 +620,30 @@ class TestCreateDefinition:
         assert field in response.text
         assert client.get("/api/agents/definitions/lossy-agent").status_code == 404
 
+    def test_gobby_tag_cannot_hand_http_agents_to_reinstall(
+        self, client: TestClient, agent_manager: AgentDefinitionManager
+    ) -> None:
+        """A web duplicate of a bundled agent posts its "gobby" tag; HTTP create and
+        update strip it so reinstall never treats the user's copy as bundled."""
+        from gobby.cli.sync import _delete_installed_definitions
+
+        created = client.post(
+            "/api/agents/definitions",
+            json=_agent_request("developer-copy", tags=["gobby", "default"]),
+        ).json()["definition"]
+        assert created["tags"] == ["default"]
+        updated = client.put(
+            f"/api/agents/definitions/{created['id']}",
+            json={"tags": ["gobby", "edited"]},
+        ).json()["definition"]
+        assert updated["tags"] == ["edited"]
+
+        _delete_installed_definitions(agent_manager.db, {"agents"})
+
+        kept = agent_manager.get(created["id"])
+        assert kept.name == "developer-copy"
+        assert kept.tags == ["edited"]
+
     def test_create_with_project_id(
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
