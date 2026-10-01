@@ -91,10 +91,9 @@ def load_cases(corpus_dir: Path = CORPUS_DIR) -> list[dict[str, Any]]:
         family = families.get(case["family"])
         if family is None:
             raise CorpusError(f"{file_name}: family {case['family']!r} is not in the manifest")
-        if case.get("backend") not in BACKEND_VALUES:
-            raise CorpusError(
-                f"{file_name}: backend {case.get('backend')!r} is neither 'up' nor 'down'"
-            )
+        backend = case.get("backend")
+        if not isinstance(backend, str) or backend not in BACKEND_VALUES:
+            raise CorpusError(f"{file_name}: backend {backend!r} is neither 'up' nor 'down'")
         if family["origin"] == "python" and case["backend"] == "up":
             cases.append(case)
     return cases

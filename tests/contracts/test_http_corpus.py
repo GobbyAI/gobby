@@ -137,8 +137,12 @@ def test_loader_rejects_missing_or_invalid_backend(tmp_path: Path) -> None:
 
     missing = _synthetic_case("health_missing", "health")
     del missing["backend"]
-    invalid = _synthetic_case("health_sideways", "health", backend="sideways")
-    for case in (missing, invalid):
+    invalid = [_synthetic_case("health_sideways", "health", backend="sideways")]
+    for label, value in (("null", None), ("number", 0), ("list", []), ("object", {})):
+        case = _synthetic_case(f"health_{label}", "health")
+        case["backend"] = value
+        invalid.append(case)
+    for case in (missing, *invalid):
         bad = tmp_path / case["name"]
         bad.mkdir()
         _write_corpus(bad, version=1, families=SYNTHETIC_FAMILIES, cases=[case])
