@@ -513,7 +513,6 @@ impl PtyIoActorRunner {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .hung_up = true;
-        debug!(pane = self.pane_id, "PTY actor parked at EOF");
     }
 
     fn run(&mut self) {

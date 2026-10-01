@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import os
 import uuid
 from collections.abc import Awaitable, Callable
@@ -25,8 +24,6 @@ from gobby.terminals.host_client import (
     UpgradeOutcome,
     UpgradeStatus,
 )
-
-logger = logging.getLogger(__name__)
 
 # The host's attempt budget: it arms SIGALRM for this long when an attempt
 # begins (crates/gterminal/src/host/upgrade.rs `BUDGET`).
@@ -96,11 +93,6 @@ class HostUpgradeCoordinator:
         if "host_upgrade" not in capabilities:
             if ping.host_pid not in self._warned_pids:
                 self._warned_pids.add(ping.host_pid)
-                logger.warning(
-                    "gterm host pid %s predates in-place upgrades and keeps its current image; "
-                    "`gobby restart --terminals` replaces it and ends its terminals",
-                    ping.host_pid,
-                )
             return
         status = ping.upgrade
         if status is None:
@@ -127,40 +119,21 @@ class HostUpgradeCoordinator:
             return None
         try:
             fresh = await probe()
-        except Exception as exc:
+        except Exception:
             self._close()
-            logger.warning(
-                "gterm host upgrade attempt %s: fresh check at the deadline failed: %s",
-                window.attempt_id,
-                exc,
-            )
             return None
         client, _hello, ping = fresh
         if (ping.host_pid, ping.host_epoch) != (window.host_pid, window.host_epoch):
             self._close()
-            logger.warning(
-                "gterm host upgrade attempt %s: pid %s epoch %s answered for pid %s epoch %s",
-                window.attempt_id,
-                ping.host_pid,
-                ping.host_epoch,
-                window.host_pid,
-                window.host_epoch,
-            )
             await client.close()
             return None
         if self._close_on_outcome(ping):
             return fresh
         self._close()
         if ping.upgrade is not None and ping.upgrade.phase == "idle":
-            logger.info("gterm host never ran upgrade attempt %s", window.attempt_id)
             return fresh
         # The host arms its alarm when an attempt begins, so a conforming host
         # cannot still be mid-attempt past the deadline.
-        logger.warning(
-            "gterm host upgrade attempt %s still reports phase %s past its deadline",
-            window.attempt_id,
-            ping.upgrade.phase if ping.upgrade is not None else None,
-        )
         await client.close()
         return None
 
@@ -198,26 +171,15 @@ class HostUpgradeCoordinator:
             ConnectionError,
             OSError,
             TimeoutError,
-        ) as exc:
-            logger.info("gterm host upgrade attempt %s: no answer (%s)", attempt_id, exc)
+        ):
             return
         except HostCommandError as exc:
             self._close()
             if exc.code in _ASK_LATER:
-                logger.info("gterm host upgrade attempt %s: %s", attempt_id, exc.code)
                 return
             # `upgrade_refused` names no candidate: the installed image is refused.
             self._refused.add(installed)
-            logger.warning(
-                "gterm host refused upgrade to %s (%s: %s)", installed, exc.code, exc.detail
-            )
             return
-        logger.info(
-            "gterm host pid %s accepted upgrade attempt %s from %s",
-            ping.host_pid,
-            attempt_id,
-            ping.binary_sha256,
-        )
         remaining_ms = reply.get("remaining_ms")
         self._confirm(
             window,
@@ -263,32 +225,9 @@ class HostUpgradeCoordinator:
     def _judge(self, window: UpgradeWindow, outcome: UpgradeOutcome, running: str | None) -> None:
         candidate = outcome.candidate_sha256 or window.candidate_sha256 or window.sha_at_start
         if outcome.outcome == "deferred":
-            logger.info("gterm host deferred upgrade attempt %s", window.attempt_id)
             return
         if outcome.outcome == "succeeded" and running is not None and running == candidate:
-            logger.info(
-                "gterm host pid %s upgraded in place: %s -> %s (attempt %s)",
-                window.host_pid,
-                window.from_sha256,
-                running,
-                window.attempt_id,
-            )
             return
-        if outcome.outcome == "succeeded":
-            logger.warning(
-                "gterm host upgrade attempt %s succeeded but runs %s, expected %s",
-                window.attempt_id,
-                running,
-                candidate,
-            )
-        else:
-            logger.warning(
-                "gterm host upgrade attempt %s ended %s (%s); %s is not retried",
-                window.attempt_id,
-                outcome.outcome,
-                outcome.reason,
-                candidate,
-            )
         if candidate is not None:
             self._refused.add(candidate)
 

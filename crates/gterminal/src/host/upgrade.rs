@@ -14,7 +14,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::{json, Map, Value};
 use tokio::sync::{oneshot, Mutex, MutexGuard, OwnedMutexGuard, OwnedRwLockWriteGuard};
-use tracing::{error, info, warn};
 
 use super::handover::{
     encode_snapshot, monotonic_now_ns, write_state, CarriedIdentity, CarriedObserverBind,
@@ -420,7 +419,6 @@ impl Attempt {
 
     /// Records the terminal outcome, which returns `ping` to idle.
     fn record(&self, outcome: UpgradeOutcome, candidate_sha256: String) {
-        info!(attempt_id = %self.attempt_id, ?outcome, "gterm upgrade attempt ended");
         *self
             .state
             .upgrade
@@ -441,10 +439,10 @@ impl Attempt {
             .unwrap_or_else(PoisonError::into_inner) = None;
     }
 
+    /// Best effort: a candidate pin left behind is removed by the
+    /// `prune_images` pass at the next host start.
     fn drop_candidate(&self, pin: &PinnedImage) {
-        if let Err(err) = image::remove_candidate(pin, &self.state.image) {
-            warn!(path = %pin.path.display(), err = %err, "candidate pin removal failed");
-        }
+        let _ = image::remove_candidate(pin, &self.state.image);
     }
 
     /// A return to idle before acceptance: record, clear the alarm while
@@ -599,7 +597,6 @@ impl Attempt {
             .await
             .unwrap_or_else(|_| vec!["<quiesce panicked>".into()]);
         if !failed.is_empty() {
-            warn!(attempt_id = %self.attempt_id, ?failed, "pane quiesce failed");
             return UpgradeOutcome::Aborted(UpgradeReason::QuiesceTimeout);
         }
 
@@ -638,7 +635,6 @@ impl Attempt {
         let target = path.clone();
         let written = tokio::task::spawn_blocking(move || write_state(&target, &handover)).await;
         if !matches!(written, Ok(Ok(()))) {
-            warn!(attempt_id = %self.attempt_id, ?written, "handover state write failed");
             return UpgradeOutcome::Aborted(UpgradeReason::StateWriteFailed);
         }
         // 1.4: exec only the bytes the probe accepted.
@@ -647,7 +643,6 @@ impl Attempt {
             tokio::task::spawn_blocking(move || pin.verify()).await
         };
         if !matches!(verified, Ok(Ok(()))) {
-            warn!(attempt_id = %self.attempt_id, ?verified, "candidate pin changed");
             return UpgradeOutcome::Aborted(UpgradeReason::PinMismatch);
         }
         if let Some(reason) = self.cutoff() {
@@ -687,10 +682,7 @@ impl Attempt {
             .ok_or(UpgradeReason::SoftDeadline)
         };
         match sigterm::blocked(exec).await {
-            Some(Ok(errno)) => {
-                warn!(attempt_id = %self.attempt_id, errno, "candidate exec failed");
-                UpgradeOutcome::RolledBack { errno }
-            }
+            Some(Ok(errno)) => UpgradeOutcome::RolledBack { errno },
             Some(Err(reason)) => UpgradeOutcome::Aborted(reason),
             None => UpgradeOutcome::Aborted(UpgradeReason::HostDraining),
         }
@@ -740,7 +732,6 @@ impl Attempt {
             }
         }
         if !stuck.is_empty() {
-            error!(attempt_id = %self.attempt_id, ?stuck, "panes refused rollback; ending the host");
             // SAFETY: SIGALRM's action is the default, which ends the process.
             unsafe { libc::raise(libc::SIGALRM) };
             // Never reopen the gate over a pane that refuses input.
@@ -778,10 +769,7 @@ fn quiesce(panes: &[(String, PtyIoActorHandle)], budget: Duration) -> Vec<String
             .into_iter()
             .filter_map(|(id, join)| match join.join() {
                 Ok(Ok(())) => None,
-                Ok(Err(err)) => {
-                    warn!(host_terminal_id = %id, err = %err, "pane quiesce failed");
-                    Some(id.clone())
-                }
+                Ok(Err(_)) => Some(id.clone()),
                 Err(_) => Some(id.clone()),
             })
             .collect()
@@ -840,10 +828,7 @@ fn capture(
         .filter_map(|slot| slot.child.as_ref().map(|child| (slot, child)))
         .collect();
     slots.sort_by(|(a, _), (b, _)| a.host_terminal_id.cmp(&b.host_terminal_id));
-    let failed = |what: &str, id: &str, err: std::io::Error| {
-        warn!(host_terminal_id = %id, err = %err, "pane {what} failed");
-        UpgradeReason::CaptureFailed
-    };
+    let failed = |_what: &str, _id: &str, _err: std::io::Error| UpgradeReason::CaptureFailed;
     let mut panes = Vec::with_capacity(slots.len());
     for (slot, child) in slots {
         let id = slot.host_terminal_id.as_str();

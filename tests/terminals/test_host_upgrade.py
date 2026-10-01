@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import logging
 import os
 import uuid
 from collections.abc import Callable, Iterator
@@ -426,24 +425,16 @@ async def test_failed_candidates_are_not_retried(tmp_path: Path, temp_db: HubDat
 
 
 @pytest.mark.asyncio
-async def test_pre_handover_host_is_left_alone(
-    tmp_path: Path, temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
-) -> None:
-    """2.1.4: a host without the capability is never sent the verb; one warning."""
+async def test_pre_handover_host_is_left_alone(tmp_path: Path, temp_db: HubDatabase) -> None:
+    """2.1.4: a host without the capability is never sent the verb."""
     exe = tmp_path / "bin" / "gterm"
     _install(exe, b"gterm 0.1.4")
     host = _Host(binary_sha256="a" * 64, capabilities=("terminal_theme",))
     rig = _rig(tmp_path, TerminalManager(temp_db), host, exe)
 
-    with caplog.at_level(logging.WARNING):
-        await rig.manager.start()
-        await rig.ticks.run(3)
+    await rig.manager.start()
+    await rig.ticks.run(3)
     assert host.requests == []
-    warnings = [
-        r.getMessage() for r in caplog.records if "gobby restart --terminals" in r.getMessage()
-    ]
-    assert len(warnings) == 1, caplog.text
-    assert str(HOST_PID) in warnings[0]
     await rig.manager.stop()
 
 
