@@ -37,6 +37,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.storage.terminals import TerminalManager
     from gobby.storage.workspaces import WorkspaceManager
     from gobby.terminals import TerminalRuntimeRegistry
+    from gobby.terminals.composer_lock import bind_composer_coordinator
     from gobby.terminals.host_manager import TerminalHostManager
     from gobby.terminals.input_grants import sync_host_input_grant
     from gobby.terminals.leases import HolderChange, TerminalLeaseRegistry
@@ -84,6 +85,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         lease_registry=runner.lease_registry,
     )
     bind_wake_write_services(runner.terminal_manager, runner.write_coordinator)
+    bind_composer_coordinator(runner.write_coordinator)
     runner.wake_dispatcher.set_terminal_manager(runner.terminal_manager)
     runner.terminal_services = TerminalServices(
         manager=runner.terminal_manager,

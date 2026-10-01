@@ -19,7 +19,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
@@ -205,7 +205,8 @@ async def _evaluate(
     has_edits: bool = True,
     transcript_deriver: AsyncMock | None = None,
     linked_paths: set[str] | None = None,
-    deleted_paths: AsyncMock | None = None,
+    deleted_paths: set[str] | None = None,
+    attributed: set[str] | None = None,
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -222,7 +223,7 @@ async def _evaluate(
         findings=(),
         evidence_files=(),
     )
-    attributed_paths = (dirty_paths or {"src/a.py"}) if has_edits else set()
+    attributed_paths = (attributed or dirty_paths or {"src/a.py"}) if has_edits else set()
     foreign_owners = {
         path: (SimpleNamespace(session_ref=session_ref),)
         for path, session_ref in (foreign_owner_sessions or {}).items()
@@ -264,10 +265,14 @@ async def _evaluate(
             "evaluate_task_scope",
             return_value=TaskScopeEvaluation((), (), ()),
         ),
-        patch.multiple(
+        patch.object(
             lifecycle,
-            collect_commit_paths=AsyncMock(return_value=linked_paths or set()),
-            collect_deleted_commit_paths=deleted_paths or AsyncMock(return_value=set()),
+            "collect_net_commit_paths",
+            AsyncMock(
+                return_value=NetCommitPaths(
+                    frozenset(linked_paths or ()), frozenset(deleted_paths or ())
+                )
+            ),
         ),
         patch.object(
             lifecycle,
@@ -302,38 +307,38 @@ async def _evaluate(
 @pytest.mark.asyncio
 async def test_linked_commit_paths_reach_both_validation_evaluations() -> None:
     evaluator = MagicMock(wraps=evaluate_validation_commands)
-    deleted = AsyncMock(return_value={"tests/deleted.py"})
     with patch.object(lifecycle, "evaluate_validation_commands", evaluator):
         evaluation = await _evaluate(
             _task(escalated=False),
             override_justification=None,
             transcript=_transcript_with_test_types_audit(),
             linked_paths={"tests/deleted.py"},
-            deleted_paths=deleted,
+            deleted_paths={"tests/deleted.py"},
         )
 
     assert evaluation.error is None
     assert evaluator.call_count == 2
     assert [call.kwargs["changed_paths"] for call in evaluator.call_args_list] == [
-        {"src/a.py", "tests/deleted.py"},
-        {"src/a.py", "tests/deleted.py"},
+        {"tests/deleted.py"},
+        {"tests/deleted.py"},
     ]
-    deleted.assert_awaited_once_with(["abc123"], "/repo")
     assert evaluator.call_args_list[-1].kwargs["deleted_paths"] == {"tests/deleted.py"}
 
 
-async def test_deleted_paths_are_not_collected_without_a_linked_test() -> None:
-    deleted = AsyncMock(return_value=set())
-    evaluation = await _evaluate(
-        _task(escalated=False),
-        override_justification=None,
-        transcript=_transcript_with_test_types_audit(),
-        linked_paths={"src/b.py"},
-        deleted_paths=deleted,
-    )
+async def test_edited_then_reverted_test_is_not_a_gate_10_changed_path() -> None:
+    # #23181: session edit history still lists a test reverted before commit.
+    evaluator = MagicMock(wraps=evaluate_validation_commands)
+    with patch.object(lifecycle, "evaluate_validation_commands", evaluator):
+        evaluation = await _evaluate(
+            _task(escalated=False),
+            override_justification=None,
+            transcript=_transcript(),
+            attributed={"src/a.py", "tests/test_reverted.py"},
+            linked_paths={"src/a.py"},
+        )
 
+    assert evaluator.call_args_list[-1].kwargs["changed_paths"] == {"src/a.py"}
     assert evaluation.error is None
-    deleted.assert_not_awaited()
 
 
 @pytest.mark.parametrize("response_detail", ["concise", "diagnostic"])

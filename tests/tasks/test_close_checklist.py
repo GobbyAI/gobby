@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,10 +12,11 @@ import pytest
 import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle
 import gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization as close_finalization
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle_validation
+from gobby.config.validation_detection import is_validation_command
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult
 from gobby.tasks.close_checklist import (
@@ -697,11 +699,100 @@ def test_cd_prefixed_pytest_covers_the_changed_python_test() -> None:
     assert gate.details["pytest_uncovered_paths"] == []
 
 
-@pytest.mark.parametrize("directory", ["--directory /repo", "--directory=/repo"])
-def test_uv_run_directory_pytest_covers_the_changed_python_test(directory: str) -> None:
+def test_no_cov_before_paths_credits_every_path() -> None:
     command = (
-        f"GOBBY_TEST_PROTECT=1 uv run {directory} pytest tests/tasks/test_close_checklist.py -q"
+        "uv run pytest --no-cov tests/tasks/test_close_checklist.py "
+        "tests/tasks/test_transcript_outcomes.py -q"
     )
+    gate = _changed_test_gate(command)
+
+    assert pytest_targets(command) == (
+        "tests/tasks/test_close_checklist.py",
+        "tests/tasks/test_transcript_outcomes.py",
+    )
+    assert gate.status == "passed", gate.message
+    assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    ("options", "expected"),
+    [
+        # Valueless pytest and pytest-cov flags leave the next path as a target.
+        *[
+            (flag, ("tests/x.py",))
+            for flag in (
+                "--no-cov",
+                "--no-cov-on-fail",
+                "--cov-append",
+                "--cov-branch",
+                "--cov-reset",
+                "-x",
+                "--exitfirst",
+                "--lf",
+                "--last-failed",
+                "--ff",
+                "--failed-first",
+                "--nf",
+                "--new-first",
+                "--sw",
+                "--stepwise",
+                "--sw-skip",
+                "--stepwise-skip",
+                "--no-header",
+                "--no-summary",
+                "--cache-clear",
+                "--showlocals",
+                "--full-trace",
+                "--strict-markers",
+                "--strict-config",
+                "--disable-warnings",
+                "--runxfail",
+            )
+        ],
+        # Options that take a value still consume it.
+        ("--cov src", ("tests/x.py",)),
+        ("--cov=src --no-cov-on-fail", ("tests/x.py",)),
+        ("-k expr", ("tests/x.py",)),
+        ("-m marker", ("tests/x.py",)),
+        ("-p no:cacheprovider", ("tests/x.py",)),
+    ],
+)
+def test_pytest_options_before_a_path_keep_it_a_target(
+    options: str, expected: tuple[str, ...]
+) -> None:
+    assert pytest_targets(f"uv run pytest {options} tests/x.py -q") == expected
+
+
+def test_uv_directory_with_no_cov_keeps_its_path_scope() -> None:
+    command = "uv run --directory /repo pytest --no-cov tests/x.py tests/y.py -q"
+
+    assert pytest_targets(command) == ("tests/x.py", "tests/y.py")
+
+
+@pytest.mark.parametrize("flag", ["--co", "--collect-only", "--setup-only", "--setup-plan"])
+def test_pytest_runs_that_execute_no_tests_are_not_validation(flag: str) -> None:
+    command = f"uv run pytest {flag} tests/tasks/test_close_checklist.py -q"
+
+    assert is_validation_command(command) is False
+
+
+@pytest.mark.parametrize(
+    "prefix",
+    [
+        "GOBBY_TEST_PROTECT=1 uv run --directory /repo",
+        "GOBBY_TEST_PROTECT=1 uv run --directory=/repo",
+        "rtk uv run --directory /repo --no-sync",
+        "uv run --no-sync --directory /repo",
+        "uv run --no-sync",
+        "uv --directory /repo run --no-sync",
+        "uv --project=/repo run",
+        "UV_NO_SYNC=1 GOBBY_TEST_PROTECT=1 uv run --project /repo --frozen",
+        "rtk uv run --locked --offline",
+        "uv run rtk",
+    ],
+)
+def test_uv_run_options_pytest_covers_the_changed_python_test(prefix: str) -> None:
+    command = f"{prefix} pytest tests/tasks/test_close_checklist.py -q"
     core_command = _run(2, command=command).core_command
     gate = _changed_test_gate(command)
 
@@ -709,6 +800,93 @@ def test_uv_run_directory_pytest_covers_the_changed_python_test(directory: str) 
     assert pytest_targets(core_command) == ("tests/tasks/test_close_checklist.py",)
     assert gate.status == "passed", gate.message
     assert gate.details["pytest_uncovered_paths"] == []
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "rtk uv run --directory /repo --no-sync pytest tests/other_test.py -q",
+        # An unlisted uv option may change what runs, so it still declines credit.
+        "uv run --with pytest-xdist pytest tests/tasks/test_close_checklist.py -q",
+        "uv run --no-sync --isolated pytest tests/tasks/test_close_checklist.py -q",
+    ],
+)
+def test_uv_run_options_do_not_credit_other_scopes(command: str) -> None:
+    gate = _changed_test_gate(command)
+
+    assert gate.status == "failed"
+    assert gate.details["pytest_uncovered_paths"] == ["tests/tasks/test_close_checklist.py"]
+
+
+def test_failing_uv_run_no_sync_pytest_earns_no_credit() -> None:
+    command = "rtk uv run --directory /repo --no-sync pytest tests/tasks/test_close_checklist.py"
+    gate = evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, "tests/tasks/test_close_checklist.py"),
+                _run(2, command=command, outcome="failure"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=("tests/tasks/test_close_checklist.py",),
+    )
+
+    assert gate.status == "failed"
+
+
+def _scoped_pytest_gate(tmp_path: Path, failing_command: str) -> CloseGateResult:
+    """Close task A after a passing run in A's worktree and a later failing run."""
+    own = tmp_path / "task-a"
+    own.mkdir()
+    test_path = "tests/tasks/test_close_checklist.py"
+    return evaluate_validation_commands(
+        task_category="code",
+        evidence=TranscriptEvidence(
+            validation_runs=(
+                _scoped_audit_run(1, test_path),
+                _run(2, command=f"uv run --directory {own} pytest {test_path}"),
+                _run(3, command=failing_command.format(own=own, tmp=tmp_path), outcome="failure"),
+            )
+        ),
+        has_attributed_edits=True,
+        changed_paths=(test_path,),
+        close_root=str(own),
+    )
+
+
+def test_failing_pytest_scoped_to_another_worktree_does_not_fail_the_close(
+    tmp_path: Path,
+) -> None:
+    # The #23010/#23188 shape: a RED run for task B lands after task A's clean run.
+    (tmp_path / "task-b").mkdir()
+    foreign = (
+        "rtk uv run --directory {tmp}/task-b --no-sync pytest tests/tasks/test_close_checklist.py"
+    )
+
+    gate = _scoped_pytest_gate(tmp_path, foreign)
+
+    assert gate.status == "passed"
+    assert gate.details["foreign_scope_runs"] == [foreign.format(tmp=tmp_path)]
+
+
+@pytest.mark.parametrize(
+    "failing_command",
+    [
+        "uv run --directory {own} pytest tests/tasks/test_close_checklist.py",
+        "uv run --project={own}/tests pytest tests/tasks/test_close_checklist.py",
+        "uv run --directory ../task-b pytest tests/tasks/test_close_checklist.py",
+        "uv run pytest tests/tasks/test_close_checklist.py",
+    ],
+    ids=["own-worktree", "own-subdirectory", "relative-scope", "no-scope"],
+)
+def test_failing_pytest_in_own_or_unresolvable_scope_still_fails(
+    tmp_path: Path, failing_command: str
+) -> None:
+    gate = _scoped_pytest_gate(tmp_path, failing_command)
+
+    assert gate.status == "failed"
+    assert gate.details["unresolved_failure_categories"] == ["test"]
 
 
 @pytest.mark.parametrize(
@@ -2021,7 +2199,7 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
@@ -2116,7 +2294,7 @@ async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failu
     with (
         patch.object(lifecycle, "resolve_task_id_for_mcp", return_value=task.id),
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),

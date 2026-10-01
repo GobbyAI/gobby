@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -10,10 +11,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.persistence import MemoryConfig
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_write import derive_memory_create_provenance
-from gobby.storage.memories import MemoryType
-from gobby.storage.tasks import TaskNotFoundError
+from gobby.memory.manager import MemoryManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories import Memory, MemoryType
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager, TaskNotFoundError
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
 
@@ -170,7 +176,7 @@ async def test_reviewing_every_queued_closure_releases_the_stop_gate() -> None:
     assert result["pending_reviews_complete"] is True
     assert result["pending_reviews"] == []
     state_manager.upsert_bounded_list_variable.assert_called_once()
-    state_manager.get_variables.assert_called_once_with(SESSION_ID)
+    state_manager.get_variables.assert_called_with(SESSION_ID)
     state_manager.set_variable.assert_called_once_with(
         SESSION_ID, "_memory_review_stop_delivered", True
     )
@@ -362,7 +368,8 @@ async def test_search_failure_records_no_review_completion() -> None:
 
     assert result["error"] == "memory_search_failed"
     assert "embedding service unavailable" in result["message"]
-    state_manager_cls.assert_not_called()
+    state_manager_cls.return_value.upsert_bounded_list_variable.assert_not_called()
+    state_manager_cls.return_value.set_variable.assert_not_called()
 
 
 _LADDER_MEMORY = SimpleNamespace(
@@ -509,3 +516,183 @@ def test_closed_task_is_accepted_as_explicit_create_memory_source() -> None:
 
     assert source_task_id == TASK_ID
     assert created_by_agent == "codex"
+
+
+# Accessed tier: real sessions, tasks and memories; get_memory writes the
+# accessed_memory_ids records the review reads. Only the search is stubbed.
+
+LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
+
+
+@dataclass
+class _ReviewWorld:
+    db: HubDatabase
+    project_id: str
+    session_id: str
+    sessions: SessionManager
+    memories: MemoryManager
+    search: AsyncMock
+    registry: Any
+
+    async def memory(self, content: str) -> Memory:
+        return await self.memories.create_memory(content, project_id=self.project_id)
+
+    async def fetch(self, memory: Memory, session_id: str | None = None) -> None:
+        result = await self.registry.call(
+            "get_memory",
+            {"memory_id": memory.id, "session_id": session_id or self.session_id},
+        )
+        assert result["success"] is True, result
+
+    def claim(self, title: str, session_id: str | None = None) -> str:
+        tasks = LocalTaskManager(self.db)
+        task = tasks.create_task(self.project_id, title, validation_criteria="Observable.")
+        tasks.claim_task(task.id, session_id or self.session_id)
+        return task.id
+
+    def close(self, task_id: str, session_id: str | None = None) -> None:
+        LocalTaskManager(self.db).close_task(
+            task_id, closed_in_session_id=session_id or self.session_id
+        )
+
+    def child_session(self) -> str:
+        child = self.sessions.register(
+            external_id="review-child",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=self.project_id,
+            parent_session_id=self.session_id,
+        )
+        return str(child.id)
+
+    async def review(self, task_id: str) -> dict[str, Any]:
+        result: dict[str, Any] = await self.registry.call(
+            "review_task_memories",
+            {"task_id": task_id, "changes_summary": "Done.", "session_id": self.session_id},
+        )
+        assert result["success"] is True, result
+        return result
+
+
+def _tiers(result: dict[str, Any]) -> list[tuple[str, str]]:
+    return [(candidate["id"], candidate["source"]) for candidate in result["candidates"]]
+
+
+@pytest.fixture
+async def review_world(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> AsyncIterator[_ReviewWorld]:
+    project_id = str(sample_project["id"])
+    memories = MemoryManager(temp_db, MemoryConfig())
+    search = AsyncMock(return_value=[])
+    with (
+        patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID),
+        patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": project_id},
+        ),
+        patch.object(memories, "search_memories", search),
+    ):
+        sessions = SessionManager(temp_db)
+        session = sessions.register(
+            external_id="review-caller",
+            machine_id=LOCAL_MACHINE_ID,
+            source="claude",
+            project_id=project_id,
+        )
+        registry = create_memory_registry(
+            lambda: memories,
+            session_manager=sessions,
+            task_manager=LocalTaskManager(temp_db),
+        )
+        yield _ReviewWorld(
+            temp_db, project_id, str(session.id), sessions, memories, search, registry
+        )
+
+
+async def test_accessed_candidates_listed_first(review_world: _ReviewWorld) -> None:
+    untagged = await review_world.memory("Fetched before any claim")
+    second = await review_world.memory("Fetched second under the task")
+    third = await review_world.memory("Fetched third under the task")
+    found = await review_world.memory("Found only by search")
+    await review_world.fetch(untagged)
+    task_id = review_world.claim("Reviewed task")
+    await review_world.fetch(second)
+    await review_world.fetch(third)
+    # A tagged record beside the untagged one still lists the memory once, first.
+    await review_world.fetch(untagged)
+    review_world.close(task_id)
+    review_world.search.return_value = [found]
+
+    result = await review_world.review(task_id)
+
+    assert _tiers(result) == [
+        (untagged.id, "accessed"),
+        (second.id, "accessed"),
+        (third.id, "accessed"),
+        (found.id, "search"),
+    ]
+
+
+async def test_other_task_accessed_records_excluded(review_world: _ReviewWorld) -> None:
+    other = await review_world.memory("Fetched under another task")
+    own = await review_world.memory("Fetched under the reviewed task")
+    other_task = review_world.claim("Other task")
+    await review_world.fetch(other)
+    LocalTaskManager(review_world.db).release_task_claim(other_task)
+    task_id = review_world.claim("Reviewed task")
+    await review_world.fetch(own)
+    review_world.close(task_id)
+
+    result = await review_world.review(task_id)
+
+    assert _tiers(result) == [(own.id, "accessed")]
+
+
+async def test_memory_fetched_under_two_tasks_found_by_each_review(
+    review_world: _ReviewWorld,
+) -> None:
+    shared = await review_world.memory("Fetched under two tasks")
+    first_task = review_world.claim("First task")
+    await review_world.fetch(shared)
+    review_world.close(first_task)
+    second_task = review_world.claim("Second task")
+    await review_world.fetch(shared)
+    review_world.close(second_task)
+
+    first = await review_world.review(first_task)
+    second = await review_world.review(second_task)
+
+    assert _tiers(first) == [(shared.id, "accessed")]
+    assert _tiers(second) == [(shared.id, "accessed")]
+
+
+async def test_closing_session_accessed_records_included(review_world: _ReviewWorld) -> None:
+    own = await review_world.memory("Fetched by the reviewing session")
+    worker = await review_world.memory("Fetched by the spawned worker")
+    child_id = review_world.child_session()
+    await review_world.fetch(own)
+    task_id = review_world.claim("Delegated task", session_id=child_id)
+    await review_world.fetch(worker, session_id=child_id)
+    review_world.close(task_id, session_id=child_id)
+
+    result = await review_world.review(task_id)
+
+    assert _tiers(result) == [(own.id, "accessed"), (worker.id, "accessed")]
+
+
+async def test_search_tier_deduped_against_accessed(review_world: _ReviewWorld) -> None:
+    fetched = await review_world.memory("Fetched and also found by search")
+    found = await review_world.memory("Found only by search")
+    task_id = review_world.claim("Reviewed task")
+    await review_world.fetch(fetched)
+    review_world.close(task_id)
+    review_world.search.return_value = [fetched, found]
+
+    result = await review_world.review(task_id)
+
+    assert _tiers(result) == [(fetched.id, "accessed"), (found.id, "search")]
+    records = SessionVariableManager(review_world.db).get_variables(review_world.session_id)[
+        "_memory_task_review_records"
+    ]
+    assert records[-1]["candidate_ids"] == [fetched.id, found.id]

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths
 from gobby.storage.project_checkouts import CheckoutNotFoundError
 from gobby.storage.tasks import Task
 from gobby.tasks.validation import PreparedCloseReview
@@ -136,8 +137,8 @@ def _linked_commits_exist() -> Iterator[None]:
             new=ECHOING_DAEMON_GIT,
         ),
         patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-            return_value=set(),
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+            return_value=NetCommitPaths(),
         ),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_finalization.collect_commit_paths",
@@ -794,8 +795,18 @@ class TestCloseTaskTool:
             assert not mock_task_manager.close_task.called
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("ledger_paths", "expected_error"),
+        [
+            pytest.param(("wiki/knowledge/topics/x.md",), None, id="ignored-ledger"),
+            pytest.param((), "task_edit_paths_unavailable", id="missing-ledger"),
+        ],
+    )
     async def test_close_task_succeeds_when_only_gitignored_paths_edited(
-        self, mock_task_manager: MagicMock
+        self,
+        mock_task_manager: MagicMock,
+        ledger_paths: tuple[str, ...],
+        expected_error: str | None,
     ) -> None:
         """Gitignored-only edits (e.g. a vault under wiki/) never need a commit."""
         mock_task = _contract_task()
@@ -828,6 +839,7 @@ class TestCloseTaskTool:
             ),
             patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
             patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+            patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=True),
         ):
             mock_proj_instance = MagicMock()
             mock_proj_instance.get.return_value = MagicMock()
@@ -838,7 +850,7 @@ class TestCloseTaskTool:
             MockSessionManager.return_value = mock_session_instance
             MockSVManager.return_value.get_variables.return_value = {
                 "task_edited_files": {
-                    "550e8400-e29b-41d4-a716-446655440000": ["wiki/knowledge/topics/x.md"],
+                    "550e8400-e29b-41d4-a716-446655440000": list(ledger_paths),
                 },
             }
             registry = create_task_registry(
@@ -854,10 +866,10 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result["success"] is True
-            assert mock_task_manager.close_task.call_count == 1
+            assert result["success"] is (expected_error is None)
+            assert result.get("error") == expected_error
+            assert mock_task_manager.close_task.call_count == int(expected_error is None)
             assert mock_task_manager.link_commit.call_count == 0
-            mock_task_manager.close_task.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_close_task_out_of_repo_succeeds_with_unrelated_task_edits(

@@ -18,7 +18,7 @@ from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
 from gobby.storage.tasks._stage_types import StageState5
@@ -568,8 +568,8 @@ class TestCloseTask:
                 return_value=TaskScopeEvaluation((), (), ()),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-                return_value=set(),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+                return_value=NetCommitPaths(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
@@ -632,8 +632,8 @@ class TestCloseTask:
                 return_value=TaskScopeEvaluation((), (), ()),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-                return_value=set(),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+                return_value=NetCommitPaths(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
@@ -744,8 +744,8 @@ class TestCloseTask:
                 return_value=TaskScopeEvaluation((), (), ()),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-                return_value=set(),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+                return_value=NetCommitPaths(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",

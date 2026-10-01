@@ -56,10 +56,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._task_scope import (
-    collect_commit_paths_async as collect_commit_paths,
-)
-from gobby.mcp_proxy.tools.tasks._task_scope import (
-    collect_deleted_commit_paths_async as collect_deleted_commit_paths,
+    collect_net_commit_paths_async as collect_net_commit_paths,
 )
 from gobby.mcp_proxy.tools.tasks._task_scope import (
     evaluate_task_scope_async as evaluate_task_scope,
@@ -76,7 +73,6 @@ from gobby.tasks.acceptance_artifacts import (
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.close_receipts import close_receipt_facts
-from gobby.tasks.close_test_coverage import changed_python_test_paths
 from gobby.tasks.commits import collect_commit_diff_text_async as collect_commit_diff_text
 from gobby.tasks.commits import collect_commit_rename_aliases_async
 from gobby.tasks.criteria_contract import operational_actions_from_command
@@ -539,13 +535,10 @@ async def _evaluate_close(
         repo_path=repo_path,
     )
 
+    # Gate 10 attributes only the candidate's net diff: edit history still lists
+    # files reverted before commit or by a later link (#23181).
     try:
-        committed_paths = await collect_commit_paths(commit_shas, repo_path)
-        deleted_paths = (
-            await collect_deleted_commit_paths(commit_shas, repo_path)
-            if changed_python_test_paths(committed_paths)
-            else set()
-        )
+        net_paths = await collect_net_commit_paths(commit_shas, repo_path)
     except RuntimeError as exc:
         return evaluation.fail(
             10,
@@ -553,7 +546,8 @@ async def _evaluate_close(
             "validation_paths_unavailable",
             f"Cannot determine changed paths for validation requirements: {exc}",
         ).block_remaining()
-    validation_paths = evaluation.edited_paths | committed_paths
+    validation_paths = set(net_paths.changed)
+    deleted_paths = set(net_paths.deleted)
     transcript = TranscriptEvidence()
     command_gate = replace(
         evaluate_validation_commands(
@@ -637,6 +631,7 @@ async def _evaluate_close(
                 validation_criteria=task.validation_criteria or "",
                 changed_paths=validation_paths,
                 deleted_paths=deleted_paths,
+                close_root=repo_path,
             ),
             item=10,
         )

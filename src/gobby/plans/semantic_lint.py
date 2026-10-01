@@ -290,7 +290,12 @@ def _iter_inventory_block_lines(
 ) -> Iterator[str]:
     """Yield header content and continuation lines from each Target/Targets block."""
 
-    body_lines = section_body_lines(plan_doc, section, before_acceptance=True)
+    yield from _iter_inventory_lines(
+        section_body_lines(plan_doc, section, before_acceptance=True), header
+    )
+
+
+def _iter_inventory_lines(body_lines: list[str], header: re.Pattern[str]) -> Iterator[str]:
     index = 0
     while index < len(body_lines):
         line = body_lines[index]
@@ -313,6 +318,7 @@ def _iter_inventory_block_lines(
                 _TARGET_LINE_RE.match(candidate)
                 or _UNCHANGED_LINE_RE.match(candidate)
                 or _ACCEPTANCE_RE.match(candidate)
+                or re.match(r"^\s*Acceptance\s*:", candidate, re.IGNORECASE)
             ):
                 break
             if stripped.startswith("#") or stripped.startswith("`kind:"):
@@ -329,7 +335,15 @@ def collect_target_inventory(plan_doc: PlanDocument, section: PlanSection) -> fr
 
     targets: set[str] = set()
     for line in iter_target_block_lines(plan_doc, section):
-        targets.update(find_file_paths_in_text(line))
+        targets.update(find_target_paths_in_text(line))
+    return frozenset(targets)
+
+
+def collect_description_target_inventory(description: str | None) -> frozenset[str]:
+    """Read explicit Targets from a task description using the plan inventory grammar."""
+    targets: set[str] = set()
+    for line in _iter_inventory_lines((description or "").splitlines(), _TARGET_LINE_RE):
+        targets.update(find_target_paths_in_text(line))
     return frozenset(targets)
 
 
@@ -356,11 +370,34 @@ def _primary_target_path(line: str) -> str | None:
     entry = line.split(_PRIMARY_TOKEN_SEPARATOR, 1)[0]
     ticked = _BACKTICK_RE.search(entry)
     if ticked is not None:
-        return normalize_file_path(ticked.group(1))
-    token = _PATH_TOKEN_RE.search(_BULLET_RE.sub("", entry, count=1))
-    if token is None:
+        return normalize_target_path(ticked.group(1))
+    return normalize_target_path(_BULLET_RE.sub("", entry, count=1).split(",", 1)[0])
+
+
+def find_target_paths_in_text(text: str) -> set[str]:
+    """Read concrete Target entries without the prose parser's suffix whitelist."""
+    entry = text.split(_PRIMARY_TOKEN_SEPARATOR, 1)[0]
+    candidates = [match.group(1) for match in _BACKTICK_RE.finditer(entry)]
+    candidates.extend(_BULLET_RE.sub("", part, count=1) for part in entry.split(","))
+    return {path for candidate in candidates if (path := normalize_target_path(candidate))}
+
+
+def normalize_target_path(value: str) -> str | None:
+    """Normalize an explicitly declared repository path, including extensionless files."""
+    candidate = value.strip().strip("`'\"").rstrip(".,;:)").replace("\\", "/")
+    candidate = re.sub(r":\d+(?:-\d+)?$", "", candidate).split("::", 1)[0]
+    path = PurePosixPath(candidate)
+    if (
+        not candidate
+        or ":" in candidate
+        or any(char.isspace() for char in candidate)
+        or path.is_absolute()
+        or ".." in path.parts
+        or path.name in {"", "."}
+        or (path.name == _suffix(path.name) and _suffix(path.name) in _KNOWN_FILE_SUFFIXES)
+    ):
         return None
-    return normalize_file_path(token.group("path"))
+    return f"{path}/" if candidate.endswith("/") else str(path)
 
 
 def section_body_lines(

@@ -8,6 +8,8 @@ _MUTATING_VALIDATION_ARGS = ["--fix", "--unsafe-fixes", "--write", "-w"]
 _NON_EXECUTING_VALIDATION_ARGS = [
     "--collect-only",
     "--co",
+    "--setup-only",
+    "--setup-plan",
     "--version",
     "-V",
     "--help",

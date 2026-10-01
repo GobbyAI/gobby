@@ -154,8 +154,9 @@ async def capture_attribution(
     if used_commit_fallback:
         # Escalation, recovery, a fresh claimant, or ignored scratch can leave the
         # volatile ledger without committable paths. Recover the durable commit
-        # paths so validation and transcript gates still receive edit evidence.
-        raw_paths = await _linked_commit_paths(
+        # paths so validation and transcript gates still receive edit evidence,
+        # retaining known ignored paths when no durable commit paths exist.
+        raw_paths |= await _linked_commit_paths(
             task,
             repo_path,
             prospective_commit_shas,

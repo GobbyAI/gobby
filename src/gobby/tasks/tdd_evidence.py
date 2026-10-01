@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import re
 import shlex
+import sys
 import textwrap
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -33,6 +35,9 @@ _PYTEST_LOCATION_RE = re.compile(
     r"(?: in (?P<symbol>\S+)| (?:[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)|Failed)(?::.*)?"
     r"| assert(?:\s+.*)?)?\s*$"
 )
+# pytest.fail() reached from a test body. pytest-timeout kills report as
+# `Failed: Timeout`, which proves nothing about the code under test.
+_PYTEST_FAIL_DETAIL_RE = re.compile(r"^\s*E\s+Failed:(?!\s+Timeout\b)", re.MULTILINE)
 _PYTHON_EXCEPTION_DETAIL_RE = re.compile(
     r"^\s*E\s+(?:[A-Za-z_][A-Za-z0-9_.]*)(?:Error|Exception)(?::|\s*$)",
     re.MULTILINE,
@@ -286,16 +291,149 @@ def _find_red_run(
         matched, reason = _has_named_red_failure(core_command, run.output, test)
         matched = matched or source_failure
         if matched:
-            if not require_not_implemented or (
+            if _has_pytest_fail_placeholder(test, evidence, run):
+                reason = "test body is an unconditional pytest.fail placeholder"
+            elif not require_not_implemented or (
                 _has_python_keyword_stub(test, evidence, run)
                 or _has_python_module_stub(test, evidence, run)
             ):
                 return run, None
-            reason = (
-                "post-production red has no attributable NotImplementedError or proven API stub"
-            )
+            else:
+                reason = (
+                    "post-production red has no attributable NotImplementedError or proven API stub"
+                )
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
+
+
+def _has_pytest_fail_placeholder(
+    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+) -> bool:
+    """Reject fail reached before control flow or a call into application code."""
+    node = _original_test_node(test, evidence, run)
+    if node is None:
+        return False
+    # Builtins, stdlib and test-framework setup are not calls into code under test.
+    setup_roots = {"pytest", "unittest", "builtins"}
+    fail_calls = {"pytest.fail"}
+    module = _original_test_module(test, evidence, run)
+    for item in [*(module.body if module is not None else ()), *node.body]:
+        if isinstance(item, ast.Import):
+            fail_calls.update(
+                f"{alias.asname or alias.name}.fail"
+                for alias in item.names
+                if alias.name == "pytest"
+            )
+            setup_roots.update(
+                alias.asname or alias.name.split(".")[0]
+                for alias in item.names
+                if alias.name.split(".")[0] in sys.stdlib_module_names | {"pytest"}
+            )
+        elif isinstance(item, ast.ImportFrom) and (item.module or "").split(".")[0] in (
+            sys.stdlib_module_names | {"pytest"}
+        ):
+            setup_roots.update(alias.asname or alias.name for alias in item.names)
+            if item.module == "pytest":
+                fail_calls.update(
+                    alias.asname or alias.name for alias in item.names if alias.name == "fail"
+                )
+    for statement in node.body:
+        for item in _executed_python_nodes(statement):
+            if isinstance(
+                item,
+                ast.If
+                | ast.IfExp
+                | ast.BoolOp
+                | ast.For
+                | ast.AsyncFor
+                | ast.While
+                | ast.Try
+                | ast.TryStar
+                | ast.With
+                | ast.AsyncWith
+                | ast.Match
+                | ast.Assert
+                | ast.comprehension,
+            ) or (isinstance(item, ast.Compare) and len(item.comparators) > 1):
+                return False
+            if isinstance(item, ast.Call):
+                if ast.unparse(item.func) in fail_calls:
+                    return True
+                root = ast.unparse(item.func).split(".", 1)[0]
+                if root not in setup_roots and root not in vars(builtins):
+                    return False
+    return False
+
+
+def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
+    """Visit eager evaluations before their call or conditional boundary."""
+    children: Iterable[ast.AST]
+    if isinstance(statement, ast.Assign):
+        children = [statement.value, *statement.targets]
+    elif isinstance(statement, ast.AnnAssign):
+        # Local annotations are not evaluated, even with no assigned value.
+        children = [*(() if statement.value is None else (statement.value,)), statement.target]
+    elif isinstance(statement, ast.AugAssign):
+        children = [statement.target, statement.value]
+    elif isinstance(statement, ast.Dict):
+        children = (
+            child
+            for key, value in zip(statement.keys, statement.values, strict=True)
+            for child in (key, value)
+            if child is not None
+        )
+    elif isinstance(statement, ast.Call):
+        # Starred positional arguments run before keywords, even when written later.
+        children = [statement.func, *statement.args, *(kw.value for kw in statement.keywords)]
+    elif isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        decorators = getattr(statement, "decorator_list", [])
+        children = [
+            *decorators,
+            *statement.args.defaults,
+            *(value for value in statement.args.kw_defaults if value is not None),
+            *_decorator_applications(decorators),
+        ]
+    elif isinstance(statement, ast.ClassDef):
+        children = [
+            *statement.decorator_list,
+            *statement.bases,
+            *(kw.value for kw in statement.keywords),
+            *statement.body,
+            *_decorator_applications(statement.decorator_list),
+        ]
+    elif isinstance(statement, ast.Compare) and len(statement.comparators) > 1:
+        # Later comparators run only when every earlier comparison holds.
+        children = [statement.left, statement.comparators[0]]
+    elif isinstance(statement, ast.TypeAlias):
+        children = ()
+    elif isinstance(statement, ast.If | ast.While | ast.IfExp | ast.Assert):
+        children = [statement.test]
+    elif isinstance(statement, ast.BoolOp):
+        children = statement.values[:1]
+    elif isinstance(statement, ast.For | ast.AsyncFor | ast.comprehension):
+        children = [statement.iter]
+    elif isinstance(statement, ast.With | ast.AsyncWith):
+        children = [item.context_expr for item in statement.items]
+    elif isinstance(statement, ast.Match):
+        children = [statement.subject]
+    elif isinstance(statement, ast.Try | ast.TryStar):
+        children = ()
+    elif isinstance(statement, ast.GeneratorExp):
+        # Construction evaluates only the first iterator; the body stays lazy.
+        children = [statement.generators[0].iter]
+    elif isinstance(statement, ast.ListComp | ast.SetComp | ast.DictComp):
+        # The remaining clauses and body are conditional on the first iterator.
+        children = statement.generators[:1]
+    else:
+        children = ast.iter_child_nodes(statement)
+    for child in children:
+        yield from _executed_python_nodes(child)
+    yield statement
+
+
+def _decorator_applications(decorators: list[ast.expr]) -> list[ast.Call]:
+    """Model each decorator's call on the defined object, innermost first."""
+    return [ast.Call(func=decorator, args=[], keywords=[]) for decorator in reversed(decorators)]
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
@@ -790,6 +928,7 @@ def _section_has_artifact_location(section: str, test: AcceptanceTest) -> bool:
 def _section_has_failure_detail(section: str) -> bool:
     return bool(
         _ASSERTION_DETAIL_RE.search(section)
+        or _PYTEST_FAIL_DETAIL_RE.search(section)
         or _PYTHON_EXCEPTION_DETAIL_RE.search(section)
         or _RAISE_EXCEPTION_DETAIL_RE.search(section)
     )
