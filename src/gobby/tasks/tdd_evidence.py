@@ -338,11 +338,6 @@ def _has_pytest_fail_placeholder(
                     alias.asname or alias.name for alias in item.names if alias.name == "fail"
                 )
     for statement in node.body:
-        is_fail = (
-            isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Call)
-            and ast.unparse(statement.value.func) in fail_calls
-        )
         for item in _executed_python_nodes(statement):
             if isinstance(
                 item,
@@ -358,33 +353,46 @@ def _has_pytest_fail_placeholder(
                 | ast.AsyncWith
                 | ast.Match
                 | ast.Assert
-                | ast.Return
-                | ast.Raise
                 | ast.comprehension,
             ):
                 return False
             if isinstance(item, ast.Call):
+                if ast.unparse(item.func) in fail_calls:
+                    return True
                 root = ast.unparse(item.func).split(".", 1)[0]
                 if root not in setup_roots and root not in vars(builtins):
                     return False
-        if is_fail:
-            return True
     return False
 
 
 def _executed_python_nodes(statement: ast.AST) -> Iterable[ast.AST]:
-    """Walk evaluated expressions, excluding uncalled function/lambda bodies."""
-    pending = [statement]
-    while pending:
-        node = pending.pop()
-        yield node
-        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
-            pending.extend(node.args.defaults)
-            pending.extend(value for value in node.args.kw_defaults if value is not None)
-            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-                pending.extend(node.decorator_list)
-        else:
-            pending.extend(ast.iter_child_nodes(node))
+    """Visit evaluations before their call or conditional boundary, in source order."""
+    children: Iterable[ast.AST]
+    if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef | ast.Lambda):
+        children = [
+            *getattr(statement, "decorator_list", ()),
+            *statement.args.defaults,
+            *(value for value in statement.args.kw_defaults if value is not None),
+        ]
+    elif isinstance(statement, ast.If | ast.While | ast.IfExp | ast.Assert):
+        children = [statement.test]
+    elif isinstance(statement, ast.BoolOp):
+        children = statement.values[:1]
+    elif isinstance(statement, ast.For | ast.AsyncFor | ast.comprehension):
+        children = [statement.iter]
+    elif isinstance(statement, ast.With | ast.AsyncWith):
+        children = [item.context_expr for item in statement.items]
+    elif isinstance(statement, ast.Match):
+        children = [statement.subject]
+    elif isinstance(statement, ast.Try | ast.TryStar):
+        children = ()
+    elif isinstance(statement, ast.ListComp | ast.SetComp | ast.DictComp | ast.GeneratorExp):
+        children = statement.generators
+    else:
+        children = ast.iter_child_nodes(statement)
+    for child in children:
+        yield from _executed_python_nodes(child)
+    yield statement
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:

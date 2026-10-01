@@ -1645,6 +1645,39 @@ def _tb_line_red(
             None,
             id="fail-after-production-call",
         ),
+        *[
+            pytest.param(
+                "import pytest\n\ndef test_feature():\n    " + statement + "\n",
+                _tb_line_red("Failed: not written yet"),
+                2,
+                "unconditional pytest.fail placeholder",
+                id=f"placeholder-expression-{name}",
+            )
+            for name, statement in (
+                ("assign", 'result = pytest.fail("not written yet")'),
+                ("annassign", 'result: object = pytest.fail("not written yet")'),
+                ("augassign", 'result += pytest.fail("not written yet")'),
+                ("return", 'return pytest.fail("not written yet")'),
+                ("raise", 'raise pytest.fail("not written yet")'),
+                ("nested-call", 'print(pytest.fail("not written yet"))'),
+                ("application-argument", 'feature(pytest.fail("not written yet"))'),
+                ("tuple", '(pytest.fail("not written yet"), feature())'),
+                ("walrus", '(result := pytest.fail("not written yet"))'),
+                ("if-test", 'if pytest.fail("not written yet"):\n        pass'),
+                ("while-test", 'while pytest.fail("not written yet"):\n        pass'),
+                ("assert-test", 'assert pytest.fail("not written yet")'),
+                ("bool-first", 'pytest.fail("not written yet") or feature()'),
+                ("with-context", 'with pytest.fail("not written yet"):\n        pass'),
+            )
+        ],
+        pytest.param(
+            "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
+            '    result = pytest.fail(f"feature returned {feature()}")\n',
+            _tb_line_red("Failed: feature returned False"),
+            2,
+            None,
+            id="assigned-fail-evaluates-production-call",
+        ),
         pytest.param(
             "import pytest\nfrom feature import feature\n\ndef test_feature():\n"
             '    pytest.fail(f"feature returned {feature()}")\n',
