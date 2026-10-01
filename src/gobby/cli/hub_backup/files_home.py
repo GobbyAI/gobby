@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 from gobby.cli.hub_backup._integrity import file_digest
 from gobby.cli.hub_backup._manifest import ArtifactRecord, VerificationState
@@ -32,6 +32,7 @@ PACK_FILES_PREFIX = "gobby/files"
 FILES_ARCHIVE_RELPATH = "files/files_home.tar"
 FILES_STORE_KEY = "files"
 FILES_ARCHIVE_METHOD = "files-home-prewalk+sha256"
+_DESTINATION_CREDENTIAL_KEYS = ("database_url", "credential_rotation")
 
 
 class FilesHomeArchiveError(Exception):
@@ -520,20 +521,51 @@ def _publish_member(
         temp_path.unlink(missing_ok=True)
 
 
+def archived_bootstrap(
+    destination: dict[str, Any], archived: bytes, dest_files_home: Path
+) -> dict[str, Any]:
+    """Adopt an archived bootstrap.yaml while the destination keeps what it owns.
+
+    The destination keeps its files_home and its PostgreSQL credentials
+    (database_url and any pending credential_rotation); the rest comes from the archive.
+    """
+    import yaml
+
+    from gobby.config.bootstrap import BootstrapConfigError
+
+    # Parser errors quote the offending line, which can carry a credential.
+    try:
+        text = archived.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BootstrapConfigError("archived bootstrap.yaml is not valid UTF-8") from exc
+    try:
+        loaded = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise BootstrapConfigError("archived bootstrap.yaml is not valid YAML") from exc
+    data = dict(loaded) if isinstance(loaded, dict) else {}
+    for key in _DESTINATION_CREDENTIAL_KEYS:
+        data.pop(key, None)
+        if key in destination:
+            data[key] = destination[key]
+    data["files_home"] = str(dest_files_home)
+    data.setdefault("datastore_mode", "local")
+    return data
+
+
 def merge_bootstrap_preserving_files_home(
     dest_bootstrap: Path,
     archived: bytes,
     dest_files_home: Path,
 ) -> None:
-    import yaml
+    """Replace the destination bootstrap with the archived one under the bootstrap lock."""
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
 
-    from gobby.config.bootstrap_io import write_bootstrap_yaml
+    def adopt(data: dict[str, Any]) -> None:
+        merged = archived_bootstrap(data, archived, dest_files_home)
+        data.clear()
+        data.update(merged)
 
-    loaded = yaml.safe_load(archived.decode("utf-8"))
-    data = loaded if isinstance(loaded, dict) else {}
-    data["files_home"] = str(dest_files_home)
-    data.setdefault("datastore_mode", "local")
-    write_bootstrap_yaml(dest_bootstrap, data)
+    update_bootstrap_yaml(dest_bootstrap, adopt)
 
 
 def restore_hub_files(backup_root: Path, expected_sha256: str | None = None) -> None:

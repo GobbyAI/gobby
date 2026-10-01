@@ -2,21 +2,28 @@
 
 from __future__ import annotations
 
+import importlib
 import io
 import json
 import os
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
+import click
 import pytest
+import yaml
 from click.testing import CliRunner
 
+from gobby.cli.hub_backup.files_home import FilesHomeArchiveError
 from gobby.cli.pack import _human_size, _import_docker_volume, pack, unpack
-from gobby.config.bootstrap_io import write_bootstrap_yaml
+from gobby.config.bootstrap_io import update_bootstrap_yaml, write_bootstrap_yaml
 
 pytestmark = pytest.mark.unit
+
+# `gobby.cli` re-exports the `pack` command under the module's own name.
+pack_module = importlib.import_module("gobby.cli.pack")
 
 
 @pytest.fixture
@@ -768,3 +775,243 @@ class TestFilesHomePack:
         assert not out_path.exists() or out_path.stat().st_size == 0
         leftover = list(tmp_path.glob(".out.tar.gz.*.tmp")) + list(tmp_path.glob("*.tmp"))
         assert leftover == []
+
+
+_DESTINATION_URL = "postgresql://gobby:old-secret@localhost:60891/gobby"
+_ARCHIVED_URL = "postgresql://gobby:source-secret@localhost:60891/gobby"
+_PENDING_ROTATION = {
+    "role": "gobby",
+    "pending_password": "pending-placeholder",
+    "previous_password": "old-secret",
+}
+
+
+@dataclass(frozen=True)
+class ServiceCalls:
+    stop_daemon: MagicMock
+    stop_docker: MagicMock
+    start_docker: MagicMock
+    start_daemon: MagicMock
+
+
+@pytest.fixture
+def services(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ServiceCalls:
+    """A running daemon and Docker stack whose stop and start calls are recorded."""
+    calls = ServiceCalls(
+        stop_daemon=MagicMock(return_value=True),
+        stop_docker=MagicMock(return_value=True),
+        start_docker=MagicMock(),
+        start_daemon=MagicMock(),
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pack_module, "_daemon_is_running", lambda: True)
+    monkeypatch.setattr(pack_module, "_docker_available", lambda: False)
+    monkeypatch.setattr(pack_module, "stop_daemon", calls.stop_daemon)
+    monkeypatch.setattr(pack_module, "_stop_docker_services", calls.stop_docker)
+    monkeypatch.setattr(pack_module, "_start_docker_services", calls.start_docker)
+    monkeypatch.setattr(pack_module, "_start_daemon", calls.start_daemon)
+    return calls
+
+
+def _unpack_archive(tmp_path: Path, members: dict[str, bytes]) -> Path:
+    archive = tmp_path / "unpack.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        for name, payload in {"gobby/manifest.json": b'{"version": 1}', **members}.items():
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
+    return archive
+
+
+def _archived_bootstrap(**fields: object) -> bytes:
+    archived = {"datastore_mode": "local", "files_home": "/archived/files", **fields}
+    return yaml.safe_dump(archived).encode()
+
+
+class TestUnpackDestinationOwnership:
+    @pytest.mark.parametrize(
+        "destination",
+        [
+            pytest.param(
+                {"database_url": _DESTINATION_URL, "credential_rotation": _PENDING_ROTATION},
+                id="pending-rotation",
+            ),
+            pytest.param({}, id="no-credential"),
+        ],
+    )
+    def test_keeps_destination_credentials(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        runner: CliRunner,
+        destination: dict[str, object],
+    ) -> None:
+        bootstrap = pack_env.home / "bootstrap.yaml"
+        update_bootstrap_yaml(bootstrap, lambda data: data.update(destination))
+        restored_with: list[object] = []
+
+        def _restore(_source: Path, *, gobby_home: Path) -> dict[str, object]:
+            current = yaml.safe_load((gobby_home / "bootstrap.yaml").read_text())
+            restored_with.append(current.get("database_url"))
+            return {"verified": True}
+
+        monkeypatch.setattr(pack_module, "restore_postgres_backup", _restore)
+        archive = _unpack_archive(
+            tmp_path,
+            {
+                "gobby/bootstrap.yaml": _archived_bootstrap(
+                    database_url=_ARCHIVED_URL, daemon_port=61000
+                ),
+                "gobby/postgres/gobby.dump": b"dump",
+            },
+        )
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code == 0, result.output
+        restored = yaml.safe_load(bootstrap.read_text())
+        assert restored.get("database_url") == destination.get("database_url")
+        assert restored.get("credential_rotation") == destination.get("credential_rotation")
+        assert restored["files_home"] == str(pack_env.files_home)
+        assert restored["daemon_port"] == 61000
+        assert restored_with == [destination.get("database_url")]
+
+    @pytest.mark.parametrize(
+        ("destination", "members", "expected"),
+        [
+            pytest.param(
+                {}, {"gobby/../../evil": b"x"}, "parent-directory traversal", id="escaping-member"
+            ),
+            pytest.param(
+                {},
+                {"gobby/bootstrap.yaml": _archived_bootstrap(datastore_mode="bogus")},
+                "datastore_mode must be one of",
+                id="invalid-bootstrap",
+            ),
+            pytest.param(
+                {"database_url": _DESTINATION_URL, "credential_rotation": _PENDING_ROTATION},
+                {"gobby/bootstrap.yaml": _archived_bootstrap(datastore_mode="remote")},
+                "pending credential rotation requires local datastore mode",
+                id="remote-archive-during-rotation",
+            ),
+            pytest.param(
+                {"database_url": _DESTINATION_URL},
+                {"gobby/bootstrap.yaml": f'database_url: "{_ARCHIVED_URL}\n\tx'.encode()},
+                "archived bootstrap.yaml is not valid YAML",
+                id="malformed-bootstrap-with-credential",
+            ),
+        ],
+    )
+    def test_refuses_before_stopping_services(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        tmp_path: Path,
+        runner: CliRunner,
+        destination: dict[str, object],
+        members: dict[str, bytes],
+        expected: str,
+    ) -> None:
+        bootstrap = pack_env.home / "bootstrap.yaml"
+        update_bootstrap_yaml(bootstrap, lambda data: data.update(destination))
+        before = bootstrap.read_bytes()
+        archive = _unpack_archive(tmp_path, {"gobby/notes.txt": b"note", **members})
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        assert "postgresql://" not in result.output
+        assert expected in result.output
+        services.stop_daemon.assert_not_called()
+        services.stop_docker.assert_not_called()
+        assert bootstrap.read_bytes() == before
+        assert not (pack_env.home / "notes.txt").exists()
+
+    def test_refuses_when_daemon_does_not_stop(
+        self, pack_env: PackEnv, services: ServiceCalls, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        services.stop_daemon.return_value = False
+        archive = _unpack_archive(tmp_path, {"gobby/notes.txt": b"note"})
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        assert "Could not stop the Gobby daemon" in result.output
+        services.stop_docker.assert_not_called()
+        services.start_daemon.assert_not_called()
+        assert not (pack_env.home / "notes.txt").exists()
+
+    def test_restarts_stopped_daemon_when_failing_before_restore(
+        self, pack_env: PackEnv, services: ServiceCalls, tmp_path: Path, runner: CliRunner
+    ) -> None:
+        services.stop_docker.side_effect = RuntimeError("compose stop failed")
+        bootstrap = pack_env.home / "bootstrap.yaml"
+        before = bootstrap.read_bytes()
+        archive = _unpack_archive(
+            tmp_path,
+            {
+                "gobby/bootstrap.yaml": _archived_bootstrap(daemon_port=61000),
+                "gobby/notes.txt": b"note",
+            },
+        )
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        services.start_daemon.assert_called_once_with()
+        services.start_docker.assert_not_called()
+        assert bootstrap.read_bytes() == before
+        assert not (pack_env.home / "notes.txt").exists()
+
+    def test_restarts_docker_before_daemon_when_failing_before_restore(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        runner: CliRunner,
+    ) -> None:
+        restarts = MagicMock()
+        restarts.attach_mock(services.start_docker, "start_docker")
+        restarts.attach_mock(services.start_daemon, "start_daemon")
+        not_a_directory = tmp_path / "not-a-directory"
+        not_a_directory.write_text("blocks the gobby home")
+        monkeypatch.setattr(pack_module, "get_gobby_home", lambda: not_a_directory / "home")
+        archive = _unpack_archive(tmp_path, {"project-gobby/project.json": b"{}"})
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        assert restarts.mock_calls == [call.start_docker(), call.start_daemon()]
+        assert not (tmp_path / ".gobby" / "project.json").exists()
+
+    @pytest.mark.parametrize("failure", ["files-restore", "services-restart"])
+    def test_reports_stopped_services_after_restore_began(
+        self,
+        pack_env: PackEnv,
+        services: ServiceCalls,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        runner: CliRunner,
+        failure: str,
+    ) -> None:
+        if failure == "files-restore":
+            monkeypatch.setattr(
+                pack_module,
+                "restore_files_home_from_archive",
+                MagicMock(side_effect=FilesHomeArchiveError("write", "disk full")),
+            )
+        else:
+            services.start_docker.side_effect = click.ClickException("compose up failed")
+        archive = _unpack_archive(
+            tmp_path, {"gobby/files/USER.md": b"profile", "gobby/notes.txt": b"note"}
+        )
+
+        result = runner.invoke(unpack, [str(archive), "--force"])
+
+        assert result.exit_code != 0
+        services.start_daemon.assert_not_called()
+        assert "the daemon and the managed Docker services are still stopped" in result.output
+        assert "gobby start" in result.output

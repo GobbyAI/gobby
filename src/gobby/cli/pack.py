@@ -11,14 +11,18 @@ import subprocess  # nosec B404 # fixed Docker and Python module invocations
 import sys
 import tarfile
 import tempfile
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath, PureWindowsPath
+from types import TracebackType
+from typing import Self
 
 import click
 
 from gobby.cli.hub_backup.files_home import (
     PACK_FILES_PREFIX,
     FilesHomeArchiveError,
+    archived_bootstrap,
     check_output_outside_sources,
     destination_free_bytes,
     files_members_would_overwrite,
@@ -39,6 +43,8 @@ from gobby.cli.postgres_backup import (
     restore_postgres_backup,
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
+from gobby.config.bootstrap import BootstrapConfigError
+from gobby.config.bootstrap_io import read_bootstrap_yaml, validated_bootstrap_payload
 from gobby.paths import (
     FilesHomeError,
     FilesHomeUnsupportedPlatformError,
@@ -276,8 +282,8 @@ def _configured_files_home() -> Path | None:
     return Path(config.files_home)
 
 
-def _safe_archive_target(base: Path, rel: str, member: tarfile.TarInfo) -> Path:
-    """Resolve an archive member under base or abort on unsafe metadata."""
+def _check_archive_member(rel: str, member: tarfile.TarInfo) -> None:
+    """Abort on archive member metadata that is unsafe under any base directory."""
     if not member.isfile() and not member.isdir():
         raise click.ClickException(
             f"Unsafe archive member {member.name!r}: only regular files and directories are supported"
@@ -296,6 +302,10 @@ def _safe_archive_target(base: Path, rel: str, member: tarfile.TarInfo) -> Path:
             f"Unsafe archive member {member.name!r}: parent-directory traversal is not allowed"
         )
 
+
+def _safe_archive_target(base: Path, rel: str, member: tarfile.TarInfo) -> Path:
+    """Resolve an archive member under base or abort on unsafe metadata."""
+    _check_archive_member(rel, member)
     base_resolved = base.resolve()
     target = (base / rel).resolve()
     if not target.is_relative_to(base_resolved):
@@ -303,6 +313,125 @@ def _safe_archive_target(base: Path, rel: str, member: tarfile.TarInfo) -> Path:
             f"Unsafe archive member {member.name!r}: resolved path escapes {base_resolved}"
         )
     return target
+
+
+@dataclass
+class _UnpackPlan:
+    """Archive members by destination, validated before unpack stops any service."""
+
+    restores: list[tuple[tarfile.TarInfo, Path, str]] = field(default_factory=list)
+    files: list[tarfile.TarInfo] = field(default_factory=list)
+    docker: list[tarfile.TarInfo] = field(default_factory=list)
+    postgres: list[tuple[tarfile.TarInfo, str]] = field(default_factory=list)
+    skipped_identity: bool = False
+
+
+def _plan_unpack(
+    tar: tarfile.TarFile, restore_identity: bool, dest_files_home: Path
+) -> _UnpackPlan:
+    """Classify every member and refuse unsafe ones while the services still run."""
+    plan = _UnpackPlan()
+    for member in tar.getmembers():
+        name = member.name
+        if name == "gobby/manifest.json":
+            continue
+        if name == PACK_FILES_PREFIX or name.startswith(f"{PACK_FILES_PREFIX}/"):
+            plan.files.append(member)
+        elif name.startswith("gobby/docker-volumes/"):
+            plan.docker.append(member)
+        elif name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/"):
+            rel = name.removeprefix(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/")
+            _check_archive_member(rel, member)
+            plan.postgres.append((member, rel))
+        elif name.startswith("project-gobby"):
+            rel = name.removeprefix("project-gobby").removeprefix("/")
+            target = _safe_archive_target(Path.cwd() / ".gobby", rel, member)
+            plan.restores.append((member, target, f".gobby/{rel}"))
+        elif name.startswith("gobby/"):
+            rel = name.removeprefix("gobby/")
+            if rel == "machine_id" and not restore_identity:
+                plan.skipped_identity = True
+                continue
+            target = _safe_archive_target(get_gobby_home(), rel, member)
+            if rel == "bootstrap.yaml" and (f := tar.extractfile(member)):
+                try:
+                    destination = read_bootstrap_yaml(target)
+                    validated_bootstrap_payload(
+                        destination, archived_bootstrap(destination, f.read(), dest_files_home)
+                    )
+                except BootstrapConfigError as exc:
+                    raise click.ClickException(f"Cannot restore bootstrap.yaml: {exc}") from exc
+            plan.restores.append((member, target, rel))
+    return plan
+
+
+class _StoppedServices:
+    """The services unpack stopped, so a failure never leaves them silently down.
+
+    A failure before the first destination write restarts them. A later failure
+    reports what is still stopped and how to bring it back.
+    """
+
+    def __init__(self) -> None:
+        self.daemon = False
+        self.docker = False
+        self.restoring = False
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        if exc is None or not (self.daemon or self.docker):
+            return
+        detail = ""
+        if not self.restoring:
+            try:
+                if self.docker:
+                    self.start_docker()
+                if self.daemon:
+                    self.start_daemon()
+            except Exception as restart_exc:
+                detail = f" Restarting them failed: {restart_exc}."
+            else:
+                click.echo("  Restarted the stopped services; nothing was unpacked.", err=True)
+                return
+        stopped = " and ".join(
+            name
+            for name, down in (
+                ("the daemon", self.daemon),
+                ("the managed Docker services", self.docker),
+            )
+            if down
+        )
+        verb = "are" if self.docker else "is"
+        click.echo(
+            f"\nUnpack failed: {stopped} {verb} still stopped.{detail} "
+            "Fix the error below, then run `gobby start`.",
+            err=True,
+        )
+
+    def stop(self) -> None:
+        if _daemon_is_running():
+            click.echo("  Stopping daemon...")
+            if not stop_daemon(quiet=True):
+                raise click.ClickException("Could not stop the Gobby daemon; nothing was unpacked")
+            self.daemon = True
+        if _stop_docker_services():
+            self.docker = True
+            click.echo("  Stopped Docker services")
+
+    def start_docker(self) -> None:
+        _start_docker_services()
+        self.docker = False
+
+    def start_daemon(self) -> None:
+        _start_daemon()
+        self.daemon = False
 
 
 @click.command("pack")
@@ -586,7 +715,7 @@ def unpack(
     archive_path = Path(archive).resolve()
     services_started = False
 
-    with tarfile.open(archive_path, "r:gz") as tar:
+    with _StoppedServices() as services, tarfile.open(archive_path, "r:gz") as tar:
         members = tar.getmembers()
 
         # Read manifest if present
@@ -617,21 +746,16 @@ def unpack(
 
         try:
             dest_files_home = require_destination_files_home()
-            files_preflight = [
-                member
-                for member in members
-                if member.name == PACK_FILES_PREFIX
-                or member.name.startswith(f"{PACK_FILES_PREFIX}/")
-            ]
-            preflight_archive_graph(files_preflight)
-            for member in files_preflight:
+            plan = _plan_unpack(tar, restore_identity, dest_files_home)
+            preflight_archive_graph(plan.files)
+            for member in plan.files:
                 if not member.isfile() and not member.isdir():
                     raise FilesHomeArchiveError(
                         "invalid",
                         f"Unsafe archive member {member.name!r}: "
                         "only regular files and directories are supported",
                     )
-            needed = sum(member.size for member in files_preflight if member.isfile())
+            needed = sum(member.size for member in plan.files if member.isfile())
             if destination_free_bytes(dest_files_home) < needed:
                 raise FilesHomeArchiveError(
                     "space", "insufficient destination space for files_home restore"
@@ -657,77 +781,32 @@ def unpack(
             click.echo(f"  Source: {manifest.get('hostname', 'unknown')}")
             click.echo(f"  Created: {manifest.get('created_at', 'unknown')}")
 
-        # Stop services before overwriting data
-        daemon_was_running = _daemon_is_running()
-        if daemon_was_running:
-            click.echo("  Stopping daemon...")
-            stop_daemon(quiet=True)
-
-        services_were_running = _stop_docker_services()
-        if services_were_running:
-            click.echo("  Stopped Docker services")
+        # Stop services before overwriting data; a failure never leaves them silently down
+        services.stop()
+        services_were_running = services.docker
 
         # Extract gobby/ contents to ~/.gobby/
         get_gobby_home().mkdir(parents=True, exist_ok=True)
-        docker_archives: list[tarfile.TarInfo] = []
-        postgres_members: list[tarfile.TarInfo] = []
-        files_members: list[tarfile.TarInfo] = []
+        services.restoring = True
+        if plan.skipped_identity:
+            click.echo("  Skipped: machine_id (use --restore-identity to opt in)")
+        for member, target, label in plan.restores:
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                f = tar.extractfile(member)
+                if f:
+                    content = f.read()
+                    if label == "bootstrap.yaml":
+                        merge_bootstrap_preserving_files_home(target, content, dest_files_home)
+                    elif label == "machine_id":
+                        durable_replace(target, content)
+                    else:
+                        target.write_bytes(content)
+            click.echo(f"  Restored: {label}")
 
-        for member in members:
-            if member.name == "gobby/manifest.json":
-                # Save manifest but don't need to extract to ~/.gobby
-                continue
-
-            if member.name == PACK_FILES_PREFIX or member.name.startswith(f"{PACK_FILES_PREFIX}/"):
-                files_members.append(member)
-                continue
-
-            if member.name.startswith("gobby/docker-volumes/"):
-                docker_archives.append(member)
-                continue
-
-            if member.name.startswith(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/"):
-                postgres_members.append(member)
-                continue
-
-            if member.name.startswith("project-gobby"):
-                # Project-level .gobby — extract to cwd
-                rel = member.name.removeprefix("project-gobby")
-                if rel.startswith("/"):
-                    rel = rel[1:]
-                target = _safe_archive_target(Path.cwd() / ".gobby", rel, member)
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    f = tar.extractfile(member)
-                    if f:
-                        target.write_bytes(f.read())
-                click.echo(f"  Restored: .gobby/{rel}")
-                continue
-
-            if member.name.startswith("gobby/"):
-                rel = member.name.removeprefix("gobby/")
-                if rel == "machine_id" and not restore_identity:
-                    click.echo("  Skipped: machine_id (use --restore-identity to opt in)")
-                    continue
-                target = _safe_archive_target(get_gobby_home(), rel, member)
-                if member.isdir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    f = tar.extractfile(member)
-                    if f:
-                        content = f.read()
-                        if rel == "bootstrap.yaml":
-                            merge_bootstrap_preserving_files_home(target, content, dest_files_home)
-                        elif rel == "machine_id":
-                            durable_replace(target, content)
-                        else:
-                            target.write_bytes(content)
-                click.echo(f"  Restored: {rel}")
-
-        if files_members:
+        if plan.files:
             try:
                 with maintenance_claim(get_gobby_home()):
                     restore_files_home_from_archive(
@@ -741,7 +820,7 @@ def unpack(
             click.echo("  Restored: files_home")
 
         # Import Docker volumes
-        if not no_docker and docker_archives:
+        if not no_docker and plan.docker:
             if not _docker_available():
                 click.echo(
                     "\n  Warning: Docker not available, skipping volume import.",
@@ -749,7 +828,7 @@ def unpack(
                 )
             else:
                 with tempfile.TemporaryDirectory() as tmpdir:
-                    for member in docker_archives:
+                    for member in plan.docker:
                         vol_filename = Path(member.name).name
                         vol_name = vol_filename.removesuffix(".tar.gz")
                         click.echo(f"  Importing Docker volume: {vol_name}...")
@@ -766,22 +845,21 @@ def unpack(
                                     err=True,
                                 )
 
-        if postgres_members and no_postgres:
+        if plan.postgres and no_postgres:
             click.echo("  Skipped PostgreSQL restore")
-        elif postgres_members:
+        elif plan.postgres:
             if (
                 services_were_running
-                or (not no_docker and docker_archives)
+                or (not no_docker and plan.docker)
                 or _postgres_restore_requires_docker_services()
             ):
                 click.echo("  Starting Docker services before PostgreSQL restore...")
-                _start_docker_services()
+                services.start_docker()
                 services_started = True
             with tempfile.TemporaryDirectory() as tmpdir:
                 postgres_dir = Path(tmpdir) / "postgres"
                 postgres_dir.mkdir()
-                for member in postgres_members:
-                    rel = member.name.removeprefix(f"{POSTGRES_BACKUP_ARCHIVE_PREFIX}/")
+                for member, rel in plan.postgres:
                     target = _safe_archive_target(postgres_dir, rel, member)
                     if member.isdir():
                         target.mkdir(parents=True, exist_ok=True)
@@ -793,22 +871,22 @@ def unpack(
                 restore_postgres_backup(postgres_dir, gobby_home=get_gobby_home())
                 click.echo("  Restored PostgreSQL logical dump")
 
-    # Reinstall git hooks from templates (ensures they match current version)
-    if (Path.cwd() / ".git").exists():
-        click.echo("  Installing git hooks...")
-        hook_result = install_git_hooks(Path.cwd(), force=True, setup_precommit=False)
-        if hook_result["success"]:
-            click.echo(f"    Installed: {', '.join(hook_result['installed'])}")
-        else:
-            click.echo(f"    Warning: {hook_result['error']}", err=True)
+        # Reinstall git hooks from templates (ensures they match current version)
+        if (Path.cwd() / ".git").exists():
+            click.echo("  Installing git hooks...")
+            hook_result = install_git_hooks(Path.cwd(), force=True, setup_precommit=False)
+            if hook_result["success"]:
+                click.echo(f"    Installed: {', '.join(hook_result['installed'])}")
+            else:
+                click.echo(f"    Warning: {hook_result['error']}", err=True)
 
-    # Restart services
-    if not services_started and (services_were_running or (not no_docker and docker_archives)):
-        click.echo("  Starting Docker services...")
-        _start_docker_services()
-    if daemon_was_running:
-        click.echo("  Restarting daemon...")
-        _start_daemon()
+        # Restart services
+        if not services_started and (services_were_running or (not no_docker and plan.docker)):
+            click.echo("  Starting Docker services...")
+            services.start_docker()
+        if services.daemon:
+            click.echo("  Restarting daemon...")
+            services.start_daemon()
 
     click.echo("\nUnpack complete.")
 

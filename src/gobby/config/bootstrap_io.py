@@ -94,8 +94,7 @@ def publish_bootstrap_yaml_locked(
     expected_credentials: dict[str, Any] | None = None,
 ) -> None:
     """Validate and durably replace ``path``. Caller must hold the sidecar lock."""
-    from gobby.config.bootstrap import BootstrapConfigError, bootstrap_from_mapping
-    from gobby.config.postgres_bootstrap import pending_credential_rotation_from_mapping
+    from gobby.config.bootstrap import BootstrapConfigError
 
     existing = read_bootstrap_yaml(path) if path.exists() else {}
     expected = data if expected_credentials is None else expected_credentials
@@ -106,6 +105,16 @@ def publish_bootstrap_yaml_locked(
             "credential state changed; reread bootstrap before writing; "
             "run `gobby datastores rotate-password postgres` to resume pending rotation"
         )
+    merged = validated_bootstrap_payload(existing, data)
+    payload = yaml.safe_dump(merged, default_flow_style=False, sort_keys=False)
+    durable_replace_text(path, payload, mode=0o600)
+
+
+def validated_bootstrap_payload(existing: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Return the mapping that publishing ``data`` over ``existing`` writes, or raise."""
+    from gobby.config.bootstrap import bootstrap_from_mapping
+    from gobby.config.postgres_bootstrap import pending_credential_rotation_from_mapping
+
     merged = _merge_owner_fields(existing, dict(data))
     pending_credential_rotation_from_mapping(merged)
     config = bootstrap_from_mapping(merged)
@@ -117,8 +126,7 @@ def publish_bootstrap_yaml_locked(
         merged["hub_daemon_url"] = config.hub_daemon_url
     else:
         merged.pop("hub_daemon_url", None)
-    payload = yaml.safe_dump(merged, default_flow_style=False, sort_keys=False)
-    durable_replace_text(path, payload, mode=0o600)
+    return merged
 
 
 def _merge_owner_fields(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
