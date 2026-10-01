@@ -523,12 +523,6 @@ async def submit_text(
             return SubmitResult(False, reason, ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE)
         enter_count += 1
         if composer_read is None:
-            logger.info(
-                "Session %s: %s has no composer reader; submission of %s is unverified",
-                session_id,
-                cli_source or "unknown CLI",
-                label,
-            )
             return SubmitResult(
                 False,
                 f"{label} was typed and Enter sent, but {cli_source or 'this CLI'} "
@@ -557,7 +551,7 @@ async def submit_text(
                 )
             continue
         if verdict == "unreadable":
-            logger.warning(
+            logger.debug(
                 "Session %s: composer could not be read after submitting %s; "
                 "submission is unverified",
                 session_id,
