@@ -169,15 +169,60 @@ def test_srt_component_swaps_each_file_by_rename_of_a_complete_sibling(
     assert sorted(replaced) == sorted(_SWAPPED)
 
 
-def test_srt_component_reinstalls_instead_of_blessing_changed_package_content(
-    gobby_home: Path, runtime: MagicMock, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = srt_runtime.srt_install_root()
-    _write_installed_tree(root, _STALE_RUNNER)
-    package_json = root / "node_modules" / "@anthropic-ai" / "sandbox-runtime" / "package.json"
+_PACKAGE_DIR = Path("node_modules/@anthropic-ai/sandbox-runtime")
+
+
+def _append_to_package_json(root: Path) -> None:
+    package_json = root / _PACKAGE_DIR / "package.json"
     package_json.chmod(0o644)
     package_json.write_text(package_json.read_text(encoding="utf-8") + " ", encoding="utf-8")
     package_json.chmod(0o444)
+
+
+def _in_writable_root(root: Path, change: Callable[[Path], None]) -> None:
+    root.chmod(0o755)
+    change(root)
+    root.chmod(0o555)
+
+
+def _replace_text(name: str, text: str) -> Callable[[Path], None]:
+    def rewrite(directory: Path) -> None:
+        (directory / name).unlink()
+        (directory / name).write_text(text, encoding="utf-8")
+        (directory / name).chmod(0o444)
+
+    return lambda root: _in_writable_root(root, rewrite)
+
+
+def _remove(name: str) -> Callable[[Path], None]:
+    return lambda root: _in_writable_root(root, lambda directory: (directory / name).unlink())
+
+
+_INVALID_TREES: dict[str, Callable[[Path], None]] = {
+    "changed-package-content": _append_to_package_json,
+    "missing-manifest": _remove("content-manifest.json"),
+    "malformed-manifest": _replace_text("content-manifest.json", "{not json"),
+    "missing-receipt": _remove("receipt.json"),
+    "malformed-receipt": _replace_text("receipt.json", "{not json"),
+    "writable-root": lambda root: root.chmod(0o755),
+    "writable-package-file": lambda root: (root / _PACKAGE_DIR / "package.json").chmod(0o644),
+    "nonexecutable-seccomp-helper": lambda root: (
+        root / _PACKAGE_DIR / "vendor" / "seccomp" / "arm64" / "apply-seccomp"
+    ).chmod(0o444),
+}
+
+
+@pytest.mark.parametrize("corrupt", list(_INVALID_TREES.values()), ids=list(_INVALID_TREES))
+def test_srt_component_reinstalls_an_invalid_tree_without_touching_it(
+    gobby_home: Path,
+    runtime: MagicMock,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    corrupt: Callable[[Path], None],
+) -> None:
+    root = srt_runtime.srt_install_root()
+    _write_installed_tree(root, _STALE_RUNNER)
+    corrupt(root)
     before = _snapshot(gobby_home, lambda path: path.name == _INSTALL_LOCK)
     full_installs: list[None] = []
 
