@@ -1296,6 +1296,42 @@ async def test_claude_tdd_gate_accepts_default_pytest_test_body_exception(
     assert result.red_runs == (command,)
 
 
+async def test_tdd_gate_credits_uv_directory_before_run(tmp_path: Path) -> None:
+    test_path = "tests/hooks/test_session_coordinator.py"
+    node_id = f"{test_path}::TestAgentRunCompletion::test_activity_direct"
+    command = f"uv --directory {tmp_path} run pytest {node_id} -q"
+    evidence = await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=command,
+        red_output="""\
+__________ TestAgentRunCompletion.test_activity_direct __________
+    def test_activity_direct() -> None:
+>       raise TypeError("direct")
+E       TypeError: direct
+/deleted/worktree/tests/hooks/test_session_coordinator.py:620: TypeError
+=========================== short test summary info ============================
+FAILED tests/hooks/test_session_coordinator.py::TestAgentRunCompletion::test_activity_direct
+""",
+        green_command=command,
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::TestAgentRunCompletion",
+        path=test_path,
+        symbol="TestAgentRunCompletion",
+        body="class TestAgentRunCompletion: ...",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    assert evidence.command_runs == ()
+    assert [(run.outcome, run.categories) for run in evidence.validation_runs] == [
+        ("failure", ("test",)),
+        ("success", ("test",)),
+    ]
+    assert result.passed is True, result
+    assert result.red_runs == (command,)
+
+
 @pytest.mark.parametrize(
     "selection",
     [

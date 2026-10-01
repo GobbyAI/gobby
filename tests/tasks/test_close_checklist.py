@@ -2027,6 +2027,10 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value={"src/a.py"}),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
+            side_effect=lambda sha, **_kwargs: sha,
+        ),
         patch.object(
             lifecycle,
             "validate_commit_requirements",

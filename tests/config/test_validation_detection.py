@@ -222,6 +222,38 @@ def test_uv_run_options_with_values_are_stripped_before_the_runner(options: str)
     assert match.normalized_argv == ("pytest", "tests/x.py", "-q")
 
 
+@pytest.mark.parametrize(
+    "options",
+    [
+        "--directory /tmp/worktree",
+        "--directory=/tmp/worktree",
+        "--project /tmp/worktree",
+        "--config-file uv.toml",
+        "--cache-dir /tmp/cache",
+        "-q --directory /tmp/worktree --offline",
+    ],
+)
+def test_uv_global_options_before_run_still_unwrap_the_runner(options: str) -> None:
+    match = classify_validation_command(f"uv {options} run pytest tests/x.py -q")
+
+    assert match is not None
+    assert match.matcher_id == "python-tests"
+    assert match.categories == ("test",)
+    assert match.normalized_argv == ("pytest", "tests/x.py", "-q")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "uv --directory /tmp/worktree pip list",
+        "uv --project /tmp/worktree sync",
+        "uv --directory run pip list",
+    ],
+)
+def test_uv_global_options_do_not_turn_other_subcommands_into_runs(command: str) -> None:
+    assert classify_validation_segments(command) == ()
+
+
 @pytest.mark.parametrize("flag", ["--no-install", "--no", "--yes", "-y"])
 def test_npx_valueless_flags_do_not_block_detection(flag: str) -> None:
     match = classify_validation_command(f"npx {flag} vitest run src/hooks")
