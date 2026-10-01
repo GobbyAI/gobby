@@ -538,6 +538,7 @@ Targets:
 - `src/gobby/runner_init/storage.py::*` — scope-reason: consumer of `ensure_machine_identity`; the call site is unchanged, verification only
 - `src/gobby/config/bootstrap.py::*` — scope-reason: the dataclass and `bootstrap_from_mapping` gain the four key fields; all default to absent so constructor sites need no edit
 - `src/gobby/config/bootstrap_io.py::update_bootstrap_yaml`
+- `src/gobby/cli/hub_backup/files_home.py::*` — scope-reason: edited by the API-keys slice's 4.2 (P4-10): ordinary unpack drops the archived key pair, and `--restore-identity` keeps it only with a usable archived `machine_id`
 - `crates/gcore/src/bootstrap.rs::HubDatabaseBootstrap`
 - `crates/gcore/src/bootstrap.rs::parse_hub_database_bootstrap`
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
@@ -637,11 +638,15 @@ the migration, `api_keys.py`, both format helpers, the two route modules,
 `_app_routes.py`, `install.py`, `runner_init/helpers.py`, and the two bootstrap parsers
 and writer.
 
+**Execution authority:** this section is not expanded. Section 4.2 of
+`.gobby/plans/gdaemon-api-keys-nodes.md` (#23106's slice, `7f49b4dc61`) is the executable
+authority for this deliverable, including its P4-10 archived-bootstrap restore and
+stale-key obligations.
+
 Consumers unchanged:
 - `src/gobby/config/postgres_bootstrap.py` — no-edit-reason: passes its own updater; the writer's signature is unchanged and only 4.2's callers write the new keys.
 - `src/gobby/ui_exposure.py` — no-edit-reason: same.
 - `tests/config/test_files_home.py` — no-edit-reason: same.
-- `src/gobby/cli/hub_backup/files_home.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 - `tests/cli/test_datastores_rotate_password.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 - `tests/config/test_bootstrap_postgres.py` — no-edit-reason: calls `update_bootstrap_yaml` with an unchanged signature for unrelated fields.
 
@@ -1959,6 +1964,12 @@ built and installed binaries:
 - 2026-10-01: Renewed consensus required. The index drift repair leaves the M1 source
   hash stale, so M1 is withdrawn (memory `f5577ae0`). Its bytes stay in Git history.
   The Adversary checks the repair and derives a fresh M1.
+- 2026-10-01: P4-10 carryover (Adversary gobby#14579), resolved under #23192 (PD
+  gobby#14972 ruling). 4.2 listed `src/gobby/cli/hub_backup/files_home.py` as Consumers
+  unchanged with the reason the Adversary rejected in #23106. It is now a Target, edited
+  by the API-keys slice's 4.2. 4.2 gains an execution-authority pointer to that slice
+  (`.gobby/plans/gdaemon-api-keys-nodes.md` 4.2, `7f49b4dc61`) and is not expanded here.
+  P4-10's repair stays in the slice, and acceptance text is unchanged.
 
 **Round 1** `kind: enhancement`
 
