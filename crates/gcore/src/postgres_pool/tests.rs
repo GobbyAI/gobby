@@ -206,6 +206,57 @@ async fn dropped_transaction_is_rolled_back() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn raw_transaction_never_reaches_the_next_borrower() -> anyhow::Result<()> {
+    let Some(database_url) = test_database_url() else {
+        return Ok(());
+    };
+    let name = unique_application_name();
+    let pool = Pool::build(&database_url, settings(&name, 2, Duration::from_secs(5)))?;
+    let _held = pool.get().await?;
+
+    let borrower = pool.get().await?;
+    let (pid, ..) = session(&borrower).await?;
+    borrower
+        .batch_execute(
+            "BEGIN; CREATE TEMP TABLE pool_raw_writes (value int); \
+             INSERT INTO pool_raw_writes VALUES (1)",
+        )
+        .await?;
+    drop(borrower);
+
+    let reused = pool.get().await?;
+    let row = reused
+        .query_one(
+            "SELECT pg_backend_pid(), pg_current_xact_id_if_assigned() IS NULL, \
+             to_regclass('pg_temp.pool_raw_writes') IS NULL",
+            &[],
+        )
+        .await?;
+    assert_eq!(
+        row.try_get::<_, i32>(0)?,
+        pid,
+        "the backend is reused once its transaction ends"
+    );
+    assert!(row.try_get::<_, bool>(1)?, "no transaction is left open");
+    assert!(row.try_get::<_, bool>(2)?, "the uncommitted write is gone");
+
+    if reused.batch_execute("BEGIN; SELECT 1 / 0").await.is_ok() {
+        anyhow::bail!("division by zero must abort the transaction");
+    }
+    drop(reused);
+
+    // A statement on an aborted transaction fails, so this query succeeding
+    // proves the next borrower is outside it.
+    let next = pool.get().await?;
+    let idle: bool = next
+        .query_one("SELECT pg_current_xact_id_if_assigned() IS NULL", &[])
+        .await?
+        .try_get(0)?;
+    assert!(idle, "no transaction is left open after an abort");
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pool_bounds_server_connections() -> anyhow::Result<()> {
     const POOL_SIZE: usize = 3;

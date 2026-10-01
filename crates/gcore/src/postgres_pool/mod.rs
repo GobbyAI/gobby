@@ -179,12 +179,14 @@ impl SessionHook {
         self.verify(client).await
     }
 
-    /// `post_recycle`: undo a borrower's time zone or name change, then verify.
+    /// `post_recycle`: end a borrower's transaction, undo its time zone or
+    /// name change, then verify.
     async fn restore(&self, client: &Client) -> Result<(), HookError> {
         #[cfg(test)]
         self.stall_if_set(client).await?;
+        // BEGIN; ROLLBACK: silent when idle, ends an open transaction, discards an aborted one.
         client
-            .batch_execute("SET TIME ZONE 'UTC'")
+            .batch_execute("BEGIN; ROLLBACK; SET TIME ZONE 'UTC'")
             .await
             .map_err(HookError::Backend)?;
         client
