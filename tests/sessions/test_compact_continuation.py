@@ -199,6 +199,10 @@ async def test_scheduled_task_is_retained_and_multiline_prompt_is_sent_once() ->
             "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
             0.0,
         ),
+        patch(
+            "gobby.sessions.compact_continuation._composer_reader",
+            return_value=_CODEX_READ,
+        ),
     ):
         assert schedule_handoff_compact_continuation(session, prompt, delay_seconds=0)
         await send_started.wait()
@@ -314,9 +318,12 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
 
     tmux = ReadinessTmux()
 
-    with patch(
-        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
-        0.0,
+    with (
+        patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+        patch(
+            "gobby.sessions.compact_continuation._composer_reader",
+            return_value=_CODEX_READ,
+        ),
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
@@ -327,9 +334,8 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
             attempt_id="current-attempt",
         )
 
-    # The fake pane never draws a composer this manifest can classify, so the read
-    # is unreadable and the second Enter follows it -- a no-op once the first Enter
-    # submitted, and the recovery when a paste review gate swallowed it.
+    # The fake pane draws an empty Codex composer, so the read after the Enter
+    # proves the prompt left it.
     assert tmux.sent_keys == [*_CODEX_DRAIN, ("%12", f"{prompt}\n", True), _ENTER]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
@@ -544,9 +550,12 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
 
     tmux = RollingTmux()
 
-    with patch(
-        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
-        0.0,
+    with (
+        patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+        patch(
+            "gobby.sessions.compact_continuation._composer_reader",
+            return_value=_CODEX_READ,
+        ),
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
@@ -583,9 +592,12 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
 
     tmux = ProseTmux()
 
-    with patch(
-        "gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS",
-        0.0,
+    with (
+        patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+        patch(
+            "gobby.sessions.compact_continuation._composer_reader",
+            return_value=_CODEX_READ,
+        ),
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
@@ -910,6 +922,7 @@ def test_reload_directive_normalized() -> None:
 
 
 _CLAUDE_READ = IdleDetector(BundledDetectionRegistry(), "claude").composer_read
+_CODEX_READ = IdleDetector(BundledDetectionRegistry(), "codex").composer_read
 _PULL_PROMPT = "Continue the claimed task by calling get_handoff first."
 _CLAUDE_DRAIN = [("%12", tmux_key_name(key), False) for key in composer_clear_sequence("claude")]
 
@@ -1013,20 +1026,21 @@ class TestPullPromptFallback:
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
 
     @pytest.mark.asyncio
-    async def test_an_unreadable_composer_after_the_enter_is_trusted(self) -> None:
-        """A frame we cannot classify after the Enter is not a failure.
+    async def test_an_unreadable_composer_after_the_enter_falls_back_without_retyping(
+        self,
+    ) -> None:
+        """An unread composer after the Enter is unverified, never delivered (#23188).
 
-        The write and the Enter were both delivered; retyping would queue the prompt
-        twice, and failing would deliver it a second time through the durable
-        fallback. What stranded the live prompts (gobby#22550) was skipping the
-        Enter, not trusting the frame after it.
+        The prompt is typed once and entered once. The durable fallback then queues
+        the pull prompt as next-turn context, which never types into the composer,
+        so an unverified delivery cannot become a second submission.
         """
         tmux = _FakeTmux()
         tmux.composer_text = None
         failures: list[int] = []
 
-        assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is True
-        assert failures == []
+        assert await _send_pull_prompt(tmux, on_send_failure=lambda: failures.append(0)) is False
+        assert failures == [0]
         assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
 
@@ -1187,8 +1201,11 @@ async def test_schedule_continuation_resolves_native_terminal_without_tmux() -> 
         await task
         await drain_asyncio_tasks()
 
+    # The native runtime draws no composer, so the submit is unverified: the prompt
+    # is written once and Enter sent once, then the composer is drained, never retyped.
     assert writes.index(("text", prompt, True)) < writes.index(("key", "enter"))
-    assert writes[-1] == ("key", "enter")
+    assert writes.count(("text", prompt, True)) == 1
+    assert writes.count(("key", "enter")) == 1
     assert not _HANDOFF_COMPACT_CONTINUATION_TASKS
 
 

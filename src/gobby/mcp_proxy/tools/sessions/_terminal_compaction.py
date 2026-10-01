@@ -17,6 +17,7 @@ from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
 from gobby.terminals.pane_io import (
     DEFAULT_SNAPSHOT_LINES,
     ENTER_DELIVERY_UNCONFIRMED_ERROR_CODE,
+    SUBMIT_UNVERIFIED_ERROR_CODE,
     SUBMIT_VERIFY_SECONDS,
     ComposerReader,
     PaneIO,
@@ -294,6 +295,10 @@ async def _submit_command(
                 "error_code": result.error_code,
             },
         )
+    if result.error_code == SUBMIT_UNVERIFIED_ERROR_CODE:
+        # The composer cannot prove this submit, but _confirm_compaction_prompt
+        # proves the compaction itself from the provider's own frame.
+        return True, None, None
     if result.ok or result.error_code is None:
         return result.ok, result.reason, None
     return (
