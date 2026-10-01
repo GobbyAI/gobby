@@ -3,6 +3,9 @@ use crate::app::{ControlState, Workspace};
 use crate::ui::settings::AgentSort;
 use crate::ui::Action;
 
+/// View › Sidebar › Agents.
+const AGENTS: ContextMenuKind = ContextMenuKind::Submenu(Submenu::Section(SidebarSection::Agents));
+
 fn labels(state: &ContextMenuState) -> Vec<&'static str> {
     state.items.iter().map(|item| item.label).collect()
 }
@@ -248,31 +251,22 @@ fn menu_bar_menus_regroup_items_per_title() {
         ]
     );
 
-    // View is the sessions band's view menu, the sidebar's openers, the
-    // legend, then the one theme row.
+    // View is the theme submenu, the monochrome toggle and the sidebar
+    // submenu, all against one margin.
     let view = menu(&ws, &chrome, MenuBarMenu::View);
-    let band = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 1)).items;
-    assert_eq!(view.items[..band.len()], band[..]);
     assert_eq!(
-        labels(&view)[band.len()..],
-        [
-            "Working projects",
-            "Show sidebar",
-            "Pin sidebar",
-            "Legend",
-            "Theme: Dark ▸"
-        ]
+        labels(&view),
+        ["  Theme: Dark ▸", "  Monochrome", "  Sidebar ▸"]
     );
     assert_eq!(
-        actions(&view)[band.len()..],
+        actions(&view),
         [
-            MenuAction::Act(Action::ToggleProjectsFilter),
-            MenuAction::Act(Action::ToggleSidebar),
-            MenuAction::PinSidebar,
-            MenuAction::Act(Action::Help),
-            MenuAction::ThemeMenu
+            MenuAction::OpenSubmenu(Submenu::Theme),
+            MenuAction::ToggleMonochrome,
+            MenuAction::OpenSubmenu(Submenu::Sidebar),
         ]
     );
+    assert!(view.items.iter().all(|item| item.enabled));
 
     let window = menu(&ws, &chrome, MenuBarMenu::Window);
     assert_eq!(
@@ -368,7 +362,7 @@ fn agents_view_menu_marks_the_view_in_force() {
     let ws = Workspace::scripted();
     let mut chrome = Chrome::dark();
     let items = |chrome: &Chrome| -> Vec<(&'static str, bool)> {
-        build_menu(&ws, chrome, ContextMenuKind::AgentsView, (0, 0))
+        build_menu(&ws, chrome, AGENTS, (0, 0))
             .items
             .into_iter()
             .map(|item| (item.label, item.enabled))
@@ -401,7 +395,7 @@ fn agents_view_menu_marks_the_view_in_force() {
     );
 
     // The enabled choice of each pair carries the toggle its chord runs.
-    let menu = build_menu(&ws, &chrome, ContextMenuKind::AgentsView, (0, 0));
+    let menu = build_menu(&ws, &chrome, AGENTS, (0, 0));
     assert_eq!(
         menu.items[0].action,
         MenuAction::Act(Action::ToggleSessionsScope)
@@ -734,7 +728,7 @@ fn agent_row_close_activates_with_the_row_pane_not_the_focused_one() {
     assert_eq!(chrome.focused_pane(), Some(held));
 }
 
-/// View › Pin Sidebar is a local chrome change both loops apply: it pins
+/// View › Sidebar › Pin sidebar is a local chrome change both loops apply: it pins
 /// the open overlay into a saved column.
 #[test]
 fn pin_sidebar_pins_the_overlay_into_a_saved_column() {
@@ -779,19 +773,19 @@ fn theme_row_opens_its_choices_beside_it_and_saves_the_pick() {
     let theme_row = view
         .items
         .iter()
-        .position(|item| item.action == MenuAction::ThemeMenu)
+        .position(|item| item.action == MenuAction::OpenSubmenu(Submenu::Theme))
         .expect("theme row");
-    assert_eq!(view.items[theme_row].label, "Theme: Dark ▸");
+    assert_eq!(view.items[theme_row].label, "  Theme: Dark ▸");
     view.selected = theme_row;
     let row = view.item_rects[theme_row];
 
     let (kind, action) = activate_menu(&mut chrome).expect("the theme row is live");
     assert_eq!(kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
-    assert_eq!(action, MenuAction::ThemeMenu);
+    assert_eq!(action, MenuAction::OpenSubmenu(Submenu::Theme));
     assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
     assert_eq!(chrome.mode, Mode::ContextMenu);
     let choices = chrome.menu.as_mut().expect("theme choices");
-    assert_eq!(choices.kind, ContextMenuKind::Theme);
+    assert_eq!(choices.kind, ContextMenuKind::Submenu(Submenu::Theme));
     assert_eq!(
         choices.item_rects[0].x,
         row.right() + 2,
@@ -808,11 +802,123 @@ fn theme_row_opens_its_choices_beside_it_and_saves_the_pick() {
 
     choices.selected = 1;
     let (kind, action) = activate_menu(&mut chrome).expect("light is a pick");
-    assert_eq!(kind, ContextMenuKind::Theme);
+    assert_eq!(kind, ContextMenuKind::Submenu(Submenu::Theme));
     assert_eq!(action, MenuAction::SetTheme("light"));
     assert!(apply_local_menu_action(&mut ws, &mut chrome, &action));
     assert_eq!(chrome.theme.kind, crate::theme::ThemeKind::Light);
-    assert_eq!(theme_row_label(&chrome), "Theme: Light ▸");
+    assert_eq!(theme_row_label(&chrome), "  Theme: Light ▸");
     let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
     assert_eq!(saved.theme, "light");
+}
+
+/// View › Sidebar › a section cascades two deep with every menu behind it
+/// open on the row that led there; left goes back one level, right opens a
+/// submenu row. Each section's submenu holds only that section's options.
+#[test]
+fn sidebar_submenus_cascade_and_hold_one_section_each() {
+    use super::super::modal_input::{route_modal_key, ModalOutcome};
+    use crate::key_input::KeyInput;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    let mut ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+    let key = |code| KeyInput {
+        key: KeyEvent::new(code, KeyModifiers::NONE),
+        bytes: Vec::new(),
+    };
+    let machines = Submenu::Section(SidebarSection::Machines);
+    assert!(apply_local_menu_action(
+        &mut ws,
+        &mut chrome,
+        &MenuAction::OpenSubmenu(machines)
+    ));
+    let open = chrome.menu.as_ref().expect("machines submenu");
+    assert_eq!(open.kind, ContextMenuKind::Submenu(machines));
+    assert_eq!(labels(open), ["✓ This machine", "  All machines"]);
+    let sidebar = open.parent.as_deref().expect("sidebar submenu behind");
+    assert_eq!(sidebar.kind, ContextMenuKind::Submenu(Submenu::Sidebar));
+    assert_eq!(
+        labels(sidebar),
+        [
+            "  Show sidebar",
+            "  Pin sidebar",
+            "  Machines ▸",
+            "  Projects ▸",
+            "  Agents ▸",
+            "  Terminals ▸",
+        ]
+    );
+    assert_eq!(
+        sidebar.items[sidebar.selected].action,
+        MenuAction::OpenSubmenu(machines)
+    );
+    let view = sidebar.parent.as_deref().expect("view menu behind");
+    assert_eq!(view.kind, ContextMenuKind::MenuBar(MenuBarMenu::View));
+    assert_eq!(
+        view.items[view.selected].action,
+        MenuAction::OpenSubmenu(Submenu::Sidebar)
+    );
+
+    // Left returns to Sidebar; right on its Projects row opens Projects.
+    route_modal_key(&ws, &mut chrome, &key(KeyCode::Left));
+    let sidebar = chrome.menu.as_mut().expect("sidebar submenu");
+    assert_eq!(sidebar.kind, ContextMenuKind::Submenu(Submenu::Sidebar));
+    sidebar.selected = 3;
+    let ModalOutcome::Menu { action, .. } = route_modal_key(&ws, &mut chrome, &key(KeyCode::Right))
+    else {
+        panic!("right opens the submenu row");
+    };
+    apply_local_menu_action(&mut ws, &mut chrome, &action);
+    let projects = chrome.menu.as_ref().expect("projects submenu");
+    assert_eq!(labels(projects), ["✓ Working projects", "  All projects"]);
+    let terminals = build_menu(
+        &ws,
+        &chrome,
+        ContextMenuKind::Submenu(Submenu::Section(SidebarSection::Terminals)),
+        (0, 0),
+    );
+    assert_eq!(
+        labels(&terminals),
+        ["New terminal", "Destroy orphaned terminals…"]
+    );
+
+    // The machine scope sets the filter the rows read.
+    apply_local_menu_action(&mut ws, &mut chrome, &MenuAction::SetMachineScope(true));
+    assert_eq!(
+        chrome.sidebar.machine_filter.as_deref(),
+        Some(crate::ui::sidebar::ALL_MACHINES)
+    );
+    apply_local_menu_action(&mut ws, &mut chrome, &MenuAction::SetMachineScope(false));
+    assert_eq!(chrome.sidebar.machine_filter, None);
+}
+
+/// View › Monochrome redraws the chrome in grays at once, keeps the theme,
+/// and survives a reload of the prefs.
+#[test]
+fn monochrome_toggle_grays_the_chrome_and_is_saved() {
+    let mut ws = Workspace::scripted();
+    let home = tempfile::tempdir().expect("temp gobby home");
+    ws.set_gobby_home(home.path().to_path_buf());
+    let mut chrome = Chrome::dark();
+    let gray = |color| match color {
+        ratatui::style::Color::Rgb(r, g, b) => r == g && g == b,
+        _ => false,
+    };
+    assert!(!gray(chrome.palette.accent));
+    apply_local_menu_action(&mut ws, &mut chrome, &MenuAction::ToggleMonochrome);
+    assert!(chrome.prefs.monochrome);
+    assert_eq!(chrome.theme.kind, crate::theme::ThemeKind::Dark);
+    for color in [
+        chrome.palette.accent,
+        chrome.palette.peach,
+        chrome.palette.red,
+    ] {
+        assert!(gray(color), "{color:?}");
+    }
+    let saved = crate::prefs::load_prefs(home.path()).expect("load prefs");
+    assert!(saved.monochrome);
+    let mut reloaded = Chrome::dark();
+    reloaded.apply_prefs(saved);
+    assert_eq!(reloaded.palette.accent, chrome.palette.accent);
+    apply_local_menu_action(&mut ws, &mut chrome, &MenuAction::ToggleMonochrome);
+    assert!(!gray(chrome.palette.accent));
 }

@@ -199,21 +199,26 @@ fn agent_state_follows_attention_and_terminal() {
 /// gone, then active, then idle. Output unseen, held and no state yet roll
 /// up as idle, and a container with no members is idle.
 #[test]
-fn rollup_ranks_needs_you_gone_active_idle() {
+fn rollup_ranks_needs_you_gone_held_active_idle() {
     let every = [
         RowState::Idle,
         RowState::Unseen,
-        RowState::Paused,
+        RowState::Unknown,
         RowState::Working,
+        RowState::Paused,
         RowState::Orphaned,
         RowState::Attention,
     ];
+    // Each prefix rolls up to its last, most urgent member.
     assert_eq!(rollup(every), RowState::Attention);
-    assert_eq!(rollup(every[..5].iter().copied()), RowState::Orphaned);
+    assert_eq!(rollup(every[..6].iter().copied()), RowState::Orphaned);
+    assert_eq!(rollup(every[..5].iter().copied()), RowState::Paused);
     assert_eq!(rollup(every[..4].iter().copied()), RowState::Working);
+    // Output unseen and no state yet count as idle.
+    assert_eq!(rollup(every[..3].iter().copied()), RowState::Idle);
     assert_eq!(
-        rollup([RowState::Unseen, RowState::Paused, RowState::Unknown]),
-        RowState::Idle
+        rollup([RowState::Paused, RowState::Working]),
+        RowState::Paused
     );
     assert_eq!(rollup(Vec::<RowState>::new()), RowState::Idle);
 }
@@ -348,7 +353,7 @@ fn build_joins_projects_worktrees_and_agents() {
     );
     assert_eq!(
         worktree.state,
-        RowState::Working,
+        Some(RowState::Working),
         "the worktree shows the state of the agent running in it"
     );
 

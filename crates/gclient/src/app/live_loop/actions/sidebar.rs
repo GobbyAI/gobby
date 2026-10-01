@@ -70,7 +70,7 @@ pub(super) fn apply_sidebar_action(
 }
 
 /// Pin the sidebar into the layout or unpin it, and save the choice; a
-/// pinned sidebar has no overlay to roll up. View › Pin Sidebar, the
+/// pinned sidebar has no overlay to roll up. View › Sidebar › Pin sidebar, the
 /// settings row and `ToggleSidebar` on a pinned sidebar all come here.
 pub(in crate::app::live_loop) fn toggle_sidebar_pin(home: Option<&Path>, chrome: &mut Chrome) {
     chrome.sidebar.pinned = !chrome.sidebar.pinned;

@@ -23,7 +23,7 @@ use gobby_client::app::{route_mouse, ContextMenuKind, ControlState};
 use gobby_client::daemon::{
     Checkout, ProjectRow, RunRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
-use gobby_client::theme::{Palette, Theme, ThemeKind};
+use gobby_client::theme::{Palette, ThemeKind, Token};
 use gobby_client::ui::chrome::Mode;
 use gobby_client::ui::menu_bar::MenuBarMenu;
 use gobby_client::ui::{render_workspace, Chrome};
@@ -48,7 +48,7 @@ const UPDATE_ENV: &str = "GOBBY_UPDATE_SCREENS";
 type ScriptedState = fn() -> (Workspace, Chrome);
 
 /// The scripted states, in the order the plan names them.
-const STATES: [(&str, ScriptedState); 14] = [
+const STATES: [(&str, ScriptedState); 15] = [
     ("empty_workspace", empty_workspace),
     ("splash_connecting", splash_connecting),
     ("splash_attach_running", splash_attach_running),
@@ -63,6 +63,7 @@ const STATES: [(&str, ScriptedState); 14] = [
     ("menu_bar", menu_bar),
     ("sidebar_overlay", sidebar_overlay),
     ("status_segments", status_segments),
+    ("monochrome", monochrome),
 ];
 
 // ---------------------------------------------------------------- the states
@@ -169,12 +170,23 @@ fn project_rows() -> SidebarRows {
 fn projects_agents() -> (Workspace, Chrome) {
     let mut ws = Workspace::scripted();
     ws.set_local_machine("local");
-    ws.daemon_mut().set_sidebar_rows(project_rows());
+    // The attention agent runs in the worktree, so the worktree rolls it up.
+    let mut rows = project_rows();
+    rows.runs.insert(
+        "proj-alpha".into(),
+        vec![RunRow {
+            run_id: "run-alpha".into(),
+            worktree_id: Some("wt-1".into()),
+            ..RunRow::default()
+        }],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
     ws.daemon_mut().set_roster(json!({
         "epoch": "e1",
         "seq": 1,
         "entries": [{
             "entry_id": "run:term-alpha",
+            "run_id": "run-alpha",
             "terminal": {"terminal_id": "term-alpha", "backend": "native"},
             "attention": {"attention_id": "att-1", "kind": "actionable", "fingerprint": "fp-1"}
         }]
@@ -187,6 +199,16 @@ fn projects_agents() -> (Workspace, Chrome) {
     }
     let mut chrome = Chrome::dark();
     chrome.sidebar.pinned = true;
+    (ws, chrome)
+}
+
+/// The projects and agents state in grays: every state keeps its glyph and
+/// lightness once the hue is gone.
+fn monochrome() -> (Workspace, Chrome) {
+    let (ws, mut chrome) = projects_agents();
+    chrome.prefs.monochrome = true;
+    chrome.set_theme(ThemeKind::Dark);
+    chrome.sidebar.toggle_group("proj-alpha");
     (ws, chrome)
 }
 
@@ -525,12 +547,24 @@ fn render(ws: &Workspace, chrome: &mut Chrome) -> Terminal<TestBackend> {
 /// with, then the chrome's own fields no herdr name covers: the bar and its
 /// inks, the line and the wordmark. Those come after the entries, so where
 /// one repeats a token (`bar_open_ink` is the dark `surface_dim`) the
-/// capture keeps naming the entry.
-fn roles(theme: &Theme) -> Vec<(&'static str, Color)> {
-    let palette = theme.palette();
-    Palette::entries(theme)
+/// capture keeps naming the entry. A monochrome chrome paints each token at
+/// its own lightness with no chroma, so its roles are those grays.
+fn roles(chrome: &Chrome) -> Vec<(&'static str, Color)> {
+    let palette = &chrome.palette;
+    let monochrome = chrome.prefs.monochrome;
+    Palette::entries(&chrome.theme)
         .into_iter()
-        .map(|(name, token)| (name, token.color()))
+        .map(|(name, token)| {
+            let token = if monochrome {
+                Token {
+                    chroma: 0.0,
+                    ..token
+                }
+            } else {
+                token
+            };
+            (name, token.color())
+        })
         .chain([
             ("bar", palette.bar),
             ("bar_ink", palette.bar_ink),
@@ -603,12 +637,18 @@ fn style_runs(styles: &[String]) -> String {
 /// Serialises the last drawn frame: a header, then a glyph line and a style
 /// line per row. The file is compared byte for byte and never parsed, so
 /// delimiters appearing inside rendered content are harmless.
-fn capture(name: &str, terminal: &Terminal<TestBackend>, theme: &Theme) -> String {
-    let roles = roles(theme);
+fn capture(name: &str, terminal: &Terminal<TestBackend>, chrome: &Chrome) -> String {
+    let roles = roles(chrome);
     let buffer = terminal.backend().buffer();
+    let theme = match (chrome.theme.kind, chrome.prefs.monochrome) {
+        (ThemeKind::Dark, false) => "dark theme",
+        (ThemeKind::Dark, true) => "dark theme in grays",
+        (ThemeKind::Light, false) => "light theme",
+        (ThemeKind::Light, true) => "light theme in grays",
+    };
     let mut out = format!(
         "# gclient screen golden: {name}\n\
-         # {WIDTH}x{HEIGHT}, dark theme, colours normalised to theme::Palette roles\n"
+         # {WIDTH}x{HEIGHT}, {theme}, colours normalised to theme::Palette roles\n"
     );
     for y in 0..buffer.area.height {
         let mut glyphs = String::new();
@@ -660,10 +700,10 @@ fn first_difference(rendered: &str, committed: &str) -> String {
 /// of the same state must serialise identically before the bytes are worth
 /// committing, and the byte comparison below then carries that guarantee
 /// across runs.
-fn deterministic_capture(name: &str, build: ScriptedState, theme: &Theme) -> String {
+fn deterministic_capture(name: &str, build: ScriptedState) -> String {
     let (ws, mut chrome) = build();
-    let first = capture(name, &render(&ws, &mut chrome), theme);
-    let second = capture(name, &render(&ws, &mut chrome), theme);
+    let first = capture(name, &render(&ws, &mut chrome), &chrome);
+    let second = capture(name, &render(&ws, &mut chrome), &chrome);
     assert!(
         first == second,
         "{name} capture is not deterministic\n{}",
@@ -676,11 +716,10 @@ fn deterministic_capture(name: &str, build: ScriptedState, theme: &Theme) -> Str
 
 #[test]
 fn screens_match_committed_captures() {
-    let theme = Theme::new(ThemeKind::Dark);
     let update = std::env::var_os(UPDATE_ENV).is_some_and(|value| value == "1");
 
     for (name, build) in STATES {
-        let rendered = deterministic_capture(name, build, &theme);
+        let rendered = deterministic_capture(name, build);
         let path = fixture_path(name);
 
         if update {
@@ -716,8 +755,7 @@ fn glyph_rows(capture: &str) -> Vec<&str> {
 
 #[test]
 fn agent_rows_golden() {
-    let theme = Theme::new(ThemeKind::Dark);
-    let rendered = deterministic_capture("agent_rows", agent_rows, &theme);
+    let rendered = deterministic_capture("agent_rows", agent_rows);
     let rows = glyph_rows(&rendered);
     assert!(
         rows[9].contains("#123: backend-developer-work"),
@@ -745,14 +783,14 @@ fn agent_rows_golden() {
         .lines()
         .find(|line| line.starts_with("11 :"))
         .expect("model slug style");
-    assert!(slug_style.contains("subtext0/panel_bg*5"));
-    assert!(!slug_style.contains("subtext0/panel_bg+d"));
+    // The model sits in overlay1, a neutral tier below the title (#23120).
+    assert!(slug_style.contains("overlay1/panel_bg*5"));
+    assert!(!slug_style.contains("overlay1/panel_bg+d"));
 }
 
 #[test]
 fn status_segments_golden() {
-    let theme = Theme::new(ThemeKind::Dark);
-    let rendered = deterministic_capture("status_segments", status_segments, &theme);
+    let rendered = deterministic_capture("status_segments", status_segments);
     let rows = glyph_rows(&rendered);
     let status = rows[usize::from(HEIGHT - 1)];
     assert!(status.contains("⍾ 1 needs you │ 1 idle"), "{status:?}");
@@ -772,8 +810,7 @@ fn status_segments_golden() {
 /// here as well raced that test's rewrite under the update flag.
 #[test]
 fn projects_agents_golden() {
-    let theme = Theme::new(ThemeKind::Dark);
-    let rendered = deterministic_capture("projects_agents", projects_agents, &theme);
+    let rendered = deterministic_capture("projects_agents", projects_agents);
     let rows = glyph_rows(&rendered);
     let row_containing = |needle: &str| {
         rows.iter()
@@ -791,10 +828,10 @@ fn projects_agents_golden() {
     let machines = row_containing(" Machines");
     assert_eq!(machines, 2, "the machines band tops the sidebar");
     let projects = row_containing(" Projects");
-    assert!(
-        rows[projects].contains("[working]"),
-        "projects band: {:?}",
-        rows[projects]
+    assert_eq!(
+        rows[projects].trim_end(),
+        " Projects",
+        "the projects band is its title alone"
     );
     assert!(machines < projects, "the machines sit above the projects");
     // alpha carries the most urgent state of its bound agents: needs you.
@@ -819,10 +856,10 @@ fn projects_agents_golden() {
         alpha + 2,
         "a blank row separates the cards from the agents band"
     );
-    assert!(
-        rows[sessions].contains("[view]"),
-        "agents band: {:?}",
-        rows[sessions]
+    assert_eq!(
+        rows[sessions].trim_end(),
+        " Agents",
+        "the agents band is its title alone"
     );
     let entry = row_containing("Unknown");
     assert_eq!(
@@ -844,7 +881,7 @@ fn projects_agents_golden() {
     // Expanding the card unfolds its worktree under it and flips the marker.
     let (ws, mut chrome) = projects_agents();
     chrome.sidebar.toggle_group("proj-alpha");
-    let expanded = capture("projects_agents", &render(&ws, &mut chrome), &theme);
+    let expanded = capture("projects_agents", &render(&ws, &mut chrome), &chrome);
     let expanded_rows = glyph_rows(&expanded);
     assert!(
         expanded_rows[alpha].trim_end().ends_with('▾'),
@@ -852,7 +889,7 @@ fn projects_agents_golden() {
         expanded_rows[alpha]
     );
     assert!(
-        expanded_rows[alpha + 1].starts_with("   └─ ○ feature · #123"),
+        expanded_rows[alpha + 1].starts_with("   └─ ⍾ feature · #123"),
         "worktree line: {:?}",
         expanded_rows[alpha + 1]
     );
@@ -861,13 +898,24 @@ fn projects_agents_golden() {
 /// 4.2.1's second half. The tab bar is chrome and sits nowhere near a pane
 /// body, so renaming one tab by a single character must move the capture.
 #[test]
+fn monochrome_paints_only_the_gray_roles() {
+    // A colour outside the roles is named by value (`rgb(…)`), so none may
+    // appear: monochrome leaves no hue behind anywhere in the chrome.
+    let rendered = deterministic_capture("monochrome", monochrome);
+    assert!(
+        !rendered.contains("rgb("),
+        "a hue leaked into monochrome\n{rendered}"
+    );
+    assert!(rendered.contains("dark theme in grays"));
+}
+
+#[test]
 fn a_chrome_change_outside_the_terminal_content_region_fails_the_capture() {
-    let theme = Theme::new(ThemeKind::Dark);
-    let committed = deterministic_capture("split_live", split_live, &theme);
+    let committed = deterministic_capture("split_live", split_live);
 
     let (ws, mut chrome) = split_live();
     chrome.tabs_mut().tabs[1].title = "secont".to_string();
-    let moved = capture("split_live", &render(&ws, &mut chrome), &theme);
+    let moved = capture("split_live", &render(&ws, &mut chrome), &chrome);
 
     assert!(
         moved != committed,

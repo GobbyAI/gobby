@@ -240,18 +240,6 @@ pub(super) fn down<W: WorkspaceView>(
             };
             MouseOutcome::Handled
         }
-        Hit::ProjectsFilter => MouseOutcome::Action(Action::ToggleProjectsFilter),
-        // The band has room for one control, so both session axes live in
-        // its menu.
-        Hit::AgentsView => {
-            open_menu(
-                ws,
-                chrome,
-                ContextMenuKind::AgentsView,
-                (mouse.column, mouse.row),
-            );
-            MouseOutcome::Handled
-        }
         Hit::Agent(entry_id) => {
             // A blocked row only reveals its terminal, which already shows the
             // question; `respond` stays on prefix+a and the row menu.

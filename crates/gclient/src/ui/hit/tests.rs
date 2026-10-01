@@ -111,24 +111,17 @@ fn hit_test_covers_split_live_layout() {
     assert_eq!(at(view, new_tab.x, new_tab.y), Hit::NewTab);
     assert_eq!(at(view, bar.right() - 1, bar.y), Hit::TabBarEmpty);
 
-    // Sidebar: divider column, band controls, rows, then bare cells.
+    // Sidebar: divider column, headings, rows, then bare cells. A heading
+    // carries no control, so its whole row is bare sidebar.
     let sidebar = view.sidebar_rect;
     let divider_x = view.sidebar_divider_x.expect("sidebar divider");
     assert_eq!(at(view, divider_x, sidebar.y), Hit::SidebarDivider);
     for (section, rect) in SidebarSection::ALL.iter().zip(view.sidebar_section_rects) {
         assert!(rect.height > 0, "{section:?} drawn");
-        assert_eq!(
-            at(view, rect.x, rect.y),
-            Hit::SidebarEmpty,
-            "{section:?} band"
-        );
+        for x in rect.x..rect.right() {
+            assert_eq!(at(view, x, rect.y), Hit::SidebarEmpty, "{section:?} band");
+        }
     }
-    let filter = view
-        .projects_filter_hit_area
-        .expect("projects filter drawn");
-    assert_eq!(at(view, filter.x, filter.y), Hit::ProjectsFilter);
-    let view_control = view.agents_view_hit_area.expect("agents view drawn");
-    assert_eq!(at(view, view_control.x, view_control.y), Hit::AgentsView);
     let (id, rect) = view.machine_hit_areas.first().expect("machine row");
     assert_eq!(at(view, rect.x, rect.y), Hit::Machine(id.clone()));
     let (id, rect) = view.project_hit_areas.first().expect("project card");

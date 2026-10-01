@@ -331,6 +331,23 @@ impl Palette {
     }
 
     pub fn from_theme(theme: &Theme) -> Self {
+        Self::painted(theme, Token::color)
+    }
+
+    /// `from_theme` with every token drawn at its own lightness and no
+    /// chroma. States already differ by glyph and lightness, so nothing
+    /// relies on the hue this drops.
+    pub fn monochrome(theme: &Theme) -> Self {
+        Self::painted(theme, |token| {
+            Token {
+                chroma: 0.0,
+                ..token
+            }
+            .color()
+        })
+    }
+
+    fn painted(theme: &Theme, paint: impl Fn(Token) -> Color) -> Self {
         let n = &theme.neutrals;
         let (ink, glint) = match theme.kind {
             ThemeKind::Dark => (n.panel_bg, n.text),
@@ -343,30 +360,30 @@ impl Palette {
             ThemeKind::Light => n.text,
         };
         Self {
-            accent: theme.accent.color(),
-            panel_bg: n.panel_bg.color(),
-            surface0: n.surface0.color(),
-            surface1: n.surface1.color(),
-            surface_dim: n.surface_dim.color(),
-            overlay0: n.overlay0.color(),
-            overlay1: n.overlay1.color(),
-            text: n.text.color(),
-            subtext0: n.subtext0.color(),
-            mauve: n.subtext0.color(),
-            green: theme.success.color(),
-            yellow: theme.warning.color(),
-            red: theme.destructive.color(),
-            blue: theme.info.color(),
-            teal: theme.info.color(),
-            peach: theme.warning.color(),
-            ink: ink.color(),
-            glint: glint.color(),
-            dim: n.dim.color(),
-            bar: light.accent.color(),
-            bar_ink: light.neutrals.panel_bg.color(),
-            bar_open_ink: light.neutrals.text.color(),
-            line: Token::neutral("line", 0.08).color(),
-            wordmark: wordmark.color(),
+            accent: paint(theme.accent),
+            panel_bg: paint(n.panel_bg),
+            surface0: paint(n.surface0),
+            surface1: paint(n.surface1),
+            surface_dim: paint(n.surface_dim),
+            overlay0: paint(n.overlay0),
+            overlay1: paint(n.overlay1),
+            text: paint(n.text),
+            subtext0: paint(n.subtext0),
+            mauve: paint(n.subtext0),
+            green: paint(theme.success),
+            yellow: paint(theme.warning),
+            red: paint(theme.destructive),
+            blue: paint(theme.info),
+            teal: paint(theme.info),
+            peach: paint(theme.warning),
+            ink: paint(ink),
+            glint: paint(glint),
+            dim: paint(n.dim),
+            bar: paint(light.accent),
+            bar_ink: paint(light.neutrals.panel_bg),
+            bar_open_ink: paint(light.neutrals.text),
+            line: paint(Token::neutral("line", 0.08)),
+            wordmark: paint(wordmark),
         }
     }
 }

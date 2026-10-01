@@ -743,9 +743,10 @@ parity_tests! {
                 .copied()
                 .expect("last visible tab");
 
+            // gclient: one rule column separates the last tab from `+`.
             assert_eq!(
                 tabs.new_tab_hit_area.x,
-                last_visible.x + last_visible.width
+                last_visible.x + last_visible.width + 1
             );
         }
 
@@ -772,11 +773,11 @@ parity_tests! {
             assert!(tabs.new_tab_hit_area.width > 0);
 
             // gclient: the new-tab button stays at the right end with the
-            // right count against it, and every tab shown is whole; each
-            // label is under the twelve-column minimum.
+            // right count one rule column before it, and every tab shown is
+            // whole; each label is under the twelve-column minimum.
             assert_eq!(tabs.new_tab_hit_area.right(), area.right());
             assert_eq!(
-                tabs.tab_scroll_right_hit_area.right(),
+                tabs.tab_scroll_right_hit_area.right() + 1,
                 tabs.new_tab_hit_area.x
             );
             let shown: Vec<Rect> = tabs
@@ -1234,12 +1235,14 @@ switch_project = "ctrl+1..9"
                     // dropped its rule for bare theme ground (#22986), and
                     // the sandbox mark led the address (#23049 option A), then
                     // left these records-free panes unmarked (`gclient` alone,
-                    // #23096): 4.1.3 requires a glyph change to fail here, so
-                    // this digest moves only alongside a deliberate render
-                    // change.
+                    // #23096), then section headings went bold with no fill
+                    // or selector and a rule set `+` apart from the last tab
+                    // (#23120): 4.1.3
+                    // requires a glyph change to fail here, so this digest
+                    // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "15ccd0e8c8687591bf249da11dcf4dae9085c26e31abec811d965f09f9a5f445",
+                        "57be67f52df824ed897bd52d1b8325b684b5748d2f1a5c437bd96146fb4e965e",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );
@@ -1679,6 +1682,7 @@ fn rendered_settings_hits_match_drawn_rows() {
     assert_eq!(view.settings_row_hit_areas.len(), SettingsRow::ALL.len());
     let labels = [
         "theme",
+        "monochrome",
         "mouse capture",
         "pane scrollbars",
         "pane gaps",

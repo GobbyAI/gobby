@@ -17,9 +17,9 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use gobby_client::app::sidebar_model::{AgentEntry, ProjectEntry, SidebarModel, WorktreeEntry};
 use gobby_client::app::{
-    apply_rename, rename_project, route_modal_key, route_mouse, Backend, ContextMenuKind,
-    ModalOutcome, MouseGesture, MouseOutcome, Pane, PaneId, Workspace, MOUSE_SCROLL_LINES,
-    PROJECT_DRAG_THRESHOLD,
+    apply_rename, build_menu, rename_project, route_modal_key, route_mouse, Backend,
+    ContextMenuKind, ModalOutcome, MouseGesture, MouseOutcome, Pane, PaneId, Submenu, Workspace,
+    MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{
     Attention, Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow,
@@ -40,7 +40,6 @@ use gobby_client::ui::sidebar_rows::{
 };
 use gobby_client::ui::status::state_dot;
 use gobby_client::ui::text::display_width;
-use gobby_client::ui::Action;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -390,7 +389,9 @@ parity_tests! {
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
-            assert_eq!(agent_style.fg, Some(p.overlay1));
+            // On the active fill the quiet line steps up to subtext0, since
+            // overlay1 on surface0 falls under AA.
+            assert_eq!(agent_style.fg, Some(p.subtext0));
             assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
             assert_eq!(agent_style.bg, Some(p.surface0));
@@ -501,8 +502,8 @@ parity_tests! {
             board.add("claude", "claude");
             let chrome = chrome();
             // A four-row body fits one three-line agent row after the top-half
-            // cap, the Agents band and its blank row, and the Terminals band.
-            let area = Rect::new(0, 0, 20, 14);
+            // cap, the Agents band and its blank row; no terminal, no Terminals band.
+            let area = Rect::new(0, 0, 20, 12);
             let body = section_body(&board, &chrome, area, SidebarSection::Agents);
             assert_eq!(body.height, 4);
             let metrics = project_list_metrics(
@@ -557,10 +558,10 @@ parity_tests! {
             // herdr's first agent spans three rows (agent + two custom
             // tokens) in a six-row panel; gclient agent rows are two lines
             // each, so three agents in a four-row body carry the same
-            // geometry once Terminals has its own band.
+            // geometry with no Terminals band.
             let board = Board::new(&["one", "two", "three"]);
             let mut chrome = chrome();
-            let area = Rect::new(0, 0, 20, 13);
+            let area = Rect::new(0, 0, 20, 12);
             let body = section_body(&board, &chrome, area, SidebarSection::Agents);
             assert_eq!(body.height, 4);
 
@@ -605,7 +606,7 @@ parity_tests! {
             board.add("one", "claude");
             board.set_state("one", RowState::Attention);
             let chrome = chrome();
-            let area = Rect::new(0, 0, 20, 9);
+            let area = Rect::new(0, 0, 20, 8);
             let panel = section_rects(&board, &chrome, area)[SidebarSection::Agents.index()];
             assert_eq!(panel.height, 4);
             let body = section_body_rect(panel, SidebarSection::Agents, false);
@@ -706,16 +707,16 @@ parity_tests! {
             // herdr's 0.9 ratio of five rows is a four-row projects request;
             // gclient has no ratio: the top half of five rows (two) goes to
             // the machines band and its row, nothing is left for the
-            // projects; Agents and Terminals split the other three.
-            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 1, 0);
+            // projects; with no bare terminal Agents takes the other three.
+            let layout = sidebar_layout(Rect::new(0, 0, 20, 5), SidebarSide::Left, 1, 4, 0);
 
             assert_eq!(
                 layout.sections,
                 [
                     Rect::new(0, 0, 19, 2),
                     Rect::new(0, 2, 19, 0),
-                    Rect::new(0, 2, 19, 2),
-                    Rect::new(0, 4, 19, 1),
+                    Rect::new(0, 2, 19, 3),
+                    Rect::new(0, 5, 19, 0),
                 ]
             );
             // The drawn sidebar follows the layout: a board with one card
@@ -1231,24 +1232,15 @@ fn agent_rows_follow_project_and_machine_filter() {
     chrome.sidebar.all_sessions = false;
     assert_eq!(labels(&board, &chrome), ["alpha-remote", "alpha"]);
 
-    // The sessions band carries one control, `[view]`, and a click opens the
-    // menu holding both axes: the value in force is marked and disabled, the
-    // other choice of each pair carries the toggle. The projects band carries
-    // the filter control, whose click is the action itself; the machines
-    // section lists this machine first and the remote one nested under it,
-    // and a click on a row sets the filter.
+    // Section headings are plain titles; each section's options live in its
+    // own View › Sidebar submenu. The Agents submenu holds both axes: the
+    // value in force is marked and disabled, the other choice of each pair
+    // carries the toggle. The machines section lists this machine first and
+    // the remote one nested under it, and a click on a row sets the filter.
     let area = Rect::new(0, 0, 34, 20);
     let (terminal, hits) = draw_sidebar(&board, &chrome, area.width, area.height);
-    let view_control = hits.agents_view.expect("view control hit");
-    let filter = hits.projects_filter.expect("filter control hit");
-    assert_eq!(
-        row_str(&terminal, view_control.y, 33),
-        " Agents                   [view]"
-    );
-    assert_eq!(
-        row_str(&terminal, filter.y, 33),
-        " Projects              [working]"
-    );
+    let agents_band = section_rects(&board, &chrome, area)[SidebarSection::Agents.index()];
+    assert_eq!(row_str(&terminal, agents_band.y, 33), " Agents");
     let machines: Vec<&str> = hits.machines.iter().map(|(id, _)| id.as_str()).collect();
     assert_eq!(machines, [LOCAL_MACHINE, REMOTE]);
     let local_row = hits.machines[0].1;
@@ -1260,21 +1252,13 @@ fn agent_rows_follow_project_and_machine_filter() {
         row_str(&terminal, remote_row.y, 33)
     );
     chrome.view.sidebar_rect = area;
-    chrome.view.agents_view_hit_area = hits.agents_view;
-    chrome.view.projects_filter_hit_area = hits.projects_filter;
     chrome.view.machine_hit_areas = hits.machines.clone();
-    assert_eq!(
-        route(
-            &board,
-            &mut chrome,
-            LEFT_DOWN,
-            view_control.x,
-            view_control.y
-        ),
-        MouseOutcome::Handled
+    let menu = build_menu(
+        &board,
+        &chrome,
+        ContextMenuKind::Submenu(Submenu::Section(SidebarSection::Agents)),
+        (0, 0),
     );
-    let menu = chrome.menu.as_ref().expect("view menu open");
-    assert_eq!(menu.kind, ContextMenuKind::AgentsView);
     let items: Vec<(&str, bool)> = menu
         .items
         .iter()
@@ -1288,12 +1272,6 @@ fn agent_rows_follow_project_and_machine_filter() {
             ("  Grouped", true),
             ("✓ Priority", false),
         ]
-    );
-    chrome.menu = None;
-    chrome.mode = Mode::Terminal;
-    assert_eq!(
-        route(&board, &mut chrome, LEFT_DOWN, filter.x, filter.y),
-        MouseOutcome::Action(Action::ToggleProjectsFilter)
     );
     // A remote row filters to that machine and a second click returns to
     // local; the local row toggles `all`.
@@ -1309,14 +1287,10 @@ fn agent_rows_follow_project_and_machine_filter() {
     route(&board, &mut chrome, LEFT_DOWN, local_row.x, local_row.y);
     assert_eq!(chrome.sidebar.machine_filter, None);
 
-    // One known machine: the local row alone. The band's single control
-    // fits beside the whole title at the default width too.
+    // One known machine: the local row alone.
     let local = Board::new(&["alpha"]);
     let (_, hits) = draw_sidebar(&local, &chrome, area.width, area.height);
     assert_eq!(hits.machines.len(), 1);
-    assert!(hits.agents_view.is_some());
-    let (_, hits) = draw_sidebar(&local, &chrome, 26, area.height);
-    assert!(hits.agents_view.is_some());
 }
 
 #[test]
@@ -1446,8 +1420,7 @@ fn sidebar_drags_reorder_resize_and_scroll() {
 
     // The sections size themselves: the machines and projects sections stop
     // at the top half of the sidebar and Agents and Terminals share the rest, so a
-    // press on a band's title starts no gesture. The band controls are the
-    // mouse's filter and scope toggles.
+    // press on a band's title starts no gesture.
     let sections = chrome.view.sidebar_section_rects;
     // Every row of the column goes to the sections.
     let rows = sidebar.height;
@@ -1463,27 +1436,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
         MouseOutcome::Ignore
     );
     assert_eq!(chrome.gesture, None);
-    let filter = chrome
-        .view
-        .projects_filter_hit_area
-        .expect("projects filter drawn");
-    assert_eq!(filter.y, projects_band);
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, filter.x, filter.y),
-        MouseOutcome::Action(Action::ToggleProjectsFilter)
-    );
-    let view_control = chrome.view.agents_view_hit_area.expect("agents view drawn");
-    assert_eq!(view_control.y, sections[SidebarSection::Agents.index()].y);
-    assert_eq!(
-        route(&ws, &mut chrome, LEFT_DOWN, view_control.x, view_control.y),
-        MouseOutcome::Handled
-    );
-    assert_eq!(
-        chrome.menu.as_ref().map(|menu| menu.kind.clone()),
-        Some(ContextMenuKind::AgentsView)
-    );
-    chrome.menu = None;
-    chrome.mode = Mode::Terminal;
+    // The bands hold no controls: their far ends are as inert as the title.
+    let band_end = sidebar.x + sidebar.width - 2;
+    for band in [projects_band, sections[SidebarSection::Agents.index()].y] {
+        assert_eq!(
+            route(&ws, &mut chrome, LEFT_DOWN, band_end, band),
+            MouseOutcome::Ignore
+        );
+    }
+    assert!(chrome.menu.is_none());
 
     // A wheel notch moves the list under the pointer three entries, clamped.
     let projects_max =

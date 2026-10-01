@@ -8000,6 +8000,8 @@ async fn settings_toggle_switches_mouse_capture_and_saves_prefs() {
         async move {
             tokio::task::yield_now().await;
             send_chord(&input_tx, KeyCode::Char('s'), KeyModifiers::NONE).await;
+            // Theme, then Monochrome, then Mouse capture.
+            send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             send_key(&input_tx, KeyCode::Down, KeyModifiers::NONE).await;
             send_key(&input_tx, KeyCode::Char(' '), KeyModifiers::NONE).await;
             wait_until(|| !captured.load(Ordering::SeqCst)).await;
@@ -11146,11 +11148,12 @@ async fn a_detached_worktree_row_does_not_latch_exit() {
                 .collect()
         })
         .collect();
-    // The token after each tree prefix is the state glyph, then the label.
+    // No agent is bound, so no state glyph: the label follows each tree
+    // prefix.
     let label_after = |prefix: &str| -> Vec<String> {
         rows.iter()
             .filter_map(|row| row.split_once(prefix))
-            .filter_map(|(_, rest)| rest.split_whitespace().nth(1).map(str::to_string))
+            .filter_map(|(_, rest)| rest.split_whitespace().next().map(str::to_string))
             .collect()
     };
     assert_eq!(label_after("├─"), ["feature"], "{rows:#?}");

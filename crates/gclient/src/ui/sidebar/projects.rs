@@ -1,30 +1,16 @@
 // upstream: none (herdr src/client/shell/sidebar.rs workspace cards)
-//! The projects section of the expanded sidebar: a band with the
-//! `[working]`/`[all]` filter control, one one-line card per listed
-//! project with the expanded card's worktree rows under it, and the
-//! variable-height scroll metrics the lists need.
+//! The projects section of the expanded sidebar: a heading, one one-line
+//! card per listed project with the expanded card's worktree rows under
+//! it, and the variable-height scroll metrics the lists need. Which
+//! projects are listed is set from View › Sidebar › Projects.
 
-use super::{render_band, render_section_rows, BandStyle, SidebarHits};
+use super::{render_band, render_section_rows, SidebarHits};
 use crate::ui::chrome::Chrome;
 use crate::ui::hit::SidebarSection;
 use crate::ui::sidebar_rows::SidebarRow;
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
 use ratatui::Frame;
-
-/// The band's filter control while the working projects are listed.
-pub const WORKING_LABEL: &str = "[working]";
-/// The band's filter control while every project is listed.
-pub const ALL_PROJECTS_LABEL: &str = "[all]";
-
-/// What the projects band's filter control reads.
-pub fn projects_filter_label(chrome: &Chrome) -> &'static str {
-    if chrome.sidebar.all_projects {
-        ALL_PROJECTS_LABEL
-    } else {
-        WORKING_LABEL
-    }
-}
 
 /// Draw the section into `area` (the content rect, without the separator
 /// column) and record its hits.
@@ -36,14 +22,7 @@ pub(super) fn render_projects(
     hits: &mut SidebarHits,
 ) {
     let section = SidebarSection::Projects;
-    let (_, controls) = render_band(
-        frame,
-        area,
-        section.title(),
-        &[projects_filter_label(chrome)],
-        BandStyle::section(&chrome.palette),
-    );
-    hits.projects_filter = controls.first().copied();
+    render_band(frame, area, section.title(), &chrome.palette);
     render_section_rows(frame, area, section, rows, chrome, hits);
 }
 

@@ -23,20 +23,20 @@ use crate::ui::sidebar_rows::{
     project_rows, row_line_with_scrolling, row_second_line_with_travel, row_third_line, row_travel,
     RowKind, SidebarRow,
 };
-use crate::ui::text::{display_width, display_width_u16, truncate_end};
+use crate::ui::text::{display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 pub use agents::{
     agent_blocked, agent_label, agent_rows, attention_order, machine_admits, next_machine_filter,
-    ALL_MACHINES, TERMINAL_ROW, VIEW_LABEL,
+    ALL_MACHINES, TERMINAL_ROW,
 };
 pub use machines::{local_hostname, machine_rows};
-pub use projects::{project_list_metrics, projects_filter_label};
+pub use projects::project_list_metrics;
 pub use terminals::terminal_rows;
 
 /// Rows the machines section lists before it scrolls.
@@ -59,10 +59,6 @@ pub struct SidebarHits {
     pub worktrees: Vec<(String, Rect)>,
     /// The `▾`/`▸` cell of each card that has worktrees, by project id.
     pub group_toggles: Vec<(String, Rect)>,
-    /// The projects band's `[working]`/`[all]`.
-    pub projects_filter: Option<Rect>,
-    /// The agents band's `[view]`.
-    pub agents_view: Option<Rect>,
     /// Session, agent run and bare terminal rows, by entry id (both lines).
     pub agents: Vec<(String, Rect)>,
     /// Scrollbar lane beside each section that overflowed, by
@@ -82,16 +78,14 @@ pub struct SidebarLayout {
 /// with up to `MACHINES_MAX_ROWS` of its `machine_rows`, the projects band
 /// with its `project_rows` while the two stay within the top half, and the
 /// agents and terminals with everything left, the projects and agents bands
-/// each under a blank row. With no `terminal_rows` the agents keep their
-/// `agent_rows` and blank row, and the terminals band follows them over the
-/// rest. A section short of its rows scrolls; one with no room at all is
-/// empty.
+/// each under a blank row. With no `terminal_rows` the terminals section is
+/// gone and the agents take the rest. A section short of its rows scrolls;
+/// one with no room at all is empty.
 pub fn sidebar_layout(
     area: Rect,
     side: SidebarSide,
     machine_rows: u16,
     project_rows: u16,
-    agent_rows: u16,
     terminal_rows: u16,
 ) -> SidebarLayout {
     // The edge column faces the content: last on the left, first on the right.
@@ -113,11 +107,10 @@ pub fn sidebar_layout(
         .saturating_add(project_rows)
         .min(top - machines);
     let remaining = rows - machines - projects;
-    let terminals = if remaining < 2 {
+    // With no bare terminal the Terminals section, heading included, is
+    // gone and the agents take the rest.
+    let terminals = if remaining < 2 || terminal_rows == 0 {
         0
-    } else if terminal_rows == 0 {
-        let agents = (BAND_ROWS + GAP_ROWS).saturating_add(agent_rows);
-        remaining - agents.min(remaining - BAND_ROWS)
     } else {
         remaining / 2
     };
@@ -143,22 +136,8 @@ pub fn section_rects<W: WorkspaceView>(ws: &W, chrome: &Chrome, area: Rect) -> [
             .map(|row| usize::from(row.height()))
             .sum(),
     );
-    let agents = rows_u16(
-        agent_rows(ws, chrome)
-            .iter()
-            .map(|row| usize::from(row.height()))
-            .sum(),
-    );
     let terminals = rows_u16(terminal_rows(ws, chrome).len());
-    sidebar_layout(
-        area,
-        chrome.sidebar.side,
-        machines,
-        projects,
-        agents,
-        terminals,
-    )
-    .sections
+    sidebar_layout(area, chrome.sidebar.side, machines, projects, terminals).sections
 }
 
 fn rows_u16(rows: usize) -> u16 {
@@ -190,7 +169,6 @@ pub fn render_sidebar<W: WorkspaceView>(
         chrome.sidebar.side,
         rows_u16(machines.len()),
         rows_u16(projects.iter().map(|row| usize::from(row.height())).sum()),
-        rows_u16(agents.iter().map(|row| usize::from(row.height())).sum()),
         rows_u16(terminals.len()),
     );
     machines::render_machines(frame, layout.sections[0], &machines, chrome, &mut hits);
@@ -247,74 +225,21 @@ pub fn section_metrics<W: WorkspaceView>(
     )
 }
 
-/// Colours of a section band: `surface0`.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct BandStyle {
-    bg: Color,
-    title: Style,
-    control: Style,
-}
-
-impl BandStyle {
-    pub(super) fn section(p: &Palette) -> Self {
-        Self {
-            bg: p.surface0,
-            title: Style::default()
-                .fg(p.subtext0)
-                .bg(p.surface0)
-                .add_modifier(Modifier::BOLD),
-            control: Style::default().fg(p.overlay0).bg(p.surface0),
-        }
-    }
-}
-
-/// Draw a band into `rect`'s first row: the title at column 1 and the
-/// bracketed `controls` right-aligned from the last column but one, one
-/// blank apart. Controls that would run into the whole title drop from the
-/// right. Returns the title's rect and the drawn controls' rects, in
-/// `controls` order.
-pub(super) fn render_band(
-    frame: &mut Frame,
-    rect: Rect,
-    title: &str,
-    controls: &[&str],
-    style: BandStyle,
-) -> (Rect, Vec<Rect>) {
+/// Draw a section heading into `rect`'s first row: the title at column 1,
+/// bold in the body text colour on the sidebar's own ground. Rows mark
+/// selection and activity with a fill; a heading never has one, so the two
+/// stay apart in every theme, monochrome included.
+pub(super) fn render_band(frame: &mut Frame, rect: Rect, title: &str, palette: &Palette) {
     let rect = Rect::new(rect.x, rect.y, rect.width, rect.height.min(BAND_ROWS));
     if rect.width < 3 || rect.height == 0 {
-        return (Rect::default(), Vec::new());
+        return;
     }
-    frame.render_widget(Block::default().style(Style::default().bg(style.bg)), rect);
-    let width = usize::from(rect.width);
-    let title_width = display_width(title);
-    let mut kept: Vec<&str> = controls.to_vec();
-    let needed = |kept: &[&str]| -> usize {
-        kept.iter()
-            .map(|control| 1 + display_width(control))
-            .sum::<usize>()
-            + 1
-    };
-    while !kept.is_empty() && 1 + title_width + needed(&kept) > width {
-        kept.pop();
-    }
-    let title = truncate_end(title, width - 2);
+    let title = truncate_end(title, usize::from(rect.width) - 2);
     let title_rect = Rect::new(rect.x + 1, rect.y, display_width_u16(&title), 1);
-    if title_rect.width > 0 {
-        frame.render_widget(Paragraph::new(Span::styled(title, style.title)), title_rect);
-    }
-    let mut x = rect.right() - 1;
-    let mut rects = vec![Rect::default(); kept.len()];
-    for (index, control) in kept.iter().enumerate().rev() {
-        let control_width = display_width_u16(control);
-        x = x.saturating_sub(control_width);
-        rects[index] = Rect::new(x, rect.y, control_width, 1);
-        frame.render_widget(
-            Paragraph::new(Span::styled(*control, style.control)),
-            rects[index],
-        );
-        x = x.saturating_sub(1);
-    }
-    (title_rect, rects)
+    let style = Style::default()
+        .fg(palette.text)
+        .add_modifier(Modifier::BOLD);
+    frame.render_widget(Paragraph::new(Span::styled(title, style)), title_rect);
 }
 
 /// Draw `rows` as `section`'s list under its band, packed from the
