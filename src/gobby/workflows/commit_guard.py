@@ -187,7 +187,7 @@ _SHELL_KEYWORDS = frozenset(
 )
 _NAVIGATION_WORDS = frozenset({"cd", "pushd", "popd"})
 _NESTED_SHELLS = frozenset({"bash", "sh", "zsh", "dash", "ksh"})
-_SHELL_C_FLAG = re.compile(r"-[a-z]*c[a-z]*")
+_SHELL_C_FLAG = re.compile(r"-[a-zA-Z]*c[a-zA-Z]*")
 _COMMAND_WORD_PREFIX = re.compile(r"[({`]")
 
 

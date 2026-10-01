@@ -21,13 +21,21 @@ from fastapi.routing import APIRoute
 from starlette.testclient import TestClient
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.auth import AuthStore, hash_token
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.executor import DatabaseExecutor
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.utils.local_token import AgentApiTokenClaims
+from gobby.utils.local_token import (
+    AgentApiTokenClaims,
+    classify_agent_api_token,
+    issue_agent_api_token,
+)
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.fixtures.agent_definitions import make_agent_definition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
@@ -215,6 +223,7 @@ def _create_agent_row(
     project_id: str | None = None,
     source: str = "installed",
     enabled: bool = True,
+    api_token: str | None = None,
 ) -> Any:
     """Create an agent definition row in the DB."""
     body = make_agent_definition(
@@ -225,6 +234,7 @@ def _create_agent_row(
         mode=mode,
         surfaces=surfaces or ["spawn"],
         enabled=enabled,
+        api_token=api_token,
     )
     dumped = body.model_dump(mode="json")
     return manager.upsert_with_steps(
@@ -253,17 +263,19 @@ def _agent_request(name: str, **fields: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def task_manager(temp_db) -> LocalTaskManager:
+def task_manager(temp_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
 @pytest.fixture
-def agent_manager(temp_db) -> AgentDefinitionManager:
+def agent_manager(temp_db: HubDatabase) -> AgentDefinitionManager:
     return AgentDefinitionManager(temp_db)
 
 
 @pytest.fixture
-def server(temp_db, task_manager, monkeypatch: pytest.MonkeyPatch):
+def server(
+    temp_db: HubDatabase, task_manager: LocalTaskManager, monkeypatch: pytest.MonkeyPatch
+) -> HTTPServer:
     result = create_http_server(
         config=DaemonConfig(),
         database=temp_db,
@@ -274,7 +286,7 @@ def server(temp_db, task_manager, monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture
-def client(server) -> TestClient:
+def client(server: HTTPServer) -> TestClient:
     return TestClient(server.app)
 
 
@@ -321,12 +333,102 @@ def test_agent_token_cannot_mutate_definitions(
         response = client.request(method, path, json=body)
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "Agent API tokens cannot modify agent definitions"
+    assert response.json()["detail"] == "Agent API tokens cannot access agent definitions"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/agents/definitions",
+        "/api/agents/definitions/endpoint-config",
+        "/api/agents/definitions/endpoint-config/export",
+    ],
+)
+@pytest.mark.parametrize("caller", ["operator", "agent", "rejected-agent"])
+def test_definition_reads_keep_endpoint_credentials_inside_operator_boundary(
+    server: HTTPServer,
+    client: TestClient,
+    agent_manager: AgentDefinitionManager,
+    path: str,
+    caller: str,
+) -> None:
+    fake_token = "TEST-ONLY-ENDPOINT-TOKEN"
+    _create_agent_row(agent_manager, "endpoint-config", api_token=fake_token)
+    principal = (
+        None
+        if caller == "operator"
+        else (
+            False
+            if caller == "rejected-agent"
+            else AgentApiTokenClaims(
+                session_id="agent-session",
+                project_id="project",
+                machine_id="machine",
+                iat=1,
+                exp=2,
+            )
+        )
+    )
+    with patch.object(server.auth_service, "request_principal", return_value=principal):
+        response = client.get(path)
+
+    if caller == "operator":
+        assert response.status_code == 200, response.text
+        assert fake_token in response.text
+    else:
+        assert response.status_code == 403
+        assert fake_token not in response.text
+        assert response.json()["detail"] == "Agent API tokens cannot access agent definitions"
+
+
+def test_signed_spawned_agent_bearer_cannot_read_definition_credentials(
+    server: HTTPServer,
+    client: TestClient,
+    agent_manager: AgentDefinitionManager,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    operator_token = "test-definition-operator"
+    token_file = tmp_path / "operator-token"
+    token_file.write_text(operator_token)
+    AuthStore(temp_db).set_local_api_token_hash(hash_token(operator_token))
+    server.auth_service = AuthService(lambda: temp_db, token_file=token_file)
+    session = session_manager.register(
+        external_id="definition-read-spawned-agent",
+        machine_id="21000000-0000-4000-8000-000000000001",
+        source="claude",
+        project_id=sample_project["id"],
+    )
+    run = LocalAgentRunManager(temp_db).create(
+        parent_session_id=session.id, provider="claude", prompt="definition boundary"
+    )
+    token = issue_agent_api_token(
+        operator_token,
+        agent_run_id=run.id,
+        session_id=session.id,
+        project_id=sample_project["id"],
+    )
+    claims = classify_agent_api_token(token, operator_token)
+    assert isinstance(claims, AgentApiTokenClaims)
+    assert claims.agent_run_id == run.id
+    assert claims.session_id == session.id
+    fake_token = "TEST-ONLY-ENDPOINT-TOKEN"
+    _create_agent_row(agent_manager, "endpoint-config", api_token=fake_token)
+
+    response = client.get(
+        "/api/agents/definitions/endpoint-config", headers={"Authorization": f"Bearer {token}"}
+    )
+
+    assert response.status_code == 401, response.text
+    assert response.json()["code"] == "route_not_permitted"
+    assert fake_token not in response.text
 
 
 @pytest.fixture
 def running_agent_run(
-    temp_db, session_manager: SessionManager, sample_project: dict[str, Any]
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
 ) -> tuple[LocalAgentRunManager, AgentRun]:
     parent = session_manager.register(
         external_id="cancel-route-parent",
@@ -373,7 +475,7 @@ class TestListDefinitions:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         client: TestClient,
         agent_manager: AgentDefinitionManager,
-        project_manager,
+        project_manager: LocalProjectManager,
     ) -> None:
         project = isolated_checkout_factory(project_manager.db, "proj-1").project
         _create_agent_row(agent_manager, "scoped", project_id=project.id)
@@ -431,7 +533,7 @@ class TestGetDefinition:
         isolated_checkout_factory: IsolatedCheckoutFactory,
         client: TestClient,
         agent_manager: AgentDefinitionManager,
-        project_manager,
+        project_manager: LocalProjectManager,
     ) -> None:
         project = isolated_checkout_factory(project_manager.db, "proj-1").project
         _create_agent_row(agent_manager, "scoped", project_id=project.id)
@@ -566,7 +668,7 @@ class TestCreateDefinition:
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         client: TestClient,
-        project_manager,
+        project_manager: LocalProjectManager,
     ) -> None:
         project = isolated_checkout_factory(project_manager.db, "test-proj").project
         response = client.post(
@@ -869,7 +971,7 @@ class TestImportDefinition:
         self,
         isolated_checkout_factory: IsolatedCheckoutFactory,
         client: TestClient,
-        project_manager,
+        project_manager: LocalProjectManager,
         tmp_path: Path,
     ) -> None:
         project = isolated_checkout_factory(project_manager.db, "import-proj").project
@@ -1502,7 +1604,9 @@ class TestCancelAgentRun:
             response = client.post(f"/api/agents/runs/{run.id}/cancel")
 
         assert response.status_code == 200
-        assert manager.get(run.id).status == "cancelled"
+        cancelled = manager.get(run.id)
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
 
     def test_retries_failed_manager_update_after_kill(
         self,
@@ -1528,7 +1632,9 @@ class TestCancelAgentRun:
 
         assert response.status_code == 200
         assert attempts == 2
-        assert manager.get(run.id).status == "cancelled"
+        cancelled = manager.get(run.id)
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
 
     def test_reconciles_status_when_kill_raises(
         self,
@@ -1544,7 +1650,9 @@ class TestCancelAgentRun:
             response = client.post(f"/api/agents/runs/{run.id}/cancel")
 
         assert response.status_code == 500
-        assert manager.get(run.id).status == "cancelled"
+        cancelled = manager.get(run.id)
+        assert cancelled is not None
+        assert cancelled.status == "cancelled"
 
     def test_cancel_missing_run(self, client: TestClient) -> None:
         with patch("gobby.agents.kill.kill_agent", new=AsyncMock()) as kill:

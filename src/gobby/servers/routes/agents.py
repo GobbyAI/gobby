@@ -250,7 +250,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
         if principal is not None:
             raise HTTPException(
                 status_code=403,
-                detail="Agent API tokens cannot modify agent definitions",
+                detail="Agent API tokens cannot access agent definitions",
             )
 
     def _row_to_api_dict(row: Any) -> dict[str, Any] | None:
@@ -290,12 +290,14 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
 
     @router.get("/definitions")
     async def list_definitions(
+        request: Request,
         project_id: str | None = Query(None),
         include_deleted: bool = Query(False),
         source_filter: str | None = Query(None),
         surface_filter: str | None = Query(None),
     ) -> dict[str, Any]:
         """List all agent definitions from agent_definitions."""
+        await _require_definition_operator(request)
         try:
             manager = _get_manager()
             rows = manager.list_all(
@@ -323,9 +325,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     @router.get("/definitions/{name}/export")
     async def export_definition(
         name: str,
+        request: Request,
         project_id: str | None = Query(None),
     ) -> Response:
         """Export an agent definition as YAML for download."""
+        await _require_definition_operator(request)
         try:
             from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -362,9 +366,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     @router.get("/definitions/{name}")
     async def get_definition(
         name: str,
+        request: Request,
         project_id: str | None = Query(None),
     ) -> dict[str, Any]:
         """Get a single agent definition by name."""
+        await _require_definition_operator(request)
         try:
             row = await server.run_db(
                 _get_manager().get_by_name,

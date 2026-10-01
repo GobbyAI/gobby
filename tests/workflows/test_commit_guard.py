@@ -1610,6 +1610,8 @@ def test_conditional_navigation_preserves_literal_commit_paths(
         "FOO=x bash -c 'cd /other && git commit -m x -- a.txt'",
         "timeout 5 sh -c 'git commit -m x -- a.txt'",
         "command eval 'git commit -m x -- a.txt'",
+        "bash -Ec 'cd /other && git commit -m x -- a.txt'",
+        "env bash -Cc 'cd /other && git commit -m x -- a.txt'",
     ],
 )
 async def test_unmodeled_navigation_refuses_before_git(

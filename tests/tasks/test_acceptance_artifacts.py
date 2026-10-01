@@ -1352,7 +1352,7 @@ def test_tdd_evidence_does_not_borrow_sibling_assertion_after_summary_rejection(
     assert evaluate_tdd_evidence((test,), evidence).passed is False
 
 
-def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> None:
+def test_python_postproduction_red_cannot_borrow_sibling_notimplemented() -> None:
     started = datetime(2026, 9, 26, tzinfo=UTC)
     test = AcceptanceTest(
         reference="tests/test_feature.py::test_feature",
@@ -1360,9 +1360,51 @@ def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> Non
         symbol="test_feature",
         body="def test_feature(): assert feature() == 1",
     )
+    evidence = TranscriptEvidence(
+        edits=(
+            _edit(test.path, started, 1),
+            _edit("src/feature.py", started + timedelta(minutes=1), 2),
+            _edit("src/feature.py", started + timedelta(minutes=3), 4),
+        ),
+        validation_runs=(
+            _run(
+                test,
+                started + timedelta(minutes=2),
+                "failure",
+                "____ test_feature ____\ntests/test_feature.py:5: in test_feature\nE   AssertionError\n"
+                "____ test_other ____\ntests/test_feature.py:10: in test_other\nE   NotImplementedError\n",
+                3,
+            ),
+            _run(test, started + timedelta(minutes=4), "success", "2 passed", 5),
+        ),
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is False, result
+
+
+def test_tdd_evidence_credits_rtk_not_implemented_raise_after_stub_edit() -> None:
+    started = datetime(2026, 9, 26, tzinfo=UTC)
+    body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"
+    test = AcceptanceTest(
+        reference="tests/test_feature.py::test_feature",
+        path="tests/test_feature.py",
+        symbol="test_feature",
+        body=body,
+    )
     edits = (
-        _edit(test.path, started, 1),
-        _edit("src/feature.py", started + timedelta(minutes=1), 2),
+        replace(
+            _edit(test.path, started, 1),
+            source_after=body,
+            source_confirmed=True,
+            source_confirmed_at=started + timedelta(seconds=1),
+        ),
+        replace(
+            _edit("src/feature.py", started + timedelta(minutes=1), 2),
+            source_after="def feature():\n    raise NotImplementedError\n",
+            source_confirmed=True,
+            source_created=True,
+            source_confirmed_at=started + timedelta(seconds=61),
+        ),
         _edit("src/feature.py", started + timedelta(minutes=3), 4),
     )
     location_only = """\
@@ -1538,11 +1580,12 @@ FAILED tests/test_feature.py::test_feature - Failed: DID NOT RAISE ReportError
 )
 def test_tdd_evidence_accepts_not_implemented_red(traceback_line: str) -> None:
     started = datetime(2026, 8, 31, tzinfo=UTC)
+    body = "from feature import feature\n\ndef test_feature():\n    assert feature() == 1\n"
     test = AcceptanceTest(
         reference="tests/test_feature.py::test_feature",
         path="tests/test_feature.py",
         symbol="test_feature",
-        body="def test_feature(): assert feature() == 1",
+        body=body,
     )
     red_output = f"""\
 ______________________________ test_feature ______________________________
@@ -1553,8 +1596,19 @@ FAILED tests/test_feature.py::test_feature - NotImplementedError
 """
     evidence = TranscriptEvidence(
         edits=(
-            _edit(test.path, started, 1),
-            _edit("src/feature.py", started + timedelta(seconds=30), 2),
+            replace(
+                _edit(test.path, started, 1),
+                source_after=body,
+                source_confirmed=True,
+                source_confirmed_at=started + timedelta(seconds=1),
+            ),
+            replace(
+                _edit("src/feature.py", started + timedelta(seconds=30), 2),
+                source_after="def feature():\n    raise NotImplementedError\n",
+                source_confirmed=True,
+                source_created=True,
+                source_confirmed_at=started + timedelta(seconds=31),
+            ),
             _edit("src/feature.py", started + timedelta(minutes=2), 4),
         ),
         validation_runs=(

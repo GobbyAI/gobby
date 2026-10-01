@@ -204,7 +204,7 @@ def is_unexecuted_tool_result(result: Any) -> bool:
     return any(pattern.search(output) for pattern in _UNEXECUTED_TOOL_PATTERNS)
 
 
-def extract_output(result: Any) -> tuple[str | None, bool]:
+def extract_output(result: Any, *, max_chars: int = _OUTPUT_CHAR_LIMIT) -> tuple[str | None, bool]:
     """Extract bounded command output needed to classify validation failures."""
     if isinstance(result, dict) and "outcome_provenance" in result:
         result = {key: value for key, value in result.items() if key != "outcome_provenance"}
@@ -240,9 +240,9 @@ def extract_output(result: Any) -> tuple[str | None, bool]:
     if not parts:
         return None, False
     output = "\n".join(parts)
-    if len(output) <= _OUTPUT_CHAR_LIMIT:
+    if len(output) <= max_chars:
         return output, False
-    half = (_OUTPUT_CHAR_LIMIT - len("\n...[output truncated]...\n")) // 2
+    half = (max_chars - len("\n...[output truncated]...\n")) // 2
     return (
         f"{output[:half]}\n...[output truncated]...\n{output[-half:]}",
         True,

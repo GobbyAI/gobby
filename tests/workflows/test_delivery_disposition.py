@@ -196,6 +196,7 @@ class TestApplyRuleDeliveryDispositions:
         assert "guard" in diagnostic
 
     def test_bundled_templates_match_classifier(self) -> None:
+        mismatches: list[str] = []
         for _root, yaml_file in _iter_active_rule_files(get_bundled_rules_paths()):
             loaded = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
             if not isinstance(loaded, dict) or not isinstance(loaded.get("rules"), dict):
@@ -224,4 +225,6 @@ class TestApplyRuleDeliveryDispositions:
                 outcome = apply_rule_delivery_dispositions(str(rule_name), body)
                 assert outcome.errors == (), (yaml_file, rule_name, outcome.errors)
                 classified = [_delivery(effect) for effect in outcome.definition["effects"]]
-                assert classified == expected, f"{yaml_file.name}:{rule_name}"
+                if classified != expected:
+                    mismatches.append(f"{yaml_file.name}:{rule_name}: {classified} != {expected}")
+        assert not mismatches, "\n".join(mismatches)
