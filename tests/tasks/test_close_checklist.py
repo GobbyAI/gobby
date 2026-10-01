@@ -2027,6 +2027,8 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
         patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value={"src/a.py"}),
         patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        # "/repo" is not a repository, so the candidate cannot be canonicalized by git.
+        patch.object(lifecycle, "select_close_candidate", return_value=("abc123", None)),
         patch.object(
             lifecycle,
             "validate_commit_requirements",
@@ -2095,7 +2097,7 @@ async def test_every_independent_deterministic_blocker_lands_in_one_response() -
 async def test_commit_dependent_gates_report_skipped_instead_of_a_borrowed_failure() -> None:
     """An unlinked commit set makes gates 11 and 12 unevaluable, never failed.
 
-    Gate 11 resolves each named test body out of the last linked commit, so running it
+    Gate 11 resolves each named test body out of the close candidate, so running it
     here would report a missing test that only the missing commit made unresolvable.
     """
     task = _task(criteria="Acceptance: `tests/test_example.py::test_example` passes.")

@@ -17,6 +17,7 @@ from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseAttributi
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import resolve_close_commit_shas
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.tasks.acceptance_artifacts import resolve_acceptance_tests_async
 from gobby.tasks.validation import TaskValidator
 from tests.mcp_proxy.tools.tasks.test_close_task_flow import (
     _ctx,
@@ -132,6 +133,26 @@ async def test_named_acceptance_body_uses_explicit_close_candidate(
     bodies = review.call_args.kwargs["test_bodies"]
     assert "'reviewed'" in bodies
     assert "'old'" not in bodies
+
+
+@pytest.mark.asyncio
+async def test_missing_named_test_file_names_the_close_candidate(
+    candidate_repo: tuple[Path, str, str],
+) -> None:
+    # The body is read from the close candidate, so the finding must name it:
+    # blaming the last linked commit sent #23110's diagnosis to the wrong commit.
+    repo, old, tip = candidate_repo
+    tests, findings = await resolve_acceptance_tests_async(
+        "Test: tests/test_absent.py::test_absent",
+        str(repo),
+        [tip, old],
+        candidate_commit_sha=tip,
+    )
+    assert tests == ()
+    assert findings == (
+        "tests/test_absent.py::test_absent: could not resolve the committed test body: "
+        f"close candidate {tip[:12]} does not contain tests/test_absent.py",
+    )
 
 
 @pytest.fixture

@@ -408,7 +408,7 @@ async def _resolve_test_body(path: str, symbol: str, repo_path: str, commit_sha:
 async def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str) -> str:
     result = await daemon_git.run(("show", f"{commit_sha}:{path}"), cwd=repo_path, timeout=30)
     if not isinstance(result, GitOk):
-        raise RuntimeError(f"last linked commit {commit_sha[:12]} does not contain {path}")
+        raise RuntimeError(f"close candidate {commit_sha[:12]} does not contain {path}")
     return result.stdout
 
 
