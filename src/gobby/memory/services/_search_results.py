@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 
-from gobby.memory.scoring import recency_anchor, temporal_decay, undecay
+from gobby.memory.scoring import recency_anchor, temporal_decay
 from gobby.memory.services._search_constants import (
     _GRAPH_CONFIDENCE_SEARCH_FLOOR,
     _GRAPH_SYNTHETIC_SIM_DISCOUNT,
@@ -77,19 +77,23 @@ def build_results(
         # Age counts from the later of the last update and the last direct fetch,
         # so a memory still being read does not decay as if abandoned.
         anchor = recency_anchor(mem.updated_at, mem.last_accessed_at)
+        # The undecayed score is kept as computed rather than recovered by dividing
+        # the decay back out: division does not round-trip, and its noise inverted
+        # exact ties in the order below (#22910).
         if raw_semantic_score is not None:
-            similarity = raw_semantic_score
+            undecayed = raw_semantic_score
             if mem.source_type == "user":
-                similarity *= _USER_SOURCE_BOOST
+                undecayed *= _USER_SOURCE_BOOST
             decay_factor = temporal_decay(anchor, half_life)
-            similarity *= decay_factor
+            similarity = undecayed * decay_factor
         elif graph_confidence is not None:
             # Recall expander (#17104): a graph hit the collection could not score
             # at all still needs a place on the similarity axis, so it enters at a
             # discounted entity-match cosine and cannot outrank a real semantic
             # match. Its admission is decided on the confidence below either way.
             decay_factor = temporal_decay(anchor, half_life)
-            similarity = graph_confidence * graph_synthetic_discount * decay_factor
+            undecayed = graph_confidence * graph_synthetic_discount
+            similarity = undecayed * decay_factor
             synthetic_similarity = True
 
         # The floor reads the undecayed score (#20858). Gating `similarity` gated
@@ -105,8 +109,6 @@ def build_results(
         # expander's own hits -- entity-linked but differently worded, so
         # low-cosine by construction -- began meeting this floor on a score that
         # was never their admission evidence (#20873).
-        if similarity is not None:
-            undecayed = undecay(similarity, decay_factor)
         if effective_min_score > 0:
             if graph_confidence is not None:
                 if graph_confidence < _GRAPH_CONFIDENCE_SEARCH_FLOOR:
