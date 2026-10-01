@@ -127,6 +127,7 @@ def build_results(
         mem.search_via = "|".join(sources) or "unknown"
         mem.raw_semantic_score = raw_semantic_score
         mem.temporal_decay_factor = decay_factor
+        mem.undecayed_similarity = undecayed
         mem.similarity = similarity
         mem.graph_confidence = graph_confidence
         mem.ranking_score = ranking_score_map.get(memory_id, 0.0)
