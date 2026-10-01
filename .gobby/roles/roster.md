@@ -3,7 +3,7 @@
 | Role file | Session |
 | --- | --- |
 | assistant.md | gobby#14069 |
-| orchestrator.md | gobby#14737 |
+| orchestrator.md | gobby#14972 |
 | merge-manager.md | gobby#14894 |
 | release-manager.md | gobby#14968 |
 | lane-1-gclient.md | gobby#14909 |
