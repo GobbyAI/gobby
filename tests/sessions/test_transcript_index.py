@@ -25,6 +25,8 @@ import pytest
 
 import gobby.sessions.processor_stats as processor_stats
 import gobby.sessions.transcript_index as transcript_index
+import gobby.sessions.transcript_index_resume as index_resume
+import gobby.sessions.transcript_index_sidecar as index_sidecar
 from gobby.sessions.message_stats import empty_message_stats
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
@@ -46,6 +48,7 @@ from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcript_io import _count_nonempty_lines
 from gobby.sessions.transcript_reader import _activity_counts_from_index
 from gobby.sessions.transcript_renderer import RenderedMessage, RenderState, render_transcript
+from gobby.sessions.transcript_window import render_window
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -880,6 +883,92 @@ async def _index_after_lag_growth(
 
 def _agy_lines() -> list[str]:
     return AGY_STATS_FIXTURE.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("append", [False, True], ids=["unchanged", "appended"])
+async def test_stale_agy_sidecar_rebuilds_without_extending_bad_tool_positions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, append: bool
+) -> None:
+    """Old AGY tool-event positions must never seed the reader's append path."""
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    clear_index_cache()
+    texts = _line_texts(_agy_lines())
+    # The fourth line ends in a tool event; the old builder did not count it.
+    split = 4
+    path = _write(tmp_path, "agy-stale", texts[:split])
+    prefix = os.stat(path)
+    correct_prefix = build_index_from_file(
+        path, "agy", SESSION, mtime_ns=prefix.st_mtime_ns, size=prefix.st_size
+    )
+
+    def legacy_next_index(records: list[Any], fallback: int, parsed_index: int) -> int:
+        next_index = fallback
+        for record in records:
+            if isinstance(record, ParsedMessage):
+                next_index = max(next_index, record.index + 1)
+        if not records:
+            next_index = max(next_index, parsed_index + 1)
+        return next_index
+
+    # Persist the actual pre-fix builder semantics and the old schema identity.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(transcript_index, "_next_index_after_records", legacy_next_index)
+        legacy.setattr(index_sidecar, "INDEX_SCHEMA_VERSION", 1)
+        stale = build_index_from_file(
+            path, "agy", SESSION, mtime_ns=prefix.st_mtime_ns, size=prefix.st_size
+        )
+        persist_index_sidecar(path, stale)
+    assert stale.next_parser_index is not None
+    assert correct_prefix.next_parser_index == stale.next_parser_index + 1
+
+    if append:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("".join(texts[split:]))
+    current = os.stat(path)
+    expected = build_index_from_file(
+        path, "agy", SESSION, mtime_ns=current.st_mtime_ns, size=current.st_size
+    )
+    builds = 0
+    extensions = 0
+    build = transcript_index.build_index_from_file
+    extend = index_resume.extend_index_from_file
+
+    def count_build(*args: Any, **kwargs: Any) -> TranscriptIndex:
+        nonlocal builds
+        builds += 1
+        return build(*args, **kwargs)
+
+    def count_extension(*args: Any, **kwargs: Any) -> TranscriptIndex | None:
+        nonlocal extensions
+        result = extend(*args, **kwargs)
+        extensions += int(result is not None)
+        return result
+
+    monkeypatch.setattr(transcript_index, "build_index_from_file", count_build)
+    monkeypatch.setattr(index_resume, "extend_index_from_file", count_extension)
+    index = await get_or_build_index(
+        path, "agy", SESSION, mtime_ns=current.st_mtime_ns, size=current.st_size
+    )
+    assert builds == 1
+    assert extensions == 0
+    assert dataclasses.asdict(index) == dataclasses.asdict(expected)
+    persisted = load_index_sidecar(
+        path, "agy", SESSION, seek_mode="byte", mtime_ns=current.st_mtime_ns, size=current.st_size
+    )
+    assert persisted is not None
+    assert dataclasses.asdict(persisted) == dataclasses.asdict(expected)
+    for order in ("head", "tail"):
+        for offset in range(0, expected.total_groups, 2):
+            actual_window = render_window(
+                path, "agy", SESSION, index, limit=2, offset=offset, order=order
+            )
+            expected_window = render_window(
+                path, "agy", SESSION, expected, limit=2, offset=offset, order=order
+            )
+            assert dataclasses.asdict(actual_window) == dataclasses.asdict(expected_window)
+    clear_index_cache()
 
 
 @pytest.mark.asyncio

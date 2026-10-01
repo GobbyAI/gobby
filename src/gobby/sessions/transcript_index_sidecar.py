@@ -25,7 +25,8 @@ logger = logging.getLogger("gobby.sessions.transcript_index")
 
 #: Bounded LRU index cache size (entries). Each entry is tens of KB.
 INDEX_CACHE_MAX_ENTRIES = 16
-INDEX_SCHEMA_VERSION = 1
+# Version 2 invalidates indexes with pre-fix AGY tool-event parser positions.
+INDEX_SCHEMA_VERSION = 2
 INDEX_SIDECAR_SUFFIX = ".gobby-index.json"
 _SKIP_ADJUSTMENT_VALUE = object()
 
