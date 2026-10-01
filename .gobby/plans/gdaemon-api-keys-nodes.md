@@ -673,9 +673,12 @@ leaf shorter than it starts.
   A `remote` bootstrap is left unenrolled, and `unpack` prints that
   `gobby auth login` must be run again (4.5). No foreign key is ever imported.
 - `--restore-identity` keeps the archived pair together with the archived
-  `machine_id`. When the PostgreSQL payload was not restored or lacks the key's
-  row, `ensure_local_api_key` treats the key as stale and mints a replacement
-  (step 2).
+  `machine_id`. When the archived bootstrap names an `api_key`, `_plan_unpack`
+  requires a `gobby/machine_id` member whose content parses as a UUID and is
+  scheduled for restoration. If it is absent or malformed, unpack refuses with a
+  `ClickException` during planning, before services stop or any destination
+  write. When the PostgreSQL payload was not restored or lacks the key's row,
+  `ensure_local_api_key` treats the key as stale and mints a replacement (step 2).
 
 Consumers unchanged:
 - `src/gobby/runner_init/helpers.py` — no-edit-reason: `ensure_machine_identity` keeps its signature and body.
@@ -722,7 +725,7 @@ first one an unpack could carry to another machine.
 - 4.2.8 - The five signed goldens under `tests/runtime_grants/golden/` carry the new schema identity and the golden-vector tests pass. file: `tests/runtime_grants/golden/brokered_datastores.json`.
 - 4.2.9 - Bootstrap parses and writes `api_key`, `api_key_id`, and `hub_cert`, and the config carrier is regenerated. file: `crates/gcore/assets/config/runtime_config_contract.json`.
 - 4.2.16 - An ordinary cross-machine unpack of an archive whose bootstrap names an `api_key` restores a bootstrap with neither the archived nor the destination's `api_key` and `api_key_id`, and a `remote` archive prints the `gobby auth login` re-enrollment line. test: `tests/cli/test_pack.py::test_unpack_drops_machine_bound_api_key`.
-- 4.2.17 - `--restore-identity` restores the archived `api_key` and `api_key_id` together with the archived `machine_id`. test: `tests/cli/test_pack.py::test_unpack_restore_identity_keeps_api_key_pair`.
+- 4.2.17 - `--restore-identity` restores the archived `api_key` and `api_key_id` together with the archived `machine_id`. When that archive's `machine_id` member is absent or malformed, unpack refuses before stopping services, and the destination bootstrap, `machine_id`, and services are unchanged. test: `tests/cli/test_pack.py::test_unpack_restore_identity_keeps_api_key_pair`.
 - 4.2.18 - `ensure_local_api_key` mints nothing when the bootstrap key is live for this machine. It mints and publishes a replacement when the bootstrap names a key whose row is absent, revoked, hash-mismatched, or bound to another machine, and it leaves that row unrevoked. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_replaces_stale_bootstrap_key`.
 
 ### 4.5 `gobby auth login` and `gobby auth key --show` [category: code] (depends: 4.1, 4.2)
@@ -1225,7 +1228,8 @@ deferral:
   - targets `files_home.py` and `pack.py`, moving `pack.py`'s bootstrap handling to the
     new `bootstrap_restore.py` so `pack.py` does not grow;
   - drops the key pair on ordinary unpack;
-  - keeps it under `--restore-identity`;
+  - keeps it under `--restore-identity` only alongside a usable archived `machine_id`,
+    and refuses before services stop when that identity is absent or malformed;
   - leaves a `remote` bootstrap unenrolled for `gobby auth login`;
   - re-mints over a bootstrap key whose row is not live for this machine.
   New acceptance items are 4.2.16 to 4.2.18, so 4.2 has eighteen. `files_home.py` and
