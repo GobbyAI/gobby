@@ -787,9 +787,11 @@ async def test_plan_mode_batch_blocks_destructive_tool_before_exit_spec() -> Non
 
 
 @pytest.mark.asyncio
-async def test_permission_request_hands_string_input_to_pre_tool_unchanged() -> None:
+@pytest.mark.parametrize(
+    "tool_input", ['{"command": "rm -rf /repo/bu', ""], ids=["truncated", "empty"]
+)
+async def test_permission_request_hands_string_input_to_pre_tool_unchanged(tool_input: str) -> None:
     """A string tool input reaches BEFORE_TOOL as sent, not coerced to {} (#23168)."""
-    truncated = '{"command": "rm -rf /repo/bu'
     backend = DroidWebChatBackend()
     session = _droid_session(backend)
     pre_tool_calls: list[dict[str, Any]] = []
@@ -800,19 +802,21 @@ async def test_permission_request_hands_string_input_to_pre_tool_unchanged() -> 
 
     session._on_pre_tool = block_pre_tool
     events = parse_droid_stream_line(
-        _permission_request_line(tool_name="Execute", tool_input=truncated)
+        _permission_request_line(tool_name="Execute", tool_input=tool_input)
     )
 
     result = await backend._resolve_permission_request(session, events)
 
     assert result == "cancel"
-    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": truncated}]
+    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": tool_input}]
 
 
 @pytest.mark.asyncio
-async def test_streamed_tool_call_hands_string_input_to_pre_tool_unchanged() -> None:
+@pytest.mark.parametrize(
+    "tool_input", ['{"command": "rm -rf /repo/bu', ""], ids=["truncated", "empty"]
+)
+async def test_streamed_tool_call_hands_string_input_to_pre_tool_unchanged(tool_input: str) -> None:
     """A streamed tool call's string input reaches BEFORE_TOOL as sent (#23168)."""
-    truncated = '{"command": "rm -rf /repo/bu'
     tool_call_line = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -827,7 +831,7 @@ async def test_streamed_tool_call_hands_string_input_to_pre_tool_unchanged() -> 
                         "type": "tool_use",
                         "id": "tool-1",
                         "name": "Execute",
-                        "input": truncated,
+                        "input": tool_input,
                     },
                 }
             },
@@ -857,7 +861,7 @@ async def test_streamed_tool_call_hands_string_input_to_pre_tool_unchanged() -> 
         await backend.attach_session(session, model="gpt-5.4")
         _ = [event async for event in session.send_message("run a command")]
 
-    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": truncated}]
+    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": tool_input}]
 
 
 def _exit_spec_session(

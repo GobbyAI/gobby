@@ -30,7 +30,7 @@ ToolPayload = tuple[str, dict[str, Any], str]
 
 def raw_string_tool_input(data: Mapping[str, Any]) -> str | None:
     """Return Droid's tool input when it arrived as a string, for hooks to mark."""
-    raw = data.get("tool_input") or data.get("input")
+    raw = data["tool_input"] if "tool_input" in data else data.get("input")
     return raw if isinstance(raw, str) else None
 
 
@@ -76,8 +76,9 @@ class DroidPermissionResolver:
             return DROID_PERMISSION_CANCEL
 
         for event, (tool_name, tool_input, _tool_id) in zip(events, tool_payloads, strict=True):
+            raw_tool_input = raw_string_tool_input(event.data)
             lifecycle_response = await session._apply_pre_tool_lifecycle(
-                tool_name, raw_string_tool_input(event.data) or tool_input
+                tool_name, raw_tool_input if raw_tool_input is not None else tool_input
             )
             if (
                 isinstance(lifecycle_response, dict)

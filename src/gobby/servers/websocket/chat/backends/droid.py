@@ -265,9 +265,12 @@ class DroidManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSession
                             if extracted is not None:
                                 structured_plan = extracted
                         if stream_event.data.get("kind") != "permission_request":
+                            raw_tool_input = raw_string_tool_input(stream_event.data)
                             await self._apply_pre_tool_lifecycle(
                                 chat_event.tool_name,
-                                raw_string_tool_input(stream_event.data) or chat_event.arguments,
+                                raw_tool_input
+                                if raw_tool_input is not None
+                                else chat_event.arguments,
                             )
                     elif isinstance(chat_event, ToolResultEvent):
                         pending = pending_tool_calls.pop(chat_event.tool_call_id, {})
