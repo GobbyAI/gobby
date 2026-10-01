@@ -18,6 +18,8 @@ from gobby.agents.cargo_target import (
     exclude_checkout_target,
     link_checkout_cargo_target,
 )
+from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, get_terminal_env_vars
+from gobby.agents.zig_packages import unsandboxed_zig_cache_dir
 
 pytestmark = pytest.mark.unit
 
@@ -239,6 +241,44 @@ def test_cleanup_keeps_what_a_linked_sandbox_target_points_to(
     assert error == f"Refusing to remove symlinked Cargo target path: {run.cargo_target}"
     assert run.cargo_target.is_symlink()
     assert sorted(child.name for child in foreign.iterdir()) == ["debug"]
+
+
+def test_unsandboxed_builds_stay_out_of_the_sandbox_cache_and_cleanup_removes_every_target(
+    gobby_home: Path, cargo_checkout: Path
+) -> None:
+    # #23198: SRT runs can write <gobby-home>/cache/sandbox, so unsandboxed
+    # agents and Guard set G must never build from anything below it.
+    agent = get_terminal_env_vars(
+        session_id="sess-child",
+        parent_session_id="sess-parent",
+        agent_run_id="run-123",
+        project_id="proj-1",
+        checkout_root=cargo_checkout,
+    )
+    run = sandbox_policy.prepare_sandbox_run_paths("run-1", {}, workspace=cargo_checkout)
+    sandbox_target = Path(run.environment("claude")["CARGO_TARGET_DIR"])
+    sandbox_cache = gobby_home / "cache" / "sandbox"
+    unsandboxed = {
+        "cargo home": Path(agent[CARGO_HOME]),
+        "agent target": Path(agent[CARGO_TARGET_DIR]),
+        "zig mirror": unsandboxed_zig_cache_dir(),
+    }
+    checkout_target = checkout_cargo_target_dir(cargo_checkout, "proj-1")
+    for target in (checkout_target, Path(agent[CARGO_TARGET_DIR]), sandbox_target):
+        (target / "debug").mkdir(parents=True, exist_ok=True)
+
+    escaped = {
+        name: path for name, path in unsandboxed.items() if path.is_relative_to(sandbox_cache)
+    }
+    assert escaped == {}
+    assert sandbox_target.is_relative_to(sandbox_cache)
+    assert cleanup_checkout_cargo_target_dir(cargo_checkout, "proj-1") is None
+    remaining = [
+        path
+        for path in (checkout_target, Path(agent[CARGO_TARGET_DIR]), sandbox_target)
+        if path.exists()
+    ]
+    assert remaining == []
 
 
 def test_cleanup_refuses_symlinked_cache_target(

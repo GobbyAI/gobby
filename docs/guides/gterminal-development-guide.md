@@ -52,8 +52,9 @@ The mirror is the same for every run because the build script reruns whenever
 `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` changes; a per-run path rebuilt libghostty-vt on
 every guard run. It sits beside `~/.gobby/cache/sandbox`, never inside it. A run
 that already inherits `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR`, as sandboxed agents do from
-their own mirror, keeps it and materializes nothing. An interactive build that
-leaves the variable unset still reruns the build script once after a guard run.
+their own mirror, keeps it and materializes nothing. Any later build in the
+same target that leaves the variable unset, such as an interactive shell or an
+agent's direct `cargo build`, still reruns the build script once after a guard run.
 
 Zig resolves a `--system` directory by package id (`<name>-<version>-<hash>`,
 matching the `.hash` fields in the vendored `build.zig.zon`) with fetching
