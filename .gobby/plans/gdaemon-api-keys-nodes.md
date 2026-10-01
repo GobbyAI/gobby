@@ -66,6 +66,9 @@ below so the planning pass that opens them starts from decisions, not questions.
      lease and backend lifecycle in Rust), not this slice).
 3. **One public port serves TLS to remote peers and plaintext to loopback peers
    (PD decision, 2026-09-29).**
+   - `front_door.enabled: false` is refused on a non-loopback `bind_host` whatever
+     `tls.mode` says, because Python then binds the public ports itself and never
+     reads the TLS block (Adversary P4-09). A disabled front door is loopback-only.
    - `tls.mode: off` stays refused on a non-loopback `bind_host`, but every local
      client (ghook, gcode, gclient, gterm through `gobby_core::daemon_url`, and
      Python through `gobby.utils.daemon_url`) dials plain `http://`. Making each
@@ -215,7 +218,6 @@ Consumers unchanged:
 - `tests/cli/test_cli_daemon.py` — no-edit-reason: patches or drives `_start_dependency_errors` with local bootstraps; the function keeps its signature; verification only.
 - `tests/providers/test_version_gate.py` — no-edit-reason: drives `run_gobby` with a local bootstrap; verification only.
 - `tests/test_runner_env_scrub.py` — no-edit-reason: same.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: same.
 - `tests/test_runner_pid_file.py` — no-edit-reason: same, and patches `_start_dependency_errors` by name.
 
 Verification planned:
@@ -249,12 +251,13 @@ Targets:
 - `crates/gdaemon/src/front_door/tls.rs`
 - `crates/gdaemon/tests/front_door.rs::*` — scope-reason: gains the TLS, loopback-gate, and companion-listener tests
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
-- `tests/config/test_bootstrap.py::*` — scope-reason: the TLS block's default, refusal, and loopback-host cases
+- `tests/config/test_bootstrap.py::*` — scope-reason: the TLS block's default, refusal, and loopback-host cases, and the disabled-front-door refusal
 - `tests/utils/test_daemon_url.py::*` — scope-reason: concrete-host cases now dial loopback
 - `tests/e2e/conftest.py::daemon_instance`
 - `tests/e2e/conftest.py::DaemonInstance`
 - `tests/e2e/conftest.py::authenticated_daemon_client`
 - `tests/e2e/conftest.py::authenticated_async_daemon_client`
+- `tests/test_runner_lifecycle.py::*` — scope-reason: `test_backend_ports_behind_front_door` moves its disabled case to a loopback host and the new `test_disabled_front_door_on_public_bind_refuses_before_bind` is added; the rest of the file patches `gobby.runner._healthy_daemon_running` by name, verification only
 - `tests/e2e/test_daemon_lifecycle.py::*` — scope-reason: gains `tls_daemon_instance`, `test_daemon_serves_over_self_signed_tls`, and the TLS parametrization of four existing cases
 - `docs/guides/configuration.md`
 
@@ -281,6 +284,21 @@ bind with `mode` absent or `off` is a parse error naming `self-signed` and
 a YAML 1.1 boolean; both parsers also accept boolean `false` as `off`.
 `FrontDoorBootstrap` gains `tls: TlsBootstrap { mode, cert, key, sans }`, and
 `FrontDoorBootstrap::default` sets `mode: Off`.
+
+Disabled front door (Adversary P4-09): with `front_door.enabled: false`,
+`src/gobby/runner_front_door.py::backend_bind` returns `(bind_host, public ports)`,
+`FrontDoorChild.from_bootstrap` returns `None`, and
+`src/gobby/runner_lifecycle.py::run_daemon` builds `uvicorn.Config` with no TLS, so the
+TLS block secures nothing. Both parsers therefore refuse `enabled: false` on a
+non-loopback `bind_host` for every `tls.mode` (absent, `off`, `self-signed`, `files`),
+with an error naming the two fixes: a loopback `bind_host`, or the front door enabled.
+`enabled: false` on a loopback bind parses as today. An absent `front_door` mapping
+keeps `enabled: true`, so the TLS rules above apply to it. Every production listener
+owner reads its bootstrap through these parsers (`load_bootstrap` for the runner and
+`gobby start`, `parse_hub_database_bootstrap` for `gdaemon serve`), so a refused
+bootstrap stops startup before any public bind. `BootstrapConfig` constructor sites
+bypass the parser; `test_backend_ports_behind_front_door` builds its disabled case on
+`0.0.0.0`, which is now unreachable, and moves that case to `127.0.0.1`.
 `parse_hub_database_bootstrap` today calls `parse_front_door(map.get("front_door"))`
 with only the mapping. It changes to parse `bind_host` first and pass it in as
 `parse_front_door(value, bind_host)`, so the default and the non-loopback
@@ -336,8 +354,9 @@ crate):
   `request.client` in Python is the front door's observed peer and nothing
   else. The login throttle (`src/gobby/servers/routes/auth.py::_login_client_id`,
   reused by 4.2) therefore keys on the real peer. With the front door disabled,
-  Python binds `bind_host` directly and trusts forwarding headers only from a
-  loopback caller, which already holds operator access.
+  Python binds the loopback `bind_host` directly (the parser refuses any other) and
+  trusts forwarding headers only from a loopback caller, which already holds operator
+  access.
 - Companion listener (Decision 3): `serve::bind` today binds `bind_host` once per
   public port. When `bind_host` is a concrete non-loopback address, it also
   binds the same port on `127.0.0.1` (IPv4) or `::1` (IPv6). A wildcard bind
@@ -382,10 +401,9 @@ Consumers unchanged:
 - `crates/ghook/src/diagnostics.rs` — no-edit-reason: reports `endpoint.host` for display only.
 - `crates/ghook/src/diagnose.rs` — no-edit-reason: same.
 - `src/gobby/hooks/hook_manager.py` — no-edit-reason: `HookManager` is built with `daemon_host="localhost"` (`src/gobby/servers/_app_lifecycle.py`), already loopback.
-- `src/gobby/runner_front_door.py` — no-edit-reason: `FrontDoorChild` readiness probes are TCP connects, which the first-byte peek does not affect.
+- `src/gobby/runner_front_door.py` — no-edit-reason: `FrontDoorChild` readiness probes are TCP connects, which the first-byte peek does not affect, and `backend_bind` only ever sees a loopback `bind_host` when the front door is disabled.
 - `src/gobby/utils/daemon_client.py` — no-edit-reason: `DaemonClient.__init__` calls `normalize_dial_host` with an unchanged signature and inherits the loopback mapping.
 - `tests/test_runner_env_scrub.py` — no-edit-reason: patches `gobby.runner._healthy_daemon_running` by name; verification only.
-- `tests/test_runner_lifecycle.py` — no-edit-reason: same.
 - `tests/test_runner_pid_file.py` — no-edit-reason: same.
 - `tests/e2e/test_autonomous_mode.py` — no-edit-reason: uses `daemon_instance` with `tls` defaulting to off; URLs and behavior unchanged.
 - `tests/e2e/test_qa_23120_tmux_address.py` — no-edit-reason: types `DaemonInstance` and uses `daemon_instance` with `tls` defaulting to off; URLs and behavior unchanged.
@@ -419,7 +437,7 @@ Verification planned:
 `cargo test -p gobby-core bootstrap`,
 `cargo test -p gobby-core daemon_url`,
 `uv run python scripts/generate_runtime_config_contract.py`,
-`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/utils/test_daemon_url.py tests/config/test_runtime_config_contract.py tests/e2e/test_daemon_lifecycle.py -v`.
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/config/test_bootstrap.py tests/utils/test_daemon_url.py tests/config/test_runtime_config_contract.py tests/test_runner_lifecycle.py tests/e2e/test_daemon_lifecycle.py -v`.
 
 **Acceptance:**
 
@@ -436,6 +454,10 @@ Verification planned:
 - 4.1.11 - Rust `dial_host` and `endpoint_to_url` give the same loopback mapping and explicit-`daemon_url` precedence. test: `crates/gcore/src/daemon_url.rs::tests::dial_host_is_always_loopback`.
 - 4.1.12 - Forged `Forwarded`, `X-Forwarded-For`, and `X-Real-IP` request headers never reach the backend on the proxy, native-health, or WS paths; the backend receives `X-Forwarded-For` equal to the observed peer. test: `crates/gdaemon/tests/front_door.rs::forwarding_headers_carry_only_observed_peer`.
 - 4.1.13 - With TLS on, a zero-byte connection and a partial-ClientHello connection are closed after `PREAUTH_DEADLINE` while a concurrent health request on the same listener succeeds. test: `crates/gdaemon/tests/front_door.rs::stalled_preauth_connections_expire_without_blocking`.
+- 4.1.15 - Both parsers refuse `front_door.enabled: false` on a non-loopback `bind_host` with `tls.mode` absent, `off`, `self-signed`, and `files`, naming the loopback and enabled fixes; they accept it on `localhost`, `127.0.0.1`, and `::1`; and an absent `front_door` on a non-loopback bind takes the enabled TLS rules. test: `tests/config/test_bootstrap.py::test_disabled_front_door_is_loopback_only`.
+- 4.1.16 - The Rust parser gives the same disabled-front-door refusals and acceptances. test: `crates/gcore/src/bootstrap.rs::tests::disabled_front_door_is_loopback_only`.
+- 4.1.17 - Runner startup from a bootstrap file with `enabled: false` on a non-loopback `bind_host` exits with the parse error before `run_daemon` binds any port, and `test_backend_ports_behind_front_door` builds its disabled case on a loopback host. test: `tests/test_runner_lifecycle.py::test_disabled_front_door_on_public_bind_refuses_before_bind`.
+- 4.1.18 - The configuration guide states that a disabled front door is loopback-only and that the TLS block applies only with the front door enabled. behavior: "loopback-only" in `docs/guides/configuration.md`.
 - 4.1.8 - The e2e fixture serves `https` with `tls="self-signed"`, keeps its fingerprint across a restart, and the four parametrized lifecycle cases pass over it through the pinned shared clients. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls`.
 
 **Granularity:** fourteen items, one leaf. The TLS acceptor, the loopback gate, the
@@ -796,15 +818,22 @@ corpus contract requires each case's version to equal the manifest's, so every
 `origin: python` case is re-recorded with the 3.1 recorder, and any
 `origin: gdaemon` case already present is updated and re-verified.
 
-**Opening gate — PD decision (gobby#14972, 2026-10-01, L7 gobby#14682 finding):** D1 does
-not open until both of these hold:
+**Production activation gate — PD decision (gobby#14972, 2026-10-01, L7 gobby#14682
+finding):** planning and isolated implementation of D1 open once the corpus 3.1 leaf has
+landed. Activating the shared-token cutover on a live install waits until both of these
+hold:
 1. A loopback break-glass exists: a local operator path that authenticates when key
    verification is wedged (an unreachable hub, a broken `api_keys` table, or a resolver
    error). It admits only a loopback peer presenting a host-local credential readable only by
    the install owner (0600), has no network exposure, and survives the shared-token cutover.
-   D1.12 tests it.
+   D1.12 tests it. D1's planning pass makes the break-glass its first leaf, landed on its own
+   ahead of the cutover leaf, so reverting the cutover code leaves the break-glass in place.
 2. A rollback rehearsal has passed: on an isolated install at schema 456, revert the D1 code,
    start the daemon, and authenticate through the break-glass (D1.13).
+
+The D1 planner owns this order and makes it enforceable: live activation is a separate
+`manual` leaf, run by the PD through the release process, blocked by the break-glass leaf
+and the D1.13 rehearsal leaf. No D1 code waits on its own revert.
 
 The settled design, refreshed against
 `0.5.0` at 069e70d, is below; the planning pass that opens this task re-sweeps
@@ -1115,6 +1144,15 @@ deferral:
   opens only after a loopback break-glass and a rollback rehearsal (D1.12, D1.13). The M1 from
   `0b0ba1fa91` is withdrawn per the PD ruling on #23106 (memory `f5577ae0`); its bytes stay in Git
   history, and the Adversary derives a fresh M1.
+- 2026-10-01: Adversary (gobby#14579) fresh review. P4-09 (disabled front door bypasses
+  TLS) is accepted by the PD (gobby#14972) and repaired: both parsers refuse
+  `enabled: false` on a non-loopback bind for every `tls.mode`, and startup refuses before
+  any public bind (4.1.15 to 4.1.18). D1's gate is restated as a production activation
+  gate. Planning and isolated implementation open after the corpus 3.1 leaf. A separate
+  manual activation leaf is blocked by the independently landed break-glass and the
+  isolated apply/revert/auth rehearsal. The main-branch consumers
+  `tests/contracts/test_http_corpus.py` and `tests/e2e/test_qa_23120_tmux_address.py`
+  landed after this worktree's base, and that is intentional.
 
 ## V2: Verification
 `kind: verification`
