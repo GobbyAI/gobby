@@ -34,6 +34,7 @@ from gobby.storage.projects import (
     PERSONAL_PROJECT_ID,
     LocalProjectManager,
 )
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.utils.checkout_root import MarkerMismatchError
 from gobby.utils.project_context import ensure_project_json_for_isolation
@@ -1592,7 +1593,12 @@ class TestRecordSessionActivityPulse:
         manager = manager_with_mocks
         session_activity.reset_for_tests()
 
-        def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> None:
+        def resolve(
+            event: HookEvent,
+            *,
+            apply_session_mutations: bool = True,
+            cached_session: Session | None = None,
+        ) -> None:
             event.metadata["_platform_session_id"] = "platform-abc"
 
         mocks = cast(Any, manager)
@@ -1681,7 +1687,12 @@ class TestTerminalIngressGate:
         mocks._workflow_handler.handle.reset_mock()
         mocks._enricher.enrich = MagicMock()
 
-        def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+        def resolve(
+            event: HookEvent,
+            *,
+            apply_session_mutations: bool = True,
+            cached_session: Session | None = None,
+        ) -> str:
             event.metadata["_platform_session_id"] = self._PLATFORM_SESSION_ID
             return self._PLATFORM_SESSION_ID
 
@@ -1708,7 +1719,10 @@ class TestTerminalIngressGate:
         response = manager._handle_internal(event)
 
         assert response.decision == "allow"
-        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": False}
+        assert mocks._session_lookup.resolve.call_args.kwargs == {
+            "apply_session_mutations": False,
+            "cached_session": None,
+        }
         handler.assert_not_called()
         mocks._workflow_handler.handle.assert_not_called()
         mocks._session_lookup.apply_session_mutations.assert_not_called()
@@ -1743,7 +1757,10 @@ class TestTerminalIngressGate:
         response = manager._handle_internal(event)
 
         assert response.decision == "allow"
-        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": False}
+        assert mocks._session_lookup.resolve.call_args.kwargs == {
+            "apply_session_mutations": False,
+            "cached_session": None,
+        }
         manager.logger.warning.assert_called_once_with(
             "Discarding ambiguous managed terminal hook envelope",
             extra={
@@ -1779,7 +1796,10 @@ class TestTerminalIngressGate:
         response = manager._handle_internal(event)
 
         assert response.decision == "allow"
-        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": False}
+        assert mocks._session_lookup.resolve.call_args.kwargs == {
+            "apply_session_mutations": False,
+            "cached_session": None,
+        }
         mocks._session_lookup.apply_session_mutations.assert_called_once_with(
             event, self._PLATFORM_SESSION_ID
         )
@@ -1804,7 +1824,10 @@ class TestTerminalIngressGate:
 
         assert response.decision == "allow"
         gate.assert_not_called()
-        assert mocks._session_lookup.resolve.call_args.kwargs == {"apply_session_mutations": True}
+        assert mocks._session_lookup.resolve.call_args.kwargs == {
+            "apply_session_mutations": True,
+            "cached_session": None,
+        }
         mocks._session_lookup.apply_session_mutations.assert_not_called()
         handler.assert_called_once_with(event)
 
@@ -1854,7 +1877,12 @@ def test_grok_preserve_original_gate_keeps_pending_context_queued(
     mocks._record_machine_ingress = MagicMock()
     mocks._record_session_activity_pulse = MagicMock()
 
-    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
+    def resolve(
+        event: HookEvent,
+        *,
+        apply_session_mutations: bool = True,
+        cached_session: Session | None = None,
+    ) -> str:
         event.metadata["_platform_session_id"] = session_id
         return session_id
 
@@ -2245,7 +2273,7 @@ class TestHookCheckoutIngress:
         sessions = MagicMock()
         sessions.db = temp_db
         sessions.get.return_value = session
-        sessions.get_session_id.return_value = None
+        sessions.get_cached_session.return_value = None
         sessions.find_active_by_external_id.return_value = None
         sessions.recover_session.return_value = None
         resolver = ProjectIdResolver(session_manager=sessions)
@@ -2254,9 +2282,8 @@ class TestHookCheckoutIngress:
             event.project_id = project.id
         elif source == "session":
             event.metadata["_platform_session_id"] = session.id
-            sessions.get_session_id.return_value = None
         elif source == "existing-session":
-            sessions.get_session_id.return_value = session.id
+            sessions.get_cached_session.return_value = session
         elif source == "contract-probe":
             event.cwd = "/tmp/gobby-contract-probe-20307"
             event.data["cwd"] = event.cwd

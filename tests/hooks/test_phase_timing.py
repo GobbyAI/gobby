@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from unittest.mock import call, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from gobby.hooks import phase_timing
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.hook_manager import HookManager
 from gobby.hooks.phase_timing import (
     HOOK_PHASES,
     HookPhaseTimings,
@@ -108,6 +111,76 @@ def test_observe_exports_all_phases_and_finds_dominant_phase() -> None:
         )
         in observe.call_args_list
     )
+
+
+def _hook_event() -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="phase-timing-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={},
+        machine_id="21000000-0000-4000-8000-000000000003",
+    )
+
+
+class _Clock:
+    """Stands in for the phase clock so a stub's duration is exact, not slept."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def perf_counter(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
+    fake = _Clock()
+    monkeypatch.setattr(phase_timing, "time", fake)
+    return fake
+
+
+def test_adapter_thread_gate_and_async_run_are_timed(
+    manager_with_mocks: HookManager, monkeypatch: pytest.MonkeyPatch, clock: _Clock
+) -> None:
+    """The health gate and the private event loop no longer hide in `response` (#23063)."""
+    response = HookResponse(decision="allow")
+
+    def slow_gate(*_args: object) -> None:
+        clock.now += 2.0
+
+    async def slow_handler() -> HookResponse:
+        clock.now += 3.0
+        return response
+
+    monkeypatch.setattr("gobby.hooks.hook_manager.ensure_daemon_ready", slow_gate)
+    monkeypatch.setattr(manager_with_mocks, "_handle_after_daemon_ready", lambda _e: slow_handler())
+    timings = HookPhaseTimings()
+
+    with hook_phase_timing_scope(timings):
+        assert manager_with_mocks._handle_internal(_hook_event()) is response
+
+    breakdown = timings.breakdown()
+    assert breakdown["daemon_ready_gate"] == 2.0
+    assert breakdown["async_handler_run"] == 3.0
+
+
+def test_response_enrichment_is_timed(manager_with_mocks: HookManager, clock: _Clock) -> None:
+    def slow_enrich(*_args: object, **_kwargs: object) -> None:
+        clock.now += 1.5
+
+    enricher = MagicMock()
+    enricher.enrich.side_effect = slow_enrich
+    manager_with_mocks._enricher = enricher
+    timings = HookPhaseTimings()
+
+    with hook_phase_timing_scope(timings):
+        manager_with_mocks._complete_response(
+            _hook_event(), HookResponse(decision="allow"), workflow_context=None
+        )
+
+    assert timings.breakdown()["response_enrich"] == 1.5
 
 
 def test_slow_hook_sampler_logs_one_full_line_per_phase_per_window() -> None:

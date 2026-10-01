@@ -7,8 +7,10 @@ import json
 import logging
 import os
 import re
+import stat
 import time
 from collections.abc import Callable, Mapping
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -18,6 +20,7 @@ from uuid import uuid4
 import psutil
 
 from gobby.cli.utils import get_gobby_home
+from gobby.utils.durable_file import exclusive_file_lock
 
 logger = logging.getLogger(__name__)
 
@@ -138,47 +141,32 @@ def clear_stale_envelope_processing_marker(
 ) -> bool:
     """Remove a stale processing marker so the envelope can be retried."""
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
-    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if record is None:
-        return _clear_stale_unreadable_marker(
-            marker,
+    with _marker_lock(marker):
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        if record is None:
+            return _clear_stale_unreadable_marker(
+                marker,
+                now=now,
+                stale_after_seconds=stale_after_seconds,
+            )
+        if record.get("status") != "processing" or _is_active_processing_record(
+            record,
             now=now,
             stale_after_seconds=stale_after_seconds,
-        )
-    if record.get("status") != "processing":
-        return False
-    if _is_active_processing_record(
-        record,
-        now=now,
-        stale_after_seconds=stale_after_seconds,
-    ):
-        return False
-
-    latest_record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if latest_record is None:
-        return _clear_stale_unreadable_marker(
-            marker,
-            now=now,
-            stale_after_seconds=stale_after_seconds,
-        )
-    if latest_record.get("status") != "processing" or _is_active_processing_record(
-        latest_record,
-        now=now,
-        stale_after_seconds=stale_after_seconds,
-    ):
-        return False
-
-    try:
+        ):
+            return False
         marker.unlink()
-    except FileNotFoundError:
-        return False
-    return True
+        return True
 
 
-def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
-    """Atomically claim first processing rights for an envelope ID."""
+def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = None) -> str | None:
+    """Atomically claim first processing rights; return the lease owner token written.
+
+    Returning the token saves the caller a second executor hop to read it back
+    (#23063), and ties lease renewal to this claim rather than a later re-read.
+    """
     if not envelope_id:
-        return False
+        return None
 
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     marker.parent.mkdir(parents=True, exist_ok=True)
@@ -187,15 +175,16 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
         pid, create_time = _owner_process_identity()
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
         pid, create_time = os.getpid(), time.time()
+    owner_token = str(uuid4())
     try:
-        with marker.open("x", encoding="utf-8") as fh:
+        with _marker_lock(marker), marker.open("x", encoding="utf-8") as fh:
             fh.write(
                 json.dumps(
                     {
                         "envelope_id": envelope_id,
                         "claimed_at": now.isoformat(),
                         "status": "processing",
-                        "owner_token": str(uuid4()),
+                        "owner_token": owner_token,
                         "owner_pid": pid,
                         "owner_create_time": create_time,
                         "renewed_at": now.isoformat(),
@@ -206,21 +195,8 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
                 + "\n"
             )
     except FileExistsError:
-        return False
-    return True
-
-
-def envelope_processing_owner_token(
-    envelope_id: str,
-    *,
-    processed_dir: Path | None = None,
-) -> str | None:
-    """Return the live processing lease token for an envelope, if present."""
-    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if record is None or record.get("status") != "processing":
         return None
-    token = record.get("owner_token")
-    return token if isinstance(token, str) and token else None
+    return owner_token
 
 
 def renew_envelope_processing_lease(
@@ -297,35 +273,12 @@ def release_envelope_processing_claim(
             writer=lambda _record: None,
         )
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
-    claimed_marker = marker.with_name(f".{marker.name}.{uuid4().hex}.release")
-    try:
-        marker.rename(claimed_marker)
-    except FileNotFoundError:
-        return False
-    try:
-        try:
-            record = json.loads(claimed_marker.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            record = None
-        if isinstance(record, dict) and record.get("status") == "processing":
-            claimed_marker.unlink(missing_ok=True)
-            return True
-
-        try:
-            os.link(claimed_marker, marker)
-        except FileExistsError:
-            pass
-        finally:
-            claimed_marker.unlink(missing_ok=True)
-        return False
-    except Exception:
-        if claimed_marker.exists() and not marker.exists():
-            try:
-                os.link(claimed_marker, marker)
-            except FileExistsError:
-                pass
-        claimed_marker.unlink(missing_ok=True)
-        raise
+    with _marker_lock(marker):
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        if record is None or record.get("status") != "processing":
+            return False
+        marker.unlink()
+        return True
 
 
 def read_envelope_marker(
@@ -371,26 +324,28 @@ def envelope_terminal_response(
     and only if they were processed after the latest session_start epoch.
     Aged or pre-epoch stop blocks are dropped so the envelope can re-evaluate.
     """
-    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if record is None:
-        return None
-    status = record.get("status")
-    if isinstance(status, str):
-        if status != "processed":
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    with _marker_lock(marker):
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        if record is None:
             return None
-    elif status is not None:
-        return None
-    response = record.get("response")
-    if not isinstance(response, dict):
-        return None
-    if _should_replay_processed_response(
-        record,
-        response,
-        now=now,
-        processed_dir=processed_dir,
-    ):
-        return response
-    remove_envelope_marker(envelope_id, processed_dir=processed_dir)
+        status = record.get("status")
+        if isinstance(status, str):
+            if status != "processed":
+                return None
+        elif status is not None:
+            return None
+        response = record.get("response")
+        if not isinstance(response, dict):
+            return None
+        if _should_replay_processed_response(
+            record,
+            response,
+            now=now,
+            processed_dir=processed_dir,
+        ):
+            return response
+        marker.unlink()
     logger.debug("Dropped stale processed STOP/turn_end replay for envelope %s", envelope_id)
     return None
 
@@ -447,43 +402,41 @@ def mark_envelope_processed(
 
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     marker.parent.mkdir(parents=True, exist_ok=True)
-    existing = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if existing is not None and existing.get("status") == "processing":
-        return
-    if (
-        response is None
-        and existing is not None
-        and existing.get("status", "processed") == "processed"
-        and isinstance(existing.get("response"), dict)
-    ):
-        return
-    record: dict[str, Any] = {
-        "envelope_id": envelope_id,
-        "processed_at": datetime.now(UTC).isoformat(),
-        "status": "processed",
-    }
-    if response is not None:
-        record["response"] = dict(response)
-    stored_hook_type = hook_type if hook_type else None
-    if stored_hook_type is None and existing is not None:
-        existing_hook_type = existing.get("hook_type")
-        if isinstance(existing_hook_type, str) and existing_hook_type:
-            stored_hook_type = existing_hook_type
-    if stored_hook_type:
-        record["hook_type"] = stored_hook_type
+    with _marker_lock(marker):
+        existing = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+        if existing is not None and existing.get("status") == "processing":
+            return
+        if (
+            response is None
+            and existing is not None
+            and existing.get("status", "processed") == "processed"
+            and isinstance(existing.get("response"), dict)
+        ):
+            return
+        record: dict[str, Any] = {
+            "envelope_id": envelope_id,
+            "processed_at": datetime.now(UTC).isoformat(),
+            "status": "processed",
+        }
+        if response is not None:
+            record["response"] = dict(response)
+        stored_hook_type = hook_type if hook_type else None
+        if stored_hook_type is None and existing is not None:
+            existing_hook_type = existing.get("hook_type")
+            if isinstance(existing_hook_type, str) and existing_hook_type:
+                stored_hook_type = existing_hook_type
+        if stored_hook_type:
+            record["hook_type"] = stored_hook_type
 
-    temp_path = marker.with_name(f"{marker.name}.{uuid4().hex}.tmp")
-    temp_path.write_text(
-        json.dumps(record, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-    try:
-        os.replace(temp_path, marker)
-    finally:
+        temp_path = marker.with_name(f"{marker.name}.{uuid4().hex}.tmp")
         try:
-            temp_path.unlink()
-        except FileNotFoundError:
-            pass
+            temp_path.write_text(
+                json.dumps(record, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            os.replace(temp_path, marker)
+        finally:
+            temp_path.unlink(missing_ok=True)
 
 
 def remove_envelope_marker(
@@ -493,11 +446,12 @@ def remove_envelope_marker(
 ) -> bool:
     """Remove the durable marker for an envelope."""
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
-    try:
-        marker.unlink()
-    except FileNotFoundError:
-        return False
-    return True
+    with _marker_lock(marker):
+        try:
+            marker.unlink()
+        except FileNotFoundError:
+            return False
+        return True
 
 
 def _processed_marker_path(envelope_id: str, *, processed_dir: Path | None = None) -> Path:
@@ -569,16 +523,12 @@ def _owner_process_is_live(record: Mapping[str, Any]) -> bool:
         return False
 
 
-def _restore_marker(claimed_marker: Path, marker: Path) -> None:
-    if marker.exists():
-        claimed_marker.unlink(missing_ok=True)
-        return
-    try:
-        os.link(claimed_marker, marker)
-    except FileExistsError:
-        pass
-    finally:
-        claimed_marker.unlink(missing_ok=True)
+def _marker_lock(marker: Path) -> AbstractContextManager[None]:
+    # Stable lock inodes survive marker replacement/removal. A separate directory
+    # keeps pruning away from them; 256 shards bound disk usage without one
+    # global lock serializing unrelated envelopes.
+    shard = hashlib.sha256(marker.name.encode("utf-8")).hexdigest()[:2]
+    return exclusive_file_lock(marker.parent / ".locks" / shard)
 
 
 def _cas_mutate_processing_marker(
@@ -591,45 +541,28 @@ def _cas_mutate_processing_marker(
     if not envelope_id or not owner_token:
         return False
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
-    claimed_marker = marker.with_name(f".{marker.name}.{uuid4().hex}.cas")
-    try:
-        marker.rename(claimed_marker)
-    except FileNotFoundError:
-        return False
-    try:
-        try:
-            record = json.loads(claimed_marker.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            _restore_marker(claimed_marker, marker)
-            return False
+    with _marker_lock(marker):
+        record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
         if (
-            not isinstance(record, dict)
+            record is None
             or record.get("status") != "processing"
             or record.get("owner_token") != owner_token
         ):
-            _restore_marker(claimed_marker, marker)
             return False
         updated = writer(record)
         if updated is None:
-            claimed_marker.unlink(missing_ok=True)
+            marker.unlink()
             return True
         temp_path = marker.with_name(f"{marker.name}.{uuid4().hex}.tmp")
-        temp_path.write_text(
-            json.dumps(updated, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
         try:
+            temp_path.write_text(
+                json.dumps(updated, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
             os.replace(temp_path, marker)
         finally:
             temp_path.unlink(missing_ok=True)
-        claimed_marker.unlink(missing_ok=True)
         return True
-    except Exception:
-        if claimed_marker.exists() and not marker.exists():
-            _restore_marker(claimed_marker, marker)
-        else:
-            claimed_marker.unlink(missing_ok=True)
-        raise
 
 
 def _clear_stale_unreadable_marker(
@@ -670,6 +603,7 @@ def prune_directory_by_age(
     cutoff: float,
     max_entries: int,
     matches: Callable[[str], bool] | None = None,
+    entry_lock: Callable[[Path], AbstractContextManager[None]] | None = None,
 ) -> DirectoryPruneResult:
     """Delete files older than the cutoff, bounded to one pass.
 
@@ -677,9 +611,9 @@ def prune_directory_by_age(
     selects entries by name and defaults to every entry; the bound counts every
     entry read, because reading is the cost the bound exists to limit.
 
-    Entries are examined in directory order, which puts the oldest first, so a
-    truncated pass deletes the oldest of the backlog and the next pass resumes
-    where this one stopped.
+    Entries are examined in filesystem directory order. Deleted entries leave
+    the next pass a smaller backlog; unpruned files and directories still count
+    toward the bound.
     """
     examined = 0
     deleted = 0
@@ -693,8 +627,18 @@ def prune_directory_by_age(
                 examined += 1
                 if matches is not None and not matches(entry.name):
                     continue
-                if _prune_entry(entry, cutoff=cutoff):
-                    deleted += 1
+                try:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    guard = (
+                        entry_lock(Path(entry.path)) if entry_lock is not None else nullcontext()
+                    )
+                    with guard:
+                        if _prune_entry(entry, cutoff=cutoff):
+                            deleted += 1
+                except OSError:
+                    # Lock acquisition can fail on an unreadable entry too.
+                    continue
     except OSError:
         # A missing or unreadable directory is not an error worth losing the
         # maintenance loop over; the next pass tries again.
@@ -712,23 +656,26 @@ def prune_processed_envelope_markers(
     """Delete marker files past the retention window, bounded to one pass.
 
     Blocking: the caller must keep this off the event loop thread. Age comes
-    from the file's mtime rather than its stored processed_at because a marker
-    is written once and never rewritten, and reading every marker to parse a
-    timestamp would cost an open and a JSON parse per entry.
+    from the file's mtime rather than its stored processed_at so renewed leases
+    stay fresh without an open and JSON parse per entry.
 
-    Every entry is a candidate: nothing but markers is written here.
+    Marker mutations share the same lock as deletion. Lock shards live in a
+    subdirectory and are never pruned, so waiters keep one stable lock inode.
     """
     target = processed_dir if processed_dir is not None else get_processed_envelope_dir()
     cutoff = (now if now is not None else time.time()) - retention_seconds
-    return prune_directory_by_age(target, cutoff=cutoff, max_entries=max_entries)
+    return prune_directory_by_age(
+        target, cutoff=cutoff, max_entries=max_entries, entry_lock=_marker_lock
+    )
 
 
 def _prune_entry(entry: os.DirEntry[str], *, cutoff: float) -> bool:
     """Delete one directory entry when it is a file older than the cutoff."""
     try:
-        if not entry.is_file(follow_symlinks=False):
+        metadata = os.stat(entry.path, follow_symlinks=False)
+        if not stat.S_ISREG(metadata.st_mode):
             return False
-        if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+        if metadata.st_mtime >= cutoff:
             return False
         os.unlink(entry.path)
     except FileNotFoundError:

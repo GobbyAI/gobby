@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.hooks import envelope_dedupe
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_REPLAY_GRACE_SECONDS,
     PROCESSED_MARKER_RETENTION_SECONDS,
@@ -34,6 +35,8 @@ _DAY = 24 * 60 * 60.0
 def _marker(processed_dir: Path, name: str, *, age_seconds: float) -> Path:
     """Write one marker file and backdate it to a chosen age."""
     processed_dir.mkdir(parents=True, exist_ok=True)
+    # Real marker writes create stable lock shards in this subdirectory.
+    (processed_dir / ".locks").mkdir(exist_ok=True)
     path = processed_dir / f"{name}.json"
     path.write_text('{"status": "processed"}\n', encoding="utf-8")
     stamp = time.time() - age_seconds
@@ -61,7 +64,7 @@ def test_a_marker_past_the_window_is_deleted_and_a_fresh_one_is_kept(
     result = prune_processed_envelope_markers(processed_dir)
 
     assert result.deleted == 1
-    assert result.examined == 2
+    assert result.examined == 3
     assert result.truncated is False
     assert not stale.exists()
     assert fresh.exists()
@@ -101,17 +104,20 @@ def test_one_pass_stops_at_its_bound_and_the_next_pass_carries_on(
     for index in range(10):
         _marker(processed_dir, f"stale-{index:02d}", age_seconds=2 * _DAY)
 
-    first = prune_processed_envelope_markers(processed_dir, max_entries=4)
+    first = prune_processed_envelope_markers(processed_dir, max_entries=5)
 
-    assert first.examined == 4
-    assert first.deleted == 4
+    assert first.examined == 5
+    # Directory enumeration may encounter the persistent lock directory anywhere.
+    assert first.deleted in {4, 5}
     assert first.truncated is True
-    assert len(list(processed_dir.iterdir())) == 6
+    assert len(list(processed_dir.glob("*.json"))) == 10 - first.deleted
 
-    second = prune_processed_envelope_markers(processed_dir, max_entries=4)
+    second = prune_processed_envelope_markers(processed_dir, max_entries=5)
 
-    assert second.deleted == 4
-    assert len(list(processed_dir.iterdir())) == 2
+    assert second.examined == 5
+    assert second.deleted in {4, 5}
+    assert len(list(processed_dir.glob("*.json"))) == 10 - first.deleted - second.deleted
+    assert (processed_dir / ".locks").is_dir()
 
 
 def test_a_pass_that_reads_the_whole_directory_is_not_reported_as_truncated(
@@ -123,7 +129,7 @@ def test_a_pass_that_reads_the_whole_directory_is_not_reported_as_truncated(
     for index in range(4):
         _marker(processed_dir, f"stale-{index}", age_seconds=2 * _DAY)
 
-    result = prune_processed_envelope_markers(processed_dir, max_entries=4)
+    result = prune_processed_envelope_markers(processed_dir, max_entries=5)
 
     assert result.deleted == 4
     assert result.truncated is False
@@ -135,6 +141,40 @@ def test_a_missing_marker_directory_is_not_an_error(tmp_path: Path) -> None:
 
     assert result.deleted == 0
     assert result.examined == 0
+
+
+def test_pruning_preserves_lock_inode_and_replacement_owner(tmp_path: Path) -> None:
+    processed_dir = tmp_path / "processed"
+    envelope_id = "n-0000000000001-prune-reclaim"
+    token = envelope_dedupe.claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    assert token is not None
+    assert envelope_dedupe.finalize_envelope_processed(
+        envelope_id, token, response={"continue": True}, processed_dir=processed_dir
+    )
+    marker = next(processed_dir.glob("*.json"))
+    lock = next((processed_dir / ".locks").iterdir())
+    lock_inode = lock.stat().st_ino
+    stamp = time.time() - 2 * _DAY
+    os.utime(marker, (stamp, stamp))
+    os.utime(lock, (stamp, stamp))
+
+    assert prune_processed_envelope_markers(processed_dir).deleted == 1
+    assert lock.stat().st_ino == lock_inode
+    replacement = envelope_dedupe.claim_envelope_processing(
+        envelope_id, processed_dir=processed_dir
+    )
+    assert replacement is not None and replacement != token
+    assert not envelope_dedupe.renew_envelope_processing_lease(
+        envelope_id, token, processed_dir=processed_dir
+    )
+    assert not envelope_dedupe.release_envelope_processing_claim(
+        envelope_id, owner_token=token, processed_dir=processed_dir
+    )
+    record = envelope_dedupe.read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    assert record is not None
+    assert record["owner_token"] == replacement
+    assert record["status"] == "processing"
+    assert lock.stat().st_ino == lock_inode
 
 
 def test_entries_the_prune_cannot_delete_do_not_end_the_pass(
@@ -154,7 +194,7 @@ def test_entries_the_prune_cannot_delete_do_not_end_the_pass(
     finally:
         os.chmod(processed_dir, 0o700)
 
-    assert result.examined == 2
+    assert result.examined == 3
     assert nested.is_dir()
     # The read-only directory blocks the unlink; the pass reports it deleted
     # nothing rather than raising, and the entry is collected once writable.
