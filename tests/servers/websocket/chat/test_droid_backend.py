@@ -231,7 +231,7 @@ def _permission_request_line(
     request_id: str = "permission-1",
     tool_id: str = "tool-1",
     tool_name: str = "Read",
-    tool_input: dict[str, Any] | str | None = None,
+    tool_input: object = None,
 ) -> str:
     return json.dumps(
         {
@@ -788,10 +788,14 @@ async def test_plan_mode_batch_blocks_destructive_tool_before_exit_spec() -> Non
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "tool_input", ['{"command": "rm -rf /repo/bu', ""], ids=["truncated", "empty"]
+    "tool_input",
+    ['{"command": "rm -rf /repo/bu', "", ["rm -rf /repo"], 7],
+    ids=["truncated", "empty", "list", "int"],
 )
-async def test_permission_request_hands_string_input_to_pre_tool_unchanged(tool_input: str) -> None:
-    """A string tool input reaches BEFORE_TOOL as sent, not coerced to {} (#23168)."""
+async def test_permission_request_hands_non_object_input_to_pre_tool_unchanged(
+    tool_input: object,
+) -> None:
+    """A non-object tool input reaches BEFORE_TOOL as sent, not coerced to {} (#23168, #23179)."""
     backend = DroidWebChatBackend()
     session = _droid_session(backend)
     pre_tool_calls: list[dict[str, Any]] = []
@@ -813,10 +817,14 @@ async def test_permission_request_hands_string_input_to_pre_tool_unchanged(tool_
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "tool_input", ['{"command": "rm -rf /repo/bu', ""], ids=["truncated", "empty"]
+    "tool_input",
+    ['{"command": "rm -rf /repo/bu', "", ["rm -rf /repo"], 7],
+    ids=["truncated", "empty", "list", "int"],
 )
-async def test_streamed_tool_call_hands_string_input_to_pre_tool_unchanged(tool_input: str) -> None:
-    """A streamed tool call's string input reaches BEFORE_TOOL as sent (#23168)."""
+async def test_streamed_tool_call_hands_non_object_input_to_pre_tool_unchanged(
+    tool_input: object,
+) -> None:
+    """A streamed tool call's non-object input reaches BEFORE_TOOL as sent (#23168, #23179)."""
     tool_call_line = json.dumps(
         {
             "jsonrpc": "2.0",
@@ -1358,12 +1366,13 @@ async def test_send_message_progress_timeout_renews_on_parsed_event() -> None:
         stdout=_TimedStdout(
             [
                 (0.0, _session_init_line()),
-                (0.04, text_line),
-                (0.04, idle_line),
+                # Each gap fits the timeout with load headroom; together they exceed it.
+                (0.2, text_line),
+                (0.2, idle_line),
             ]
         )
     )
-    backend, session = _attached_session(process, prompt_timeout=0.05)
+    backend, session = _attached_session(process, prompt_timeout=0.3)
 
     with (
         patch(

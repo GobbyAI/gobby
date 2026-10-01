@@ -210,7 +210,7 @@ class AgyManagedChatSession(ManagedWebChatPermissionsMixin, ManagedChatSessionBa
     async def _apply_pre_tool_lifecycle(
         self,
         tool_name: str,
-        tool_input: dict[str, Any] | str,
+        tool_input: object,
     ) -> dict[str, Any] | None:
         """Native ghook is the sole BEFORE_TOOL authority for AGY (plan row 5.3.5)."""
         del tool_name, tool_input

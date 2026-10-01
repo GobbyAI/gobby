@@ -28,10 +28,10 @@ DROID_PERMISSION_PROCEED_ONCE = "proceed_once"
 ToolPayload = tuple[str, dict[str, Any], str]
 
 
-def raw_string_tool_input(data: Mapping[str, Any]) -> str | None:
-    """Return Droid's tool input when it arrived as a string, for hooks to mark."""
+def raw_non_object_tool_input(data: Mapping[str, Any]) -> object | None:
+    """Return Droid's tool input when it arrived as anything but an object, for hooks to mark."""
     raw = data["tool_input"] if "tool_input" in data else data.get("input")
-    return raw if isinstance(raw, str) else None
+    return raw if not isinstance(raw, dict) else None
 
 
 class DroidPermissionSession(Protocol):
@@ -46,7 +46,7 @@ class DroidPermissionSession(Protocol):
     _plan_exit_blocked_this_turn: bool
 
     async def _apply_pre_tool_lifecycle(
-        self, tool_name: str, tool_input: dict[str, Any] | str
+        self, tool_name: str, tool_input: object
     ) -> dict[str, Any] | None: ...
 
     async def _maybe_broadcast_pending_plan(
@@ -76,7 +76,7 @@ class DroidPermissionResolver:
             return DROID_PERMISSION_CANCEL
 
         for event, (tool_name, tool_input, _tool_id) in zip(events, tool_payloads, strict=True):
-            raw_tool_input = raw_string_tool_input(event.data)
+            raw_tool_input = raw_non_object_tool_input(event.data)
             lifecycle_response = await session._apply_pre_tool_lifecycle(
                 tool_name, raw_tool_input if raw_tool_input is not None else tool_input
             )

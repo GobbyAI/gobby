@@ -35,6 +35,37 @@ def test_unparseable_string_tool_input_is_marked_without_content(
     assert tool_input_error(data) == {"field": field, "code": code}
 
 
+@pytest.mark.parametrize(
+    ("data", "field"),
+    [
+        ({"tool_name": "Bash", "tool_input": ["git", "status"]}, "tool_input"),
+        ({"tool_name": "Bash", "tool_input": 7}, "tool_input"),
+        ({"tool_name": "Bash", "tool_input": False}, "tool_input"),
+        ({"tool_name": "Read", "toolArgs": []}, "toolArgs"),
+        ({"tool_name": "Read", "parameters": 1.5}, "parameters"),
+        ({"tool_name": "apply_patch", "args": ["*** Begin Patch"]}, "args"),
+    ],
+    ids=["list", "int", "bool", "empty-list", "float", "apply-patch-list"],
+)
+def test_non_object_tool_input_is_marked_never_coerced(data: dict[str, Any], field: str) -> None:
+    normalize_tool_fields(data)
+
+    assert "tool_input" not in data
+    assert tool_input_error(data) == {"field": field, "code": "non_object"}
+
+
+def test_absent_tool_input_and_non_tool_args_are_not_marked() -> None:
+    absent: dict[str, Any] = {"tool_name": "Bash", "tool_input": None}
+    non_tool: dict[str, Any] = {"args": ["--verbose"]}
+
+    normalize_tool_fields(absent)
+    normalize_tool_fields(non_tool)
+
+    assert tool_input_error(absent) is None
+    assert tool_input_error(non_tool) is None
+    assert non_tool["tool_input"] == ["--verbose"]
+
+
 def test_object_string_tool_input_is_parsed() -> None:
     data: dict[str, Any] = {"tool_name": "Read", "tool_input": '{"path": "/repo/a.py"}'}
 

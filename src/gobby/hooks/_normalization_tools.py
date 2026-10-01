@@ -12,6 +12,7 @@ from gobby.hooks._normalization_shell import canonicalize_shell_tool_name
 from gobby.hooks._normalization_tool_input import (
     TOOL_INPUT_ERROR_FIELD,
     decode_string_tool_input,
+    is_non_object_tool_input,
     mark_tool_input_unavailable,
     tool_input_error,
     tool_input_source,
@@ -86,6 +87,12 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     # apply_patch input is freeform patch text, never JSON.
     compact_tool_name = _compact_tool_name(data.get("tool_name"))
     decoded_string = compact_tool_name != "applypatch" and decode_string_tool_input(data, source)
+    # A list, number, or bool sent directly; Write and apply_patch may still recover it below.
+    sent_non_object = (
+        not decoded_string
+        and "tool_name" in data
+        and is_non_object_tool_input(data.get("tool_input"))
+    )
 
     # Normalize tool_input internal fields (e.g., path -> file_path)
     tool_input = data.get("tool_input")
@@ -113,6 +120,8 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
 
     if decoded_string and "tool_input" in data and not isinstance(tool_input, dict):
         mark_tool_input_unavailable(data, source, "non_object_json")
+    elif sent_non_object and (not isinstance(tool_input, dict) or not tool_input):
+        mark_tool_input_unavailable(data, source, "non_object")
     elif prior_error is not None and "tool_input" not in data:
         data.setdefault(TOOL_INPUT_ERROR_FIELD, prior_error)
 

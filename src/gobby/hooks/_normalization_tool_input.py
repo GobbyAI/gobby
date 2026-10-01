@@ -1,4 +1,4 @@
-"""Mark string tool input that is not a JSON object instead of coercing it to {}."""
+"""Mark tool input that is not an object instead of coercing it to {}."""
 
 import json
 from collections.abc import Mapping
@@ -6,8 +6,8 @@ from typing import Any, Literal, TypedDict
 
 TOOL_INPUT_ERROR_FIELD = "tool_input_error"
 TOOL_INPUT_SOURCES = ("tool_input", "toolArgs", "parameters", "args")
-ToolInputErrorCode = Literal["invalid_json", "non_object_json"]
-_ERROR_CODES: tuple[ToolInputErrorCode, ...] = ("invalid_json", "non_object_json")
+ToolInputErrorCode = Literal["invalid_json", "non_object_json", "non_object"]
+_ERROR_CODES: tuple[ToolInputErrorCode, ...] = ("invalid_json", "non_object_json", "non_object")
 
 
 class ToolInputError(TypedDict):
@@ -41,6 +41,11 @@ def mark_tool_input_unavailable(
     """Drop the unusable input and record why, without retaining its content."""
     data.pop("tool_input", None)
     data[TOOL_INPUT_ERROR_FIELD] = {"field": source, "code": code}
+
+
+def is_non_object_tool_input(value: object) -> bool:
+    """Whether a present tool input is neither an object nor undecoded string text."""
+    return value is not None and not isinstance(value, dict | str)
 
 
 def decode_string_tool_input(data: dict[str, Any], source: str) -> bool:

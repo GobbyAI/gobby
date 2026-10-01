@@ -478,8 +478,9 @@ class CodexAdapter(BaseAdapter):
 
             original_tool = _shared_compose_mcp_tool_name(server_name, tool_name)
             tool_params = meta.get("tool_params")
-            # A string is kept so normalization marks it unless it decodes to an object.
-            tool_input = tool_params if isinstance(tool_params, dict | str) else {}
+            # A non-object is kept so normalization marks it, unless it is a string
+            # that decodes to an object.
+            tool_input = tool_params if tool_params is not None else {}
             data = {
                 "item_id": params.get("elicitationId", ""),
                 "item_type": "mcpToolCall",
