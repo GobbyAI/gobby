@@ -21,7 +21,10 @@ from uuid import uuid4
 import httpx
 import pytest
 
+import gobby.terminals.composer_lock as composer_lock_module
+from gobby.agents.idle_detector import ComposerRead
 from gobby.agents.terminal_delivery import shielded_terminal_delivery
+from gobby.events.live_wake import TerminalActivity, composer_unconfirmed_result
 from gobby.events.wake import WakeDispatcher
 from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks._normalization_tools import normalize_tool_fields
@@ -53,6 +56,103 @@ from tests.terminals.fakes import (
 from tests.terminals.test_composer_proof_trace import registered_trace
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+@pytest.mark.parametrize("priority", ["normal", "urgent"])
+@pytest.mark.parametrize("probe_state", ["unknown", "error", "in_flight"])
+async def test_installed_wake_observer_preserves_unconfirmed_result_and_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, provider: str, priority: str, probe_state: str
+) -> None:
+    trace, event = registered_trace(tmp_path)
+    own = replace(trace.surfaces[str(event["terminal_id"])], provider=provider)
+    trace.surfaces[own.terminal_id] = own
+    terminal = replace(
+        make_memory_terminal(backend="native"),
+        id=own.terminal_id,
+        session_id=own.session_id,
+        project_id=own.project_id,
+        host_epoch=own.host_epoch,
+    )
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, MemoryTerminalStore(terminal)),
+        runtime_registry(FakeRuntime()),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="proof-epoch"),
+    )
+    monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)
+    session = SimpleNamespace(
+        id=own.session_id,
+        source=provider,
+        status="paused",
+        session_type="terminal",
+        agent_depth=0,
+        turn_count=0,
+    )
+    manager = MagicMock()
+    manager.get.return_value = session
+    activity = TerminalActivity(
+        ComposerRead("empty" if probe_state == "in_flight" else "unknown"),
+        turn_in_flight_fingerprint="actual-unit-turn" if probe_state == "in_flight" else None,
+    )
+    probe = AsyncMock(
+        side_effect=RuntimeError("unit probe unavailable") if probe_state == "error" else None,
+        return_value=activity,
+    )
+    sender = AsyncMock()
+    dispatcher = WakeDispatcher(manager, MagicMock(), tmux_sender=sender, activity_probe=probe)
+    dispatcher.bind_owner_loop(asyncio.get_running_loop())
+    observer = RaceObservation(trace.accept)
+    original = WakeDispatcher._dispatch_live_wake_unlocked
+    retry_waiting = asyncio.Event()
+
+    async def traced(instance: WakeDispatcher, session_id: str, **kwargs: Any) -> dict[str, Any]:
+        return await observer.observe_wake(instance, original, session_id, **kwargs)
+
+    async def wait_for_retry(delay: float) -> None:
+        assert delay == 15.0
+        retry_waiting.set()
+        await asyncio.Event().wait()
+
+    variables = MagicMock()
+    variables.get_variables.return_value = {}
+    with (
+        patch.object(WakeDispatcher, "_dispatch_live_wake_unlocked", traced),
+        observer.install(),
+        patch.object(
+            dispatcher,
+            "_terminal_route_for_session",
+            AsyncMock(return_value=SimpleNamespace(managed_terminal=terminal)),
+        ),
+        patch("gobby.events.wake.SessionVariableManager", return_value=variables),
+        patch.object(dispatcher, "_composer_retry_wait", wait_for_retry),
+    ):
+        try:
+            result = await dispatcher.dispatch_live_wake(own.session_id, priority=priority)
+            assert result == composer_unconfirmed_result(own.session_id, method="terminal")
+            await asyncio.wait_for(retry_waiting.wait(), 1)
+            retry = dispatcher._composer_retries[own.session_id]
+            assert not retry.done() and len(dispatcher._composer_retries) == 1
+            probe.assert_awaited_once_with(session, terminal)
+            sender.assert_not_awaited()
+            receipt = next(item for item in trace.events if item.get("phase") == "wake")
+            assert receipt["skipped"] == result["skipped"]
+            assert receipt["requested_session_id"] == own.session_id
+            fields = {key: value for key, value in receipt.items() if key != "sequence"}
+            accepted = len(trace.events)
+            for malformed in (
+                {**fields, "skipped": "composer_unknown"},
+                {**fields, "skipped": "composer_probe_error"},
+                {**fields, "unexpected": True},
+                {**fields, "host_epoch": "foreign-epoch"},
+            ):
+                with pytest.raises(ProofRefused):
+                    await trace.accept(malformed)
+            assert len(trace.events) == accepted
+        finally:
+            retries = list(dispatcher._composer_retries.values())
+            for retry in retries:
+                retry.cancel()
+            await asyncio.gather(*retries, return_exceptions=True)
 
 
 async def test_before_write_barrier_holds_original_dispatch_without_submitting(
@@ -134,7 +234,9 @@ async def test_race_evidence_requires_exact_writes_and_original_wait_order(
             "phase": "wake",
             "requested_session_id": "predecessor",
             "delivered": False,
-            "skipped": "handoff_delivery_pending",
+            "skipped": composer_unconfirmed_result("predecessor", method="terminal")["skipped"]
+            if failed
+            else "handoff_delivery_pending",
         }
     )
     if corruption == "extra_enter":

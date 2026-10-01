@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any, Literal, cast
 from uuid import UUID
 
+from gobby.events.live_wake import RETRYABLE_WAKE_SKIPS
 from gobby.sessions.clear_continuation import CLEAR_ATTEMPT_VARIABLE
 from gobby.sessions.handoff import (
     FAILED_HANDOFF_VARIABLE,
@@ -75,11 +76,7 @@ def require_race_evidence(
                 "session_not_live",
                 "session_active",
             }
-            | (
-                {"composer_unknown", "composer_probe_error", "composer_occupied"}
-                if failed
-                else set()
-            )
+            | (RETRYABLE_WAKE_SKIPS if failed else set())
         )
     ):
         raise ProofRefused("staged handoff wake did not preserve the real protected outcome")

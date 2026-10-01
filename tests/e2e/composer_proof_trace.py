@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 from uuid import UUID
 
+from gobby.events.live_wake import RETRYABLE_WAKE_SKIPS
 from gobby.sessions.handoff import build_handoff_continue_prompt
 from gobby.storage.terminals import Terminal
 from gobby.terminals.runtime import WriteOutcome
@@ -322,9 +323,6 @@ class ProofTrace:
                 or event.get("skipped")
                 not in {
                     None,
-                    "composer_occupied",
-                    "composer_unknown",
-                    "composer_probe_error",
                     "session_active",
                     "debounced",
                     "handoff_delivery_pending",
@@ -332,6 +330,7 @@ class ProofTrace:
                     "session_expired",
                     "session_not_live",
                 }
+                | RETRYABLE_WAKE_SKIPS
             ):
                 raise ProofRefused("invalid wake outcome event")
         elif event.get("origin") not in {"operator", "automatic", "attention", "daemon"}:
