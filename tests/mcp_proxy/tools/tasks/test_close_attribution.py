@@ -279,5 +279,7 @@ async def test_close_attribution_with_ignored_ledger_paths(
     )
 
     assert snapshot.edited_paths == expected_paths
+    assert snapshot.raw_paths == frozenset(ledger_paths) | expected_paths
+    assert snapshot.attributed is True
     assert snapshot.used_commit_fallback is expected_fallback
     assert snapshot.had_attributed_edits is bool(expected_paths)
