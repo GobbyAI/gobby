@@ -18,6 +18,7 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
+from gobby.tasks.tdd_paths import is_implementation_edit_path, is_production_edit_path
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
@@ -55,24 +56,6 @@ _FAILURE_SECTION_BOUNDARY_RE = re.compile(
 _NON_EXECUTION_TEST_MATCHERS = frozenset({"gobby-test-quality-audit"})
 
 
-def is_test_convention_path(path: str) -> bool:
-    """A test module in any language or any file under a test directory."""
-    pure = PurePosixPath(path)
-    name = pure.name.casefold()
-    if (name == "tests.rs" or name.endswith("_tests.rs")) and any(
-        part.casefold() == "src" for part in pure.parts[:-1]
-    ):
-        # Rust module tests: <module>/tests.rs or <module>_tests.rs under src/.
-        return True
-    return (
-        any(part.casefold() in {"test", "tests", "__tests__"} for part in pure.parts[:-1])
-        or name.startswith("test_")
-        or "_test." in name
-        or ".test." in name
-        or ".spec." in name
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class TddEvidenceResult:
     """TDD evidence outcome for a close attempt."""
@@ -91,8 +74,6 @@ class TddEvidenceResult:
         }
 
 
-_DOCUMENTATION_ROOTS = frozenset({"docs", ".gobby"})
-_INSTRUCTION_FILES = frozenset({"agents.md", "claude.md", "readme.md", "changelog.md"})
 TDD_SKILL = "test-driven-development"
 TDD_REQUIRED_LABEL = "tdd:required"
 _TDD_EVIDENCE_PHRASE = "tdd evidence"
@@ -121,16 +102,6 @@ def task_requires_tdd(
     return _TDD_FAILING_TEST_PHRASE in lowered and _TDD_BEFORE_IMPLEMENTATION_PHRASE in lowered
 
 
-def _is_production_edit_path(path: str) -> bool:
-    """Implementation edits only: neither test convention, docs, nor repo instructions."""
-    if is_test_convention_path(path):
-        return False
-    pure = PurePosixPath(path)
-    if pure.parts and pure.parts[0].casefold() in _DOCUMENTATION_ROOTS:
-        return False
-    return pure.name.casefold() not in _INSTRUCTION_FILES
-
-
 def _contains_word(value: str, word: str) -> bool:
     return re.search(rf"\b{re.escape(word)}\b", value) is not None
 
@@ -140,12 +111,27 @@ def evaluate_tdd_evidence(
     evidence: TranscriptEvidence,
     *,
     renamed_test_paths: Mapping[str, tuple[str, ...]] | None = None,
+    task_category: str | None = None,
+    implementation_paths: Iterable[str] = (),
 ) -> TddEvidenceResult:
-    """Require one assertion-backed cycle and later coverage of every named test."""
+    """Require one assertion-backed cycle and later coverage of every named test.
+
+    The caller supplies implementation_paths from the task's linked patch. Only
+    test-category tasks may count non-test fixture modules under tests/ as code.
+    """
     if not tests:
         return TddEvidenceResult(
             False, False, ("TDD is required but no named test reference resolved.",)
         )
+
+    named_test_paths = frozenset(
+        path
+        for test in tests
+        for path in (test.path, *(renamed_test_paths or {}).get(test.path, ()))
+    )
+    infrastructure_paths = (
+        frozenset(implementation_paths) if task_category == "test" else frozenset()
+    )
 
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
@@ -176,7 +162,12 @@ def evaluate_tdd_evidence(
                 (
                     edit
                     for edit in evidence.edits
-                    if edit.order > test_edit.order and _is_production_edit_path(edit.path)
+                    if edit.order > test_edit.order
+                    and is_implementation_edit_path(
+                        edit.path,
+                        named_test_paths=named_test_paths,
+                        test_infrastructure_paths=infrastructure_paths,
+                    )
                 ),
                 key=lambda edit: edit.order,
             )
@@ -570,7 +561,7 @@ def _has_python_keyword_stub(
             if edit.session_id == run.session_id
             and edit.timestamp < run.started_at
             and edit.order < run.order
-            and _is_production_edit_path(edit.path)
+            and is_production_edit_path(edit.path)
         ),
         key=lambda edit: edit.order,
     )
@@ -609,7 +600,7 @@ def _has_python_module_stub(
             edit.session_id == run.session_id
             and edit.timestamp < run.started_at
             and edit.order < run.order
-            and _is_production_edit_path(edit.path)
+            and is_production_edit_path(edit.path)
             and not edit.source_unchanged
         ):
             latest_by_path[edit.path] = edit
