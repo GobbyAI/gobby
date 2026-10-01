@@ -36,7 +36,7 @@ This adds no new mechanism: no code, pipeline, rule or gate. It needs one bullet
 
 ### Other history
 - **Past remediation tasks:** #9865, #14995, #15012, #17313 and #18909. The remediation epic is in `.gobby/plans/completed/coderabbit-fixes/`; it split one 786-finding pass into domain fixes and forward-ported them to 0.5.0.
-- **Former `no-coderabbit` rule:** it appears only in `docs/plans/completed/workflows-v2.md` and in `tests/workflows/test_agent_scope_rules.py`, which seeds its own row. It isn't among the current `src/gobby/install/shared/workflows/rules/` templates, so nothing blocks an agent from running the CLI today.
+- **Former `no-coderabbit` rule:** it appears only in `docs/plans/completed/workflows-v2.md` and in `tests/workflows/test_agent_scope_rules.py`, which seeds its own row. It isn't among the current `src/gobby/install/shared/workflows/rules/` templates. The installed DB rule rows are authoritative (repository rule 8), and this task's no-storage constraint meant I didn't read them, so whether any installed rule blocks agents from running the CLI is **unverified**. Check the installed rules before adoption.
 
 ## 2. CLI capabilities on 0.7.3
 
@@ -88,9 +88,9 @@ Each fact is tagged with its source:
 ### What leaves the machine
 - **[undocumented]** for a local review. The docs don't say whether only the diff or full files and repository context are uploaded.
 - The local record keeps `diff.json` and `incrementalDiff.json`. That shows what was reviewed, not what was uploaded. The safe assumption is **at least the full diff of the selected range, plus `.coderabbit.yaml` instructions**, and possibly surrounding file content.
-- Two things widen what is sent:
-  - `-c CLAUDE.md AGENTS.md` sends those instruction files.
-  - **v0.8.0+ automatically includes the Claude Code or Codex session transcript [changelog].** This matters only if the CLI is updated (decision D5).
+- What can widen what is sent:
+  - `-c CLAUDE.md AGENTS.md` sends those instruction files with a review.
+  - The v0.8.0 changelog describes an automatic Claude Code or Codex session-transcript upload for the **cloud handoff** command (`cr handoff --summary ...`), not for `cr review` **[changelog]**. I found no evidence that updating the CLI makes ordinary reviews send transcripts. The recommended workflow never uses `handoff`.
 - **Retention [docs-latest, coderabbit.ai/security and FAQ]:**
   - "nothing is stored after the review" unless review caching is enabled.
   - Cached data is never used for training.
@@ -194,7 +194,7 @@ git -C /Users/josh/Projects/gobby worktree remove "$WT"
 | D2 | Adopt CodeRabbit as a Code Reviewer input on the exact SHA? | `Adopt (recommended)` · `Not now` |
 | D3 | Advisory or blocking? | `Advisory (recommended)` · `Unresolved HIGH blocks LAND` |
 | D4 | What code may be sent to CodeRabbit? | `All candidate paths` · `Exclude .gobby/ and roles` · `Only src/ and crates/` |
-| D5 | CLI version? | `Stay on 0.7.3 (recommended)` · `Update to 0.8.x (sends the session transcript)` |
+| D5 | CLI version? | `Stay on 0.7.3 (recommended)` · `Update to 0.8.x (review only; never use handoff, which uploads the session transcript)` |
 | D6 | When the plan allowance runs out? | `Skip and note it (recommended)` · `Enable credits with a cap` |
 | D7 | Which candidates get a run? | `Every candidate (recommended)` · `Only src/ or crates/ changes` |
 
