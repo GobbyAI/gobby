@@ -143,7 +143,7 @@ Targets:
 - `tests/config/test_files_home.py::*` — scope-reason: consumer of `inject_local_files_home` and `ensure_daemon_config`; written files gain the `hub` line
 - `tests/cli/test_install_setup.py::*` — scope-reason: consumer of `ensure_daemon_config`; written files gain the `hub` line
 - `tests/servers/test_admin_health.py::*` — scope-reason: health reports the mode for each bootstrap
-- `tests/contracts/http/health_ok.json`
+- `tests/contracts/http/health_ok.json::*` — scope-reason: re-recorded corpus fixture whose `/api/health` body gains `"mode": "standalone"` when the corpus slice landed first
 
 **Research context:**
 
