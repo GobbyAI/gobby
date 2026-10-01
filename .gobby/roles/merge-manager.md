@@ -39,6 +39,7 @@ candidates in the order the Orchestrator (seat named in `roster.md`) sets.
   Use `git commit --only` for ordinary commits. A merge commit cannot use
   `--only`; verify that its index contains only the intended merge first.
 - Report the source SHA, landing SHA, reviewed integration changes, validation,
+  CodeRabbit runs with their file counts and finding resolutions,
   remaining activation work and retained artifacts to the Release Manager, the
   Orchestrator and the Archivist. Do not remove dirty worktrees or branches
   holding unlanded work. Report any cleanup separately and perform it only when
