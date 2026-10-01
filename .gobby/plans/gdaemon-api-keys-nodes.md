@@ -460,7 +460,7 @@ Verification planned:
 - 4.1.18 - The configuration guide states that a disabled front door is loopback-only and that the TLS block applies only with the front door enabled. behavior: "loopback-only" in `docs/guides/configuration.md`.
 - 4.1.8 - The e2e fixture serves `https` with `tls="self-signed"`, keeps its fingerprint across a restart, and the four parametrized lifecycle cases pass over it through the pinned shared clients. test: `tests/e2e/test_daemon_lifecycle.py::test_daemon_serves_over_self_signed_tls`.
 
-**Granularity:** fourteen items, one leaf. The TLS acceptor, the loopback gate, the
+**Granularity:** eighteen items, one leaf. The TLS acceptor, the loopback gate, the
 companion listener, and the dial-host contract are one behavior: a TLS-enabled
 front door that its own machine can still reach. Shipping the acceptor without
 the gate or the dial-host change leaves a hub whose local hooks and CLIs cannot
@@ -657,7 +657,7 @@ Verification planned:
 `uv run python scripts/generate_runtime_config_contract.py`,
 `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/storage/test_api_keys.py tests/utils/test_api_key_format.py tests/servers/routes/test_api_keys.py tests/cli/test_cli_install.py tests/cli/test_install_coverage.py tests/test_runner_init.py tests/runtime_grants/ tests/config/test_runtime_config_contract.py tests/config/test_bootstrap.py tests/storage/test_storage_auth.py tests/e2e/test_local_api_key_adoption.py tests/e2e/test_api_key_bootstrap_lockout.py -v`.
 
-**Granularity:** fourteen items, one leaf. The migration, `ApiKeyManager`, the
+**Granularity:** fifteen items, one leaf. The migration, `ApiKeyManager`, the
 format helper, and the routes are one issuance path; none is observable without
 the others. Local-key adoption is the issuance path's second caller and D1's flag
 day requires every install to hold a key before it lands. The schema carriers
@@ -1153,6 +1153,12 @@ deferral:
   isolated apply/revert/auth rehearsal. The main-branch consumers
   `tests/contracts/test_http_corpus.py` and `tests/e2e/test_qa_23120_tmux_address.py`
   landed after this worktree's base, and that is intentional.
+- 2026-10-01: Renewed consensus. The Adversary (gobby#14579) independently checked
+  `d1eb7a8` and found P4-09 and the D1 activation gate resolved, with no blocking finding
+  remaining. The narrative scope is four active leaves (4.6, 4.1, 4.2, 4.5) carrying 48
+  acceptance items (6, 18, 15, and 9), with D1 to D5 deferred. The 4.1 and 4.2
+  Granularity counts are corrected to eighteen and fifteen. The Adversary derives and
+  applies a fresh M1 from these bytes.
 
 ## V2: Verification
 `kind: verification`
