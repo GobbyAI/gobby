@@ -227,7 +227,6 @@ async def _send_compaction_interrupt(
             pane, cli_source, composer_read, action="a compaction interrupt"
         )
     except Exception:
-        logger.warning("Composer probe failed before interrupt for %s", session_id, exc_info=True)
         writable, refuse_reason, state = False, "composer probe failed before interrupt", "unknown"
     if not writable:
         return (
@@ -696,7 +695,6 @@ async def _send_terminal_compaction_command_locked(
             if not writable:
                 if continuation_pending:
                     clear_continuation_pending()
-                logger.info("Refusing %s for session %s: %s", command, session_id, refuse_reason)
                 error_code = (
                     _COMPOSER_OCCUPIED_ERROR_CODE
                     if composer_state == "draft"

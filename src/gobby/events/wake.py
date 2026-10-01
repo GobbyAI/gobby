@@ -352,8 +352,6 @@ class WakeDispatcher:
 
     async def _retry_withheld_wake(self, session_id: str, *, priority: str) -> None:
         delay = COMPOSER_RETRY_BASE_SECONDS
-        attempt = 0
-        previous: str | None = None
         while True:
             await self._composer_retry_wait(delay)
             lock = self._live_wake_locks.get(session_id)
@@ -368,22 +366,8 @@ class WakeDispatcher:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.warning("Composer retry failed for session %s", session_id, exc_info=True)
                 return
             skipped = result.get("skipped")
-            attempt += 1
-            # A draft held for hours retries at the cap; report only its first attempt
-            # and each outcome change at INFO so the loop does not spam the log.
-            changed = attempt == 1 or skipped != previous
-            previous = skipped
-            logger.log(
-                logging.INFO if changed and skipped != "debounced" else logging.DEBUG,
-                "Composer retry for session %s: attempt=%d delivered=%s skipped=%s",
-                session_id,
-                attempt,
-                result.get("delivered"),
-                skipped,
-            )
             if skipped not in RETRYABLE_WAKE_SKIPS:
                 return
             if skipped == "session_active":
@@ -721,19 +705,9 @@ class WakeDispatcher:
         try:
             activity = await self._activity_probe(session, terminal)
         except Exception:
-            logger.warning(
-                "wake for session %s deferred: composer probe failed, so the "
-                "durable message waits for a positive empty read",
-                session_id,
-                exc_info=True,
-            )
+            logger.debug("activity probe failed for session %s", session_id, exc_info=True)
             return composer_unconfirmed_result(session_id, method=method), False
         if activity.turn_in_flight_fingerprint is not None:
-            logger.warning(
-                "wake for session %s deferred: a provider turn is in flight, so "
-                "the durable message waits rather than steering it",
-                session_id,
-            )
             return composer_unconfirmed_result(session_id, method=method), False
         state = activity.composer.state
         if state == "empty":
@@ -750,11 +724,6 @@ class WakeDispatcher:
             return composer_occupied_result(session_id, method=method), False
         if not activity.composer_probeable:
             return None, False
-        logger.warning(
-            "wake for session %s deferred: composer state unconfirmed, so the "
-            "durable message waits for a positive empty read",
-            session_id,
-        )
         return composer_unconfirmed_result(session_id, method=method), False
 
     async def _send_managed_terminal_wake(

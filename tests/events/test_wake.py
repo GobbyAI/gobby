@@ -2002,37 +2002,3 @@ class TestComposerRetry:
         assert delays[:4] == [15.0, 30.0, 60.0, 120.0]
         assert states == []
         pane_sender.assert_awaited_once()
-
-    @pytest.mark.asyncio
-    async def test_retry_logs_info_only_on_first_attempt_and_state_changes(
-        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-    ) -> None:
-        """A long-held draft retries at the cap without an INFO line every cycle."""
-        from gobby.agents.idle_detector import ComposerRead, ComposerState
-        from gobby.events.live_wake import TerminalActivity
-
-        states: list[ComposerState] = ["draft", "draft", "draft", "draft", "draft", "empty"]
-
-        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
-            return TerminalActivity(ComposerRead(states.pop(0), "operator text"))
-
-        dispatcher = TestComposerGate._dispatcher(probe, AsyncMock())
-
-        async def no_wait(_delay: float) -> None:
-            return None
-
-        monkeypatch.setattr(dispatcher, "_composer_retry_wait", no_wait)
-
-        with caplog.at_level(logging.DEBUG, logger="gobby.events.wake"):
-            await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
-            await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
-
-        retries = [r for r in caplog.records if r.getMessage().startswith("Composer retry for")]
-        assert [r.levelno for r in retries] == [
-            logging.INFO,
-            logging.DEBUG,
-            logging.DEBUG,
-            logging.DEBUG,
-            logging.INFO,
-        ]
-        assert "delivered=True" in retries[-1].getMessage()

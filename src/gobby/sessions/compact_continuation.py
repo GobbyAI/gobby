@@ -574,18 +574,13 @@ async def _type_handoff_compact_continuation(
         # prompt, so require a positively empty composer before typing anything.
         # Only an unprobed composer keeps the blind drain: after a confirmed-empty
         # read it could only delete keystrokes the operator typed since.
-        writable, refuse_reason, composer_state = await composer_gate_for_write(
+        writable, _, composer_state = await composer_gate_for_write(
             pane,
             cli_source,
             composer_read,
             action="the set_handoff continuation",
         )
         if not writable:
-            logger.warning(
-                "Skipping set_handoff continuation for %s: %s",
-                session_id,
-                refuse_reason,
-            )
             return False
         ok, reason = (
             (True, None) if composer_state == "empty" else await clear_composer(pane, cli_source)
