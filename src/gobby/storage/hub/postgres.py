@@ -382,10 +382,6 @@ class PostgresHubDatabase:
     def apply_migrations(self) -> None:
         schema_contract.apply_schema(self._conninfo)
 
-    def apply_destructive_migrations(self) -> None:
-        """Apply or resume one verified destructive migration batch."""
-        schema_contract.apply_schema(self._conninfo, destructive=True)
-
     def close(self) -> None:
         if getattr(self, "_pool_closed", False):
             return

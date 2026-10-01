@@ -1,13 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{BufReader, Read};
 use std::path::{Component, Path};
 
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
-use time::{Duration, OffsetDateTime};
 
 const MANIFEST_FORMAT: &str = "gobby-hub-backup-manifest";
 const MANIFEST_VERSION: u32 = 3;
@@ -94,95 +91,6 @@ impl fmt::Display for BackupManifestError {
 
 impl std::error::Error for BackupManifestError {}
 
-#[derive(Clone, Copy, Debug)]
-pub struct BackupGateContext<'a> {
-    pub backup_root: &'a Path,
-    pub current_identity: &'a SourceIdentity,
-    pub current_schema_head: i32,
-    pub now: OffsetDateTime,
-    pub max_age: Duration,
-}
-
-impl<'a> BackupGateContext<'a> {
-    pub fn new(
-        backup_root: &'a Path,
-        current_identity: &'a SourceIdentity,
-        current_schema_head: i32,
-        now: OffsetDateTime,
-    ) -> Self {
-        Self {
-            backup_root,
-            current_identity,
-            current_schema_head,
-            now,
-            max_age: Duration::hours(24),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct VerifiedBackupManifest {
-    manifest: HubBackupManifest,
-}
-
-impl VerifiedBackupManifest {
-    pub fn verify(
-        manifest: HubBackupManifest,
-        context: &BackupGateContext<'_>,
-    ) -> Result<Self, BackupManifestError> {
-        let mut reasons = Vec::new();
-        let created_at = OffsetDateTime::parse(&manifest.created_at, &Rfc3339)
-            .map_err(|error| BackupManifestError::new(format!("invalid created_at: {error}")))?;
-        let age = context.now - created_at;
-        if age.is_negative() {
-            reasons.push(format!(
-                "manifest creation time is in the future: {}",
-                manifest.created_at
-            ));
-        } else if age > context.max_age {
-            reasons.push(format!(
-                "manifest exceeds max age: {} seconds > {} seconds",
-                age.whole_seconds(),
-                context.max_age.whole_seconds()
-            ));
-        }
-        if &manifest.source_identity != context.current_identity {
-            reasons.push("source identity fingerprint mismatch".to_owned());
-        }
-        if manifest.backup_starting_head != context.current_schema_head {
-            reasons.push(format!(
-                "backup starting head {} does not match current head {}",
-                manifest.backup_starting_head, context.current_schema_head
-            ));
-        }
-        for key in STORE_KEYS {
-            match manifest.stores.get(key) {
-                Some(store) if store.restore_verified.verified => {}
-                Some(_) => reasons.push(format!("restore_verified not earned for store: {key}")),
-                None => reasons.push(format!("required store missing: {key}")),
-            }
-        }
-        match manifest.stores.get("files") {
-            Some(store) if store.archive_verified.verified => {}
-            Some(_) => reasons.push("archive_verified not earned for store: files".to_owned()),
-            None => reasons.push("required store missing: files".to_owned()),
-        }
-        reasons.extend(artifact_integrity_errors(
-            context.backup_root,
-            &manifest.artifacts,
-        ));
-        if reasons.is_empty() {
-            Ok(Self { manifest })
-        } else {
-            Err(BackupManifestError::from_reasons(reasons))
-        }
-    }
-
-    pub fn manifest(&self) -> &HubBackupManifest {
-        &self.manifest
-    }
-}
-
 pub fn parse_backup_manifest(payload: &str) -> Result<HubBackupManifest, BackupManifestError> {
     let manifest: HubBackupManifest = serde_json::from_str(payload)
         .map_err(|error| BackupManifestError::new(format!("invalid JSON shape: {error}")))?;
@@ -246,86 +154,6 @@ pub fn parse_backup_manifest(payload: &str) -> Result<HubBackupManifest, BackupM
     }
 }
 
-fn artifact_integrity_errors(root: &Path, artifacts: &[ArtifactRecord]) -> Vec<String> {
-    let mut reasons = Vec::new();
-    let canonical_root = match root.canonicalize() {
-        Ok(root) => root,
-        Err(error) => return vec![format!("backup root is unavailable: {error}")],
-    };
-    for artifact in artifacts {
-        let path = root.join(&artifact.path);
-        match fs::symlink_metadata(&path) {
-            Ok(metadata) if metadata.file_type().is_symlink() => {
-                reasons.push(format!("artifact must not be a symlink: {}", artifact.path));
-                continue;
-            }
-            Ok(_) => {}
-            Err(error) => {
-                reasons.push(format!(
-                    "artifact is unavailable {}: {error}",
-                    artifact.path
-                ));
-                continue;
-            }
-        }
-        let canonical = match path.canonicalize() {
-            Ok(path) if path.starts_with(&canonical_root) => path,
-            Ok(_) => {
-                reasons.push(format!("artifact escapes backup root: {}", artifact.path));
-                continue;
-            }
-            Err(error) => {
-                reasons.push(format!(
-                    "artifact is unavailable {}: {error}",
-                    artifact.path
-                ));
-                continue;
-            }
-        };
-        let metadata = match canonical.metadata() {
-            Ok(metadata) if metadata.is_file() => metadata,
-            Ok(_) => {
-                reasons.push(format!("artifact is not a regular file: {}", artifact.path));
-                continue;
-            }
-            Err(error) => {
-                reasons.push(format!(
-                    "artifact metadata failed {}: {error}",
-                    artifact.path
-                ));
-                continue;
-            }
-        };
-        if metadata.len() != artifact.size_bytes {
-            reasons.push(format!("artifact size mismatch: {}", artifact.path));
-        }
-        match file_sha256(&canonical) {
-            Ok(checksum) if checksum == artifact.sha256 => {}
-            Ok(_) => reasons.push(format!("artifact checksum mismatch: {}", artifact.path)),
-            Err(error) => reasons.push(format!("artifact read failed {}: {error}", artifact.path)),
-        }
-    }
-    reasons
-}
-
-fn file_sha256(path: &Path) -> std::io::Result<String> {
-    let mut input = BufReader::new(File::open(path)?);
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = input.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        digest.update(&buffer[..count]);
-    }
-    Ok(digest
-        .finalize()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect())
-}
-
 fn valid_relative_path(value: &str) -> bool {
     let path = Path::new(value);
     !value.is_empty()
@@ -366,25 +194,5 @@ mod tests {
                 .iter()
                 .any(|reason| reason.contains("details"))
         );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn artifact_integrity_rejects_symlinks() -> anyhow::Result<()> {
-        use std::os::unix::fs::symlink;
-
-        let root = tempfile::tempdir()?;
-        fs::write(root.path().join("target.dump"), [])?;
-        symlink("target.dump", root.path().join("linked.dump"))?;
-        let artifacts = [ArtifactRecord {
-            name: "postgres".to_owned(),
-            path: "linked.dump".to_owned(),
-            sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_owned(),
-            size_bytes: 0,
-        }];
-
-        let errors = artifact_integrity_errors(root.path(), &artifacts);
-        assert_eq!(errors, ["artifact must not be a symlink: linked.dump"]);
-        Ok(())
     }
 }

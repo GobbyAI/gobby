@@ -13,10 +13,9 @@ use postgres::Client;
 
 use super::{
     BASELINE_CHECKSUM, BASELINE_VERSION, BaselineState, EmbeddedMigration, PRIOR_RECEIPT_CHECKSUMS,
-    SchemaError, SchemaRunner, VerifiedBackupManifest, baseline_filename, classify_baseline_state,
-    has_directive, is_prior_baseline_receipt, latest_version, qualified_name, read_schema_head,
-    read_source_identity, require_pg_search, set_search_path, verify_adopted_columns,
-    verify_embedded_assets,
+    SchemaError, SchemaRunner, baseline_filename, classify_baseline_state, has_directive,
+    is_prior_baseline_receipt, latest_version, qualified_name, read_schema_head, require_pg_search,
+    set_search_path, verify_adopted_columns, verify_embedded_assets,
 };
 
 /// What one `SchemaRunner::apply` would do against the current database.
@@ -33,31 +32,13 @@ impl SchemaRunner<'_> {
     ///
     /// Returns the current database head and a lineage that is never
     /// `BaselineState::CorruptPartial`: that arm is the refusal below.
-    pub(super) fn validate_lineage(
-        &mut self,
-        backup: Option<&VerifiedBackupManifest>,
-    ) -> Result<(i32, BaselineState), SchemaError> {
+    pub(super) fn validate_lineage(&mut self) -> Result<(i32, BaselineState), SchemaError> {
         let code_head = latest_version(self.migrations);
         let database_head = read_schema_head(self.client, &self.schema)?;
         if database_head > code_head {
             return Err(SchemaError::Unsupported(format!(
                 "database schema v{database_head} is newer than this runner (v{code_head})"
             )));
-        }
-        if let Some(backup) = backup {
-            let current_identity = read_source_identity(self.client)?;
-            if backup.manifest().source_identity != current_identity {
-                return Err(SchemaError::Unsupported(
-                    "verified backup source identity does not match the current database"
-                        .to_owned(),
-                ));
-            }
-            if backup.manifest().backup_starting_head != database_head {
-                return Err(SchemaError::Unsupported(format!(
-                    "verified backup starts at schema v{}, current database is v{database_head}",
-                    backup.manifest().backup_starting_head
-                )));
-            }
         }
 
         let state = classify_baseline_state(self.client, &self.schema)?;
@@ -78,7 +59,7 @@ impl SchemaRunner<'_> {
     pub fn plan(&mut self) -> Result<PlanReport, SchemaError> {
         verify_embedded_assets(self.migrations)?;
         set_search_path(self.client, &self.schema)?;
-        let (database_head, state) = self.validate_lineage(None)?;
+        let (database_head, state) = self.validate_lineage()?;
         let code_head = latest_version(self.migrations);
 
         if state.is_fresh_lineage() {
@@ -98,8 +79,7 @@ impl SchemaRunner<'_> {
             });
         }
 
-        let pending =
-            resolve_pending_migrations(self.client, &self.schema, self.migrations, state, false)?;
+        let pending = resolve_pending_migrations(self.client, &self.schema, self.migrations)?;
         Ok(PlanReport {
             database_head,
             code_head,
@@ -111,14 +91,11 @@ impl SchemaRunner<'_> {
 
 /// Validate every receipt and return the migrations an apply would run, in order.
 ///
-/// Writes nothing: receipt validation and the destructive-authorization checks
-/// only. `apply_pending_migrations` executes the list this returns.
+/// Writes nothing: receipt validation and the directive checks only. `apply_pending_migrations` executes the list this returns.
 pub(super) fn resolve_pending_migrations<'m>(
     client: &mut Client,
     schema: &str,
     migrations: &'m [EmbeddedMigration],
-    lineage: BaselineState,
-    destructive_authorized: bool,
 ) -> Result<Vec<&'m EmbeddedMigration>, SchemaError> {
     let table = qualified_name(schema, "schema_migrations")?;
     let rows = client.query(
@@ -164,16 +141,9 @@ pub(super) fn resolve_pending_migrations<'m>(
         .iter()
         .filter(|migration| !applied.contains(&migration.version))
         .collect();
-    let stamp_destructive = lineage.stamps_destructive_migrations();
     for migration in &pending {
         let destructive = has_directive(migration.sql, "-- gobby:destructive");
         let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
-        if destructive && !destructive_authorized && !stamp_destructive {
-            return Err(SchemaError::Unsupported(format!(
-                "migration {} is destructive; a verified hub backup is required",
-                migration.filename
-            )));
-        }
         if non_transactional && destructive {
             return Err(SchemaError::Unsupported(format!(
                 "destructive migration {} cannot be non-transactional",

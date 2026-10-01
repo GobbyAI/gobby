@@ -9,7 +9,6 @@ from gobby.config.bootstrap import (
     HUB_BACKEND_DATABASE_URL_REQUIRED,
     load_bootstrap,
 )
-from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.hub.managed import managed_grant_path, managed_hub_database
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.maintenance_epoch import admitted_database_url
@@ -51,24 +50,5 @@ def runtime_hub_database(
 
             ensure_personal_project(db)
         yield db
-    finally:
-        db.close()
-
-
-def apply_destructive_batch(
-    database_url: str,
-    pool_config: PostgresPoolConfig,
-) -> None:
-    """Apply one epoch-bound destructive batch on a dedicated hub pool.
-
-    The caller has already validated the backup and epoch evidence and bound the
-    URL to the open maintenance epoch; this owns only the pool lifetime, which
-    keeps PostgreSQL pool construction out of operational CLI modules.
-    """
-    from gobby.storage.hub.postgres import PostgresHubDatabase
-
-    db = PostgresHubDatabase(database_url, pool_config=pool_config)
-    try:
-        db.apply_destructive_migrations()
     finally:
         db.close()
