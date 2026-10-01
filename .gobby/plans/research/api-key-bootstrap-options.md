@@ -57,9 +57,15 @@ Josh: "A user should be able to acquire a key by registering a node with the hub
 3. The user authenticates in one of two ways, and the hub advertises which it supports:
    - **Password prompt** on the node (email + password). Works for self-hosted hubs (T1-T3).
    - **Device code**, following [RFC 8628, OAuth 2.0 Device Authorization Grant](https://www.rfc-editor.org/rfc/rfc8628.html). The node prints a short code and a URL, and the user approves in a browser already logged in to the hub. This fits cloud hubs (T4) with SSO or MFA, and any node where typing a password is unwanted.
-4. The hub verifies the credentials, rate-limited as today. It then **mints the machine's key already bound** to the submitted public key, so no unbound window exists. It returns the key id and machine id. The key secret is never sent back; the node needs only its private key.
+4. The hub verifies the credentials (abuse limits below). It then **mints the machine's key already bound** to the submitted public key, so no unbound window exists. It returns the key id and machine id. The key secret is never sent back; the node needs only its private key.
 5. The node promotes the pending keypair and writes the DSN-free bootstrap: `hub_url`, `key_id` and the private-key path. The password is never stored on the node.
 6. A retry after a lost response, with the same pending public key and fresh credentials, returns the existing binding. It is idempotent, with no duplicate machine and no lockout.
+
+**Abuse limits on the password and device-code routes (PD review, 2026-10-01).** Revision 3 originally said "rate-limited as today", which is not enough once T3 Funnel or T4 puts the login on the internet. Behind a proxy every peer arrives as loopback, so a per-IP limit collapses into one shared bucket. That denies service to real users and does nothing to slow an attacker. Two independent limits apply instead:
+- **Per client address:** the key is the client address taken **only** from configured trusted proxies (section 0.6, #23270 forwarding-header handling). A forwarding header from an untrusted peer is ignored, and the peer address is used.
+- **Per account:** an exponential backoff or temporary lockout keyed on the account, independent of address. It slows distributed guessing against one account. A successful login resets it.
+
+The same two limits apply to the RFC 8628 device-code polling endpoint: per client address, and per device code (honouring the RFC's `slow_down` response).
 
 **How credentials relate to the bound key:**
 - **Credentials are the user's identity; the machine key is a per-machine credential derived from one login.** After registration they are independent.
@@ -109,6 +115,13 @@ Node-local clients (ghook, gcode, CLI) talk to their own node gdaemon over loopb
 **WebSockets and long-lived streams.** The WS upgrade request is signed, and the hub verifies it once per connection. For revocation, the front door keeps a key-id to live-connection registry and closes a key's sockets when that key is revoked, or on reset. That is the bounded D2 channel duty, now required because a WS connection outlives one request.
 
 **Hub-local clients are unchanged:** loopback + local proof, plaintext, with no signing on the ghook hot path.
+
+**Identity handoff from the front door to Python (PD review, 2026-10-01).** Python never sees signatures, so it learns the verified user, machine and key id only from the front door:
+1. The front door **strips every inbound identity header** from every request, whatever the source or route.
+2. After verifying a signature, it **injects the verified identity** (user, machine, key id) as headers on the gdaemon-to-Python hop, which is authenticated with the per-boot front-door secret.
+3. Python **accepts identity headers only on a request carrying a valid per-boot front-door secret**. It rejects them from any other source, including direct loopback connections to the backend port.
+
+Without this, a T3 request that reaches the hub as loopback could forge identity headers.
 
 ### 0.5 Certificate trust: how the node decides
 
