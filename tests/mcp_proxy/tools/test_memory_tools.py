@@ -13,6 +13,8 @@ Tests the memory MCP tools including:
 - search_knowledge_graph
 """
 
+from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,7 +23,9 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry
 from gobby.mcp_proxy.tools.memory_scope import get_current_project_id
-from gobby.storage.memories import MemoryType
+from gobby.memory.scoring import temporal_decay
+from gobby.memory.services import _search_results
+from gobby.storage.memories import Memory, MemoryType
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.session_context import SessionContext, session_context_for_test
 
@@ -64,6 +68,7 @@ class MockMemory:
         ranking_score: float | None = None,
         raw_semantic_score: float | None = None,
         temporal_decay_factor: float | None = None,
+        undecayed_similarity: float | None = None,
         ranking_mode: str | None = None,
     ):
         self.id = id
@@ -87,6 +92,8 @@ class MockMemory:
             self.raw_semantic_score = raw_semantic_score
         if temporal_decay_factor is not None:
             self.temporal_decay_factor = temporal_decay_factor
+        if undecayed_similarity is not None:
+            self.undecayed_similarity = undecayed_similarity
         if ranking_mode is not None:
             self.ranking_mode = ranking_mode
 
@@ -153,7 +160,12 @@ class TestCreateMemory:
     async def test_create_memory_success(self, memory_registry, mock_memory_manager):
         """Test successful memory creation with similar_existing in response."""
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="existing-1", content="Similar memory", similarity=0.85),
+            MockMemory(
+                id="existing-1",
+                content="Similar memory",
+                similarity=0.85,
+                undecayed_similarity=0.85,
+            ),
         ]
 
         with patch(
@@ -499,6 +511,7 @@ class TestCreateMemory:
                 similarity=0.475,
                 raw_semantic_score=0.95,
                 temporal_decay_factor=0.5,
+                undecayed_similarity=0.95,
             ),
             MockMemory(
                 id=weaker_id,
@@ -506,6 +519,7 @@ class TestCreateMemory:
                 similarity=0.7,
                 raw_semantic_score=0.7,
                 temporal_decay_factor=1.0,
+                undecayed_similarity=0.7,
             ),
             MockMemory(id=third_id, content="Third", raw_semantic_score=0.8),
             MockMemory(id=fourth_id, content="Fourth", raw_semantic_score=0.75),
@@ -563,6 +577,7 @@ class TestCreateMemory:
                 similarity=0.95,
                 raw_semantic_score=0.89,
                 temporal_decay_factor=1.0,
+                undecayed_similarity=0.95,
             ),
         ]
 
@@ -629,9 +644,10 @@ class TestSearchMemories:
                 ranking_score=0.91,
                 raw_semantic_score=0.95,
                 temporal_decay_factor=1.0,
+                undecayed_similarity=0.95,
                 ranking_mode="semantic_only",
             ),
-            MockMemory(id="m2", content="Memory 2", similarity=0.85),
+            MockMemory(id="m2", content="Memory 2", similarity=0.85, undecayed_similarity=0.85),
         ]
 
         with patch(
@@ -735,6 +751,7 @@ class TestSearchMemories:
                 ranking_score=0.08,
                 raw_semantic_score=0.8,
                 temporal_decay_factor=0.8125,
+                undecayed_similarity=0.8,
                 ranking_mode="rrf",
             ),
             MockMemory(
@@ -744,6 +761,7 @@ class TestSearchMemories:
                 ranking_score=0.12,
                 raw_semantic_score=0.55,
                 temporal_decay_factor=0.95,
+                undecayed_similarity=0.5789,
                 ranking_mode="rrf",
             ),
         ]
@@ -1399,6 +1417,7 @@ class TestSearchMemoriesResultShape:
             similarity=0.72,
             raw_semantic_score=0.8,
             temporal_decay_factor=0.9,
+            undecayed_similarity=0.8,
         )
         hit.rationale = "Why a future session needs this."
         hit.source_task_id = "31000000-0000-4000-8000-000000000001"
@@ -1429,8 +1448,8 @@ class TestSearchMemoriesResultShape:
         self, memory_registry: InternalToolRegistry, mock_memory_manager: MagicMock
     ) -> None:
         mock_memory_manager.search_memories.return_value = [
-            MockMemory(id="a", similarity=0.7, temporal_decay_factor=1.0),
-            MockMemory(id="b", similarity=0.5, temporal_decay_factor=0.5),
+            MockMemory(id="a", similarity=0.7, temporal_decay_factor=1.0, undecayed_similarity=0.7),
+            MockMemory(id="b", similarity=0.5, temporal_decay_factor=0.5, undecayed_similarity=1.0),
             MockMemory(id="c"),
         ]
 
@@ -1574,3 +1593,86 @@ class TestUpdateMemoryRationale:
         assert result["success"] is False
         assert "Invalid memory_type" in result["error"]
         mock_memory_manager.update_memory_scoped.assert_not_awaited()
+
+
+class TestUndecayedFloorBoundary:
+    """The tools read the undecayed score the service floor admitted (#22910).
+
+    A raw 0.9 at 2 days on a 30-day half-life clears the service's 0.9 floor.
+    Dividing its decayed similarity back out gives 0.8999999999999999, so a tool
+    that recovered the score that way dropped the hit at the same floor.
+    """
+
+    _NOW = datetime(2026, 1, 1, tzinfo=UTC)
+
+    @pytest.fixture
+    def service_search(
+        self, mock_memory_manager: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            _search_results, "temporal_decay", partial(temporal_decay, now=self._NOW)
+        )
+        updated = self._NOW - timedelta(days=2)
+        storage = MagicMock()
+        storage.get_memories.return_value = [
+            Memory(
+                id="on-floor",
+                memory_type=MemoryType.FACT,
+                content="On the floor",
+                created_at=updated,
+                updated_at=updated,
+            )
+        ]
+
+        def search(**kwargs: Any) -> list[Memory]:
+            return _search_results.build_results(
+                storage=storage,
+                merged_ids=["on-floor"],
+                ranking_score_map={"on-floor": 0.5},
+                qdrant_score_map={"on-floor": 0.9},
+                qdrant_set={"on-floor"},
+                keyword_set=set(),
+                graph_set=None,
+                rrf_applied=False,
+                project_id=None,
+                memory_type=None,
+                tags_all=None,
+                tags_any=None,
+                tags_none=None,
+                half_life=30.0,
+                effective_min_score=kwargs.get("min_score") or 0.0,
+                limit=kwargs["limit"],
+            )
+
+        mock_memory_manager.search_memories.side_effect = search
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("service_search")
+    async def test_search_floor_admits_what_the_service_floor_admitted(
+        self, memory_registry: InternalToolRegistry
+    ) -> None:
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call("search_memories", {"query": "q", "min_score": 0.9})
+
+        assert result["diagnostics"]["candidates_considered"] == 1
+        assert [mem["id"] for mem in result["memories"]] == ["on-floor"]
+        assert result["memories"][0]["undecayed_similarity"] == 0.9
+        assert result["diagnostics"]["score_range"] == [0.9, 0.9]
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("service_search")
+    async def test_similar_existing_reports_the_undecayed_score_exactly(
+        self, memory_registry: InternalToolRegistry
+    ) -> None:
+        with patch(
+            "gobby.utils.project_context.get_project_context",
+            return_value={"id": "11111111-1111-4111-8111-111111110001"},
+        ):
+            result = await memory_registry.call(
+                "create_memory", {"content": "Test content", "rationale": _VALID_RATIONALE}
+            )
+
+        assert result["similar_existing"][0]["similarity"] == 0.9

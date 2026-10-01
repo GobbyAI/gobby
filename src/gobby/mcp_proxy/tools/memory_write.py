@@ -21,7 +21,6 @@ from gobby.mcp_proxy.tools.memory_scope import (
 )
 from gobby.mcp_proxy.tools.memory_session import resolve_claimed_task_id
 from gobby.memory.embedding_text import memory_embedding_text
-from gobby.memory.scoring import undecay
 from gobby.memory.services.lifecycle import MAX_MEMORY_CONTENT_CHARS
 from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -267,13 +266,8 @@ def register_memory_write_tools(
                     caller="mcp_proxy.memory.create_memory.similar_existing",
                 )
                 for m in similar:
-                    similarity = getattr(m, "similarity", None)
                     raw_score = getattr(m, "raw_semantic_score", None)
-                    undecayed = (
-                        undecay(similarity, getattr(m, "temporal_decay_factor", None))
-                        if isinstance(similarity, int | float) and not isinstance(similarity, bool)
-                        else None
-                    )
+                    undecayed = getattr(m, "undecayed_similarity", None)
                     similar_existing.append(
                         {
                             "id": m.id,
