@@ -43,7 +43,6 @@ ASSISTANT: dict[str, Any] = {"_agent_type": "default", "_persona_name": "assista
 ARCHIVIST: dict[str, Any] = {"_agent_type": "archivist"}
 PLAN_WRITER: dict[str, Any] = {"_agent_type": "default", "_persona_name": "plan-writer"}
 ORCHESTRATOR: dict[str, Any] = {"_agent_type": "default", "_persona_name": "orchestrator"}
-DIGEST_DIR = "/Users/josh/Desktop"
 
 
 def _load_roles(db: HubDatabase) -> None:
@@ -187,9 +186,14 @@ def _write(project: Path, file_path: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_seat_write_scope_is_path_aware(engine: RuleEngine, tmp_path: Path) -> None:
+async def test_seat_write_scope_is_path_aware(
+    engine: RuleEngine, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     project = (tmp_path / "checkout").resolve()
     (project / "docs").mkdir(parents=True)
+    home = (tmp_path / "home").resolve()
+    monkeypatch.setenv("HOME", str(home))
+    digest_dir = f"{home}/Desktop"
     opaque = {**_shell("git apply update.patch"), "cwd": str(project)}
 
     async def decision(seat: dict[str, Any], data: dict[str, Any]) -> str:
@@ -202,12 +206,13 @@ async def test_seat_write_scope_is_path_aware(engine: RuleEngine, tmp_path: Path
         assert blocked.decision == "block", path
         assert "The Assistant writes only under" in (blocked.reason or "")
 
-    digest = f"{DIGEST_DIR}/gobby-digest-2026-09-27.md"
+    digest = f"{digest_dir}/gobby-digest-2026-09-27.md"
     assert await decision(ARCHIVIST, _write(project, digest)) == "allow"
     for path in (
-        f"{DIGEST_DIR}/notes.md",
-        f"{DIGEST_DIR}/gobby-digest.md",
-        f"{DIGEST_DIR}/gobby-digest-2026-09-27-v2.md",
+        f"{digest_dir}/notes.md",
+        f"{digest_dir}/gobby-digest.md",
+        f"{digest_dir}/gobby-digest-2026-09-27-v2.md",
+        f"{tmp_path.resolve()}/other-home/Desktop/gobby-digest-2026-09-27.md",
         "docs/guide.md",
     ):
         blocked = await _decide(engine, _write(project, path), ARCHIVIST)
@@ -319,11 +324,9 @@ class _ProxyHarness:
             self.claim(session_id, claim)
         return session_id
 
-    def claim(self, session_id: str, task_id: str) -> None:
-        seq = self.tasks.get_task(task_id).seq_num
-        self.variables.merge_variables(
-            session_id, {"task_claimed": True, "claimed_tasks": {task_id: f"#{seq}"}}
-        )
+    def claim(self, session_id: str, *task_ids: str) -> None:
+        claimed = {task_id: f"#{self.tasks.get_task(task_id).seq_num}" for task_id in task_ids}
+        self.variables.merge_variables(session_id, {"task_claimed": True, "claimed_tasks": claimed})
 
     def receipted(self, task_id: str) -> bool:
         return RECEIPT in (self.tasks.get_task(task_id).labels or [])
@@ -439,6 +442,17 @@ async def test_plan_writer_enhancer_pass_is_per_task(harness: _ProxyHarness) -> 
     assert await harness.spawn(writer, **ENHANCER_CALL) is None
     assert await harness.spawn(writer, **ENHANCER_CALL) is not None
     assert harness.receipted(third)
+
+    # A seat holding several claims is refused: one receipt cannot spend them all.
+    fourth = harness.task("plan 4")
+    multi = harness.session("multi", PLAN_WRITER)
+    receipts_before = harness.dispatcher.receipt_calls
+    for claims in ((first, fourth), (fourth, first)):
+        harness.claim(multi, *claims)
+        refused = await harness.spawn(multi, **ENHANCER_CALL)
+        assert refused is not None and "plan-writer-enhancer-only" in refused["error"]
+    assert not harness.receipted(fourth)
+    assert harness.dispatcher.receipt_calls == receipts_before
 
     # Only the Orchestrator removes a receipt.
     remove: dict[str, Any] = {"task_id": first, "label": RECEIPT}

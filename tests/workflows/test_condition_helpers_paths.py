@@ -64,3 +64,19 @@ def test_write_path_helpers_resolve_before_matching(project: Path) -> None:
     assert evaluator.evaluate("write_paths_within(event_data, tool_input, ['docs/'])") is True
     assert evaluator.evaluate("write_paths_match(event_data, tool_input, 'nothing')") is False
     assert "touches_docker_policy_path" in helpers
+
+
+def test_write_paths_match_anchors_tilde_at_current_home(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = project.parent / "home.d"
+    monkeypatch.setenv("HOME", str(home))
+    pattern = "~" + DIGEST
+    digest = "gobby-digest-2026-09-27.md"
+
+    assert write_paths_match(_write(project, str(home / "digests" / digest)), {}, pattern)
+    elsewhere = str(project.parent / "other" / "digests" / digest)
+    assert write_paths_match(_write(project, elsewhere), {}, pattern) is False
+    # The home path is literal: its "." does not match any character.
+    lookalike = str(project.parent / "homexd" / "digests" / digest)
+    assert write_paths_match(_write(project, lookalike), {}, pattern) is False

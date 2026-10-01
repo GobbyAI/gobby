@@ -57,7 +57,13 @@ def write_paths_match(
     tool_input: Any,
     pattern: str,
 ) -> bool:
-    """True when every resolved absolute write path fullmatches `pattern`."""
+    """True when every resolved absolute write path fullmatches `pattern`.
+
+    A leading `~/` anchors the pattern at the current user's resolved home, so
+    shipped rules never name one machine's home directory.
+    """
+    if pattern.startswith("~/"):
+        pattern = re.escape(str(Path.home().resolve())) + pattern[1:]
     paths = _resolved_write_paths(event_data, tool_input)
     return bool(paths) and all(re.fullmatch(pattern, str(path)) for path in paths)
 
