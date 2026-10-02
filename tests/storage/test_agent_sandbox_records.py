@@ -12,6 +12,7 @@ import pytest
 from gobby.storage.agents import AgentRun, _sandbox_records
 from gobby.storage.agents._sandbox_records import (
     _MAX_COUNTED_VIOLATIONS,
+    _MAX_EXPOSED_COMMAND_CHARS,
     _cached_violation_count,
     sandbox_list_record,
     sandbox_record,
@@ -163,6 +164,37 @@ def test_sandbox_record_decodes_only_the_recent_tail_of_a_long_log(
     assert record["violation_count"] == 5_000
     assert record["violations"] == [{"sequence": value} for value in range(4_900, 5_000)]
     assert decoded == 100
+
+
+def test_sandbox_record_bounds_each_projected_command(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Existing logs carry ~59 KB commands; the detail payload keeps a bounded prefix."""
+    gobby_home = tmp_path / "gobby-home"
+    run_dir = gobby_home / "run" / "sandbox" / "run-wide"
+    run_dir.mkdir(parents=True)
+    violations = run_dir / "violations.jsonl"
+    wide = "x" * 60_000
+    events = [
+        {"line": "deny", "command": wide, "timestamp": "2026-10-01T00:00:00Z"},
+        {"line": "deny", "command": "ls", "timestamp": "2026-10-01T00:00:01Z"},
+    ]
+    violations.write_text("".join(json.dumps(event) + "\n" for event in events), "utf-8")
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+    record = sandbox_record(
+        {"sandbox": {"backend": "srt", "violation_path": str(violations)}},
+        include_events=True,
+    )
+
+    assert record is not None
+    capped, short = record["violations"]
+    assert capped["command"] == wide[:_MAX_EXPOSED_COMMAND_CHARS]
+    assert capped["command_length"] == 60_000
+    assert capped["command_truncated"] is True
+    assert capped["line"] == "deny"
+    assert short == events[1]
 
 
 @pytest.mark.parametrize(

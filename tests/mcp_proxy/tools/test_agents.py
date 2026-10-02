@@ -26,7 +26,7 @@ import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -2481,7 +2481,9 @@ class TestKillAgentCapturePreemptedDelivery:
             id="run-123", status="cancelled", error=None
         )
         registry = DeliveryRegistry(delivery or {"waiter-sess": True})
-        tool_registry = create_agents_registry(runner, completion_registry=registry)
+        tool_registry = create_agents_registry(
+            runner, completion_registry=cast(CompletionEventRegistry, registry)
+        )
         return tool_registry._tools["kill_agent"].func, registry
 
     @pytest.mark.asyncio

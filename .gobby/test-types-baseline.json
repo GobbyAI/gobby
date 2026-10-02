@@ -3751,16 +3751,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/mcp_proxy/tools/test_agents.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 2410,
-      "message": "Argument \"completion_registry\" to \"create_agents_registry\" has incompatible type \"DeliveryRegistry\"; expected \"CompletionEventRegistry | None\"",
-      "occurrences": 1,
-      "path": "tests/mcp_proxy/tools/test_agents.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/mcp_proxy/tools/test_ancestry_proximity_scoring.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 32,

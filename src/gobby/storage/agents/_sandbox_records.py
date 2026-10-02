@@ -17,6 +17,8 @@ from gobby.agents.sandbox_policy import (
 from gobby.paths import get_gobby_home
 
 _MAX_EXPOSED_VIOLATIONS = 100
+# A prefix this long identifies a denied command; 100 events stay near 200 KB.
+_MAX_EXPOSED_COMMAND_CHARS = 2048
 _MAX_COUNTED_VIOLATIONS = 10_000
 _MAX_TAIL_BYTES = 16 * 1024 * 1024
 _TAIL_BLOCK_BYTES = 64 * 1024
@@ -178,13 +180,29 @@ def _recent_violations(path: Path) -> list[Any]:
                     if not line.strip():
                         continue
                     try:
-                        recent.append(json.loads(line.decode("utf-8", errors="replace")))
+                        event = json.loads(line.decode("utf-8", errors="replace"))
+                        recent.append(_bounded_command(event))
                     except json.JSONDecodeError:
                         continue
     except OSError:
         return []
     recent.reverse()
     return recent
+
+
+def _bounded_command(event: Any) -> Any:
+    """Keep a command prefix; logs already written carry commands of ~59 KB each."""
+    if not isinstance(event, dict):
+        return event
+    command = event.get("command")
+    if not isinstance(command, str) or len(command) <= _MAX_EXPOSED_COMMAND_CHARS:
+        return event
+    return {
+        **event,
+        "command": command[:_MAX_EXPOSED_COMMAND_CHARS],
+        "command_length": len(command),
+        "command_truncated": True,
+    }
 
 
 def _count_violation_lines(path: Path) -> tuple[int, bool]:
