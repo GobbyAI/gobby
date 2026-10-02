@@ -1121,7 +1121,8 @@
         "symbol": "wait_for_coordination"
       },
       "verification": [
-        "coordination-wait-contract"
+        "coordination-wait-contract",
+        "coordination-wait-replay-contract"
       ],
       "audience": "agent"
     },
@@ -1186,7 +1187,13 @@
       "id": "coordination-wait-contract",
       "kind": "source-and-schema",
       "command": "get_tool_schema(gobby-agents, wait_for_coordination/cancel_coordination_wait); gcode symbol-at coordination.py and CoordinationWaitManager.register; docs/guides/agents.md runtime-tools",
-      "result": "Registered schemas and implementation agree: exactly one keyed/status condition, 900-second default/3600 maximum, idempotent registration without expiry extension, owner release message metadata, waiter-only cancellation. Guide already reflects current contract; messaging reference extended. No live wait mutation."
+      "result": "Source/schema audit covers condition selection, 900-second default/3600 maximum, owner release message metadata and waiter-only cancellation. Registration preserves the original ID and expiry only while waiting. Completed-condition replay and public guidance are verified separately by coordination-wait-replay-contract. No live wait mutation."
+    },
+    {
+      "id": "coordination-wait-replay-contract",
+      "kind": "pytest",
+      "command": "RTK_DISABLED=1 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv --directory /Users/josh/.gobby/worktrees/gobby/task-23308-coordination-wait-contract run pytest tests/events/test_coordination_waits.py -k test_mcp_replay_contract_matches_public_guidance -q",
+      "result": "3 failed before the guidance repair, after all runtime assertions passed; the same command then passed all 3 cases. Isolated MCP registration covers active ID/expiry preservation, release after registration, fresh wait on identical terminal replay and independent fresh-key hold. MCP description, guide and bundled messaging reference agree with that behavior. Runtime behavior remains as intentionally changed in e90924169c5c3740501fdf247973010535ee692c. No live wait mutation."
     }
   ],
   "discrepancies": [
@@ -1259,6 +1266,13 @@
       "evidence": [
         "source-audit",
         "sandbox-cli-models"
+      ]
+    },
+    {
+      "finding": "Guide/reference promised terminal replay returned the original wait; MCP description omitted the active/terminal distinction.",
+      "resolution": "Preserve intentional runtime re-arm and document active-only ID/expiry reuse plus a new wait after completion. Preserve wait_id to inspect terminal results before re-registering.",
+      "evidence": [
+        "coordination-wait-replay-contract"
       ]
     }
   ],
