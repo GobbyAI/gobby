@@ -452,42 +452,6 @@ class TestRegisterTerminalTools:
         terminal_manager.resolve_live_for_session.assert_called_once_with(session)
         write_coordinator.write.assert_not_called()
 
-    def test_send_keys_rejects_target_outside_caller_scope(self) -> None:
-        """Cross-project sessions outside the caller's agent tree cannot receive keys."""
-        registry = _TestRegistry(name="test", description="test")
-        caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
-        target = MagicMock(id="target-session", project_id="project-2")
-
-        session_manager = MagicMock()
-        session_manager.resolve_session_reference.side_effect = lambda ref, project_id=None: ref
-        session_manager.get.side_effect = {
-            "caller-session": caller,
-            "target-session": target,
-        }.get
-        session_manager.is_ancestor.return_value = False
-
-        register_terminal_tools(
-            registry, session_manager, MagicMock(fetchone=MagicMock(return_value=None))
-        )
-
-        send_keys = registry.get_tool("send_keys")
-        assert send_keys is not None
-
-        with patch(
-            "gobby.utils.session_context.get_current_session_id",
-            return_value="caller-session",
-        ):
-            result = asyncio.run(send_keys(session_id="target-session", keys="hello"))
-
-        assert result == {
-            "success": False,
-            "error": "send_keys target is outside the caller's project and agent tree",
-            "error_code": "send_keys_target_forbidden",
-            "caller_session_id": "caller-session",
-            "target_session_id": "target-session",
-            "idempotency_key": result["idempotency_key"],
-        }
-
     def test_send_keys_rejects_autonomous_agent_caller(self) -> None:
         """Autonomous agent sessions cannot inject keystrokes into any terminal."""
         registry = _TestRegistry(name="test", description="test")

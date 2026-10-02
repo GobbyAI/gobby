@@ -535,6 +535,7 @@ def build_condition_helpers(
     stop_registry: Any = None,
     plugin_conditions: dict[str, Any] | None = None,
     context: dict[str, Any] | None = None,
+    session_manager: Any = None,
 ) -> dict[str, Callable[..., Any]]:
     """Build allowed_funcs dict with workflow condition helpers for SafeExpressionEvaluator.
 
@@ -546,6 +547,7 @@ def build_condition_helpers(
         stop_registry: StopRegistry instance (enables has_stop_signal)
         plugin_conditions: Dict of plugin condition name -> callable
         context: Evaluation context dict (needed for mcp_* helpers to access variables)
+        session_manager: SessionManager instance (enables send_keys_target_in_scope)
 
     Returns:
         Dict of function_name -> callable, ready to pass as allowed_funcs.
@@ -575,6 +577,7 @@ def build_condition_helpers(
         wrapped_validation_command,
     )
     from .condition_helpers_paths import PATH_CONDITION_HELPERS
+    from .condition_helpers_sessions import session_condition_helpers
     from .condition_helpers_tasks import task_condition_helpers
     from .monolith_guard import (
         outstanding_monolith_paths,
@@ -655,6 +658,7 @@ def build_condition_helpers(
             "touches_ui_design_path": touches_ui_design_path,
             **PATH_CONDITION_HELPERS,
             **task_condition_helpers(task_manager),
+            **session_condition_helpers(session_manager),
         }
     )
 
