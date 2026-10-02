@@ -605,3 +605,30 @@ def test_python_heredoc_class_rebinding_a_scratch_path_name_keeps_scope_unknown(
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "state_change",
+    [
+        "p._raw_paths = ['src/a.py']",
+        "q = p\nq._raw_paths = ['src/a.py']",
+        "parts = p._raw_paths\nparts.clear()\nparts.append('src/a.py')",
+    ],
+)
+def test_python_heredoc_mutable_path_receiver_keeps_scope_unknown(
+    tmp_path: Path, state_change: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        f"{state_change}\n"
+        "p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True

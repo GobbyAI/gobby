@@ -559,6 +559,42 @@ def test_namespace_inspection_without_a_write_is_not_a_mutation() -> None:
     assert targets == ()
 
 
+@pytest.mark.parametrize(
+    "state_change",
+    [
+        "p._raw_paths = ['src/a.py']",
+        "q = p\nq._raw_paths = ['src/a.py']",
+        "p._raw_paths[0] = 'src/a.py'",
+        "parts = p._raw_paths\nparts.clear()\nparts.append('src/a.py')",
+        "q = p\nq._raw_paths.clear()\nq._raw_paths.append('src/a.py')",
+        "from redirector import redirect\nredirect(p)",
+    ],
+)
+def test_mutable_path_receiver_state_has_unknown_write_scope(state_change: str) -> None:
+    script = (
+        f"from pathlib import Path\np = Path('/tmp/safe.txt')\n{state_change}\np.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+def test_public_path_inspection_preserves_literal_write_scope() -> None:
+    script = (
+        "from pathlib import Path\n"
+        "p = Path('/tmp/safe.txt')\n"
+        "print(p.name, p.as_posix())\n"
+        "p.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ("/tmp/safe.txt",)
+
+
 def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
     assert _classify_python_source_with_targets("print(open('a.md').read())") == (
         _PythonExecutionClassification.READ_ONLY,

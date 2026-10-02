@@ -291,7 +291,9 @@ def _path_value_names(
     A name keeps its literal only when every binding of it is that same literal
     assignment; any other binding (loop, ``with``, augmented, argument, unpacking,
     definition) leaves its value unknown. A namespace handle such as ``globals()``
-    can rebind any name, so it leaves every value unknown.
+    can rebind any name, so it leaves every value unknown. Object state writes,
+    private state access, or a Path value escaping its receiver position likewise
+    invalidate the literal proof: a stable binding need not hold a stable Path.
     """
     names: dict[str, str | None] = {}
     literal_sites: Counter[str] = Counter()
@@ -319,8 +321,25 @@ def _path_value_names(
             literal = _literal_path_call(value)
             names[target.id] = literal if names.get(target.id, literal) == literal else None
             literal_sites[target.id] += 1
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    state_escape = any(
+        (
+            isinstance(node, ast.Attribute)
+            and (not isinstance(node.ctx, ast.Load) or node.attr.startswith("_"))
+        )
+        or (isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load))
+        or (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in names
+            and not (
+                isinstance(parent := parents.get(node), ast.Attribute) and parent.value is node
+            )
+        )
+        for node in ast.walk(tree)
+    )
     for name in names:
-        if namespace_escape or literal_sites[name] != binding_counts[name]:
+        if namespace_escape or state_escape or literal_sites[name] != binding_counts[name]:
             names[name] = None
     return names
 
