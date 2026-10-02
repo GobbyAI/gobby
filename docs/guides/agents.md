@@ -320,10 +320,12 @@ resolves, times out, or is cancelled.
 The tool returns a durable `wait_id` and an `outcome` of `waiting`, `released`,
 `replied`, `status_matched`, `owner_ended`, `cancelled`, or `timeout`. Yield after
 `waiting`; completion uses the existing durable mailbox and protected wake handling.
-Expiry defaults to 900 seconds and accepts at most 3600 seconds. Repeating an
-identical owner/condition registration returns the original wait without extending
-its deadline, including its terminal outcome. Use a fresh unique release key for a
-new hold. Only the waiting session can call `cancel_coordination_wait(wait_id=...)`.
+Expiry defaults to 900 seconds and accepts at most 3600 seconds. While waiting,
+repeating the same owner and condition returns the original wait and expiry.
+After completion, repeating the same owner and condition creates a new wait.
+Preserve `wait_id` and inspect its terminal outcome before registering again.
+Use a fresh key for a separate keyed hold. Only the waiting session can call
+`cancel_coordination_wait(wait_id=...)`.
 
 `send_message` uses explicit targets: `global`, `project`, `parent`, `session`,
 `agent`, and `build`. Spawned agents may omit `target`; it defaults to `parent`.

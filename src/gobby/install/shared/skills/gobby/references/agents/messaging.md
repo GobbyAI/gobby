@@ -37,10 +37,12 @@ registration, and omitting `owner_session` waits on the session that spawned
 you. Messages already sent never resolve it, so send the question and register
 in the same turn. A registered wait holds off idle and stuck cleanup until it
 resolves, times out, or is cancelled.
-The default timeout is 900 seconds, maximum 3600. Repeating the same condition
-returns the original wait and expiry, even after completion; use a fresh key
-for a new hold. Preserve `wait_id` and inspect the terminal outcome. Only the
-waiting session can use `cancel_coordination_wait` to cancel its own wait.
+The default timeout is 900 seconds, maximum 3600. While waiting, repeating the same
+owner and condition returns the original wait and expiry. After completion,
+repeating the same owner and condition creates a new wait. Preserve `wait_id` and
+inspect the terminal outcome before registering again. Use a fresh key for a
+separate keyed hold. Only the waiting session can use `cancel_coordination_wait`
+to cancel its own wait.
 
 For a task blocker, use `target="parent"` (or omit `target`) and send the failing command, diagnostics, paths,
 impact, and exact task identity in `metadata.task_id`. In configured worker steps,
@@ -54,4 +56,4 @@ retained work before respawning with the answer.
 Guide: [Coordination](../../../../../../../../docs/guides/agents.md#runtime-tools)
 and [blocked children](../../../../../../../../docs/guides/agents.md#blocked-child-communication).
 
-_Last verified: 2026-09-17_
+_Last verified: 2026-10-02_
