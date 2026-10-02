@@ -39,12 +39,12 @@ def _step_context(
     current_step: str = "load_skill",
 ) -> StepWorkflowContext:
     return StepWorkflowContext(
-        workflow_name="plan-adversary-taskless",
+        workflow_name="plan-adversary-taskless-old",
         current_step=current_step,
         description=None,
         status_message=None,
         exit_condition=None,
-        agent_name="plan-adversary-taskless",
+        agent_name="plan-adversary-taskless-old",
         allowed_tools=cast("list[str]", allowed_tools),
         is_entry_step=is_entry_step,
         mcp_progress_only=mcp_progress_only,

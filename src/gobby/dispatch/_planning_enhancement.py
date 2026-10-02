@@ -3,7 +3,7 @@
 The planning stage runs a constructive enhancement sub-loop *before* the
 adversary gate. While an enhancement budget remains and the plan has not
 converged, the ``needs_review`` planning stage is routed to the advisory
-``plan-enhancer`` agent instead of the adversary. ``rules.py`` registers
+``plan-enhancer-old`` agent instead of the adversary. ``rules.py`` registers
 ``planning_enhancement_rule`` immediately before ``planning_review_rule`` so the
 enhancer preempts the adversary only while enabled and incomplete; once the
 budget is spent or the plan converges this rule returns ``None`` and dispatch
@@ -23,13 +23,13 @@ from typing import Any
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.prompts import PROMPT_BUILDERS
 
-PLAN_ENHANCER_AGENT = "plan-enhancer"
+PLAN_ENHANCER_AGENT = "plan-enhancer-old"
 _PLANNING_STAGE = "planning"
 _NEEDS_REVIEW = "needs_review"
 
 
 def planning_enhancement_rule(task: object, context: object) -> SpawnAgentAction | None:
-    """Spawn ``plan-enhancer`` while the planning stage has enhancement budget.
+    """Spawn ``plan-enhancer-old`` while the planning stage has enhancement budget.
 
     Fires only when the current manifest stage is ``planning`` in
     ``needs_review``, the build opted into enhancement

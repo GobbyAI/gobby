@@ -1,6 +1,6 @@
-"""Structural contract tests for the bundled plan-enhancer agents.
+"""Structural contract tests for the bundled plan-enhancer-old agents.
 
-`plan-enhancer-taskless` (interactive /gobby plan) and `plan-enhancer`
+`plan-enhancer-taskless-old` (interactive /gobby plan) and `plan-enhancer-old`
 (stage-native dispatch) are the constructive Better/Bigger counterweight to the
 plan-adversary agents. They run BEFORE the unchanged adversary gate and are
 advisory-only: they load `plan-enhance` + `proportionality`, never edit the plan
@@ -25,8 +25,8 @@ from tests.agents._yaml_helpers import _field, find_step
 pytestmark = pytest.mark.unit
 
 AGENTS_DIR = Path("src/gobby/install/shared/workflows/agents")
-TASKLESS_PATH = AGENTS_DIR / "plan-enhancer-taskless.yaml"
-STAGE_NATIVE_PATH = AGENTS_DIR / "plan-enhancer.yaml"
+TASKLESS_PATH = AGENTS_DIR / "plan-enhancer-taskless-old.yaml"
+STAGE_NATIVE_PATH = AGENTS_DIR / "plan-enhancer-old.yaml"
 
 
 def _load(path: Path) -> AgentDefinitionBody:
@@ -128,7 +128,7 @@ class TestSharedEnhancerContract:
 
 
 class TestTasklessEnhancer:
-    """plan-enhancer-taskless: advisory, surfaces suggestions to the parent."""
+    """plan-enhancer-taskless-old: advisory, surfaces suggestions to the parent."""
 
     def test_isolation_none(self, taskless: AgentDefinitionBody) -> None:
         assert taskless.isolation == "none"
@@ -227,7 +227,7 @@ class TestTasklessEnhancer:
 
 
 class TestStageNativeEnhancer:
-    """plan-enhancer: records suggestions via record_plan_enhancement."""
+    """plan-enhancer-old: records suggestions via record_plan_enhancement."""
 
     def test_has_claim_step_with_delegated_close_tolerance(
         self, stage_native: AgentDefinitionBody

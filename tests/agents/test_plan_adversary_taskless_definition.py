@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 AGENT_PATH = (
     Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+    / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
 )
 
 
