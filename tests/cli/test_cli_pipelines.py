@@ -15,16 +15,76 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.pipelines import _try_daemon_catalog
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.loader_cache import DiscoveredWorkflow
+from gobby.workflows.pipeline_loader import PipelineLoader
 from gobby.workflows.pipeline_state import (
     ExecutionStatus,
     PipelineExecution,
     StepExecution,
     StepStatus,
 )
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("daemon", [True, False], ids=["daemon", "fallback"])
+@pytest.mark.parametrize("json_format", [True, False], ids=["json", "text"])
+def test_list_filters_by_tag(
+    runner: CliRunner,
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    daemon: bool,
+    json_format: bool,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "cli-tag-filter").project
+    manager = PipelineDefinitionManager(temp_db)
+    for name, tags, enabled in (
+        ("tagged-only", ["runbook"], True),
+        ("ordinary-only", [], True),
+        ("disabled-only", ["runbook"], False),
+    ):
+        manager.create(
+            name,
+            {"name": name, "steps": [{"id": "work", "exec": "true"}]},
+            project_id=project.id,
+            tags=tags,
+            enabled=enabled,
+        )
+    manager.create(
+        "shadowed-only",
+        {"name": "shadowed-only", "steps": [{"id": "work", "exec": "true"}]},
+        tags=["runbook"],
+    )
+    manager.create(
+        "shadowed-only",
+        {"name": "shadowed-only", "steps": [{"id": "work", "exec": "true"}]},
+        project_id=project.id,
+    )
+    rows = [row.__dict__ for row in manager.list_all(project_id=project.id)] if daemon else None
+    loader = PipelineLoader(temp_db)
+    with (
+        patch("gobby.cli.pipelines._try_daemon_catalog", return_value=rows),
+        patch("gobby.cli.pipelines._get_project_id", return_value=project.id),
+        patch("gobby.cli.pipelines.get_workflow_loader", return_value=loader),
+    ):
+        result = runner.invoke(
+            cli, ["pipelines", "list", "--tag", "runbook"] + (["--json"] if json_format else [])
+        )
+    assert result.exit_code == 0, result.output
+    if json_format:
+        parsed = json.loads(result.output)
+        assert parsed["count"] == 1
+        assert [item["name"] for item in parsed["pipelines"]] == ["tagged-only"]
+    else:
+        assert "tagged-only" in result.output
+        assert "ordinary-only" not in result.output
+        assert "disabled-only" not in result.output
+        assert "shadowed-only" not in result.output
 
 
 @pytest.fixture

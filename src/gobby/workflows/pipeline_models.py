@@ -127,6 +127,14 @@ class PipelineDefinition(BaseModel):
     priority: int = 100
     deprecated: bool = False
     deprecated_reason: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+    @field_validator("tags")
+    @classmethod
+    def validate_tags(cls, tags: list[str]) -> list[str]:
+        if any(not tag.strip() for tag in tags):
+            raise ValueError("Pipeline tags must be non-empty strings")
+        return tags
 
     @field_validator("version", mode="before")
     @classmethod
