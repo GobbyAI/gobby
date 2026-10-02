@@ -28,7 +28,7 @@ from gobby.tasks.expansion._plan_gate import (
 )
 from tests.agents.prepared_spawn import prepared_spawn
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 def _write_broken_plan(path: Path) -> Path:

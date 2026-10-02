@@ -77,7 +77,7 @@ async def test_no_isolation_preserves_requested_worktree_for_sandbox(
     assert project.root_path not in paths.write_paths
 
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 async def _drain_spawn_background_tasks() -> None:

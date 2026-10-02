@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.agents.cargo_target import cleanup_checkout_cargo_target_dir
 from gobby.agents.completion_subscribers import subscribe_agent_completion
-from gobby.agents.external_write_grants import GRANT_KEY, apply_write_grant, authorize_write_grant
+from gobby.agents.external_write_grants import GRANT_KEY, authorize_write_grant
 from gobby.agents.isolation import (
     CloneIsolationHandler,
     IsolationHandler,
@@ -25,7 +25,7 @@ from gobby.agents.isolation import (
 from gobby.agents.provider_rotation import model_for_provider
 from gobby.agents.reasoning import resolve_spawn_reasoning
 from gobby.agents.resume_placement import placement_snapshot
-from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
+from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_executor_providers import agy_support_refusal
@@ -66,6 +66,7 @@ from ._runtime import (
     _normalize_optional_model,
     build_spawn_context,
 )
+from ._sandbox_gate import resolve_spawn_sandbox
 from ._spawn_guards import (
     TaskSpawnLease,
     admit_task_spawn,
@@ -366,9 +367,11 @@ async def spawn_agent_impl(
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
-    effective_sandbox_config: SandboxConfig = apply_write_grant(
-        agent_sandbox_config(daemon_config), write_grant
-    )
+    gated = await resolve_spawn_sandbox(daemon_config, write_grant)
+    if isinstance(gated, dict):
+        # Placed refusals carry ``placement_error`` (the spawn_agent reply contract).
+        return gated if placement is None else {**gated, "placement_error": "sandbox_required"}
+    effective_sandbox_config: SandboxConfig = gated
     requested_agent_name = agent_lookup_name or (agent_body.name if agent_body else None)
     if not parent_session_id:
         return {"success": False, "error": "parent_session_id is required"}

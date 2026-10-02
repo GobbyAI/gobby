@@ -11,7 +11,7 @@ from gobby.agents.isolation import IsolationContext
 from gobby.storage.hub.protocol import HubDatabase
 from tests.fixtures.agent_definitions import make_agent_definition
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 async def _drain_spawn_background_tasks() -> None:

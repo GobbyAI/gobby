@@ -313,6 +313,13 @@ def temp_dir() -> Iterator[Path]:
         yield Path(tmpdir)
 
 
+@pytest.fixture
+def stub_srt_verifier() -> Iterator[MagicMock]:
+    """Pass the managed-SRT gate without the pinned install; unit spawn modules opt in."""
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verifier:
+        yield verifier
+
+
 @pytest.fixture(scope="session")
 def repo_root() -> Path:
     """Return the repository root for tests that inspect checked-in files."""
