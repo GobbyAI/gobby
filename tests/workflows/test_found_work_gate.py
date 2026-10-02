@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shlex
+import subprocess
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -985,28 +986,95 @@ _MISSING_PATH_OUTPUT = (
 )
 
 
+def _commit(repo: Path) -> None:
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "-q",
+            "-m",
+            "fixture",
+        ],
+        cwd=repo,
+        check=True,
+    )
+
+
 class TestMissingPathSupersession:
     """A red that collected nothing because a named path is gone narrows to the survivors."""
 
     @pytest.fixture
     def project(self, tmp_path: Path) -> str:
+        """A repository whose HEAD tracks the surviving test and never tracked the gone one."""
         (tmp_path / _ALIVE).parent.mkdir(parents=True)
         (tmp_path / _ALIVE).write_text("")
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        _commit(tmp_path)
         return str(tmp_path)
 
+    def test_uncommitted_deletion_of_tracked_path_still_blocks(self, project: str) -> None:
+        (Path(project) / _GONE).write_text("")
+        _commit(Path(project))
+        (Path(project) / _GONE).unlink()
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == (
+            runs[0],
+        )
+
+    def test_unanswered_head_lookup_still_blocks(self, tmp_path: Path) -> None:
+        (tmp_path / _ALIVE).parent.mkdir(parents=True)
+        (tmp_path / _ALIVE).write_text("")
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(
+            runs, owner_handoff=False, project_path=str(tmp_path)
+        ) == (runs[0],)
+
+    @pytest.mark.parametrize("history", ["never_tracked", "committed_deletion", "committed_rename"])
     def test_missing_path_failure_is_superseded_by_green_over_surviving_paths(
-        self, project: str
+        self, project: str, history: str
     ) -> None:
+        repo = Path(project)
+        if history != "never_tracked":
+            (repo / _GONE).write_text("")
+            _commit(repo)
+            if history == "committed_deletion":
+                (repo / _GONE).unlink()
+            else:
+                (repo / _GONE).rename(repo / "tests/unit/test_renamed.py")
+            _commit(repo)
         runs = [
             _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
             _run(2, "success", _SURVIVING_GREEN),
         ]
         assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == ()
 
-    def test_collected_failure_still_requires_full_coverage(self, project: str) -> None:
-        output = (
-            "collected 3 items\n\nFAILED tests/unit/test_alive.py::test_case\n1 failed, 2 passed"
-        )
+    @pytest.mark.parametrize(
+        "output",
+        [
+            "collected 3 items\n\nFAILED tests/unit/test_alive.py::test_case\n1 failed, 2 passed",
+            "collected 1 item\n\nFAILED tests/unit/test_alive.py::test_case\n1 failed\n"
+            + _MISSING_PATH_OUTPUT,
+        ],
+        ids=["collected_only", "collected_then_missing_path"],
+    )
+    def test_collected_failure_still_requires_full_coverage(
+        self, project: str, output: str
+    ) -> None:
         runs = [
             _run(1, "failure", _MISSING_PATH_RED, output=output),
             _run(2, "success", _SURVIVING_GREEN),
