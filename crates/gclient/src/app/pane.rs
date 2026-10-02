@@ -220,7 +220,8 @@ pub struct Pane {
     pub(super) tombstones: HashSet<String>,
     pub(super) status_message: Option<String>,
     /// The direct writer refused the latest `SetViewport`; the resize
-    /// waits for it to drain and clears once a retry is queued.
+    /// waits for it to drain and clears once a retry is queued or the
+    /// source is removed or replaced.
     pub(super) viewport_deferred: bool,
     pub(super) terminating: bool,
     pub(super) viewport: (u16, u16),
@@ -651,10 +652,12 @@ impl Pane {
     }
 
     pub(super) fn take_frame_source(&mut self) -> Option<PaneFrameSource> {
+        self.viewport_deferred = false;
         self.frame_source.take()
     }
 
     pub(super) fn install_frame_source(&mut self, source: PaneFrameSource) {
+        self.viewport_deferred = false;
         if let AttachState::Attached { transport, .. } = &mut self.attach {
             *transport = source.transport();
         }

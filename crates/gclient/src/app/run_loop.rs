@@ -479,6 +479,7 @@ impl<D: Daemon> Workspace<D> {
         };
         let mut messages = Vec::with_capacity(2);
         if matches!(source, PaneFrameSource::Proxy(_)) {
+            pane.viewport_deferred = false;
             messages.push(json!({
                 "type": "terminal_set_viewport",
                 "terminal_id": pane.terminal_id,
