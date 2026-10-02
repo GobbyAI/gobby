@@ -149,6 +149,7 @@ async def _evaluate_named_test_close(
     *,
     tdd_result: TddEvidenceResult | None,
     named_tests: bool = True,
+    net_paths: NetCommitPaths | None = None,
 ) -> tuple[CloseEvaluation, MagicMock]:
     review = AsyncMock(
         return_value=ValidationResult(
@@ -205,6 +206,9 @@ async def _evaluate_named_test_close(
             AsyncMock(return_value=transcript),
         ),
         patch.object(lifecycle, "evaluate_acceptance_artifacts", return_value=artifacts),
+        patch.object(
+            lifecycle, "collect_net_commit_paths", return_value=net_paths or NetCommitPaths()
+        ),
         patch.object(lifecycle, "evaluate_tdd_evidence", tdd_check),
         patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
         patch.object(lifecycle, "evaluate_close_review", review),
@@ -869,6 +873,27 @@ async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> 
     assert tdd_gate.name == "tdd_evidence"
     assert tdd_gate.status == "failed"
     tdd_check.assert_called_once()
+
+
+async def test_tdd_close_receives_only_surviving_net_implementation_paths() -> None:
+    task = replace(_task(), category="test", labels=["tdd:required"])
+    delivered = frozenset({"tests/fixtures/gdaemon_binary.py"})
+    net_paths = NetCommitPaths(
+        changed=delivered,
+        deleted=frozenset({"tests/fixtures/deleted_helper.py"}),
+    )
+
+    evaluation, tdd_check = await _evaluate_named_test_close(
+        task,
+        tdd_result=TddEvidenceResult(passed=True, skipped=False, findings=()),
+        net_paths=net_paths,
+    )
+
+    tdd_check.assert_called_once()
+    assert tdd_check.call_args.kwargs["task_category"] == "test"
+    assert tdd_check.call_args.kwargs["implementation_paths"] == delivered
+    tdd_gate = next(gate for gate in evaluation.gates if gate.item == 12)
+    assert tdd_gate.status == "passed"
 
 
 async def test_tdd_required_task_without_resolved_tests_fails_gate_12() -> None:

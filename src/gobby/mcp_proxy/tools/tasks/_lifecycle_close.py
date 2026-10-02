@@ -715,7 +715,7 @@ async def _evaluate_close(
                     transcript,
                     renamed_test_paths=rename_aliases,
                     task_category=task.category,
-                    implementation_paths=committed_paths,
+                    implementation_paths=validation_paths,
                 )
                 tdd_details = tdd.details()
                 # Gate 12 and gate 13 both ask whether the loop was followed rather than
