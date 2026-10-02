@@ -44,6 +44,7 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
     from gobby.terminals.services import TerminalServices
     from gobby.terminals.sync_bridge import TerminalEffectBridge
+    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
     from gobby.terminals.write_coordinator import WriteCoordinator
     from gobby.utils.machine_id import require_machine_id
 
@@ -70,6 +71,12 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
         spawn_in_doubt_seconds=config.terminals.spawn_in_doubt_seconds,
     )
     terminal_runtime_registry.register(native_runtime)
+    # Spawn-less adapter for hand-started tmux panes: send_keys, wake, and
+    # /compact continuation resolve their external rows through it, each on
+    # the socket its pane recorded.
+    terminal_runtime_registry.register(
+        TmuxTerminalRuntime(host_control=HostManagerControl(runner.terminal_host_manager))
+    )
 
     async def follow_lease_holder(change: HolderChange) -> bool | None:
         return await sync_host_input_grant(native_runtime, change.terminal, change.holder)

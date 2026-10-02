@@ -11,14 +11,13 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
 
-from gobby.agents import spawn_executor, spawn_executor_support
+from gobby.agents import spawn_executor_support
 from gobby.agents.constants import (
     CARGO_HOME,
     CARGO_TARGET_DIR,
@@ -49,7 +48,6 @@ from gobby.agents.spawn_executor_support import (
 from gobby.agents.spawn_timing import SPAWN_PHASES
 from gobby.mcp_proxy.server import GobbyDaemonTools
 from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.runtime import Delivered
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
@@ -153,7 +151,7 @@ async def test_managed_code_index_preflight_uses_issued_credential(
         code_index_preflight_mode="required",
         code_index_api_token="probe-token",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
 
     async def preflight(
@@ -216,7 +214,7 @@ async def test_required_managed_code_index_preflight_fails_closed(
         project_id="project",
         code_index_preflight_mode="required",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
 
     async def fail_preflight(*_args: object, **_kwargs: object) -> None:
@@ -263,7 +261,7 @@ async def test_best_effort_preflight_records_warning_without_operator_credential
         },
         code_index_preflight_mode="best_effort",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
 
     async def fail_preflight(*_args: object, **kwargs: object) -> None:
@@ -325,7 +323,7 @@ def test_record_resume_launch_details_uses_resolved_agent_run_id(
             "env": {CARGO_HOME: "/persisted/cargo", "PERSISTED": "old"},
         },
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     calls: list[tuple[object, str, dict[str, object]]] = []
 
@@ -381,7 +379,7 @@ class TestSpawnRequest:
             parent_session_id="parent-789",
             project_id="proj-abc",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         assert request.prompt == "Test prompt"
@@ -403,7 +401,7 @@ class TestSpawnRequest:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         assert request.workflow is None
@@ -423,7 +421,7 @@ class TestSpawnRequest:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         assert request.sandbox_config is None
@@ -445,7 +443,7 @@ class TestSpawnRequest:
             sandbox_args=["--settings", '{"sandbox":{"enabled":true}}'],
             sandbox_env={"SEATBELT_PROFILE": "restrictive-closed"},
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         assert request.sandbox_config is not None
@@ -465,7 +463,7 @@ class TestSpawnRequest:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         assert request.api_base is None
@@ -484,7 +482,7 @@ class TestSpawnRequest:
             api_base="http://localhost:1234/v1",
             api_token="sk-local",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         assert request.api_base == "http://localhost:1234/v1"
@@ -541,21 +539,16 @@ class TestSpawnResult:
 
 
 def test_spawn_result_has_no_tmux_aliases() -> None:
-    from gobby.agents.spawners.base import SpawnResult as SpawnerSpawnResult
-
     result = SpawnResult(True, "run", "child", "pending")
-    spawner_result = SpawnerSpawnResult(True, "spawned")
     session_alias = "tmux_" + "session_name"
     pane_alias = "tmux_" + "pane"
 
     assert not hasattr(result, session_alias)
     assert not hasattr(result, pane_alias)
-    assert not hasattr(spawner_result, session_alias)
-    assert not hasattr(spawner_result, pane_alias)
     with pytest.raises(TypeError):
         cast(Any, SpawnResult)(True, "run", "child", "pending", **{session_alias: "alias"})
     with pytest.raises(TypeError):
-        cast(Any, SpawnerSpawnResult)(True, "spawned", **{pane_alias: "%1"})
+        cast(Any, SpawnResult)(True, "run", "child", "pending", **{pane_alias: "%1"})
 
 
 class TestExecuteSpawn:
@@ -566,7 +559,7 @@ class TestExecuteSpawn:
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Test that terminal mode dispatches to TmuxSpawner."""
+        """Test that terminal mode dispatches to the terminal runtime."""
         caplog.set_level(logging.DEBUG, logger="gobby.agents.spawn_executor")
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -580,7 +573,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         # Mock prepare_terminal_spawn
@@ -641,7 +634,7 @@ class TestExecuteSpawn:
             parent_session_id="parent",
             project_id="proj",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         clock = iter((0.0, 1.0))
         monkeypatch.setattr(
@@ -693,7 +686,7 @@ class TestExecuteSpawn:
             session_manager=session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(session_id="child-session-id"),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         request.prepared_spawn = context
 
@@ -720,7 +713,7 @@ class TestExecuteSpawn:
             run_manager=run_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         context = MagicMock()
         context.session_id = "child-session-id"
@@ -753,7 +746,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -801,7 +794,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -846,7 +839,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -900,7 +893,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         request.prepared_spawn = prepared_spawn(
             session_id="gobby-sess-123",
@@ -939,7 +932,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             run_manager=run_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         call_order: list[str] = []
@@ -1062,7 +1055,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             run_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         spawn_context = MagicMock(
             session_id="gobby-sess-123",
@@ -1122,7 +1115,7 @@ class TestExecuteSpawn:
             is_local=True,
             codex_oss_provider="ollama",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         spawn_context = MagicMock(
             session_id="gobby-sess-local",
@@ -1174,7 +1167,7 @@ class TestExecuteSpawn:
             session_manager=MagicMock(),
             run_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         call_order: list[str] = []
         spawn_context = MagicMock(
@@ -1241,7 +1234,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -1291,7 +1284,7 @@ class TestExecuteSpawn:
             project_id="proj",
             # No session_manager provided,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -1312,7 +1305,7 @@ class TestExecuteSpawn:
             project_id="proj",
             # No session_manager provided,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -1334,7 +1327,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=mock_session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -1389,7 +1382,7 @@ class TestExecuteSpawn:
             model="grok-build",
             effective_reasoning_effort="high",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -1453,7 +1446,7 @@ class TestExecuteSpawn:
             session_manager=mock_session_manager,
             sandbox_config=SandboxConfig(enabled=True, mode="restrictive"),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         mock_prepare = MagicMock(
             return_value=MagicMock(
@@ -1489,7 +1482,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=False,
@@ -1540,7 +1533,7 @@ class TestExecuteSpawn:
             project_id="proj",
             session_manager=MagicMock(),
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         record = SimpleNamespace(supported=False, reason=reason)
         with patch(
@@ -1578,7 +1571,7 @@ class TestExecuteSpawn:
                 parent_session_id="parent",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=True,
@@ -1638,7 +1631,7 @@ class TestExecuteSpawn:
                 agent_run_id="run-agy123",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=True,
@@ -1697,7 +1690,7 @@ class TestExecuteSpawn:
                 agent_run_id="run-agy123",
                 env_vars={"GOBBY_SESSION_ID": "gobby-sess-agy"},
             ),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         record = SimpleNamespace(
             supported=True,
@@ -1755,10 +1748,16 @@ class TestExecuteSpawn:
         runtime = _runtime_of(request)
         spawned = runtime.last_request
         assert spawned is not None
-        await kill_spawn_key(runtime, spawned.spawn_key, pending=None)
-        assert spawned.spawn_key in runtime.killed
+        await kill_spawn_key(
+            runtime,
+            spawned.spawn_key,
+            pending=None,
+            host_terminal_id="ht-1",
+            host_epoch=runtime.host_epoch,
+        )
+        assert "ht-1" in runtime.killed_host_ids
 
-        mgr = TmuxSessionManager()
+        mgr = TmuxSessionManager("/tmp/gobby-test-tmux.sock")
         with (
             patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
             patch("os.killpg") as mock_killpg,
@@ -1779,7 +1778,7 @@ class TestExecuteSpawnSandbox:
 
     @pytest.mark.asyncio
     async def test_terminal_spawn_passes_sandbox_config_to_spawner(self, tmp_path: Path) -> None:
-        """Test that sandbox_config is resolved and passed to TmuxSpawner."""
+        """Test that sandbox_config is resolved and passed to the terminal runtime."""
         sandbox_config = SandboxConfig(enabled=True, mode="permissive")
         mock_session_manager = MagicMock()
         request = SpawnRequest(
@@ -1794,7 +1793,7 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -1917,7 +1916,7 @@ class TestExecuteSpawnSandbox:
             prepared_spawn=prepared_spawn(
                 env_vars={"GOBBY_SESSION_ID": "project-preflight-session"}
             ),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -1972,7 +1971,7 @@ class TestExecuteSpawnSandbox:
             machine_id="21000000-0000-4000-8000-000000000002",
             # No sandbox_config specified,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2023,7 +2022,7 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2089,7 +2088,7 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -2138,7 +2137,7 @@ class TestExecuteSpawnSandbox:
             session_manager=mock_session_manager,
             sandbox_config=sandbox_config,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -2189,7 +2188,7 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             # No session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         result = await execute_spawn(request)
@@ -2211,7 +2210,7 @@ class TestExecuteSpawnErrorPaths:
             project_id="proj",
             session_manager=mock_session_manager,
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_prepare = MagicMock(
@@ -2260,7 +2259,7 @@ class TestExecuteSpawnErrorPaths:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-00000000000e",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2306,7 +2305,7 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000022",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2369,7 +2368,7 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000023",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child"
@@ -2408,7 +2407,7 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000024",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child"
@@ -2440,7 +2439,7 @@ class TestExecuteSpawnErrorPaths:
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000022",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
@@ -2488,21 +2487,13 @@ class TestExecuteSpawnErrorPaths:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000022",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
 
         mock_spawn_context = MagicMock()
         mock_spawn_context.session_id = "child"
         mock_spawn_context.agent_run_id = "run-1"
         mock_spawn_context.env_vars = {}
-
-        mock_spawner = MagicMock()
-        mock_spawner.spawn.return_value = MagicMock(
-            success=True,
-            pid=99,
-            backend="tmux",
-            terminal_id="gobby-abc",
-        )
 
         with (
             patch(
@@ -2516,8 +2507,8 @@ class TestExecuteSpawnErrorPaths:
         assert result.terminal_id is not None
         row = _manager_of(request).get(result.terminal_id)
         assert row is not None
-        assert row.spawn_key == f"gobby-{result.terminal_id}"
-        assert row.session_name == f"gobby-{result.terminal_id}"
+        assert row.spawn_key == result.terminal_id
+        assert row.session_name is None
         assert result.success is True
         assert result.pid == 12345
 
@@ -2537,7 +2528,7 @@ class TestApplyExtraEnv:
             project_id="proj",
             extra_env={PATH_ENV_VAR: os.pathsep.join(("/work/.gobby/bin", "/usr/bin"))},
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         env = {PATH_ENV_VAR: "/bin"}
 
@@ -2566,7 +2557,7 @@ class TestApplyExtraEnv:
                 "CUSTOM_FLAG": "1",
             },
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         env = {
             "GOBBY_SESSION_ID": "gobby-sess-123",
@@ -2672,7 +2663,7 @@ def test_capability_token_never_in_argv_or_metadata(
         session_manager=cast("ChildSessionManager", session_manager),
         resume_metadata_json={"provider": "codex"},
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     persisted: list[dict[str, object]] = []
 
@@ -3386,7 +3377,7 @@ async def test_one_terminal_row_per_attempt_all_outcomes() -> None:
             session_manager=mock_session_manager,
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
         )
         runtime = _runtime_of(request)
         runtime.fail_spawn = fail
@@ -3410,7 +3401,8 @@ async def test_one_terminal_row_per_attempt_all_outcomes() -> None:
     manager = _manager_of(request)
     assert result.success is False
     assert len(manager.rows) == 1
-    assert next(iter(manager.rows.values())).state == "pending"
+    # An untyped native failure settles through the host listing.
+    assert next(iter(manager.rows.values())).state == "exited"
 
 
 @pytest.mark.asyncio
@@ -3429,21 +3421,21 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.01,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.spawn_hold = asyncio.Event()
     result = await execute_spawn(request)
     assert result.success is False
-    assert "timed out" in (result.error or "")
+    assert result.error == "spawn_timeout"
     assert result.retryable_infrastructure is True
     manager = _manager_of(request)
     row = next(iter(manager.rows.values()))
     assert row.state == "pending"
-    assert runtime.killed == []
+    assert runtime.killed_host_ids == []
     runtime.spawn_hold.set()
-    await runtime.terminate_started.wait()
-    assert runtime.killed  # the done callback killed the late effect
+    await runtime.terminate_host_started.wait()
+    assert runtime.killed_host_ids  # the done callback killed the late effect
     reaped = await reap_stale_pending_terminals(
         cast(TerminalManager, manager), runtime_registry(runtime), in_doubt_seconds=150.0
     )
@@ -3464,7 +3456,7 @@ async def test_timed_out_attempt_is_settled_after_delayed_cleanup() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=row.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3498,7 +3490,7 @@ async def test_srt_wrap_single_chokepoint(monkeypatch: pytest.MonkeyPatch) -> No
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     result = await execute_spawn(request)
     assert result.success is True
@@ -3520,7 +3512,7 @@ async def test_lost_cas_converges_when_reconciler_already_promoted(
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     manager = _manager_of(request)
     runtime = _runtime_of(request)
@@ -3560,7 +3552,7 @@ async def test_cancel_windows_pre_and_post_dispatch() -> None:
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
         cancel_event=cancel,
     )
     result = await execute_spawn(request)
@@ -3580,7 +3572,7 @@ async def test_cancel_windows_pre_and_post_dispatch() -> None:
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     runtime = _runtime_of(request2)
     runtime.spawn_hold = hold
@@ -3611,7 +3603,7 @@ async def test_retry_generation_fences_the_reaper() -> None:
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.typed_fail = True
@@ -3633,7 +3625,7 @@ async def test_retry_generation_fences_the_reaper() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=row.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3662,7 +3654,7 @@ async def test_retry_generation_fences_the_reaper() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=row.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3701,7 +3693,7 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     first = await execute_spawn(request)
     assert first.success is True
@@ -3721,7 +3713,7 @@ async def test_refused_retry_cleanup_leaves_the_live_attempt(read_fails: bool) -
         machine_id="21000000-0000-4000-8000-000000000002",
         retry_terminal_id=live.id,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
         terminal_manager=cast(TerminalManager, manager),
         terminal_runtime_registry=request.terminal_runtime_registry,
     )
@@ -3807,7 +3799,7 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
             session_manager=MagicMock(),
             machine_id="21000000-0000-4000-8000-000000000002",
             prepared_spawn=prepared_spawn(),
-            terminal_backend="tmux",
+            terminal_backend="native",
             **extra,
         )
 
@@ -3834,7 +3826,7 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
         )
     if not kill_proven:
         monkeypatch.setattr(
-            runtime, "terminate", AsyncMock(side_effect=RuntimeError("tmux server unreachable"))
+            runtime, "terminate", AsyncMock(side_effect=RuntimeError("host unreachable"))
         )
 
     # Persisting terminal B fails and is swallowed, so the run row keeps terminal A.
@@ -3887,7 +3879,7 @@ async def test_failed_attempt_on_a_run_bound_elsewhere_still_kills_its_own_termi
     assert settled is not None
     assert manager.get(bound.id) == bound
     if kill_proven:
-        assert runtime.killed == [own.spawn_key]
+        assert runtime.killed_ids == {own.id}
         assert settled.state == "exited"
         handler.cleanup_environment.assert_awaited_once_with(None)
     else:
@@ -3914,7 +3906,7 @@ async def test_attempt_started_at_survives_unrelated_updates_and_restart() -> No
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.01,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.delay = 1.0
@@ -4117,7 +4109,7 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
         machine_id="21000000-0000-4000-8000-000000000002",
         timeout_seconds=0.001,
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     runtime.spawn_hold = asyncio.Event()
@@ -4129,12 +4121,12 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
     newer = manager.bump_attempt_generation(row.id)
     assert newer is not None
     runtime.spawn_hold.set()
-    await runtime.terminate_started.wait()
+    await runtime.terminate_host_started.wait()
     assert row.state == "pending"
     assert row.attempt_generation == newer.attempt_generation
 
     web_manager = MemoryTerminalStore()
-    web_runtime = FakeRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    web_runtime = FakeRuntime(backend="native", spawn_hold=asyncio.Event())
     web_result = await spawn_web_terminal(
         manager=cast(TerminalManager, web_manager),
         runtime=web_runtime,
@@ -4152,53 +4144,9 @@ async def test_timeout_callback_is_owned_by_attempt_generation() -> None:
     assert web_newer is not None
     assert web_runtime.spawn_hold is not None
     web_runtime.spawn_hold.set()
-    await web_runtime.terminate_started.wait()
+    await web_runtime.terminate_host_started.wait()
     assert web_row.state == "pending"
     assert web_row.attempt_generation == web_newer.attempt_generation
-
-
-@pytest.mark.asyncio
-async def test_tmux_retry_owner_proves_duplicate_session_dead_before_settlement() -> None:
-    manager = MemoryTerminalStore()
-    terminal_id = str(uuid4())
-    row = manager.create_pending(terminal_id, "proj", "tmux", "gobby", f"gobby-{terminal_id}")
-    runtime = FakeRuntime(backend="tmux", typed_fail=True, spawn_error="duplicate session")
-    runtime.live_keys.add(row.spawn_key or "")
-    request = SpawnRequest(
-        prompt="Test",
-        cwd="/path",
-        provider="claude",
-        session_id="sess",
-        run_id="run",
-        parent_session_id="parent",
-        project_id="proj",
-        session_manager=MagicMock(),
-        machine_id="21000000-0000-4000-8000-000000000002",
-        retry_terminal_id=row.id,
-        prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
-        terminal_manager=cast(TerminalManager, manager),
-        terminal_runtime_registry=runtime_registry(runtime),
-    )
-
-    result = await execute_spawn(request)
-
-    assert result.success is False
-    assert result.error == "duplicate session"
-    assert row.state == "pending"
-    assert in_doubt_spawns.holds(row.id)
-    owners = [
-        task
-        for task in spawn_executor._TIMEOUT_CLEANUP_TASKS
-        if task.get_loop() is asyncio.get_running_loop()
-    ]
-    assert len(owners) == 1
-    await asyncio.wait_for(asyncio.gather(*owners), timeout=2)
-
-    assert row.state == "exited"
-    assert row.spawn_key not in runtime.live_keys
-    assert runtime.killed == [row.spawn_key]
-    assert not in_doubt_spawns.holds(row.id)
 
 
 @pytest.mark.asyncio
@@ -4229,7 +4177,7 @@ async def test_spawn_failure_keeps_typed_infrastructure_provenance(
         session_manager=MagicMock(),
         machine_id="21000000-0000-4000-8000-000000000002",
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     runtime = _runtime_of(request)
     error: Exception

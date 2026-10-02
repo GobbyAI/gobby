@@ -13,6 +13,8 @@ from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 
 pytestmark = pytest.mark.unit
 
+_SOCKET = "/tmp/tmux-501/default"
+
 
 @pytest.mark.asyncio
 async def test_scheduled_tmux_rename_is_retained_until_done() -> None:
@@ -45,8 +47,8 @@ class _RecordingTmuxManager:
 
     instances: list[Any] = []
 
-    def __init__(self, config: Any) -> None:
-        self.config = config
+    def __init__(self, socket_path: str) -> None:
+        self.socket_path = socket_path
         self.rename_calls: list[tuple[str, str]] = []
         self.release_calls: list[str] = []
         self.fail = False
@@ -137,13 +139,13 @@ class TestRenameTmuxWindow:
         assert mock_exec.await_count == 0
 
     @pytest.mark.asyncio
-    async def test_provisional_user_session_renames_on_default_server(self) -> None:
-        """A provisional provider title is prefixed with the session ref."""
+    async def test_provisional_user_session_renames_on_recorded_socket(self) -> None:
+        """A provisional provider title is used verbatim on the pane's own server."""
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42"}
+        session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.title_source = "provisional"
@@ -152,8 +154,7 @@ class TestRenameTmuxWindow:
             await _rename_tmux_window(session, "Codex")
 
         manager = _RecordingTmuxManager.instances[0]
-        assert manager.config.socket_path is None
-        assert manager.config.socket_name == ""
+        assert manager.socket_path == _SOCKET
         assert manager.rename_calls == [("%42", "Codex")]
 
     @pytest.mark.asyncio
@@ -278,14 +279,14 @@ class TestRenameTmuxWindow:
         _RecordingTmuxManager.instances = []
         stale_session = SimpleNamespace(
             id="session-id",
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
             agent_depth=0,
             ref="#99",
             title="Queued title",
         )
         persisted_session = SimpleNamespace(
             id="session-id",
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
             agent_depth=0,
             ref="#99",
             title="Late task title",
@@ -312,7 +313,7 @@ class TestRenameTmuxWindow:
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42"}
+        session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
 
@@ -348,7 +349,7 @@ class TestRenameTmuxWindow:
         ):
             applied = await _apply_window_rename(
                 session,
-                {"tmux_pane": "%42"},
+                {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
                 "%42",
                 "My Title",
             )
@@ -374,7 +375,11 @@ class TestRenameTmuxWindow:
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/work/repos/gobby/",
+        }
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.source = "claude"
@@ -392,7 +397,11 @@ class TestRenameTmuxWindow:
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/work/repos/gobby/",
+        }
         session.agent_depth = 0
         session.seq_num = 99
         session.ref = "gobby#99"
@@ -431,7 +440,11 @@ class TestRenameTmuxWindow:
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/work/repos/gobby/",
+        }
         session.agent_depth = 0
         session.seq_num = 99
         session.ref = "gobby#99"
@@ -450,13 +463,21 @@ class TestRenameTmuxWindow:
 
         _RecordingTmuxManager.instances = []
         source_session = MagicMock()
-        source_session.terminal_context = {"tmux_pane": "%43", "cwd": "/work/repos/gobby"}
+        source_session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%43",
+            "cwd": "/work/repos/gobby",
+        }
         source_session.agent_depth = 0
         source_session.ref = None
         source_session.source = "codex"
 
         session_fallback = MagicMock()
-        session_fallback.terminal_context = {"tmux_pane": "%44", "cwd": "/work/repos/gobby"}
+        session_fallback.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%44",
+            "cwd": "/work/repos/gobby",
+        }
         session_fallback.agent_depth = 0
         session_fallback.ref = None
         session_fallback.source = None
@@ -470,26 +491,32 @@ class TestRenameTmuxWindow:
         assert _RecordingTmuxManager.instances[1].rename_calls == [("%44", "gobby")]
 
     @pytest.mark.asyncio
-    async def test_spawned_agent_renames_on_gobby_socket(self) -> None:
-        """Spawned agent (depth > 0) uses TmuxSessionManager."""
-        from gobby.sessions.tmux_window_naming import _rename_tmux_window
+    @pytest.mark.parametrize(
+        ("context", "depth"),
+        [
+            ({"tmux_pane": "%0"}, 1),
+            ({"tmux_pane": "%42"}, 0),
+            ({"tmux_pane": "%10", "tmux_socket_name": "gobby"}, 0),
+        ],
+        ids=["spawned-agent", "user-session", "named-socket"],
+    )
+    async def test_pane_without_a_recorded_socket_is_not_renamed(
+        self, context: dict[str, str], depth: int
+    ) -> None:
+        """Gobby runs no tmux server, so only a recorded socket path names one."""
+        from gobby.sessions.tmux_window_naming import _apply_window_rename
 
         _RecordingTmuxManager.instances = []
-        session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%0"}
-        session.agent_depth = 1
-        session.ref = "#55"
+        session = SimpleNamespace(agent_depth=depth, ref="#55", status="active")
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "Agent Title")
+            applied = await _apply_window_rename(session, context, context["tmux_pane"], "Title")
 
-        manager = _RecordingTmuxManager.instances[0]
-        assert manager.config.socket_path is None
-        assert manager.config.socket_name == "gobby"
-        assert manager.rename_calls == [("%0", "Agent Title")]
+        assert applied is False
+        assert _RecordingTmuxManager.instances == []
 
     @pytest.mark.asyncio
-    async def test_tmux_socket_path_overrides_socket_name(self) -> None:
+    async def test_tmux_socket_path_routes_rename_to_that_server(self) -> None:
         """Stored tmux_socket_path routes renames to that exact server."""
         from gobby.sessions.tmux_window_naming import _rename_tmux_window
 
@@ -498,7 +525,6 @@ class TestRenameTmuxWindow:
         session.terminal_context = {
             "tmux_pane": "%9",
             "tmux_socket_path": "/tmp/tmux-501/gobby",
-            "tmux_socket_name": "ignored",
         }
         session.agent_depth = 0
         session.ref = None
@@ -507,28 +533,8 @@ class TestRenameTmuxWindow:
             await _rename_tmux_window(session, "Socket Path Title")
 
         manager = _RecordingTmuxManager.instances[0]
-        assert manager.config.socket_path == "/tmp/tmux-501/gobby"
-        assert manager.config.socket_name == ""
+        assert manager.socket_path == "/tmp/tmux-501/gobby"
         assert manager.rename_calls == [("%9", "Socket Path Title")]
-
-    @pytest.mark.asyncio
-    async def test_tmux_socket_name_routes_to_named_server(self) -> None:
-        """Stored tmux_socket_name routes renames when no path is present."""
-        from gobby.sessions.tmux_window_naming import _rename_tmux_window
-
-        _RecordingTmuxManager.instances = []
-        session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%10", "tmux_socket_name": "gobby"}
-        session.agent_depth = 0
-        session.ref = None
-
-        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager):
-            await _rename_tmux_window(session, "Named Socket Title")
-
-        manager = _RecordingTmuxManager.instances[0]
-        assert manager.config.socket_path is None
-        assert manager.config.socket_name == "gobby"
-        assert manager.rename_calls == [("%10", "Named Socket Title")]
 
     @pytest.mark.asyncio
     async def test_failure_does_not_propagate_and_logs_warning(
@@ -540,7 +546,7 @@ class TestRenameTmuxWindow:
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42"}
+        session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
 
@@ -555,7 +561,7 @@ class TestRenameTmuxWindow:
             await _rename_tmux_window(session, "Title")
 
         assert "tmux window rename errored" in caplog.text
-        assert "#99 pane=%42 socket=default" in caplog.text
+        assert f"#99 pane=%42 socket={_SOCKET}" in caplog.text
         assert "title=" not in caplog.text
         assert any(record.levelno == logging.WARNING for record in caplog.records)
 
@@ -572,8 +578,8 @@ class _EnforceTmuxManager:
     auto_rename_return: bool | None = True
     window_name_return: str | None = None
 
-    def __init__(self, config: Any) -> None:
-        self.config = config
+    def __init__(self, socket_path: str) -> None:
+        self.socket_path = socket_path
         self.rename_calls: list[tuple[str, str]] = []
         _EnforceTmuxManager.instances.append(self)
 
@@ -600,7 +606,7 @@ class TestEnforceWindowNameIfUnmanaged:
         stale_session = SimpleNamespace(id="session-id")
         persisted_session = SimpleNamespace(
             id="session-id",
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
             agent_depth=0,
             ref="#99",
             title="Historical title",
@@ -627,7 +633,11 @@ class TestEnforceWindowNameIfUnmanaged:
         _EnforceTmuxManager.auto_rename_return = True
         _EnforceTmuxManager.window_name_return = None
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/work/repos/gobby/",
+        }
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.title = ""
@@ -649,7 +659,11 @@ class TestEnforceWindowNameIfUnmanaged:
         _EnforceTmuxManager.auto_rename_return = False
         _EnforceTmuxManager.window_name_return = "Session title"
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/work/repos/gobby/",
+        }
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.title = "Session title"
@@ -670,7 +684,7 @@ class TestEnforceWindowNameIfUnmanaged:
         _EnforceTmuxManager.auto_rename_return = False
         _EnforceTmuxManager.window_name_return = "#99 Old title"
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42"}
+        session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.title = "New title"
@@ -691,7 +705,11 @@ class TestEnforceWindowNameIfUnmanaged:
         _EnforceTmuxManager.auto_rename_return = False
         _EnforceTmuxManager.window_name_return = "#session_ref gobby"
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/work/repos/gobby/",
+        }
         session.agent_depth = 0
         session.seq_num = 99
         session.ref = "gobby#99"
@@ -713,7 +731,7 @@ class TestEnforceWindowNameIfUnmanaged:
         _EnforceTmuxManager.auto_rename_return = False
         _EnforceTmuxManager.window_name_return = "#99: #99 codex"
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42"}
+        session.terminal_context = {"tmux_socket_path": _SOCKET, "tmux_pane": "%42"}
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.title = "#99 codex"
@@ -735,7 +753,11 @@ class TestEnforceWindowNameIfUnmanaged:
         _EnforceTmuxManager.auto_rename_return = None
         _EnforceTmuxManager.window_name_return = "#session_ref gobby"
         session = MagicMock()
-        session.terminal_context = {"tmux_pane": "%42", "cwd": "/x/gobby"}
+        session.terminal_context = {
+            "tmux_socket_path": _SOCKET,
+            "tmux_pane": "%42",
+            "cwd": "/x/gobby",
+        }
         session.agent_depth = 0
         session.ref = "gobby#99"
         session.title = ""
@@ -814,7 +836,7 @@ class TestReleaseWindowNameIfUnowned:
         inactive = SimpleNamespace(
             id="stale-session",
             status="expired",
-            terminal_context={"tmux_pane": "%42"},
+            terminal_context={"tmux_socket_path": _SOCKET, "tmux_pane": "%42"},
         )
         active = SimpleNamespace(id="active-session", status="active")
         ownership = PaneOwnershipDecision(

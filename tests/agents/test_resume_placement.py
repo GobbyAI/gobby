@@ -21,7 +21,7 @@ from gobby.mcp_proxy.tools.spawn_agent import _implementation as impl
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
-from gobby.storage.terminals import mint_terminal_id, tmux_locator_key
+from gobby.storage.terminals import mint_terminal_id, native_locator_key
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.runtime import TerminalSpawnRequest
 from tests.mcp_proxy.tools.spawn_agent.test_placement import (
@@ -114,7 +114,7 @@ def placed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> _Harness:
-    return _harness(temp_db, sample_project, tmp_path, monkeypatch, FakeRuntime(backend="tmux"))
+    return _harness(temp_db, sample_project, tmp_path, monkeypatch, FakeRuntime(backend="native"))
 
 
 def _parked_original(h: _Harness) -> AgentRun:
@@ -146,20 +146,15 @@ def _orphaned_seat(h: _Harness) -> None:
     )
     terminal_id = mint_terminal_id()
     row = h.terminals.create_pending(
-        terminal_id, h.project_id, "tmux", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
+        terminal_id, h.project_id, "native", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
     )
-    socket = "/private/tmp/tmux-501/resume-placement"
+    # A committed native terminal is addressed by its host terminal id on the
+    # host epoch that spawned it.
     live = h.terminals.promote_to_live(
         row.id,
-        locator={
-            "socket_path": socket,
-            "server_pid": 1658,
-            "server_start_time": 1784592177,
-            "pane_id": "%7",
-        },
-        locator_key=tmux_locator_key(
-            socket_path=socket, server_pid=1658, server_start_time=1784592177, pane_id="%7"
-        ),
+        locator={"host_terminal_id": "ht-orphan"},
+        locator_key=native_locator_key("orphan-epoch", "ht-orphan"),
+        host_epoch="orphan-epoch",
         session_name=row.spawn_key,
     )
     assert live is not None
@@ -255,7 +250,7 @@ async def test_placed_resume_replaces_before_exec(
         sample_project,
         tmp_path,
         monkeypatch,
-        _ExecOrderedRuntime(backend="tmux", order=order),
+        _ExecOrderedRuntime(backend="native", order=order),
     )
     for name in ("preflight", "reserve", "bind"):
         real = getattr(h.reserver, name)
@@ -386,7 +381,7 @@ async def test_placed_resume_cleanup_once(
     exit_kind: str,
 ) -> None:
     hold = asyncio.Event()
-    runtime = _HeldRuntime(backend="tmux", spawn_hold=hold, typed_fail=exit_kind == "failed")
+    runtime = _HeldRuntime(backend="native", spawn_hold=hold, typed_fail=exit_kind == "failed")
     h = _harness(temp_db, sample_project, tmp_path, monkeypatch, runtime)
     if exit_kind == "failed":
         hold.set()
@@ -429,7 +424,7 @@ async def test_placed_resume_cancel_during_preflight_parks_successor(
     monkeypatch: pytest.MonkeyPatch,
     finalize: AsyncMock,
 ) -> None:
-    runtime = _HeldRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    runtime = _HeldRuntime(backend="native", spawn_hold=asyncio.Event())
     h = _harness(temp_db, sample_project, tmp_path, monkeypatch, runtime)
     entered, hold = asyncio.Event(), asyncio.Event()
     real_preflight = h.reserver.preflight
@@ -472,7 +467,7 @@ async def test_placed_resume_cancel_keeps_in_doubt_owner(
     finalize: AsyncMock,
 ) -> None:
     hold = asyncio.Event()
-    runtime = _HeldRuntime(backend="tmux", spawn_hold=hold)
+    runtime = _HeldRuntime(backend="native", spawn_hold=hold)
     h = _harness(temp_db, sample_project, tmp_path, monkeypatch, runtime)
     original = _parked_original(h)
 

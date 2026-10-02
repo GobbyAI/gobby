@@ -359,7 +359,7 @@ def create_spawn_agent_registry(
         parent_session_id: str | None = None,
         project_path: str | None = None,
         notify_parent_on_completion: bool = True,
-        terminal_backend: Literal["tmux", "native"] | None = None,
+        terminal_backend: Literal["native"] | None = None,
         droid_mode: Literal["exec", "interactive"] = "exec",
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,

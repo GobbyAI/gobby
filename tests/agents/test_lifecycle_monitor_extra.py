@@ -12,9 +12,7 @@ from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.tmux import configure_tmux
 from gobby.agents.watchdog import WatchdogReaderRegistry
-from gobby.config.tmux import TmuxConfig as ConfiguredTmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -40,12 +38,6 @@ from tests.workflows.step_instance_fixtures import make_step_instance
 from .detection_test_support import BundledDetectionRegistry
 
 DETECTION_REGISTRY = BundledDetectionRegistry()
-
-
-@pytest.fixture(autouse=True)
-def _configured_tmux() -> None:
-    """(Re)configure daemon tmux helpers; earlier runner-shutdown tests reset them."""
-    configure_tmux(ConfiguredTmuxConfig())
 
 
 pytestmark = pytest.mark.unit

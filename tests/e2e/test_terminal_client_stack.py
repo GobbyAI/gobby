@@ -15,7 +15,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Literal, TypeIs, cast
+from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import httpx
@@ -131,16 +131,10 @@ _FRAME_TYPES = {
 
 
 @pytest.fixture
-def terminal_backend(request: pytest.FixtureRequest) -> str:
-    return str(getattr(request, "param", "native"))
-
-
-@pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
     e2e_config: tuple[Path, int, int],
     monkeypatch: pytest.MonkeyPatch,
-    terminal_backend: str,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
     socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
@@ -167,16 +161,12 @@ def e2e_pre_daemon_setup(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
-                # Native is explicit opt-in under the tmux default; this stack test
-                # exercises the native web-create path, so the daemon opts in here.
-                "terminals.default_backend": terminal_backend,
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,
                 "agent_sandbox.enabled": False,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
-                "tmux.registration_timeout_seconds": 300.0,
             }
         ),
         source="e2e-terminal-stack",
@@ -375,7 +365,9 @@ def _attach_locator(item: dict[str, Any]) -> AttachLocator:
     )
 
 
-def _spawn_agent(client: httpx.Client, backend: Literal["tmux", "native"]) -> dict[str, Any]:
+def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
+    """Spawn one agent run; agent spawn is native-only."""
+    backend = "native"
     created = client.post(
         "/api/tasks",
         json={
@@ -472,15 +464,6 @@ def _visible(message: dict[str, Any]) -> str:
     return _frame_text(message) or ""
 
 
-def _is_item_pair(value: object) -> TypeIs[tuple[dict[str, Any], dict[str, Any]]]:
-    return (
-        isinstance(value, tuple)
-        and len(value) == 2
-        and isinstance(value[0], dict)
-        and isinstance(value[1], dict)
-    )
-
-
 def _has_ready_marker(message: dict[str, Any]) -> bool:
     text = _visible(message)
     return READY in text or HEARTBEAT in text or "STACK-PROMPT" in text
@@ -510,47 +493,33 @@ async def test_terminal_client_stack_end_to_end(
     socket_dir = Path(os.environ["GOBBY_E2E_HOST_SOCKET_DIR"])
     _wait_for_host(daemon_client, daemon_instance)
     client = _http(daemon_instance)
-    tmux_spawn = _spawn_agent(client, "tmux")
-    native_spawn = _spawn_agent(client, "native")
+    native_spawn = _spawn_agent(client)
 
-    def both_live() -> tuple[dict[str, Any], dict[str, Any]] | None:
+    def native_live() -> dict[str, Any] | None:
         try:
-            return _item_by_backend(client, "tmux"), _item_by_backend(client, "native")
+            return _item_by_backend(client, "native")
         except AssertionError:
             return None
 
-    live = wait_for_condition(
-        both_live, timeout=25.0, interval=0.2, description="tmux and native rows"
+    native_item = wait_for_condition(
+        native_live, timeout=25.0, interval=0.2, description="native agent row"
     )
-    assert _is_item_pair(live)
-    tmux_item, native_item = live
-    assert tmux_item["backend"] == "tmux"
+    assert native_item is not None
     assert native_item["backend"] == "native"
-    assert tmux_item["state"] == "live"
     assert native_item["state"] == "live"
     native_id = str(native_item["id"])
-    tmux_id = str(tmux_item["id"])
 
     token = daemon_token(daemon_instance.gobby_home)
     native_loc = _attach_locator(native_item)
-    tmux_loc = _attach_locator(tmux_item)
     native_frames = await _open_viewer(native_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
-    tmux_frames = await _open_viewer(tmux_loc, token, cols=VIEWER_COLS, rows=VIEWER_ROWS)
     native_seen = await _read_until(
         native_frames,
         _has_ready_marker,
         timeout=12.0,
         description="native ready frames",
     )
-    tmux_seen = await _read_until(
-        tmux_frames,
-        _has_ready_marker,
-        timeout=12.0,
-        description="tmux ready frames",
-    )
     assert {_frame_text(item) and item.get("type") for item in native_seen}  # nonempty
     assert all(item.get("type") in _FRAME_TYPES for item in native_seen)
-    assert all(item.get("type") in _FRAME_TYPES for item in tmux_seen)
 
     gclient_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
@@ -558,22 +527,13 @@ async def test_terminal_client_stack_end_to_end(
     await web_ws.connect()
     await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native")
-    gclient_tmux = WsSession(daemon_instance)
-    await gclient_tmux.connect()
-    await gclient_tmux.attach(tmux_id, delivery="direct", request_id="gclient-tmux")
 
     native_marker = f"N-{uuid.uuid4().hex[:6]}"
-    tmux_marker = f"T-{uuid.uuid4().hex[:6]}"
     granted = await gclient_ws.take(native_id)
     assert granted.get("granted") is True
     delivered = await gclient_ws.write(native_id, native_marker + "\r")
     assert delivered.get("outcome") == "delivered"
     await _assert_input_reaches(native_frames, native_marker, description="native keystroke")
-    tmux_granted = await gclient_tmux.take(tmux_id)
-    assert tmux_granted.get("granted") is True
-    tmux_delivered = await gclient_tmux.write(tmux_id, tmux_marker + "\r")
-    assert tmux_delivered.get("outcome") == "delivered"
-    await _assert_input_reaches(tmux_frames, tmux_marker, description="tmux keystroke")
 
     await native_frames.detach()
     await native_frames.close()
@@ -586,39 +546,22 @@ async def test_terminal_client_stack_end_to_end(
     )
 
     native_session = str(native_item.get("session_id") or "")
-    tmux_session = str(tmux_item.get("session_id") or "")
-
-    def both_attention() -> tuple[dict[str, Any], dict[str, Any]] | None:
-        native_hit = _roster_entry(client, native_session)
-        tmux_hit = _roster_entry(client, tmux_session)
-        if native_hit and tmux_hit:
-            return native_hit, tmux_hit
-        return None
-
     try:
-        attention = wait_for_condition(
-            both_attention,
+        native_entry = wait_for_condition(
+            lambda: _roster_entry(client, native_session),
             timeout=45.0,
             interval=0.5,
-            description="native and tmux attention",
+            description="native attention",
         )
     except AssertionError as exc:
         roster = client.get("/api/attention/roster")
         running = client.get("/api/agents/running")
         raise AssertionError(
-            f"{exc}; native_session={native_session}; tmux_session={tmux_session}; "
+            f"{exc}; native_session={native_session}; "
             f"running={running.text[:1500]}; roster={roster.text[:2000]}"
         ) from exc
-    assert _is_item_pair(attention)
-    native_entry, tmux_entry = attention
     _respond(client, native_entry)
-    # The first response can advance the other CLI's prompt. Read its current
-    # fingerprint immediately before answering the second entry.
-    current_tmux_entry = _roster_entry(client, tmux_session)
-    assert current_tmux_entry, tmux_entry
-    _respond(client, current_tmux_entry)
     await _assert_input_reaches(native_frames, "ANSWERED:", description="native attention answer")
-    await _assert_input_reaches(tmux_frames, "ANSWERED:", description="tmux attention answer")
 
     web_take = await web_ws.take(native_id)
     assert web_take.get("granted") is True
@@ -671,16 +614,12 @@ async def test_terminal_client_stack_end_to_end(
     _wait_for_host(client, daemon_instance)
     await gclient_ws.close()
     await web_ws.close()
-    await gclient_tmux.close()
     gclient_ws = WsSession(daemon_instance)
     web_ws = WsSession(daemon_instance)
-    gclient_tmux = WsSession(daemon_instance)
     await gclient_ws.connect()
     await web_ws.connect()
-    await gclient_tmux.connect()
     await gclient_ws.attach(native_id, delivery="direct", request_id="gclient-native-2")
     await web_ws.attach(native_id, delivery="proxy", request_id="web-native-2")
-    await gclient_tmux.attach(tmux_id, delivery="direct", request_id="gclient-tmux-2")
     await gclient_ws.take(native_id)
     await web_ws.wait_for(
         lambda item: item.get("type")
@@ -961,10 +900,8 @@ async def test_terminal_client_stack_end_to_end(
     exit_id = str(exiting["terminal_id"])
     epoch_before = _wait_for_host(client, daemon_instance).get("host_epoch")
     await native_frames.close()
-    await tmux_frames.close()
     await gclient_ws.close()
     await web_ws.close()
-    await gclient_tmux.close()
     await control.close()
 
     _restart_daemon_preserving_host(daemon_instance)
@@ -974,9 +911,7 @@ async def test_terminal_client_stack_end_to_end(
     assert host_after.get("adopted") is True
     assert host_after.get("host_epoch") == epoch_before
     native_after = client.get(f"/api/terminals/{native_id}").json()
-    tmux_after = client.get(f"/api/terminals/{tmux_id}").json()
     assert native_after.get("state") == "live"
-    assert tmux_after.get("state") == "live"
     wait_for_condition(
         lambda: client.get(f"/api/terminals/{exit_id}").json().get("state")
         in {"exited", "orphaned", "live"},
@@ -994,12 +929,9 @@ async def test_terminal_client_stack_end_to_end(
         interval=0.4,
         description="native host-crash state",
     )
-    tmux_crash = client.get(f"/api/terminals/{tmux_id}").json()
-    assert tmux_crash.get("state") == "live"
 
-    for run_id in (native_spawn.get("run_id"), tmux_spawn.get("run_id")):
-        if not isinstance(run_id, str):
-            continue
+    run_id = native_spawn.get("run_id")
+    if isinstance(run_id, str):
         cancelled = client.post(f"/api/agents/runs/{run_id}/cancel")
         assert cancelled.status_code in {200, 409, 404}, cancelled.text
         detail = client.get(f"/api/agents/runs/{run_id}")
@@ -1450,19 +1382,41 @@ async def _take_and_echo(client: GclientDriver, marker: str) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_backend", ["tmux"], indirect=True)
-async def test_gclient_renders_tmux_row_through_host(daemon_instance: DaemonInstance) -> None:
-    with _http(daemon_instance) as http:
-        await asyncio.to_thread(_wait_for_host, http, daemon_instance)
-        terminal_id = await _shell(daemon_instance, marker="GCLIENT-ROW-OK")
-        row = http.get(f"/api/terminals/{terminal_id}").json()
-        assert row["backend"] == "tmux"
-    async with ClientWire(daemon_instance).running() as wire:
-        async with _running_gclient(daemon_instance, local_url=wire.url) as client:
-            await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
-            await _screen(client, "GCLIENT-ROW-OK")
-            await _delivery(wire, "direct")
-            assert client.poll() is None
+async def test_gclient_renders_external_tmux_row_through_host(
+    daemon_instance: DaemonInstance,
+    cli_events: CLIEventSimulator,
+    tmp_path: Path,
+) -> None:
+    """gclient renders a user-started tmux pane, discovered as an external row, via the host."""
+    isolated = IsolatedTmux(tmp_path)
+    isolated.start()
+    try:
+        wait_for_condition(
+            lambda: "GOBBY-EXT-READY" in isolated.capture(),
+            timeout=5.0,
+            interval=0.05,
+            description="scripted CLI ready",
+        )
+        with _http(daemon_instance) as http:
+            await asyncio.to_thread(_wait_for_host, http, daemon_instance)
+            _seed_session(cli_events, isolated, cwd=str(daemon_instance.project_dir))
+            row = wait_for_condition(
+                lambda: _list_external(http),
+                timeout=8.0,
+                interval=0.1,
+                description="external terminal row",
+            )
+            assert row["backend"] == "tmux"
+            assert row["ownership"] == "external"
+            terminal_id = str(row["id"])
+        async with ClientWire(daemon_instance).running() as wire:
+            async with _running_gclient(daemon_instance, local_url=wire.url) as client:
+                await _activate_terminal(client, await _adopt(daemon_instance, terminal_id))
+                await _screen(client, "GOBBY-EXT-READY")
+                await _delivery(wire, "direct")
+                assert client.poll() is None
+    finally:
+        isolated.close()
 
 
 @pytest.mark.asyncio
@@ -1492,7 +1446,6 @@ async def test_gclient_renders_native_row_direct_and_types(daemon_instance: Daem
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_backend", ["native", "tmux"], indirect=True)
 async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)

@@ -767,7 +767,7 @@ gobby agents cleanup [--timeout MINUTES] [--dry-run]
 
 `agents spawn` supports `--workflow`, `--task`, `--provider`, `--model`,
 `--reasoning-effort`, `--reasoning-required/--no-reasoning-required`,
-`--timeout`, `--terminal-backend tmux|native`, and `--json`.
+`--timeout`, `--terminal-backend native`, and `--json`.
 The CLI requires a parent session and does not expose all MCP isolation/grant
 fields. Cleanup mutates by default; use `--dry-run` to inspect stale candidates.
 CLI kill defaults differ from MCP: pass `--stop` to stop the workflow as well.

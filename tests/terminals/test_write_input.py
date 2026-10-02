@@ -38,6 +38,9 @@ class _Sessions:
         return ["tmux"]
 
     async def _run(self, *args: str, **_kwargs: object) -> TmuxResult:
+        if "#{pid}" in args[-1]:
+            # The server that recorded make_memory_terminal's pane.
+            return 0, "1658\t1784592177\n", ""
         self.calls.append(args)
         effect = self.effects.pop(0) if self.effects else (0, "", "")
         if isinstance(effect, BaseException):
@@ -59,7 +62,9 @@ class _HostClient:
 
 
 def _tmux_runtime(sessions: _Sessions) -> TmuxTerminalRuntime:
-    return TmuxTerminalRuntime(cast(TmuxSessionManager, sessions))
+    return TmuxTerminalRuntime(
+        sessions_for_socket=lambda _socket: cast(TmuxSessionManager, sessions)
+    )
 
 
 def _native_terminal() -> Terminal:

@@ -392,44 +392,69 @@ async def test_direct_attach_refuses_exited_row(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("state", "backend", "code"),
+    ("state", "code"),
     [
-        ("missing", "native", "terminal_gone"),
-        ("exited", "native", "terminal_exited"),
-        ("orphaned", "native", "terminal_orphaned"),
-        ("pending", "tmux", "unsupported_terminal_backend"),
-        ("live", "tmux", "unsupported_terminal_backend"),
+        ("missing", "terminal_gone"),
+        ("exited", "terminal_exited"),
+        ("orphaned", "terminal_orphaned"),
     ],
 )
-async def test_attach_fences_unavailable_and_legacy_rows_before_acquiring_a_lease(
-    state: str, backend: str, code: str, temp_db: HubDatabase, sample_project: dict[str, Any]
+async def test_attach_fences_unavailable_rows_before_acquiring_a_lease(
+    state: str, code: str, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     manager = TerminalManager(temp_db)
     terminal_id = str(uuid.uuid4())
     if state != "missing":
-        if backend == "native":
-            terminal_id = _live_row(temp_db, sample_project)
-            if state == "exited":
-                assert manager.mark_exited(terminal_id) is not None
-            else:
-                assert manager.mark_orphaned(terminal_id) is not None
+        terminal_id = _live_row(temp_db, sample_project)
+        if state == "exited":
+            assert manager.mark_exited(terminal_id) is not None
         else:
-            pending = _create_pending(manager, sample_project["id"])
-            terminal_id = pending.id
-            if state == "live":
-                socket_path = "/tmp/legacy-tmux.sock"
-                promoted = manager.promote_to_live(
-                    pending.id,
-                    locator={"socket_path": socket_path, "pane_id": "%1"},
-                    locator_key=tmux_locator_key(
-                        socket_path=socket_path,
-                        server_pid=100,
-                        server_start_time=200,
-                        pane_id="%1",
-                    ),
-                    session_name="legacy",
-                )
-                assert promoted is not None
+            assert manager.mark_orphaned(terminal_id) is not None
+    reply, leases, runtime = await _attach_reply(manager, terminal_id)
+
+    assert reply["success"] is False
+    assert reply["code"] == code
+    assert reply["reason"]
+    assert "attachment_id" not in reply
+    assert leases._attachments == {}
+    assert runtime.resolved == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["pending", "live"])
+async def test_attach_to_a_backend_without_a_runtime_releases_its_lease(
+    state: str, temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """A tmux row attaches like any live row; only a missing runtime refuses it."""
+    manager = TerminalManager(temp_db)
+    pending = _create_pending(manager, sample_project["id"], backend="tmux")
+    if state == "live":
+        socket_path = "/tmp/hand-started-tmux.sock"
+        promoted = manager.promote_to_live(
+            pending.id,
+            locator={"socket_path": socket_path, "pane_id": "%1"},
+            locator_key=tmux_locator_key(
+                socket_path=socket_path,
+                server_pid=100,
+                server_start_time=200,
+                pane_id="%1",
+            ),
+            session_name="hand-started",
+        )
+        assert promoted is not None
+    reply, leases, runtime = await _attach_reply(manager, pending.id)
+
+    assert reply["success"] is False
+    assert reply["code"] == "runtime_unavailable"
+    assert reply["reason"]
+    assert leases.get(reply["attachment_id"]) is None
+    assert runtime.resolved == 0
+
+
+async def _attach_reply(
+    manager: TerminalManager, terminal_id: str
+) -> tuple[dict[str, Any], TerminalLeaseRegistry, _AfterStartupRuntime]:
+    """Attach through a server whose only runtime is native."""
     server = _ws_server()
     runtime = _AfterStartupRuntime(_StartupHost(settled=True))
     registry = TerminalRuntimeRegistry()
@@ -445,14 +470,7 @@ async def test_attach_fences_unavailable_and_legacy_rows_before_acquiring_a_leas
     ws = MockWebSocket()
     server.clients[ws] = {"subscriptions": {"*"}}
     await _send(server, ws, {"type": "terminal_attach", "terminal_id": terminal_id})
-
-    reply = ws.messages_of_type("terminal_attach_result")[-1]
-    assert reply["success"] is False
-    assert reply["code"] == code
-    assert reply["reason"]
-    assert "attachment_id" not in reply
-    assert leases._attachments == {}
-    assert runtime.resolved == 0
+    return ws.messages_of_type("terminal_attach_result")[-1], leases, runtime
 
 
 @pytest.mark.asyncio

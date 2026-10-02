@@ -3,25 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal
 
-from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
-from gobby.agents.tmux.spawner import tmux_spawn_shell_and_env, validate_spawn_key
+from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.tmux.text_injection import (
     TMUX_TEXT_ENTER_DELAY_SECONDS,
+    TmuxTargetUnavailableError,
     TmuxTextInjectionError,
     TmuxTextInjectionTimeout,
     paste_literal_text_to_tmux_target,
     send_enter_key_to_tmux_target,
     send_named_key_to_tmux_target,
 )
-from gobby.config.tmux import TmuxConfig
 from gobby.storage.terminals import (
     AttachLocator,
     Terminal,
-    parse_tmux_generation,
-    tmux_locator_key,
 )
 from gobby.terminals.dimensions import validate_dimensions
 from gobby.terminals.host_protocol import frames_socket_path
@@ -48,8 +46,11 @@ __all__ = [
     "CommitSpawnRefusedError",
     "InputPayloadTooLargeError",
     "TmuxTerminalRuntime",
-    "configured_tmux_runtime",
 ]
+
+_GENERATION_FORMAT = "#{pid}\t#{start_time}"
+# What a pane from another server generation reads as: nothing.
+_EMPTY_SNAPSHOT = SnapshotResult(text="", truncated=False, dropped_bytes=0, total_bytes=0)
 
 
 class TmuxTerminalRuntime:
@@ -59,26 +60,26 @@ class TmuxTerminalRuntime:
 
     def __init__(
         self,
-        sessions: TmuxSessionManager,
         *,
         host_control: Any | None = None,
+        sessions_for_socket: Callable[[str], TmuxSessionManager] = TmuxSessionManager,
     ) -> None:
-        self._sessions = sessions
         self._host_control = host_control
-
-    def _cmd(self) -> list[str]:
-        return self._sessions.base_args()
-
-    async def list_sessions(self) -> list[TmuxSessionInfo]:
-        """Live sessions on this runtime's socket (restart reconciliation)."""
-        return await self._sessions.list_sessions()
+        self._sessions_for_socket = sessions_for_socket
 
     def _sessions_for(self, terminal: Terminal) -> TmuxSessionManager:
+        """The manager for the user's own server that recorded this pane.
+
+        Gobby owns no tmux server, so a row that is not an external pane with a
+        recorded socket has nothing to address.
+        """
         locator = terminal.locator or {}
         socket_path = locator.get("socket_path")
-        if terminal.ownership == "external" and isinstance(socket_path, str) and socket_path:
-            return TmuxSessionManager(TmuxConfig(socket_name="", socket_path=socket_path))
-        return self._sessions
+        if terminal.ownership != "external" or not isinstance(socket_path, str) or not socket_path:
+            raise TmuxTargetUnavailableError(
+                "tmux row has no external socket to address", command=()
+            )
+        return self._sessions_for_socket(socket_path)
 
     def _cmd_for(self, terminal: Terminal) -> list[str]:
         return self._sessions_for(terminal).base_args()
@@ -96,113 +97,44 @@ class TmuxTerminalRuntime:
             return f"={name}:"
         raise TerminalWriteError(stage="none")
 
-    async def _run(self, *args: str) -> tuple[int, str, str]:
-        return await self._sessions._run(*args)
-
     async def prepare_spawn(self, request: TerminalSpawnRequest) -> PreparedSpawn:
-        if request.rows is not None and request.cols is not None:
-            validate_dimensions(request.rows, request.cols)
-        elif request.rows is not None or request.cols is not None:
-            validate_dimensions(
-                request.rows if request.rows is not None else 0,
-                request.cols if request.cols is not None else 0,
-            )
-        spawn_key = validate_spawn_key(request.spawn_key)
-        shell_cmd, extra_env = tmux_spawn_shell_and_env(
-            request.command,
-            request.env,
-            request.auth_cli,
-        )
-        try:
-            info = await self._sessions.create_session(
-                spawn_key,
-                command=shell_cmd,
-                cwd=request.cwd,
-                env=extra_env,
-                rows=request.rows,
-                cols=request.cols,
-            )
-        except Exception as exc:
-            raise TerminalSpawnFailed(str(exc)) from exc
-        dims_rc, dims_stdout, dims_stderr = await self._run(
-            "display-message",
-            "-t",
-            f"={info.name}:",
-            "-p",
-            "#{pane_height} #{pane_width}",
-        )
-        if dims_rc != 0:
-            raise TerminalSpawnFailed(
-                f"tmux pane dimension query failed (rc={dims_rc}): {dims_stderr.strip()}"
-            )
-        try:
-            pane_rows, pane_cols = (int(value) for value in dims_stdout.split())
-            validate_dimensions(pane_rows, pane_cols)
-        except ValueError as exc:
-            raise TerminalSpawnFailed("tmux returned invalid pane dimensions") from exc
-        rc, stdout, _stderr = await self._run(
-            "display-message",
-            "-t",
-            f"={info.name}:",
-            "-p",
-            "#{socket_path}|#{pid}|#{start_time}|#{pane_id}",
-        )
-        locator: AttachLocator | None = None
-        stored_locator: dict[str, object] | None = None
-        locator_key: str | None = None
-        host_terminal_id: str | None = info.pane_id
-        if rc == 0 and stdout.strip():
-            parsed = parse_tmux_generation(stdout.strip())
-            pane_id = str(parsed["pane_id"])
-            socket_path = str(parsed["socket_path"])
-            raw_pid = parsed["server_pid"]
-            raw_start = parsed["server_start_time"]
-            if not isinstance(raw_pid, int) or not isinstance(raw_start, int):
-                raise TerminalSpawnFailed("tmux generation fields were not integers")
-            server_pid = raw_pid
-            server_start_time = raw_start
-            locator = AttachLocator(
-                backend="tmux",
-                frame_host_epoch="",
-                socket_path=socket_path,
-                pane_id=pane_id,
-            )
-            stored_locator = {
-                "socket_path": socket_path,
-                "server_pid": server_pid,
-                "server_start_time": server_start_time,
-                "pane_id": pane_id,
-            }
-            locator_key = tmux_locator_key(
-                socket_path=socket_path,
-                server_pid=server_pid,
-                server_start_time=server_start_time,
-                pane_id=pane_id,
-            )
-            host_terminal_id = pane_id
-        return PreparedSpawn(
-            terminal_id=request.terminal_id,
-            spawn_key=spawn_key,
-            locator=locator,
-            process=None,
-            host_terminal_id=host_terminal_id,
-            stored_locator=stored_locator,
-            locator_key=locator_key,
-            pid=info.pane_pid,
-            rows=pane_rows,
-            cols=pane_cols,
-        )
+        """Refuse: agent spawn is native-only; tmux rows are external panes."""
+        raise TerminalSpawnFailed("tmux backend does not spawn terminals")
 
     async def commit_spawn(self, prepared: PreparedSpawn) -> TerminalHandle:
-        if not prepared.persist_acknowledged:
-            raise CommitSpawnRefusedError("persist has not been acknowledged")
-        locator = prepared.locator or AttachLocator(backend="tmux", frame_host_epoch="")
-        return TerminalHandle(terminal_id=prepared.terminal_id, locator=locator)
+        """Refuse: nothing was prepared on tmux."""
+        raise TerminalSpawnFailed("tmux backend does not spawn terminals")
+
+    async def _same_generation(self, terminal: Terminal, target: str) -> bool:
+        """True only while ``target`` is on the tmux server that recorded this row.
+
+        A restarted server reuses pane ids, so the socket and pane alone can
+        name an unrelated pane.
+        """
+        locator = terminal.locator or {}
+        recorded = (locator.get("server_pid"), locator.get("server_start_time"))
+        if not all(isinstance(part, int) and not isinstance(part, bool) for part in recorded):
+            return False
+        try:
+            rc, stdout, _stderr = await self._sessions_for(terminal)._run(
+                "display-message", "-p", "-t", target, _GENERATION_FORMAT
+            )
+        except (TimeoutError, OSError, TmuxTargetUnavailableError):
+            return False
+        return rc == 0 and stdout.strip() == "{}\t{}".format(*recorded)
+
+    async def _require_generation(
+        self, terminal: Terminal, target: str, *, stage: Literal["none", "partial"]
+    ) -> None:
+        if not await self._same_generation(terminal, target):
+            raise TerminalWriteError(stage=stage)
 
     async def is_live(self, terminal: Terminal) -> bool:
         locator = terminal.locator or {}
         pane_id = locator.get("pane_id")
         if isinstance(pane_id, str) and pane_id:
+            if not await self._same_generation(terminal, pane_id):
+                return False
             rc, stdout, _stderr = await self._sessions_for(terminal)._run(
                 "display-message", "-p", "-t", pane_id, "#{pane_dead}"
             )
@@ -214,18 +146,26 @@ class TmuxTerminalRuntime:
         name = self._tmux_name(terminal)
         if not name:
             return False
-        return await self._sessions_for(terminal).has_session(name)
+        try:
+            sessions = self._sessions_for(terminal)
+        except TmuxTargetUnavailableError:
+            return False
+        return await sessions.has_session(name)
 
     async def snapshot(
         self, terminal: Terminal, lines: int = 50, *, mode: SnapshotMode = "text"
     ) -> SnapshotResult:
-        text = await self._sessions_for(terminal).capture_pane(
-            self._capture_name(terminal), lines=lines, mode=mode
-        )
+        target = self._capture_name(terminal)
+        if not await self._same_generation(terminal, target):
+            return _EMPTY_SNAPSHOT
+        text = await self._sessions_for(terminal).capture_pane(target, lines=lines, mode=mode)
         return await self._snapshot_result(terminal, text or "")
 
     async def snapshot_full(self, terminal: Terminal) -> SnapshotResult:
-        text = await self._sessions_for(terminal).capture_full_pane(self._capture_name(terminal))
+        target = self._capture_name(terminal)
+        if not await self._same_generation(terminal, target):
+            return _EMPTY_SNAPSHOT
+        text = await self._sessions_for(terminal).capture_full_pane(target)
         return await self._snapshot_result(terminal, text or "")
 
     def _capture_name(self, terminal: Terminal) -> str:
@@ -274,6 +214,7 @@ class TmuxTerminalRuntime:
 
     async def write_text(self, terminal: Terminal, text: str, submit: bool) -> WriteOutcome:
         target = self._target(terminal)
+        await self._require_generation(terminal, target, stage="none")
         body = text.rstrip("\n")
         payload_landed = False
         try:
@@ -287,6 +228,7 @@ class TmuxTerminalRuntime:
             if submit:
                 if body and TMUX_TEXT_ENTER_DELAY_SECONDS > 0:
                     await asyncio.sleep(TMUX_TEXT_ENTER_DELAY_SECONDS)
+                    await self._require_generation(terminal, target, stage="partial")
                 await send_enter_key_to_tmux_target(target, tmux_cmd=self._cmd_for(terminal))
             return Delivered()
         except TmuxTextInjectionTimeout:
@@ -300,6 +242,7 @@ class TmuxTerminalRuntime:
 
     async def write_key(self, terminal: Terminal, key: NamedKey) -> WriteOutcome:
         target = self._target(terminal)
+        await self._require_generation(terminal, target, stage="none")
         try:
             cursor, keypad, _paste = await self._query_flags(terminal, target)
             named = TMUX_KEY_NAMES.get(key)
@@ -323,6 +266,7 @@ class TmuxTerminalRuntime:
         if len(data) > MAX_RAW_INPUT_PAYLOAD_BYTES:
             raise InputPayloadTooLargeError("input exceeds 64 KiB")
         target = self._target(terminal)
+        await self._require_generation(terminal, target, stage="none")
         delivered_bytes = 0
         for offset in range(0, len(data), 512):
             chunk = data[offset : offset + 512]
@@ -351,6 +295,7 @@ class TmuxTerminalRuntime:
         if len(text.encode("utf-8")) > MAX_INPUT_PAYLOAD_BYTES:
             raise InputPayloadTooLargeError("paste exceeds 1 MiB UTF-8")
         target = self._target(terminal)
+        await self._require_generation(terminal, target, stage="none")
         try:
             _cursor, _keypad, bracketed = await self._query_flags(terminal, target)
             payload = f"\x1b[200~{text}\x1b[201~" if bracketed else text
@@ -369,8 +314,10 @@ class TmuxTerminalRuntime:
 
     async def resize(self, terminal: Terminal, rows: int, cols: int) -> None:
         validate_dimensions(rows, cols)
-        sessions = self._sessions_for(terminal)
         target = self._target(terminal)
+        if not await self._same_generation(terminal, target):
+            return
+        sessions = self._sessions_for(terminal)
         await sessions._run("set-option", "-w", "-t", target, "window-size", "manual")
         await sessions._run(
             "resize-window",
@@ -383,12 +330,16 @@ class TmuxTerminalRuntime:
         )
 
     async def release_size(self, terminal: Terminal) -> None:
-        sessions = self._sessions_for(terminal)
-        await sessions._run("set-option", "-wu", "-t", self._target(terminal), "window-size")
+        target = self._target(terminal)
+        if await self._same_generation(terminal, target):
+            await self._sessions_for(terminal)._run(
+                "set-option", "-wu", "-t", target, "window-size"
+            )
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         name = self._tmux_name(terminal)
-        if name:
+        # A restarted server's same-named session belongs to someone else.
+        if name and await self._same_generation(terminal, self._target(terminal)):
             # Kill on the terminal's own socket: presence checks use
             # _sessions_for, so killing on the default socket would no-op
             # for external rows and report the session as still present.
@@ -435,14 +386,3 @@ class TmuxTerminalRuntime:
         while len(parts) < 3:
             parts.append("0")
         return parts[0] == "1", parts[1] == "1", parts[2] == "1"
-
-
-def configured_tmux_runtime(host_control: Any | None = None) -> TmuxTerminalRuntime:
-    """Runtime over the daemon-configured tmux session manager.
-
-    The accessor is imported at call time so the configured socket (and any
-    test patch of the accessor) resolves when the runtime is built.
-    """
-    from gobby.agents.tmux import get_tmux_session_manager
-
-    return TmuxTerminalRuntime(get_tmux_session_manager(), host_control=host_control)

@@ -170,13 +170,6 @@ def register_send_keys_tool(
                 terminal_manager,
             ).managed_terminal
             if terminal is not None:
-                if terminal.backend != "native":
-                    return {
-                        "success": False,
-                        "error": f"Unsupported terminal backend: {terminal.backend}",
-                        "error_code": "unsupported_terminal_backend",
-                        "idempotency_key": resolved_key,
-                    }
                 kind: Literal["text", "key", "paste"] = "text"
                 payload = keys
                 submit = False

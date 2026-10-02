@@ -35,6 +35,8 @@ class _Sessions:
         return ["tmux"]
 
     async def _run(self, *args: str, **_kwargs: object) -> TmuxResult:
+        if "#{pid}" in args[-1]:
+            return 0, "1658\t1784592177\n", ""
         self.calls.append(args)
         return 0, "", ""
 
@@ -149,7 +151,9 @@ async def test_input_bytes_are_key_codes_and_paste_stays_bracketed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sessions = _Sessions()
-    runtime = TmuxTerminalRuntime(cast(TmuxSessionManager, sessions))
+    runtime = TmuxTerminalRuntime(
+        sessions_for_socket=lambda _socket: cast(TmuxSessionManager, sessions)
+    )
     terminal = make_memory_terminal()
     server, attachment_id = await _server(terminal, runtime)
     websocket = _WebSocket()

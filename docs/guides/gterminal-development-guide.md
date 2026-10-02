@@ -159,19 +159,18 @@ version is unpublished or yanked. Do not invent a combined workflow.
 
 ## Backend status
 
-`native` is the default backend: `terminals.default_backend: native` in the bundled
-`config.yaml` and `TerminalConfig.default_backend`. `tmux` remains supported and is
-selected per spawn with `backend: tmux`, or globally with
-`terminals.default_backend: tmux`; externally discovered sessions
-(`ownership: external`) are always tmux. A native spawn requires an installed
+`native` is the only spawn backend: `terminals.default_backend: native` in the bundled
+`config.yaml` and `TerminalConfig.default_backend`, which accepts no other value.
+`tmux` remains only as a spawn-less adapter for externally discovered sessions
+(`ownership: external`), which are always tmux: send_keys, wake, and capture reach
+them, and a spawn request for tmux is refused (#22856). A native spawn requires an installed
 `gterm`. When the host is unavailable it fails before fork with the typed refusal
 `host_unavailable` (`HostUnavailableError`, a `HostCommandError`); there is no silent
 tmux fallback. The flip landed under #22104 on the evidence in
 `docs/evidence/native-backend-flip.md`: P7's host-driven acceptance suite green in
 ordinary CI at one commit with no later red row for a required OS. The required OS
 set is macOS only — Linux is deferred by user decision (2026-09-16) and its rows stay
-recorded without gating. Evidence rows are append-only in execution order. Roll a
-deployment back to tmux with `gobby config set terminals.default_backend tmux`.
+recorded without gating. Evidence rows are append-only in execution order.
 
 ## Landing worktree
 
@@ -187,21 +186,18 @@ is currently active. Inspect installed worktree/task rows before acting on it.
   `agent_runs.terminal_id`, backend-neutral WS messages), pins stay at schema 407
   until migration 408 lands, tests take the union with 0.5.0 assertions ported to
   the renamed seams (`manager_for_terminal_context`, `snapshot_lines`,
-  `dispatch_keys`). Web delivery is split by backend (#21195): a `tmux` row is
-  viewed through the tmux-client PTY bridge (`src/gobby/agents/tmux/pty_bridge.py`,
-  `history.py`, `alt_screen.py` and `src/gobby/servers/websocket/tmux_activation.py`)
-  — `terminal_attach` reserves, the browser's first `terminal_resize` spawns
-  `tmux attach-session` in a PTY at that geometry, the bounded `capture-pane`
-  history goes out as `terminal_attach_history`, raw PTY bytes stream as
-  `terminal_output` keyed by attachment id, and `terminal_input` writes raw
-  bytes to the PTY; a `native` row goes through the gterm host proxy, and the
-  daemon sends it one empty `terminal_attach_history` before its first output
-  because the host captures history only for tmux panes. Operator
-  flags, exit codes, and stale-socket start recovery for that host are in
+  `dispatch_keys`). Web delivery goes through the gterm host for every backend.
+  A `native` row is the host's own pane, and the daemon sends it one empty
+  `terminal_attach_history` before its first output because the host captures
+  history only for tmux panes. A `tmux` row is an external pane the user started:
+  Gobby spawns no tmux (#22856 deleted the tmux-client PTY bridge and its
+  `pty_bridge.py`, `history.py` and `alt_screen.py`), and the host observes the
+  pane on its recorded socket. Operator flags, exit codes, and stale-socket start
+  recovery for that host are in
   [CLI commands — gterm host](cli-commands.md#gterm-host). The #20805
-  no-op-resize guard lives in `TmuxPTYBridge.resize` for tmux rows and in
+  no-op-resize guard lives in
   `src/gobby/servers/websocket/terminal_sizing.py::_apply_terminal_sizing` for
-  native rows; a native `terminal_resize` also moves the sender's host viewport
+  both backends; a native `terminal_resize` also moves the sender's host viewport
   to the new grid so its frames repaint at that size. The current gclient
   renders tmux rows through a gterm host observer (see *Client status*).
 

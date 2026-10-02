@@ -506,37 +506,18 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
 
 
-def reserve_tmux_socket() -> Path:
-    """Reserve a short unique socket name under the permitted temp root."""
-    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
-    with tempfile.NamedTemporaryFile(prefix="t", dir=root) as reserved:
-        socket_path = Path(reserved.name).resolve()
-    if len(os.fsencode(socket_path)) >= 104:
-        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
-    return socket_path
-
-
 def _seed_e2e_runtime_state(
     postgres_db: Any,
     project_dir: Path,
     *,
     terminal_host_socket_dir: Path | None = None,
-) -> Path:
-    """Seed PostgreSQL-owned runtime config and the synthetic E2E project.
-
-    Returns the daemon's private tmux socket path. Without ``tmux.socket_path``
-    the daemon shares the user's ``tmux -L gobby`` server, and every agent it
-    spawns outlives the SIGKILL that tears the daemon down (#21175). The path
-    lives under the permitted temp root with a short unique name; the owner
-    kills the server and removes the socket with :func:`kill_tmux_server`.
-    """
+) -> None:
+    """Seed PostgreSQL-owned runtime config and the synthetic E2E project."""
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
-    tmux_socket = reserve_tmux_socket()
     mutations = ConfigMutations(postgres_db)
     values: dict[str, object] = {
         "test_mode": True,
-        "tmux.socket_path": str(tmux_socket),
         "memory.dream.enabled": False,
         "gobby-tasks.expansion.enabled": False,
         "gobby-tasks.validation.enabled": False,
@@ -566,7 +547,7 @@ def _seed_e2e_runtime_state(
     from tests.fixtures.isolated_checkout import insert_isolated_machine, write_project_marker
 
     # validate_checkout_root proves the root by its marker, so a bare temp dir
-    # (the runtime-contract and tmux-isolation callers) needs one; the
+    # (the runtime-contract and single-daemon callers) needs one; the
     # e2e_project_dir fixture already wrote the same marker, and rewriting it
     # is a no-op there (#21671).
     if not (project_dir / ".gobby" / "project.json").exists():
@@ -580,15 +561,6 @@ def _seed_e2e_runtime_state(
         expected_marker_id=project_id,
     )
     LocalProjectCheckoutManager(postgres_db).register(machine_id, project_id, root)
-    return tmux_socket
-
-
-def kill_tmux_server(socket_path: Path) -> None:
-    """Stop the tmux server on ``socket_path`` (if any) and drop the socket file."""
-    subprocess.run(
-        ["tmux", "-S", str(socket_path), "kill-server"], capture_output=True, check=False
-    )
-    socket_path.unlink(missing_ok=True)
 
 
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:
@@ -900,7 +872,7 @@ def e2e_config(
     # Runtime configuration is PostgreSQL-owned. The legacy config.yaml below
     # remains input coverage for bootstrap-path resolution only.
     terminal_host_socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
-    tmux_socket = _seed_e2e_runtime_state(
+    _seed_e2e_runtime_state(
         postgres_db,
         e2e_project_dir,
         terminal_host_socket_dir=terminal_host_socket_dir,
@@ -968,7 +940,6 @@ front_door:
 
     yield config_path, http_port, ws_port
 
-    kill_tmux_server(tmux_socket)
     shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 

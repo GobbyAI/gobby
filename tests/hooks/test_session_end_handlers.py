@@ -395,7 +395,7 @@ class TestSessionEndHandling:
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
         mock_session.session_type = "terminal"
-        mock_session.terminal_context = {"tmux_socket_name": "spawn"}
+        mock_session.terminal_context = {"parent_pid": 4242}
         mock_dependencies["session_storage"].get.return_value = mock_session
 
         handlers = EventHandlers(**mock_dependencies)
@@ -406,11 +406,7 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with patch(
-            "gobby.hooks.event_handlers._session_end.is_configured_tmux_socket",
-            return_value=True,
-        ):
-            response = handlers.handle_session_end(event)
+        response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status_if_non_terminal.assert_called_once_with(
@@ -436,13 +432,7 @@ class TestSessionEndHandling:
             metadata={"_platform_session_id": "sess-123"},
         )
 
-        with (
-            patch(
-                "gobby.hooks.event_handlers._session_end.is_configured_tmux_socket",
-                return_value=False,
-            ),
-            patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls,
-        ):
+        with patch("gobby.workflows.step_instances.AgentStepInstanceManager") as manager_cls:
             response = handlers.handle_session_end(event)
 
         assert response.decision == "allow"

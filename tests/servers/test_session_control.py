@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import subprocess
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -50,28 +51,6 @@ class TestKillTerminalSession:
     """Tests for the kill_terminal_session helper."""
 
     @pytest.mark.asyncio
-    async def test_kills_via_tmux_pane(self) -> None:
-        """Should call tmux kill-pane and return True on success."""
-        ctx = {"tmux_pane": "%49", "parent_pid": "12345"}
-
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 0
-        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
-
-        with patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec:
-            result = await kill_terminal_session(ctx, "test-session-id")
-
-        assert result is True
-        mock_exec.assert_called_once_with(
-            "tmux",
-            "kill-pane",
-            "-t",
-            "%49",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-    @pytest.mark.asyncio
     async def test_kills_via_tmux_pane_on_recorded_socket(self) -> None:
         """Should target the recorded tmux socket path when killing a pane."""
         ctx = {
@@ -100,10 +79,100 @@ class TestKillTerminalSession:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "server",
+        [
+            pytest.param({}, id="default-server"),
+            pytest.param({"tmux_socket_name": "gobby"}, id="named-server"),
+        ],
+    )
+    async def test_never_kills_a_pane_without_its_recorded_socket(
+        self, server: dict[str, str]
+    ) -> None:
+        """%N on some other server is an unrelated pane; Gobby only reaches $TMUX's socket."""
+        ctx = {"tmux_pane": "%49", "parent_pid": "12345", **server}
+
+        with (
+            patch("gobby.utils.spawn.create_subprocess_exec") as mock_exec,
+            patch("os.kill") as mock_kill,
+        ):
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is False
+        mock_exec.assert_not_called()
+        mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "probe",
+        [
+            pytest.param((0, "1658\t1790000000\t@1\twork\n"), id="restarted-server"),
+            pytest.param((1, ""), id="unverifiable"),
+        ],
+    )
+    async def test_never_kills_a_pane_from_another_server_generation(
+        self, probe: tuple[int, str]
+    ) -> None:
+        """A restarted server reuses %N, so a recorded generation must still answer."""
+        ctx = {
+            "tmux_pane": "%49",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
+            "tmux_server_pid": 1658,
+            "tmux_server_start_time": 1784592177,
+            "parent_pid": "12345",
+        }
+        returncode, stdout = probe
+        answer = subprocess.CompletedProcess([], returncode, stdout=stdout, stderr="")
+
+        with (
+            patch("gobby.utils.spawn.run", return_value=answer),
+            patch("gobby.utils.spawn.create_subprocess_exec") as mock_exec,
+            patch("os.kill") as mock_kill,
+        ):
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is False
+        mock_exec.assert_not_called()
+        mock_kill.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_kills_a_pane_whose_recorded_generation_still_answers(self) -> None:
+        ctx = {
+            "tmux_pane": "%49",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
+            "tmux_server_pid": 1658,
+            "tmux_server_start_time": 1784592177,
+        }
+        answer = subprocess.CompletedProcess(
+            [], 0, stdout="1658\t1784592177\t@1\twork\n", stderr=""
+        )
+        mock_proc = AsyncMock()
+        mock_proc.returncode = 0
+        mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+
+        with (
+            patch("gobby.utils.spawn.run", return_value=answer) as mock_run,
+            patch("gobby.utils.spawn.create_subprocess_exec", return_value=mock_proc) as mock_exec,
+        ):
+            result = await kill_terminal_session(ctx, "test-session-id")
+
+        assert result is True
+        assert mock_run.call_args.args[0][:3] == ["tmux", "-S", "/tmp/tmux-1000/default"]
+        assert mock_exec.call_args.args == (
+            "tmux",
+            "-S",
+            "/tmp/tmux-1000/default",
+            "kill-pane",
+            "-t",
+            "%49",
+        )
+
+    @pytest.mark.asyncio
     async def test_refuses_pid_fallback_when_tmux_fails(self) -> None:
         """A recorded pane with an unresolved tmux failure must block PID fallback."""
         ctx = {
             "tmux_pane": "%49",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
             "parent_pid": "12345",
             "parent_create_time": 100.0,
             "parent_name": "codex",
@@ -175,7 +244,11 @@ class TestKillTerminalSession:
     @pytest.mark.asyncio
     async def test_handles_tmux_not_installed(self) -> None:
         """A recorded pane must block PID fallback when tmux is unavailable."""
-        ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
+        ctx = {
+            "tmux_pane": "%10",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
+            "parent_pid": "5678",
+        }
 
         with (
             patch("gobby.utils.spawn.create_subprocess_exec", side_effect=FileNotFoundError),
@@ -189,7 +262,11 @@ class TestKillTerminalSession:
     @pytest.mark.asyncio
     async def test_handles_tmux_timeout(self) -> None:
         """A recorded pane must block PID fallback when tmux times out."""
-        ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
+        ctx = {
+            "tmux_pane": "%10",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
+            "parent_pid": "5678",
+        }
 
         with (
             patch(
@@ -208,6 +285,7 @@ class TestKillTerminalSession:
         """Missing panes should count as success during resume cleanup."""
         ctx = {
             "tmux_pane": "%10",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
             "parent_pid": "5678",
             "parent_create_time": 100.0,
             "parent_name": "codex",
@@ -231,7 +309,11 @@ class TestKillTerminalSession:
     @pytest.mark.asyncio
     async def test_tmux_failure_does_not_fall_back(self) -> None:
         """An unresolved tmux failure must return False without signaling the PID."""
-        ctx = {"tmux_pane": "%10", "parent_pid": "5678"}
+        ctx = {
+            "tmux_pane": "%10",
+            "tmux_socket_path": "/tmp/tmux-1000/default",
+            "parent_pid": "5678",
+        }
 
         mock_proc = AsyncMock()
         mock_proc.returncode = 1

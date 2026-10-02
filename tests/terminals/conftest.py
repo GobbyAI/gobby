@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import shutil
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -90,13 +89,12 @@ def gterm_binary() -> Path | None:
 
 def require_backend(backend: str) -> None:
     """Skip a contract cell when its real backend binary is absent."""
-    if backend == "tmux" and shutil.which("tmux") is None:
-        pytest.skip("tmux binary is not available")
     if backend == "native" and gterm_binary() is None:
         pytest.skip("gterm binary is not available")
 
 
-@pytest.fixture(params=["tmux", "native"])
+# tmux spawns nothing (#22856), so the spawn contract has one cell.
+@pytest.fixture(params=["native"])
 def contract_backend(request: pytest.FixtureRequest) -> str:
     backend = str(request.param)
     require_backend(backend)

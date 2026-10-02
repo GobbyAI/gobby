@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
 
 import pytest
 
@@ -17,7 +16,6 @@ from gobby.terminals.dimensions import (
     InvalidTerminalDimensionsError,
     validate_dimensions,
 )
-from gobby.terminals.runtime import TerminalSpawnRequest
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests.terminals.fakes import make_memory_terminal
 
@@ -51,25 +49,11 @@ def test_bounds_rejected_before_side_effects() -> None:
 
 
 @pytest.mark.asyncio
-async def test_prepare_spawn_and_resize_validate_before_backend() -> None:
+async def test_resize_validates_before_backend() -> None:
     sessions = MagicMock()
-    sessions.create_session = AsyncMock()
-    sessions._run = AsyncMock(return_value=(0, "", ""))
-    runtime = TmuxTerminalRuntime(sessions)
-    terminal = make_memory_terminal()
-    request = TerminalSpawnRequest(
-        terminal_id=uuid4(),
-        spawn_key="gobby-key",
-        command=["echo", "hi"],
-        rows=0,
-        cols=80,
-    )
-    with pytest.raises(InvalidTerminalDimensionsError):
-        await runtime.prepare_spawn(request)
-    sessions.create_session.assert_not_awaited()
-
     sessions._run = AsyncMock()
+    runtime = TmuxTerminalRuntime(sessions_for_socket=lambda _socket: sessions)
+    terminal = make_memory_terminal()
     with pytest.raises(InvalidTerminalDimensionsError):
         await runtime.resize(terminal, 0, 80)
     sessions._run.assert_not_awaited()
-    sessions.create_session.assert_not_awaited()

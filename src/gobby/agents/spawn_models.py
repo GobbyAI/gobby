@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 def resolve_terminal_backend(
     requested: str | None,
     daemon_config: Any | None,
-) -> Literal["tmux", "native"]:
+) -> Literal["native"]:
     """Validate an explicit backend or fall back to TerminalConfig.default_backend."""
     if requested is None:
         config = getattr(daemon_config, "terminals", None)
@@ -36,8 +36,6 @@ def resolve_terminal_backend(
         return TerminalConfig().default_backend
     if requested == "native":
         return "native"
-    if requested == "tmux":
-        return "tmux"
     raise ValueError(f"invalid terminal_backend: {requested}")
 
 
@@ -97,8 +95,7 @@ class SpawnRequest:
     terminal_manager: TerminalManager | None = None
     terminal_runtime_registry: TerminalRuntimeRegistry | None = None
     write_coordinator: WriteCoordinator | None = None
-    backend: Literal["tmux", "native"] | None = None
-    terminal_backend: Literal["tmux", "native"] = "tmux"
+    terminal_backend: Literal["native"] = "native"
     droid_mode: Literal["exec", "interactive"] = "exec"
     retry_terminal_id: str | None = None
     cancel_event: asyncio.Event | None = None

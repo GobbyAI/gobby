@@ -57,7 +57,10 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "sandbox_policy_hash: 'str') -> 'Session'",
     "delete": "(self, session_id: 'str') -> 'bool'",
     "expire_empty_sessions": "(self, timeout_hours: 'int' = 2) -> 'int'",
-    "expire_if_active": "(self, session_id: 'str') -> 'Session | None'",
+    "expire_if_active": (
+        "(self, session_id: 'str', *, machine_id: 'str', observed_updated_at: 'datetime')"
+        " -> 'Session | None'"
+    ),
     "expire_if_paused_terminal_exited": (
         "(self, session_id: 'str', *, terminal_id: 'str', machine_id: 'str', "
         "observed_updated_at: 'datetime', live_host_epoch: 'str | None' = None) "

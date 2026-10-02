@@ -284,7 +284,6 @@ def _kill_target(attempt: InDoubtAttempt, row: Terminal, prepared: PreparedSpawn
         locator_key=identity.locator_key,
         host_epoch=identity.host_epoch if attempt.backend == "native" else row.host_epoch,
         process=process or None,
-        session_name=attempt.spawn_key if attempt.backend == "tmux" else row.session_name,
     )
 
 
