@@ -174,6 +174,7 @@ async def test_resume_replays_trusted_snapshot(monkeypatch: pytest.MonkeyPatch) 
             session_manager=MagicMock(),
         )
 
+    assert prepare_sandbox.await_args is not None
     replayed = prepare_sandbox.await_args.kwargs["config"]
     assert replayed.allowed_domains == trusted.allowed_domains
     assert (replayed.allow_git_network, replayed.allow_package_registries) == (True, True)
