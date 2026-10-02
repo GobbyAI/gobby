@@ -22,6 +22,38 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 pytestmark = pytest.mark.integration
 
 
+def test_bundled_pipeline_tags_merge_with_gobby(temp_db: HubDatabase, tmp_path: Path) -> None:
+    from gobby.workflows.sync_pipelines import sync_bundled_pipelines
+
+    payload: dict[str, Any] = {
+        "name": "tagged-bundle",
+        "type": "pipeline",
+        "tags": ["runbook", "gobby", "runbook"],
+        "steps": [{"id": "work", "exec": "true"}],
+    }
+    (tmp_path / "tagged.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+    manager = PipelineDefinitionManager(temp_db)
+    with patch("gobby.workflows.sync_pipelines.get_bundled_pipelines_path", return_value=tmp_path):
+        assert sync_bundled_pipelines(temp_db)["synced"] == 1
+        row = manager.get_by_name("tagged-bundle")
+        assert row is not None
+        assert row.tags == ["gobby", "runbook"]
+
+        manager.update(row.id, tags=["gobby", "custom"])
+        assert sync_bundled_pipelines(temp_db)["updated"] == 1
+        assert manager.get(row.id).tags == ["gobby", "runbook"]
+
+        payload["tags"] = ["release"]
+        (tmp_path / "tagged.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+        assert sync_bundled_pipelines(temp_db)["updated"] == 1
+        assert manager.get(row.id).tags == ["gobby", "release"]
+
+        payload.pop("tags")
+        (tmp_path / "tagged.yaml").write_text(yaml.safe_dump(payload), encoding="utf-8")
+        assert sync_bundled_pipelines(temp_db)["updated"] == 1
+        assert manager.get(row.id).tags == ["gobby"]
+
+
 @pytest.fixture
 def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a temporary database for sync tests."""
