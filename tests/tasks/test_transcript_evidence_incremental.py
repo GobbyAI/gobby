@@ -773,7 +773,7 @@ _RECALL = "d1965a04eb04"
 
 
 def _long_session_records(tmp_path: Path) -> list[dict[str, Any]]:
-    """Validation reds and greens among shell commands, with an rtk recall receipt."""
+    """Validation reds and greens among shell commands, then an rtk recall receipt."""
     noise = "line of shell output\n" * 200
     steps: list[tuple[str, Any, bool]] = [
         (
@@ -790,13 +790,13 @@ def _long_session_records(tmp_path: Path) -> list[dict[str, Any]]:
             },
             True,
         ),
+        ("git diff", {"exit_code": 0, "stdout": noise}, False),
+        ("uv run pytest tests/tasks/test_a.py -q", {"exit_code": 0, "stdout": "4 passed"}, False),
         (
             f"rtk recall {_RECALL}",
             "tests/tasks/test_b.py:7: AssertionError: assert False\n1 failed in 0.01s",
             False,
         ),
-        ("git diff", {"exit_code": 0, "stdout": noise}, False),
-        ("uv run pytest tests/tasks/test_a.py -q", {"exit_code": 0, "stdout": "4 passed"}, False),
         ("ls src", {"exit_code": 0, "stdout": noise}, False),
     ]
     records: list[dict[str, Any]] = [
@@ -819,28 +819,58 @@ def _long_session_records(tmp_path: Path) -> list[dict[str, Any]]:
     return records
 
 
-async def test_command_output_is_kept_only_while_a_reader_can_take_it(tmp_path: Path) -> None:
-    """Snapshots stop carrying settled shell output; validation output stays whole."""
+def _derive_as_legacy(monkeypatch: pytest.MonkeyPatch, *, trim: bool) -> None:
+    """Derive inline, keeping review-only output as snapshots written before #23256 did."""
+
+    async def run_inline(function: Any, /, *args: Any) -> Any:
+        return function(*args)
+
+    # The pool's worker processes would not see the patched module.
+    monkeypatch.setattr(transcript_evidence, "run_in_transcript_evidence_pool", run_inline)
+    monkeypatch.setattr(
+        transcript_evidence,
+        "_retained_output",
+        lambda command, segments, output, output_truncated: (output, output_truncated),
+    )
+    if not trim:
+        monkeypatch.setattr(transcript_evidence, "_drop_settled_command_output", lambda runs: runs)
+
+
+async def test_resumed_snapshot_sheds_settled_command_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A legacy snapshot loses settled shell output on resume; validation output stays."""
     transcript = tmp_path / "claude.jsonl"
     records = _long_session_records(tmp_path)
-    _write_jsonl(transcript, records[:7])
     session = _session("claude", transcript)
-    await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    _append_jsonl(transcript, records[7:])
+    _write_jsonl(transcript, records[:7])
+    with monkeypatch.context() as legacy:
+        _derive_as_legacy(legacy, trim=False)
+        await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    legacy_snapshot = transcript_evidence_snapshots.load_snapshot(session.id)
+    assert legacy_snapshot is not None
+    assert next(run for run in legacy_snapshot.runs if run.command == "git status").output
 
-    evidence = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+    _append_jsonl(transcript, records[7:13])
+    resumed = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
     snapshot = transcript_evidence_snapshots.load_snapshot(session.id)
 
     assert snapshot is not None
+    assert snapshot.parsed_from_offset > 0
     *settled, latest = [run for run in snapshot.runs if not run.categories]
-    assert [run.command for run in settled] == ["git status", f"rtk recall {_RECALL}", "git diff"]
+    assert [run.command for run in settled] == ["git status", "git diff"]
     assert all(run.output is None for run in settled)
-    assert latest.command == "ls src"
+    # The newest run keeps its output: the Codex wrapper dedupe compares against it.
+    assert latest.command == f"rtk recall {_RECALL}"
     assert latest.output
     assert all(run.output for run in snapshot.runs if run.categories)
-    assert [run.output is None for run in evidence.command_runs] == [True, True, True, False]
-    recalled = next(run for run in evidence.validation_runs if "test_b.py" in run.command)
+    recalled = next(run for run in resumed.validation_runs if "test_b.py" in run.command)
     assert recalled.output_recovered_from == f"rtk recall {_RECALL}"
+
+    _append_jsonl(transcript, records[13:])
+    later = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
+
+    assert [run.output for run in later.command_runs] == [None, None, None, None]
 
 
 async def test_dropping_settled_command_output_leaves_gate_findings_unchanged(
@@ -867,28 +897,19 @@ async def test_dropping_settled_command_output_leaves_gate_findings_unchanged(
             close,
         )
 
-    trimmed = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-    clear_evidence_snapshots()
-    transcript_evidence_cache.clear_snapshots()
-    with monkeypatch.context() as untrimmed_derivation:
+    derived: dict[bool, TranscriptEvidence] = {}
+    for trim in (True, False):
+        clear_evidence_snapshots()
+        transcript_evidence_cache.clear_snapshots()
+        with monkeypatch.context() as legacy:
+            _derive_as_legacy(legacy, trim=trim)
+            derived[trim] = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
 
-        async def run_inline(function: Any, /, *args: Any) -> Any:
-            return function(*args)
-
-        # The pool's worker processes would not see the patched module.
-        untrimmed_derivation.setattr(
-            transcript_evidence, "run_in_transcript_evidence_pool", run_inline
-        )
-        untrimmed_derivation.setattr(
-            transcript_evidence, "_drop_settled_command_output", lambda runs: runs
-        )
-        untrimmed = await _derive(session, BASE_TIME, {"src/changed.py"}, tmp_path)
-
-    assert any(run.output for run in untrimmed.command_runs[:-1])
-    assert not any(run.output for run in trimmed.command_runs[:-1])
-    assert findings(trimmed) == findings(untrimmed)
+    assert any(run.output for run in derived[False].command_runs[:-1])
+    assert not any(run.output for run in derived[True].command_runs[:-1])
+    assert findings(derived[True]) == findings(derived[False])
     # The compound red's lint segment has no green; test_b's red has none either.
-    assert findings(trimmed)[0] == [
+    assert findings(derived[True])[0] == [
         "uv run ruff check src/ && uv run pytest tests/tasks/test_a.py -q",
         "uv run pytest tests/tasks/test_b.py -q",
     ]

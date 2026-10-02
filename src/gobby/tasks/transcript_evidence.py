@@ -881,8 +881,10 @@ def _drop_settled_command_output(
     """Keep a non-validation run's output only while it is the latest run.
 
     Its output is read only then: by the Codex wrapper dedupe and as an rtk
-    recall receipt. Validation output stays for the gates. Without this, a long
-    session's snapshot carries every shell command's output.
+    recall receipt. Validation output stays for the gates. ``_retained_output``
+    drops review-only output as runs are recorded; this also sheds settled
+    recall receipts and the shell output that snapshots written before it still
+    carry, on their next resume rather than through a full re-parse.
     """
     last = len(runs) - 1
     return [

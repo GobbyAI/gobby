@@ -1232,7 +1232,9 @@ async def test_two_sessions_owner_filed_disposition_survives_later_turn(
         source="codex",
         project_id=sample_project["id"],
     )
-    failed_at = datetime.now(UTC)
+    # The task's created_at comes from the database clock, which can trail this
+    # process's clock by a fraction of a millisecond; the red ran well before filing.
+    failed_at = datetime.now(UTC) - timedelta(seconds=5)
     _window_bound_derive(
         monkeypatch,
         _run(
