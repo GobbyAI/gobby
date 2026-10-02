@@ -15,6 +15,7 @@ from gobby.config.validation_detection import (
     classify_validation_segments,
     is_validation_command,
     load_project_validation_detection,
+    normalize_validation_evidence_command,
     resolve_validation_detection_config,
     save_project_validation_detection,
 )
@@ -476,6 +477,57 @@ def test_wrapped_validation_commands_record_normalized_metadata(
     assert match.normalized_argv == normalized_argv
     assert match.normalized_command == shlex.join(normalized_argv)
     assert match.wrapper_chain == wrapper_chain
+
+
+@pytest.mark.parametrize(
+    "env_command",
+    [
+        "env A=1 B=2 uv run pytest tests/a.py",
+        "env A=1 B=2 -- uv run pytest tests/a.py",
+        "/usr/bin/env A=1 B=2 uv run pytest tests/a.py",
+    ],
+)
+def test_env_with_only_assignments_matches_like_the_bare_prefix(env_command: str) -> None:
+    bare = classify_validation_command("A=1 B=2 uv run pytest tests/a.py")
+    match = classify_validation_command(env_command)
+
+    assert bare is not None
+    assert match is not None
+    assert match.matcher_id == bare.matcher_id == "python-tests"
+    assert match.categories == bare.categories
+    assert match.normalized_argv == bare.normalized_argv == ("pytest", "tests/a.py")
+    assert match.wrapper_chain == ("env", "uv-run")
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "env -i A=1 uv run pytest tests/a.py",
+        "env -i A=1 -- uv run pytest tests/a.py",
+        "env -u A uv run pytest tests/a.py",
+        "env -u A -- uv run pytest tests/a.py",
+        "env -C /tmp uv run pytest tests/a.py",
+        "env -S 'uv run pytest tests/a.py'",
+        "env A=1",
+    ],
+)
+def test_env_with_options_or_no_command_is_not_credited(command: str) -> None:
+    assert classify_validation_command(command) is None
+
+
+@pytest.mark.parametrize(
+    "command,expected",
+    [
+        ("A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("env A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("env A=1 B=2 -- uv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("cd /repo && env A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("env -u A uv run pytest tests/a.py", "env -u A uv run pytest tests/a.py"),
+        ("env -i A=1 uv run pytest tests/a.py", "env -i A=1 uv run pytest tests/a.py"),
+    ],
+)
+def test_evidence_normalizer_strips_env_assignment_prefix_only(command: str, expected: str) -> None:
+    assert normalize_validation_evidence_command(command) == expected
 
 
 def test_nice_without_delimiter_is_detected() -> None:
