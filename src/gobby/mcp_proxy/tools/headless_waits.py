@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from gobby.agents.provider_capabilities import provider_capabilities
+from gobby.agents.provider_capabilities import agent_run_is_headless
 
 HEADLESS_WAIT_ERROR_CODE = "headless_agent_run"
 HEADLESS_WAIT_GUIDANCE = (
@@ -40,7 +40,7 @@ def headless_wait_refusal(
     """Return a typed refusal when this session's run cannot survive a turn yield.
 
     ``None`` means the caller may register the wait: the session is not a spawned
-    run, or its provider keeps reading its terminal across a yielded turn.
+    run, or its CLI keeps reading its terminal across a yielded turn.
     """
     if session_id is None or agent_run_manager is None:
         return None
@@ -49,13 +49,13 @@ def headless_wait_refusal(
     except Exception:
         # The wait is the risky operation here; an unreadable run is not.
         return None
-    provider = getattr(agent_run, "provider", None)
-    if not isinstance(provider, str) or not provider_capabilities(provider).headless_spawn:
+    if not agent_run_is_headless(agent_run):
         return None
+    provider = getattr(agent_run, "provider", None)
     return {
         "success": False,
         "error": (
-            f"{tool_name} ends the turn to wait, and {provider} agent runs are headless: "
+            f"{tool_name} ends the turn to wait, and this {provider} agent run is headless: "
             "the CLI exits when the turn yields, so the wake payload would have no process "
             "to resume."
         ),

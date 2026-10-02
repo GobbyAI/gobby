@@ -32,7 +32,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock, PropertyMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -4064,8 +4064,8 @@ class TestHooksEndpoints:
             )
 
         breakdown = timings.breakdown()
-        assert breakdown["adapter_worker"] >= wait_seconds
-        assert breakdown["adapter_worker_cpu"] < wait_seconds / 4
+        assert breakdown["adapter_worker"] == pytest.approx(wait_seconds)
+        assert breakdown["adapter_worker_cpu"] == 0.0
 
     @pytest.mark.asyncio
     async def test_adapter_executor_runs_sixteen_sessions_concurrently(self) -> None:
@@ -4614,11 +4614,14 @@ class TestHooksEndpoints:
             "retry_kind": "ingress_backpressure",
             "reason": reason,
         }
-        # The retry path releases for the caller, then request teardown
-        # releases again as a CAS on the lease this execution owned.
-        assert release.call_args_list[0] == call(envelope_id)
+        # Retry and teardown must both release only this execution's lease.
         assert len(release.call_args_list) == 2
-        assert set(release.call_args_list[1].kwargs) == {"owner_token"}
+        retry_release, teardown_release = release.call_args_list
+        assert retry_release.args == (envelope_id,)
+        assert set(retry_release.kwargs) == {"owner_token"}
+        assert isinstance(retry_release.kwargs["owner_token"], str)
+        assert retry_release.kwargs["owner_token"]
+        assert retry_release == teardown_release
         mark_processed.assert_not_called()
 
     @pytest.mark.parametrize(
@@ -5275,7 +5278,7 @@ class TestEnvelopeOwnershipLease:
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
         envelope_id = "n-0000000000001-dead-lease"
         processed_dir = gobby_home / "hooks" / "inbox" / "processed"
-        assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+        assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is not None
         aged = (
             datetime.now(UTC) - timedelta(seconds=ENVELOPE_REPLAY_GRACE_SECONDS + 5)
         ).isoformat()

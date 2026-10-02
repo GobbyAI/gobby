@@ -30,10 +30,11 @@ hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-time = { version = "0.3", features = ["parsing"] }
+time = "0.3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
 tower-service = "0.3"
 
 [dev-dependencies]
 assert_cmd = "2"
 tempfile = "3"
+tokio = { version = "1", features = ["test-util"] }

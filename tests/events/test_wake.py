@@ -6,7 +6,6 @@ import asyncio
 import gc
 import json
 import logging
-import weakref
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, cast
@@ -20,12 +19,19 @@ from gobby.agents.tmux.text_injection import (
 )
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.live_wake import TerminalActivity
-from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
+from gobby.events.wake import (
+    COMPOSER_RETRY_BASE_SECONDS,
+    COMPOSER_RETRY_MAX_SECONDS,
+    CONTINUE_WAKE_MESSAGE,
+    CONTINUE_WAKE_SIGNAL,
+    WakeDispatcher,
+)
 from gobby.events.wake_active_recovery import reconcile_idle_prompt_session
 from gobby.storage.session_models import Session
 from gobby.terminals.runtime import AutomaticWriteDeclined, AutomaticWriteQuarantined
 from tests._timing import drain_asyncio_tasks
 from tests.agents.detection_test_support import BundledDetectionRegistry
+from tests.events.wake_test_support import PendingWakeLedger
 
 WAKE_SESSION_ID = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
 WAKE_RUN_ID = "ac314d27-4314-5fe3-a0ab-01645086e137"
@@ -96,7 +102,7 @@ async def test_codex_idle_recovery_rechecks_composer_and_exact_row(race: str) ->
 def test_live_wake_signal_is_neutral() -> None:
     assert "Task completed" not in CONTINUE_WAKE_MESSAGE
     assert "Task completed" not in CONTINUE_WAKE_SIGNAL
-    assert CONTINUE_WAKE_MESSAGE == "Message from Gobby daemon: New activity available."
+    assert CONTINUE_WAKE_MESSAGE == "[Gobby] Check messages"
     assert CONTINUE_WAKE_SIGNAL == f"{CONTINUE_WAKE_MESSAGE}\n"
 
 
@@ -173,6 +179,7 @@ class TestWakeDispatch:
             terminal_manager=terminal_manager,
             activity_probe=activity_probe,
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
@@ -185,7 +192,7 @@ class TestWakeDispatch:
             "error_code": f"session_{status}",
             "decline_reason": f"session_{status}",
         }
-        assert dispatcher._last_live_wake == {}
+        assert ledger.recorded == []
         terminal_manager.resolve_live_for_session.assert_not_called()
         tmux_sender.assert_not_awaited()
         sdk_resumer.assert_not_awaited()
@@ -546,6 +553,7 @@ class TestWakeDispatch:
             clear_before_submit=True,
             cli_source=ANY,
         )
+        assert tmux_sender.await_args is not None
         assert "Task completed" not in tmux_sender.await_args.args[1]
 
     @pytest.mark.asyncio
@@ -799,6 +807,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
             result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -808,7 +817,7 @@ class TestWakeDispatch:
         assert result["error_code"] == "automatic_write_quarantined"
         assert result["decline_reason"] == "automatic_write_quarantined"
         tmux_sender.assert_awaited_once()
-        assert WAKE_SESSION_ID not in dispatcher._last_live_wake
+        assert ledger.recorded == []
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
 
@@ -1291,6 +1300,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
         await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
@@ -1304,6 +1314,7 @@ class TestWakeDispatch:
             cli_source=ANY,
         )
         assert ism_manager.create_message.call_count == 3
+        assert ledger.recorded == [WAKE_SESSION_ID]
 
     @pytest.mark.asyncio
     async def test_concurrent_terminal_wakes_coalesce_before_sending_text(
@@ -1341,9 +1352,10 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
-        async def run_wakes() -> list[None]:
-            return await asyncio.gather(
+        async def run_wakes() -> None:
+            await asyncio.gather(
                 dispatcher.wake(
                     WAKE_SESSION_ID,
                     "Done",
@@ -1375,6 +1387,7 @@ class TestWakeDispatch:
             cli_source=ANY,
         )
         assert ism_manager.create_message.call_count == 3
+        assert ledger.recorded == [WAKE_SESSION_ID]
 
     @pytest.mark.asyncio
     async def test_concurrent_terminal_agent_wakes_coalesce_to_one_live_signal(
@@ -1412,9 +1425,10 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
-        async def run_wakes() -> list[None]:
-            return await asyncio.gather(
+        async def run_wakes() -> None:
+            await asyncio.gather(
                 dispatcher.wake(
                     WAKE_SESSION_ID,
                     "Done",
@@ -1446,6 +1460,7 @@ class TestWakeDispatch:
             cli_source=ANY,
         )
         assert ism_manager.create_message.call_count == 3
+        assert ledger.recorded == [WAKE_SESSION_ID]
 
     @pytest.mark.asyncio
     async def test_terminal_wake_resumes_after_turn_advances(
@@ -1489,82 +1504,6 @@ class TestWakeDispatch:
         assert tmux_sender.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_terminal_wake_resumes_after_debounce_ceiling(
-        self,
-        session_manager: MagicMock,
-        ism_manager: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Stuck idle longer than the 30s ceiling → next completion fires again."""
-        session_manager.get.return_value = FakeSession(
-            id=WAKE_SESSION_ID,
-            agent_depth=0,
-            terminal_context='{"tmux_pane": "%12"}',
-            turn_count=5,
-        )
-        tmux_sender = AsyncMock()
-        dispatcher = WakeDispatcher(
-            session_manager=session_manager,
-            ism_manager=ism_manager,
-            tmux_sender=tmux_sender,
-            terminal_manager=_managed_terminal(),
-        )
-
-        clock = [1000.0]
-
-        def fake_monotonic() -> float:
-            return clock[0]
-
-        monkeypatch.setattr("gobby.events.wake.time.monotonic", fake_monotonic)
-
-        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r1"})
-        clock[0] += 5.0
-        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r2"})
-        assert tmux_sender.await_count == 1
-        clock[0] += 31.0
-        await dispatcher.wake(WAKE_SESSION_ID, "Done", {"status": "completed", "run_id": "r3"})
-
-        assert tmux_sender.await_count == 2
-
-    @pytest.mark.asyncio
-    async def test_live_wake_prunes_stale_timestamps_and_unused_locks(
-        self,
-        session_manager: MagicMock,
-        ism_manager: MagicMock,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        """Stale wake state cleanup removes idle locks but leaves active dispatch locks."""
-        dispatcher = WakeDispatcher(
-            session_manager=session_manager,
-            ism_manager=ism_manager,
-        )
-        locked = asyncio.Lock()
-        await locked.acquire()
-        stale_lock = asyncio.Lock()
-        fresh_lock = asyncio.Lock()
-        dispatcher._last_live_wake = {
-            "stale": (1, 900.0),
-            "locked": (1, 900.0),
-            "fresh": (1, 990.0),
-        }
-        dispatcher._live_wake_locks = weakref.WeakValueDictionary(
-            {"stale": stale_lock, "locked": locked, "fresh": fresh_lock}
-        )
-        monkeypatch.setattr("gobby.events.wake.time.monotonic", lambda: 1000.0)
-
-        try:
-            assert dispatcher._should_send_live_wake("new", FakeSession(id="new")) is True
-        finally:
-            locked.release()
-
-        assert "stale" not in dispatcher._last_live_wake
-        assert "stale" not in dispatcher._live_wake_locks
-        assert "locked" in dispatcher._last_live_wake
-        assert "locked" in dispatcher._live_wake_locks
-        assert "fresh" in dispatcher._last_live_wake
-        assert "fresh" in dispatcher._live_wake_locks
-
-    @pytest.mark.asyncio
     async def test_terminal_wake_decline_does_not_record_timestamp(
         self,
         session_manager: MagicMock,
@@ -1590,6 +1529,7 @@ class TestWakeDispatch:
             tmux_sender=tmux_sender,
             terminal_manager=_managed_terminal(),
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         with caplog.at_level(logging.INFO, logger="gobby.events.wake"):
             await dispatcher.wake(
@@ -1598,7 +1538,7 @@ class TestWakeDispatch:
                 {"status": "completed", "run_id": "r1"},
             )
 
-        assert WAKE_SESSION_ID not in dispatcher._last_live_wake
+        assert ledger.recorded == []
         assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
         assert not [record for record in caplog.records if record.exc_info]
 
@@ -1674,12 +1614,15 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
             web_chat_session_registry=registry,
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         async def run_wakes() -> list[dict[str, object]]:
-            return await asyncio.gather(
-                dispatcher.dispatch_live_wake("web-1"),
-                dispatcher.dispatch_live_wake("web-1"),
-                dispatcher.dispatch_live_wake("web-1"),
+            return list(
+                await asyncio.gather(
+                    dispatcher.dispatch_live_wake("web-1"),
+                    dispatcher.dispatch_live_wake("web-1"),
+                    dispatcher.dispatch_live_wake("web-1"),
+                )
             )
 
         wakes = asyncio.create_task(run_wakes())
@@ -1690,6 +1633,7 @@ class TestWakeDispatch:
 
         registry.wake_session.assert_awaited_once_with("web-1")
         assert [result.get("skipped") for result in results].count("debounced") == 2
+        assert ledger.recorded == ["web-1"]
 
     @pytest.mark.asyncio
     async def test_web_chat_session_without_live_registry_returns_explicit_failure(
@@ -1737,6 +1681,7 @@ class TestWakeDispatch:
             terminal_manager=_managed_terminal(),
             activity_probe=probe,
         )
+        ledger = PendingWakeLedger(dispatcher)
 
         first = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
         debounced = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -1754,7 +1699,9 @@ class TestWakeDispatch:
         assert debounced["skipped"] == "debounced"
         assert retried["delivered"] is True
         assert tmux_sender.await_count == 2
+        assert tmux_sender.await_args is not None
         assert tmux_sender.await_args.args[1] == retry_prompt
+        assert ledger.recorded == [WAKE_SESSION_ID, WAKE_SESSION_ID]
         assert ism_manager.create_message.call_args.kwargs["content"] == retry_prompt
 
         probe.return_value = TerminalActivity(ComposerRead("draft", "operator draft"))
@@ -1794,6 +1741,7 @@ class TestComposerGate:
         pane_sender = AsyncMock()
         probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", "hello draft")))
         dispatcher = self._dispatcher(probe, pane_sender)
+        ledger = PendingWakeLedger(dispatcher)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
@@ -1806,7 +1754,7 @@ class TestComposerGate:
             "ism_persisted": True,
         }
         pane_sender.assert_not_awaited()
-        assert dispatcher._last_live_wake == {}
+        assert ledger.recorded == []
 
     @pytest.mark.asyncio
     async def test_urgent_wake_defers_when_the_composer_holds_a_draft(self) -> None:
@@ -1840,18 +1788,46 @@ class TestComposerGate:
             "terminal-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
-            clear_before_submit=True,
+            clear_before_submit=False,
+            composer_confirmed_empty=True,
             cli_source=ANY,
         )
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("state", ["empty", "unknown"])
-    async def test_non_draft_reads_drain_blind(self, state: str) -> None:
-        from gobby.agents.idle_detector import ComposerRead, ComposerState
+    async def test_confirmed_empty_read_types_without_draining(self) -> None:
+        """A positive empty read under the lock leaves the drain nothing to do.
+
+        The drain after it could only delete keystrokes an operator typed after
+        the probe, so a confirmed-empty wake types directly (#22915).
+        """
+        from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity
 
         pane_sender = AsyncMock()
-        probe = AsyncMock(return_value=TerminalActivity(ComposerRead(cast(ComposerState, state))))
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("empty")))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result["delivered"] is True
+        pane_sender.assert_awaited_once_with(
+            "terminal-1",
+            CONTINUE_WAKE_MESSAGE,
+            submit=True,
+            clear_before_submit=False,
+            composer_confirmed_empty=True,
+            cli_source=ANY,
+        )
+
+    @pytest.mark.asyncio
+    async def test_unprobeable_provider_keeps_the_blind_drain(self) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(
+            return_value=TerminalActivity(ComposerRead("unknown"), composer_probeable=False)
+        )
         dispatcher = self._dispatcher(probe, pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
@@ -1866,11 +1842,163 @@ class TestComposerGate:
         )
 
     @pytest.mark.asyncio
-    async def test_probe_error_drains_blind(self) -> None:
+    async def test_unknown_read_only_withholds_when_the_provider_can_classify(
+        self,
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity, composer_unconfirmed_result
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("unknown")))
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result == composer_unconfirmed_result(WAKE_SESSION_ID, method="terminal")
+        pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unknown_read_drains_when_the_provider_cannot_classify(
+        self,
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+
+        pane_sender = AsyncMock()
+        probe = AsyncMock(
+            return_value=TerminalActivity(ComposerRead("unknown"), composer_probeable=False)
+        )
+        dispatcher = self._dispatcher(probe, pane_sender)
+
+        result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        assert result["delivered"] is True
+        pane_sender.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_probe_error_withholds_until_a_positive_empty_read(self) -> None:
+        from gobby.events.live_wake import composer_unconfirmed_result
+
         pane_sender = AsyncMock()
         dispatcher = self._dispatcher(AsyncMock(side_effect=RuntimeError("no pane")), pane_sender)
 
         result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
 
-        assert result["delivered"] is True
+        assert result == composer_unconfirmed_result(WAKE_SESSION_ID, method="terminal")
+        pane_sender.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_probe_and_send_hold_the_composer_lock_together(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rival writer cannot interleave between the empty probe and the send."""
+        from gobby.agents.idle_detector import ComposerRead
+        from gobby.events.live_wake import TerminalActivity
+        from gobby.terminals import composer_lock as composer_lock_module
+        from gobby.terminals.composer_lock import composer_action_lock
+
+        class _Coordinator:
+            def __init__(self) -> None:
+                self._locks: dict[str, asyncio.Lock] = {}
+
+            def logical_action_lock(self, terminal_id: str) -> asyncio.Lock:
+                return self._locks.setdefault(terminal_id, asyncio.Lock())
+
+        coordinator = _Coordinator()
+        monkeypatch.setattr(composer_lock_module, "_coordinator", coordinator)
+
+        order: list[str] = []
+        probe_entered = asyncio.Event()
+        release_send = asyncio.Event()
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            order.append("probe")
+            probe_entered.set()
+            return TerminalActivity(ComposerRead("empty"))
+
+        async def slow_send(*_args: object, **_kwargs: object) -> None:
+            order.append("send")
+            await release_send.wait()
+
+        dispatcher = self._dispatcher(probe, AsyncMock(side_effect=slow_send))
+        wake_task = asyncio.create_task(dispatcher.dispatch_live_wake(WAKE_SESSION_ID))
+        await asyncio.wait_for(probe_entered.wait(), timeout=5)
+        # The probe already ran, but the wake holds the lock through its send,
+        # so a rival composer writer cannot take the lock until the send ends.
+        assert coordinator.logical_action_lock("terminal-1").locked()
+
+        async def rival_wake() -> None:
+            async with composer_action_lock("terminal-1"):
+                order.append("rival")
+
+        rival = asyncio.create_task(rival_wake())
+        release_send.set()
+        await asyncio.wait_for(wake_task, timeout=5)
+        await rival
+        assert order == ["probe", "send", "rival"]
+
+
+class TestComposerRetry:
+    """A withheld wake retries with bounded exponential backoff until empty."""
+
+    @pytest.mark.asyncio
+    async def test_retry_redelivers_once_the_composer_confirms_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead, ComposerState
+        from gobby.events.live_wake import TerminalActivity
+
+        states: list[ComposerState] = ["draft", "draft", "empty"]
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return TerminalActivity(ComposerRead(states.pop(0), "operator text"))
+
+        pane_sender = AsyncMock()
+        dispatcher = TestComposerGate._dispatcher(probe, pane_sender)
+        delays: list[float] = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(dispatcher, "_composer_retry_wait", no_wait)
+
+        first = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        assert first["skipped"] == "composer_occupied"
+        await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
+
+        # Two backoffs before the third probe finally saw an empty composer.
+        assert delays == [COMPOSER_RETRY_BASE_SECONDS, COMPOSER_RETRY_BASE_SECONDS * 2]
+        pane_sender.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_retry_continues_with_capped_delay_until_empty(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from gobby.agents.idle_detector import ComposerRead, ComposerState
+        from gobby.events.live_wake import TerminalActivity
+
+        # Stay occupied beyond the old six-attempt/705-second abandonment point.
+        states: list[ComposerState] = ["draft" for _ in range(8)]
+        states.append("empty")
+
+        async def probe(_session: object, _terminal: object | None) -> TerminalActivity:
+            return TerminalActivity(ComposerRead(states.pop(0), "operator text"))
+
+        pane_sender = AsyncMock()
+        dispatcher = TestComposerGate._dispatcher(probe, pane_sender)
+        delays: list[float] = []
+
+        async def no_wait(delay: float) -> None:
+            delays.append(delay)
+
+        monkeypatch.setattr(dispatcher, "_composer_retry_wait", no_wait)
+
+        await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+        await asyncio.wait_for(dispatcher._composer_retries[WAKE_SESSION_ID], timeout=5)
+
+        assert len(delays) == 8
+        assert delays[-1] == COMPOSER_RETRY_MAX_SECONDS
+        assert all(delay <= COMPOSER_RETRY_MAX_SECONDS for delay in delays)
+        assert delays[:4] == [15.0, 30.0, 60.0, 120.0]
+        assert states == []
         pane_sender.assert_awaited_once()

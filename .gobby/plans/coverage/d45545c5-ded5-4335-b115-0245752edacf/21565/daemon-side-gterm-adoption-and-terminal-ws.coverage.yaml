@@ -1,0 +1,904 @@
+header:
+  plan_id: daemon-side-gterm-adoption-and-terminal-ws
+  plan_hash: c9f26934d35be7d823414b9777d8833c8dade6e07b80e412c64e1e48ab7b1108
+  root_task_ref: '21565'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-01T13:12:03Z'
+  task_tree_source: db
+  task_tree_source_hash: 261b0ce87d8e0615a25b2ad26bc92fabb7ebbf15bc3b4c61f5a9b9d3448a8c30
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: '1.1'
+  item_id: 1.1.1
+  plan_node_hash: 414cb524a307ecf6ae886f99f2755a75b12ef442dcf0c3693770754ea563fb88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23207'
+    validation_criteria_snippet: '1.1.1: `gobby-terminals` is a workspace member,
+      is `publish = false`, inherits workspace version/edition/lints, exports the
+      terminal family API, and is linked ...'
+    matched_artifact_ref: crates/gterminals/Cargo.toml
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.2
+  plan_node_hash: 629598fc3f9a17577f9ed22faa57fde86ac22822184c497e0d9cf1532fa4d31f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23207'
+    validation_criteria_snippet: '1.1.1: `gobby-terminals` is a workspace member,
+      is `publish = false`, inherits workspace version/edition/lints, exports the
+      terminal family API, and is linked ...'
+    matched_artifact_ref: crates/gterminals/tests/protocol_contract.rs::control_json_lines_match_gterm
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.3
+  plan_node_hash: f714353e152a2d948abfaca55d46a999c6da09e129dd8c2cc0265b349b96f198
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23207'
+    validation_criteria_snippet: '1.1.1: `gobby-terminals` is a workspace member,
+      is `publish = false`, inherits workspace version/edition/lints, exports the
+      terminal family API, and is linked ...'
+    matched_artifact_ref: crates/gterminals/tests/protocol_contract.rs::event_epoch_and_cursor_are_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.4
+  plan_node_hash: 880bdba6152a70a87aead107b9524830e95bc7018ffebc6f17d4545356555deb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23207'
+    validation_criteria_snippet: '1.1.1: `gobby-terminals` is a workspace member,
+      is `publish = false`, inherits workspace version/edition/lints, exports the
+      terminal family API, and is linked ...'
+    matched_artifact_ref: crates/gterminals/tests/protocol_contract.rs::frame_bytes_match_gterm
+  deferral_target: null
+  detail: ''
+- section_id: '1.1'
+  item_id: 1.1.5
+  plan_node_hash: 7ab711bba94e5dae5324bb4c55ec1e93a2e89539eb3d5ac4ddc4cc8abc489535
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23207'
+    validation_criteria_snippet: '1.1.1: `gobby-terminals` is a workspace member,
+      is `publish = false`, inherits workspace version/edition/lints, exports the
+      terminal family API, and is linked ...'
+    matched_artifact_ref: gterm-gclient-protocol-scope-guard
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.1
+  plan_node_hash: b1ad316ba3c7b1ed9700d8c86c8e3c39547055c1fd58dfe7b2c6b48019e14db5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23208'
+    validation_criteria_snippet: '1.2.1: Same-epoch startup adopts the existing gterm
+      pid and epoch without spawning, rotating credentials, or rewriting sockets;
+      two concurrent callers share on...'
+    matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::same_epoch_adopts_singleflight
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.2
+  plan_node_hash: 83129418127a2d9dc8da06ca8e995ee3ea4b133272c65de24617a05a02d3e4d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23208'
+    validation_criteria_snippet: '1.2.1: Same-epoch startup adopts the existing gterm
+      pid and epoch without spawning, rotating credentials, or rewriting sockets;
+      two concurrent callers share on...'
+    matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::semantic_epoch_refusal_is_non_destructive
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.3
+  plan_node_hash: 865d513de60431a05c4f5e2b4678e1dfef97c99a7637023cb425965d849d2aa2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23208'
+    validation_criteria_snippet: '1.2.1: Same-epoch startup adopts the existing gterm
+      pid and epoch without spawning, rotating credentials, or rewriting sockets;
+      two concurrent callers share on...'
+    matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::adoption_result_subtypes_are_exhaustive
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.4
+  plan_node_hash: 77d3c01be35c121a96a872108b5f4040a46bffd43c1665e362cd5afbcf816e9f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23208'
+    validation_criteria_snippet: '1.2.1: Same-epoch startup adopts the existing gterm
+      pid and epoch without spawning, rotating credentials, or rewriting sockets;
+      two concurrent callers share on...'
+    matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::route_mode_has_exactly_one_supervisor
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.5
+  plan_node_hash: 331ba43c0dd64dc21d03df19eb71f036c5d5f1c72dcf184dc8d4ccc94dfb0a48
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23208'
+    validation_criteria_snippet: '1.2.1: Same-epoch startup adopts the existing gterm
+      pid and epoch without spawning, rotating credentials, or rewriting sockets;
+      two concurrent callers share on...'
+    matched_artifact_ref: crates/gterminals/tests/host_lifecycle.rs::daemon_restart_preserves_live_terminal
+  deferral_target: null
+  detail: ''
+- section_id: '1.2'
+  item_id: 1.2.6
+  plan_node_hash: d4bc43612d59bce1bfd490fa26910c4c05dbf5cab47ef82435f449519639b277
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23208'
+    validation_criteria_snippet: '1.2.1: Same-epoch startup adopts the existing gterm
+      pid and epoch without spawning, rotating credentials, or rewriting sockets;
+      two concurrent callers share on...'
+    matched_artifact_ref: tests/terminals/test_host_shutdown_preservation.py::test_explicit_terminal_drain_is_the_only_host_shutdown_path
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.1
+  plan_node_hash: 4e33c2c5a1be5fd73a3a07efb2b2692bb2a1a7caaf80613189ef745f8d2d6c37
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23209'
+    validation_criteria_snippet: '1.3.1: Row decoding/encoding preserves backend,
+      machine/project/session/run identity, host_epoch, locator, dimensions, lifecycle
+      state, pending identity, and p...'
+    matched_artifact_ref: crates/gterminals/tests/reconcile.rs::terminal_row_round_trips_all_runtime_fields
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.2
+  plan_node_hash: ce0547ef8d60f0ec35de998e44d5616c9dc2d755cec452c755242a0e283c0c9d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23209'
+    validation_criteria_snippet: '1.3.1: Row decoding/encoding preserves backend,
+      machine/project/session/run identity, host_epoch, locator, dimensions, lifecycle
+      state, pending identity, and p...'
+    matched_artifact_ref: crates/gterminals/tests/reconcile.rs::matching_inventory_promotes_once
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.3
+  plan_node_hash: 8c436062b591d4d9b593a7cf53bcc017aac8bd70178e11bb56fd54fd106345a2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23209'
+    validation_criteria_snippet: '1.3.1: Row decoding/encoding preserves backend,
+      machine/project/session/run identity, host_epoch, locator, dimensions, lifecycle
+      state, pending identity, and p...'
+    matched_artifact_ref: crates/gterminals/tests/reconcile.rs::absence_is_scoped_to_observed_machine_and_epoch
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.4
+  plan_node_hash: 40b06c57353a9b723d9fdc93c6c1f182bce2bc8c05a52e8d759907974c944e78
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23209'
+    validation_criteria_snippet: '1.3.1: Row decoding/encoding preserves backend,
+      machine/project/session/run identity, host_epoch, locator, dimensions, lifecycle
+      state, pending identity, and p...'
+    matched_artifact_ref: crates/gterminals/tests/reconcile.rs::identity_conflicts_fail_closed_without_touching_refused_host
+  deferral_target: null
+  detail: ''
+- section_id: '1.3'
+  item_id: 1.3.5
+  plan_node_hash: 116d2df4d53d5b424131fe79bd1411941722f6449f92f936d834fe142ffeefde
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23209'
+    validation_criteria_snippet: '1.3.1: Row decoding/encoding preserves backend,
+      machine/project/session/run identity, host_epoch, locator, dimensions, lifecycle
+      state, pending identity, and p...'
+    matched_artifact_ref: crates/gterminals/tests/reconcile.rs::spawn_settlement_is_atomic_across_failure_boundaries
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.1
+  plan_node_hash: 93a9810a827137d80c0fa779eeb5a56b999ecd318bfadd18324e7765c545b85f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23210'
+    validation_criteria_snippet: '1.4.1: Attach/detach/take/release/finalize permits
+      one controller, increments generation, and returns the same deterministic control
+      outcomes as Python. test: ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::control_holder_transitions_are_deterministic
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.2
+  plan_node_hash: 0ddea6d2a39438aae85472b2f73188d1f6cf01b50f4c7a593658c00890512744
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23210'
+    validation_criteria_snippet: '1.4.1: Attach/detach/take/release/finalize permits
+      one controller, increments generation, and returns the same deterministic control
+      outcomes as Python. test: ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::sizing_and_scroll_are_attachment_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.3
+  plan_node_hash: 61485785fae93870516d26f74bfd4a5f46490dcf884942bee250584cafaa9c46
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23210'
+    validation_criteria_snippet: '1.4.1: Attach/detach/take/release/finalize permits
+      one controller, increments generation, and returns the same deterministic control
+      outcomes as Python. test: ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::write_admission_is_generation_and_payload_bound
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.4
+  plan_node_hash: 98f0c93eb2e61782aa770102596203180d2a5a44d59aae038ce582c27c01f6c7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23210'
+    validation_criteria_snippet: '1.4.1: Attach/detach/take/release/finalize permits
+      one controller, increments generation, and returns the same deterministic control
+      outcomes as Python. test: ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::lifecycle_order_is_epoch_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '1.4'
+  item_id: 1.4.5
+  plan_node_hash: 0396ec843adf7d3f53351011188ac84195ee440917ecbf7e6d47702ced711972
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23210'
+    validation_criteria_snippet: '1.4.1: Attach/detach/take/release/finalize permits
+      one controller, increments generation, and returns the same deterministic control
+      outcomes as Python. test: ...'
+    matched_artifact_ref: crates/gterminals/tests/leases.rs::publication_failure_is_atomic_and_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.1
+  plan_node_hash: 0d0908004eb5e427ec05afa84f5e50f27aa72a3019fa6d984ac68abfa0a11ff1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23211'
+    validation_criteria_snippet: '1.5.1: Native and tmux rows dispatch through their
+      own runtime; unavailable/unknown backend fails closed and no global/config default
+      can redirect a row. test:...'
+    matched_artifact_ref: crates/gterminals/tests/write_coordinator.rs::runtime_is_resolved_from_terminal_row
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.2
+  plan_node_hash: 50631082d61ab10cd5d608d5c60fec6eecbd09e9ff87432464cea9f10567f96c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23211'
+    validation_criteria_snippet: '1.5.1: Native and tmux rows dispatch through their
+      own runtime; unavailable/unknown backend fails closed and no global/config default
+      can redirect a row. test:...'
+    matched_artifact_ref: crates/gterminals/tests/write_coordinator.rs::stale_lease_never_emits_bytes
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.3
+  plan_node_hash: d9638ee5b56c3b3225f124c20c941863b5a247de8f452a639878a1b4dccfb58f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23211'
+    validation_criteria_snippet: '1.5.1: Native and tmux rows dispatch through their
+      own runtime; unavailable/unknown backend fails closed and no global/config default
+      can redirect a row. test:...'
+    matched_artifact_ref: crates/gterminals/tests/write_coordinator.rs::idempotency_and_uncertainty_are_fail_closed
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.4
+  plan_node_hash: cf56fb3dfff5688542d94bf035f364ddfdfeb34a6118765292ce4802332ae6e9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23211'
+    validation_criteria_snippet: '1.5.1: Native and tmux rows dispatch through their
+      own runtime; unavailable/unknown backend fails closed and no global/config default
+      can redirect a row. test:...'
+    matched_artifact_ref: crates/gterminals/tests/write_coordinator.rs::each_evidence_mutation_path_is_explicit
+  deferral_target: null
+  detail: ''
+- section_id: '1.5'
+  item_id: 1.5.5
+  plan_node_hash: 8cb72fbf8446b7a277e342317da036d94a51438c10cd1f450cf7fbc80eb1b7c8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23211'
+    validation_criteria_snippet: '1.5.1: Native and tmux rows dispatch through their
+      own runtime; unavailable/unknown backend fails closed and no global/config default
+      can redirect a row. test:...'
+    matched_artifact_ref: crates/gterminals/tests/write_coordinator.rs::batch_and_sequence_stop_at_first_uncertain_step
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.1
+  plan_node_hash: 8f0cbe88c6aa45b10481bbcb9f3b3c9173c1e294cf5ca9bca4fc1c8bde170839
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23212'
+    validation_criteria_snippet: '1.6.1: `TerminalConfig`, installed config, and the
+      regenerated runtime contract have no `default_backend`; config containing it
+      is rejected as unknown. test: `...'
+    matched_artifact_ref: tests/terminals/test_backend_selection.py::test_default_backend_config_is_removed
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.2
+  plan_node_hash: e7e3b1bc1a71edd403e97e57ad80cf29594ab572955657554775aa120f55255d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23212'
+    validation_criteria_snippet: '1.6.1: `TerminalConfig`, installed config, and the
+      regenerated runtime contract have no `default_backend`; config containing it
+      is rejected as unknown. test: `...'
+    matched_artifact_ref: tests/agents/test_backend_ingress.py::test_every_agent_definition_write_and_read_rejects_backend
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.3
+  plan_node_hash: 8196944bd5defd1612f03708152f81000d97e3355b00dc55a8ed75f7328ff989
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23212'
+    validation_criteria_snippet: '1.6.1: `TerminalConfig`, installed config, and the
+      regenerated runtime contract have no `default_backend`; config containing it
+      is rejected as unknown. test: `...'
+    matched_artifact_ref: tests/agents/test_backend_ingress.py::test_every_public_spawn_ingress_rejects_backend
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.4
+  plan_node_hash: 637af0b86f256a8c80523c5eefafe2562e10aa5b49455aa410eca1c39bfcb23f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23212'
+    validation_criteria_snippet: '1.6.1: `TerminalConfig`, installed config, and the
+      regenerated runtime contract have no `default_backend`; config containing it
+      is rejected as unknown. test: `...'
+    matched_artifact_ref: tests/agents/test_backend_ingress.py::test_all_spawn_request_producers_emit_run_lifetime
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.5
+  plan_node_hash: ed6cadfba951577973983e34494e63331fd27af3621d9820998c5bf69985ef56
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23212'
+    validation_criteria_snippet: '1.6.1: `TerminalConfig`, installed config, and the
+      regenerated runtime contract have no `default_backend`; config containing it
+      is rejected as unknown. test: `...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_role_bound_pane_is_persistent_and_bare_pane_is_run
+  deferral_target: null
+  detail: ''
+- section_id: '1.6'
+  item_id: 1.6.6
+  plan_node_hash: de821792deffb4e6391c4cfdd0abce5394adf62f8d4d447612489d7851eaae49
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23212'
+    validation_criteria_snippet: '1.6.1: `TerminalConfig`, installed config, and the
+      regenerated runtime contract have no `default_backend`; config containing it
+      is rejected as unknown. test: `...'
+    matched_artifact_ref: backend-option-consumer-sweep
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.1
+  plan_node_hash: f39697ee262da152c864d68ffd5b95787bd4572a9a9179a217a76a5ebcf72b34
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23213'
+    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
+      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
+      may select tmux for `run`; sepa...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_tmux_fallback_subtype_matrix_is_exhaustive
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.2
+  plan_node_hash: e0d9be1043ed2a69ed3c9ba8d0e2f6193ef8a5bc545274bbd137a1a28d05e3d7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23213'
+    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
+      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
+      may select tmux for `run`; sepa...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_persistent_role_refuses_tmux_fallback
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.3
+  plan_node_hash: 59335518708486a2f56a12af48123cc7c288a6c826bb1de04a6254cd44c661e1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23213'
+    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
+      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
+      may select tmux for `run`; sepa...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_fallback_announcement_is_attempt_until_activation
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.4
+  plan_node_hash: 70b9de672f1663aa109f8ad6990bfba7b8dfacb83789fd6e4b7e3528f68334ce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23213'
+    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
+      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
+      may select tmux for `run`; sepa...'
+    matched_artifact_ref: tests/servers/test_terminals_routes.py::test_terminal_inventory_exposes_backend_and_fallback_reason
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.5
+  plan_node_hash: a054bff47052b0d25002bdf2eb187f85ca75e8f7c58998c7ee79503a689b6b21
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23213'
+    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
+      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
+      may select tmux for `run`; sepa...'
+    matched_artifact_ref: crates/gclient/tests/client_loop.rs::terminal_inventory_renders_each_backend
+  deferral_target: null
+  detail: ''
+- section_id: '1.7'
+  item_id: 1.7.6
+  plan_node_hash: 778c099b5923c898f259770c17862d3d4e1e326c741d6b3519e107b695940501
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23213'
+    validation_criteria_snippet: '1.7.1: A healthy/adopted host always selects gterm.
+      Exactly `host_start_timeout`, semantic `epoch_refused`, and `gterm_missing`
+      may select tmux for `run`; sepa...'
+    matched_artifact_ref: tests/agents/test_spawn_executor.py::test_recovery_is_new_spawn_and_handoff_only
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.1
+  plan_node_hash: 361536e6b01cb86a508c34a0a8124b9265841bcf6aca0ef27f64eb30a561ff37
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
+      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
+      semantics on the row''s o...'
+    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::input_and_write_match_python_on_recorded_socket
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.2
+  plan_node_hash: ea3ecd13ca223e90a06edabf8eafd92adac8d1f996481a0988f22f87f0bae310
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
+      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
+      semantics on the row''s o...'
+    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::resize_and_snapshot_preserve_tmux_history_contract
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.3
+  plan_node_hash: 6d85a7ea85d4d6b0b43f7f2e9ab1a2af89e4d18189812f2b1e8212d70876002d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
+      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
+      semantics on the row''s o...'
+    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::attach_locator_uses_live_host_generation
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.4
+  plan_node_hash: f394b591959349299e896eb9a43776b0fe874f6298ff9df9bbdd1db8b311c59e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
+      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
+      semantics on the row''s o...'
+    matched_artifact_ref: crates/gterminals/tests/tmux_runtime.rs::liveness_presence_and_termination_are_socket_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '1.8'
+  item_id: 1.8.5
+  plan_node_hash: 523875b2cb9f113720c0d31bc9da2bd85f0bbd813b002cf347e08cc5cc3067ba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23214'
+    validation_criteria_snippet: '1.8.1: Raw input, literal text, named keys, and
+      bracketed paste preserve current byte/size and delivered/indeterminate/partial-failure
+      semantics on the row''s o...'
+    matched_artifact_ref: native-family-live-tmux-runtime-parity
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.1
+  plan_node_hash: 4000dfc4165116711fffbfa9cc59bc75d01286c71321566998adaf7d7e427b8f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23215'
+    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+      with the non-empty and byte-ceiling check, and every schema identity carrier
+      agrees: `cargo test -p g...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/456_workspace_pane_role.sql
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.2
+  plan_node_hash: d45e9aac6121d840e1b820a781918a8ad92cddba92ee820be7d2f1d6a9846b13
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23215'
+    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+      with the non-empty and byte-ceiling check, and every schema identity carrier
+      agrees: `cargo test -p g...'
+    matched_artifact_ref: tests/storage/test_workspaces.py::test_pane_role_persists_and_defaults_null
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.3
+  plan_node_hash: 600d7c6ecfeea42d1d0b1fa8533175ec79d42a548a5e79aa49668283c8cb6814
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23215'
+    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+      with the non-empty and byte-ceiling check, and every schema identity carrier
+      agrees: `cargo test -p g...'
+    matched_artifact_ref: tests/storage/test_workspaces.py::test_pane_to_dict_omits_null_role
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.4
+  plan_node_hash: bded5176ee21f5218847a800d958a6a4b1520a288e9e7bdffa7d781c7d42c707
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23215'
+    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+      with the non-empty and byte-ceiling check, and every schema identity carrier
+      agrees: `cargo test -p g...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_tab_create_and_pane_split_carry_role
+  deferral_target: null
+  detail: ''
+- section_id: '1.9'
+  item_id: 1.9.5
+  plan_node_hash: a8256218f44328e115824a207074948fbfa5b22879b7df1c2ee16dc554b31531
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23215'
+    validation_criteria_snippet: '1.9.1: Migration 456 adds nullable `workspace_panes.role`
+      with the non-empty and byte-ceiling check, and every schema identity carrier
+      agrees: `cargo test -p g...'
+    matched_artifact_ref: tests/servers/test_terminal_ws_golden.py::test_workspace_emitters_match_golden_replies
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.1
+  plan_node_hash: 30c185d427df497667e376d5d4d3f73193767c5cafe1203917e4f676438faeff
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23216'
+    validation_criteria_snippet: '2.1.1: Every manifest case is discovered and Rust
+      encode/decode output is byte-identical to the canonical fixture; a missing/unread
+      manifest case fails the tes...'
+    matched_artifact_ref: crates/gterminals/tests/ws_golden.rs::canonical_terminal_ws_corpus_replays_byte_identically
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.2
+  plan_node_hash: f5ded4b2007fc22961082084f938479cc9f805a17ad7c776592542866232bfd8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23216'
+    validation_criteria_snippet: '2.1.1: Every manifest case is discovered and Rust
+      encode/decode output is byte-identical to the canonical fixture; a missing/unread
+      manifest case fails the tes...'
+    matched_artifact_ref: crates/gterminals/tests/ws_golden.rs::fragment_limits_and_identity_match_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.3
+  plan_node_hash: 3d113a33cddf525c70605808034c53243ac164fb53a65611c6dff061f376d0ad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23216'
+    validation_criteria_snippet: '2.1.1: Every manifest case is discovered and Rust
+      encode/decode output is byte-identical to the canonical fixture; a missing/unread
+      manifest case fails the tes...'
+    matched_artifact_ref: crates/gterminals/tests/ws_golden.rs::inventory_pagination_matches_python
+  deferral_target: null
+  detail: ''
+- section_id: '2.1'
+  item_id: 2.1.4
+  plan_node_hash: 2aa4dfa31fd30d5196d285dcda0f2cdba081e8ece004d9d8a250b10f0e8f4285
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23216'
+    validation_criteria_snippet: '2.1.1: Every manifest case is discovered and Rust
+      encode/decode output is byte-identical to the canonical fixture; a missing/unread
+      manifest case fails the tes...'
+    matched_artifact_ref: terminal-ws-wire-scope-guard
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.3
+  plan_node_hash: e2bcb46a781b009ba6d2f8e8964c2c407fd1bb9bedf4fe6bdbd775cc0dbee6c0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::cutover_requires_restart_and_has_one_owner
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.7
+  plan_node_hash: 89ff32899a050ebd5e5d3a91058071f6359cf59f266d565048cce8e868c92924
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: tests/terminals/test_coordinator_client.py::test_pane_io_submit_regressions_hold_against_rust_coordinator
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.8
+  plan_node_hash: 8f2d482652deea88577de6a00314cc2b3917e630809fc4bfb63f50f4842bec94
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::write_route_requires_the_per_start_parent_pipe_token
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.12
+  plan_node_hash: d4cd524cb38112cb5e9595002475d5258909733969538d8d8c123f377c5d219e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_consumers_use_the_rust_runtime_client
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.13
+  plan_node_hash: e2760884e08d68d28b6916627cbc2a4375c70764436365d6a8e0fccfb7f29dd0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: tests/terminals/test_runtime_client.py::test_native_settlement_has_one_rust_owner
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.14
+  plan_node_hash: a952c8ed50510ecca14d1ff3f7faf4bda50cd8b7a5ec1fd33e2a6b4fb83b1dc0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::route_hold_queue_is_bounded_and_token_scoped
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.15
+  plan_node_hash: 24897f2b87eebea8b35abb95d5aed2abceb309fc5b8115b5a3b60b1d9459f561
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::uncertain_hold_admits_nothing_before_proof
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.16
+  plan_node_hash: 7ab48524aac74257cc89c7e363c12c7e4ca75b493efeca66f9c4f7ec02738314
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: tests/terminals/test_workspace_ops.py::test_native_pane_binds_after_rust_settlement
+  deferral_target: null
+  detail: ''
+- section_id: '2.4'
+  item_id: 2.4.17
+  plan_node_hash: 105a43869f64a083011be5421a4def0e99884da5b5f59349ab4a416e42016d94
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23217'
+    validation_criteria_snippet: '2.4.3: Startup has exactly one supervisor in every
+      mode, and a runtime route-mode change is rejected with restart-required before
+      altering ownership. test: `cr...'
+    matched_artifact_ref: crates/gterminals/tests/family_cutover.rs::native_activation_refuses_without_the_terminal_family
+  deferral_target: null
+  detail: ''
+- section_id: D1
+  item_id: 1.4.6
+  plan_node_hash: 9826e640eeb6dda47a91fcb7853e7fddab52832ac3fb666c56f66e0263e24273
+  status: deferred
+  leaves: []
+  deferral_target: '#23218'
+  detail: deferral is valid
+- section_id: D1
+  item_id: 1.4.7
+  plan_node_hash: 29c7153d221bec3e6993f334303580264e588c99d041363982d7c5b618de4674
+  status: deferred
+  leaves: []
+  deferral_target: '#23218'
+  detail: deferral is valid
+- section_id: D1
+  item_id: 1.4.8
+  plan_node_hash: fd9d2309863b435f3700c1aa2973019b22dcc66b37d2b0391ffe0e83f4fed2ae
+  status: deferred
+  leaves: []
+  deferral_target: '#23218'
+  detail: deferral is valid
+- section_id: D1
+  item_id: 1.4.9
+  plan_node_hash: 70cf0fa699cc674e282e0d75df646093d17e3d4a8d1529d35dbd77e52985eb3b
+  status: deferred
+  leaves: []
+  deferral_target: '#23218'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.2.1
+  plan_node_hash: ce525a3d81e0441af234c23952e69b2ed0745b7fee75b083bdb54d4c9312c201
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.2.2
+  plan_node_hash: 13bf7e1ba97854724cc3ad2eae2a953c409ce0df8039de4e7ea3637fcfdf88f3
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.2.3
+  plan_node_hash: 80cc2f5d6563f778f74108d6404cb96f949592e647a361d88d43e5a9f8ca91af
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.2.4
+  plan_node_hash: 10a447d726e6ad4a5f209f3a1b991474c1d54dde1eabb80a3ed40e09d7ee49b1
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.2.5
+  plan_node_hash: c9c2b628a75f7b40e39aba5bc739d86db7d576c7a2ed1c0bd2706de52a2ac913
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.2.6
+  plan_node_hash: 322bbe7092bdb6cb27df00687d2326e3c660bbf9b0d5f827e42fb789a060e551
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.3.1
+  plan_node_hash: 55bf93c83467834f49b8b629641811fc216395c5e243b2ef411c7613b007aba1
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.3.2
+  plan_node_hash: 91dfbac0a6b7e1b203da5ff8990636f3b6292a2bdf6cb4fc6e91d3f59d4e9034
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.3.3
+  plan_node_hash: 1fe6a3a51c11f0245e94dd3af865ca7171befb3fbb607ec08f0b3a821d6990f8
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.3.4
+  plan_node_hash: 64903f3a4f52e97ac773de803d9697b0337fdc0b6272250c349a1451c46d36d8
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.1
+  plan_node_hash: b0aa16820d806b248160f03a43c706eb4644ab302ccac9aded9234808f1a6757
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.2
+  plan_node_hash: 3f6c2e75dbb8de96b3c53a4e6c8cdf88f148108642d1d786023f3a8f57c821b9
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.4
+  plan_node_hash: f844505591bd2d635c04377d5a41842c2d6a370800f81c79bc0b153c4eb4d70f
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.5
+  plan_node_hash: 2bc9443d039df9e8f9792b11cb1f82fd2e528796fa9d03ccb0a78e28ab5b725f
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.6
+  plan_node_hash: 9da0c05ff695d6098bda809379f2e2b03f498f3e83b0de6e53da259f42af89c4
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.9
+  plan_node_hash: b13bf6ca6064be255b6cc83d7f46bcbae655a2330ef2841c1ee46dd739a70f7a
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.10
+  plan_node_hash: 0a926d47dbdcfa588fecb374dd88208580bb241af1bfd738f02c84049fa871e0
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.11
+  plan_node_hash: dd5839d6bcf2f9220ec8e654bb261b8765a54a2a6a45547b5a878dad475db391
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid
+- section_id: D2
+  item_id: 2.4.18
+  plan_node_hash: a6761653261bc6ef990eb75f3a4321092b8928e8f73956af95de85fe335c3418
+  status: deferred
+  leaves: []
+  deferral_target: '#23219'
+  detail: deferral is valid

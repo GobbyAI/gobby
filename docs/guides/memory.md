@@ -284,9 +284,13 @@ call_tool(server_name="gobby-memory", tool_name="memory_dream", arguments={
 After a worked leaf closes, call `review_task_memories` with the task reference,
 a concrete changes summary, and caller identity through outer `session_id`.
 It requires a task closed by that session or one of its spawned descendants in
-the caller project. It searches project/global candidates and records the closure
-review; the caller still evaluates each candidate and updates or deletes stale
-knowledge. Zero candidates is a valid complete review. Most tasks need no new
+the caller project. Candidates come in two tiers, each tagged by `source`. First
+come `accessed` memories, the ones fetched with `get_memory` while that task was
+claimed or with no task claimed. They are read from the calling session and from
+the closing session, in first-fetch order. After them come `search` hits for
+project/global memories related to the task title and summary, minus any memory
+already listed. The tool records the closure review. The caller still evaluates
+each candidate and updates or deletes stale knowledge. Zero candidates is a valid complete review. Most tasks need no new
 memory. Use the returned canonical `source_task_id` if capture is justified.
 
 `pending_reviews_complete` and `pending_reviews` describe outstanding closures.
@@ -605,7 +609,7 @@ Current bundled memory rules:
 | `review-closed-task-memories-before-handoff` | `before_tool` | Blocks `gobby-sessions:set_handoff` once per queued closure set, so a handoff right after `close_task` cannot defer the review past the closing context; silent once every queued closure is reviewed. |
 | `review-closed-task-memories-on-stop` | `turn_end` | Blocks once per queued closure set with a `review_task_memories` request; silent once every queued closure is reviewed. |
 | `guard-plan-memory-writes` | `before_tool` | Blocks the first plan-time `create_memory` or `update_memory` call until the agent confirms that the write is a durable preference or finalized decision rather than plan evidence. |
-| `reset-memory-tracking-on-start` | `session_start` | Clears injected review-lesson tracking after clear, compact, or selected resume events. |
+| `reset-memory-tracking-on-start` | `session_start` | Clears `surfaced_memory_ids`, `accessed_memory_ids`, `_memory_surface_seq`, and `injected_review_lesson_ids` after clear, compact, or selected resume events. |
 | `increment-parent-turn-seq` | `turn_start` | Increments the parent session turn sequence counter. |
 | `surface-memories-on-turn-start` | `turn_start` | Calls `surface_memories` once per parent turn and injects the ranked index, searching on the prompt when it states work and on the session's last assistant message when it does not. |
 | `surface-memories-before-spawn` | `before_tool` | Surfaces a ranked memory index for the spawn prompt before `gobby-agents:spawn_agent` runs. |
@@ -650,11 +654,19 @@ The index prints each rationale as the `when:` clause, so write a rationale as
 the situation in which a future session needs the memory. Most turns need no
 memory write.
 
-Rule-delivered review lessons and surfaced memory indexes are deduplicated for
-one context epoch through
-`injected_memory_ids`. Clear, compact, and selected resume events start a new
-context epoch by resetting that variable, allowing relevant guidance to appear
-again without suppressing it for the whole session.
+Rule-delivered review lessons are deduplicated for one context epoch through
+`injected_review_lesson_ids`. Memory indexes track two sets. Every successful
+surfacing advances `_memory_surface_seq`, including one with no hits or no rendered
+line, and every line it renders is stamped
+`<memory_id>@<seq>` in `surfaced_memory_ids`. A shown but unfetched memory is
+listed again once `index_reshow_after_injections` further surfacings have passed.
+`gobby-memory:get_memory` appends `{memory_id, task_id}` records to
+`accessed_memory_ids`, and a fetched memory is never listed again in that epoch.
+Stamps and the sequence commit only after the hook response is acknowledged, so a
+lost delivery suppresses nothing. Clear, compact (`preserve-context-on-compact`
+and `reset-memory-tracking-on-start`), and selected resume events start a new
+context epoch by resetting all four variables, allowing relevant guidance to
+appear again without suppressing it for the whole session.
 
 ## Backup Format
 

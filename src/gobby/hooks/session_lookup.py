@@ -25,6 +25,7 @@ from gobby.sessions.tmux_window_naming import schedule_tmux_window_rename
 from gobby.storage.session_activity import reconcile_compact_session_activity
 from gobby.storage.sessions._constants import TERMINAL_SESSION_STATUSES
 from gobby.storage.sessions._contested_expiry import session_has_active_native_subagent
+from gobby.storage.sessions._registration_cache import session_matches_registration
 from gobby.tasks.state_semantics import serialize_task_state
 
 if TYPE_CHECKING:
@@ -94,6 +95,7 @@ class SessionLookupService:
         event: HookEvent,
         *,
         apply_session_mutations: bool = True,
+        cached_session: Session | None = None,
     ) -> str | None:
         """Resolve platform session ID from event and enrich with task context.
 
@@ -112,6 +114,9 @@ class SessionLookupService:
                 ingress identity fence can reject a stale hook before it
                 writes onto the durable session; call
                 :meth:`apply_session_mutations` after acceptance.
+            cached_session: The row that validated this event's cached
+                registration mapping during project resolution, reused so the
+                session row is read once per hook.
 
         Returns:
             Platform session ID or None if no external_id
@@ -145,10 +150,11 @@ class SessionLookupService:
                     project_resolution.reason,
                 )
                 return None
+            cached_session = project_resolution.session
 
         if explicit_platform_session_id:
             if apply_session_mutations:
-                self.apply_session_mutations(event, explicit_platform_session_id)
+                self._apply_session_mutations(explicit_platform_session_id, event, explicit_session)
             self._enrich_task_context(explicit_platform_session_id, event)
             event.metadata["_platform_session_id"] = explicit_platform_session_id
             return explicit_platform_session_id
@@ -157,12 +163,12 @@ class SessionLookupService:
         if not external_id:
             return None
 
-        platform_session_id = self._resolve_session_id(external_id, event)
+        platform_session_id = self._resolve_session_id(external_id, event, cached_session)
 
         # Resolve active task for this session
         if platform_session_id:
             if apply_session_mutations:
-                self.apply_session_mutations(event, platform_session_id)
+                self._apply_session_mutations(platform_session_id, event, cached_session)
             self._enrich_task_context(platform_session_id, event)
 
         # Store platform session_id in event metadata for handlers. Never
@@ -186,10 +192,21 @@ class SessionLookupService:
         """
         if not platform_session_id:
             return
-        # The incoming seat is recorded first so revival judges the process that
-        # sent this hook, such as a resumed CLI, rather than the one that left.
-        self._backfill_terminal_context(platform_session_id, event)
-        self._revive_expired_terminal_session(platform_session_id, event)
+        self._apply_session_mutations(platform_session_id, event, None)
+
+    def _apply_session_mutations(
+        self,
+        platform_session_id: str,
+        event: HookEvent,
+        current: Session | None,
+    ) -> None:
+        """Backfill then revive, handing revival the row backfill left behind.
+
+        The incoming seat is recorded first so revival judges the process that
+        sent this hook, such as a resumed CLI, rather than the one that left.
+        """
+        current = self._backfill_terminal_context(platform_session_id, event, current)
+        self._revive_expired_terminal_session(platform_session_id, event, current)
 
     def validate_platform_session_metadata(self, event: HookEvent) -> str | None:
         """Validate caller-supplied _platform_session_id without side effects.
@@ -205,13 +222,20 @@ class SessionLookupService:
         self,
         platform_session_id: str,
         event: HookEvent,
-    ) -> None:
-        """Repair false-expired terminal rows when a non-end hook arrives."""
+        current: Session | None,
+    ) -> Session | None:
+        """Repair false-expired terminal rows when a non-end hook arrives.
+
+        Returns the session row as it stands afterwards, or ``current``
+        unchanged when revival does not run.
+        """
         if event.event_type == HookEventType.SESSION_END:
-            return
+            return current
 
         try:
-            self._session_manager.revive_expired_terminal_session(platform_session_id)
+            return self._session_manager.revive_expired_terminal_session(
+                platform_session_id, current
+            )
         except Exception as exc:
             self._logger.debug(
                 "Failed to revive expired terminal session %s on %s: %s",
@@ -220,7 +244,7 @@ class SessionLookupService:
                 exc,
                 exc_info=True,
             )
-            return
+            return None
 
     def _resolve_metadata_platform_session(
         self,
@@ -281,8 +305,17 @@ class SessionLookupService:
         event.metadata.pop("_platform_session_id", None)
         return False
 
-    def _backfill_terminal_context(self, platform_session_id: str, event: HookEvent) -> None:
-        """Merge terminal metadata discovered after the original registration."""
+    def _backfill_terminal_context(
+        self,
+        platform_session_id: str,
+        event: HookEvent,
+        current: Session | None,
+    ) -> Session | None:
+        """Merge terminal metadata discovered after the original registration.
+
+        Returns the session row as it stands afterwards; ``None`` when the merge
+        failed, so the next step reads the row itself.
+        """
         raw_context = event.data.get("terminal_context")
         terminal_context = raw_context if isinstance(raw_context, dict) else None
         terminal_context = enrich_terminal_context_with_cwd(
@@ -291,12 +324,13 @@ class SessionLookupService:
             external_id=event.session_id,
         )
         if not terminal_context:
-            return
+            return current
 
         try:
             updated_session, tmux_pane_added = self._session_manager.backfill_terminal_context(
                 platform_session_id,
                 terminal_context,
+                current,
             )
         except Exception as exc:
             self._logger.debug(
@@ -304,7 +338,7 @@ class SessionLookupService:
                 platform_session_id,
                 exc,
             )
-            return
+            return None
 
         if tmux_pane_added and updated_session is not None:
             title = getattr(updated_session, "title", None) or ""
@@ -313,11 +347,24 @@ class SessionLookupService:
                 title,
                 loop=getattr(self._session_coordinator, "_event_loop", None),
             )
+        return updated_session
 
-    def _resolve_session_id(self, external_id: str, event: HookEvent) -> str | None:
+    def _resolve_session_id(
+        self,
+        external_id: str,
+        event: HookEvent,
+        cached_session: Session | None,
+    ) -> str | None:
         """Look up or create platform session ID for the given external_id."""
         machine_id = require_hook_machine_id(event)
         project_id = event.project_id
+        if cached_session is not None and session_matches_registration(
+            cached_session,
+            external_id=external_id,
+            source=event.source.value,
+            project_id=project_id,
+        ):
+            return cached_session.id
         platform_session_id = self._session_manager.get_session_id(
             external_id,
             event.source.value,

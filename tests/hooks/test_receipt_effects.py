@@ -7,6 +7,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 from gobby.hooks.receipt_effects import (
     apply_acknowledged_receipt,
@@ -16,6 +17,7 @@ from gobby.hooks.receipt_effects import (
     worker_staging_scope,
 )
 from gobby.workflows.engine._offload import offload
+from gobby.workflows.engine.injection_tracking import InjectionTrackingMixin
 
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 
@@ -24,6 +26,9 @@ class _VariableStore:
     def __init__(self) -> None:
         self.variables: dict[str, dict[str, Any]] = {}
         self.appended: list[tuple[str, str, list[str]]] = []
+
+    def get_variables(self, session_id: str) -> dict[str, Any]:
+        return dict(self.variables.get(session_id, {}))
 
     def merge_variables(self, session_id: str, updates: dict[str, Any]) -> bool:
         self.variables.setdefault(session_id, {}).update(updates)
@@ -120,12 +125,12 @@ def test_record_worker_staging_deep_merges_session_and_append_sets() -> None:
         {
             "session_id": SESSION_ID,
             "session_variables": {"_agent_context_injected": True},
-            "append_set_variables": {"injected_memory_ids": ["a"]},
+            "append_set_variables": {"surfaced_memory_ids": ["a"]},
         }
     )
     record_worker_staging(
         {
-            "append_set_variables": {"injected_memory_ids": ["a", "b"]},
+            "append_set_variables": {"surfaced_memory_ids": ["a", "b"]},
             "pending_message_ids": ["msg-1"],
         }
     )
@@ -136,7 +141,7 @@ def test_record_worker_staging_deep_merges_session_and_append_sets() -> None:
         "one_shot_guard": True,
         "_agent_context_injected": True,
     }
-    assert staged["append_set_variables"]["injected_memory_ids"] == ["a", "b"]
+    assert staged["append_set_variables"]["surfaced_memory_ids"] == ["a", "b"]
     assert staged["pending_message_ids"] == ["msg-1"]
 
 
@@ -150,7 +155,7 @@ async def _stage_one_delivery(session_id: str, barrier: threading.Barrier) -> di
         record_worker_staging(
             {
                 "session_id": session_id,
-                "append_set_variables": {"injected_memory_ids": [f"{session_id}-offloaded"]},
+                "append_set_variables": {"surfaced_memory_ids": [f"{session_id}-offloaded"]},
             }
         )
 
@@ -208,7 +213,7 @@ def test_worker_staging_scope_isolates_concurrent_deliveries() -> None:
             assert runtime_view["session_id"] == session_id
             assert runtime_view["session_variables"] == {session_id: True}
             assert runtime_view["append_set_variables"] == {
-                "injected_memory_ids": [f"{session_id}-offloaded"]
+                "surfaced_memory_ids": [f"{session_id}-offloaded"]
             }
 
         # The adapter thread drains exactly what its own delivery staged,
@@ -234,20 +239,20 @@ def test_worker_staging_scope_isolates_concurrent_deliveries() -> None:
 
 def test_apply_acknowledged_receipt_appends_set_variables_without_replacing() -> None:
     variable_manager = _VariableStore()
-    variable_manager.variables[SESSION_ID] = {"injected_memory_ids": ["a"]}
+    variable_manager.variables[SESSION_ID] = {"surfaced_memory_ids": ["a"]}
     receipt = SimpleNamespace(
         receipt_id="receipt-append",
         session_id=SESSION_ID,
         staged_payload={
             "session_id": SESSION_ID,
-            "append_set_variables": {"injected_memory_ids": ["b", "a"]},
+            "append_set_variables": {"surfaced_memory_ids": ["b", "a"]},
         },
     )
 
     apply_acknowledged_receipt(receipt, variable_manager=variable_manager)
 
-    assert variable_manager.appended == [(SESSION_ID, "injected_memory_ids", ["b", "a"])]
-    assert variable_manager.variables[SESSION_ID]["injected_memory_ids"] == ["a", "b"]
+    assert variable_manager.appended == [(SESSION_ID, "surfaced_memory_ids", ["b", "a"])]
+    assert variable_manager.variables[SESSION_ID]["surfaced_memory_ids"] == ["a", "b"]
     assert "one_shot_guard" not in variable_manager.variables[SESSION_ID]
 
 
@@ -268,6 +273,48 @@ def test_apply_acknowledged_receipt_duplicate_append_is_a_noop() -> None:
     assert variable_manager.variables[SESSION_ID]["suggested_skill_names"] == ["new-skill"]
     assert len(variable_manager.appended) == 2
     assert variable_manager.appended[0] == (SESSION_ID, "suggested_skill_names", ["new-skill"])
+
+
+def test_surface_seq_and_stamps_commit_on_ack() -> None:
+    from gobby.hooks.receipt_effects import staged_session_variable
+
+    store = _VariableStore()
+    tracker = InjectionTrackingMixin()
+    tracker.db = MagicMock()
+    hits = [{"id": "memory-a"}, {"id": "memory-b"}]
+
+    with (
+        patch("gobby.workflows.state_manager.SessionVariableManager", return_value=store),
+        worker_staging_scope(),
+    ):
+        first = tracker._filter_and_track_new_memories(hits, SESSION_ID)
+        assert [hit["id"] for hit in first] == ["memory-a", "memory-b"]
+        assert staged_session_variable("_memory_surface_seq") == 1
+        # Nothing rendered, yet the surfacing still advances the sequence.
+        assert tracker._filter_and_track_new_memories(hits, SESSION_ID) == []
+        assert staged_session_variable("_memory_surface_seq") == 2
+        staged = take_worker_staging()
+
+    assert store.variables == {}
+    assert staged["append_set_variables"] == {"surfaced_memory_ids": ["memory-a@1", "memory-b@1"]}
+    assert staged["session_variables"] == {"_memory_surface_seq": 2}
+
+    apply_acknowledged_receipt(
+        SimpleNamespace(receipt_id="surface-ack", session_id=SESSION_ID, staged_payload=staged),
+        variable_manager=store,
+    )
+
+    assert store.variables[SESSION_ID] == {
+        "surfaced_memory_ids": ["memory-a@1", "memory-b@1"],
+        "_memory_surface_seq": 2,
+    }
+    # The next delivery continues from the committed sequence.
+    with (
+        patch("gobby.workflows.state_manager.SessionVariableManager", return_value=store),
+        worker_staging_scope(),
+    ):
+        tracker._filter_and_track_new_memories([{"id": "memory-c"}], SESSION_ID)
+        assert staged_session_variable("_memory_surface_seq") == 3
 
 
 class _StartupStore(_VariableStore):

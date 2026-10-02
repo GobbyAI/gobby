@@ -89,11 +89,17 @@ def _surface(
     engine: RuleEngine,
     hits: list[dict[str, Any]],
     trigger: str = "spawn_agent",
+    reshow_after_injections: int = 5,
 ) -> tuple[bool, str | None, list[str]]:
     return engine._format_memory_backed_result(
         server="gobby-memory",
         tool="surface_memories",
-        result={"trigger": trigger, "count": len(hits), "memories": hits},
+        result={
+            "trigger": trigger,
+            "count": len(hits),
+            "memories": hits,
+            "reshow_after_injections": reshow_after_injections,
+        },
         event=_event(),
         platform_session_id=PLATFORM_SESSION_ID,
         variables={},
@@ -170,7 +176,7 @@ def test_index_dedupes_and_stages_ids(engine: RuleEngine, db: HubDatabase) -> No
     _handled, first, _ids = _surface(engine, [_hit(first_id)])
     assert first is not None
     assert "002c13ae" in first
-    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
+    assert "surfaced_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
     _handled, second, _ids = _surface(engine, [_hit(first_id), _hit(second_id)])
     assert second is not None
@@ -180,8 +186,12 @@ def test_index_dedupes_and_stages_ids(engine: RuleEngine, db: HubDatabase) -> No
     assert second.splitlines()[1].startswith("1. 7f0c9d2e ")
 
     staged = take_worker_staging()
-    assert staged["append_set_variables"]["injected_memory_ids"] == [first_id, second_id]
-    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
+    assert staged["append_set_variables"]["surfaced_memory_ids"] == [
+        f"{first_id}@1",
+        f"{second_id}@2",
+    ]
+    assert staged["session_variables"] == {"_memory_surface_seq": 2}
+    assert "surfaced_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
     apply_acknowledged_receipt(
         SimpleNamespace(
@@ -191,18 +201,78 @@ def test_index_dedupes_and_stages_ids(engine: RuleEngine, db: HubDatabase) -> No
         ),
         variable_manager=SessionVariableManager(db),
     )
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == [first_id, second_id]
+    committed = _vars(db, PLATFORM_SESSION_ID)
+    assert committed["surfaced_memory_ids"] == [f"{first_id}@1", f"{second_id}@2"]
+    assert committed["_memory_surface_seq"] == 2
 
     _handled, third, _ids = _surface(engine, [_hit(first_id), _hit(second_id)])
     assert third is None
 
 
-def test_empty_index_injects_nothing(engine: RuleEngine) -> None:
+def test_accessed_memory_never_reshown(engine: RuleEngine, db: HubDatabase) -> None:
+    fetched_id = "002c13ae-4b1f-4d4a-9a1e-6f0d2a3b4c5d"
+    shown_id = "7f0c9d2e-4b1f-4d4a-9a1e-6f0d2a3b4c5d"
+    # Another task fetched it: any record suppresses the id, whichever task tagged it.
+    SessionVariableManager(db).set_variable(
+        PLATFORM_SESSION_ID,
+        "accessed_memory_ids",
+        [{"memory_id": fetched_id, "task_id": "33333333-3333-4333-8333-333333333333"}],
+    )
+
+    rendered = [_surface(engine, [_hit(fetched_id), _hit(shown_id)])[1] for _ in range(12)]
+
+    assert all(index is None or "002c13ae" not in index for index in rendered)
+    # The unread neighbour still returns on its horizon: surfacings 1, 6 and 11.
+    assert [seq for seq, index in enumerate(rendered, start=1) if index is not None] == [1, 6, 11]
+
+
+def test_surfaced_memory_reshown_after_horizon(engine: RuleEngine) -> None:
+    memory_id = "002c13ae-4b1f-4d4a-9a1e-6f0d2a3b4c5d"
+
+    rendered = [_surface(engine, [_hit(memory_id)])[1] is not None for _ in range(7)]
+
+    # Stamped at seq 1, dropped at seq 2-5, shown again at seq 6 (the fifth
+    # further surfacing), and the refreshed stamp suppresses seq 7.
+    assert rendered == [True, False, False, False, False, True, False]
+    staged = take_worker_staging()
+    assert staged["append_set_variables"]["surfaced_memory_ids"] == [
+        f"{memory_id}@1",
+        f"{memory_id}@6",
+    ]
+    assert staged["session_variables"] == {"_memory_surface_seq": 7}
+
+    # The horizon comes from the payload.
+    short = [
+        _surface(engine, [_hit(memory_id)], reshow_after_injections=2)[1] is not None
+        for _ in range(3)
+    ]
+    assert short == [True, False, True]
+
+
+def test_empty_index_injects_nothing_but_advances_the_sequence(engine: RuleEngine) -> None:
     handled, formatted, _ids = _surface(engine, [])
 
     assert handled is True
     assert formatted is None
-    assert take_worker_staging() == {}
+    staged = take_worker_staging()
+    assert not staged.get("append_set_variables", {}).get("surfaced_memory_ids")
+    assert staged["session_variables"] == {"_memory_surface_seq": 1}
+
+
+def test_empty_surfacings_count_toward_the_horizon(engine: RuleEngine) -> None:
+    memory_id = "002c13ae-4b1f-4d4a-9a1e-6f0d2a3b4c5d"
+    hits = [[_hit(memory_id)], [], [], [], [], [_hit(memory_id)]]
+
+    rendered = [_surface(engine, surfacing)[1] is not None for surfacing in hits]
+
+    # The final hit is the fifth further surfacing, so it renders again.
+    assert rendered == [True, False, False, False, False, True]
+    staged = take_worker_staging()
+    assert staged["append_set_variables"]["surfaced_memory_ids"] == [
+        f"{memory_id}@1",
+        f"{memory_id}@6",
+    ]
+    assert staged["session_variables"] == {"_memory_surface_seq": 6}
 
 
 def test_unregistered_memory_tool_is_not_routed_to_the_index(engine: RuleEngine) -> None:

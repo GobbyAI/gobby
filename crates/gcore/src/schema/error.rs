@@ -1,7 +1,5 @@
 use thiserror::Error;
 
-use super::gate::BackupManifestError;
-
 #[derive(Debug, Error)]
 pub enum SchemaError {
     #[error("invalid PostgreSQL schema name: {0}")]
@@ -16,8 +14,6 @@ pub enum SchemaError {
     Verification(String),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
-    #[error(transparent)]
-    BackupManifest(#[from] BackupManifestError),
     #[error(transparent)]
     Postgres(#[from] postgres::Error),
 }

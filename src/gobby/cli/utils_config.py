@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
+from urllib.parse import unquote
 
 from gobby.cli.utils_runtime import facade
 
@@ -35,17 +36,35 @@ def get_daemon_client(
 
 def _redact_dsn(dsn: str) -> str:
     """Redact the password component from a PostgreSQL DSN for CLI output."""
-    if "@" not in dsn:
+    if not dsn:
         return dsn
-    prefix, suffix = dsn.rsplit("@", 1)
-    scheme, auth = prefix.split("://", 1) if "://" in prefix else ("", prefix)
-    if ":" not in auth:
-        return dsn
-    user = auth.split(":", 1)[0]
-    redacted_auth = f"{user}:****"
-    if scheme:
-        return f"{scheme}://{redacted_auth}@{suffix}"
-    return f"{redacted_auth}@{suffix}"
+    redacted = dsn
+    head, separator, query = dsn.partition("?")
+    if separator:
+        params = []
+        for pair in query.split("&"):
+            key, eq, _value = pair.partition("=")
+            if not eq:
+                params.append(pair)
+                continue
+            try:
+                decoded = unquote(key)
+            except ValueError:
+                decoded = key
+            params.append(f"{key}=****" if decoded.lower() == "password" else pair)
+        redacted = f"{head}?{'&'.join(params)}"
+    prefix, at_sign, suffix = redacted.rpartition("@")
+    if not at_sign:
+        return redacted
+    scheme, scheme_separator, auth = prefix.rpartition("://")
+    if not scheme_separator:
+        return redacted
+    user, colon, _password = auth.partition(":")
+    if not colon:
+        return redacted
+    if any(character.isspace() for character in auth):
+        return f"{scheme}://****@{suffix}"
+    return f"{scheme}://{user}:****@{suffix}"
 
 
 def get_resources_dir(project_path: str | None = None) -> Path:

@@ -143,6 +143,7 @@ async def evaluate_acceptance_artifacts_async(
             evidence_files=evidence_files,
             repo_path=repo_path,
             commit_shas=commit_shas,
+            candidate_commit_sha=candidate_commit_sha,
         )
     )
     return AcceptanceArtifactResult(
@@ -181,9 +182,7 @@ async def resolve_acceptance_tests_async(
     """Resolve every named acceptance test from one authoritative close candidate."""
     tests: list[AcceptanceTest] = []
     findings = list(malformed_test_reference_findings(criteria))
-    candidate = candidate_commit_sha
-    if candidate is None and len(commit_shas) == 1:
-        candidate = commit_shas[0]
+    candidate = _close_candidate(commit_shas, candidate_commit_sha)
     for reference in extract_artifact_references(criteria, "test"):
         parsed = parse_test_reference(reference)
         if parsed is None:
@@ -196,9 +195,7 @@ async def resolve_acceptance_tests_async(
         if not commit_shas:
             findings.append(f"{reference}: a linked commit is required to resolve the test body")
             continue
-        if candidate is None or not any(
-            candidate == sha or candidate.startswith(sha) for sha in commit_shas
-        ):
+        if candidate is None:
             findings.append(f"{reference}: an explicit linked close candidate is required")
             continue
         try:
@@ -321,17 +318,22 @@ async def validate_structured_file_evidence_async(
     evidence_files: tuple[str, ...],
     repo_path: str,
     commit_shas: list[str],
+    candidate_commit_sha: str | None = None,
 ) -> tuple[str, ...]:
     """Validate structured CI evidence using only repository-local facts."""
     findings: list[str] = []
     repo_slug = await _repository_slug(repo_path)
+    candidate = _close_candidate(commit_shas, candidate_commit_sha)
     for path in evidence_files:
         path_error = _path_error(path, repo_path)
         if path_error:
             findings.append(f"{path}: {path_error}")
             continue
+        if commit_shas and candidate is None:
+            findings.append(f"{path}: an explicit linked close candidate is required")
+            continue
         try:
-            content = await _read_committed_file(path, commit_shas, repo_path)
+            content = await _read_committed_file(path, candidate, repo_path)
         except RuntimeError as exc:
             findings.append(f"{path}: {exc}")
             continue
@@ -375,7 +377,11 @@ async def validate_structured_file_evidence_async(
 
 
 def validate_structured_file_evidence(
-    *, evidence_files: tuple[str, ...], repo_path: str, commit_shas: list[str]
+    *,
+    evidence_files: tuple[str, ...],
+    repo_path: str,
+    commit_shas: list[str],
+    candidate_commit_sha: str | None = None,
 ) -> tuple[str, ...]:
     """Offline synchronous facade for direct-library consumers."""
     return asyncio.run(
@@ -383,6 +389,7 @@ def validate_structured_file_evidence(
             evidence_files=evidence_files,
             repo_path=repo_path,
             commit_shas=commit_shas,
+            candidate_commit_sha=candidate_commit_sha,
         )
     )
 
@@ -408,7 +415,7 @@ async def _resolve_test_body(path: str, symbol: str, repo_path: str, commit_sha:
 async def _read_test_file_from_commit(path: str, commit_sha: str, repo_path: str) -> str:
     result = await daemon_git.run(("show", f"{commit_sha}:{path}"), cwd=repo_path, timeout=30)
     if not isinstance(result, GitOk):
-        raise RuntimeError(f"last linked commit {commit_sha[:12]} does not contain {path}")
+        raise RuntimeError(f"close candidate {commit_sha[:12]} does not contain {path}")
     return result.stdout
 
 
@@ -640,18 +647,32 @@ def _strip_markdown_value(value: str) -> str:
     return value.strip().strip("`").strip()
 
 
-async def _read_committed_file(path: str, commit_shas: list[str], repo_path: str) -> str:
-    for sha in reversed(commit_shas):
-        result = await daemon_git.run(("show", f"{sha}:{path}"), cwd=repo_path, timeout=30)
+def _close_candidate(commit_shas: list[str], candidate_commit_sha: str | None) -> str | None:
+    """Return the one linked commit a close reviews, or None when it is ambiguous."""
+    candidate = candidate_commit_sha
+    if candidate is None and len(commit_shas) == 1:
+        candidate = commit_shas[0]
+    if candidate is None or not any(
+        candidate == sha or candidate.startswith(sha) for sha in commit_shas
+    ):
+        return None
+    return candidate
+
+
+async def _read_committed_file(path: str, candidate: str | None, repo_path: str) -> str:
+    if candidate is not None:
+        result = await daemon_git.run(("show", f"{candidate}:{path}"), cwd=repo_path, timeout=30)
         if isinstance(result, GitOk):
             return result.stdout
         if isinstance(result, GitTimeout) or (
             isinstance(result, GitFailed) and result.returncode is None
         ):
             raise RuntimeError("git is unavailable while resolving evidence")
-    candidate = Path(repo_path, path)
+        raise RuntimeError(f"referenced evidence file is missing at close candidate {candidate}")
+    # No linked commit: only the working tree can supply the evidence.
+    working_file = Path(repo_path, path)
     try:
-        return candidate.read_text(encoding="utf-8")
+        return working_file.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
         raise RuntimeError("referenced evidence file is missing or unreadable") from exc
 

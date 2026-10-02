@@ -19,12 +19,20 @@ class TerminalActivity:
 
     composer: ComposerRead
     turn_in_flight_fingerprint: str | None = None
+    # False when this provider's manifest cannot classify a composer at all, so
+    # an ``unknown`` read is a capability gap rather than an unreadable frame.
+    composer_probeable: bool = True
 
 
 # (session, managed terminal row or None) -> one shared terminal activity read.
 ActivityProbe = Callable[[Any, Any | None], Awaitable[TerminalActivity]]
 
 COMPOSER_OCCUPIED = "composer_occupied"
+COMPOSER_UNCONFIRMED = "composer_unconfirmed"
+
+# Skips that must be retried rather than treated as a final outcome: the durable
+# message is persisted and the composer may clear on a later probe.
+RETRYABLE_WAKE_SKIPS = frozenset({"session_active", COMPOSER_OCCUPIED, COMPOSER_UNCONFIRMED})
 
 
 def parse_tmux_session(terminal_context: Any) -> str | None:
@@ -123,6 +131,24 @@ def composer_occupied_result(session_id: str, *, method: str) -> dict[str, Any]:
         "method": method,
         "skipped": COMPOSER_OCCUPIED,
         "decline_reason": COMPOSER_OCCUPIED,
+        "ism_persisted": True,
+    }
+
+
+def composer_unconfirmed_result(session_id: str, *, method: str) -> dict[str, Any]:
+    """Return the skip outcome for a wake withheld from an unreadable composer.
+
+    An ``unknown`` read is not permission to type: the composer may hold an
+    operator draft the probe could not classify. Same durable bucket as
+    ``composer_occupied_result``, so senders still see the message as sent and
+    the wake retries until a probe positively confirms an empty composer.
+    """
+    return {
+        "session_id": session_id,
+        "delivered": False,
+        "method": method,
+        "skipped": COMPOSER_UNCONFIRMED,
+        "decline_reason": COMPOSER_UNCONFIRMED,
         "ism_persisted": True,
     }
 

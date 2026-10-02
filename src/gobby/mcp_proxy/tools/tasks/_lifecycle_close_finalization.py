@@ -149,20 +149,20 @@ async def capture_attribution(
 
     attributed = target_task_has_edits(session_vars, task_id)
     raw_paths = frozenset(task_edited_file_set(session_vars, task_id))
-    used_commit_fallback = not raw_paths
-    if not raw_paths:
-        # Session variables are a volatile cache of what the task edited: escalation,
-        # dead-session recovery, and a fresh claiming session all leave them empty for
-        # a task that really did edit files. Linked commits are the durable record, so
-        # fall back to them instead of reading committed work as a no-edit close --
-        # which would skip gate 10 and starve gate 12 of transcript evidence.
-        raw_paths = await _linked_commit_paths(
+    edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
+    used_commit_fallback = not edited_paths
+    if used_commit_fallback:
+        # Escalation, recovery, a fresh claimant, or ignored scratch can leave the
+        # volatile ledger without committable paths. Recover the durable commit
+        # paths so validation and transcript gates still receive edit evidence,
+        # retaining known ignored paths when no durable commit paths exist.
+        raw_paths |= await _linked_commit_paths(
             task,
             repo_path,
             prospective_commit_shas,
         )
         attributed = attributed or bool(raw_paths)
-    edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
+        edited_paths = frozenset(await _committable_task_paths(set(raw_paths), repo_path))
     clean_proof_paths = edited_paths
     if used_commit_fallback and edited_paths:
         clean_proof_paths = await _linked_commit_clean_proof_paths(

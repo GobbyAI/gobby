@@ -15,6 +15,7 @@ rules:
           != variables.get('parent_turn_seq')
     effects:
       - type: mcp_call
+        delivery: on_receipt
         server: gobby-memory
         tool: surface_memories
         # capture_turn_prompt writes _current_user_prompt, which carries the

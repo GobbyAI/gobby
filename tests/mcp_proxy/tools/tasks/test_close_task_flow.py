@@ -34,7 +34,7 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_tool import register_close_task
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
 from gobby.mcp_proxy.tools.tasks._notifications import _notification_tasks as notifications
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.sessions.machine_scope import RemoteSessionOwnershipError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -67,7 +67,7 @@ def _close_gates_are_quiet() -> Iterator[None]:
             "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
             side_effect=lambda sha, **_kwargs: sha,
         ),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(
             close_finalization,
@@ -664,7 +664,11 @@ async def test_ready_leaf_detaches_close_review_and_records_latency() -> None:
         patch.object(lifecycle, "resolve_task_repo_path", return_value="/repo"),
         patch.object(close_finalization, "_claimed_session_window_start", return_value=None),
         patch.object(close_finalization, "_linked_commit_paths", linked_paths),
-        patch.object(close_finalization, "_committable_task_paths", return_value={"src/a.py"}),
+        patch.object(
+            close_finalization,
+            "_committable_task_paths",
+            side_effect=lambda paths, _cwd: set(paths),
+        ),
         patch.object(lifecycle_validation, "task_dirty_paths_async", return_value=set()),
         patch.object(
             lifecycle,
@@ -948,7 +952,7 @@ async def test_scope_justification_controls_downstream_close_evidence(
     )
     scope_check = AsyncMock(return_value=scope)
     dirty_paths = AsyncMock(return_value=set())
-    validation_paths = AsyncMock(return_value=set())
+    validation_paths = AsyncMock(return_value=NetCommitPaths())
     diff = AsyncMock(return_value="diff")
     acceptance = AsyncMock(return_value=artifacts)
     tdd = MagicMock(return_value=TddEvidenceResult(passed=True, skipped=False, findings=()))
@@ -979,7 +983,7 @@ async def test_scope_justification_controls_downstream_close_evidence(
         ),
         patch.object(lifecycle, "evaluate_task_scope", scope_check),
         patch.object(lifecycle_validation, "task_dirty_paths_async", dirty_paths),
-        patch.object(lifecycle, "collect_commit_paths", validation_paths),
+        patch.object(lifecycle, "collect_net_commit_paths", validation_paths),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(lifecycle, "_derive_close_transcript_evidence", transcript),
         patch.object(lifecycle, "collect_commit_diff_text", diff),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -18,7 +19,7 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import _evaluate_close
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import Task
 from gobby.tasks.acceptance_artifacts import AcceptanceArtifactResult, AcceptanceTest
 from gobby.tasks.close_checklist import CloseGateResult, evaluate_validation_commands
@@ -31,10 +32,22 @@ from gobby.tasks.transcript_evidence_models import (
 
 pytestmark = pytest.mark.unit
 
+
+@pytest.fixture(autouse=True)
+def _close_candidate_is_the_linked_sha() -> Iterator[None]:
+    # The fake commit SHAs below are not in any repository; take each as canonical.
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview._canonical_commit_sha",
+        side_effect=lambda sha, **_kwargs: sha,
+    ):
+        yield
+
+
 SESSION_ID = "00000000-0000-4000-8000-000000000301"
 MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 NOW = datetime(2026, 8, 23, 12, 5, tzinfo=UTC)
 WORKTREE = "/worktrees/wt-101"
+CANDIDATE_SHA = "abc123" + "0" * 34
 NO_WORKTREE = CloseWorktreeRoot(None, None, "the task has no registered isolation worktree")
 NAMED_TEST = AcceptanceTest(
     reference="tests/memory/test_recall.py::test_batched_read_failure_injects_nothing",
@@ -192,7 +205,8 @@ async def _evaluate(
     has_edits: bool = True,
     transcript_deriver: AsyncMock | None = None,
     linked_paths: set[str] | None = None,
-    deleted_paths: AsyncMock | None = None,
+    deleted_paths: set[str] | None = None,
+    attributed: set[str] | None = None,
 ) -> CloseEvaluation:
     review = review or AsyncMock(
         return_value=ValidationResult(
@@ -209,7 +223,7 @@ async def _evaluate(
         findings=(),
         evidence_files=(),
     )
-    attributed_paths = (dirty_paths or {"src/a.py"}) if has_edits else set()
+    attributed_paths = (attributed or dirty_paths or {"src/a.py"}) if has_edits else set()
     foreign_owners = {
         path: (SimpleNamespace(session_ref=session_ref),)
         for path, session_ref in (foreign_owner_sessions or {}).items()
@@ -232,7 +246,12 @@ async def _evaluate(
             "foreign_owned_dirty_paths",
             return_value=foreign_owners,
         ),
-        patch.object(lifecycle, "resolve_close_commit_shas", return_value=(["abc123"], None)),
+        # The fake /repo has no objects, so the explicit candidate's full identity is given.
+        patch.multiple(
+            lifecycle,
+            resolve_close_commit_shas=AsyncMock(return_value=(["abc123"], None)),
+            select_close_candidate=AsyncMock(return_value=(CANDIDATE_SHA, None)),
+        ),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(close_finalization, "unlinked_tagged_commits", return_value=(([], []), None)),
         patch.object(
@@ -246,10 +265,14 @@ async def _evaluate(
             "evaluate_task_scope",
             return_value=TaskScopeEvaluation((), (), ()),
         ),
-        patch.multiple(
+        patch.object(
             lifecycle,
-            collect_commit_paths=AsyncMock(return_value=linked_paths or set()),
-            collect_deleted_commit_paths=deleted_paths or AsyncMock(return_value=set()),
+            "collect_net_commit_paths",
+            AsyncMock(
+                return_value=NetCommitPaths(
+                    frozenset(linked_paths or ()), frozenset(deleted_paths or ())
+                )
+            ),
         ),
         patch.object(
             lifecycle,
@@ -284,38 +307,38 @@ async def _evaluate(
 @pytest.mark.asyncio
 async def test_linked_commit_paths_reach_both_validation_evaluations() -> None:
     evaluator = MagicMock(wraps=evaluate_validation_commands)
-    deleted = AsyncMock(return_value={"tests/deleted.py"})
     with patch.object(lifecycle, "evaluate_validation_commands", evaluator):
         evaluation = await _evaluate(
             _task(escalated=False),
             override_justification=None,
             transcript=_transcript_with_test_types_audit(),
             linked_paths={"tests/deleted.py"},
-            deleted_paths=deleted,
+            deleted_paths={"tests/deleted.py"},
         )
 
     assert evaluation.error is None
     assert evaluator.call_count == 2
     assert [call.kwargs["changed_paths"] for call in evaluator.call_args_list] == [
-        {"src/a.py", "tests/deleted.py"},
-        {"src/a.py", "tests/deleted.py"},
+        {"tests/deleted.py"},
+        {"tests/deleted.py"},
     ]
-    deleted.assert_awaited_once_with(["abc123"], "/repo")
     assert evaluator.call_args_list[-1].kwargs["deleted_paths"] == {"tests/deleted.py"}
 
 
-async def test_deleted_paths_are_not_collected_without_a_linked_test() -> None:
-    deleted = AsyncMock(return_value=set())
-    evaluation = await _evaluate(
-        _task(escalated=False),
-        override_justification=None,
-        transcript=_transcript_with_test_types_audit(),
-        linked_paths={"src/b.py"},
-        deleted_paths=deleted,
-    )
+async def test_edited_then_reverted_test_is_not_a_gate_10_changed_path() -> None:
+    # #23181: session edit history still lists a test reverted before commit.
+    evaluator = MagicMock(wraps=evaluate_validation_commands)
+    with patch.object(lifecycle, "evaluate_validation_commands", evaluator):
+        evaluation = await _evaluate(
+            _task(escalated=False),
+            override_justification=None,
+            transcript=_transcript(),
+            attributed={"src/a.py", "tests/test_reverted.py"},
+            linked_paths={"src/a.py"},
+        )
 
+    assert evaluator.call_args_list[-1].kwargs["changed_paths"] == {"src/a.py"}
     assert evaluation.error is None
-    deleted.assert_not_awaited()
 
 
 @pytest.mark.parametrize("response_detail", ["concise", "diagnostic"])

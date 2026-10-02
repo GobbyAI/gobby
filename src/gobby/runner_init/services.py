@@ -142,6 +142,9 @@ class MemoryServiceBundle:
 
 def _schedule_scoped_tool_backfill(runner: GobbyRunner) -> None:
     """Kick the one-shot scoped-payload embedding backfill on the daemon path."""
+    if runner.bootstrap_config.run_mode() == "node":
+        logger.info("skipping hub-only scoped tool backfill in node mode")
+        return
     from gobby.runner_init.mcp_stack import schedule_scoped_embedding_backfill
 
     memory = runner.config_runtime.capture().services.get("memory_services")
@@ -398,6 +401,9 @@ def _request_memory_projection_repair(
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Schedule store reconcile against the live memory bundle after serving resumes."""
+    if runner.bootstrap_config.run_mode() == "node":
+        logger.info("skipping hub-only memory projection repair in node mode")
+        return
 
     async def _repair() -> None:
         try:

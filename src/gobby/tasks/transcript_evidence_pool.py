@@ -13,7 +13,7 @@ from collections.abc import Callable
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
-from time import monotonic, sleep
+from time import monotonic, process_time, sleep
 
 from gobby.hooks.phase_timing import add_hook_phase, timed_to_thread
 
@@ -115,10 +115,13 @@ def _handle_pool_failure(
     _warn_fallback_once(exc)
 
 
-def _timed_run[T](function: Callable[..., T], args: tuple[object, ...]) -> tuple[T, float, float]:
+def _timed_run[T](
+    function: Callable[..., T], args: tuple[object, ...]
+) -> tuple[T, float, float, float]:
     started_at = monotonic()
+    started_cpu = process_time()
     result = function(*args)
-    return result, started_at, monotonic()
+    return result, started_at, monotonic(), process_time() - started_cpu
 
 
 async def run_in_transcript_evidence_pool[T](
@@ -136,9 +139,12 @@ async def run_in_transcript_evidence_pool[T](
         _handle_pool_failure(pool, exc)
         return await timed_to_thread("prelude_transcript_fallback", function, *args)
     try:
-        result, started_at, finished_at = await pending
+        result, started_at, finished_at, work_cpu = await pending
         add_hook_phase("prelude_transcript_pool_queue", started_at - submitted_at)
         add_hook_phase("prelude_transcript_pool_work", finished_at - started_at)
+        # The worker process's CPU for this derivation; well below its work wall
+        # time means that process waited on I/O or was not scheduled (#23063).
+        add_hook_phase("prelude_transcript_pool_cpu", work_cpu)
         return result
     except BrokenProcessPool as exc:
         _handle_pool_failure(pool, exc)

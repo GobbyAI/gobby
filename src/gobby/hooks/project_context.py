@@ -12,6 +12,7 @@ import psycopg
 
 from gobby.hooks.events import HookEvent
 from gobby.hooks.session_types import HookSessionManager
+from gobby.storage.session_models import Session
 
 
 @dataclass(frozen=True)
@@ -20,6 +21,9 @@ class HookProjectResolution:
     source: str | None = None
     skipped: bool = False
     reason: str | None = None
+    # The row that validated the event's cached registration mapping, kept so
+    # session lookup does not read it again (#23063).
+    session: Session | None = None
 
 
 class ProjectIdResolver:
@@ -123,6 +127,12 @@ def resolve_hook_project_context(
             apply_project_id_to_event(event, project_id)
             return HookProjectResolution(project_id, source=source)
 
+    cached_session = _cached_session(event, session_manager, logger)
+    project_id = _as_nonempty_str(getattr(cached_session, "project_id", None))
+    if project_id:
+        apply_project_id_to_event(event, project_id)
+        return HookProjectResolution(project_id, source="existing-session", session=cached_session)
+
     project_id = _project_id_from_existing_session(event, session_manager, logger)
     if project_id:
         apply_project_id_to_event(event, project_id)
@@ -182,16 +192,15 @@ def _project_id_from_session(
     return _as_nonempty_str(getattr(session, "project_id", None))
 
 
-def _project_id_from_existing_session(
+def _cached_session(
     event: HookEvent,
     session_manager: HookSessionManager | None,
     logger: logging.Logger | None,
-) -> str | None:
+) -> Session | None:
     if session_manager is None or not event.session_id:
         return None
-
     try:
-        cached_session_id = session_manager.get_session_id(
+        return session_manager.get_cached_session(
             event.session_id,
             event.source.value,
             project_id=event.project_id,
@@ -199,11 +208,16 @@ def _project_id_from_existing_session(
     except Exception as exc:
         if logger:
             logger.debug("Failed to read hook session cache for %s: %s", event.session_id, exc)
-        cached_session_id = None
-    if cached_session_id:
-        project_id = _project_id_from_session(session_manager, cached_session_id, logger)
-        if project_id:
-            return project_id
+        return None
+
+
+def _project_id_from_existing_session(
+    event: HookEvent,
+    session_manager: HookSessionManager | None,
+    logger: logging.Logger | None,
+) -> str | None:
+    if session_manager is None or not event.session_id:
+        return None
 
     finder = getattr(session_manager, "find_active_by_external_id", None)
     if callable(finder):

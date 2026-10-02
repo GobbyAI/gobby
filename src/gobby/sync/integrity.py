@@ -41,6 +41,7 @@ BUNDLED_SYNC_CONTENT_TYPES: set[str] = {
     "rules",
     "variables",
     "build_profiles",
+    "detection_manifests",
     "mcp_templates",
 }
 
@@ -56,6 +57,7 @@ CONTENT_TYPE_DIRS: dict[str, str] = {
     "workflows/variables": "variables",
     "workflows/pipelines": "pipelines",
     "mcp": "mcp_templates",
+    "detection": "detection_manifests",
 }
 
 _GIT_PROTECTED_PATHS: tuple[str, ...] = (
@@ -65,6 +67,7 @@ _GIT_PROTECTED_PATHS: tuple[str, ...] = (
     "rules",
     "registry/build_profiles.yaml",
     "mcp",
+    "detection",
 )
 
 
@@ -381,7 +384,7 @@ def _content_type_for_shared_relative_path(relative_path: str) -> str | None:
     if not parts or any(part in {".", ".."} for part in parts):
         return None
 
-    if parts[0] in {"skills", "prompts", "rules", "mcp"}:
+    if parts[0] in {"skills", "prompts", "rules", "mcp", "detection"}:
         return CONTENT_TYPE_DIRS[parts[0]]
 
     if parts[0] == "workflows":

@@ -15,7 +15,10 @@ from gobby.hooks._normalization_shell import (
     tokenize_shell_command,
 )
 from gobby.hooks.normalization import normalize_mcp_fields, normalize_tool_fields
-from gobby.mcp_proxy._call_tool_wrapper import canonicalize_call_tool_wrapper
+from gobby.mcp_proxy._call_tool_wrapper import (
+    CallToolWrapperInputError,
+    canonicalize_call_tool_wrapper,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -296,22 +299,36 @@ class TestCallToolExtraction:
         assert result["mcp_server"] == "gobby-tasks"
         assert result["mcp_tool"] == "escalate_task"
 
-    def test_nested_arguments_take_precedence_over_args_alias(self) -> None:
-        data: dict[str, Any] = {
-            "tool_name": "mcp__gobby__call_tool",
-            "tool_input": {
-                "arguments": {
-                    "server_name": "arguments-server",
-                    "tool_name": "arguments-tool",
-                },
+    @pytest.mark.parametrize(
+        "tool_input",
+        [
+            {
+                "arguments": {"server_name": "arguments-server", "tool_name": "arguments-tool"},
                 "args": {"server_name": "args-server", "tool_name": "args-tool"},
             },
-        }
+            {
+                "arguments": {},
+                "args": {"server_name": "args-server", "tool_name": "args-tool"},
+            },
+        ],
+        ids=["both-routed", "empty-arguments"],
+    )
+    def test_both_argument_aliases_route_nowhere(self, tool_input: dict[str, Any]) -> None:
+        """Both spellings are ambiguous to the proxy, so neither payload routes the event."""
+        data: dict[str, Any] = {"tool_name": "mcp__gobby__call_tool", "tool_input": tool_input}
 
         result = normalize_mcp_fields(data)
 
-        assert result["mcp_server"] == "arguments-server"
-        assert result["mcp_tool"] == "arguments-tool"
+        with pytest.raises(CallToolWrapperInputError):
+            canonicalize_call_tool_wrapper(
+                server_name=None,
+                tool_name=None,
+                arguments=tool_input["arguments"],
+                args=tool_input["args"],
+            )
+        assert result["tool_input"] == tool_input
+        assert result["mcp_server"] == "gobby"
+        assert result["mcp_tool"] == "call_tool"
 
     def test_top_level_route_fields_independently_override_nested_route(self) -> None:
         data: dict[str, Any] = {
@@ -334,20 +351,12 @@ class TestCallToolExtraction:
         "tool_input",
         [
             {
-                "arguments": {"server_name": "arguments-server", "tool_name": "arguments-tool"},
-                "args": {"server_name": "args-server", "tool_name": "args-tool"},
-            },
-            {
                 "server_name": "top-server",
                 "arguments": {"server_name": "nested-server", "tool_name": "nested-tool"},
             },
             {
                 "arguments": None,
                 "args": {"server_name": "args-server", "tool_name": "args-tool"},
-            },
-            {
-                "arguments": {},
-                "args": {"server_name": "ignored-server", "tool_name": "ignored-tool"},
             },
         ],
     )
@@ -668,11 +677,12 @@ class TestFieldAliases:
         normalize_tool_fields(data)
         assert data["tool_input"] == {"path": "/foo.py", "file_path": "/foo.py"}
 
-    def test_toolArgs_invalid_json_string_kept_as_string(self) -> None:
-        """Invalid JSON in toolArgs should be kept as-is."""
+    def test_toolArgs_invalid_json_string_is_marked(self) -> None:
+        """Invalid JSON in toolArgs is marked unavailable, not passed on as a string."""
         data: dict[str, Any] = {"toolArgs": "not valid json"}
         normalize_tool_fields(data)
-        assert data["tool_input"] == "not valid json"
+        assert "tool_input" not in data
+        assert data["tool_input_error"] == {"field": "toolArgs", "code": "invalid_json"}
 
     def test_toolArgs_does_not_overwrite_tool_input(self) -> None:
         data: dict[str, Any] = {"toolArgs": '{"a": 1}', "tool_input": {"b": 2}}
@@ -696,6 +706,37 @@ class TestFieldAliases:
         data: dict[str, Any] = {"parameters": {"from_params": True}, "args": {"from_args": True}}
         normalize_tool_fields(data)
         assert data["tool_input"] == {"from_params": True}
+
+    def test_tool_input_json_object_string_is_parsed(self) -> None:
+        """A JSON-object tool_input string becomes a dict before canonical metadata."""
+        data: dict[str, Any] = {"tool_input": '{"file_path": "/tmp/example.py"}'}
+        normalize_tool_fields(data)
+        assert data["tool_input"] == {"file_path": "/tmp/example.py"}
+        assert data["_raw_tool_input"] == {"file_path": "/tmp/example.py"}
+
+    def test_tool_input_json_object_string_extracts_command(self) -> None:
+        """Parsed tool_input feeds command extraction instead of being skipped."""
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": '{"command": "ls -la"}'}
+        normalize_tool_fields(data)
+        assert data["tool_input"]["command"] == "ls -la"
+
+    def test_tool_input_invalid_json_string_is_marked(self) -> None:
+        data: dict[str, Any] = {"tool_input": "not json"}
+        normalize_tool_fields(data)
+        assert "tool_input" not in data
+        assert data["tool_input_error"] == {"field": "tool_input", "code": "invalid_json"}
+
+    def test_tool_input_json_non_object_string_is_marked(self) -> None:
+        data: dict[str, Any] = {"tool_input": "[1, 2, 3]"}
+        normalize_tool_fields(data)
+        assert "tool_input" not in data
+        assert data["tool_input_error"] == {"field": "tool_input", "code": "non_object_json"}
+
+    def test_tool_input_object_keeps_raw_and_aliases(self) -> None:
+        data: dict[str, Any] = {"tool_input": {"cmd": "ls"}}
+        normalize_tool_fields(data)
+        assert data["tool_input"] == {"cmd": "ls", "command": "ls"}
+        assert data["_raw_tool_input"] == {"cmd": "ls"}
 
 
 class TestMcpContextFlattening:

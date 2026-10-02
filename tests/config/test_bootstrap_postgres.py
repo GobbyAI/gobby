@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
+
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL, fake_database_url
 
 pytestmark = pytest.mark.unit
 
@@ -102,7 +105,7 @@ def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    database_url = FAKE_DATABASE_URL
     _write_bootstrap(
         bootstrap_file,
         f"database_url: {database_url}\n",
@@ -121,7 +124,7 @@ def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
 def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
     from gobby.config.postgres_bootstrap import read_bootstrap_database_url, write_postgres_defaults
 
-    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    database_url = FAKE_DATABASE_URL
     files_home = temp_dir / "files"
     files_home.mkdir()
     _write_bootstrap(temp_dir / "bootstrap.yaml", f"files_home: {files_home}\n")
@@ -161,7 +164,7 @@ def test_write_postgres_defaults_removes_legacy_pool_sizes(temp_dir: Path) -> No
 
     write_postgres_defaults(
         gobby_home=temp_dir,
-        database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        database_url=FAKE_DATABASE_URL,
     )
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
@@ -181,7 +184,7 @@ def test_postgres_defaults_follow_runtime_gobby_home_changes(
 
     first_home = tmp_path / "first-home"
     second_home = tmp_path / "second-home"
-    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    database_url = FAKE_DATABASE_URL
 
     for gobby_home in (first_home, second_home):
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
@@ -207,7 +210,7 @@ def test_postgres_defaults_follow_runtime_gobby_home_changes(
 def test_load_bootstrap_without_resolution_reads_plain_database_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import load_bootstrap
 
-    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    database_url = FAKE_DATABASE_URL
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
@@ -226,8 +229,7 @@ def test_load_bootstrap_rejects_removed_postgres_install_mode(temp_dir: Path) ->
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
-        "postgres_install_mode: bogus\n",
+        f"database_url: {FAKE_DATABASE_URL}\npostgres_install_mode: bogus\n",
     )
 
     with pytest.raises(BootstrapConfigError, match="postgres_install_mode has been removed"):
@@ -237,8 +239,8 @@ def test_load_bootstrap_rejects_removed_postgres_install_mode(temp_dir: Path) ->
 def test_write_postgres_defaults_refreshes_database_url(temp_dir: Path) -> None:
     from gobby.config.postgres_bootstrap import read_bootstrap_database_url, write_postgres_defaults
 
-    first_database_url = "postgresql://gobby:first@localhost:60891/gobby"
-    second_database_url = "postgresql://gobby:second@localhost:60891/gobby"
+    first_database_url = fake_database_url("first")
+    second_database_url = fake_database_url("second")
     files_home = temp_dir / "files"
     files_home.mkdir()
     _write_bootstrap(temp_dir / "bootstrap.yaml", f"files_home: {files_home}\n")
@@ -261,7 +263,7 @@ def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Pa
     from gobby.config.postgres_bootstrap import clear_postgres_fields
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
-    database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    database_url = FAKE_DATABASE_URL
     _write_bootstrap(
         bootstrap_file,
         f"database_url: {database_url}\npostgres_install_mode: docker\n",
@@ -300,9 +302,7 @@ def test_clear_postgres_fields_removes_legacy_bootstrap_keys(temp_dir: Path) -> 
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: local\n"
-        "database_path: /legacy/gobby.db\n"
-        "database_url: postgresql://gobby:secret@localhost:60891/gobby\n",
+        f"hub_backend: local\ndatabase_path: /legacy/gobby.db\ndatabase_url: {FAKE_DATABASE_URL}\n",
     )
 
     clear_postgres_fields(temp_dir)
@@ -310,7 +310,7 @@ def test_clear_postgres_fields_removes_legacy_bootstrap_keys(temp_dir: Path) -> 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert "hub_backend" not in persisted
     assert "database_path" not in persisted
-    assert persisted["database_url"] == "postgresql://gobby:secret@localhost:60891/gobby"
+    assert persisted["database_url"] == FAKE_DATABASE_URL
 
 
 def test_database_url_ref_is_rejected_for_runtime(temp_dir: Path) -> None:
@@ -408,3 +408,110 @@ def test_bootstrap_rejects_insecure_file_permissions(temp_dir: Path) -> None:
 
     with pytest.raises(BootstrapConfigError, match="permissions.*0600"):
         load_bootstrap(str(bootstrap_file))
+
+
+def test_pending_rotation_round_trips_and_requires_string_fields(temp_dir: Path) -> None:
+    """The pending pair is parser-validated and readable by recovery."""
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
+    from gobby.config.postgres_bootstrap import read_pending_credential_rotation
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    database_url = fake_database_url("old-secret")
+    _write_bootstrap(bootstrap_file, f"database_url: {database_url}\n")
+
+    assert read_pending_credential_rotation(temp_dir) is None
+
+    def _annotate_pending(data: dict[str, Any]) -> None:
+        data["credential_rotation"] = {
+            "role": "gobby",
+            "pending_password": "pending-placeholder",
+            "previous_password": "old-secret",
+        }
+
+    update_bootstrap_yaml(bootstrap_file, _annotate_pending)
+    pending = read_pending_credential_rotation(temp_dir)
+    assert pending is not None
+    assert (pending.role, pending.pending_password, pending.previous_password) == (
+        "gobby",
+        "pending-placeholder",
+        "old-secret",
+    )
+
+    def _annotate_incomplete(data: dict[str, Any]) -> None:
+        data["credential_rotation"] = {"role": "gobby"}
+
+    before = bootstrap_file.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending credential"):
+        update_bootstrap_yaml(bootstrap_file, _annotate_incomplete)
+    assert bootstrap_file.read_bytes() == before
+    # Invalid on-disk state must also fail closed when loaded by recovery.
+    _write_bootstrap(
+        bootstrap_file, f"database_url: {database_url}\ncredential_rotation:\n  role: gobby\n"
+    )
+    with pytest.raises(BootstrapConfigError, match="pending_password"):
+        read_pending_credential_rotation(temp_dir)
+
+
+def test_write_postgres_defaults_preserves_pending_rotation(temp_dir: Path) -> None:
+    def _annotate_pending_and_note(data: dict[str, Any]) -> None:
+        data["credential_rotation"] = {
+            "role": "gobby",
+            "pending_password": "pending-placeholder",
+            "previous_password": "old-secret",
+        }
+        data["cosmetic_note"] = "keep me"
+
+    """Ordinary defaults writers cannot perform recovery's credential transition."""
+    from gobby.config.bootstrap import BootstrapConfigError
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
+    from gobby.config.postgres_bootstrap import write_postgres_defaults
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        f"database_url: {fake_database_url('old-secret')}\n",
+    )
+    update_bootstrap_yaml(
+        bootstrap_file,
+        _annotate_pending_and_note,
+    )
+
+    before = bootstrap_file.read_bytes()
+    with pytest.raises(BootstrapConfigError, match="pending credential"):
+        write_postgres_defaults(
+            gobby_home=temp_dir,
+            database_url=fake_database_url("pending-placeholder"),
+        )
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert bootstrap_file.read_bytes() == before
+    assert persisted["database_url"] == fake_database_url("old-secret")
+    assert persisted["credential_rotation"]["pending_password"] == "pending-placeholder"
+    assert persisted["cosmetic_note"] == "keep me"
+
+
+def test_concurrent_bootstrap_writers_preserve_unrelated_fields(temp_dir: Path) -> None:
+    """Serialized canonical writers never lose each other's unrelated keys."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from gobby.config.bootstrap_io import update_bootstrap_yaml
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        f"database_url: {fake_database_url('old-secret')}\n",
+    )
+
+    def _writer(index: int) -> None:
+        def _apply(data: dict[str, Any], index: int = index) -> None:
+            data[f"writer_{index}"] = index
+
+        update_bootstrap_yaml(bootstrap_file, _apply)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(_writer, range(16)))
+
+    persisted = yaml.safe_load(bootstrap_file.read_text())
+    assert {persisted[f"writer_{index}"] for index in range(16)} == set(range(16))
+    assert persisted["database_url"] == fake_database_url("old-secret")

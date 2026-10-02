@@ -6,6 +6,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -26,6 +27,7 @@ from gobby.hooks.events import (
     SessionSource,
 )
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -3361,3 +3363,66 @@ def test_codex_successor_after_a_slow_login_binds_its_existing_pane(
     live = terminals.resolve_live_for_session(paused)
     assert live is not None
     assert live.id == pane_id
+
+
+def test_session_resolution_reads_the_session_row_once(
+    hook_manager_with_mocks: HookManager,
+    sample_session_start_event: HookEvent,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A steady-state hook resolves its session from one row read (#23063).
+
+    Every read is a pooled round trip, and under hook fanout each costs a pool
+    checkout plus a slow query, so re-reading the row already loaded to validate
+    the cached mapping multiplies session_resolution latency.
+    """
+    manager = hook_manager_with_mocks
+    manager.handle(sample_session_start_event)
+
+    resolving = threading.Event()
+
+    @contextmanager
+    def flag_resolution(phase: str) -> Iterator[None]:
+        with measure_hook_phase(phase):
+            if phase != "session_resolution":
+                yield
+                return
+            resolving.set()
+            try:
+                yield
+            finally:
+                resolving.clear()
+
+    reads: list[str] = []
+    original_get = SessionManager.get
+
+    def counting_get(self: SessionManager, session_id: str) -> Any:
+        if resolving.is_set():
+            reads.append(session_id)
+        return original_get(self, session_id)
+
+    monkeypatch.setattr("gobby.hooks.hook_manager.measure_hook_phase", flag_resolution)
+    monkeypatch.setattr(SessionManager, "get", counting_get)
+
+    def after_tool() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id=sample_session_start_event.session_id,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "tool_name": "Read",
+                "tool_output": "x",
+                "cwd": sample_session_start_event.cwd,
+                "terminal_context": {"gobby_terminal_id": "t-23063", "parent_pid": 4242},
+            },
+            machine_id=manager.get_machine_id(),
+        )
+
+    # The first hook backfills the new terminal context; the next is steady state.
+    manager.handle(after_tool())
+    reads.clear()
+    event = after_tool()
+    manager.handle(event)
+
+    assert reads == [event.metadata["_platform_session_id"]]

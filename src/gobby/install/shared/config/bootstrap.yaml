@@ -1,6 +1,8 @@
 # Gobby bootstrap — settings needed before the database is available.
 # All other configuration is managed via the web UI or gobby-config MCP tools.
 # local owns the bundled datastore stack; remote connects to a hub machine.
+# Three run modes derive from datastore_mode plus hub: standalone (local, hub
+# false), hub (local, hub true), node (remote).
 #
 # files_home is required for datastore_mode: local. Absolute hub bind directory
 # that already exists. Writers never create this root and never default it to
@@ -8,6 +10,7 @@
 # files_home: "/Users/you/.gobby/files"
 # Remote mode must omit files_home and set hub_daemon_url to the hub origin.
 datastore_mode: "local"
+hub: false
 postgres_pool:
   acquire_timeout_seconds: 5.0
   open_timeout_seconds: 30.0

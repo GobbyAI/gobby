@@ -82,57 +82,51 @@ fn screen(terminal: &Terminal<TestBackend>) -> String {
 fn a_right_sidebar_keeps_its_edge_column_first() {
     // On the right the edge faces the panes, so the sections start one
     // column in and run to the sidebar's last column.
-    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1, 3, 0);
+    let layout = sidebar_layout(Rect::new(54, 0, 26, 40), SidebarSide::Right, 1, 1, 2);
     assert_eq!(layout.sections[0], Rect::new(55, 0, 25, 3));
-    assert_eq!(layout.sections[3], Rect::new(55, 11, 25, 29));
+    assert_eq!(layout.sections[3], Rect::new(55, 23, 25, 17));
 }
 
 #[test]
 fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     let area = Rect::new(0, 0, 26, 40);
     // One machine, one card: each takes its band, its row and the blank
-    // row under it. With no bare terminal the agents keep their band, their
-    // three rows and the blank row, and the terminals band follows them with
-    // the rest of the column under it.
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 3, 0);
+    // row under it. With no bare terminal the Terminals section is gone,
+    // heading and all, and the agents take the rest of the column.
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 0);
     assert_eq!(
         layout.sections,
         [
             Rect::new(0, 0, 25, 3),
             Rect::new(0, 3, 25, 3),
-            Rect::new(0, 6, 25, 5),
-            Rect::new(0, 11, 25, 29),
+            Rect::new(0, 6, 25, 34),
+            Rect::new(0, 40, 25, 0),
         ]
     );
-    // More agents than rows: they take everything down to the terminals
-    // band on the last row.
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 60, 0);
-    assert_eq!(layout.sections[2], Rect::new(0, 6, 25, 33));
-    assert_eq!(layout.sections[3], Rect::new(0, 39, 25, 1));
     // A bare terminal splits the rest in half, however few the agents.
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 3, 2);
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 1, 2);
     assert_eq!(layout.sections[2], Rect::new(0, 6, 25, 17));
     assert_eq!(layout.sections[3], Rect::new(0, 23, 25, 17));
     // The machines stop at four rows; the cards at the top half, their
     // blank row charged inside it. An odd row left over goes to the agents.
-    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1, 3, 2);
+    let layout = sidebar_layout(area, SidebarSide::Left, 9, 1, 2);
     assert_eq!(layout.sections[0].height, 1 + MACHINES_MAX_ROWS + 1);
     assert_eq!(layout.sections[1], Rect::new(0, 6, 25, 3));
     assert_eq!(layout.sections[2], Rect::new(0, 9, 25, 16));
     assert_eq!(layout.sections[3], Rect::new(0, 25, 25, 15));
-    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30, 3, 0);
+    let layout = sidebar_layout(area, SidebarSide::Left, 1, 30, 0);
     assert_eq!(layout.sections[0].height, 3);
     assert_eq!(layout.sections[1], Rect::new(0, 3, 25, 17));
-    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 5));
-    assert_eq!(layout.sections[3], Rect::new(0, 25, 25, 15));
+    assert_eq!(layout.sections[2], Rect::new(0, 20, 25, 20));
+    assert_eq!(layout.sections[3].height, 0);
     // Two rows hold the machines band and the agents band, terminals or
     // not; one row the agents band alone; three rows the terminals band as
-    // well. Nothing fits a one-column area.
+    // well when there is a terminal, the agents both rows otherwise.
+    // Nothing fits a one-column area.
     let heights = |rows: u16, terminal_rows: u16| {
         sidebar_layout(
             Rect::new(0, 0, 26, rows),
             SidebarSide::Left,
-            1,
             1,
             1,
             terminal_rows,
@@ -143,9 +137,10 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     assert_eq!(heights(2, 0), [1, 0, 1, 0]);
     assert_eq!(heights(2, 2), [1, 0, 1, 0]);
     assert_eq!(heights(1, 0), [0, 0, 1, 0]);
-    assert_eq!(heights(3, 0), [1, 0, 1, 1]);
+    assert_eq!(heights(3, 0), [1, 0, 2, 0]);
+    assert_eq!(heights(3, 2), [1, 0, 1, 1]);
     assert_eq!(
-        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1, 3, 0),
+        sidebar_layout(Rect::new(0, 0, 1, 40), SidebarSide::Left, 1, 1, 0),
         SidebarLayout::default()
     );
     // `section_rects` counts the workspace's rows into the same layout: one
@@ -153,7 +148,7 @@ fn layout_gives_the_top_half_to_machines_and_projects_at_most() {
     let ws = scripted_workspace();
     assert_eq!(
         section_rects(&ws, &Chrome::dark(), area),
-        sidebar_layout(area, SidebarSide::Left, 1, 1, 3, 2).sections
+        sidebar_layout(area, SidebarSide::Left, 1, 1, 2).sections
     );
 }
 
@@ -172,20 +167,19 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
     let blank = |line: &str| line.is_empty();
     // The machines band opens the column.
     assert_eq!(lines[0], " Machines");
-    // The hub row carries its blocked agent's state and the local mark.
+    // The hub row carries its blocked agent's state and its name, no mark.
     assert!(lines[1].starts_with(" ⍾ "), "{:?}", lines[1]);
-    assert!(lines[1].contains("· local"), "{:?}", lines[1]);
+    assert!(!lines[1].contains('·'), "{:?}", lines[1]);
     // A blank row above the projects and agents bands.
     assert!(blank(lines[2]), "{:?}", lines[2]);
-    assert_eq!(lines[3], " Projects      [working]");
+    // Headings carry no controls: View › Sidebar holds each section's options.
+    assert_eq!(lines[3], " Projects");
     // `working` lists only alpha, folded, on one line with its counts.
     assert_eq!(lines[4], " ⍾ alpha (main ↑2 ↓1)   ▸");
     assert!(!text.contains("○ beta"), "{text}");
     assert!(!text.contains("feature"), "{text}");
     assert!(blank(lines[5]), "{:?}", lines[5]);
-    // One control, so the band fits the default width; the scope and the
-    // order live in its menu.
-    assert_eq!(lines[6], " Agents           [view]");
+    assert_eq!(lines[6], " Agents");
     assert_eq!(lines[7], " ⍾ Codex");
     assert_eq!(lines[8], "   No assigned task");
     assert_eq!(lines[9], "   gpt-6-sol");
@@ -202,7 +196,6 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
 
     assert_eq!(hits.machines.len(), 1, "{:?}", hits.machines);
     assert_eq!(hits.machines[0].1, Rect::new(0, 1, 25, 1));
-    assert_eq!(hits.projects_filter, Some(Rect::new(15, 3, 9, 1)));
     assert_eq!(
         hits.projects,
         vec![("proj-alpha".to_string(), Rect::new(0, 4, 25, 1))]
@@ -212,7 +205,6 @@ fn expanded_sidebar_draws_the_bands_and_records_the_hits() {
         hits.group_toggles,
         vec![("proj-alpha".to_string(), Rect::new(24, 4, 1, 1))]
     );
-    assert_eq!(hits.agents_view, Some(Rect::new(18, 6, 6, 1)));
     assert_eq!(
         hits.agents,
         vec![
@@ -270,9 +262,9 @@ fn wider_sidebar_shows_the_expanded_card() {
         .unwrap();
     let text = screen(&terminal);
     let lines: Vec<&str> = text.lines().collect();
-    assert_eq!(lines[5], "   └─ ○ feature · #123         ");
-    assert_eq!(lines[7], " Agents                [view]  ");
-    assert_eq!(hits.agents_view, Some(Rect::new(23, 7, 6, 1)));
+    // No agent runs in the worktree, so it draws no state glyph.
+    assert_eq!(lines[5], "   └─   feature · #123         ");
+    assert_eq!(lines[7], " Agents                        ");
     assert_eq!(
         hits.worktrees,
         vec![("wt-1".to_string(), Rect::new(0, 5, 30, 1))]
@@ -290,4 +282,88 @@ fn list_scroll_clamps_to_the_last_page() {
     assert_eq!(metrics.offset_from_bottom, 0);
     assert_eq!(metrics.viewport_rows, 4);
     assert!(!should_show_scrollbar(list_metrics(3, 4, 0)));
+}
+
+/// Every drawn cell of an agent's quiet lines (`No assigned task`, the
+/// model) meets AA against the fill it actually sits on: the ground, the
+/// active fill and the selected fill, in dark, light and monochrome.
+#[test]
+fn agent_quiet_lines_meet_aa_on_every_row_fill() {
+    use crate::theme::{contrast_ratio, ThemeKind};
+    use ratatui::style::Color;
+
+    let rgb = |color: Color, ground: Color| match (color, ground) {
+        (Color::Rgb(r, g, b), _) | (Color::Reset, Color::Rgb(r, g, b)) => (r, g, b),
+        other => panic!("not a palette colour: {other:?}"),
+    };
+    let row = |id: &str, active: bool, selected: bool| SidebarRow {
+        id: id.into(),
+        definition: "Codex".into(),
+        model_slug: "gpt-6-sol".into(),
+        kind: RowKind::Agent,
+        active,
+        selected,
+        ..SidebarRow::default()
+    };
+    let rows = [
+        row("plain", false, false),
+        row("active", true, false),
+        row("selected", false, true),
+    ];
+    let mut light = Chrome::dark();
+    light.set_theme(ThemeKind::Light);
+    let mut mono_dark = Chrome::dark();
+    mono_dark.prefs.monochrome = true;
+    mono_dark.set_theme(ThemeKind::Dark);
+    let mut mono_light = Chrome::dark();
+    mono_light.prefs.monochrome = true;
+    mono_light.set_theme(ThemeKind::Light);
+    for chrome in [Chrome::dark(), light, mono_dark, mono_light] {
+        let p = &chrome.palette;
+        let area = Rect::new(0, 0, 26, 12);
+        let mut terminal = Terminal::new(TestBackend::new(26, 12)).unwrap();
+        let mut hits = SidebarHits::default();
+        terminal
+            .draw(|frame| {
+                render_section_rows(
+                    frame,
+                    area,
+                    SidebarSection::Agents,
+                    &rows,
+                    &chrome,
+                    &mut hits,
+                );
+            })
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let text = screen(&terminal);
+        let mut checked = [0usize; 3];
+        for (y, line) in text.lines().enumerate() {
+            let quiet = line.trim();
+            if quiet != "No assigned task" && quiet != "gpt-6-sol" {
+                continue;
+            }
+            let row_y = u16::try_from(y).unwrap();
+            let fill = hits
+                .agents
+                .iter()
+                .position(|(_, rect)| (rect.y..rect.bottom()).contains(&row_y))
+                .expect("a quiet line belongs to a row");
+            for x in 0..area.width {
+                let cell = &buffer[(x, row_y)];
+                if cell.symbol().trim().is_empty() {
+                    continue;
+                }
+                let ratio = contrast_ratio(rgb(cell.fg, p.panel_bg), rgb(cell.bg, p.panel_bg));
+                assert!(
+                    ratio >= 4.5,
+                    "{:?} {} row {quiet:?}: {ratio:.2}:1",
+                    chrome.theme.kind,
+                    rows[fill].id,
+                );
+            }
+            checked[fill] += 1;
+        }
+        assert_eq!(checked, [2, 2, 2], "both quiet lines of every row drawn");
+    }
 }

@@ -18,7 +18,7 @@ from gobby.mcp_proxy.tools.tasks import _lifecycle_close_tool as close_tool
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
 from gobby.storage.tasks import LocalTaskManager, Task, TaskAlreadyEscalatedError
 from gobby.storage.tasks._stage_states import StageState
 from gobby.storage.tasks._stage_types import StageState5
@@ -28,6 +28,7 @@ from gobby.tasks.transcript_evidence_models import TranscriptEvidence
 from gobby.tasks.validation import PreparedCloseReview
 from gobby.utils.session_context import session_context_for_test
 from tests.mcp_proxy.tools.close_review_test_support import (
+    ECHOING_DAEMON_GIT,
     complete_invalid_close_review,
     complete_valid_close_review,
     return_detached_response,
@@ -257,6 +258,14 @@ class TestCloseTask:
     @pytest.fixture(autouse=True)
     def _seed_session_context(self) -> Iterator[None]:
         with session_context_for_test("legacy-test-session"):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def _candidate_is_its_own_identity(self) -> Iterator[None]:
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
+            new=ECHOING_DAEMON_GIT,
+        ):
             yield
 
     @pytest.mark.asyncio
@@ -559,8 +568,8 @@ class TestCloseTask:
                 return_value=TaskScopeEvaluation((), (), ()),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-                return_value=set(),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+                return_value=NetCommitPaths(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
@@ -586,7 +595,8 @@ class TestCloseTask:
         assert result["closed"] is True
         mock_task_manager.link_commit.assert_called_once_with(task.id, "abc1234")
         mock_norm.assert_any_await("abc1234", cwd=str(Path.cwd()))
-        assert mock_norm.await_count == 3
+        # Link resolution and candidate identity each resolve once per close phase.
+        assert mock_norm.await_count == 6
         assert mock_task_manager.close_task.call_args.kwargs["closed_commit_sha"] == "abc1234"
         task_validator.validate_task.assert_not_awaited()
 
@@ -622,8 +632,8 @@ class TestCloseTask:
                 return_value=TaskScopeEvaluation((), (), ()),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-                return_value=set(),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+                return_value=NetCommitPaths(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",
@@ -734,8 +744,8 @@ class TestCloseTask:
                 return_value=TaskScopeEvaluation((), (), ()),
             ),
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_paths",
-                return_value=set(),
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_net_commit_paths",
+                return_value=NetCommitPaths(),
             ),
             patch(
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.unlinked_tagged_commits",

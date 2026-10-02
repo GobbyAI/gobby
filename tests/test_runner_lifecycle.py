@@ -28,9 +28,10 @@ from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
+from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_async_condition
 from tests.config_runtime_helpers import static_runtime_capture
-from tests.runner_helpers import create_base_patches
+from tests.runner_helpers import create_base_patches, serve_until_should_exit
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
@@ -40,17 +41,6 @@ def _clear_app_context_between_tests() -> Iterator[None]:
     clear_app_context()
     yield
     clear_app_context()
-
-
-def _serve_mock_until_should_exit(server: Any) -> AsyncMock:
-    server.started = True
-    server.should_exit = False
-
-    async def serve() -> None:
-        while not server.should_exit:
-            await asyncio.sleep(0)
-
-    return AsyncMock(side_effect=serve)
 
 
 def _runner_with_static_runtime() -> GobbyRunner:
@@ -196,7 +186,7 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = _serve_mock_until_should_exit(mock_server)
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -206,8 +196,53 @@ class TestGobbyRunnerRun:
             mock_mcp_manager.disconnect_all.assert_called_once()
             assert mock_server.capture_signals is nullcontext
             assert runner._shutdown_requested is True
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
             assert get_app_context() is None
+
+    @pytest.mark.asyncio
+    async def test_run_with_base_patches_logs_no_uninjected_errors(
+        self, mock_config: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The shared runner mocks match production shapes, so a clean run logs no ERROR."""
+        mock_mcp_manager = AsyncMock()
+        patches = create_base_patches(mock_config=mock_config, mock_mcp_manager=mock_mcp_manager)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = _runner_with_static_runtime()
+
+            list_servers = mock_mcp_manager.mcp_db_manager.list_all_servers
+            credential_manager = cast(MagicMock, runner.managed_credential_manager)
+
+            async def stop_after_background_passes() -> None:
+                # The OAuth keep-alive and credential reconcile each run one pass first.
+                await wait_for_async_condition(
+                    lambda: list_servers.called and credential_manager.reconcile.called,
+                    description="startup background passes",
+                )
+                runner._shutdown_requested = True
+
+            mock_mcp_manager.connect_all.side_effect = stop_after_background_passes
+
+            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
+                mock_server = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
+                mock_server_cls.return_value = mock_server
+
+                with (
+                    patch("gobby.runner_maintenance.setup_signal_handlers"),
+                    caplog.at_level(logging.ERROR),
+                ):
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
+
+        errors = [
+            record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR
+        ]
+        assert errors == []
+        assert list_servers.call_args == call(True)
+        assert credential_manager.rotate_due.call_args_list == [call()]
+        assert mock_mcp_manager.disconnect_all.await_count == 1
+        cast(MagicMock, runner.database).close.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_run_handles_mcp_timeout(self, mock_config):
@@ -229,14 +264,14 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
     async def test_run_handles_mcp_connection_error(self, mock_config):
@@ -258,14 +293,14 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
     async def test_shutdown_during_subsystem_init_does_not_start_websocket(
@@ -303,7 +338,7 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = _serve_mock_until_should_exit(mock_server)
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -509,7 +544,7 @@ async def test_backend_ports_behind_front_door(
         daemon._shutdown_requested = True
         uvicorn_config = stack.enter_context(patch("uvicorn.Config"))
         server = AsyncMock()
-        server.serve = _serve_mock_until_should_exit(server)
+        server.serve = serve_until_should_exit(server)
         stack.enter_context(patch("uvicorn.Server", return_value=server))
         stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
         await daemon.run(ownership_resolution=FailOpenPidOwnership("test"))
@@ -711,6 +746,7 @@ class TestInitSubsystems:
     @pytest.mark.asyncio
     async def test_init_subsystems_uses_embedding_readiness_helper_and_stays_alive(self) -> None:
         runner = SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             http_server=SimpleNamespace(),
             wake_dispatcher=SimpleNamespace(
                 reconcile_restart_active_sessions=AsyncMock(return_value=[])
@@ -802,6 +838,7 @@ class TestInitSubsystems:
             count=AsyncMock(return_value=0),
         )
         runner = SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             http_server=SimpleNamespace(),
             wake_dispatcher=SimpleNamespace(
                 reconcile_restart_active_sessions=AsyncMock(return_value=[])
@@ -966,6 +1003,7 @@ class TestInitSubsystems:
         services = RecordingServices()
         tracker = RecordingTracker()
         runner = SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             config=SimpleNamespace(code_index=SimpleNamespace(enabled=False)),
             config_runtime=SimpleNamespace(
                 capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
@@ -1101,7 +1139,9 @@ class TestShutdownDaemonServices:
     @staticmethod
     def _minimal_shutdown_runner(intent: ShutdownIntent) -> SimpleNamespace:
         return SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             _shutdown_intent=intent,
+            agent_runner=None,
             http_server=SimpleNamespace(
                 services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
                 _terminate_streamable_http_sessions=AsyncMock(),
@@ -1126,6 +1166,7 @@ class TestShutdownDaemonServices:
     async def test_late_subsystem_init_cannot_activate_after_shutdown_starts(self) -> None:
         services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
         runner = SimpleNamespace(
+            bootstrap_config=BootstrapConfig(),
             config=SimpleNamespace(code_index=SimpleNamespace(enabled=False)),
             config_runtime=SimpleNamespace(
                 capture=static_runtime_capture(DaemonConfig(code_index={"enabled": False}))
@@ -1134,6 +1175,7 @@ class TestShutdownDaemonServices:
             wake_dispatcher=SimpleNamespace(
                 reconcile_restart_active_sessions=AsyncMock(return_value=[])
             ),
+            agent_runner=None,
         )
 
         async def begin_shutdown_during_pipeline_recovery(
@@ -1752,6 +1794,10 @@ class TestShutdownDaemonServices:
             runner_lifecycle_shutdown,
             "_run_async_shutdown_cleanup",
             wait_for_overall_deadline,
+        )
+        # The 0.05s deadline must expire in the cleanup tail, not in the phases before it.
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()
         )
 
         async def blocked_delete(boundary: DestructiveBoundary) -> None:
@@ -4165,6 +4211,7 @@ class TestShutdownLoop:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
+                # This test patches asyncio.sleep, so a serve loop could not yield.
                 mock_server.serve = AsyncMock()
                 mock_server_cls.return_value = mock_server
 
@@ -4547,6 +4594,7 @@ async def test_startup_barrier_precedes_subscriber_recovery_and_optional_failure
     ):
         await runner_lifecycle_subsystems.init_subsystems(
             SimpleNamespace(
+                bootstrap_config=BootstrapConfig(),
                 agent_runner=object(),
                 agent_lifecycle_monitor=monitor,
                 http_bound_at_ms=1_700_000_000_000,
@@ -4569,6 +4617,7 @@ async def test_startup_fails_closed_without_agent_reconciliation_owner() -> None
     with pytest.raises(RuntimeError, match="Agent reconciliation owner is unavailable"):
         await runner_lifecycle_subsystems.init_subsystems(
             SimpleNamespace(
+                bootstrap_config=BootstrapConfig(),
                 agent_runner=object(),
                 agent_lifecycle_monitor=None,
             ),
@@ -4690,7 +4739,9 @@ class TestAgentRestartRecoveryHelpers:
         from gobby.events.completion_registry import CompletionEventRegistry
 
         active = SimpleNamespace(id="active-run", continuation_prompt="Inspect result")
-        terminal = SimpleNamespace(id="terminal-run", status="success")
+        terminal = SimpleNamespace(
+            id="terminal-run", status="success", machine_id=require_machine_id()
+        )
         subscriber_manager = MagicMock()
         subscriber_manager.get_completion_subscribers.side_effect = lambda run_id: {
             "active-run": ["active-session"],
@@ -4771,6 +4822,7 @@ class TestAgentRestartRecoveryHelpers:
         run = SimpleNamespace(
             id="racing-run",
             status="running",
+            machine_id=require_machine_id(),
             continuation_prompt="Inspect result",
         )
         subscriber_manager = MagicMock()
@@ -4883,7 +4935,9 @@ class TestAgentRestartRecoveryHelpers:
     async def test_startup_completion_recovery_retries_unacknowledged_terminal_row(
         self,
     ) -> None:
-        terminal = SimpleNamespace(id="terminal-run", status="error")
+        terminal = SimpleNamespace(
+            id="terminal-run", status="error", machine_id=require_machine_id()
+        )
         subscriber_manager = MagicMock()
         subscriber_manager.get_completion_subscribers.return_value = ["session-1"]
         subscriber_manager.list_completion_ids.return_value = ["terminal-run"]
@@ -4930,7 +4984,9 @@ class TestAgentRestartRecoveryHelpers:
 
     @pytest.mark.asyncio
     async def test_startup_completion_recovery_removes_missing_session_row(self) -> None:
-        terminal = SimpleNamespace(id="terminal-run", status="cancelled")
+        terminal = SimpleNamespace(
+            id="terminal-run", status="cancelled", machine_id=require_machine_id()
+        )
         subscriber_manager = MagicMock()
         subscriber_manager.get_completion_subscribers.return_value = ["deleted-session"]
         subscriber_manager.list_completion_ids.return_value = ["terminal-run"]
@@ -4993,12 +5049,14 @@ class TestAgentRestartRecoveryHelpers:
         genuine = SimpleNamespace(
             id="genuine-run",
             status="error",
+            machine_id=require_machine_id(),
             terminal_reason=None,
             resume_metadata_json=None,
         )
         parked = SimpleNamespace(
             id="parked-run",
             status="cancelled",
+            machine_id=require_machine_id(),
             terminal_reason="daemon_stop",
             resume_metadata_json={},
         )
@@ -5574,3 +5632,83 @@ class TestAgentOutputReaderShutdown:
         finally:
             rb._agent_event_callback = old_callback
             rb._agent_output_readers = old_readers
+
+
+@pytest.mark.asyncio
+async def test_terminal_completion_recovery_skips_foreign_machine_runs() -> None:
+    local = SimpleNamespace(
+        id="local-run",
+        status="success",
+        machine_id=require_machine_id(),
+        terminal_reason=None,
+        resume_metadata_json=None,
+    )
+    foreign = SimpleNamespace(
+        id="foreign-run",
+        status="success",
+        machine_id="another-machine",
+        terminal_reason=None,
+        resume_metadata_json=None,
+    )
+    subscriber_manager = MagicMock()
+    subscriber_manager.list_completion_ids.return_value = ["foreign-run", "local-run"]
+    subscriber_manager.get_completion_subscribers.side_effect = lambda run_id: {
+        "local-run": ["local-session"],
+        "foreign-run": ["foreign-session"],
+    }[run_id]
+    run_manager = MagicMock()
+    run_manager.get.side_effect = lambda run_id: {
+        "local-run": local,
+        "foreign-run": foreign,
+    }[run_id]
+    review_lookups: list[str] = []
+    marked: list[dict[str, str]] = []
+
+    def terminal_review_delivery(_db: object, run_id: str) -> None:
+        review_lookups.append(run_id)
+
+    def mark_terminal_review_delivered(
+        _db: object, payload: dict[str, str], _acknowledged: list[str]
+    ) -> None:
+        marked.append(payload)
+
+    wake = AsyncMock(return_value={"ism_persisted": True})
+    runner = SimpleNamespace(
+        bootstrap_config=BootstrapConfig(),
+        database=_empty_database_double(),
+        db_executor=None,
+        wake_dispatcher=SimpleNamespace(wake=wake),
+    )
+
+    with (
+        patch.object(
+            runner_lifecycle_agents,
+            "CompletionSubscriberManager",
+            return_value=subscriber_manager,
+        ),
+        patch.object(runner_lifecycle_agents, "LocalAgentRunManager", return_value=run_manager),
+        patch(
+            "gobby.tasks.close_review_delivery.terminal_review_delivery",
+            terminal_review_delivery,
+        ),
+        patch(
+            "gobby.tasks.close_review_delivery.mark_terminal_review_delivered",
+            mark_terminal_review_delivered,
+        ),
+    ):
+        delivered = await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
+            cast(GobbyRunner, runner)
+        )
+
+    assert delivered == 1
+    wake.assert_awaited_once_with(
+        "local-session",
+        "Agent local-run reached terminal status success",
+        {"status": "success", "run_id": "local-run"},
+    )
+    subscriber_manager.get_completion_subscribers.assert_called_once_with("local-run")
+    subscriber_manager.remove_completion_subscribers.assert_called_once_with(
+        "local-run", session_ids=["local-session"]
+    )
+    assert review_lookups == ["local-run"]
+    assert marked == [{"status": "success", "run_id": "local-run"}]

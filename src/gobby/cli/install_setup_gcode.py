@@ -8,6 +8,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request
 
+from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_models import compare_versions
 from gobby.install.bin_set_coherence import promote_workspace_binary_set
@@ -136,7 +137,7 @@ def install_gcode_from_submodule(module: Any, bin_dir: Path) -> bool:
         if result.returncode != 0:
             return False
 
-        release_dir = manifest.parent / "target" / "release"
+        release_dir = cargo_release_dir(manifest.parent)
         src_bin = release_dir / module._GCODE_BIN_NAME
         if not src_bin.exists():
             return False

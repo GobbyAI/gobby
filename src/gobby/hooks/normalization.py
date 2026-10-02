@@ -91,6 +91,11 @@ from gobby.hooks._normalization_shell import (
 from gobby.hooks._normalization_shell import (
     is_shell_tool as is_shell_tool,
 )
+from gobby.hooks._normalization_tool_input import ToolInputError as ToolInputError
+from gobby.hooks._normalization_tool_input import (
+    is_non_object_tool_input as is_non_object_tool_input,
+)
+from gobby.hooks._normalization_tool_input import tool_input_error as tool_input_error
 from gobby.hooks._normalization_tools import (
     _detect_tool_error as _detect_tool_error,
 )
@@ -127,9 +132,11 @@ __all__ = [
     "_setdefault_tool_input_paths",
     "_shell_positional_args",
     "_unwrap_mcp_tool_output",
+    "ToolInputError",
     "ToolOutcome",
     "ToolOutcomeStatus",
     "canonicalize_shell_tool_name",
+    "is_non_object_tool_input",
     "is_shell_tool",
     "normalize_mcp_fields",
     "normalize_notification_input",
@@ -137,5 +144,6 @@ __all__ = [
     "normalize_tool_fields",
     "notification_message_from_payload",
     "notification_type_from_payload",
+    "tool_input_error",
     "tool_outcome_from_data",
 ]

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,8 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.events.wake import WakeDispatcher
+from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks.terminal_handoff_delivery import resume_dead_handoff_dispatches
 from gobby.sessions import codex_compact_watch
+from gobby.sessions.clear_continuation import stage_clear_attempt
 from gobby.sessions.compact_continuation import (
     _HANDOFF_COMPACT_CONTINUATION_TASKS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
@@ -33,6 +36,7 @@ from gobby.sessions.handoff import (
     build_handoff_continue_prompt,
     claim_staged_handoff_delivery,
     consume_pending_handoff,
+    recover_failed_handoff,
     stage_handoff_attempt,
     staged_handoff_rejection,
 )
@@ -74,13 +78,20 @@ def _session_manager(
 
 
 def _claim(hub_db: HubDatabase, *, clear_session: bool = False) -> ClaimedHandoffDelivery:
-    stage_handoff_attempt(
-        hub_db,
-        SESSION_ID,
-        attempt_id=ATTEMPT_ID,
-        handoff=build_handoff_payload(current_state="working", next_steps=["continue"]),
-        clear_session=clear_session,
-    )
+    handoff = build_handoff_payload(current_state="working", next_steps=["continue"])
+    if clear_session:
+        stage_clear_attempt(
+            hub_db,
+            SESSION_ID,
+            attempt_id=ATTEMPT_ID,
+            handoff=handoff,
+            terminal_context=_TERMINAL_CONTEXT,
+            chat_context=None,
+        )
+    else:
+        stage_handoff_attempt(
+            hub_db, SESSION_ID, attempt_id=ATTEMPT_ID, handoff=handoff, clear_session=False
+        )
     SessionVariableManager(hub_db).merge_variables(
         SESSION_ID,
         {
@@ -125,8 +136,10 @@ def _receipts(hub_db: HubDatabase, kind: str = "compact") -> int:
     return int(row["n"])
 
 
-async def _run_operation(_run_id: str, operation: Any, **_kwargs: Any) -> dict[str, Any]:
-    return dict(await operation())
+async def _run_operation[T](
+    _run_id: str, operation: Callable[[], Awaitable[T]], **_kwargs: Any
+) -> T:
+    return await operation()
 
 
 def test_live_claim_in_this_process_stays_exclusive(hub_db: HubDatabase) -> None:
@@ -483,3 +496,96 @@ async def test_dispatched_codex_compact_is_left_to_its_dispatch(
         )
     finally:
         unregister_compact_boundary_waiter(SESSION_ID, ATTEMPT_ID)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["claude", "codex"])
+@pytest.mark.parametrize("failure", ["result", "exception"])
+@pytest.mark.parametrize("clear", [False, True])
+@pytest.mark.parametrize("cancellations", [1, 2])
+async def test_caller_cancellation_preserves_failed_handoff_recovery(
+    hub_db: HubDatabase, source: str, failure: str, clear: bool, cancellations: int
+) -> None:
+    """The original shield must settle real failure compensation before cancellation."""
+    session_manager = _session_manager(hub_db, source)
+    claimed = _claim(hub_db, clear_session=clear)
+    staged = asyncio.Event()
+    release = asyncio.Event()
+    physical_done = asyncio.Event()
+
+    async def delivery(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        staged.set()
+        await release.wait()
+        physical_done.set()
+        if failure == "exception":
+            raise RuntimeError("owned transport failed")
+        return {"compacted": False, "reason": "owned transport failed"}
+
+    target = "deliver_staged_clear_session" if clear else "deliver_staged_compact_handoff"
+    with patch.object(terminal_handoff_delivery, target, delivery):
+        caller = asyncio.create_task(
+            terminal_handoff_delivery._settle_delivery(
+                claimed,
+                session_manager=session_manager,
+                agent_run_manager=MagicMock(),
+                terminal_manager=None,
+                terminal_runtime_registry=None,
+            )
+        )
+        try:
+            await asyncio.wait_for(staged.wait(), 1)
+            assert caller.cancel(), "cancel the actual delivery caller while its owned task waits"
+            assert not physical_done.is_set()
+            if cancellations == 2:
+                fence: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+                asyncio.get_running_loop().call_soon(fence.set_result, None)
+                await fence
+                assert not caller.done() and caller.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(caller, 1)
+        finally:
+            release.set()
+            caller.cancel()
+            await asyncio.gather(caller, return_exceptions=True)
+
+    assert physical_done.is_set()
+    variables = SessionVariableManager(hub_db).get_variables(SESSION_ID)
+    gate = variables[HANDOFF_DISPATCH_GATE_VARIABLE]
+    assert gate.get("delivery_state") == "failed_not_deliverable"
+    assert gate.get("attempt_id") == ATTEMPT_ID
+    assert gate.get("delivery_pending") is False
+    assert _receipts(hub_db) == 0, "cancelled failed delivery cannot manufacture a compact receipt"
+    assert _receipts(hub_db, "clear") == 0
+    recovered = recover_failed_handoff(hub_db, SESSION_ID, ATTEMPT_ID)
+    assert recovered is not None and "working" in recovered
+    assert recover_failed_handoff(hub_db, SESSION_ID, ATTEMPT_ID) == recovered
+    assert _receipts(hub_db) == 0 and _receipts(hub_db, "clear") == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source", ["claude", "codex"])
+@pytest.mark.parametrize("clear", [False, True])
+async def test_owner_loop_failure_preserves_failed_handoff_recovery(
+    hub_db: HubDatabase, source: str, clear: bool
+) -> None:
+    session_manager = _session_manager(hub_db, source)
+    claimed = _claim(hub_db, clear_session=clear)
+    with patch.object(
+        terminal_handoff_delivery,
+        "shielded_terminal_delivery",
+        AsyncMock(side_effect=RuntimeError("owner loop unavailable")),
+    ):
+        await terminal_handoff_delivery._settle_delivery(
+            claimed,
+            session_manager=session_manager,
+            agent_run_manager=MagicMock(),
+            terminal_manager=None,
+            terminal_runtime_registry=None,
+        )
+    recovered = recover_failed_handoff(hub_db, SESSION_ID, ATTEMPT_ID)
+    assert recovered is not None and "working" in recovered
+    gate = SessionVariableManager(hub_db).get_variables(SESSION_ID)[HANDOFF_DISPATCH_GATE_VARIABLE]
+    assert gate["delivery_pending"] is False
+    assert gate["reason"] == "owner loop unavailable"
+    assert _receipts(hub_db) == 0 and _receipts(hub_db, "clear") == 0

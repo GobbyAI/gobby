@@ -37,12 +37,14 @@ def _registry(provider: str | None) -> tuple[InternalToolRegistry, MagicMock]:
 
     ``None`` stands for a session that is not a spawned run at all.
     """
+    return _registry_for_run(None if provider is None else SimpleNamespace(provider=provider))
+
+
+def _registry_for_run(run: SimpleNamespace | None) -> tuple[InternalToolRegistry, MagicMock]:
     ctx = MagicMock()
     ctx.get_current_session_id.return_value = WAITER
     ctx.resolve_session_id.side_effect = lambda reference: reference
-    ctx.agent_run_manager.get_by_session.return_value = (
-        None if provider is None else SimpleNamespace(provider=provider)
-    )
+    ctx.agent_run_manager.get_by_session.return_value = run
     registry = InternalToolRegistry(name="gobby-agents", description="test")
     register_coordination_tools(registry, ctx)
     register_agent_query_tools(registry, ctx)
@@ -82,6 +84,33 @@ async def test_headless_run_refuses_an_agent_wait_before_resolving_the_target(
     # A run has no session to message; its result rides a later tool result.
     assert result["retry_guidance"] == HEADLESS_AGENT_WAIT_GUIDANCE
     # The refusal is target-independent: no run is looked up to reach it.
+    ctx.agent_run_manager.find_by_id_prefix.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["wait_for_coordination", "wait_for_agent"])
+async def test_srt_close_reviewer_running_codex_exec_refuses_waits(tool: str) -> None:
+    """#23170: the codex reviewer is headless only under SRT, so the provider alone
+    cannot decide; the run's recorded launch does."""
+    registry, ctx = _registry_for_run(
+        SimpleNamespace(
+            provider="codex",
+            agent_name="task-close-reviewer",
+            resume_metadata_json={"sandbox": {"backend": "srt", "enforced": True}},
+        )
+    )
+    arguments = (
+        {"owner_session": OWNER, "coordination_key": "restart-1"}
+        if tool == "wait_for_coordination"
+        else {"run_id": "deadbeef"}
+    )
+
+    with patch("gobby.mcp_proxy.tools.coordination.CoordinationWaitManager") as manager:
+        result = await registry.call(tool, arguments)
+
+    assert result["success"] is False
+    assert result["error_code"] == HEADLESS_WAIT_ERROR_CODE
+    manager.assert_not_called()
     ctx.agent_run_manager.find_by_id_prefix.assert_not_called()
 
 

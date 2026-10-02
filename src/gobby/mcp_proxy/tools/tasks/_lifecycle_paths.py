@@ -11,7 +11,7 @@ from gobby.mcp_proxy.tools.tasks._context import (
 )
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode, task_error
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.storage.project_checkouts import resolve_operation_root
+from gobby.storage.project_checkouts import LocalProjectCheckoutManager, resolve_operation_root
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.utils.daemon_git import GitOk, daemon_git, parse_porcelain_v1_z
@@ -22,6 +22,7 @@ from gobby.workflows.commit_guard import (
     inspect_checkout_path_ownership_async,
 )
 from gobby.workflows.task_claim_state import (
+    normalize_task_checkout_root,
     normalize_task_edited_path,
     task_edited_file_times,
 )
@@ -60,6 +61,11 @@ def _lifecycle_checkout_root(
         else ctx.checkout_machine_id(project_id)
     )
     if overlay_path:
+        primary = LocalProjectCheckoutManager(ctx.task_manager.db).get(machine_id, project_id)
+        if primary is not None and normalize_task_checkout_root(
+            overlay_path
+        ) == normalize_task_checkout_root(primary.root_path):
+            return primary.root_path
         return resolve_operation_root(
             ctx.task_manager.db,
             project_id,

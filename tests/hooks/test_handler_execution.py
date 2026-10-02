@@ -310,8 +310,13 @@ def _pending_recheck_manager(
     mocks._evaluate_blocking_webhooks = MagicMock(return_value=None)
     mocks._event_handlers.get_handler.return_value = lambda _event: HookResponse(decision="allow")
 
-    def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> str:
-        del apply_session_mutations
+    def resolve(
+        event: HookEvent,
+        *,
+        apply_session_mutations: bool = True,
+        cached_session: object = None,
+    ) -> str:
+        del apply_session_mutations, cached_session
         event.metadata["_platform_session_id"] = session.id
         return str(session.id)
 

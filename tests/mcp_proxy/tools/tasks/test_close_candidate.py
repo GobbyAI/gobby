@@ -16,7 +16,8 @@ from gobby.mcp_proxy.tools.tasks import _lifecycle_validation as validation
 from gobby.mcp_proxy.tools.tasks._close_evaluation_support import CloseAttributionSnapshot
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import resolve_close_commit_shas
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import ValidationResult
-from gobby.mcp_proxy.tools.tasks._task_scope import TaskScopeEvaluation
+from gobby.mcp_proxy.tools.tasks._task_scope import NetCommitPaths, TaskScopeEvaluation
+from gobby.tasks.acceptance_artifacts import resolve_acceptance_tests_async
 from gobby.tasks.validation import TaskValidator
 from tests.mcp_proxy.tools.tasks.test_close_task_flow import (
     _ctx,
@@ -106,7 +107,7 @@ async def test_named_acceptance_body_uses_explicit_close_candidate(
         patch.object(finalization, "_committable_task_paths", return_value=set()),
         patch.object(validation, "task_dirty_paths_async", return_value=set()),
         patch.object(lifecycle, "unlinked_tagged_commits", return_value=(([], []), None)),
-        patch.object(lifecycle, "collect_commit_paths", return_value=set()),
+        patch.object(lifecycle, "collect_net_commit_paths", return_value=NetCommitPaths()),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(
             lifecycle, "evaluate_task_scope", return_value=TaskScopeEvaluation((), (), ())
@@ -132,6 +133,26 @@ async def test_named_acceptance_body_uses_explicit_close_candidate(
     bodies = review.call_args.kwargs["test_bodies"]
     assert "'reviewed'" in bodies
     assert "'old'" not in bodies
+
+
+@pytest.mark.asyncio
+async def test_missing_named_test_file_names_the_close_candidate(
+    candidate_repo: tuple[Path, str, str],
+) -> None:
+    # The body is read from the close candidate, so the finding must name it:
+    # blaming the last linked commit sent #23110's diagnosis to the wrong commit.
+    repo, old, tip = candidate_repo
+    tests, findings = await resolve_acceptance_tests_async(
+        "Test: tests/test_absent.py::test_absent",
+        str(repo),
+        [tip, old],
+        candidate_commit_sha=tip,
+    )
+    assert tests == ()
+    assert findings == (
+        "tests/test_absent.py::test_absent: could not resolve the committed test body: "
+        f"close candidate {tip[:12]} does not contain tests/test_absent.py",
+    )
 
 
 @pytest.fixture

@@ -20,6 +20,7 @@ from gobby.plans.parser import (
     resolve_plan_id,
     strip_section_dependencies,
 )
+from gobby.plans.semantic_lint import collect_target_inventory
 from gobby.prompts.models import parse_frontmatter
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.tasks import Task
@@ -283,13 +284,13 @@ def _contract_artifact_summary(section: PlanSection) -> str:
     return "; ".join(refs) if refs else "the documented acceptance artifacts"
 
 
-def _contract_affected_files(section: PlanSection) -> list[str]:
+def _contract_affected_files(plan_doc: PlanDocument, section: PlanSection) -> list[str]:
     file_refs = [
         item.artifact_ref
         for item in section.acceptance_items
         if item.artifact_kind.value in {"file", "test"}
     ]
-    return sorted(dict.fromkeys(file_refs))
+    return sorted(set(file_refs) | collect_target_inventory(plan_doc, section))
 
 
 def _contract_section_body(plan_doc: PlanDocument, section: PlanSection) -> str:

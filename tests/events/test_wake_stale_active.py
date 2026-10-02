@@ -31,6 +31,7 @@ class _Wake:
     session_id: str
     sender: AsyncMock
     messages: InterSessionMessageManager
+    dispatcher: WakeDispatcher
 
 
 async def _run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -100,7 +101,7 @@ async def _deferred_wake(
     assert first["skipped"] == "session_active"
     sender.assert_not_awaited()
     await asyncio.wait_for(dispatcher._deferred_refreshes[recipient_id], timeout=2)
-    return _Wake(recipient_id, sender, messages)
+    return _Wake(recipient_id, sender, messages, dispatcher)
 
 
 def _deferred_line(caplog: pytest.LogCaptureFixture, session_id: str) -> str:
@@ -212,3 +213,58 @@ async def test_row_touched_between_reads_is_refused_by_exact_cas(
     assert row.updated_at == touched_at
     wake.sender.assert_not_awaited()
     assert "idle=row_changed" in _deferred_line(caplog, wake.session_id)
+
+
+async def _cancel_followups(dispatcher: WakeDispatcher) -> None:
+    """Cancel the bounded composer retry a withheld wake schedules."""
+    for task in list(dispatcher._composer_retries.values()):
+        task.cancel()
+    for task in list(dispatcher._deferred_refreshes.values()):
+        task.cancel()
+    await asyncio.sleep(0)
+
+
+@pytest.mark.parametrize(
+    "send_read",
+    [
+        pytest.param(lambda: TerminalActivity(ComposerRead("unknown")), id="unknown"),
+        pytest.param(
+            lambda: TerminalActivity(ComposerRead("empty"), turn_in_flight_fingerprint="run-7"),
+            id="turn_in_flight",
+        ),
+        pytest.param(_probe_error, id="probe_error"),
+    ],
+)
+async def test_send_time_unconfirmed_composer_withholds_and_keeps_message_durable(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    send_read: Callable[[], TerminalActivity],
+) -> None:
+    """#23102: after the reconcile pauses the row, an unconfirmed re-probe at the
+    send boundary must not reach the terminal sender or drop the durable message.
+    """
+    caplog.set_level(logging.INFO, logger="gobby.events.wake")
+    reads = 0
+
+    def read_on_send_past_reconcile(_session_id: str) -> TerminalActivity:
+        nonlocal reads
+        reads += 1
+        # Reads 1-2 reconcile the stale-active row; read 3 is the send re-probe.
+        return _EMPTY if reads <= 2 else send_read()
+
+    wake = await _deferred_wake(
+        temp_db, session_manager, sample_project["id"], read_on_send_past_reconcile
+    )
+
+    row = session_manager.get(wake.session_id)
+    assert row is not None and row.status == "paused"
+    assert reads == 3, reads
+    wake.sender.assert_not_awaited()
+    assert [m.content for m in wake.messages.get_undelivered_wake_messages(wake.session_id)] == [
+        "pending wake"
+    ]
+    line = _deferred_line(caplog, wake.session_id)
+    assert "skipped=composer_unconfirmed" in line
+    await _cancel_followups(wake.dispatcher)

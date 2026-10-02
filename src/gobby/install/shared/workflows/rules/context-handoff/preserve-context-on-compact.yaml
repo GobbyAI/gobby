@@ -9,7 +9,16 @@ rules:
     when: "True"
     effects:
       - type: set_variable
-        variable: injected_memory_ids
+        variable: surfaced_memory_ids
+        value: []
+      - type: set_variable
+        variable: accessed_memory_ids
+        value: []
+      - type: set_variable
+        variable: _memory_surface_seq
+        value: 0
+      - type: set_variable
+        variable: injected_review_lesson_ids
         value: []
       - type: set_variable
         variable: pending_context_reset

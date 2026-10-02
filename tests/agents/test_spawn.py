@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.cargo_target import agent_checkout_cargo_target_dir
 from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, UV_CACHE_DIR
 from gobby.agents.session import ChildSessionConfig
 from gobby.agents.spawn import (
@@ -307,7 +307,7 @@ class TestPrepareTerminalSpawnMetadata:
         )
 
         assert result.env_vars[CARGO_TARGET_DIR] == str(
-            checkout_cargo_target_dir(workspace, "proj-1")
+            agent_checkout_cargo_target_dir(workspace, "proj-1")
         )
         assert result.env_vars[CARGO_HOME] == str(tmp_path / "home" / "cache" / "cargo-home")
 

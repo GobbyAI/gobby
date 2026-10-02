@@ -48,6 +48,7 @@ from gobby.install.checksums import parse_sha256_digest
 from gobby.install.distribution import HomebrewHelperStatus
 from gobby.install.version_pins import MANAGED_BIN_VERSION_PINS
 from gobby.storage.projects import GLOBAL_PROJECT_ID
+from tests.fixtures.fake_hub import fake_database_url
 
 pytestmark = pytest.mark.unit
 GCODE_PIN: str = MANAGED_BIN_VERSION_PINS["gcode"]
@@ -83,7 +84,7 @@ def _verified_gdaemon(monkeypatch: pytest.MonkeyPatch) -> None:
 
 class TestEnsureDaemonConfig:
     @patch("gobby.cli.install_setup.Path.expanduser")
-    def test_exists(self, mock_expand, tmp_path):
+    def test_exists(self, mock_expand: MagicMock, tmp_path: Path) -> None:
         target = tmp_path / "bootstrap.yaml"
         target.touch()
         mock_expand.return_value = target
@@ -109,7 +110,9 @@ class TestEnsureDaemonConfig:
 
     @patch("gobby.cli.install_setup.Path.expanduser")
     @patch("gobby.cli.install_setup.get_install_dir")
-    def test_copy_shared(self, mock_get_dir, mock_expand, tmp_path):
+    def test_copy_shared(
+        self, mock_get_dir: MagicMock, mock_expand: MagicMock, tmp_path: Path
+    ) -> None:
         target = tmp_path / "bootstrap.yaml"
         mock_expand.return_value = target
 
@@ -129,11 +132,11 @@ class TestEnsureDaemonConfig:
         assert (tmp_path / ".bootstrap.yaml.lock").exists()
 
     @patch("gobby.cli.install_setup.Path.expanduser")
-    def test_existing_bootstrap_is_never_rewritten(self, mock_expand, tmp_path):
+    def test_existing_bootstrap_is_never_rewritten(
+        self, mock_expand: MagicMock, tmp_path: Path
+    ) -> None:
         target = tmp_path / "bootstrap.yaml"
-        original = (
-            "datastore_mode: local\ndatabase_url: postgresql://gobby:keep@localhost:60891/gobby\n"
-        )
+        original = f"datastore_mode: local\ndatabase_url: {fake_database_url('keep')}\n"
         target.write_text(original)
         mock_expand.return_value = target
 
@@ -146,7 +149,9 @@ class TestEnsureDaemonConfig:
 
     @patch("gobby.cli.install_setup.Path.expanduser")
     @patch("gobby.cli.install_setup.get_install_dir")
-    def test_fallback_generate(self, mock_get_dir, mock_expand, tmp_path):
+    def test_fallback_generate(
+        self, mock_get_dir: MagicMock, mock_expand: MagicMock, tmp_path: Path
+    ) -> None:
         target = tmp_path / "bootstrap.yaml"
         mock_expand.return_value = target
 
@@ -203,20 +208,20 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_success(
         self,
-        mock_ide,
-        _mock_gclient,
-        _mock_gterm,
-        mock_ghook,
-        mock_gcode,
-        mock_run,
-        mock_sync,
-        mock_init,
-        mock_srt,
-        mock_impeccable,
-        mock_reconcile,
-        tmp_path,
+        mock_ide: MagicMock,
+        _mock_gclient: MagicMock,
+        _mock_gterm: MagicMock,
+        mock_ghook: MagicMock,
+        mock_gcode: MagicMock,
+        mock_run: MagicMock,
+        mock_sync: MagicMock,
+        mock_init: MagicMock,
+        mock_srt: MagicMock,
+        mock_impeccable: MagicMock,
+        mock_reconcile: MagicMock,
+        tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
-    ):
+    ) -> None:
         mock_db = MagicMock()
         mock_db.list_templates.return_value = []
         mock_context = MagicMock()
@@ -385,18 +390,18 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
-        mock_ide,
-        _mock_gclient,
-        _mock_gterm,
-        mock_ghook,
-        mock_gcode,
-        mock_run,
-        mock_sync,
-        mock_init,
-        mock_srt,
-        mock_impeccable,
-        tmp_path,
-    ):
+        mock_ide: MagicMock,
+        _mock_gclient: MagicMock,
+        _mock_gterm: MagicMock,
+        mock_ghook: MagicMock,
+        mock_gcode: MagicMock,
+        mock_run: MagicMock,
+        mock_sync: MagicMock,
+        mock_init: MagicMock,
+        mock_srt: MagicMock,
+        mock_impeccable: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         mock_db = MagicMock()
         mock_db.list_templates.return_value = []
         mock_init.return_value = mock_db
@@ -415,7 +420,7 @@ class TestRunDaemonSetup:
         mock_ide.return_value = {"Code": {"added": False}}
         mock_run.return_value = MagicMock(returncode=0)
 
-        def _fake_install_ghook():
+        def _fake_install_ghook() -> dict[str, object]:
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
             ghook = bin_dir / "ghook"
@@ -661,7 +666,9 @@ class TestRunNpmInstall:
 
 class TestReleaseTagHelpers:
     @patch("gobby.cli.install_release.urlopen")
-    def test_resolve_latest_release_tag_prefers_matching_stable_prefix(self, mock_urlopen):
+    def test_resolve_latest_release_tag_prefers_matching_stable_prefix(
+        self, mock_urlopen: MagicMock
+    ) -> None:
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps(
             [
@@ -697,7 +704,9 @@ class TestReleaseTagHelpers:
         assert _resolve_latest_release_tag(tag_prefix="gcode-v") == "gcode-v1.2.3"
 
     @patch("gobby.cli.install_release.urlopen")
-    def test_resolve_latest_release_tag_fails_closed_without_legacy_fallback(self, mock_urlopen):
+    def test_resolve_latest_release_tag_fails_closed_without_legacy_fallback(
+        self, mock_urlopen: MagicMock
+    ) -> None:
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps(
             [
@@ -721,7 +730,9 @@ class TestReleaseTagHelpers:
         ]
 
     @patch("gobby.cli.install_release.urlopen")
-    def test_download_release_binary_uses_only_canonical_repo(self, mock_urlopen, tmp_path):
+    def test_download_release_binary_uses_only_canonical_repo(
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             info = tarfile.TarInfo(name="gcode")
@@ -753,8 +764,8 @@ class TestReleaseTagHelpers:
 
     @patch("gobby.cli.install_release.urlopen")
     def test_download_release_binary_fails_closed_when_asset_is_missing(
-        self, mock_urlopen, tmp_path
-    ):
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
         mock_urlopen.side_effect = URLError("not found")
 
         assert not _download_release_binary(
@@ -776,13 +787,15 @@ class TestReleaseTagHelpers:
 
 
 class TestGcodeHelpers:
-    def test_get_installed_gcode_version(self, tmp_path):
+    def test_get_installed_gcode_version(self, tmp_path: Path) -> None:
         assert _get_installed_gcode_version(tmp_path) is None
         (tmp_path / ".gcode-version").write_text("1.0.0")
         assert _get_installed_gcode_version(tmp_path) == "1.0.0"
 
     @patch("gobby.cli.install_setup.subprocess.run")
-    def test_get_installed_gcode_version_prefers_binary_over_stamp(self, mock_run, tmp_path):
+    def test_get_installed_gcode_version_prefers_binary_over_stamp(
+        self, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
         (tmp_path / "gcode").write_bytes(b"fake")
         (tmp_path / ".gcode-version").write_text("0.9.8")
         mock_run.return_value = MagicMock(returncode=0, stdout="gcode 0.9.9\n", stderr="")
@@ -796,7 +809,7 @@ class TestGcodeHelpers:
             timeout=5,
         )
 
-    def test_write_gcode_version_stamp(self, tmp_path):
+    def test_write_gcode_version_stamp(self, tmp_path: Path) -> None:
         _write_gcode_version_stamp(tmp_path, "2.0.0")
         assert (tmp_path / ".gcode-version").read_text() == "2.0.0\n"
 
@@ -807,8 +820,14 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_binary_installers_pass_resolved_bin_dir(
-        self, mock_path, mock_sub, mock_latest, mock_installed, mock_machine, tmp_path
-    ):
+        self,
+        mock_path: MagicMock,
+        mock_sub: MagicMock,
+        mock_latest: MagicMock,
+        mock_installed: MagicMock,
+        mock_machine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
             # Create binary so chmod succeeds
             bin_dir = tmp_path / ".gobby" / "bin"
@@ -820,7 +839,7 @@ class TestGcodeHelpers:
             assert res["method"] == "workspace"
             mock_path.assert_called_once_with(bin_dir)
 
-    def test_install_gcode_from_submodule_stages_under_lock(self, tmp_path):
+    def test_install_gcode_from_submodule_stages_under_lock(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         (workspace / "crates" / "gcode").mkdir(parents=True)
         (workspace / "src" / "gobby" / "cli").mkdir(parents=True)
@@ -871,8 +890,13 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup._get_installed_gcode_version", return_value=GCODE_PIN)
     @patch("gobby.cli.install_setup._install_gcode_from_submodule")
     def test_install_gcode_skips_when_installed_version_satisfies_pin(
-        self, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
-    ):
+        self,
+        mock_submodule: MagicMock,
+        mock_installed: MagicMock,
+        mock_latest: MagicMock,
+        mock_machine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -890,8 +914,12 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup.subprocess.run")
     @patch("gobby.cli.install_setup._install_gcode_from_submodule")
     def test_install_gcode_refreshes_stale_stamp_when_binary_satisfies_pin(
-        self, mock_submodule, mock_run, mock_machine, tmp_path
-    ):
+        self,
+        mock_submodule: MagicMock,
+        mock_run: MagicMock,
+        mock_machine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -916,8 +944,14 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_install_gcode_installs_when_installed_version_is_below_pin(
-        self, mock_path, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
-    ):
+        self,
+        mock_path: MagicMock,
+        mock_submodule: MagicMock,
+        mock_installed: MagicMock,
+        mock_latest: MagicMock,
+        mock_machine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -935,8 +969,14 @@ class TestGcodeHelpers:
     @patch("gobby.cli.install_setup._install_gcode_from_submodule", return_value=True)
     @patch("gobby.cli.install_setup._ensure_gobby_bin_on_path", return_value={})
     def test_install_gcode_force_bypasses_pin_skip(
-        self, mock_path, mock_submodule, mock_installed, mock_latest, mock_machine, tmp_path
-    ):
+        self,
+        mock_path: MagicMock,
+        mock_submodule: MagicMock,
+        mock_installed: MagicMock,
+        mock_latest: MagicMock,
+        mock_machine: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         with patch("gobby.cli.install_setup.Path.home", return_value=tmp_path):
             bin_dir = tmp_path / ".gobby" / "bin"
             bin_dir.mkdir(parents=True, exist_ok=True)
@@ -947,7 +987,9 @@ class TestGcodeHelpers:
         assert res["installed"] is True
         assert res["version"] == MANAGED_BIN_VERSION_PINS["gcode"]
 
-    def test_install_gcode_uses_managed_pin_for_download_and_cargo_paths(self, tmp_path):
+    def test_install_gcode_uses_managed_pin_for_download_and_cargo_paths(
+        self, tmp_path: Path
+    ) -> None:
         pin = MANAGED_BIN_VERSION_PINS["gcode"]
 
         with (
@@ -984,7 +1026,9 @@ class TestGcodeHelpers:
         cargo_install.assert_called_once_with(bin_dir, pin)
         ensure_path.assert_called_once_with(bin_dir)
 
-    def test_install_gcode_uses_newer_installed_version_as_install_target(self, tmp_path):
+    def test_install_gcode_uses_newer_installed_version_as_install_target(
+        self, tmp_path: Path
+    ) -> None:
         newer_version = "9.9.9"
 
         with (
@@ -1024,7 +1068,7 @@ class TestGcodeHelpers:
         ensure_path.assert_called_once_with(bin_dir)
 
     @patch("gobby.cli.install_release.urlopen")
-    def test_get_latest_gcode_version(self, mock_url):
+    def test_get_latest_gcode_version(self, mock_url: MagicMock) -> None:
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps({"crate": {"max_version": "0.2.3"}}).encode()
         fake_resp.__enter__.return_value = fake_resp
@@ -1033,13 +1077,13 @@ class TestGcodeHelpers:
         assert _get_latest_gcode_version() == "0.2.3"
 
     @patch("gobby.cli.install_release.urlopen", side_effect=URLError("timeout"))
-    def test_get_latest_gcode_version_fail(self, mock_url):
+    def test_get_latest_gcode_version_fail(self, mock_url: MagicMock) -> None:
         assert _get_latest_gcode_version() is None
 
     @patch("gobby.cli.install_release.urlopen")
     def test_install_gcode_from_github_uses_binary_specific_tag_prefix(
-        self, mock_urlopen, tmp_path
-    ):
+        self, mock_urlopen: MagicMock, tmp_path: Path
+    ) -> None:
         buf = BytesIO()
         with tarfile.open(fileobj=buf, mode="w:gz") as tar:
             info = tarfile.TarInfo(name="gcode")
@@ -1061,7 +1105,9 @@ class TestGcodeHelpers:
 
     @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
     @patch("subprocess.run")
-    def test_install_gcode_from_cargo_binstall(self, mock_run, mock_which, tmp_path):
+    def test_install_gcode_from_cargo_binstall(
+        self, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
+    ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
         assert _install_gcode_from_cargo_binstall(tmp_path) is True
         cmd = mock_run.call_args[0][0]
@@ -1069,7 +1115,9 @@ class TestGcodeHelpers:
 
     @patch("shutil.which", return_value="/usr/bin/cargo-binstall")
     @patch("subprocess.run")
-    def test_install_gcode_from_cargo_binstall_with_version(self, mock_run, mock_which, tmp_path):
+    def test_install_gcode_from_cargo_binstall_with_version(
+        self, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
+    ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
         _install_gcode_from_cargo_binstall(tmp_path, "0.2.3")
         cmd = mock_run.call_args[0][0]
@@ -1078,7 +1126,9 @@ class TestGcodeHelpers:
     @patch("shutil.which", return_value="/usr/bin/cargo")
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup.click")
-    def test_install_gcode_from_cargo_install(self, mock_click, mock_run, mock_which, tmp_path):
+    def test_install_gcode_from_cargo_install(
+        self, mock_click: MagicMock, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
+    ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
         assert _install_gcode_from_cargo_install(tmp_path) is True
         cmd = mock_run.call_args[0][0]
@@ -1088,8 +1138,8 @@ class TestGcodeHelpers:
     @patch("subprocess.run")
     @patch("gobby.cli.install_setup.click")
     def test_install_gcode_from_cargo_install_with_version(
-        self, mock_click, mock_run, mock_which, tmp_path
-    ):
+        self, mock_click: MagicMock, mock_run: MagicMock, mock_which: MagicMock, tmp_path: Path
+    ) -> None:
         mock_run.return_value = MagicMock(returncode=0)
         _install_gcode_from_cargo_install(tmp_path, "0.2.3")
         cmd = mock_run.call_args[0][0]
@@ -1249,43 +1299,43 @@ def _archive_resp(data: bytes) -> MagicMock:
 
 
 class TestParseSha256Digest:
-    def test_bare_digest(self):
+    def test_bare_digest(self) -> None:
         digest = "a" * 64
         assert parse_sha256_digest(f"{digest}\n") == digest
 
-    def test_sha256sum_line_format(self):
+    def test_sha256sum_line_format(self) -> None:
         digest = "b" * 64
         assert parse_sha256_digest(f"{digest}  gcode-aarch64-apple-darwin.tar.gz\n") == digest
 
-    def test_uppercase_is_normalized(self):
+    def test_uppercase_is_normalized(self) -> None:
         assert parse_sha256_digest("C" * 64) == "c" * 64
 
-    def test_no_valid_digest_returns_none(self):
+    def test_no_valid_digest_returns_none(self) -> None:
         assert parse_sha256_digest("not-a-checksum\n") is None
         assert parse_sha256_digest("") is None
         assert parse_sha256_digest("abc123\n") is None
 
 
 class TestFetchReleaseChecksum:
-    def test_success(self):
+    def test_success(self) -> None:
         digest = "d" * 64
         with patch("gobby.cli.install_release.urlopen", return_value=_checksum_resp(f"{digest}\n")):
             result = _fetch_release_checksum("https://example.com/x.sha256", label="gcode")
         assert result == digest
 
-    def test_network_error_returns_none(self):
+    def test_network_error_returns_none(self) -> None:
         with patch("gobby.cli.install_release.urlopen", side_effect=URLError("boom")):
             result = _fetch_release_checksum("https://example.com/x.sha256", label="gcode")
         assert result is None
 
-    def test_unparseable_body_returns_none(self):
+    def test_unparseable_body_returns_none(self) -> None:
         with patch("gobby.cli.install_release.urlopen", return_value=_checksum_resp("garbage\n")):
             result = _fetch_release_checksum("https://example.com/x.sha256", label="gcode")
         assert result is None
 
 
 class TestVerifyReleaseArtifact:
-    def test_matching_digest_passes(self):
+    def test_matching_digest_passes(self) -> None:
         data = b"payload-bytes"
         digest = hashlib.sha256(data).hexdigest()
         with patch("gobby.cli.install_release._fetch_release_checksum", return_value=digest):
@@ -1294,7 +1344,7 @@ class TestVerifyReleaseArtifact:
                 is True
             )
 
-    def test_mismatched_digest_fails(self):
+    def test_mismatched_digest_fails(self) -> None:
         with patch("gobby.cli.install_release._fetch_release_checksum", return_value="0" * 64):
             assert (
                 _verify_release_artifact(
@@ -1303,7 +1353,7 @@ class TestVerifyReleaseArtifact:
                 is False
             )
 
-    def test_missing_checksum_fails_closed(self):
+    def test_missing_checksum_fails_closed(self) -> None:
         with patch("gobby.cli.install_release._fetch_release_checksum", return_value=None):
             assert (
                 _verify_release_artifact(
@@ -1316,7 +1366,7 @@ class TestVerifyReleaseArtifact:
 class TestDownloadReleaseBinaryChecksum:
     """Integration: _download_release_binary verifies before placement."""
 
-    def _download(self, bin_dir: Path):
+    def _download(self, bin_dir: Path) -> bool:
         return _download_release_binary(
             bin_dir,
             binary_name="gcode",
@@ -1327,7 +1377,7 @@ class TestDownloadReleaseBinaryChecksum:
             label="gcode",
         )
 
-    def test_places_binary_when_checksum_matches(self, tmp_path):
+    def test_places_binary_when_checksum_matches(self, tmp_path: Path) -> None:
         archive = _release_tarball("gcode")
         digest = hashlib.sha256(archive).hexdigest()
         # urlopen order: archive download, then checksum fetch.
@@ -1340,7 +1390,7 @@ class TestDownloadReleaseBinaryChecksum:
         assert (tmp_path / "gcode").exists()
         assert (tmp_path / "gcode").read_bytes() == b"fake-binary"
 
-    def test_archive_promotion_stages_under_native_lock(self, tmp_path):
+    def test_archive_promotion_stages_under_native_lock(self, tmp_path: Path) -> None:
         archive = _release_tarball("gcode", b"new-binary")
         lock = MagicMock()
 
@@ -1364,7 +1414,7 @@ class TestDownloadReleaseBinaryChecksum:
         lock.__enter__.assert_called_once_with()
         assert replace.call_args.args[1] == tmp_path / "gcode"
 
-    def test_archive_promotion_preserves_binary_when_lock_is_held(self, tmp_path):
+    def test_archive_promotion_preserves_binary_when_lock_is_held(self, tmp_path: Path) -> None:
         destination = tmp_path / "gcode"
         destination.write_bytes(b"old-binary")
 
@@ -1380,7 +1430,7 @@ class TestDownloadReleaseBinaryChecksum:
         assert result is False
         assert destination.read_bytes() == b"old-binary"
 
-    def test_rejects_and_skips_placement_on_mismatch(self, tmp_path):
+    def test_rejects_and_skips_placement_on_mismatch(self, tmp_path: Path) -> None:
         archive = _release_tarball("gcode")
         with patch(
             "gobby.cli.install_release.urlopen",

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import posixpath
 import re
 import shlex
 from collections import Counter
+from pathlib import Path
 
 from gobby.config.shell_lexing import ParsedShellCommand
 from gobby.config.validation_detection import normalize_validation_evidence_command
@@ -223,6 +225,36 @@ _VALUELESS_OPTIONS = frozenset(
         "--no-header",
         "--all-targets",
         "--",
+        # pytest and pytest-cov flags agents put in front of path targets. Without
+        # them here the next path would be read as the flag's value.
+        "--no-cov",
+        "--no-cov-on-fail",
+        "--cov-append",
+        "--cov-branch",
+        "--cov-reset",
+        "--exitfirst",
+        "--lf",
+        "--last-failed",
+        "--ff",
+        "--failed-first",
+        "--nf",
+        "--new-first",
+        "--sw",
+        "--stepwise",
+        "--sw-skip",
+        "--stepwise-skip",
+        "--no-summary",
+        "--cache-clear",
+        "--showlocals",
+        "--full-trace",
+        "--strict-markers",
+        "--strict-config",
+        "--disable-warnings",
+        "--runxfail",
+        "--co",
+        "--collect-only",
+        "--setup-only",
+        "--setup-plan",
     }
 )
 # Pytest options that only change reporting or stop after early failures. A run that
@@ -251,6 +283,13 @@ _RUNNER_REPORTING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
     ("ruff", "check"): frozenset({"--output-format"}),
     ("mypy",): frozenset({"--no-error-summary"}),
 }
+# `uv --directory <dir>` runs from <dir>, like the `cd <dir> &&` prefix evidence
+# normalization already drops, so both forms scope the same paths. `--project <dir>`
+# keeps the working directory and only picks which project's environment runs, so
+# paths still resolve where they did. The flags only govern environment syncing and
+# network access, never test selection.
+_UV_LOCATION_OPTIONS = frozenset({"--directory", "--project"})
+_UV_NEUTRAL_FLAGS = frozenset({"--no-sync", "--frozen", "--locked", "--offline"})
 # These flags prove a strict superset only when they appear on the executed command.
 _EXECUTED_SCOPE_WIDENING_OPTIONS: dict[tuple[str, ...], frozenset[str]] = {
     ("cargo", "clippy"): frozenset({"--all-targets"}),
@@ -263,14 +302,8 @@ def _path_scope(
     parsed = parse_validation_shell(command)
     if len(parsed.segments) != 1:
         return None
-    tokens = list(parsed.segments[0])
+    tokens, _location = _drop_neutral_uv_options(list(parsed.segments[0]))
     start = 2 if tokens[:2] == ["uv", "run"] else 0
-    # `uv run --directory <dir>` runs from <dir>, like the `cd <dir> &&` prefix that
-    # evidence normalization already drops, so both forms scope the same paths.
-    if start and tokens[2:3] == ["--directory"]:
-        del tokens[2:4]
-    elif start and tokens[2:3] and tokens[2].startswith("--directory="):
-        del tokens[2]
     if tokens[start : start + 2] in (["python", "-m"], ["python3", "-m"]):
         start += 2
     runner = _path_scope_runner(tokens, start)
@@ -315,6 +348,55 @@ def _path_scope(
     # Distinct options compare in any order; repeats of one option keep their order.
     options.sort(key=lambda option: option[0].split("=", 1)[0])
     return tokens[:end] + [shlex.join(option) for option in options], paths
+
+
+def _drop_neutral_uv_options(tokens: list[str]) -> tuple[list[str], str | None]:
+    """Rewrite ``uv [options] run [options] <rest>`` as ``uv run <rest>``.
+
+    Only options that keep the run's test selection are dropped, before or after
+    ``run``. Any other option stays in place, so the runner is not recognized and
+    the command earns no path-scope credit. The second value is the last dropped
+    ``--directory``/``--project`` location, if any.
+    """
+    if tokens[:1] != ["uv"]:
+        return tokens, None
+    index = 1
+    seen_run = False
+    location: str | None = None
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "run" and not seen_run:
+            seen_run = True
+            index += 1
+        elif token in _UV_NEUTRAL_FLAGS:
+            index += 1
+        elif token in _UV_LOCATION_OPTIONS and index + 1 < len(tokens):
+            location = tokens[index + 1]
+            index += 2
+        elif token.split("=", 1)[0] in _UV_LOCATION_OPTIONS and "=" in token:
+            location = token.split("=", 1)[1]
+            index += 1
+        else:
+            break
+    if not seen_run:
+        return tokens, None
+    return ["uv", "run", *tokens[index:]], location
+
+
+def runs_outside_root(command: str, root: str) -> bool:
+    """Whether a ``uv`` location option points the command away from ``root``.
+
+    Only an absolute ``--directory``/``--project`` outside ``root`` counts. With no
+    location, or a relative one whose cwd was never recorded, the scope is
+    unresolvable and the command is judged as running in ``root``.
+    """
+    parsed = parse_validation_shell(command)
+    if len(parsed.segments) != 1:
+        return False
+    _tokens, location = _drop_neutral_uv_options(list(parsed.segments[0]))
+    if location is None or not os.path.isabs(location):
+        return False
+    return not Path(location).resolve().is_relative_to(Path(root).resolve())
 
 
 def _path_scope_runner(tokens: list[str], start: int) -> tuple[tuple[str, ...], int] | None:

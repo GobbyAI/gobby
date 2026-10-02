@@ -238,8 +238,9 @@ async def run_adapter_hook(
             finally:
                 _current_session_admission_release.reset(release_token)
                 finished_at = time.perf_counter()
-                # CPU this thread burned; far below adapter_worker wall time means the
-                # worker waited (locks, I/O, or not being scheduled), not code cost (#23063).
+                # CPU this thread burned. Far below adapter_worker wall time means this
+                # thread was blocked: on locks, I/O, the GIL, or child threads such as
+                # rule evaluation, whose own CPU this does not count (#23063).
                 timings.add("adapter_worker_cpu", time.thread_time() - started_cpu)
 
     def durations() -> tuple[float, float, float]:

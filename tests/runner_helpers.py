@@ -14,6 +14,7 @@ from gobby.config.database_concurrency import DatabaseConcurrencyConfig
 from gobby.config.logging import LoggingSettings
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.storage.concurrency import PostgresCapacity
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 TEST_MACHINE_ID = "00000000-0000-4000-8000-000000000001"
 
@@ -41,7 +42,28 @@ def normalize_mcp_manager(mock_mcp_manager: Any | None) -> MagicMock:
     elif not isinstance(get_server_config, MagicMock):
         manager.get_server_config = MagicMock(return_value=None)
 
+    # LocalMCPManager.list_all_servers is synchronous; the OAuth keep-alive loop
+    # runs it in a thread and iterates the rows.
+    if isinstance(manager.mcp_db_manager.list_all_servers, AsyncMock):
+        manager.mcp_db_manager.list_all_servers = MagicMock(return_value=[])
+
     return manager
+
+
+def serve_until_should_exit(server: Any) -> AsyncMock:
+    """Serve like uvicorn: run until shutdown sets ``should_exit``.
+
+    A serve mock that returns at once reads as an unexpected HTTP server exit
+    and races the test's own shutdown request.
+    """
+    server.started = True
+    server.should_exit = False
+
+    async def serve() -> None:
+        while not server.should_exit:
+            await asyncio.sleep(0)
+
+    return AsyncMock(side_effect=serve)
 
 
 def set_mock_default(obj: MagicMock, name: str, default: Any) -> None:
@@ -56,7 +78,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     defaults = DaemonConfig()
     config.bind_host = "localhost"
     config.hub_backend = "postgres"
-    config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
+    config.database_url = FAKE_DATABASE_URL
     config.database_concurrency = DatabaseConcurrencyConfig()
     config.postgres_pool = PostgresPoolConfig()
 
@@ -74,9 +96,18 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
         "knowledge_graph_queue",
         "memory",
         "pipelines",
+        "session_feedback",
         "terminals",
+        "cron",
     ):
         set_mock_default(config, name, getattr(defaults, name))
+    # A test-supplied memory mock still needs a real cron string for dream registration.
+    if isinstance(config.memory, MagicMock):
+        set_mock_default(config.memory, "dream", defaults.memory.dream)
+    # Enabled by default, which would reach GitHub for managed binary releases.
+    set_mock_default(
+        config, "bin_freshness", defaults.bin_freshness.model_copy(update={"enabled": False})
+    )
 
     config.telemetry = getattr(config, "telemetry", MagicMock())
     config.telemetry.traces_enabled = False
@@ -162,6 +193,17 @@ def create_base_patches(
         mock_http.app.state = State()
         mock_http.port = 60887
     set_mock_default(mock_http, "_terminate_streamable_http_sessions", AsyncMock())
+    # Startup recovery awaits the task registry's close-review promoter.
+    internal_manager = MagicMock()
+    registry = internal_manager.get_registry.return_value
+    registry.get_private_callback.return_value = AsyncMock(return_value=[])
+    set_mock_default(mock_http, "_internal_manager", internal_manager)
+
+    # Startup reconcile runs DB-side credential functions and cleans the
+    # managed-executions directory under the Gobby home.
+    credential_manager = MagicMock()
+    credential_manager.reconcile.return_value = 0
+    credential_manager.rotate_due.return_value = []
 
     mock_agent_monitor = AsyncMock()
     mock_agent_monitor.recover_or_cleanup_agents.return_value = (0, 0)
@@ -209,7 +251,11 @@ def create_base_patches(
         database.open_runtime_async_connection = AsyncMock(return_value=notification_connection)
         database.fetchone.return_value = None
         database.fetchall.return_value = []
-        database.execute.return_value = None
+        cursor = MagicMock(rowcount=0, lastrowid=None)
+        cursor.fetchone.return_value = None
+        cursor.fetchall.return_value = []
+        database.execute.return_value = cursor
+        database.executemany.return_value = cursor
         database.safe_update.return_value = 0
         database.server_capacity.return_value = PostgresCapacity(
             max_connections=100,
@@ -236,6 +282,10 @@ def create_base_patches(
             side_effect=lambda _database, machine_id: machine_id,
         ),
         patch("gobby.runner_init.storage.ensure_system_session"),
+        # Construction otherwise fetches the OpenRouter registry and rewrites model_metadata.
+        patch("gobby.storage.model_metadata.ModelMetadataStore.populate", return_value=0),
+        # Startup otherwise shells out to gdaemon to drop test schemas on config.database_url.
+        patch("gobby.runner_maintenance.storage_hygiene.sweep_orphaned_test_schemas"),
         patch("gobby.storage.hub.postgres.PostgresHubDatabase", side_effect=make_postgres_db),
         patch(
             "gobby.runner_init.helpers.admitted_database_url",
@@ -257,6 +307,11 @@ def create_base_patches(
         patch("gobby.runner_init.services.VectorStore"),
         patch("gobby.runner_init.servers.HTTPServer", return_value=mock_http),
         patch("gobby.storage.secrets.SecretStore"),
+        # init_storage_and_config imports it function-locally.
+        patch(
+            "gobby.storage.managed_credentials.ManagedCredentialManager",
+            return_value=credential_manager,
+        ),
         patch("gobby.storage.config_store.ConfigStore"),
         patch("gobby.runner_init.storage.AuthStore"),
         patch("gobby.storage.config_repository.ConfigRepository", return_value=config_repository),

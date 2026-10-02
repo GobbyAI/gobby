@@ -4,8 +4,8 @@
 00 : bar_ink/bar+b*120
 01 |                                                                                                                        |
 01 : text/panel_bg*120
-02 | alpha       +                                                                                                          |
-02 : text/surface1+b*12 overlay1/surface0*3 text/surface0*105
+02 | alpha      │ +                                                                                                         |
+02 : text/surface1+b*12 line/surface0*1 overlay1/surface0*3 text/surface0*104
 03 |┌ ○ #1742: Codex ───────────────────────────────────────────────────────────────────────────────────────────── gclient ┐|
 03 : overlay0/panel_bg*120
 04 |│                                                                                                                      │|

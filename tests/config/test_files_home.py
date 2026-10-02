@@ -26,6 +26,7 @@ from gobby.paths import (
     publish_files_home_descendant,
     require_files_home,
 )
+from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
 
@@ -322,11 +323,11 @@ def test_write_postgres_defaults_keeps_files_home(tmp_path: Path) -> None:
     write_bootstrap_yaml(tmp_path / "bootstrap.yaml", _local_mapping(files_home))
     write_postgres_defaults(
         gobby_home=tmp_path,
-        database_url="postgresql://gobby:secret@localhost:60891/gobby",
+        database_url=FAKE_DATABASE_URL,
     )
     loaded = load_bootstrap(str(tmp_path / "bootstrap.yaml"))
     assert loaded.files_home == str(files_home)
-    assert loaded.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
+    assert loaded.database_url == FAKE_DATABASE_URL
 
 
 def test_ensure_daemon_config_persists_caller_files_home(tmp_path: Path) -> None:

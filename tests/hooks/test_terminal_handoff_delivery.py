@@ -1085,7 +1085,7 @@ async def test_native_worker_receives_the_continuation_after_set_handoff_compact
     )
 
     # Claude restarts in place: SessionStart source=compact on the pre-created row.
-    runtime.snapshot_text = ""
+    runtime.snapshot_text = f"{'─' * 20}\n❯\xa0\n{'─' * 20}\n"
     handler = _session_start_handler(session_manager, store, registry)
     with patch(
         "gobby.sessions.compact_continuation._composer_reader",

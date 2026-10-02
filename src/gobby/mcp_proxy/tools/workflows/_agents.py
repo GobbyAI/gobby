@@ -13,6 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+from gobby.mcp_proxy.tools.workflows._auto_export import require_exportable_endpoint_token
 from gobby.storage.definitions import AgentDefinitionManager, AgentDefinitionRow
 from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
@@ -31,10 +32,12 @@ def _row_body(row: AgentDefinitionRow) -> dict[str, Any]:
 
 
 def _export_row(row: AgentDefinitionRow) -> Any:
+    body = _row_body(row)
+    require_exportable_endpoint_token(row.name, body)
     return SimpleNamespace(
         name=row.name,
         tags=row.tags,
-        definition_json=json.dumps(_row_body(row)),
+        definition_json=json.dumps(body),
     )
 
 

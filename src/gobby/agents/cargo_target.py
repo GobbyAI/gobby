@@ -3,9 +3,15 @@
 Each checkout builds into a deterministic directory below
 ``~/.gobby/cache/cargo-target-v2/<project_id>/``. The checkout path participates
 in the cache key, so a main checkout, worktree, and clone never exchange build
-artifacts. Interactive shells reach the directory through a ``target`` symlink;
-spawned agents receive the same path as ``CARGO_TARGET_DIR``. The shared
-``CARGO_HOME`` remains separate and continues to reuse registry and Git inputs.
+artifacts. Interactive shells reach the directory through a ``target`` symlink
+and build with the operator's own Cargo home. Unsandboxed spawned agents build
+with Gobby's shared ``CARGO_HOME``, and fingerprints embed that home's registry
+source paths, so they receive a sibling ``<checkout>-agent`` directory as
+``CARGO_TARGET_DIR`` instead of the operator's target. Sandboxed runs build with
+their own Cargo home into a per-checkout target under the sandbox cache. Checkout
+cleanup removes all three targets, and artifact readers resolve the release
+directory through ``cargo_release_dir`` so they follow whichever target a build
+used.
 
 The link is added to the repository's local exclude file because the conventional
 ``target/`` ignore pattern matches directories and leaves a symlink untracked.
@@ -21,8 +27,10 @@ import os
 import re
 import shutil
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 
+from gobby.agents.constants import sandbox_agent_cache_dir
 from gobby.paths import get_gobby_home
 
 logger = logging.getLogger(__name__)
@@ -61,8 +69,7 @@ def _legacy_cargo_target_dir(project_id: str) -> Path:
     return get_gobby_home() / "cache" / "cargo-target" / safe_id
 
 
-def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
-    """Return the deterministic Cargo target directory for one checkout."""
+def _checkout_component(checkout: Path) -> str:
     canonical = checkout.expanduser().resolve(strict=False)
     safe_name = _safe_component(
         canonical.name,
@@ -70,24 +77,89 @@ def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
         fallback="checkout",
     )
     path_hash = hashlib.sha256(os.fsencode(canonical)).hexdigest()[:_PATH_HASH_LENGTH]
-    return _project_cache_root(project_id) / f"{safe_name}-{path_hash}"
+    return f"{safe_name}-{path_hash}"
 
 
-def ensure_checkout_cargo_target_dir(checkout: Path, project_id: str) -> str:
-    """Create one checkout's Cargo target directory and return its path."""
-    target_dir = checkout_cargo_target_dir(checkout, project_id)
+def checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
+    """Return the deterministic Cargo target directory for one checkout."""
+    return _project_cache_root(project_id) / _checkout_component(checkout)
+
+
+def _sandbox_target_root() -> Path:
+    return sandbox_agent_cache_dir() / "cargo-target"
+
+
+def sandbox_checkout_cargo_target_dir(checkout: Path) -> Path:
+    """Return the Cargo target that sandboxed runs in one checkout build into.
+
+    Sandboxed runs build with their own ``CARGO_HOME``, and fingerprints embed
+    that home's registry source paths, so sharing the checkout's target with
+    unsandboxed builds would rebuild every dependency on each alternation. Keyed
+    by checkout path alone: a run knows its workspace but not always its project.
+    """
+    return _sandbox_target_root() / _checkout_component(checkout)
+
+
+def agent_checkout_cargo_target_dir(checkout: Path, project_id: str) -> Path:
+    """Return the Cargo target that unsandboxed agents in one checkout build into.
+
+    Agents build with Gobby's shared ``CARGO_HOME`` while the operator's shell
+    keeps its own, and a target shared between two homes rebuilds every
+    dependency on each alternation (#23198). The suffix cannot collide with a
+    checkout component, which always ends in a hexadecimal path hash.
+    """
+    return _project_cache_root(project_id) / f"{_checkout_component(checkout)}-agent"
+
+
+def ensure_agent_cargo_target_dir(checkout: Path, project_id: str) -> str:
+    """Create one checkout's unsandboxed-agent Cargo target and return its path."""
+    target_dir = agent_checkout_cargo_target_dir(checkout, project_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     return str(target_dir)
 
 
+def cargo_release_dir(
+    workspace: Path,
+    *,
+    cwd: Path | None = None,
+    env: Mapping[str, str] | None = None,
+) -> Path:
+    """Return the release directory a Cargo build of ``workspace`` wrote into.
+
+    Cargo honours ``CARGO_TARGET_DIR`` relative to the directory it ran in, and
+    otherwise builds into the workspace's ``target`` entry.
+    """
+    values = os.environ if env is None else env
+    configured = values.get("CARGO_TARGET_DIR", "").strip()
+    target = (cwd or Path.cwd()) / configured if configured else workspace / "target"
+    return target / "release"
+
+
 def cleanup_checkout_cargo_target_dir(checkout: Path, project_id: str) -> str | None:
-    """Remove one Gobby-owned checkout target, returning an error message on failure."""
-    project_root = _project_cache_root(project_id)
-    target_dir = checkout_cargo_target_dir(checkout, project_id)
-    if target_dir.parent != project_root or target_dir == project_root:
+    """Remove one checkout's Gobby-owned targets, returning an error message on failure."""
+    errors = [
+        error
+        for error in (
+            _remove_target_dir(
+                _project_cache_root(project_id), checkout_cargo_target_dir(checkout, project_id)
+            ),
+            _remove_target_dir(
+                _project_cache_root(project_id),
+                agent_checkout_cargo_target_dir(checkout, project_id),
+            ),
+            _remove_target_dir(_sandbox_target_root(), sandbox_checkout_cargo_target_dir(checkout)),
+        )
+        if error is not None
+    ]
+    # Both project-cache targets report the same refusal for a symlinked root.
+    return "; ".join(dict.fromkeys(errors)) or None
+
+
+def _remove_target_dir(cache_root: Path, target_dir: Path) -> str | None:
+    if target_dir.parent != cache_root or target_dir == cache_root:
         return f"Refusing to remove unguarded Cargo target path: {target_dir}"
-    if project_root.is_symlink():
-        return f"Refusing to remove Cargo target below symlinked project cache: {project_root}"
+    if cache_root.is_symlink():
+        return f"Refusing to remove Cargo target below symlinked project cache: {cache_root}"
     try:
         if target_dir.is_symlink():
             return f"Refusing to remove symlinked Cargo target path: {target_dir}"

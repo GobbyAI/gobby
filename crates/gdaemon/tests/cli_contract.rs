@@ -55,7 +55,7 @@ fn version_json_reports_exact_schema_identity_contract() -> anyhow::Result<()> {
     assert_eq!(identity["assets_root_hash"], embedded.root_hash);
     // One literal stays as the human tripwire, deliberately: a bare version number is
     // something a reviewer can verify at a glance, which was never true of a checksum.
-    assert_eq!(identity["latest_version"], 454);
+    assert_eq!(identity["latest_version"], 455);
     assert_eq!(
         identity["assets_root_hash"].as_str().map(str::len),
         Some(64)
@@ -131,23 +131,18 @@ fn connection_errors_redact_dsn_credentials() -> anyhow::Result<()> {
 }
 
 #[test]
-fn destructive_apply_parses_newest_backup_before_connecting() -> anyhow::Result<()> {
-    let home = tempfile::tempdir()?;
-    let home_path = home.path().canonicalize()?;
-    let backup = home_path.join("backups/hub/20260805T120000Z");
-    std::fs::create_dir_all(&backup)?;
-    std::fs::write(backup.join("manifest.json"), "{}")?;
-
+fn apply_has_no_destructive_argument() -> anyhow::Result<()> {
     let output = Command::cargo_bin("gdaemon")?
         .args(["schema", "apply", "--destructive"])
-        .env("GOBBY_HOME", &home_path)
         .env(DATABASE_URL_ENV, SECRET_DSN)
         .output()?;
+    let stderr = String::from_utf8(output.stderr)?;
 
     assert!(!output.status.success());
-    let stderr = String::from_utf8(output.stderr)?;
-    assert!(stderr.contains("invalid hub backup manifest"), "{stderr}");
-    assert!(!stderr.contains("failed to connect"), "{stderr}");
+    assert!(
+        stderr.contains("unexpected argument '--destructive'"),
+        "{stderr}"
+    );
     assert!(!stderr.contains("do-not-leak"), "{stderr}");
     Ok(())
 }

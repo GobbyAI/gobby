@@ -23,13 +23,38 @@ from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.servers.http import HTTPServer
 from gobby.shutdown_intent import ShutdownIntent
 from tests.hooks._event_handler_helpers import make_event
-from tests.runner_helpers import create_base_patches
+from tests.runner_helpers import create_base_patches, serve_until_should_exit
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
 
 async def _never_complete() -> None:
     await asyncio.Event().wait()
+
+
+class _CancellationResistantStart:
+    """A startup coroutine that swallows its first cancellation until released.
+
+    Releasing ends every run at whichever wait it reached, so teardown never
+    depends on shutdown having delivered the first cancel.
+    """
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.resisted = asyncio.Event()
+        self._released = asyncio.Event()
+
+    async def run(self) -> None:
+        self.started.set()
+        try:
+            await self._released.wait()
+        except asyncio.CancelledError:
+            self.resisted.set()
+            await self._released.wait()
+
+    async def release(self, tasks: list[asyncio.Task[Any]]) -> None:
+        self._released.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 class _ExitAwareServer:
@@ -173,7 +198,7 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -349,7 +374,7 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -380,7 +405,7 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -463,7 +488,7 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -501,7 +526,7 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -604,7 +629,7 @@ class TestGobbyRunnerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -655,7 +680,8 @@ class TestWebSocketServerShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.server_state = SimpleNamespace(connections=set(), tasks=set())
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with (
@@ -680,14 +706,7 @@ class TestWebSocketServerShutdown:
         mock_mcp_manager.disconnect_all = AsyncMock()
 
         mock_ws_server = AsyncMock()
-        websocket_started = asyncio.Event()
-
-        async def ws_start_hang() -> None:
-            websocket_started.set()
-            try:
-                await _never_complete()
-            except asyncio.CancelledError:
-                await _never_complete()
+        websocket_start = _CancellationResistantStart()
 
         patches = create_base_patches(
             mock_config=mock_config_with_websocket,
@@ -699,13 +718,15 @@ class TestWebSocketServerShutdown:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
-            mock_ws_server.start = AsyncMock(side_effect=ws_start_hang)
+            mock_ws_server.start = AsyncMock(side_effect=websocket_start.run)
+            websocket_tasks: list[asyncio.Task[None]] = []
 
             async def init_subsystems(runner_arg: GobbyRunner, _rebuild_vector_store: bool) -> None:
                 assert runner_arg.websocket_server is not None
                 runner_arg._websocket_task = asyncio.create_task(
                     runner_arg.websocket_server.start()
                 )
+                websocket_tasks.append(runner_arg._websocket_task)
                 runner_arg._shutdown_requested = True
 
             async def shutdown_websocket_server(runner_arg: GobbyRunner) -> None:
@@ -716,7 +737,7 @@ class TestWebSocketServerShutdown:
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
                 mock_server.server_state = SimpleNamespace(connections=set(), tasks=set())
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with (
@@ -727,13 +748,87 @@ class TestWebSocketServerShutdown:
                         side_effect=shutdown_websocket_server,
                     ),
                 ):
-                    await asyncio.wait_for(
-                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=15.0
-                    )
+                    try:
+                        await asyncio.wait_for(
+                            runner.run(ownership_resolution=FailOpenPidOwnership("test")),
+                            timeout=15.0,
+                        )
+                    finally:
+                        # Shutdown detaches the task that resisted cancellation; release
+                        # and reap it so the closing loop does not destroy it pending.
+                        await websocket_start.release(websocket_tasks)
 
             assert mock_ws_server.start.await_count == 1
-            assert websocket_started.is_set()
+            assert websocket_start.started.is_set()
+            assert websocket_start.resisted.is_set()
             assert cast(MagicMock, runner.database).close.called is True
+
+    @pytest.mark.asyncio
+    async def test_websocket_shutdown_bounds_startup_task_that_resists_cancellation(
+        self,
+    ) -> None:
+        """The wait and cancel bounds hold when the startup task ignores cancellation."""
+        websocket_start = _CancellationResistantStart()
+        websocket_task = asyncio.create_task(websocket_start.run())
+        websocket_server = AsyncMock()
+        runner = SimpleNamespace(_websocket_task=websocket_task, websocket_server=websocket_server)
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown._shutdown_websocket_server(
+                cast("GobbyRunner", runner), timeout=0.01
+            )
+        )
+        try:
+            # Hang guard only: the bounded path returns after about 1s.
+            done, _ = await asyncio.wait({shutdown}, timeout=10.0)
+            assert shutdown in done
+            assert websocket_start.resisted.is_set()
+            websocket_server.stop.assert_awaited_once()
+            assert runner._websocket_task is None
+        finally:
+            shutdown.cancel()
+            await websocket_start.release([shutdown, websocket_task])
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("teardown_cancels_first", [False, True])
+    async def test_resistant_start_teardown_completes_without_shutdown_cancel(
+        self, teardown_cancels_first: bool
+    ) -> None:
+        """Release ends the stub even when the run fails before shutdown cancels it."""
+        websocket_start = _CancellationResistantStart()
+        websocket_task = asyncio.create_task(websocket_start.run())
+        await websocket_start.started.wait()
+        if teardown_cancels_first:
+            # The stub swallows this first cancel, as it would a shutdown cancel.
+            websocket_task.cancel()
+            await asyncio.wait_for(websocket_start.resisted.wait(), timeout=5.0)
+
+        # Hang guard only: release ends the task at once.
+        await asyncio.wait_for(websocket_start.release([websocket_task]), timeout=5.0)
+
+        assert websocket_task.done() is True
+        assert websocket_task.cancelled() is False
+        assert websocket_start.resisted.is_set() is teardown_cancels_first
+
+    @pytest.mark.asyncio
+    async def test_websocket_shutdown_propagates_caller_cancellation(self) -> None:
+        """An expiring shutdown budget cancels the step instead of being swallowed."""
+        websocket_task = asyncio.create_task(_never_complete())
+        runner = SimpleNamespace(_websocket_task=websocket_task, websocket_server=AsyncMock())
+        shutdown = asyncio.create_task(
+            runner_lifecycle_shutdown._shutdown_websocket_server(
+                cast("GobbyRunner", runner), timeout=60.0
+            )
+        )
+        await asyncio.sleep(0)  # let the step reach its wait on the startup task
+
+        shutdown.cancel()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await shutdown
+            assert websocket_task.cancelling() == 1
+        finally:
+            websocket_task.cancel()
+            await asyncio.gather(websocket_task, return_exceptions=True)
 
 
 class TestMetricsCleanupTaskShutdown:
@@ -760,7 +855,7 @@ class TestMetricsCleanupTaskShutdown:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -802,7 +897,7 @@ class TestGobbyRunnerShutdownExtended:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -843,7 +938,7 @@ class TestGobbyRunnerShutdownExtended:
                 ),
             ):
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -877,7 +972,7 @@ class TestGobbyRunnerShutdownExtended:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):

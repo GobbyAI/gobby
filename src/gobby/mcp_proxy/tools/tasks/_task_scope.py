@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -15,10 +14,11 @@ from gobby.mcp_proxy.tools.tasks._context import (
     RegistryContext,
     checkout_unresolved_error,
 )
-from gobby.plans.semantic_lint import find_file_paths_in_text
+from gobby.plans.semantic_lint import collect_description_target_inventory
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
+from gobby.tasks.commits import collect_net_name_status_async
 from gobby.utils.daemon_git import GitOk, daemon_git
 
 if TYPE_CHECKING:
@@ -29,9 +29,6 @@ if TYPE_CHECKING:
 MIN_SCOPE_JUSTIFICATION_LENGTH = 20
 MAX_SCOPE_JUSTIFICATION_LENGTH = 1000
 
-_TARGET_LINE_RE = re.compile(r"^\s*Targets?\s*:\s*(?P<rest>.*)$", re.IGNORECASE)
-_ACCEPTANCE_RE = re.compile(r"^\s*Acceptance\s*:", re.IGNORECASE)
-_BULLET_RE = re.compile(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)")
 _DECLARED_ANNOTATION_SOURCES = frozenset({"manual", "expansion"})
 _ADVISORY_ANNOTATION_SOURCES = frozenset({"hypothesis"})
 _TESTS_ROOT = "tests/"
@@ -184,11 +181,10 @@ def collect_declared_task_targets(
 ) -> set[str]:
     """Collect normalized paths supplied through Targets or affected_files."""
     declared: set[str] = set()
-    for target_line in _iter_target_block_lines(description or ""):
-        for target in find_file_paths_in_text(target_line):
-            normalized = _normalize_scope_entry(target)
-            if normalized is not None:
-                declared.add(normalized)
+    for target in collect_description_target_inventory(description):
+        normalized = _normalize_scope_entry(target)
+        if normalized is not None:
+            declared.add(normalized)
     for affected_file in affected_files or ():
         normalized = _normalize_scope_entry(affected_file)
         if normalized is not None:
@@ -238,30 +234,51 @@ async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str)
     return await _diff_tree_paths(commit_shas, repo_path)
 
 
-async def collect_deleted_commit_paths_async(
-    commit_shas: Iterable[str], repo_path: str
-) -> set[str]:
-    """Return paths a linked commit deleted that ``HEAD`` in ``repo_path`` no longer tracks.
+@dataclass(frozen=True)
+class NetCommitPaths:
+    """Paths a close set changes on net, and those it leaves deleted."""
 
-    Deletion is Git's record alone: a file tracked at HEAD but missing from the
-    worktree is never reported.
+    changed: frozenset[str] = frozenset()
+    deleted: frozenset[str] = frozenset()
+
+
+async def collect_net_commit_paths_async(commit_shas: list[str], repo_path: str) -> NetCommitPaths:
+    """Return what the linked commits change on net against the close review's base.
+
+    A file a later link reverts, or one only edited and never committed, is absent.
+    Deletion is Git's record alone: a file the candidate tracks but the worktree
+    lacks is never reported.
     """
-    deleted = await _diff_tree_paths(commit_shas, repo_path, "--diff-filter=D")
-    if not deleted:
-        return deleted
-    tree = await daemon_git.run(
-        ["ls-tree", "-r", "--name-only", "-z", "HEAD"], cwd=repo_path, timeout=10
-    )
-    if not isinstance(tree, GitOk):
-        raise RuntimeError("Cannot list the paths tracked at HEAD.")
-    return deleted - set(tree.stdout.split("\0"))
+    if not commit_shas:
+        return NetCommitPaths()
+    listing = await collect_net_name_status_async(commit_shas, cwd=repo_path)
+    if listing is None:
+        raise RuntimeError("Cannot compute the net diff of the linked commits against their base.")
+    changed: set[str] = set()
+    deleted: set[str] = set()
+    fields = iter(listing.split("\0"))
+    for status in fields:
+        kind = status.strip()[:1]
+        if not kind:
+            continue
+        # Renames and copies name a source then a destination; a rename removes its source.
+        names = [next(fields, ""), next(fields, "")] if kind in "RC" else [next(fields, "")]
+        paths = [_normalize_git_repo_path(name) for name in names]
+        if kind == "C":
+            paths = paths[1:]
+        for path in paths:
+            if path is not None:
+                changed.add(path)
+        if kind in "DR" and paths[0] is not None:
+            deleted.add(paths[0])
+    return NetCommitPaths(frozenset(changed), frozenset(deleted))
 
 
-async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str, *flags: str) -> set[str]:
+async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     paths: set[str] = set()
     for sha in commit_shas:
         result = await daemon_git.run(
-            ["diff-tree", "--root", "--no-commit-id", *flags, "--name-only", "-z", "-r", sha],
+            ["diff-tree", "--root", "--no-commit-id", "--name-only", "-z", "-r", sha],
             cwd=repo_path,
             timeout=10,
         )
@@ -277,37 +294,6 @@ async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str, *flags: s
 def collect_commit_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:
     """Offline synchronous facade for direct-library consumers."""
     return asyncio.run(collect_commit_paths_async(commit_shas, repo_path))
-
-
-def _iter_target_block_lines(description: str) -> Iterable[str]:
-    lines = description.splitlines()
-    index = 0
-    while index < len(lines):
-        match = _TARGET_LINE_RE.match(lines[index])
-        if match is None:
-            index += 1
-            continue
-        if rest := match.group("rest").strip():
-            yield rest
-        index += 1
-        while index < len(lines):
-            candidate = lines[index]
-            stripped = candidate.strip()
-            if not stripped:
-                break
-            if (
-                _TARGET_LINE_RE.match(candidate)
-                or _ACCEPTANCE_RE.match(candidate)
-                or stripped.startswith("Consumers unchanged:")
-            ):
-                break
-            if stripped.startswith("#") or stripped.startswith("`kind:"):
-                break
-            if _BULLET_RE.match(candidate) or "`" in candidate or "/" in candidate:
-                yield candidate
-                index += 1
-                continue
-            break
 
 
 def _normalize_scope_entry(value: str) -> str | None:

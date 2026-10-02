@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -34,14 +35,11 @@ def older_worktree(tmp_path: Path) -> tuple[Path, Path]:
     _git("-C", str(main), "add", ".gobby/project.json")
     _git("-C", str(main), "commit", "-qm", "base")
     _git("-C", str(main), "worktree", "add", "-qb", "old", str(old))
-    # Synthetic roles keep the lookup contract independent of live roster reseats.
-    roles = main / ".gobby/roles"
-    roles.mkdir()
-    (roles / "_common.md").write_text("# Rules for every role\n")
-    (roles / "roster.md").write_text(
+    shutil.copytree(REPO_ROOT / ".gobby/roles", main / ".gobby/roles")
+    # Seats rotate in the live roster; bind a fixed one so only the lookup is under test.
+    (main / ".gobby/roles/roster.md").write_text(
         "| Role file | Session |\n| --- | --- |\n| rust-migration.md | gobby#14549 |\n"
     )
-    (roles / "rust-migration.md").write_text("# Rust migration\n")
     assert not (old / ".gobby/roles").exists()
     return old, main
 

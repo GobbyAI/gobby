@@ -68,6 +68,11 @@ from gobby.tasks.transcript_outcomes import (
     is_unexecuted_tool_result as _is_unexecuted_tool_result,
 )
 from gobby.tasks.transcript_tool_arguments import (
+    edited_source,
+    python_edit_tokens,
+    python_keyword_stub,
+)
+from gobby.tasks.transcript_tool_arguments import (
     extract_command as _extract_command,
 )
 from gobby.tasks.transcript_tool_arguments import (
@@ -153,6 +158,7 @@ def _derivation_fingerprint(
     """Fingerprint every input the derived records are a function of."""
     payload = json.dumps(
         {
+            "derivation_version": 10,
             "session": session.id,
             "source": session.source,
             "window_start": window_start.isoformat() if window_start is not None else None,
@@ -650,6 +656,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             validation_segments=segments,
         )
     )
+    _recover_rtk_output(state, outcome.result)
 
 
 def _validation_segments(
@@ -684,17 +691,55 @@ def _record_validation_run(
     order: int,
     source_label: str,
 ) -> None:
+    if _is_unexecuted_tool_result(result):
+        # Begin records are provisional until an explicit denial proves no edit ran.
+        state.edits[:] = [edit for edit in state.edits if edit.order != pending.order]
+        return
     if _tool_basename(pending.name) not in _SHELL_TOOLS:
+        confirmed = _extract_outcome(result)[0] == "success"
+        native_result = result.get("tool_result", result) if isinstance(result, dict) else result
+        output = native_result.get("content") if isinstance(native_result, dict) else native_result
+        written_path = pending.arguments.get("file_path")
+        creation_receipt = (
+            confirmed
+            and _tool_basename(pending.name) == "write"
+            and isinstance(written_path, str)
+            and isinstance(output, str)
+            and (
+                output == f"File created successfully at: {written_path}"
+                or output.startswith(f"File created successfully at: {written_path} ")
+            )
+        )
+        state.edits[:] = [
+            replace(
+                edit,
+                source_confirmed=confirmed,
+                source_confirmed_at=completed_at if confirmed else None,
+                source_created=bool(
+                    creation_receipt
+                    and not any(
+                        prior.path == edit.path and prior.order < edit.order
+                        for prior in state.edits
+                    )
+                ),
+            )
+            if edit.order == pending.order
+            else edit
+            for edit in state.edits
+        ]
         return
     command = _extract_command(pending.arguments)
     matches = classify_validation_segments(command, state.detection_config)
     if not command.strip():
         return
-    if _is_unexecuted_tool_result(result):
-        return
     match = matches[0] if matches else None
     segments = _validation_segments(matches)
-    output, output_truncated = _extract_output(result)
+    # A literal recall carries the original failure sections, often larger than
+    # the ordinary command summary. Keep that native receipt bounded separately.
+    recall = re.fullmatch(r"(?:uv run )?rtk recall [0-9a-f]{12,64}", command.strip())
+    output, output_truncated = (
+        _extract_output(result, max_chars=64_000) if recall else _extract_output(result)
+    )
     outcome, exit_code, unknown_reason = _extract_outcome(
         result,
         output,
@@ -727,6 +772,47 @@ def _record_validation_run(
             output_truncated=output_truncated,
             validation_segments=segments,
         )
+    )
+    _recover_rtk_output(state, result)
+
+
+def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
+    """Attach a native recall receipt to its unique original failed test run."""
+    receipt = state.runs[-1]
+    # The general exit-preserving normalizer strips the `rtk` executable itself.
+    match = re.fullmatch(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})", receipt.command.strip())
+    if match is None or receipt.wrapped:
+        return
+    # Retrieval output contains the old pytest failure. Its transport outcome,
+    # rather than those historical failure counts, certifies the recall itself.
+    outcome, exit_code, unknown_reason = _extract_outcome(result)
+    if outcome != "success" or not receipt.output or receipt.output_truncated:
+        return
+    state.runs[-1] = replace(
+        receipt, outcome=outcome, exit_code=exit_code, unknown_reason=unknown_reason
+    )
+    reference = re.compile(rf"(?m)^[ \t]*\[full output: rtk recall {match.group(1)}\][ \t]*\r?$")
+    originals = [
+        index
+        for index, run in enumerate(state.runs[:-1])
+        if run.outcome == "failure"
+        and "test" in run.categories
+        and (
+            reference.search(run.output or "")
+            or re.fullmatch(
+                rf"(?:uv run )?rtk recall {match.group(1)}", run.output_recovered_from or ""
+            )
+        )
+    ]
+    if len(originals) != 1:
+        return
+    index = originals[0]
+    state.runs[index] = replace(
+        state.runs[index],
+        output=receipt.output,
+        output_truncated=False,
+        output_recovered_from=receipt.command,
+        output_recovered_at=receipt.completed_at,
     )
 
 
@@ -773,6 +859,28 @@ def _record_edit(
         )
         if task_file is None:
             continue
+        previous = next((edit for edit in reversed(state.edits) if edit.path == task_file), None)
+        source_after = (
+            edited_source(
+                basename,
+                arguments,
+                previous.source_after
+                if previous is not None and previous.source_confirmed
+                else None,
+            )
+            if task_file.endswith(".py")
+            else None
+        )
+        old, new = arguments.get("old_string"), arguments.get("new_string")
+        python_edit = basename == "edit" and task_file.endswith(".py")
+        fragment: str | None = None
+        stub: tuple[str, tuple[str, ...]] | None = None
+        unchanged = False
+        if python_edit and isinstance(old, str) and isinstance(new, str):
+            fragment = new
+            stub = python_keyword_stub(old, new)
+            old_tokens = python_edit_tokens(old)
+            unchanged = bool(old_tokens and old_tokens == python_edit_tokens(new))
         state.edits.append(
             TranscriptEdit(
                 session_id=state.session.id,
@@ -781,6 +889,10 @@ def _record_edit(
                 timestamp=timestamp,
                 order=order,
                 tool_name=tool_name,
+                source_after=source_after,
+                source_fragment=fragment,
+                python_stub=stub,
+                source_unchanged=unchanged,
             )
         )
 

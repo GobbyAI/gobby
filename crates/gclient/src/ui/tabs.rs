@@ -232,12 +232,14 @@ fn centered_tab_scroll(
     best_scroll
 }
 
+/// The `+` column: one gap past the last shown tab, for the rule that parts
+/// them, or `fallback_x` with no tab.
 fn trailing_tab_controls_x(tab_hit_areas: &[Rect], fallback_x: u16) -> u16 {
     tab_hit_areas
         .iter()
         .rev()
         .find(|rect| rect.width > 0)
-        .map(|rect| rect.x + rect.width)
+        .map(|rect| rect.right() + 1)
         .unwrap_or(fallback_x)
 }
 
@@ -265,10 +267,11 @@ fn compute_tab_bar_view(
     }
 
     let area_right = area.x + area.width;
+    // The `+` and the one-column rule before it.
     let all_tabs_area = Rect::new(
         area.x,
         area.y,
-        area.width.saturating_sub(NEW_TAB_WIDTH),
+        area.width.saturating_sub(NEW_TAB_WIDTH + 1),
         area.height,
     );
     let all_tabs = layout_tab_hit_areas(labels, all_tabs_area, 0);
@@ -298,7 +301,7 @@ fn compute_tab_bar_view(
         current_scroll.min(max_scroll)
     };
     let (tab_hit_areas, left, right) = layout_at(labels, attention, all_tabs_area, scroll);
-    let new_tab_x = all_tabs_area.right();
+    let new_tab_x = all_tabs_area.right() + 1;
     let new_tab_hit_area = Rect::new(
         new_tab_x,
         area.y,
@@ -482,6 +485,13 @@ pub fn render_tab_bar<W: WorkspaceView>(
             Paragraph::new(" + ").style(Style::default().fg(p.overlay1).bg(p.surface0)),
             view.new_tab_hit_area,
         );
+        // The same rule that parts two tabs parts the last one from `+`.
+        if view.tab_hit_areas.iter().any(|rect| rect.width > 0) {
+            frame.render_widget(
+                Paragraph::new("│").style(Style::default().fg(p.line).bg(p.surface0)),
+                Rect::new(view.new_tab_hit_area.x - 1, area.y, 1, 1),
+            );
+        }
     }
 
     TabBarHits {
@@ -542,10 +552,13 @@ mod tests {
         assert_eq!(hits.tabs[1].1.x, 13);
         assert_eq!(hits.tabs[2].1.width, display_width_u16("3: Untitled") + 4);
         assert!(hits.scroll_left.is_none() && hits.scroll_right.is_none());
-        assert_eq!(hits.new_tab, Some(Rect::new(41, 0, 3, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(42, 0, 3, 1)));
         assert!(text.contains(" alpha") && text.contains(" second"));
         assert!(text.contains(" 3: Untitled "), "{text}");
-        assert!(text.contains(" + "));
+        assert!(
+            text.contains("│ + "),
+            "the rule parts the last tab from +: {text}"
+        );
     }
 
     #[test]
@@ -556,10 +569,10 @@ mod tests {
         chrome.sidebar.overlay = true;
         chrome.view.sidebar_rect = Rect::new(0, 0, 34, 1);
         let (hits, text) = draw(&chrome, 80);
-        assert_eq!(hits.tabs[0], (0, Rect::new(36, 0, 12, 1)));
+        assert_eq!(hits.tabs[0], (0, Rect::new(35, 0, 12, 1)));
         assert_eq!(hits.new_tab, Some(Rect::new(77, 0, 3, 1)));
         assert!(
-            text.starts_with(&" ".repeat(36)) && text.ends_with(" + "),
+            text.starts_with(&" ".repeat(35)) && text.ends_with(" + "),
             "{text}"
         );
 
@@ -567,15 +580,15 @@ mod tests {
         chrome.view.sidebar_rect = Rect::new(46, 0, 34, 1);
         let (hits, _) = draw(&chrome, 80);
         assert_eq!(hits.tabs[0], (0, Rect::new(0, 0, 12, 1)));
-        assert_eq!(hits.new_tab, Some(Rect::new(41, 0, 3, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(42, 0, 3, 1)));
     }
 
     #[test]
     fn overlay_fits_the_tabs_to_the_columns_it_leaves() {
         // Tabs that fit the whole bar but not the columns beside the overlay
         // scroll inside those columns; none lies under the overlay.
-        let mut chrome = chrome_with_tabs(&["one", "two", "three", "four", "five", "six"]);
-        chrome.activate_tab(5);
+        let mut chrome = chrome_with_tabs(&["one", "two", "three", "four", "five"]);
+        chrome.activate_tab(4);
         let (hits, _) = draw(&chrome, 80);
         assert!(hits.scroll_left.is_none(), "the whole bar fits them");
 
@@ -609,7 +622,7 @@ mod tests {
                 );
             }
             assert!(
-                hits.tabs.iter().any(|(idx, _)| *idx == 5),
+                hits.tabs.iter().any(|(idx, _)| *idx == 4),
                 "{side:?}: the active tab shows"
             );
         }
@@ -621,7 +634,7 @@ mod tests {
         chrome.activate_tab(5);
         let sixth = chrome.tabs().tabs[5].id.clone();
         chrome.viewer.zoomed.insert(sixth);
-        let (hits, text) = draw(&chrome, 46);
+        let (hits, text) = draw(&chrome, 47);
         // Following the active last tab, three tabs show whole after the
         // count of the three before them; none hides on the right, and the
         // new-tab button stays at the right end.
@@ -633,7 +646,7 @@ mod tests {
         assert_eq!(hits.tabs, shown);
         assert_eq!(hits.scroll_left, Some(Rect::new(0, 0, 5, 1)));
         assert_eq!(hits.scroll_right, None);
-        assert_eq!(hits.new_tab, Some(Rect::new(43, 0, 3, 1)));
+        assert_eq!(hits.new_tab, Some(Rect::new(44, 0, 3, 1)));
         assert!(text.starts_with(" ‹ 3 "), "{text}");
         assert!(text.contains("six Z") && !text.contains('…'), "{text}");
     }
@@ -643,10 +656,10 @@ mod tests {
         // A tab wider than the bar still shows, clipped; the tab after it
         // hides whole behind the right count.
         let chrome = chrome_with_tabs(&["a very long title that will not fit", "b"]);
-        let (hits, text) = draw(&chrome, 20);
+        let (hits, text) = draw(&chrome, 21);
         assert_eq!(hits.tabs, [(0, Rect::new(0, 0, 10, 1))]);
         assert_eq!(hits.scroll_left, None);
         assert_eq!(hits.scroll_right, Some(Rect::new(12, 0, 5, 1)));
-        assert!(text.ends_with(" 1 ›  + "), "{text}");
+        assert!(text.ends_with(" 1 › │ + "), "{text}");
     }
 }

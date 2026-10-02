@@ -284,6 +284,7 @@ class TestGobbyDaemonToolsCallTool:
             "test-tool",
             {"key": "value"},
             None,
+            enforce_workflow=True,
             wrapper_originated=True,
             intent=None,
             project_id="test-project-id",
@@ -426,6 +427,7 @@ class TestGobbyDaemonToolsCallTool:
             "get_skill",
             {"name": "brevity"},
             None,
+            enforce_workflow=True,
             wrapper_originated=True,
             intent=None,
             project_id="test-project-id",
@@ -449,6 +451,7 @@ class TestGobbyDaemonToolsCallTool:
             "no-args-tool",
             None,
             None,
+            enforce_workflow=True,
             wrapper_originated=True,
             intent=None,
             project_id="test-project-id",
@@ -475,6 +478,7 @@ class TestGobbyDaemonToolsCallTool:
             "get_handoff",
             {"session_id": "session-123", "timeout_seconds": 300},
             None,
+            enforce_workflow=True,
             wrapper_originated=True,
             intent=None,
             project_id="test-project-id",
@@ -499,6 +503,7 @@ class TestGobbyDaemonToolsCallTool:
             "wait_for_agent",
             arguments,
             None,
+            enforce_workflow=True,
             wrapper_originated=True,
             intent=None,
             project_id="test-project-id",
@@ -548,6 +553,7 @@ class TestGobbyDaemonToolsCallTool:
             "wait_for_output",
             {"session_id": "session-123", "timeout_seconds": 0.02},
             None,
+            enforce_workflow=True,
             wrapper_originated=True,
             intent=None,
             project_id="test-project-id",
@@ -607,7 +613,7 @@ class TestGobbyDaemonToolsListTools:
         await tools_handler.list_tools(server_name="server1")
 
         tools_handler.tool_proxy.list_tools.assert_called_once_with(
-            "server1", session_id=None, project_id="test-project-id"
+            "server1", session_id=None, project_id="test-project-id", enforce_workflow=True
         )
         assert tools_handler.tool_proxy.list_tools.call_count == 1
         assert tools_handler.tool_proxy.list_tools.call_args is not None
@@ -634,7 +640,10 @@ class TestGobbyDaemonToolsListTools:
         await tools_handler.list_tools(server_name="server1", session_id="session-123")
 
         tools_handler.tool_proxy.list_tools.assert_called_once_with(
-            "server1", session_id="session-123", project_id="test-project-id"
+            "server1",
+            session_id="session-123",
+            project_id="test-project-id",
+            enforce_workflow=True,
         )
         assert tools_handler.tool_proxy.list_tools.call_count == 1
         assert tools_handler.tool_proxy.list_tools.call_args is not None

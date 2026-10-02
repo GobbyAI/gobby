@@ -86,7 +86,18 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    admitted_url = admitted_database_url(database_url)
+    try:
+        admitted_url = admitted_database_url(database_url)
+    except psycopg.Error as exc:
+        # Startup never mutates credentials. A pending rotation stays pending, and
+        # the operator gets resumable guidance with no DSN or password material.
+        logger.error(
+            "PostgreSQL hub admission failed (%s); credentials were not modified. "
+            "If a password rotation was interrupted, resume it with "
+            "`gobby datastores rotate-password postgres`.",
+            type(exc).__name__,
+        )
+        raise
     bootstrap_pool = replace(
         config.postgres_pool,
         min_size=BOOTSTRAP_POOL_SIZE,

@@ -12,13 +12,14 @@ use postgres::{
     config::{Host, SslMode},
 };
 use postgres_openssl::MakeTlsConnector;
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::mpsc;
 use std::time::Duration;
 
 const GOBBY_APPLICATION_NAME: &str = "gobby-cli";
 const MANAGED_APPLICATION_NAME_PREFIX: &str = "gobby-agent-";
 /// Bound for one whole connect attempt when the URL sets no `connect_timeout`.
-const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Connect to the PostgreSQL hub in read-only mode.
 ///
@@ -135,12 +136,6 @@ fn connection_config(database_url: &str) -> anyhow::Result<postgres::Config> {
     Ok(config)
 }
 
-pub fn is_lock_timeout(error: &postgres::Error) -> bool {
-    error
-        .as_db_error()
-        .is_some_and(|db_error| db_error.code() == &postgres::error::SqlState::LOCK_NOT_AVAILABLE)
-}
-
 fn is_password_authentication_failure(error: &anyhow::Error) -> bool {
     error.chain().any(|source| {
         source
@@ -240,6 +235,7 @@ fn connect_bounded(config: postgres::Config, mode: RequestedSslMode) -> anyhow::
         .copied()
         .unwrap_or(DEFAULT_CONNECT_TIMEOUT);
     let endpoint = endpoint_label(&config);
+    let probe_config = config.clone();
     let (sender, receiver) = mpsc::channel();
     std::thread::Builder::new()
         .name("gobby-postgres-connect".to_string())
@@ -250,19 +246,116 @@ fn connect_bounded(config: postgres::Config, mode: RequestedSslMode) -> anyhow::
 
     match receiver.recv_timeout(bound) {
         Ok(result) => result,
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(anyhow::anyhow!(
-            "the Gobby PostgreSQL hub at {endpoint} did not answer the startup handshake \
-             within {:.1}s",
-            bound.as_secs_f64(),
-        )),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(anyhow::anyhow!(handshake_timeout_message(
+            &endpoint,
+            bound,
+            mode,
+            &probe_tcp_after_timeout(probe_config),
+        ))),
         Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
             "the connect to the Gobby PostgreSQL hub at {endpoint} ended without a result"
         )),
     }
 }
 
+/// Current TCP reachability of the hub, probed once after a handshake timeout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TcpProbe {
+    Reachable,
+    Unreachable(String),
+    NotApplicable,
+    Unknown(String),
+}
+
+/// Bound for the whole diagnostic probe, name resolution included. The probe runs
+/// only on the already-failed path.
+const TCP_PROBE_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// The sync client exposes no connect phases, so a timed-out connect is followed by
+/// one bare TCP connect to the same endpoint. It reports reachability now, not the
+/// phase the original attempt stalled in.
+fn probe_tcp_after_timeout(config: postgres::Config) -> TcpProbe {
+    probe_within(TCP_PROBE_TIMEOUT, move || probe_tcp(&config))
+}
+
+/// Name resolution has no deadline of its own, so the probe runs on a thread and
+/// the caller waits at most `budget`. A probe still running then is abandoned and
+/// ends with the process, as in `connect_bounded`.
+fn probe_within(budget: Duration, probe: impl FnOnce() -> TcpProbe + Send + 'static) -> TcpProbe {
+    let (sender, receiver) = mpsc::channel();
+    let spawned = std::thread::Builder::new()
+        .name("gobby-postgres-probe".to_string())
+        .spawn(move || {
+            // The receiver is gone once the budget has passed; nothing is left to tell.
+            let _ = sender.send(probe());
+        });
+    if let Err(error) = spawned {
+        return TcpProbe::Unknown(format!("probe thread failed to start: {error}"));
+    }
+    match receiver.recv_timeout(budget) {
+        Ok(probe) => probe,
+        Err(mpsc::RecvTimeoutError::Timeout) => TcpProbe::Unknown(format!(
+            "probe did not finish within {:.1}s",
+            budget.as_secs_f64()
+        )),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            TcpProbe::Unknown("probe ended without a result".to_string())
+        }
+    }
+}
+
+fn probe_tcp(config: &postgres::Config) -> TcpProbe {
+    let port = config.get_ports().first().copied().unwrap_or(5432);
+    let address = if let Some(hostaddr) = config.get_hostaddrs().first() {
+        Some(SocketAddr::new(*hostaddr, port))
+    } else {
+        match config.get_hosts().first() {
+            Some(Host::Tcp(host)) => match (host.as_str(), port).to_socket_addrs() {
+                Ok(mut addresses) => addresses.next(),
+                Err(error) => {
+                    return TcpProbe::Unreachable(format!("address resolution failed: {error}"));
+                }
+            },
+            #[cfg(unix)]
+            Some(Host::Unix(_)) => return TcpProbe::NotApplicable,
+            None => None,
+        }
+    };
+    let Some(address) = address else {
+        return TcpProbe::Unreachable("no TCP address to probe".to_string());
+    };
+    match TcpStream::connect_timeout(&address, TCP_PROBE_TIMEOUT) {
+        Ok(_) => TcpProbe::Reachable,
+        Err(error) => TcpProbe::Unreachable(error.to_string()),
+    }
+}
+
+fn handshake_timeout_message(
+    endpoint: &str,
+    bound: Duration,
+    mode: RequestedSslMode,
+    probe: &TcpProbe,
+) -> String {
+    let probe = match probe {
+        TcpProbe::Reachable if mode == RequestedSslMode::Disable => {
+            "reachable, stalled after TCP (startup or authentication)".to_string()
+        }
+        TcpProbe::Reachable => {
+            "reachable, stalled after TCP (TLS negotiation, startup or authentication)".to_string()
+        }
+        TcpProbe::Unreachable(error) => format!("unreachable ({error})"),
+        TcpProbe::NotApplicable => "not_applicable (unix socket)".to_string(),
+        TcpProbe::Unknown(reason) => format!("unknown ({reason})"),
+    };
+    format!(
+        "the Gobby PostgreSQL hub at {endpoint} did not answer the startup handshake \
+         within {:.1}s; tcp_probe_after_timeout={probe}",
+        bound.as_secs_f64(),
+    )
+}
+
 /// Host and port of the configured hub, with no user, password or database.
-fn endpoint_label(config: &postgres::Config) -> String {
+pub(crate) fn endpoint_label(config: &postgres::Config) -> String {
     let host = config
         .get_hosts()
         .first()
@@ -308,7 +401,7 @@ fn connect_for_mode(config: &postgres::Config, mode: RequestedSslMode) -> anyhow
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestedSslMode {
+pub(crate) enum RequestedSslMode {
     Disable,
     Prefer,
     Require,
@@ -316,7 +409,7 @@ enum RequestedSslMode {
     VerifyFull,
 }
 
-fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode {
+pub(crate) fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode {
     match config.get_ssl_mode() {
         SslMode::Disable => RequestedSslMode::Disable,
         SslMode::Prefer => RequestedSslMode::Prefer,
@@ -325,7 +418,7 @@ fn requested_ssl_mode_from_config(config: &postgres::Config) -> RequestedSslMode
     }
 }
 
-fn requested_ssl_mode(database_url: &str) -> Option<RequestedSslMode> {
+pub(crate) fn requested_ssl_mode(database_url: &str) -> Option<RequestedSslMode> {
     let value = sslmode_value(database_url)?;
     match value.as_str() {
         "disable" => Some(RequestedSslMode::Disable),
@@ -356,7 +449,7 @@ fn sslmode_value(database_url: &str) -> Option<String> {
         })
 }
 
-fn normalize_sslmode_for_parser(database_url: &str) -> String {
+pub(crate) fn normalize_sslmode_for_parser(database_url: &str) -> String {
     if let Some((base, query)) = database_url.split_once('?') {
         let query = query
             .split('&')
@@ -423,7 +516,7 @@ fn connect_with_tls(config: &postgres::Config, mode: TlsConnectorMode) -> anyhow
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum TlsConnectorMode {
+pub(crate) enum TlsConnectorMode {
     Unverified,
     VerifyCa,
     VerifyFull,
@@ -453,7 +546,7 @@ struct TlsConnectorBuilder {
     disables_hostname_verification: bool,
 }
 
-fn tls_connector(mode: TlsConnectorMode) -> anyhow::Result<MakeTlsConnector> {
+pub(crate) fn tls_connector(mode: TlsConnectorMode) -> anyhow::Result<MakeTlsConnector> {
     let builder = tls_connector_builder(mode)?;
     let disables_hostname_verification = builder.disables_hostname_verification;
     let mut connector = MakeTlsConnector::new(builder.builder.build());
@@ -733,7 +826,8 @@ mod tests {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { break };
                 accepted.push(stream);
-                if accepted.len() == 2 {
+                // One connect plus one post-timeout TCP probe per sslmode below.
+                if accepted.len() == 4 {
                     break;
                 }
             }
@@ -762,8 +856,12 @@ mod tests {
             });
             let message = format!("{error:#}");
             assert!(
-                message.contains("startup handshake"),
+                message.contains("did not answer the startup handshake"),
                 "sslmode={sslmode} error must name the unanswered startup handshake: {message}"
+            );
+            assert!(
+                message.contains("tcp_probe_after_timeout=reachable, stalled after TCP"),
+                "sslmode={sslmode} the listening server must probe as TCP-reachable: {message}"
             );
             assert!(
                 message.contains("127.0.0.1") && message.contains(&port.to_string()),
@@ -776,5 +874,88 @@ mod tests {
         }
 
         drop(release_sender);
+    }
+
+    #[test]
+    fn handshake_timeout_message_reports_the_post_timeout_tcp_probe() {
+        let bound = Duration::from_secs(5);
+        let prefix = "the Gobby PostgreSQL hub at localhost:60891 did not answer the startup \
+                      handshake within 5.0s; tcp_probe_after_timeout=";
+        let cases = [
+            (
+                RequestedSslMode::Disable,
+                TcpProbe::Reachable,
+                "reachable, stalled after TCP (startup or authentication)",
+            ),
+            (
+                RequestedSslMode::Require,
+                TcpProbe::Reachable,
+                "reachable, stalled after TCP (TLS negotiation, startup or authentication)",
+            ),
+            (
+                RequestedSslMode::Prefer,
+                TcpProbe::Reachable,
+                "reachable, stalled after TCP (TLS negotiation, startup or authentication)",
+            ),
+            (
+                RequestedSslMode::Disable,
+                TcpProbe::Unreachable("Connection refused (os error 61)".to_string()),
+                "unreachable (Connection refused (os error 61))",
+            ),
+            (
+                RequestedSslMode::Disable,
+                TcpProbe::NotApplicable,
+                "not_applicable (unix socket)",
+            ),
+            (
+                RequestedSslMode::Disable,
+                TcpProbe::Unknown("probe did not finish within 1.0s".to_string()),
+                "unknown (probe did not finish within 1.0s)",
+            ),
+        ];
+        for (mode, probe, suffix) in cases {
+            assert_eq!(
+                handshake_timeout_message("localhost:60891", bound, mode, &probe),
+                format!("{prefix}{suffix}"),
+                "mode={mode:?} probe={probe:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn tcp_probe_reports_a_closed_port_unreachable() {
+        // Bind then drop, so the port is known free and nothing is listening on it.
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|listener| listener.local_addr())
+            .expect("reserve a free port")
+            .port();
+        let config = connection_config(&format!(
+            "postgresql://gobby@127.0.0.1:{port}/gobby?sslmode=disable"
+        ))
+        .expect("parse the probe config");
+        assert!(
+            matches!(probe_tcp_after_timeout(config), TcpProbe::Unreachable(_)),
+            "a closed port must probe as unreachable"
+        );
+    }
+
+    #[test]
+    fn tcp_probe_budget_covers_a_stalled_resolver() {
+        // Stands in for a DNS lookup that never answers: the probe body blocks well
+        // past the budget, and the caller must still return within it.
+        let started = std::time::Instant::now();
+        let probe = probe_within(TCP_PROBE_TIMEOUT, || {
+            std::thread::sleep(Duration::from_secs(30));
+            TcpProbe::Reachable
+        });
+        let elapsed = started.elapsed();
+        assert_eq!(
+            probe,
+            TcpProbe::Unknown("probe did not finish within 1.0s".to_string())
+        );
+        assert!(
+            elapsed < TCP_PROBE_TIMEOUT + Duration::from_millis(500),
+            "a stalled probe must not hold the caller past its budget: {elapsed:?}"
+        );
     }
 }

@@ -2,9 +2,8 @@
 //!
 //! A right-click on a pane, a tab, a sidebar row (project card, worktree
 //! row, agent row) or empty chrome opens a menu, the global one for empty
-//! chrome; the sessions band's `[view]` and each menu bar title open their
-//! own. This
-//! module is pure: [`build_menu`] reads the
+//! chrome; each menu bar title opens its own, and a [`Submenu`] row opens
+//! its menu beside it. This module is pure: [`build_menu`] reads the
 //! workspace and chrome to decide which items apply, [`menu_hit`] maps a
 //! screen cell to an item, and the routers in `mouse` and `modal_input` own
 //! the open, select, activate and close transitions. The loops dispatch the
@@ -15,7 +14,9 @@ use ratatui::layout::{Margin, Position, Rect};
 
 use crate::app::PaneId;
 use crate::daemon::Daemon;
+use crate::ui::hit::SidebarSection;
 use crate::ui::menu_bar::MenuBarMenu;
+use crate::ui::sidebar::ALL_MACHINES;
 use crate::ui::{Action, Chrome, Mode, WorkspaceView};
 
 use super::super::Workspace;
@@ -25,12 +26,47 @@ use super::modal_input::persist_prefs;
 mod items;
 pub use items::attention_id;
 use items::{
-    agent_items, global_items, pane_items, project_items, tab_items, theme_items, worktree_items,
+    agent_items, global_items, pane_items, project_items, submenu_items, tab_items, worktree_items,
 };
 pub(super) use items::{
-    agents_view_items, arrange_items, blocked_entry, enabled_if, item, passthrough_label,
-    theme_row_label,
+    arrange_row, blocked_entry, enabled_if, item, passthrough_label, theme_row_label, toggle,
 };
+
+/// A menu that opens beside the row of its parent menu that names it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Submenu {
+    /// View › Theme: the theme choices.
+    Theme,
+    /// View › Sidebar: showing and pinning the sidebar, and one submenu per
+    /// section.
+    Sidebar,
+    /// View › Sidebar › one section: only that section's options.
+    Section(SidebarSection),
+    /// Arrange: the layout choices for the tab the opening menu (Window, a
+    /// tab's or a pane's) was built for.
+    Arrange(ArrangeTarget),
+}
+
+impl Submenu {
+    /// The submenu holding this one's row; `None` for a row of a menu bar
+    /// menu itself.
+    fn parent(&self) -> Option<Self> {
+        match self {
+            Self::Section(_) => Some(Self::Sidebar),
+            Self::Theme | Self::Sidebar | Self::Arrange(_) => None,
+        }
+    }
+}
+
+/// The tab an Arrange choice lays out, fixed when the menu offering it was
+/// built so a later focus change cannot redirect it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArrangeTarget {
+    /// The id of the tab to arrange.
+    pub tab: String,
+    /// The pane whose menu offered the choice; it must still be in `tab`.
+    pub pane: Option<PaneId>,
+}
 
 /// What the menu was opened on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,16 +76,14 @@ pub enum ContextMenuKind {
     Project(String),
     Worktree(String),
     Agent(String),
-    /// The agents band's `[view]` control.
-    AgentsView,
     Global,
     /// A menu bar title.
     MenuBar(MenuBarMenu),
-    /// The View menu's theme choices, beside the row that opened them.
-    Theme,
+    /// A submenu, beside the row that opened it.
+    Submenu(Submenu),
 }
 
-/// Layout choices prepared for Window › Arrange.
+/// The layout choices under Arrange ▸.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArrangeLayout {
     EvenHorizontal,
@@ -62,7 +96,12 @@ pub enum ArrangeLayout {
 /// What an item does when activated.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MenuAction {
-    Arrange(ArrangeLayout),
+    /// Lay out the target tab's panes; refused once the tab is gone or the
+    /// pane has left it.
+    Arrange {
+        layout: ArrangeLayout,
+        target: ArrangeTarget,
+    },
     OpenNewGrid,
     NewGrid {
         rows: u8,
@@ -100,10 +139,14 @@ pub enum MenuAction {
     MarkSeen(String),
     /// Pin the sidebar into the layout, or unpin it.
     PinSidebar,
-    /// Open the theme choices beside the View menu's theme row.
-    ThemeMenu,
+    /// Open this submenu beside the row that names it.
+    OpenSubmenu(Submenu),
     /// Save this theme preference (`dark`, `light` or `system`) and draw in it.
     SetTheme(&'static str),
+    /// Flip the monochrome preference, save it and redraw in it.
+    ToggleMonochrome,
+    /// List the agents on every machine (`true`) or on this one.
+    SetMachineScope(bool),
     /// Open the alert log.
     ShowAlerts,
     /// Open the destroy-orphaned-terminals dialog.
@@ -145,14 +188,13 @@ pub fn build_menu<W: WorkspaceView>(
 ) -> ContextMenuState {
     let items = match &kind {
         ContextMenuKind::Pane(pane) => pane_items(ws, chrome, *pane),
-        ContextMenuKind::Tab(_) => tab_items(),
+        ContextMenuKind::Tab(index) => tab_items(chrome, *index),
         ContextMenuKind::Global => global_items(),
         ContextMenuKind::Project(project_id) => project_items(ws, chrome, project_id),
         ContextMenuKind::Worktree(worktree_id) => worktree_items(chrome, worktree_id),
         ContextMenuKind::Agent(entry_id) => agent_items(ws, entry_id),
-        ContextMenuKind::AgentsView => agents_view_items(chrome),
         ContextMenuKind::MenuBar(menu) => super::menu_bar::menu_bar_items(ws, chrome, *menu),
-        ContextMenuKind::Theme => theme_items(chrome),
+        ContextMenuKind::Submenu(submenu) => submenu_items(chrome, submenu),
     };
     menu_state(kind, anchor, items)
 }
@@ -212,8 +254,16 @@ pub fn close_menu(chrome: &mut Chrome) {
 }
 
 /// Close the menu and hand back the selected item's action, when the item
-/// is enabled.
+/// is enabled. An enabled row that opens a submenu leaves the menu open so
+/// the submenu cascades from it.
 pub fn activate_menu(chrome: &mut Chrome) -> Option<(ContextMenuKind, MenuAction)> {
+    if let Some(menu) = chrome.menu.as_ref() {
+        if let Some(item) = menu.items.get(menu.selected) {
+            if item.enabled && matches!(item.action, MenuAction::OpenSubmenu(_)) {
+                return Some((menu.kind.clone(), item.action.clone()));
+            }
+        }
+    }
     let menu = chrome.menu.take();
     chrome.mode = Mode::Terminal;
     let menu = menu?;
@@ -245,44 +295,71 @@ where
         }
         MenuAction::ToggleGroup(project_id) => chrome.sidebar.toggle_group(project_id),
         MenuAction::PinSidebar => toggle_sidebar_pin(workspace.gobby_home(), chrome),
-        MenuAction::ThemeMenu => open_theme_choices(workspace, chrome),
+        MenuAction::OpenSubmenu(submenu) => {
+            chrome.menu = Some(submenu_state(workspace, chrome, submenu));
+            chrome.mode = Mode::ContextMenu;
+        }
         MenuAction::SetTheme(theme) => {
             chrome.prefs.theme = (*theme).to_owned();
             let kind = chrome.prefs.theme_kind();
             chrome.set_theme(kind);
             persist_prefs(workspace.gobby_home(), chrome);
         }
+        MenuAction::ToggleMonochrome => {
+            chrome.prefs.monochrome = !chrome.prefs.monochrome;
+            chrome.set_theme(chrome.theme.kind);
+            persist_prefs(workspace.gobby_home(), chrome);
+        }
+        MenuAction::SetMachineScope(all) => {
+            chrome.sidebar.machine_filter = all.then(|| ALL_MACHINES.to_owned());
+        }
         _ => return false,
     }
     true
 }
 
-/// The theme choices open beside the View menu's theme row and level with
-/// it, where that menu draws under its title. The View menu stays open
-/// behind them with that row selected.
-fn open_theme_choices<W: WorkspaceView>(ws: &W, chrome: &mut Chrome) {
-    let view = MenuBarMenu::View;
-    let anchor = chrome
-        .view
-        .menu_title_hit_areas
-        .iter()
-        .find(|(index, _)| MenuBarMenu::ALL.get(*index) == Some(&view))
-        .map_or((0, 1), |(_, cell)| (cell.x, cell.bottom()));
-    let mut parent = build_menu(ws, chrome, ContextMenuKind::MenuBar(view), anchor);
-    let theme_row = parent
-        .items
-        .iter()
-        .position(|item| item.action == MenuAction::ThemeMenu);
-    let anchor = theme_row
+/// `submenu` open beside the row that names it and level with it, with every
+/// menu it cascades from open behind it, each with that row selected. The
+/// open menu is the parent when it has that row; otherwise the chain is
+/// rebuilt from the View menu, where it draws under its title.
+fn submenu_state<W: WorkspaceView>(
+    ws: &W,
+    chrome: &mut Chrome,
+    submenu: &Submenu,
+) -> ContextMenuState {
+    let opener = MenuAction::OpenSubmenu(submenu.clone());
+    let open = chrome
+        .menu
+        .take()
+        .filter(|menu| menu.items.iter().any(|item| item.action == opener));
+    let mut parent = match (open, submenu.parent()) {
+        (Some(open), _) => open,
+        (None, Some(outer)) => submenu_state(ws, chrome, &outer),
+        (None, None) => {
+            let view = MenuBarMenu::View;
+            let anchor = chrome
+                .view
+                .menu_title_hit_areas
+                .iter()
+                .find(|(index, _)| MenuBarMenu::ALL.get(*index) == Some(&view))
+                .map_or((0, 1), |(_, cell)| (cell.x, cell.bottom()));
+            build_menu(ws, chrome, ContextMenuKind::MenuBar(view), anchor)
+        }
+    };
+    let row = parent.items.iter().position(|item| item.action == opener);
+    let anchor = row
         .and_then(|index| parent.item_rects.get(index))
-        .map_or(anchor, |row| {
+        .map_or(parent.anchor, |row| {
             (row.right().saturating_add(1), row.y.saturating_sub(1))
         });
-    parent.selected = theme_row.unwrap_or(parent.selected);
-    let mut choices = menu_state(ContextMenuKind::Theme, anchor, theme_items(chrome));
-    choices.parent = Some(Box::new(parent));
-    chrome.menu = Some(choices);
-    chrome.mode = Mode::ContextMenu;
+    parent.selected = row.unwrap_or(parent.selected);
+    let mut state = menu_state(
+        ContextMenuKind::Submenu(submenu.clone()),
+        anchor,
+        submenu_items(chrome, submenu),
+    );
+    state.parent = Some(Box::new(parent));
+    state
 }
 
 /// Exchange `pane`'s slot with the focused slot of the active tab.

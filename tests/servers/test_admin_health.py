@@ -56,3 +56,27 @@ def test_health_reports_gterm_host_state(basic_http_server: HTTPServer) -> None:
     assert "gterm_host" in payload.get("degraded_services", []) or "gterm_host" in (
         client.get("/api/admin/status").json().get("degraded_services") or []
     )
+
+
+def test_health_reports_run_mode(basic_http_server: HTTPServer) -> None:
+    """2.1.3: /api/health reports the mode name from the bootstrap pair."""
+    from gobby.config.bootstrap import BootstrapConfig
+
+    basic_http_server.bootstrap_config = BootstrapConfig(datastore_mode="local", hub=True)
+    payload = TestClient(basic_http_server.app).get("/api/health").json()
+    assert payload["mode"] == "hub"
+
+    basic_http_server.bootstrap_config = BootstrapConfig()
+    payload = TestClient(basic_http_server.app).get("/api/health").json()
+    assert payload["mode"] == "standalone"
+
+
+def test_node_bootstrap_reports_node_mode(basic_http_server: HTTPServer) -> None:
+    """2.1.4: a node bootstrap serves health with mode: node."""
+    from gobby.config.bootstrap import BootstrapConfig
+
+    basic_http_server.bootstrap_config = BootstrapConfig(
+        datastore_mode="remote", hub_daemon_url="http://hub.example.test:60887"
+    )
+    payload = TestClient(basic_http_server.app).get("/api/health").json()
+    assert payload["mode"] == "node"

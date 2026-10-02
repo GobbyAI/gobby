@@ -19,7 +19,7 @@ from gobby.sessions.handoff_records import record_handoff_delivery
 
 logger = logging.getLogger(__name__)
 
-WEB_CHAT_WAKE_PROMPT = "Message from Gobby daemon: New activity available."
+WEB_CHAT_WAKE_PROMPT = "[Gobby] Check messages"
 
 
 class ClearLifecycleHooks(Protocol):

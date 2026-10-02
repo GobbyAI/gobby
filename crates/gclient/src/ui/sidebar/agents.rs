@@ -2,8 +2,8 @@
 //! The agents section: one three-line row per roster entry the machine
 //! filter and the scope admit — interactive sessions with the agent runs
 //! they spawned nested under them, parentless runs at the top level, in tab
-//! order or by urgency (`agent_sort`). The band carries the `[view]` control, which
-//! opens the menu holding both axes.
+//! order or by urgency (`agent_sort`). View › Sidebar › Agents holds both
+//! axes and the order.
 //!
 //! herdr lists every workspace's agents and marks the view with a label in
 //! the header; gclient has two axes instead: the scope (the focused
@@ -13,7 +13,7 @@
 
 use std::cmp::Reverse;
 
-use super::{render_band, render_section_rows, BandStyle, SidebarHits};
+use super::{render_band, render_section_rows, SidebarHits};
 use crate::app::project_tabs::TabSet;
 use crate::app::sidebar_model::{agent_row_state, urgency, AgentEntry, SidebarModel};
 use crate::ui::chrome::{Chrome, RowState, WorkspaceView};
@@ -25,11 +25,6 @@ use ratatui::Frame;
 
 /// `SidebarState::machine_filter` value that admits every machine.
 pub const ALL_MACHINES: &str = "all";
-/// The band's only control: it opens the menu carrying both axes. One
-/// control fits the default sidebar width, which the two labels it replaced
-/// did not, and the rows show the chosen view themselves — the project
-/// headings under `all projects`, the `├─`/`└─` nesting under `grouped`.
-pub const VIEW_LABEL: &str = "[view]";
 /// Row id prefix of a bare terminal: `terminal:<terminal_id>`.
 pub const TERMINAL_ROW: &str = "terminal:";
 /// Row id prefix of a project heading of the all-projects list.
@@ -371,14 +366,7 @@ pub(super) fn render_agents(
     hits: &mut SidebarHits,
 ) {
     let section = SidebarSection::Agents;
-    let (_, controls) = render_band(
-        frame,
-        area,
-        section.title(),
-        &[VIEW_LABEL],
-        BandStyle::section(&chrome.palette),
-    );
-    hits.agents_view = controls.first().copied();
+    render_band(frame, area, section.title(), &chrome.palette);
     render_section_rows(frame, area, section, rows, chrome, hits);
 }
 

@@ -231,7 +231,7 @@ def _permission_request_line(
     request_id: str = "permission-1",
     tool_id: str = "tool-1",
     tool_name: str = "Read",
-    tool_input: dict[str, Any] | None = None,
+    tool_input: object = None,
 ) -> str:
     return json.dumps(
         {
@@ -786,6 +786,92 @@ async def test_plan_mode_batch_blocks_destructive_tool_before_exit_spec() -> Non
     assert session.has_blocking_plan_decision is False
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_input",
+    ['{"command": "rm -rf /repo/bu', "", ["rm -rf /repo"], 7],
+    ids=["truncated", "empty", "list", "int"],
+)
+async def test_permission_request_hands_non_object_input_to_pre_tool_unchanged(
+    tool_input: object,
+) -> None:
+    """A non-object tool input reaches BEFORE_TOOL as sent, not coerced to {} (#23168, #23179)."""
+    backend = DroidWebChatBackend()
+    session = _droid_session(backend)
+    pre_tool_calls: list[dict[str, Any]] = []
+
+    async def block_pre_tool(payload: dict[str, Any]) -> dict[str, Any]:
+        pre_tool_calls.append(payload)
+        return {"decision": "block", "reason": "input unavailable"}
+
+    session._on_pre_tool = block_pre_tool
+    events = parse_droid_stream_line(
+        _permission_request_line(tool_name="Execute", tool_input=tool_input)
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": tool_input}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_input",
+    ['{"command": "rm -rf /repo/bu', "", ["rm -rf /repo"], 7],
+    ids=["truncated", "empty", "list", "int"],
+)
+async def test_streamed_tool_call_hands_non_object_input_to_pre_tool_unchanged(
+    tool_input: object,
+) -> None:
+    """A streamed tool call's non-object input reaches BEFORE_TOOL as sent (#23168, #23179)."""
+    tool_call_line = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "type": "notification",
+            "factoryApiVersion": "1.0.0",
+            "factoryProtocolVersion": "1.25.0",
+            "method": "droid.session_notification",
+            "params": {
+                "notification": {
+                    "type": "tool_call",
+                    "toolUse": {
+                        "type": "tool_use",
+                        "id": "tool-1",
+                        "name": "Execute",
+                        "input": tool_input,
+                    },
+                }
+            },
+        }
+    )
+    turn = _turn_response_lines("Done")
+    process = _FakeProcess([_session_init_line(), turn[0], tool_call_line, *turn[1:]])
+    backend = DroidWebChatBackend()
+    session = _droid_session(backend)
+    session.project_path = str(Path.cwd())
+    pre_tool_calls: list[dict[str, Any]] = []
+
+    async def record_pre_tool(payload: dict[str, Any]) -> None:
+        pre_tool_calls.append(payload)
+
+    session._on_pre_tool = record_pre_tool
+
+    with (
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.shutil.which", return_value="/bin/droid"
+        ),
+        patch(
+            "gobby.servers.websocket.chat.backends.droid.asyncio.create_subprocess_exec",
+            return_value=process,
+        ),
+    ):
+        await backend.attach_session(session, model="gpt-5.4")
+        _ = [event async for event in session.send_message("run a command")]
+
+    assert pre_tool_calls == [{"tool_name": "Bash", "tool_input": tool_input}]
+
+
 def _exit_spec_session(
     backend: DroidWebChatBackend,
 ) -> tuple[DroidManagedChatSession, list[str | None]]:
@@ -1280,12 +1366,13 @@ async def test_send_message_progress_timeout_renews_on_parsed_event() -> None:
         stdout=_TimedStdout(
             [
                 (0.0, _session_init_line()),
-                (0.04, text_line),
-                (0.04, idle_line),
+                # Each gap fits the timeout with load headroom; together they exceed it.
+                (0.2, text_line),
+                (0.2, idle_line),
             ]
         )
     )
-    backend, session = _attached_session(process, prompt_timeout=0.05)
+    backend, session = _attached_session(process, prompt_timeout=0.3)
 
     with (
         patch(
