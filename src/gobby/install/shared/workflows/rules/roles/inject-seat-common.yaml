@@ -11,10 +11,10 @@ rules:
     when: >
       (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary']
       or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary'])
+        'plan-writer', 'plan-enhancer', 'plan-adversary'])
       and not variables.get('_seat_common_injected')
     effects:
       - type: inject_context

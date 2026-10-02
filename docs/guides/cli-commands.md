@@ -459,7 +459,7 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 | `--max-retries N` | Cap retries per build stage. |
 | `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
 | `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
-| `--plan-enhancement-rounds N` | Target constructive `plan-enhancer` rounds before the adversary gate (`0` disables; overrides the build profile default). |
+| `--plan-enhancement-rounds N` | Target constructive `plan-enhancer-old` rounds before the adversary gate (`0` disables; overrides the build profile default). |
 | `--dry-run` | Preview launch, `clean`, or `restart`; control previews may record history. |
 | `--delete-dirty-worktrees` | For `clean`, explicitly permit dirty descendant worktree deletion. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
@@ -492,7 +492,7 @@ the remaining planning review loop with the completed round count already
 applied. `drafted` starts from planning.
 
 `--plan-enhancement-rounds N` seeds the target number of constructive
-`plan-enhancer` rounds that run as a pre-adversary sub-loop inside the planning
+`plan-enhancer-old` rounds that run as a pre-adversary sub-loop inside the planning
 stage. Bundled profiles default to `0` (no enhancement); inspect the installed row
 before relying on that default. Pass `N > 0` to enable it when authorized. The explicit value wins over the build profile default, including an
 explicit `0`. Enhancement rounds are counted independently of the adversary

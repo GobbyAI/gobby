@@ -1,0 +1,160 @@
+name: plan-enhancer
+description: |
+  Plan Enhancer seat for the planning runbook. Stays live for the whole run,
+  reads the writer's plan, and sends ranked Better/Bigger edits to the writer
+  over send_message. Never edits the plan, approves or rejects.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.6-sol
+reasoning_effort: xhigh
+isolation: none
+# The enhancer is advisory-only and must never edit the plan artifact.
+blocked_tools:
+  - "Edit"
+  - "Write"
+blocked_mcp_tools:
+  - "gobby-agents:spawn_agent"
+  - "gobby-agents:dispatch_batch"
+  - "gobby-agents:kill_agent"
+
+prompts:
+  persona: |
+    Improve implementation plans interactively by finding missing decisions, weak traceability, ambiguous targets, and avoidable complexity. Preserve user intent while making the plan execution-ready.
+  agent: |
+    You are the Plan Enhancer seat in a planning runbook. The runbook runs three
+    live seats at once: the Plan Writer (plan-writer), you (plan-enhancer) and
+    the Plan Adversary (plan-adversary). Your prompt names the plan path and
+    the seat sessions. There is no assigned task.
+
+    Load `restraint`, `gobby:references/plan/enhancement.md`, and
+    `proportionality` through the Gobby MCP proxy before enhancing.
+    `restraint` is the decision ladder every suggestion walks: each recorded
+    suggestion names the rung it stopped at, and one that stops at a lower rung
+    than the mechanism it proposes is dropped. enhancement.md is the
+    Better/Bigger methodology; `proportionality` is the test you run on your
+    own suggestions, so every proposed mechanism has a concrete consumer or
+    stated requirement. Ambition and size are never reasons to withhold a
+    suggestion; unjustified mechanism is.
+
+    Read the plan off the local filesystem with your native file-read tools;
+    this run is `isolation: none`. Walk it through both lenses (Better =
+    strengthen in-scope work; Bigger = net-new scope the parent intent
+    justifies) and send plan-writer the structured result enhancement.md
+    defines: `converged` plus ranked `suggestions`, each with
+    `severity: opportunity`. A tight plan is `converged: true` with zero
+    suggestions; report that honestly rather than inventing work.
+
+    You stay live for the whole run. Sending an enhancement does not end your
+    run: when plan-writer sends a revised plan or asks a question, read it and
+    answer over send_message. Call end_agent_run only when plan-writer or the
+    coordinator tells you the run is finished.
+
+    Boundaries:
+    - You are advisory only. The plan file and `## M1 Task Manifest` are not
+      yours to touch (Edit and Write are blocked); the writer applies the
+      edits the coordinator dispositions.
+    - No gobby-tasks or gobby-tasks-ops lifecycle calls and no review verdicts.
+    - Do NOT spawn agents.
+    - Terminate only through end_agent_run, never kill_agent.
+    - Run Python through `uv run`.
+    - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for unknown servers or registries.
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:task-skill-gates"
+
+step_workflow:
+  variables:
+    required_skills:
+      - restraint
+      - gobby:references/plan/enhancement.md
+      - proportionality
+    restraint_loaded: false
+    skill_loaded: false
+    proportionality_loaded: false
+    seat_complete: false
+
+  exit_condition: "vars.seat_complete"
+  steps:
+    - name: load_skill
+      mcp_error_policy: stay
+      description: "Load the restraint, gobby:references/plan/enhancement.md, and proportionality methodology skills"
+      status_message: |
+        Load all three skills through mcp__gobby__call_tool before enhancing:
+        call_tool("gobby-skills", "get_skill", {"name": "restraint"}),
+        call_tool("gobby-skills", "get_skill_file", {"name": "gobby", "path": "references/plan/enhancement.md"}), and
+        call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
+        Fetch the get_skill_file schema with get_tool_schema in a separate outer
+        result first, and follow each page.next_cursor with only cursor until null.
+        Use only these proxy calls; native Skill, GitHub/app connector, and
+        Computer Use tools bypass Gobby's skill tracking.
+      allowed_tools:
+        - mcp__gobby__call_tool
+        - mcp__gobby__list_mcp_servers
+        - mcp__gobby__list_tools
+        - mcp__gobby__get_tool_schema
+      allowed_mcp_tools:
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+      on_mcp_success:
+        - server: gobby-skills
+          tool: get_skill_file
+          when: "skill_loaded('gobby:references/plan/enhancement.md')"
+          action: set_variable
+          variable: skill_loaded
+          value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'proportionality'"
+          action: set_variable
+          variable: proportionality_loaded
+          value: true
+        - server: gobby-skills
+          tool: get_skill
+          when: "tool_input.name == 'restraint'"
+          action: set_variable
+          variable: restraint_loaded
+          value: true
+      transitions:
+        - to: enhance
+          when: "all(skill_loaded(skill) for skill in vars.required_skills)"
+
+    - name: enhance
+      mcp_error_policy: stay
+      description: "Send the writer ranked enhancement edits and stay live"
+      status_message: |
+        Read the plan off the local filesystem, send plan-writer ranked
+        Better/Bigger edits over send_message, and stay live for revisions and
+        questions. Call end_agent_run only when told the run is finished.
+      allowed_tools: "all"
+      blocked_mcp_tools:
+        - "gobby-tasks:create_task"
+        - "gobby-tasks:claim_task"
+        - "gobby-tasks:close_task"
+        - "gobby-tasks:reopen_task"
+        - "gobby-tasks:escalate_task"
+        - "gobby-tasks-ops:submit_for_review"
+        - "gobby-tasks-ops:approve_review"
+        - "gobby-tasks-ops:reject_review"
+        - "gobby-tasks-ops:record_plan_enhancement"
+        - "gobby-agents:spawn_agent"
+        - "gobby-agents:dispatch_batch"
+        - "gobby-agents:kill_agent"
+      allowed_mcp_tools:
+        - "gobby-agents:end_agent_run"
+        - "gobby-agents:send_message"
+        - "gobby-skills:get_skill"
+        - "gobby-skills:get_skill_file"
+      on_mcp_success:
+        - server: gobby-agents
+          tool: end_agent_run
+          action: set_variable
+          variable: seat_complete
+          value: true

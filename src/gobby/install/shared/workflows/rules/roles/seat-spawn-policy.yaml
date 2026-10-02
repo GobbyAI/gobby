@@ -11,10 +11,10 @@ rules:
     when: >
       (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary']
       or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary'])
+        'plan-writer', 'plan-enhancer', 'plan-adversary'])
       and 'plan-writer' not in [variables.get('_agent_type'), variables.get('_persona_name')]
     effects:
       - type: block
@@ -33,10 +33,10 @@ rules:
     when: >
       (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary']
       or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary'])
+        'plan-writer', 'plan-enhancer', 'plan-adversary'])
       and tool_input.get('server_name') == 'gobby-workflows'
       and (tool_input.get('tool_name') == 'run_pipeline'
         or str(tool_input.get('tool_name') or '').startswith('pipeline:'))
@@ -55,10 +55,10 @@ rules:
     when: >
       variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary']
       or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary']
     effects:
       - type: block
         tools: [Bash]
@@ -126,10 +126,10 @@ rules:
     when: >
       (variables.get('_agent_type') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary']
+        'plan-writer', 'plan-enhancer', 'plan-adversary']
       or variables.get('_persona_name') in ['assistant', 'orchestrator', 'lane-manager',
         'developer', 'code-reviewer', 'researcher', 'archivist', 'log-monitor',
-        'plan-writer', 'plan-adversary'])
+        'plan-writer', 'plan-enhancer', 'plan-adversary'])
       and 'orchestrator' not in [variables.get('_agent_type'), variables.get('_persona_name')]
       and tool_input.get('server_name') == 'gobby-tasks'
       and (
