@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 

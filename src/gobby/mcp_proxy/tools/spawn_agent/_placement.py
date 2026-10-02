@@ -9,8 +9,8 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.agents import srt_runtime
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_gate import SandboxRequiredError, require_managed_srt
 from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
 from gobby.storage.sessions._constants import system_session_id
 from gobby.terminals.workspace_agent_panes import (
@@ -53,12 +53,10 @@ async def preflight_placement(
         parsed = AgentPlacement.parse(placement)
     except AgentPlacementError as exc:
         return _refusal(exc.code, str(exc))
-    if not (sandbox_config.enabled and sandbox_config.backend == "srt"):
-        return _refusal("sandbox_required", "A placed launch requires the managed SRT sandbox")
     try:
-        await asyncio.to_thread(srt_runtime.verify_srt_installation)
-    except srt_runtime.SrtRuntimeError as exc:
-        return _refusal("sandbox_required", f"Managed SRT is unavailable: {exc}")
+        await asyncio.to_thread(require_managed_srt, sandbox_config)
+    except SandboxRequiredError as exc:
+        return _refusal("sandbox_required", str(exc))
     if (
         machine_id is None
         or parent_session_id == system_session_id(machine_id)

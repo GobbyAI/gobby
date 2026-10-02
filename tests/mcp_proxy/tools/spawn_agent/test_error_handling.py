@@ -14,7 +14,7 @@ from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 from tests.agents.prepared_spawn import prepared_spawn
 from tests.completion_delivery_helpers import record_removals
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 @pytest.fixture(autouse=True)

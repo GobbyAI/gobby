@@ -33,7 +33,7 @@ from gobby.sessions.context_usage import (
 )
 from tests.agents.prepared_spawn import prepared_spawn
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 _MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 

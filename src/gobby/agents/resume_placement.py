@@ -11,8 +11,8 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents import srt_runtime
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_gate import SandboxRequiredError, require_managed_srt
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.terminals.workspace_agent_panes import (
     AgentPaneReserver,
@@ -63,11 +63,11 @@ async def _preflight(
     """Resolve the recorded placement against current state; return it or a refusal code."""
     if reserver is None:
         return "placement_unavailable"
-    if sandbox_config is None or not (sandbox_config.enabled and sandbox_config.backend == "srt"):
+    if sandbox_config is None:
         return "sandbox_required"
     try:
-        await asyncio.to_thread(srt_runtime.verify_srt_installation)
-    except srt_runtime.SrtRuntimeError:
+        await asyncio.to_thread(require_managed_srt, sandbox_config)
+    except SandboxRequiredError:
         return "sandbox_required"
     try:
         parent = await asyncio.to_thread(sessions.get, parent_session_id)

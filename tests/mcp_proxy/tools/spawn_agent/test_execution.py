@@ -23,7 +23,7 @@ from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.fixtures.isolated_checkout import patch_local_machine_id
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
 ALTERNATE_MACHINE_ID = "21000000-0000-4000-8000-000000000004"

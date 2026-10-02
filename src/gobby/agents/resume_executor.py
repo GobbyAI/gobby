@@ -47,19 +47,14 @@ from gobby.agents.resume_metadata import (
     merge_resume_metadata_env,
 )
 from gobby.agents.resume_placement import launch_resume
-from gobby.agents.sandbox import coerce_sandbox_config
-from gobby.agents.sandbox_resolvers import get_sandbox_resolver
+from gobby.agents.sandbox_gate import SandboxRequiredError, resolve_resume_sandbox
 from gobby.agents.spawn import prepare_terminal_resume
 from gobby.agents.spawn_executor_support import (
     _codex_runtime_config_overrides,
     schedule_codex_prompt_delivery,
 )
 from gobby.agents.spawners.command_builder import build_cli_command
-from gobby.agents.srt_runtime import (
-    SandboxLaunch,
-    SrtRuntimeError,
-    prepare_sandbox_launch,
-)
+from gobby.agents.srt_runtime import SrtRuntimeError, prepare_sandbox_launch
 from gobby.agents.trust import pre_approve_directory
 from gobby.ai.codex_endpoint import (
     codex_endpoint_config_overrides,
@@ -325,47 +320,44 @@ async def resume_agent_run(
         env["GOBBY_MACHINE_ID"] = ""
     if not env["GOBBY_MACHINE_ID"]:
         env.pop("GOBBY_MACHINE_ID")
-    sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
-    launch = SandboxLaunch(backend="provider-native", enforced=False)
-    if sandbox_config is not None:
-        resolver = None
-        if sandbox_config.enabled and sandbox_config.backend == "provider-native":
-            try:
-                resolver = get_sandbox_resolver(provider)
-            except ValueError:
-                error = f"resume_sandbox_unsupported:{provider}"
-                await _rollback_prepared_resume(
-                    runner,
-                    original_run_id=original_run.id,
-                    successor_run_id=run_id,
-                    child_session_id=spawn_context.session_id,
-                )
-                return ResumeAgentResult(False, run_id=run_id, error=error)
-        daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
-        websocket = getattr(daemon_config, "websocket", None)
-        websocket_port = int(getattr(websocket, "port", 60888))
-        try:
-            launch = await prepare_sandbox_launch(
-                config=sandbox_config,
-                provider=provider,
-                workspace_path=cwd,
-                run_id=run_id,
-                resolver=resolver,
-                daemon_port=daemon_port,
-                websocket_port=websocket_port,
-                api_base=_resume_api_base(provider, env),
-                env=env,
-                allow_run_unix_sockets=True,
-            )
-        except (OSError, ValueError, SrtRuntimeError) as exc:
-            error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
-            await _rollback_prepared_resume(
-                runner,
-                original_run_id=original_run.id,
-                successor_run_id=run_id,
-                child_session_id=spawn_context.session_id,
-            )
-            return ResumeAgentResult(False, run_id=run_id, error=error)
+    park = functools.partial(
+        _park_unlaunched_successor,
+        runner,
+        original_run=original_run,
+        successor_run_id=run_id,
+        child_session_id=spawn_context.session_id,
+        completion_registry=completion_registry,
+    )
+    try:
+        sandbox_config = await asyncio.to_thread(resolve_resume_sandbox, resume_metadata)
+    except SandboxRequiredError:
+        await park()
+        return ResumeAgentResult(False, run_id=run_id, error="sandbox_required")
+    daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
+    websocket = getattr(daemon_config, "websocket", None)
+    websocket_port = int(getattr(websocket, "port", 60888))
+    try:
+        launch = await prepare_sandbox_launch(
+            config=sandbox_config,
+            provider=provider,
+            workspace_path=cwd,
+            run_id=run_id,
+            resolver=None,
+            daemon_port=daemon_port,
+            websocket_port=websocket_port,
+            api_base=_resume_api_base(provider, env),
+            env=env,
+            allow_run_unix_sockets=True,
+        )
+    except (OSError, ValueError, SrtRuntimeError) as exc:
+        error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
+        await _rollback_prepared_resume(
+            runner,
+            original_run_id=original_run.id,
+            successor_run_id=run_id,
+            child_session_id=spawn_context.session_id,
+        )
+        return ResumeAgentResult(False, run_id=run_id, error=error)
     env.update(launch.provider_env)
     update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
     if callable(update_sandbox_enabled):
@@ -516,14 +508,6 @@ async def resume_agent_run(
         prepared_spawn=spawn_context,
         terminal_manager=getattr(runner, "terminal_manager", None),
         terminal_runtime_registry=getattr(runner, "terminal_runtime_registry", None),
-    )
-    park = functools.partial(
-        _park_unlaunched_successor,
-        runner,
-        original_run=original_run,
-        successor_run_id=run_id,
-        child_session_id=spawn_context.session_id,
-        completion_registry=completion_registry,
     )
     try:
         terminal_result = await launch_resume(
