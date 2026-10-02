@@ -80,6 +80,13 @@ rules:
       event.metadata.get('session_type') != 'web_chat'
       and isinstance(variables.get('context_compact_handoff_result'), dict)
       and variables.get('context_compact_handoff_result').get('delivery_failed') is True
+      and (
+        variables.get('context_compact_handoff_result').get('readiness_unconfirmed') is not True
+        or (
+          event.data.get('mcp_server') == 'gobby-sessions'
+          and event.data.get('mcp_tool') == 'set_handoff'
+        )
+      )
       and not (
         event.data.get('mcp_server') == 'gobby-sessions'
         and (
@@ -88,9 +95,14 @@ rules:
             event.data.get('mcp_tool') == 'set_handoff'
             and not (
               variables.get('context_compact_handoff_result').get('error_code') == 'compact_unconfirmed'
-              and isinstance(variables.get('failed_handoff_attempt'), dict)
-              and variables.get('failed_handoff_attempt').get('attempt_id')
-                  == variables.get('context_compact_handoff_result').get('attempt_id')
+              and (
+                variables.get('context_compact_handoff_result').get('readiness_unconfirmed') is True
+                or (
+                  isinstance(variables.get('failed_handoff_attempt'), dict)
+                  and variables.get('failed_handoff_attempt').get('attempt_id')
+                      == variables.get('context_compact_handoff_result').get('attempt_id')
+                )
+              )
             )
           )
         )

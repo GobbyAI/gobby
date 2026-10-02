@@ -16,7 +16,7 @@ def ensure_agent_claim_available(
     check and subsequent claim or creation stay atomic.
     """
     query = """
-        SELECT id, seq_num
+        SELECT id, seq_num, escalated_at
         FROM tasks
         WHERE claimed_by_session_id = %s
           AND closed_at IS NULL
@@ -34,4 +34,6 @@ def ensure_agent_claim_available(
     claimed_task_id = str(row["id"])
     seq_num = row["seq_num"]
     claimed_task_ref = f"#{seq_num}" if seq_num else claimed_task_id
-    raise AgentTaskClaimConflictError(claimed_task_id, claimed_task_ref)
+    raise AgentTaskClaimConflictError(
+        claimed_task_id, claimed_task_ref, escalated=row["escalated_at"] is not None
+    )

@@ -585,8 +585,11 @@ class RuleEngine(
                     _step_transition_msg = await self._process_step_after_tool(
                         event, session_id, variables
                     )
-                    if _step_transition_msg:
-                        evaluation.context_parts.append(("step_transition", _step_transition_msg))
+                _step_transition_msg = self._route_step_transition_notice(
+                    event, variables, _step_transition_msg
+                )
+                if _step_transition_msg:
+                    evaluation.context_parts.append(("step_transition", _step_transition_msg))
 
                 # Deferred overrides — these used to early-return, but that skipped rule
                 # evaluation entirely, preventing background mcp_call effects

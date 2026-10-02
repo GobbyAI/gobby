@@ -511,7 +511,7 @@
             "auto_generate_on_expand": true,
             "candidates": [
               {
-                "candidate": "codex/gpt-5.6-terra",
+                "candidate": "codex/gpt-6-luna",
                 "reasoning_effort": null
               },
               {
@@ -615,7 +615,7 @@
           "dream": {
             "candidates": [
               {
-                "candidate": "codex/gpt-5.6-terra",
+                "candidate": "codex/gpt-6-luna",
                 "reasoning_effort": null
               },
               {
@@ -673,7 +673,7 @@
         "merge_resolution": {
           "candidates": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -712,7 +712,7 @@
         "project_verification_synthesis": {
           "candidates": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -726,7 +726,7 @@
         "recommend_tools": {
           "candidates": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -755,7 +755,7 @@
           "review": {
             "candidates": [
               {
-                "candidate": "codex/gpt-5.6-terra",
+                "candidate": "codex/gpt-6-luna",
                 "reasoning_effort": null
               },
               {
@@ -1581,7 +1581,7 @@
             "auto_generate_on_expand": true,
             "candidates": [
               {
-                "candidate": "codex/gpt-5.6-terra",
+                "candidate": "codex/gpt-6-luna",
                 "reasoning_effort": null
               },
               {
@@ -1685,7 +1685,7 @@
           "dream": {
             "candidates": [
               {
-                "candidate": "codex/gpt-5.6-terra",
+                "candidate": "codex/gpt-6-luna",
                 "reasoning_effort": null
               },
               {
@@ -1743,7 +1743,7 @@
         "merge_resolution": {
           "candidates": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -1782,7 +1782,7 @@
         "project_verification_synthesis": {
           "candidates": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -1796,7 +1796,7 @@
         "recommend_tools": {
           "candidates": [
             {
-              "candidate": "codex/gpt-5.6-terra",
+              "candidate": "codex/gpt-6-luna",
               "reasoning_effort": null
             },
             {
@@ -1825,7 +1825,7 @@
           "review": {
             "candidates": [
               {
-                "candidate": "codex/gpt-5.6-terra",
+                "candidate": "codex/gpt-6-luna",
                 "reasoning_effort": null
               },
               {

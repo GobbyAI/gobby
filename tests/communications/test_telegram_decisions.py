@@ -394,7 +394,16 @@ async def test_long_decision_is_republished_in_place_and_answered_once(
     async def telegram_api(method: str, payload: dict[str, Any]) -> dict[str, Any]:
         # Republishing the unchanged question leaves the first chunk as it was.
         if method == "editMessageText" and payload["message_id"] == "200":
-            return {"ok": False, "description": "Bad Request: message is not modified"}
+            request = httpx.Request("POST", "https://api.telegram.org/bot***/editMessageText")
+            raise httpx.HTTPStatusError(
+                "Client error '400 Bad Request'",
+                request=request,
+                response=httpx.Response(
+                    400,
+                    request=request,
+                    json={"ok": False, "description": "Bad Request: message is not modified"},
+                ),
+            )
         return _OK
 
     post_json = AsyncMock(side_effect=telegram_api)

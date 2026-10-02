@@ -10,6 +10,7 @@ that build must be newer than the crate sources it was built from.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from itertools import chain
 from pathlib import Path
 
 CHECKOUT_BINARY_ENV = "GOBBY_TEST_GDAEMON"
@@ -23,15 +24,29 @@ class CheckoutBinaryError(RuntimeError):
 
 
 def newest_source(repo_root: Path) -> tuple[Path, int] | None:
-    """Return the newest file under the gdaemon crate sources and its mtime in ns."""
+    """Return the newest binary input, excluding conventional test-only Rust paths.
+
+    Separate tests.rs / *_tests.rs modules and tests/benches/examples trees are
+    test-only. Inline cfg(test) blocks share a production file: retain that file's
+    mtime conservatively because timestamps cannot identify which block changed.
+    Keep crate assets/build metadata and workspace dependency resolution inputs.
+    """
     newest: tuple[Path, int] | None = None
-    for relative in SOURCE_DIRS:
-        for path in (repo_root / relative).rglob("*"):
-            if not path.is_file():
-                continue
-            mtime = path.stat().st_mtime_ns
-            if newest is None or mtime > newest[1]:
-                newest = (path, mtime)
+    candidates = chain(
+        (repo_root / name for name in ("Cargo.toml", "Cargo.lock")),
+        *((repo_root / relative).rglob("*") for relative in SOURCE_DIRS),
+    )
+    for path in candidates:
+        if not path.is_file():
+            continue
+        relative = path.relative_to(repo_root)
+        if any(part in {"tests", "benches", "examples"} for part in relative.parts):
+            continue
+        if path.name == "tests.rs" or path.name.endswith("_tests.rs"):
+            continue
+        mtime = path.stat().st_mtime_ns
+        if newest is None or mtime > newest[1]:
+            newest = (path, mtime)
     return newest
 
 

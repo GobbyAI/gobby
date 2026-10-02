@@ -1976,7 +1976,7 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "codex/gpt-5.6-terra",
+          "candidate": "codex/gpt-6-luna",
           "reasoning_effort": null
         },
         {
@@ -2841,7 +2841,7 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "codex/gpt-5.6-terra",
+          "candidate": "codex/gpt-6-luna",
           "reasoning_effort": null
         },
         {
@@ -3314,7 +3314,7 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "codex/gpt-5.6-terra",
+          "candidate": "codex/gpt-6-luna",
           "reasoning_effort": null
         },
         {
@@ -3457,7 +3457,7 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "codex/gpt-5.6-terra",
+          "candidate": "codex/gpt-6-luna",
           "reasoning_effort": null
         },
         {
@@ -3501,7 +3501,7 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "codex/gpt-5.6-terra",
+          "candidate": "codex/gpt-6-luna",
           "reasoning_effort": null
         },
         {
@@ -3651,7 +3651,7 @@
       "activation": "live",
       "default": [
         {
-          "candidate": "codex/gpt-5.6-terra",
+          "candidate": "codex/gpt-6-luna",
           "reasoning_effort": null
         },
         {

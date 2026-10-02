@@ -10,7 +10,7 @@ surfaces: [spawn, persona]
 # spawns. Pin the mid-profile reasoning default so direct spawns are deterministic;
 # a validation candidate may still override it with its own concrete effort.
 provider: codex
-model: gpt-5.6-terra
+model: gpt-6-luna
 reasoning_effort: medium
 isolation: none
 blocked_mcp_tools:
@@ -52,8 +52,9 @@ prompts:
     only cursor until null before starting the next requirement. Do not batch
     loads or queue review commands with them. Loading instructions is the only
     work in this step: defer all skill procedures, including code-review Preflight,
-    OCR, Git, task/diff reads, and validations. Wait for the notification
-    `Step transition: load_skills -> review` before invoking those procedures.
+    OCR, Git, task/diff reads, and validations. The last required load delivers
+    the notice `Step transition: load_skills -> review`; start those procedures
+    with your next tool call after it. Never end the turn or idle to wait for it.
     If a call is denied, abandon it and complete the missing loads named in
     the recovery guidance; do not retry the denied capability in this step.
 

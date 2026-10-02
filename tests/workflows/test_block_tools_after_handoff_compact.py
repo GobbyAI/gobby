@@ -430,6 +430,44 @@ async def test_background_delivery_failure_blocks_until_set_handoff_retry(
 
 
 @pytest.mark.asyncio
+async def test_delivered_readiness_timeout_allows_work_but_blocks_another_compact(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(
+        SESSION_ID,
+        "context_compact_handoff_result",
+        {
+            "delivery_failed": True,
+            "delivery_pending": False,
+            "attempt_pending": False,
+            "error_code": "compact_unconfirmed",
+            "readiness_unconfirmed": True,
+            "attempt_id": "a" * 32,
+        },
+    )
+    ordinary = await handler._evaluate_rules(_arbitrary_tool_event(tool_name="Read"))
+    recover = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="get_handoff",
+        )
+    )
+    resubmit = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="set_handoff",
+        )
+    )
+    assert ordinary.decision == "allow"
+    assert recover.decision == "allow"
+    assert resubmit.decision == "block"
+    assert "get_handoff" in (resubmit.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_unconfirmed_compact_gate_blocks_resubmission_but_allows_recovery(
     handler: WorkflowHookHandler,
     temp_db: HubDatabase,

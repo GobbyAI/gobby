@@ -254,8 +254,13 @@ class TestRegisterTerminalTools:
             ),
         ],
     )
+    @pytest.mark.parametrize("readiness_unconfirmed", [False, True])
     def test_set_handoff_rejects_second_attempt_while_compact_unconfirmed(
-        self, clear_session: bool, error_code: str | None, reason: str | None
+        self,
+        clear_session: bool,
+        error_code: str | None,
+        reason: str | None,
+        readiness_unconfirmed: bool,
     ) -> None:
         registry = _TestRegistry(name="test", description="test")
         session = MagicMock(
@@ -307,10 +312,15 @@ class TestRegisterTerminalTools:
                 gate["error_code"] = error_code
             if reason is not None:
                 gate["reason"] = reason
-            variable_manager.return_value.get_variables.return_value = {
+            variables = {
                 "context_compact_handoff_result": gate,
                 "failed_handoff_attempt": {"attempt_id": attempt_id},
             }
+            if readiness_unconfirmed:
+                gate["readiness_unconfirmed"] = True
+                variables.pop("failed_handoff_attempt")
+                variables["set_handoff_pending"] = {"attempt_id": attempt_id}
+            variable_manager.return_value.get_variables.return_value = variables
             result = asyncio.run(
                 set_handoff(
                     current_state="New handoff",

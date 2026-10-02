@@ -1202,7 +1202,7 @@ class TestTranscriptReaderWindowed:
     async def test_iter_rendered_windows_tiles_full_render(self, tmp_path: Path) -> None:
         reader = _jsonl_reader_with_user_msgs(tmp_path, 5)
 
-        pages = [page async for page in reader.iter_rendered_windows("sess-1", page=2)]
+        pages = [w.groups async for w in reader.iter_rendered_windows("sess-1", page=2)]
 
         flat = [g.content for page in pages for g in page]
         assert flat == [f"msg {i}" for i in range(5)]
