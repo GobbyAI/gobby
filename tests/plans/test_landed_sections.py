@@ -146,6 +146,55 @@ def test_unfinished_section_still_rejects_size_and_bare_target(
     assert [issue.code for issue in symbols.issues if issue.blocking] == [MISSING_SYMBOL_SCOPE]
 
 
+@pytest.mark.parametrize("bare_only", [False, True], ids=["size-growth", "bare-target"])
+@pytest.mark.parametrize("landed", [False, True], ids=["no-landing", "landed"])
+@pytest.mark.parametrize(
+    "reason",
+    [
+        None,
+        "unknown",
+        "completed",
+        "already_implemented",
+        "duplicate",
+        "wont_fix",
+        "obsolete",
+        "out_of_repo",
+    ],
+)
+def test_closed_section_requires_delivered_reason_or_landing(
+    landed_plan: tuple[Path, _Index], reason: str | None, landed: bool, bare_only: bool
+) -> None:
+    plan, index = landed_plan
+    before = plan.read_bytes()
+    if bare_only:
+        source = plan.parent / "src/large.py"
+        source.write_text("def run():\n    pass\n")
+        index.files[(PROJECT_ID, "src/large.py")] = _IndexedFile(_hash(source), 1)
+    if landed:
+        _git(plan.parent, "init", "-b", "main")
+        _git(plan.parent, "add", ".")
+        _git(
+            plan.parent,
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "commit",
+            "-m",
+            "[gobby-#999] fix: split module",
+        )
+    task = _task(closed=True)
+    task.closed_reason = reason
+    result = _validate(plan, index, [task])
+    delivered = reason in {"completed", "already_implemented"}
+    abandoned = reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}
+    expected = not abandoned and (delivered or landed)
+    assert result["valid"] is expected, result
+    if not expected:
+        assert (MISSING_SYMBOL_SCOPE if bare_only else "production-size-growth") in str(result)
+    assert plan.read_bytes() == before
+
+
 @pytest.mark.parametrize("problem", ["missing", "partial", "duplicate", "foreign", "abandoned"])
 def test_completion_evidence_fails_closed(landed_plan: tuple[Path, _Index], problem: str) -> None:
     plan, index = landed_plan

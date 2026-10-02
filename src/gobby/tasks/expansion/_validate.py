@@ -128,7 +128,8 @@ def _completed_plan_sections(
             continue
         if task.closed_reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}:
             continue
-        if task.closed_at or (project_root and _task_has_landed_commit(task, project_root)):
+        delivered = task.closed_at and task.closed_reason in {"completed", "already_implemented"}
+        if delivered or (project_root and _task_has_landed_commit(task, project_root)):
             completed.add(section.section_id)
     return frozenset(completed)
 
