@@ -97,8 +97,8 @@ async def collect_commit_diff_text_async(
     A landing merge, which reaches every other linked commit only through its
     second parent, is the set's net patch on its own. A sync merge, whose other
     linked commits live on the first-parent line, contributes only its remerge
-    diff. Any other merge-containing set skips the replay and streams each
-    commit.
+    diff. Any other merge replays as its first-parent diff, and the linked
+    commits it reaches only through another parent are not replayed again.
     """
     if not commit_shas:
         return ""
@@ -325,8 +325,16 @@ async def _net_commit_patch(
         return landing.decode("utf-8", errors="replace").strip()
     syncs = [sha for sha in ordered if await _is_sync_merge(sha, ordered, cwd=cwd)]
     replayable = [sha for sha in ordered if sha not in syncs]
-    if any([await _is_merge(sha, cwd=cwd) for sha in replayable]):
-        return None
+    # A merge replays as its first-parent diff, which already carries every
+    # linked commit it reaches only through another parent (#23314).
+    merges = {sha for sha in replayable if await _is_merge(sha, cwd=cwd)}
+    absorbed: set[str] = set()
+    for merge in merges:
+        carried = await _git_bytes(["rev-list", merge, f"^{merge}^1"], cwd=cwd)
+        if carried is None:
+            return None
+        absorbed.update(set(carried.decode("ascii", errors="replace").split()) - {merge})
+    replayable = [sha for sha in replayable if sha not in absorbed]
     if not replayable:
         return await _stream_commit_patches(ordered, cwd=cwd, output=output)
     parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{replayable[0]}^"], cwd=cwd)
@@ -336,10 +344,13 @@ async def _net_commit_patch(
         if await _git_bytes(["read-tree", base], cwd=cwd, env=env) is None:
             return None
         for sha in replayable:
-            patch = await _git_bytes(
-                ["show", "--format=", "--find-renames", "--find-copies", "--binary", sha],
-                cwd=cwd,
+            options = ["--find-renames", "--find-copies", "--binary"]
+            command = (
+                ["diff", *options, f"{sha}^1", sha]
+                if sha in merges
+                else ["show", "--format=", *options, sha]
             )
+            patch = await _git_bytes(command, cwd=cwd)
             if patch is None:
                 return None
             if not patch.strip():

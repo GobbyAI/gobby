@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from gobby.tasks.commits import collect_commit_diff_text, collect_commit_rename_aliases_async
+from gobby.tasks.commits import (
+    collect_commit_diff_text,
+    collect_commit_diff_text_async,
+    collect_commit_rename_aliases_async,
+    collect_net_name_status_async,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -253,3 +258,79 @@ def test_conflict_sync_merge_contributes_only_its_resolution(repo: Path) -> None
     assert "remerge CONFLICT" in diff
     assert "+RESOLVED = True" in diff
     assert "MARKER = True" in diff
+
+
+def _merge(repo: Path, branch: str, message: str) -> str:
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", message, branch)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _branch_commit(repo: Path, branch: str, start: str, path: str, content: str) -> str:
+    _git(repo, "checkout", "-q", "-b", branch, start)
+    return _commit(repo, path, content, branch)
+
+
+def _paths(name_status: str | None) -> list[str]:
+    assert name_status is not None
+    fields = [field for field in name_status.split("\0") if field]
+    return fields[1::2]
+
+
+async def test_managed_integration_nets_only_its_linked_merges(repo: Path) -> None:
+    """#23302's shape: managed merges of a private branch and of an integration
+    branch holding an inner merge of two landed branches, with an unlinked foreign
+    commit on shared's first-parent chain between them (#23314)."""
+    private = _branch_commit(repo, "private", "main", "a.py", "A = 1\n")
+    _git(repo, "checkout", "-q", "main")
+    checkpoint_a = _merge(repo, "private", "managed checkpoint A")
+    foreign = _commit(repo, "foreign.py", "FOREIGN = True\n", "unlinked foreign commit")
+    landed_x = _branch_commit(repo, "x", foreign, "x.py", "X = 1\n")
+    landed_y = _branch_commit(repo, "y", foreign, "y.py", "Y = 1\n")
+    _git(repo, "checkout", "-q", "-b", "package", foreign)
+    inner_x = _merge(repo, "x", "inner merge x")
+    inner_y = _merge(repo, "y", "inner merge y")
+    _git(repo, "checkout", "-q", "main")
+    checkpoint_b = _merge(repo, "package", "managed checkpoint B")
+    linked = [private, checkpoint_a, landed_x, landed_y, inner_x, inner_y, checkpoint_b]
+
+    listing = await collect_net_name_status_async(linked, cwd=repo)
+    diff = await collect_commit_diff_text_async(linked, cwd=repo)
+
+    assert sorted(_paths(listing)) == ["a.py", "x.py", "y.py"]
+    assert "foreign.py" not in diff
+    for path in ("a.py", "x.py", "y.py"):
+        assert diff.count(f"diff --git a/{path} b/{path}") == 1
+
+
+async def test_linked_merge_and_its_second_parent_commits_apply_once(repo: Path) -> None:
+    """A merge's first-parent diff already carries its linked second-parent commits."""
+    first = _branch_commit(repo, "side", "main", "probe.py", "def probe():\n    return 1\n")
+    second = _commit(repo, "probe.py", "def probe():\n    return 2\n", "side second")
+    _git(repo, "checkout", "-q", "main")
+    landing = _merge(repo, "side", "land side")
+    follow = _commit(repo, "probe.py", "def probe():\n    return 3\n", "main follow")
+
+    listing = await collect_net_name_status_async([first, second, landing, follow], cwd=repo)
+    diff = await collect_commit_diff_text_async([first, second, landing, follow], cwd=repo)
+
+    assert _paths(listing) == ["probe.py"]
+    assert diff.count("diff --git a/probe.py b/probe.py") == 1
+    assert "+    return 3" in diff
+    assert "return 2" not in diff
+
+
+async def test_merge_that_needs_unlinked_first_parent_content_stays_unavailable(
+    repo: Path,
+) -> None:
+    """A merge whose diff builds on an unlinked commit cannot be netted from the base."""
+    started = _branch_commit(repo, "early", "main", "early.py", "EARLY = True\n")
+    _git(repo, "checkout", "-q", "main")
+    early = _merge(repo, "early", "land early")
+    foreign = _commit(repo, "probe.py", "def probe():\n    return 5\n", "unlinked foreign")
+    change = _branch_commit(repo, "late", foreign, "probe.py", "def probe():\n    return 6\n")
+    _git(repo, "checkout", "-q", "main")
+    late = _merge(repo, "late", "land late")
+
+    linked = [started, early, change, late]
+
+    assert await collect_net_name_status_async(linked, cwd=repo) is None
