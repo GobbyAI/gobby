@@ -24,7 +24,7 @@ def definition_sandbox_config(
         return base
     try:
         seed = trusted_domains()
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, ValueError) as exc:
         raise SandboxRequiredError(f"the vendored Trusted seed is unreadable: {exc}") from exc
     return base.model_copy(
         update={

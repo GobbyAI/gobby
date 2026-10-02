@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import MagicMock, patch
@@ -20,7 +21,7 @@ from gobby.workflows.agent_models import AgentDefinitionBody
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 _IMPL = "gobby.mcp_proxy.tools.spawn_agent._implementation"
-_SEED = "gobby.agents.sandbox_network.trusted_domains"
+_SEED_FILES = "gobby.agents.sandbox_domains.files"
 
 
 def _body(network: Literal["none", "trusted"]) -> AgentDefinitionBody:
@@ -59,18 +60,36 @@ def _runner() -> MagicMock:
     return runner
 
 
+@pytest.fixture
+def seed_read() -> Iterator[MagicMock]:
+    """The real ``trusted_domains`` loader over a controlled seed file read."""
+    trusted_domains.cache_clear()
+    with patch(_SEED_FILES) as package_files:
+        yield package_files.return_value.joinpath.return_value.read_text
+    trusted_domains.cache_clear()
+
+
 @pytest.mark.parametrize(
-    "load_error",
+    "seed",
     [
         pytest.param(FileNotFoundError("trusted_domains.json"), id="missing"),
-        pytest.param(ValueError("Expecting value"), id="malformed"),
-        pytest.param(KeyError("categories"), id="wrong-shape"),
+        pytest.param("{", id="malformed-json"),
+        pytest.param("[]", id="top-level-array"),
+        pytest.param("{}", id="no-categories"),
+        pytest.param('{"categories": []}', id="categories-not-object"),
+        pytest.param('{"categories": {"git": "github.com"}}', id="domains-not-list"),
+        pytest.param('{"categories": {"git": [7]}}', id="domain-not-string"),
     ],
 )
-async def test_unreadable_seed_refuses_trusted_spawn_only(load_error: Exception) -> None:
+async def test_unreadable_seed_refuses_trusted_spawn_only(
+    seed: str | Exception, seed_read: MagicMock
+) -> None:
+    if isinstance(seed, Exception):
+        seed_read.side_effect = seed
+    else:
+        seed_read.return_value = seed
     runner = _runner()
     with (
-        patch(_SEED, side_effect=load_error) as seed,
         patch(f"{_IMPL}.authorize_write_grant", return_value=None),
         patch(f"{_IMPL}.get_project_context", return_value={"id": "p", "project_path": "/repo"}),
         patch(f"{_IMPL}.get_machine_id", return_value="21000000-0000-4000-8000-000000000001"),
@@ -94,7 +113,7 @@ async def test_unreadable_seed_refuses_trusted_spawn_only(load_error: Exception)
         prepare.assert_not_called()
         execute.assert_not_called()
 
-        seed.reset_mock()
+        seed_read.reset_mock()
         none = await resolve_spawn_sandbox(DaemonConfig(), None, _body("none"))
         assert isinstance(none, SandboxConfig)
-        seed.assert_not_called()
+        seed_read.assert_not_called()
