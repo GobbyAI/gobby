@@ -1932,16 +1932,15 @@ fn assert_ended_and_drained(
     socket_dir: &Path,
     attempt_id: &str,
     outcome: &str,
+    reason: &str,
 ) {
+    // The existing post-rollback hold keeps the control socket open until
+    // this outcome is observed, before the SIGTERM drain closes it.
+    let after = wait_outcome(socket_dir, UPGRADE_TOKEN, attempt_id, OUTCOME_WAIT);
+    assert_outcome(&after, attempt_id, outcome, Some(reason));
     let status =
         host_support::wait_exit(host, Duration::from_secs(20)).expect("the host drains and exits");
     assert!(status.success(), "{status:?}");
-    let log = std::fs::read_to_string(socket_dir.join("gterm.log")).unwrap_or_default();
-    assert!(
-        log.lines()
-            .any(|line| line.contains(attempt_id) && line.contains(outcome)),
-        "{attempt_id} ended {outcome}: {log}"
-    );
     let restored = restored_lines(socket_dir);
     assert!(restored.is_empty(), "no image restored: {restored:?}");
 }
@@ -1958,7 +1957,7 @@ fn sigterm_in_accepted_hold_aborts_and_exits() {
         &mut ctl,
         &gterm_bin(),
         "attempt-term-hold",
-        json!({"hold_accepted_ms": 1500}),
+        json!({"hold_accepted_ms": 1500, "hold_after_guard_release_ms": 5000}),
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     terminate(&host);
@@ -1966,7 +1965,8 @@ fn sigterm_in_accepted_hold_aborts_and_exits() {
         &mut host,
         &dir,
         "attempt-term-hold",
-        "Aborted(HostDraining)",
+        "aborted",
+        "host_draining",
     );
 }
 
@@ -1982,7 +1982,7 @@ fn sigterm_before_exec_aborts_and_exits() {
         &mut ctl,
         &gterm_bin(),
         "attempt-term-write",
-        json!({"hold_before_exec_ms": 1500}),
+        json!({"hold_before_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     wait_until("the state file is written", || {
@@ -1993,7 +1993,8 @@ fn sigterm_before_exec_aborts_and_exits() {
         &mut host,
         &dir,
         "attempt-term-write",
-        "Aborted(HostDraining)",
+        "aborted",
+        "host_draining",
     );
 }
 
@@ -2033,7 +2034,7 @@ fn sigterm_during_failed_exec_drains_the_old_image() {
         &mut ctl,
         &gterm_bin(),
         "attempt-term-failed",
-        json!({"hold_in_exec_ms": 1500}),
+        json!({"hold_in_exec_ms": 1500, "hold_after_guard_release_ms": 5000}),
     );
     assert_eq!(accepted["accepted"], true, "{accepted}");
     wait_phase(&dir, "attempt-term-failed", "exec");
@@ -2047,7 +2048,13 @@ fn sigterm_during_failed_exec_drains_the_old_image() {
         .expect("candidate sha");
     std::fs::rename(&blocked, pin_path(&dir, sha)).expect("replace the pin");
     terminate(&host);
-    assert_ended_and_drained(&mut host, &dir, "attempt-term-failed", "RolledBack");
+    assert_ended_and_drained(
+        &mut host,
+        &dir,
+        "attempt-term-failed",
+        "rolled_back",
+        "exec_failed",
+    );
 }
 
 /// SIGTERM without an attempt drains the host and removes what it owns.
