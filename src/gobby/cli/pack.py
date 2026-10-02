@@ -19,15 +19,14 @@ from typing import Self
 
 import click
 
+from gobby.cli.hub_backup import bootstrap_restore
 from gobby.cli.hub_backup.files_home import (
     PACK_FILES_PREFIX,
     FilesHomeArchiveError,
-    archived_bootstrap,
     check_output_outside_sources,
     destination_free_bytes,
     files_members_would_overwrite,
     maintenance_claim,
-    merge_bootstrap_preserving_files_home,
     preflight_archive_graph,
     require_destination_files_home,
     restore_files_home_from_archive,
@@ -43,8 +42,6 @@ from gobby.cli.postgres_backup import (
     restore_postgres_backup,
 )
 from gobby.cli.utils import get_gobby_home, stop_daemon
-from gobby.config.bootstrap import BootstrapConfigError
-from gobby.config.bootstrap_io import read_bootstrap_yaml, validated_bootstrap_payload
 from gobby.paths import (
     FilesHomeError,
     FilesHomeUnsupportedPlatformError,
@@ -331,6 +328,7 @@ def _plan_unpack(
 ) -> _UnpackPlan:
     """Classify every member and refuse unsafe ones while the services still run."""
     plan = _UnpackPlan()
+    keeps_api_key = False
     for member in tar.getmembers():
         name = member.name
         if name == "gobby/manifest.json":
@@ -354,14 +352,12 @@ def _plan_unpack(
                 continue
             target = _safe_archive_target(get_gobby_home(), rel, member)
             if rel == "bootstrap.yaml" and (f := tar.extractfile(member)):
-                try:
-                    destination = read_bootstrap_yaml(target)
-                    validated_bootstrap_payload(
-                        destination, archived_bootstrap(destination, f.read(), dest_files_home)
-                    )
-                except BootstrapConfigError as exc:
-                    raise click.ClickException(f"Cannot restore bootstrap.yaml: {exc}") from exc
+                keeps_api_key = bootstrap_restore.preview_archived_bootstrap(
+                    target, f.read(), dest_files_home, restore_identity=restore_identity
+                )
             plan.restores.append((member, target, rel))
+    if keeps_api_key:
+        bootstrap_restore.require_archived_machine_id(tar, plan.restores)
     return plan
 
 
@@ -799,7 +795,9 @@ def unpack(
                 if f:
                     content = f.read()
                     if label == "bootstrap.yaml":
-                        merge_bootstrap_preserving_files_home(target, content, dest_files_home)
+                        bootstrap_restore.restore_archived_bootstrap(
+                            target, content, dest_files_home, restore_identity=restore_identity
+                        )
                     elif label == "machine_id":
                         durable_replace(target, content)
                     else:
