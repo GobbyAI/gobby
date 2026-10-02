@@ -51,6 +51,9 @@ def test_install_has_no_auth_mode_flag() -> None:
     assert "--auth-mode" not in result.output
 
 
+_MACHINE_ID = "00000000-0000-4000-8000-000000000001"
+
+
 @contextmanager
 def _full_local_install(
     files_home: Path, *, real_token: bool = False
@@ -60,6 +63,7 @@ def _full_local_install(
         "required_stack": MagicMock(),
         "reconcile_rtk": MagicMock(return_value=_RTK_DISABLED),
         "provision_token": MagicMock(),
+        "local_api_key": MagicMock(),
     }
     replacements: dict[str, object] = {
         "gobby.cli.install.get_install_dir": MagicMock(return_value=Path("/fake/install")),
@@ -86,6 +90,8 @@ def _full_local_install(
         "gobby.cli.install._is_claude_code_installed": MagicMock(return_value=False),
         "gobby.cli.install._is_grok_cli_installed": MagicMock(return_value=False),
         "gobby.cli.install._is_codex_cli_installed": MagicMock(return_value=False),
+        "gobby.cli.install.require_machine_id": MagicMock(return_value=_MACHINE_ID),
+        "gobby.cli.install.ensure_local_api_key": mocks["local_api_key"],
     }
     if not real_token:
         replacements["gobby.cli.install._provision_local_api_token"] = mocks["provision_token"]
@@ -551,6 +557,55 @@ class TestInstallCommand:
         token = token_path.read_text().strip()
         auth_store.set_local_api_token_hash.assert_called_once_with(hash_token(token))
         assert token_path.stat().st_mode & 0o777 == 0o600
+
+    def test_install_mints_local_api_key(
+        self,
+        runner: CliRunner,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        gobby_home = temp_dir / "gobby-home"
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        auth_store = MagicMock()
+        auth_store._read_local_api_token_hash.return_value = (None, False)
+
+        with (
+            _full_local_install(files_home, real_token=True) as mocks,
+            patch("gobby.cli.install.AuthStore", return_value=auth_store),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
+            result = runner.invoke(cli, ["install", "--no-interactive"])
+
+        assert result.exit_code == 0, result.output
+        mocks["local_api_key"].assert_called_once_with(
+            auth_store.db, _MACHINE_ID, gobby_home / "bootstrap.yaml"
+        )
+
+    def test_install_reports_local_api_key_failure(
+        self,
+        runner: CliRunner,
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("GOBBY_HOME", str(temp_dir / "gobby-home"))
+        files_home = temp_dir / "files"
+        files_home.mkdir()
+        auth_store = MagicMock()
+        auth_store._read_local_api_token_hash.return_value = (None, False)
+
+        with (
+            _full_local_install(files_home, real_token=True) as mocks,
+            patch("gobby.cli.install.AuthStore", return_value=auth_store),
+            runner.isolated_filesystem(temp_dir=str(temp_dir)),
+        ):
+            mocks["local_api_key"].side_effect = OSError("bootstrap.yaml is read-only")
+            result = runner.invoke(cli, ["install", "--no-interactive"])
+
+        assert result.exit_code != 0
+        assert isinstance(result.exception, OSError)
+        assert str(result.exception) == "bootstrap.yaml is read-only"
 
     def test_install_db_unreachable_fails_before_token_provisioning(
         self,
