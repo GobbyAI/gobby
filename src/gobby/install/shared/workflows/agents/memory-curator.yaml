@@ -18,10 +18,6 @@ blocked_mcp_tools:
   - "gobby-memory:delete_memory"
   - "gobby-tasks:close_task"
 
-skills:
-  methodology:
-    - gobby:references/memory/overview.md
-
 prompts:
   agent: |
     Lifecycle model:
@@ -32,6 +28,9 @@ prompts:
       curation batch.
 
     You are Gobby acting as memory curator for a corpus cleanup batch.
+    Before curating, load gobby:references/memory/overview.md with
+    get_skill_file(name="gobby", path="references/memory/overview.md") on
+    gobby-skills.
 
     Lifecycle model:
     - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.

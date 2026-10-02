@@ -31,7 +31,7 @@ from gobby.shutdown_intent import ShutdownIntent
 from gobby.utils.machine_id import require_machine_id
 from tests._timing import wait_for_async_condition
 from tests.config_runtime_helpers import static_runtime_capture
-from tests.runner_helpers import create_base_patches
+from tests.runner_helpers import create_base_patches, serve_until_should_exit
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
 
@@ -41,17 +41,6 @@ def _clear_app_context_between_tests() -> Iterator[None]:
     clear_app_context()
     yield
     clear_app_context()
-
-
-def _serve_mock_until_should_exit(server: Any) -> AsyncMock:
-    server.started = True
-    server.should_exit = False
-
-    async def serve() -> None:
-        while not server.should_exit:
-            await asyncio.sleep(0)
-
-    return AsyncMock(side_effect=serve)
 
 
 def _runner_with_static_runtime() -> GobbyRunner:
@@ -197,7 +186,7 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = _serve_mock_until_should_exit(mock_server)
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -207,8 +196,53 @@ class TestGobbyRunnerRun:
             mock_mcp_manager.disconnect_all.assert_called_once()
             assert mock_server.capture_signals is nullcontext
             assert runner._shutdown_requested is True
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
             assert get_app_context() is None
+
+    @pytest.mark.asyncio
+    async def test_run_with_base_patches_logs_no_uninjected_errors(
+        self, mock_config: MagicMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """The shared runner mocks match production shapes, so a clean run logs no ERROR."""
+        mock_mcp_manager = AsyncMock()
+        patches = create_base_patches(mock_config=mock_config, mock_mcp_manager=mock_mcp_manager)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = _runner_with_static_runtime()
+
+            list_servers = mock_mcp_manager.mcp_db_manager.list_all_servers
+            credential_manager = cast(MagicMock, runner.managed_credential_manager)
+
+            async def stop_after_background_passes() -> None:
+                # The OAuth keep-alive and credential reconcile each run one pass first.
+                await wait_for_async_condition(
+                    lambda: list_servers.called and credential_manager.reconcile.called,
+                    description="startup background passes",
+                )
+                runner._shutdown_requested = True
+
+            mock_mcp_manager.connect_all.side_effect = stop_after_background_passes
+
+            with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
+                mock_server = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
+                mock_server_cls.return_value = mock_server
+
+                with (
+                    patch("gobby.runner_maintenance.setup_signal_handlers"),
+                    caplog.at_level(logging.ERROR),
+                ):
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
+
+        errors = [
+            record.getMessage() for record in caplog.records if record.levelno >= logging.ERROR
+        ]
+        assert errors == []
+        assert list_servers.call_args == call(True)
+        assert credential_manager.rotate_due.call_args_list == [call()]
+        assert mock_mcp_manager.disconnect_all.await_count == 1
+        cast(MagicMock, runner.database).close.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_run_handles_mcp_timeout(self, mock_config):
@@ -230,14 +264,14 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
     async def test_run_handles_mcp_connection_error(self, mock_config):
@@ -259,14 +293,14 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = AsyncMock()
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
                     await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
-            assert runner.database.close.called is True
+            assert cast(MagicMock, runner.database).close.called is True
 
     @pytest.mark.asyncio
     async def test_shutdown_during_subsystem_init_does_not_start_websocket(
@@ -304,7 +338,7 @@ class TestGobbyRunnerRun:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
-                mock_server.serve = _serve_mock_until_should_exit(mock_server)
+                mock_server.serve = serve_until_should_exit(mock_server)
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
@@ -510,7 +544,7 @@ async def test_backend_ports_behind_front_door(
         daemon._shutdown_requested = True
         uvicorn_config = stack.enter_context(patch("uvicorn.Config"))
         server = AsyncMock()
-        server.serve = _serve_mock_until_should_exit(server)
+        server.serve = serve_until_should_exit(server)
         stack.enter_context(patch("uvicorn.Server", return_value=server))
         stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
         await daemon.run(ownership_resolution=FailOpenPidOwnership("test"))
@@ -1107,6 +1141,7 @@ class TestShutdownDaemonServices:
         return SimpleNamespace(
             bootstrap_config=BootstrapConfig(),
             _shutdown_intent=intent,
+            agent_runner=None,
             http_server=SimpleNamespace(
                 services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
                 _terminate_streamable_http_sessions=AsyncMock(),
@@ -1140,6 +1175,7 @@ class TestShutdownDaemonServices:
             wake_dispatcher=SimpleNamespace(
                 reconcile_restart_active_sessions=AsyncMock(return_value=[])
             ),
+            agent_runner=None,
         )
 
         async def begin_shutdown_during_pipeline_recovery(
@@ -1758,6 +1794,10 @@ class TestShutdownDaemonServices:
             runner_lifecycle_shutdown,
             "_run_async_shutdown_cleanup",
             wait_for_overall_deadline,
+        )
+        # The 0.05s deadline must expire in the cleanup tail, not in the phases before it.
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()
         )
 
         async def blocked_delete(boundary: DestructiveBoundary) -> None:
@@ -4171,6 +4211,7 @@ class TestShutdownLoop:
 
             with patch("uvicorn.Config"), patch("uvicorn.Server") as mock_server_cls:
                 mock_server = AsyncMock()
+                # This test patches asyncio.sleep, so a serve loop could not yield.
                 mock_server.serve = AsyncMock()
                 mock_server_cls.return_value = mock_server
 

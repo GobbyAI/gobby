@@ -41,12 +41,20 @@ Gobby-hosted GitHub assets. `gclient`'s local build is ordinary cargo.
 
 Guard set G wraps groups 2 and 3 with a run-scoped environment. When a machine
 Zig package cache exists (`~/.cache/zig/p`), the guard first materializes
-every package into a writable `zig-cache/p/` directory under the run root and
-then exports the cache variables:
+every package into the stable `~/.gobby/cache/zig-packages/p/` mirror and then
+exports the cache variables:
 
-- `ZIG_GLOBAL_CACHE_DIR` points at the run-scoped `zig-cache` directory.
+- `ZIG_GLOBAL_CACHE_DIR` points at `~/.gobby/cache/zig-packages`.
 - `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` points at its `p` subdirectory and becomes
   `zig build --system <dir>` in `crates/gterminal/build.rs`.
+
+The mirror is the same for every run because the build script reruns whenever
+`LIBGHOSTTY_VT_ZIG_SYSTEM_DIR` changes; a per-run path rebuilt libghostty-vt on
+every guard run. It sits beside `~/.gobby/cache/sandbox`, never inside it. A run
+that already inherits `LIBGHOSTTY_VT_ZIG_SYSTEM_DIR`, as sandboxed agents do from
+their own mirror, keeps it and materializes nothing. Any later build in the
+same target that leaves the variable unset, such as an interactive shell or an
+agent's direct `cargo build`, still reruns the build script once after a guard run.
 
 Zig resolves a `--system` directory by package id (`<name>-<version>-<hash>`,
 matching the `.hash` fields in the vendored `build.zig.zon`) with fetching

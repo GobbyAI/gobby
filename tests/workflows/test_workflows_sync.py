@@ -1365,3 +1365,40 @@ class TestBundledPaths:
         result = get_bundled_variables_path()
         assert isinstance(result, Path)
         assert str(result).endswith("variables")
+
+
+def test_imported_agent_yaml_cannot_widen_network(
+    db: HubDatabase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gobby.storage.definitions import AgentDefinitionManager
+    from gobby.workflows.imports import sync_imported_workflows
+
+    project_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    db.execute(
+        "INSERT INTO projects (id, name) VALUES (%s, %s) ON CONFLICT (id) DO NOTHING",
+        (project_id, "network-import"),
+    )
+    agent = {
+        "type": "agent",
+        "provider": "claude",
+        "network": "trusted",
+        "prompts": {"agent": "Run the assigned task."},
+        "workflows": {"rule_selectors": {"include": []}},
+    }
+    global_dir = tmp_path / "global"
+    (global_dir / "agents").mkdir(parents=True)
+    (global_dir / "agents" / "g.yaml").write_text(yaml.safe_dump({**agent, "name": "global-wide"}))
+    project_root = tmp_path / "project"
+    project_agents = project_root / ".gobby" / "workflows" / "agents"
+    project_agents.mkdir(parents=True)
+    (project_agents / "p.yaml").write_text(yaml.safe_dump({**agent, "name": "project-wide"}))
+    monkeypatch.setattr("gobby.workflows.imports.get_global_workflows_dir", lambda: global_dir)
+
+    result = sync_imported_workflows(db, project_path=project_root, project_id=project_id)
+
+    assert result["synced"] == 0
+    assert len(result["errors"]) == 2
+    assert all("network is sync-owned" in error for error in result["errors"])
+    manager = AgentDefinitionManager(db)
+    assert manager.get_by_name("global-wide") is None
+    assert manager.get_by_name("project-wide", project_id=project_id) is None

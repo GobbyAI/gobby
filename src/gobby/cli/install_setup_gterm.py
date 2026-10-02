@@ -8,6 +8,7 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request
 
+from gobby.agents.cargo_target import cargo_release_dir
 from gobby.cli.install_setup_versions import managed_version_satisfies_pin
 from gobby.install.bin_freshness_locks import try_acquire_native_bin_lock
 from gobby.install.bin_freshness_models import compare_versions
@@ -173,7 +174,7 @@ def install_gterm_from_submodule(module: Any, bin_dir: Path) -> str | None:
         if result.returncode != 0:
             return None
 
-        release_dir = manifest.parent / "target" / "release"
+        release_dir = cargo_release_dir(manifest.parent)
         src_bin = release_dir / module._GTERM_BIN_NAME
         if not src_bin.exists():
             return None

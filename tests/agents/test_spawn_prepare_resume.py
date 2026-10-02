@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from gobby.agents.cargo_target import checkout_cargo_target_dir
+from gobby.agents.cargo_target import agent_checkout_cargo_target_dir
 from gobby.agents.constants import CARGO_TARGET_DIR
 from gobby.agents.session import ChildSessionManager
 from gobby.agents.spawn import prepare_terminal_resume
@@ -107,7 +107,7 @@ def test_prepare_terminal_resume_merges_variables_inside_preflight(
     assert prepared.session_id == child.id
     assert prepared.agent_run_id == successor_run_id
     assert prepared.env_vars[CARGO_TARGET_DIR] == str(
-        checkout_cargo_target_dir(workspace, sample_project["id"])
+        agent_checkout_cargo_target_dir(workspace, sample_project["id"])
     )
     successor = runs.get(successor_run_id)
     assert successor is not None

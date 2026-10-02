@@ -584,7 +584,7 @@ def test_named_schema_pool_remains_available_across_epoch_release(
 ) -> None:
     """Named-schema test pools remain usable because login fencing is public-only."""
     connection, scoped_dsn = epoch_admin
-    epoch_id = _insert_epoch(connection, campaign="schema-apply")
+    epoch_id = _insert_epoch(connection, campaign="purge")
 
     pool = ConnectionPool(
         scoped_dsn,

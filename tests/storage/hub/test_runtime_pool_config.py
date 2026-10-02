@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from gobby.config.postgres_pool import PostgresPoolConfig
-from gobby.storage.hub.runtime import apply_destructive_batch, runtime_hub_database
+from gobby.storage.hub.runtime import runtime_hub_database
 from tests.fixtures.fake_hub import FAKE_DATABASE_URL
 
 pytestmark = pytest.mark.unit
@@ -44,36 +44,4 @@ def test_runtime_database_receives_resolved_pool_config(
     assert database_class.call_args_list == [
         call(config.database_url, pool_config=pool_config),
     ]
-    assert database_class.return_value.close.call_args_list == [call()]
-
-
-def test_destructive_batch_runs_on_a_dedicated_pool_and_closes_it() -> None:
-    pool_config = PostgresPoolConfig(min_size=1, max_size=2)
-
-    with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as database_class:
-        database_class.return_value = MagicMock()
-        apply_destructive_batch("postgresql://gobby@localhost/gobby", pool_config)
-
-    assert database_class.call_args_list == [
-        call("postgresql://gobby@localhost/gobby", pool_config=pool_config),
-    ]
-    database = database_class.return_value
-    assert database.apply_destructive_migrations.call_args_list == [call()]
-    assert database.close.call_args_list == [call()]
-
-
-def test_destructive_batch_closes_the_pool_when_the_batch_raises() -> None:
-    pool_config = PostgresPoolConfig(min_size=1, max_size=2)
-
-    with patch("gobby.storage.hub.postgres.PostgresHubDatabase") as database_class:
-        database_class.return_value = MagicMock()
-        database_class.return_value.apply_destructive_migrations.side_effect = RuntimeError(
-            "migration 356 failed"
-        )
-        with pytest.raises(RuntimeError, match="migration 356 failed"):
-            apply_destructive_batch(
-                "postgresql://gobby@localhost/gobby",
-                pool_config,
-            )
-
     assert database_class.return_value.close.call_args_list == [call()]

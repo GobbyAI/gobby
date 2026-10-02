@@ -9,6 +9,9 @@ from gobby.storage.session_resolution import resolve_session_reference
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
+# ``{memory_id, task_id}`` records ``get_memory`` appends and the task review reads.
+ACCESSED_MEMORY_IDS_VARIABLE = "accessed_memory_ids"
+
 
 def resolve_session(
     session_manager: SessionManager,

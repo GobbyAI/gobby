@@ -1,0 +1,1417 @@
+header:
+  plan_id: gclient-daemon-resilience
+  plan_hash: 1dc647585b5b73229d689aea05cd48f44bd5afa293d1ec50d962e069b0256fd6
+  root_task_ref: '23220'
+  project_id: d45545c5-ded5-4335-b115-0245752edacf
+  generated_at: '2026-10-01T13:23:09Z'
+  task_tree_source: db
+  task_tree_source_hash: 84a5c5691764afeba25ed847745e62c243c7a556154a7a032158e628dcb192b0
+  evidence_summary: []
+  evidence: []
+rows:
+- section_id: R1
+  item_id: R1.1
+  plan_node_hash: 6821e68f679eb9cf3fdc9f10803e32a60353bb4a11375c49f3d6031020c128d9
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23225'
+    validation_criteria_snippet: 'R1.1: The exit, resize and suspend signal helpers
+      live in their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+      R1.2: The local-tab adoption g...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/signals.rs
+  deferral_target: null
+  detail: ''
+- section_id: R1
+  item_id: R1.2
+  plan_node_hash: cf0820c9e2b56e165b17666ebec73813bf549ce55854e2e982cd0663bde19feb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23225'
+    validation_criteria_snippet: 'R1.1: The exit, resize and suspend signal helpers
+      live in their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+      R1.2: The local-tab adoption g...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/local_adoption.rs
+  deferral_target: null
+  detail: ''
+- section_id: R1
+  item_id: R1.3
+  plan_node_hash: cee6f288223abb70ae6e010c135a3117f8918f431bfa4616866ada262ae6ae5d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23225'
+    validation_criteria_snippet: 'R1.1: The exit, resize and suspend signal helpers
+      live in their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+      R1.2: The local-tab adoption g...'
+    matched_artifact_ref: each of the four moved-from files is under 850 lines
+  deferral_target: null
+  detail: ''
+- section_id: R1
+  item_id: R1.4
+  plan_node_hash: 6ae8e93827c71865dcf63967ec4b1e8798286536ff4152d1f0f4474cda16ad9e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23225'
+    validation_criteria_snippet: 'R1.1: The exit, resize and suspend signal helpers
+      live in their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+      R1.2: The local-tab adoption g...'
+    matched_artifact_ref: crates/gclient/src/app/disconnect.rs
+  deferral_target: null
+  detail: ''
+- section_id: R1
+  item_id: R1.5
+  plan_node_hash: ef70d80b3c52eddb2847f71e8fbb0abc119d3eb4ad73a3ed05aaed76a27da89b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23225'
+    validation_criteria_snippet: 'R1.1: The exit, resize and suspend signal helpers
+      live in their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+      R1.2: The local-tab adoption g...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/lifecycle.rs
+  deferral_target: null
+  detail: ''
+- section_id: R1
+  item_id: R1.7
+  plan_node_hash: 3a2d3ac0e8f3e44f3ea9b4c7e8678c51d056629da4d6970b63313def8cf60d77
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23225'
+    validation_criteria_snippet: 'R1.1: The exit, resize and suspend signal helpers
+      live in their own module. file: `crates/gclient/src/app/live_loop/signals.rs`.
+      R1.2: The local-tab adoption g...'
+    matched_artifact_ref: cargo nextest run -p gobby-client passes with no golden
+      regeneration
+  deferral_target: null
+  detail: ''
+- section_id: A0
+  item_id: A0.1
+  plan_node_hash: 7666d3bf1015b1171c9df5bfddba37a02d29bf39f6be357a2aa600af09983f83
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23226'
+    validation_criteria_snippet: 'A0.1: `hold_ws` keeps a matching websocket request
+      pending until released and `replies` counts the released reply. file: `crates/gclient/tests/mock_daemon/mod....'
+    matched_artifact_ref: crates/gclient/tests/mock_daemon/mod.rs
+  deferral_target: null
+  detail: ''
+- section_id: A0
+  item_id: A0.2
+  plan_node_hash: 2278b5b27366737806961ccab350f6d0cdb0c54016dfd372729bf901e6b3745e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23226'
+    validation_criteria_snippet: 'A0.1: `hold_ws` keeps a matching websocket request
+      pending until released and `replies` counts the released reply. file: `crates/gclient/tests/mock_daemon/mod....'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::held_websocket_request_stays_pending_until_released
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.1
+  plan_node_hash: 559f4365528b78d115f8e226a736a931723e38b12bf111567bff68265fa6cf2f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/jobs.rs
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.2
+  plan_node_hash: f3019f8800f694e090708bc53c19920f025c9bc46f0e60f9581654499f02ad55
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: run_live_loop
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.3
+  plan_node_hash: eee6666b2ad1473e547d03b46ed60b79d7ff4d0328f8b123c7f3c013f9dae848
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_focus_hint_op_never_stalls_frames_or_ticks
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.4
+  plan_node_hash: 966037347aa2f883457c7d0e740515dc05ada4d0f480e628b93accf2eff470d4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::resize_burst_sends_at_most_one_resize_per_pane_in_flight
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.5
+  plan_node_hash: ea3c28134dc7a1334896c036416a4c7f69841ab4d7b83d1cadb56e5720630241
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/jobs/tests.rs::coalescer_keeps_one_in_flight_and_latest_pending
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.6
+  plan_node_hash: 39d60eeda188e97a4cf83b558af3a01064d9a715bd6c525169cb307cecc356ed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::direct_set_viewport_backpressure_is_visible_and_never_stalls_the_loop
+  deferral_target: null
+  detail: ''
+- section_id: A1
+  item_id: A1.7
+  plan_node_hash: 2ea654b83bd351fe70ec18417a03da3d822b4eb2bed6551b939b6e80d4d5534f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23227'
+    validation_criteria_snippet: 'A1.1: The job types, ledger, coalescer and `spawn_job`
+      exist and are `Send`. file: `crates/gclient/src/app/live_loop/jobs.rs`. A1.2:
+      `run_live_loop` consumes j...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_late_old_generation_outcome_never_settles_the_reissued_job
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.1
+  plan_node_hash: f20190504c2600d5db9b197a1cdcce5b4b1b442dd8f8acf2fbfd29780e110428
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/control.rs
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.2
+  plan_node_hash: de0ca5b645ffd6c24bab388fb3ff04ab3e0be9f3e7c1720cb4f929d6ee8ff4e6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::typing_into_a_tmux_pane_while_terminal_input_is_held_keeps_frames_flowing
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.3
+  plan_node_hash: c06adb237ee8998fea66a701f7890d32daf6d548f83ff81efcd85882ea3114e5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_focus_move_writes_release_before_take_on_the_wire
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.4
+  plan_node_hash: ecb01dafaf05e54739cd7eb52f12e0ecf7edaa1e37a274a62058187383107c02
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_write_error_from_a_stale_generation_does_not_mark_the_pane_read_only
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.5
+  plan_node_hash: 5f6f98e5e62028122d9baa1cf23ad097b2d5ecf9b70ed9a12b7d6fc7c005dbc6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/src/app/live_control.rs
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.6
+  plan_node_hash: 838ba7feb5e4653f91eb834bfff625e829197c76c761fdaca3b0102cc82627ed
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/daemon_ops.rs
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.7
+  plan_node_hash: 2537f2c0e41a3671035d5e4b92232c882fe77732decbe95e7d64e87126e38373
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_attention_response_never_stalls_frames_or_applies_twice
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.8
+  plan_node_hash: 4d3df4e92df9897754362c0082931f1848e195aeabb9c97f126e1aee6967af36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_terminal_input_flood_is_bounded_ordered_and_nonblocking
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.9
+  plan_node_hash: ae54a0b9d2ac762125066e3542f880c7ed3db433e21662a08e9ff14307757c52
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::held_input_then_focus_move_delivers_or_reports_before_release
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.10
+  plan_node_hash: 3b43cb731b6d213fc02acf680e8d6ac25f065609a4595bf1f19f3bc0564dca00
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::close_and_generation_change_never_replay_queued_input
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.11
+  plan_node_hash: 5e057dc1f96f02dfa4ffe5eff5ec3b319581c7d78965128b54b8b71194b135dc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::direct_flush_receipt_orders_locally_and_late_consumption_is_unconfirmed
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.12
+  plan_node_hash: e3340fcfbdb5cf8733855c716815e3b561ce48cc355091d68b8e1cb3818b02b1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::indeterminate_daemon_write_is_unconfirmed_and_never_replayed
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.13
+  plan_node_hash: 0ce9d7293899491cd7cd555cb650bd734d649596aebeba9530d865d95f9bce0b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::focus_a_b_c_with_a_held_writer_orders_every_release_before_the_next_take
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.14
+  plan_node_hash: f96a13fab4e3e8acb8970963be3abab2a50a7b00008e4f250a17fcaa10b33245
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::closing_a_pane_while_its_release_is_pending_detaches_after_the_release
+  deferral_target: null
+  detail: ''
+- section_id: A2
+  item_id: A2.15
+  plan_node_hash: 547bb32d9d467c5f304ec95a1d40035f67eba35e8210a0f087e9bbb907abbeec
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23228'
+    validation_criteria_snippet: 'A2.1: No function in `control.rs` awaits the daemon;
+      writes go through the pane writer and releases through the pending flag. file:
+      `crates/gclient/src/app/liv...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::old_generation_write_uncertainty_is_reported_after_reconnect
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.1
+  plan_node_hash: f22a1ede535adcec81523446631e97887f65dbaaeab4d794826a1b0918b31917
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23229'
+    validation_criteria_snippet: 'A3.1: The `created` event path marks the pane due
+      for `start_due_attaches` instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+      A3.2: A held a...'
+    matched_artifact_ref: apply_live_event
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.2
+  plan_node_hash: c0756f3ed062ccdedbc4c5849d58c5f3bf0ff75a65b599645e805e89117dd224
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23229'
+    validation_criteria_snippet: 'A3.1: The `created` event path marks the pane due
+      for `start_due_attaches` instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+      A3.2: A held a...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_attach_on_one_pane_keeps_the_other_pane_rendering
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.3
+  plan_node_hash: 6c0687cace100be8c902bc1aac6abd8caac74e544069cb71d77c6a0ce79f5ef4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23229'
+    validation_criteria_snippet: 'A3.1: The `created` event path marks the pane due
+      for `start_due_attaches` instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+      A3.2: A held a...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::an_attach_outcome_from_a_previous_generation_is_dropped_and_detached
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.4
+  plan_node_hash: abbc6e77b9836d5badce9caf5ecc5d7ee0661188b3b2162be94fbd0e5a8c7d1c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23229'
+    validation_criteria_snippet: 'A3.1: The `created` event path marks the pane due
+      for `start_due_attaches` instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+      A3.2: A held a...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::recovery_detaches_then_attaches_while_input_still_routes
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.6
+  plan_node_hash: 2edec6b0d9f74ace1a2016659d7af457d194a98b410a36b1f6a43af788e2afe3
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23229'
+    validation_criteria_snippet: 'A3.1: The `created` event path marks the pane due
+      for `start_due_attaches` instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+      A3.2: A held a...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::frame_errors_and_recovery_giveups_are_logged_with_pane_context
+  deferral_target: null
+  detail: ''
+- section_id: A3
+  item_id: A3.7
+  plan_node_hash: f7a93edc8fe03acbeec233e3d78254505ce56c66353c9aa1737ba90bff5ee923
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23229'
+    validation_criteria_snippet: 'A3.1: The `created` event path marks the pane due
+      for `start_due_attaches` instead of awaiting `attach_ready_panes`. symbol: `apply_live_event`.
+      A3.2: A held a...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_slow_new_terminal_attach_never_stalls_streaming_direct_panes
+  deferral_target: null
+  detail: ''
+- section_id: A3b
+  item_id: A3b.1
+  plan_node_hash: eb1706c817154a4603d90fc7b436b927af97793ea18940da143c9c0ba5209ff1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23230'
+    validation_criteria_snippet: 'A3b.1: A held unresolved-terminal open keeps frames,
+      ticks and direct input progressing, installs the terminal once after release,
+      and coalesces repeated works...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_open_unresolved_terminal_job_is_coalesced_and_nonblocking
+  deferral_target: null
+  detail: ''
+- section_id: A3b
+  item_id: A3b.2
+  plan_node_hash: af5d59db8eaec51ed89019e221574027a39dc73423b5053c0da230721d7bc60d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23230'
+    validation_criteria_snippet: 'A3b.1: A held unresolved-terminal open keeps frames,
+      ticks and direct input progressing, installs the terminal once after release,
+      and coalesces repeated works...'
+    matched_artifact_ref: open_unresolved_terminals
+  deferral_target: null
+  detail: ''
+- section_id: A3b
+  item_id: A3b.3
+  plan_node_hash: b1e5038fd60ba71a69e0daf483c54e2d10ecc8f215e4d80e99a65fb0bb50c2c8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23230'
+    validation_criteria_snippet: 'A3b.1: A held unresolved-terminal open keeps frames,
+      ticks and direct input progressing, installs the terminal once after release,
+      and coalesces repeated works...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/unresolved.rs
+  deferral_target: null
+  detail: ''
+- section_id: A3b
+  item_id: A3b.4
+  plan_node_hash: 9600ee785049c02acd81b7d6b9e650b89c63dd5b072ca7220c62b081c7ea1243
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23230'
+    validation_criteria_snippet: 'A3b.1: A held unresolved-terminal open keeps frames,
+      ticks and direct input progressing, installs the terminal once after release,
+      and coalesces repeated works...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::an_unresolved_terminal_open_failure_is_logged_with_elapsed_time
+  deferral_target: null
+  detail: ''
+- section_id: A4a
+  item_id: A4a.1
+  plan_node_hash: 030dd30270a629d3be9125f38160a84a88e0b0d30e08579cc001f8db1be9fcf5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23231'
+    validation_criteria_snippet: 'A4a.1: A roster for a project no longer focused
+      is dropped (was A4.3). test: `crates/gclient/tests/loop_liveness.rs::a_roster_for_a_project_no_longer_focused_i...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_roster_for_a_project_no_longer_focused_is_dropped
+  deferral_target: null
+  detail: ''
+- section_id: A4a
+  item_id: A4a.2
+  plan_node_hash: c21cb4bae723710d085efcd2486b990ee9db3520e108932cf65592b44278650a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23231'
+    validation_criteria_snippet: 'A4a.1: A roster for a project no longer focused
+      is dropped (was A4.3). test: `crates/gclient/tests/loop_liveness.rs::a_roster_for_a_project_no_longer_focused_i...'
+    matched_artifact_ref: apply_live_event
+  deferral_target: null
+  detail: ''
+- section_id: A4a
+  item_id: A4a.3
+  plan_node_hash: 5877fca4ae612ac0ba14d19426ee507e69aea3c93b879632b5bb179c49cf9e34
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23231'
+    validation_criteria_snippet: 'A4a.1: A roster for a project no longer focused
+      is dropped (was A4.3). test: `crates/gclient/tests/loop_liveness.rs::a_roster_for_a_project_no_longer_focused_i...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::rest_failures_and_lagged_events_warn_with_elapsed_time
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.1
+  plan_node_hash: be1947ab620d9825b0ef57eaf476aec371a9184726ac457bbcdde229e4e6cc9b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_terminal_create_keeps_the_window_interactive_and_places_after_create
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.2
+  plan_node_hash: 5d039bf3c940e082e2902ab66e79898c0850931f3903c20997b7daa7ae8249ce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::closing_a_tab_issues_tab_close_only_after_every_kill_settles
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.3
+  plan_node_hash: 6b291a57d78cd803579083de117a87eaf5eac7e87a7d0ce7bbfb17db94bfb656
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::two_new_tabs_before_the_first_create_lands_place_both
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.4
+  plan_node_hash: cdde9d1ef6808bee9808a01924f7fa6ae5a64016c78a7ae7672517f53d158247
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::split_right_with_a_held_control_or_create_reply_keeps_the_window_live
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.5
+  plan_node_hash: a5e4010f72efebac655aca6dc812307747d7ef728965083a8b444a2712edf522
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_held_adoption_step_keeps_the_window_live_and_rolls_back_on_refusal
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.6
+  plan_node_hash: c83b0dd9541720b042dbba8a11b85099240c1a6f53d7e0c951f202b0c36e8144
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_stale_committed_create_is_compensated_once_and_an_unanswered_create_is_not_replayed
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.7
+  plan_node_hash: c57f6a8381ae89e82ef6ef44d3e54edcb0bcfdda46786e06182dc56a2c08a967
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_stale_committed_adoption_step_rolls_back_its_captured_tab
+  deferral_target: null
+  detail: ''
+- section_id: A4b
+  item_id: A4b.8
+  plan_node_hash: 4459cd0f4392ae13c64e9724150d97b09caa51f322783e5d69ba4f4851712515
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23232'
+    validation_criteria_snippet: 'A4b.1: A held `terminal_create` keeps the window
+      interactive and places the pane after the create lands (was A4.1). test: `crates/gclient/tests/loop_liveness.r...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_stale_create_is_disposed_once_in_either_order_and_a_failed_disposal_stays_owned
+  deferral_target: null
+  detail: ''
+- section_id: A4c
+  item_id: A4c.1
+  plan_node_hash: d9a8da4626d53d455803d3853dc4cf7e61cffc8152c5cf329eb7356dbe575b40
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23233'
+    validation_criteria_snippet: 'A4c.1: Holding orphan inventory leaves the dialog
+      and window live; after release, orphan kills fan out concurrently and `DestroySummary`
+      preserves one result p...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::held_orphan_fetch_and_kill_fanout_are_nonblocking_and_complete
+  deferral_target: null
+  detail: ''
+- section_id: A5
+  item_id: A5.2
+  plan_node_hash: 36c91b64fef485b306123379d6bde58de90e0df8942e3c5446331ebc35de966a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23234'
+    validation_criteria_snippet: 'A5.2: A reconcile from a stale generation is dropped.
+      test: `crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped`.
+      A5.4: A bo...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped
+  deferral_target: null
+  detail: ''
+- section_id: A5
+  item_id: A5.4
+  plan_node_hash: 4f6fab1d4627d69893b80742c7ac8202b3b6e32203145862d89b61c5a5705591
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23234'
+    validation_criteria_snippet: 'A5.2: A reconcile from a stale generation is dropped.
+      test: `crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped`.
+      A5.4: A bo...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::every_run_live_loop_daemon_path_is_issued_without_awaiting
+  deferral_target: null
+  detail: ''
+- section_id: A5
+  item_id: A5.5
+  plan_node_hash: 64eef65ec928f9b7d41156276cf3fb8f7c48bd38d5055c8190a1408363c68a6e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23234'
+    validation_criteria_snippet: 'A5.2: A reconcile from a stale generation is dropped.
+      test: `crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped`.
+      A5.4: A bo...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::reconnect_attempts_warn_once_at_start_and_finish_with_reason
+  deferral_target: null
+  detail: ''
+- section_id: A5
+  item_id: A5.6
+  plan_node_hash: 8556fea656241783a08d30c0ec16bba293fc2ad7f20e557cc3a8cdfcd178e90e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23234'
+    validation_criteria_snippet: 'A5.2: A reconcile from a stale generation is dropped.
+      test: `crates/gclient/tests/loop_liveness.rs::a_reconcile_from_a_stale_generation_is_dropped`.
+      A5.4: A bo...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_chrome_chord_applies_while_a_rest_request_is_held
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.1
+  plan_node_hash: 9a2c695b7ed4a42596ddccc12bc217f188e6a77686803e37c0b0761059d10e92
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23235'
+    validation_criteria_snippet: 'B1.1: Every waiter records `issued_at` and `oldest_inflight_age`
+      reports the oldest. symbol: `LiveState`. B1.2: `DaemonHealth` derives `Slow`
+      past the threshol...'
+    matched_artifact_ref: LiveState
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.2
+  plan_node_hash: 0607c6564fae5aa7e2982c252aefa8fbf8c91c154d43722ca9519ce9df2a3529
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23235'
+    validation_criteria_snippet: 'B1.1: Every waiter records `issued_at` and `oldest_inflight_age`
+      reports the oldest. symbol: `LiveState`. B1.2: `DaemonHealth` derives `Slow`
+      past the threshol...'
+    matched_artifact_ref: crates/gclient/src/app/live_loop/health/tests.rs::health_is_slow_once_the_oldest_in_flight_request_passes_the_threshold
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.3
+  plan_node_hash: 2b6e369a4d0fc5aeebbba159abafc45178acf9c06c4b5e685c7e81f04b78bd36
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23235'
+    validation_criteria_snippet: 'B1.1: Every waiter records `issued_at` and `oldest_inflight_age`
+      reports the oldest. symbol: `LiveState`. B1.2: `DaemonHealth` derives `Slow`
+      past the threshol...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_slow_workspace_op_reply_shows_daemon_slow_until_it_lands
+  deferral_target: null
+  detail: ''
+- section_id: B1
+  item_id: B1.4
+  plan_node_hash: cfd6c4e277536567ce2af4e38c26978da1c0c07a12a99adf89ed7e1a5985a8eb
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23235'
+    validation_criteria_snippet: 'B1.1: Every waiter records `issued_at` and `oldest_inflight_age`
+      reports the oldest. symbol: `LiveState`. B1.2: `DaemonHealth` derives `Slow`
+      past the threshol...'
+    matched_artifact_ref: Daemon slow
+  deferral_target: null
+  detail: ''
+- section_id: B3
+  item_id: B3.1
+  plan_node_hash: 775daa2e3a550f56bc1217a09ceec369a1859397f98c42075b8ac1b86f7faab2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23236'
+    validation_criteria_snippet: 'B3.1: No sidebar `/api/source-control/status` or
+      roster refresh request is recorded while the daemon is slow, and polling resumes
+      on `Ready`. test: `crates/gcl...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::sidebar_polls_pause_while_the_daemon_is_slow_and_resume_on_ready
+  deferral_target: null
+  detail: ''
+- section_id: B3
+  item_id: B3.2
+  plan_node_hash: 8b44520721ce14c3fd18c974bfe4bd081a5ec34bedcf7dc9dabb0971ebae4a88
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23236'
+    validation_criteria_snippet: 'B3.1: No sidebar `/api/source-control/status` or
+      roster refresh request is recorded while the daemon is slow, and polling resumes
+      on `Ready`. test: `crates/gcl...'
+    matched_artifact_ref: pauses
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.1
+  plan_node_hash: b10352830ace6ea08c802a415ac533f982cb2202a490bc5a83d5453e921a327b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: crates/gterminal/tests/frame_protocol.rs::daemonless_native_inventory_is_authenticated_and_excludes_tmux
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.2
+  plan_node_hash: 47673fb7b7ee16bb5697541dd009d9914c58c35ad1925dbf7a9c41d605256bf5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: crates/gterminal/tests/frame_protocol.rs::first_local_attachment_holds_fallback_input_until_detach
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.3
+  plan_node_hash: 522adf80d3cb6c816a772ee3114e440f695c7c4835cfe14f8a0ca45015297355
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: crates/gterminal/tests/frame_protocol.rs::frame_detach_clears_only_its_local_fallback_grant
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.4
+  plan_node_hash: 796ac77387f1a01da71896d887be5f1a5fd746e5a17ea0fa02cd98fc7be1d2c5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: crates/gterminal/tests/control_protocol.rs::daemon_grant_replaces_local_fallback_and_restores_arbitration
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.5
+  plan_node_hash: 2b3c7d805eb5192c561f9157d4cfd5c3f18d93cd187d7082a76bdca4a1c0e4e7
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: local fallback holder
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.6
+  plan_node_hash: 22b71aa47238bacef3b3e3aa15ef5679c6cfae98c892dfe6064805dea8a07efe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: crates/gterminal/tests/control_protocol.rs::disconnect_and_rebind_transfer_the_daemon_grant_without_an_input_gap
+  deferral_target: null
+  detail: ''
+- section_id: C0
+  item_id: C0.7
+  plan_node_hash: 9f8ccb3ab722f3eac51a3b3627fa79d8c97a89cd2aa050858efb36563d9f7a10
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23237'
+    validation_criteria_snippet: 'C0.1: An authenticated frame client lists only committed
+      live native terminals with stable terminal/host ids and host epoch; unauthenticated
+      and tmux inventory...'
+    matched_artifact_ref: crates/gterminal/tests/control_protocol.rs::a_late_grant_from_a_retired_connection_cannot_overwrite_newer_authority
+  deferral_target: null
+  detail: ''
+- section_id: C0b
+  item_id: C0b.1
+  plan_node_hash: e9dcaf2b1cfa1994b0f94ec90877cd09ac738642a18a647dc99659f5e3c74656
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23238'
+    validation_criteria_snippet: 'C0b.1: `NativeHost` uses the existing authenticated
+      frame codec and returns typed native inventory without any daemon request. file:
+      `crates/gclient/src/frame_...'
+    matched_artifact_ref: crates/gclient/src/frame_source/native_host.rs
+  deferral_target: null
+  detail: ''
+- section_id: C0b
+  item_id: C0b.2
+  plan_node_hash: 275bf37fa2cf66a47727246ac1c956d6adcb59595a5509f448d20f492e78ac9b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23238'
+    validation_criteria_snippet: 'C0b.1: `NativeHost` uses the existing authenticated
+      frame codec and returns typed native inventory without any daemon request. file:
+      `crates/gclient/src/frame_...'
+    matched_artifact_ref: crates/gclient/tests/frame_source_live.rs::native_inventory_and_attach_work_without_a_daemon
+  deferral_target: null
+  detail: ''
+- section_id: C0b
+  item_id: C0b.3
+  plan_node_hash: 940ef7798e279f1c61fed2f6e74aa20624ee92b9014d7696c03f8930086d9148
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23238'
+    validation_criteria_snippet: 'C0b.1: `NativeHost` uses the existing authenticated
+      frame codec and returns typed native inventory without any daemon request. file:
+      `crates/gclient/src/frame_...'
+    matched_artifact_ref: crates/gclient/tests/frame_source_live.rs::native_inventory_failure_cleans_up_the_frame_connection
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.1
+  plan_node_hash: 17c75f8a1d7399091633b01989d951db7e4b944b6649bff97fc7aae907c54c50
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/startup.rs::missing_default_daemon_token_starts_in_native_degraded_mode
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.2
+  plan_node_hash: be758d773866b9ae6b2e81fe7ebf483f88e3dd6b7490e6183c4184ee0f229a3c
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::daemonless_launch_attaches_renders_and_types_native_panes
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.3
+  plan_node_hash: f97a12da47a4bac0eece9169327d5826b1d85809ccda9a15f4ffa14778977945
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::daemonless_second_client_cannot_take_over_the_local_holder
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.4
+  plan_node_hash: a2654f2b58e639fb9550e60d35d2cd6213fdcc630a78cbb0e31868cbad3e4bfe
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::daemon_reconcile_adopts_daemonless_native_panes_without_duplication
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.5
+  plan_node_hash: 846f1b526035518d9caf4c302696795c312e48629dc7a8d65efaa6a8e954d573
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: Native degraded mode
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.6
+  plan_node_hash: be75fff8b643cde5644245d1bd2e55a84da3d7d99b47f00f4ed79abca141de31
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::daemonless_launch_attaches_and_types_multiple_native_panes_independently
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.7
+  plan_node_hash: 2a4e0a92afcfb76872e947449eca84ff1d3ef6ced4c807ca8cb73470bffe9e2e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::daemonless_focus_moves_between_direct_panes_and_types_into_both_ptys
+  deferral_target: null
+  detail: ''
+- section_id: C0c
+  item_id: C0c.8
+  plan_node_hash: f4e4455ffd41325189984aeb9c7bd569287f598eae738184bbcaf2c973a0d739
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23239'
+    validation_criteria_snippet: 'C0c.1: A missing default daemon token produces an
+      empty degraded Ready window, an unreachable daemon with a valid local token
+      can use the native host, and an e...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_late_native_result_after_the_daemon_workspace_is_disposed_and_closes_its_sources
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.1
+  plan_node_hash: b75b838c962932961eab1c82d5374aaac7743ca797112c9104770aa7b41e2eab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23240'
+    validation_criteria_snippet: 'C1.1: A daemon-granted or local-fallback direct
+      pane stays Held with `lease_unconfirmed` when the mock daemon closes the socket,
+      and the mock frame host still ...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_direct_granted_pane_keeps_typing_through_a_daemon_disconnect
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.2
+  plan_node_hash: 1dfd1398f82f4724a0e7cb5c59a9f405e8dca6ef36d79f60436a0d42bac947f5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23240'
+    validation_criteria_snippet: 'C1.1: A daemon-granted or local-fallback direct
+      pane stays Held with `lease_unconfirmed` when the mock daemon closes the socket,
+      and the mock frame host still ...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_proxied_pane_drops_to_observe_on_daemon_disconnect
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.3
+  plan_node_hash: 3c3e7bc6ed050143add5b0564aaa9b47319f90dec5bc659aadc6cf88c0c203fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23240'
+    validation_criteria_snippet: 'C1.1: A daemon-granted or local-fallback direct
+      pane stays Held with `lease_unconfirmed` when the mock daemon closes the socket,
+      and the mock frame host still ...'
+    matched_artifact_ref: keeps typing
+  deferral_target: null
+  detail: ''
+- section_id: C1
+  item_id: C1.4
+  plan_node_hash: 9834539498b4415211908f97fe66c76b1b0081aa2c63ff3d8c9336c059669b58
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23240'
+    validation_criteria_snippet: 'C1.1: A daemon-granted or local-fallback direct
+      pane stays Held with `lease_unconfirmed` when the mock daemon closes the socket,
+      and the mock frame host still ...'
+    matched_artifact_ref: typing continues on the host
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.1
+  plan_node_hash: 685765acf5c7f12c544dc0aea3ec667ff590f416307900e5664ac20a936a9f5e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23241'
+    validation_criteria_snippet: 'C2.1: On reconnect every unconfirmed direct pane
+      rebinds its preserved frame stream before `terminal_take_control`; bytes typed
+      before the reply continue to re...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::an_unconfirmed_direct_stream_rebinds_and_keeps_typing_until_retake_grants
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.2
+  plan_node_hash: a2c532cf9bfee5c9cda6b910bd323dd332ca1846a44b5a52a734482ba174a152
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23241'
+    validation_criteria_snippet: 'C2.1: On reconnect every unconfirmed direct pane
+      rebinds its preserved frame stream before `terminal_take_control`; bytes typed
+      before the reply continue to re...'
+    matched_artifact_ref: Pane
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.3
+  plan_node_hash: 8043d20fbffdc01a8551eff21b2b61f98ef8cfe4175bffb9173b2b3b64d48d08
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23241'
+    validation_criteria_snippet: 'C2.1: On reconnect every unconfirmed direct pane
+      rebinds its preserved frame stream before `terminal_take_control`; bytes typed
+      before the reply continue to re...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::daemon_arrival_after_degraded_launch_retakes_every_adopted_holder
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.4
+  plan_node_hash: 7333a4d386f8fc4fb5de4700fa725041eebc2445a6c26b8a469294dd64974a2d
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23241'
+    validation_criteria_snippet: 'C2.1: On reconnect every unconfirmed direct pane
+      rebinds its preserved frame stream before `terminal_take_control`; bytes typed
+      before the reply continue to re...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::every_unconfirmed_pane_retakes_and_one_failed_take_retries_boundedly
+  deferral_target: null
+  detail: ''
+- section_id: C2
+  item_id: C2.5
+  plan_node_hash: 320bd687aeeefad7fc9704db2fd5f99c8a925e40e1d2fc8f9a167e2ace9a132e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23241'
+    validation_criteria_snippet: 'C2.1: On reconnect every unconfirmed direct pane
+      rebinds its preserved frame stream before `terminal_take_control`; bytes typed
+      before the reply continue to re...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_lease_grant_without_a_host_grant_does_not_confirm_typing
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.1
+  plan_node_hash: 6b5cd764bd999254a783d808eaa7ee5ac5f03143673650a0bb73347fb138f943
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23242'
+    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
+      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
+      daemon request. t...'
+    matched_artifact_ref: crates/gclient/tests/frame_source_live.rs::a_direct_source_error_reattaches_directly_before_asking_the_daemon
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.2
+  plan_node_hash: cc1a5371da9d8d6619df2fdb5ada14e4825b863014418b882a570c8051e13f75
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23242'
+    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
+      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
+      daemon request. t...'
+    matched_artifact_ref: direct re-attach
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.3
+  plan_node_hash: 28f124f23ef0530a6fc51409646d57a5084c18d69c213d22e68f2b604a00266b
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23242'
+    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
+      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
+      daemon request. t...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_lost_fallback_stream_reclaims_only_when_no_peer_holds_input
+  deferral_target: null
+  detail: ''
+- section_id: C3
+  item_id: C3.4
+  plan_node_hash: 80a7762b6afe17bead46fdfb1d7e572dcffcec8c1e89a99d4f7ed5565ad4e0b5
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23242'
+    validation_criteria_snippet: 'C3.1: A direct source error followed by a successful
+      direct reconnect records `AttachTerminal` plus `BindAttachment` and no `terminal_attach`
+      daemon request. t...'
+    matched_artifact_ref: crates/gclient/tests/loop_liveness.rs::a_fallback_stream_lost_during_daemon_return_types_only_after_the_retake
+  deferral_target: null
+  detail: ''
+- section_id: D1a
+  item_id: D1a.1
+  plan_node_hash: cfdc7b71f5919e1b897c3b7c65eef2196901dd5c60289d78ca65cd345e5341ce
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23243'
+    validation_criteria_snippet: 'D1a.1: Attach resolves its row on the executor.
+      test: `tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor`.
+      D1a....'
+    matched_artifact_ref: tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor
+  deferral_target: null
+  detail: ''
+- section_id: D1a
+  item_id: D1a.2
+  plan_node_hash: 41003360fbb4140a1b21daca7a89a9fb385ef93cb017c85a659bbdd5332090d0
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23243'
+    validation_criteria_snippet: 'D1a.1: Attach resolves its row on the executor.
+      test: `tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor`.
+      D1a....'
+    matched_artifact_ref: tests/servers/test_terminal_ws_resize.py::test_sizing_runs_get_and_set_dims_as_one_executor_hop
+  deferral_target: null
+  detail: ''
+- section_id: D1a
+  item_id: D1a.3
+  plan_node_hash: 4c3f34eaa92659077d3dd158a7eded09c400329b34680fe4461dc91b505e77e8
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23243'
+    validation_criteria_snippet: 'D1a.1: Attach resolves its row on the executor.
+      test: `tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor`.
+      D1a....'
+    matched_artifact_ref: tests/servers/test_terminal_ws_golden.py::test_scroll_offset_makes_no_storage_call
+  deferral_target: null
+  detail: ''
+- section_id: D1a
+  item_id: D1a.4
+  plan_node_hash: 76dfdcf3cef113cfaf3903afd7b3d31263329d6b7d81e90a4e4797609f6f70bf
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23243'
+    validation_criteria_snippet: 'D1a.1: Attach resolves its row on the executor.
+      test: `tests/servers/test_terminal_ws_attach_honesty.py::test_attach_resolves_the_row_on_the_db_executor`.
+      D1a....'
+    matched_artifact_ref: tests/servers/test_terminal_ws_create.py::test_create_and_kill_run_storage_on_the_executor
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.1
+  plan_node_hash: ebe2090bdaa8a310b26a0bf2a1bbd3ebf667ab1e7207fa1d49fad7cb2a8fddb4
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_host_client.py::test_roundtrip_times_out_with_host_unavailable
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.2
+  plan_node_hash: 38faf6dcdf1389856ca9d67540d5c72183d5c2fa8ce709b58e7292cd7a9f823a
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_native_runtime.py::test_eof_reconnect_and_retry_share_one_deadline_and_release_the_lease_lock
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.3
+  plan_node_hash: d70c618b998a6d274567f00a45385dd6b572c23857486496244fa36982e1077f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/config/test_terminal_host_config.py::test_control_timeout_seconds_default
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.4
+  plan_node_hash: a34e2597b8e70539fe49cd3a020529a24ea1add519930efdacf310a5f2b7acba
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: crates/gcore/assets/config/runtime_config_contract.json
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.5
+  plan_node_hash: b6a19f1e1b53c01353b01c761458fb42ac61073333216132e6d6df72dc34ffad
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: src/gobby/terminals/host_process.py
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.6
+  plan_node_hash: 8e4c4b069a098d787b93320f6b4bd2e8e2c023bf8e4be1cc0799f2f7c611b5c1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_host_client.py::test_mutating_timeout_retires_the_connection_and_never_reuses_its_sequence
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.7
+  plan_node_hash: 94164f63f77ac9ad3fc2b4aa972201b00128fc0010a868c5e9d0ac72eadad5cc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_host_client.py::test_grant_timeout_retires_the_connection_before_the_next_authority_change
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.8
+  plan_node_hash: c1d2afd7b81606bc4cef48056e10310bedb4f9e3c31a4e9246c71d7824a643e1
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_host_client.py::test_cancelling_a_written_grant_retires_the_connection_so_newer_authority_survives
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.9
+  plan_node_hash: 15c69aeac976c8efa6e817a497af40aa5ab63c15cc3067313504c8b8cc0bcb72
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_host_client.py::test_retirement_fences_before_cleanup_and_stale_cleanup_leaves_the_new_connection
+  deferral_target: null
+  detail: ''
+- section_id: D3
+  item_id: D3.10
+  plan_node_hash: 6f854bfea102e10790c72943f93488611d1b3aa83f4e6087db67c39cc3216095
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23244'
+    validation_criteria_snippet: 'D3.1: A round trip past its deadline raises `HostUnavailableError("timed
+      out")` and drops the pending future. test: `tests/terminals/test_host_client.py::test_...'
+    matched_artifact_ref: tests/terminals/test_native_runtime.py::test_abandoned_requests_are_never_replayed_and_timed_out_writes_are_indeterminate
+  deferral_target: null
+  detail: ''
+- section_id: D3b
+  item_id: D3b.1
+  plan_node_hash: c497e0a03c825ad52f3c2dbd5335c7c670917edd4c176bc21497b5b7719e5d01
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23245'
+    validation_criteria_snippet: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+      == false`; direct `ws_close` preserves the current host grant, while repeated/first
+      take, takeover, e...'
+    matched_artifact_ref: tests/terminals/test_lease_authority.py::test_holder_transition_matrix_applies_preserve_and_revoke_policies_outside_the_lease_lock
+  deferral_target: null
+  detail: ''
+- section_id: D3b
+  item_id: D3b.2
+  plan_node_hash: c33475f39d7d4c9ffc723a801b93804257fb34c3bc7ef032667275111b09641e
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23245'
+    validation_criteria_snippet: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+      == false`; direct `ws_close` preserves the current host grant, while repeated/first
+      take, takeover, e...'
+    matched_artifact_ref: tests/terminals/test_lease_authority.py::test_stalled_holder_sync_converges_to_the_latest_generation
+  deferral_target: null
+  detail: ''
+- section_id: D3b
+  item_id: D3b.3
+  plan_node_hash: f571545cf5dfa1caab7ba254afd2e9c22f9bced61e65fd7490e44c56fa83f6bc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23245'
+    validation_criteria_snippet: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+      == false`; direct `ws_close` preserves the current host grant, while repeated/first
+      take, takeover, e...'
+    matched_artifact_ref: tests/e2e/test_terminal_client_stack.py::test_direct_native_input_survives_daemon_restart_until_lease_retake
+  deferral_target: null
+  detail: ''
+- section_id: D3b
+  item_id: D3b.4
+  plan_node_hash: 1799aa962808d0b6102c76284574836aadaa740b530a53514fc86c976fa70d11
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23245'
+    validation_criteria_snippet: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+      == false`; direct `ws_close` preserves the current host grant, while repeated/first
+      take, takeover, e...'
+    matched_artifact_ref: tests/servers/test_terminal_ws_lease.py::test_unanswered_host_grant_is_bounded_and_lock_free
+  deferral_target: null
+  detail: ''
+- section_id: D3b
+  item_id: D3b.5
+  plan_node_hash: 80f3c1606f93567a61df1664e593c2072f4cc54f2621c69d5137694b8c5f4238
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23245'
+    validation_criteria_snippet: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+      == false`; direct `ws_close` preserves the current host grant, while repeated/first
+      take, takeover, e...'
+    matched_artifact_ref: tests/terminals/test_lease_authority.py::test_reconcile_latest_holder_snapshots_under_the_sync_lock_after_newer_sync_wins
+  deferral_target: null
+  detail: ''
+- section_id: D3b
+  item_id: D3b.6
+  plan_node_hash: e420321313e464b6223df5ba6cb362d5dd2bc562a8e10c3c681e060e49cd12da
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23245'
+    validation_criteria_snippet: 'D3b.1: The transition matrix sees `lock_held(terminal_id)
+      == false`; direct `ws_close` preserves the current host grant, while repeated/first
+      take, takeover, e...'
+    matched_artifact_ref: tests/terminals/test_lease_authority.py::test_a_superseded_take_reply_keeps_its_captured_generation_and_claims_no_host_grant
+  deferral_target: null
+  detail: ''
+- section_id: D4
+  item_id: D4.1
+  plan_node_hash: 65779fafc5094d350a1dfa7ff9f1b749351989736570c7cb3e77d93fe43683e2
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23246'
+    validation_criteria_snippet: 'D4.1: The final acquire failure logs a `pg_stat_activity`
+      census, and concurrent failures within a minute run at most one census. test:
+      `tests/storage/hub/test...'
+    matched_artifact_ref: tests/storage/hub/test_postgres_pool_backoff.py::test_final_acquire_failure_logs_a_rate_limited_activity_census
+  deferral_target: null
+  detail: ''
+- section_id: D4
+  item_id: D4.3
+  plan_node_hash: a16ae1df0158a1edd104cae5e49a2f47eca3c62e89a516f3711302bec00b82ab
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23246'
+    validation_criteria_snippet: 'D4.1: The final acquire failure logs a `pg_stat_activity`
+      census, and concurrent failures within a minute run at most one census. test:
+      `tests/storage/hub/test...'
+    matched_artifact_ref: tests/storage/hub/test_postgres_pool_backoff.py::test_census_failure_reason_is_typed_and_claims_capacity_only_for_53300
+  deferral_target: null
+  detail: ''
+- section_id: D4
+  item_id: D4.4
+  plan_node_hash: 3dff11d37cd49c58b8f9b76d129210d8523d033d0abc11bae62cb48cbd6cacf6
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23246'
+    validation_criteria_snippet: 'D4.1: The final acquire failure logs a `pg_stat_activity`
+      census, and concurrent failures within a minute run at most one census. test:
+      `tests/storage/hub/test...'
+    matched_artifact_ref: tests/storage/hub/test_postgres_pool_backoff.py::test_census_is_bounded_and_preserves_the_original_acquisition_error
+  deferral_target: null
+  detail: ''
+- section_id: D4
+  item_id: D4.2
+  plan_node_hash: 5c23afbe12cd559c566b32f55fcf993f803d5df8178a8364cc15073f41927b3f
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23246'
+    validation_criteria_snippet: 'D4.1: The final acquire failure logs a `pg_stat_activity`
+      census, and concurrent failures within a minute run at most one census. test:
+      `tests/storage/hub/test...'
+    matched_artifact_ref: tests/telemetry/test_logging.py::test_psycopg_pool_warnings_reach_the_daemon_log
+  deferral_target: null
+  detail: ''
+- section_id: E1
+  item_id: E1.1
+  plan_node_hash: 3da90e2abeda9aa0867244084efd916078521855a67d32fda5245203056fb503
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23247'
+    validation_criteria_snippet: 'E1.1: `reserve_observer` sends no `subscribe_events`.
+      test: `tests/terminals/test_native_runtime.py::test_reserve_observer_sends_no_subscribe_events`.
+      E1.2: Th...'
+    matched_artifact_ref: tests/terminals/test_native_runtime.py::test_reserve_observer_sends_no_subscribe_events
+  deferral_target: null
+  detail: ''
+- section_id: E1
+  item_id: E1.2
+  plan_node_hash: 69ee1a1be69f3c26e8380b37830cc88e9e1481082ece47cd7375be609d10b9fc
+  status: covered
+  leaves:
+  - leaf_task_ref: '#23247'
+    validation_criteria_snippet: 'E1.1: `reserve_observer` sends no `subscribe_events`.
+      test: `tests/terminals/test_native_runtime.py::test_reserve_observer_sends_no_subscribe_events`.
+      E1.2: Th...'
+    matched_artifact_ref: src/gobby/terminals/native_spawn_failure.py
+  deferral_target: null
+  detail: ''

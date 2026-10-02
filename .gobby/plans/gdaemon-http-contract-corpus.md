@@ -25,7 +25,13 @@ is down.
 Section numbers 3.1 and 3.2 are kept from the plan of record so its changelog and
 cross-references still read. The plan has one phase, P3. Expansion creates phase
 sub-epics only for multi-phase plans (`src/gobby/tasks/expansion/_apply.py`), so
-both deliverables expand as leaves directly under #21552.
+every deliverable expands as a leaf directly under #21552.
+
+Expansion state (2026-10-01, #23192): 3.1 expanded as #23108, which is closed and
+landed at `dbdb68518f`. 3.2 expanded as #23109, which is parked at frozen source
+`1be86e9e85` and lands unchanged. 3.3 is new. It carries the plan of record's #22951
+repairs that 3.1 and 3.2 did not, and it expands under #21552 blocked by #23109 once
+Josh approves this revision.
 
 ## Constraints
 `kind: framing`
@@ -37,11 +43,13 @@ both deliverables expand as leaves directly under #21552.
   - #23043 (1.2) added `gdaemon serve`, the routing table, the WS splice, and the
     typed 503.
   - #23044 (1.4) made ghook treat the typed 503 as unreachable.
-  - #23045 made the runner own the front door:
+  - #23045 (1.3) made the runner own the front door:
     `GobbyRunner` spawns `gdaemon serve` on the public ports, and Python binds
     `127.0.0.1` at public+100.
   - E2E daemons run in front-door mode. `GOBBY_TEST_GDAEMON=checkout` selects the
     worktree's `target/debug/gdaemon`, per `tests/fixtures/gdaemon_binary.py`.
+  - The plan of record's 3.1-on-1.3 ordering (#22951 finding 3) is satisfied: #23045
+    landed before #23108 recorded the first corpus through its front-door fixture.
 - **No backward compatibility.** `schema_version` starts at 1. The API-key leaf
   of the plan of record (4.3) deletes the `X-Gobby-Local-Token` alias, re-records
   the auth cases, and bumps `schema_version` to 2. This slice does not record that
@@ -65,20 +73,20 @@ and Rust both replay; the parity gate for every Stage 2 takeover.
 
 Targets:
 - `tests/contracts/__init__.py`
-- `tests/contracts/http_corpus.py`
-- `tests/contracts/test_http_corpus.py`
-- `tests/contracts/http/manifest.json`
+- `tests/contracts/http_corpus.py::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/test_http_corpus.py::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/manifest.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
 - `tests/contracts/http/README.md`
-- `tests/contracts/http/mask_vector.json`
-- `tests/contracts/http/health_ok.json`
-- `tests/contracts/http/config_schema.json`
-- `tests/contracts/http/config_values.json`
-- `tests/contracts/http/tasks_list.json`
-- `tests/contracts/http/runtime_handshake_challenge.json`
-- `tests/contracts/http/runtime_handshake.json`
-- `tests/contracts/http/auth_missing_auth.json`
-- `tests/contracts/http/auth_missing_grant.json`
-- `tests/contracts/http/auth_forged_identity.json`
+- `tests/contracts/http/mask_vector.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/health_ok.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/config_schema.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/config_values.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/tasks_list.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/runtime_handshake_challenge.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/runtime_handshake.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/auth_missing_auth.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/auth_missing_grant.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
+- `tests/contracts/http/auth_forged_identity.json::*` — scope-reason: created by this leaf (landed in #23108 at `dbdb68518f`)
 
 **Granularity:** one deliverable. Past the three Python modules, every Target
 is a fixture or document the recorder writes. The loader, masking, recorder,
@@ -311,9 +319,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 `kind: deliverable`
 
 Targets:
-- `crates/gdaemon/tests/http_contracts.rs`
-- `tests/contracts/http/front_door_backend_down.json`
-- `tests/contracts/http/manifest.json`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: created by this leaf (landed in #23109 at `1be86e9e85`, package 3 `b1dc981f1f`)
+- `tests/contracts/http/front_door_backend_down.json::*` — scope-reason: created by this leaf (landed in #23109 at `1be86e9e85`, package 3 `b1dc981f1f`)
+- `tests/contracts/http/manifest.json::*` — scope-reason: registers the `front_door` family and its `front_door_backend_down` case
 
 **Research context:**
 
@@ -411,6 +419,92 @@ the 3.1 pytest command to confirm the Python replay still skips the new
 - 3.2.5 - Every family in `FAMILIES` has at least one manifest case with `native` parity, and no other family except `front_door` has `native` parity. test: `crates/gdaemon/tests/http_contracts.rs::every_native_family_has_corpus_cases`.
 - 3.2.6 - On synthetic manifests, the precheck names a registered family with no case, a registered family with `proxy` parity, and an unregistered family with `native` parity. test: `crates/gdaemon/tests/http_contracts.rs::precheck_rejects_missing_or_mismatched_parity`.
 
+### 3.3 Per-case backend state and the native health down case [category: test] (depends: 3.2)
+`kind: deliverable`
+
+Targets:
+- `tests/contracts/http_corpus.py::*` — scope-reason: `_CASE_KEY_ORDER` gains `backend`, the loader validates it, and `load_cases` returns only `up` cases to Python replay and recording
+- `tests/contracts/test_http_corpus.py::*` — scope-reason: the loader test gains the backend cases and replay parametrizes over `up` cases only
+- `tests/contracts/http/README.md`
+- `tests/contracts/http/manifest.json::*` — scope-reason: registers the `health_backend_down` case
+- `tests/contracts/http/health_ok.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/config_schema.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/config_values.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/tasks_list.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/runtime_handshake_challenge.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/runtime_handshake.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/auth_missing_auth.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/auth_missing_grant.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/auth_forged_identity.json::*` — scope-reason: gains `"backend": "up"` after `family`
+- `tests/contracts/http/front_door_backend_down.json::*` — scope-reason: gains `"backend": "down"` after `family`
+- `tests/contracts/http/health_backend_down.json`
+- `crates/gdaemon/tests/http_contracts.rs::*` — scope-reason: the harness dispatches each case on its declared `backend` and gains the 3.3 replay tests
+
+**Granularity:** one deliverable. The case field, the Python loader rule, and the Rust
+state dispatch are one contract; the new health case exercises it in both languages.
+
+**Research context:**
+
+This leaf lands the plan of record's #22951 repairs (Adversary findings 3 and A) that the
+landed 3.1 (#23108) and the frozen 3.2 (#23109) do not carry. It runs after #23109 lands,
+so #23109 lands untouched.
+
+Case field: every case gains a required `"backend": "up" | "down"`, written after `family`
+(`_CASE_KEY_ORDER` in `tests/contracts/http_corpus.py`). The loader rejects a case whose
+`backend` is missing or has any other value, naming the case. The nine `origin: python`
+cases are `up`; `front_door_backend_down` and the new `health_backend_down` are `down`.
+The recorder preserves the field when it rewrites a case.
+
+Python: Python can only produce `up` (the e2e backend is always up). `load_cases`
+returns the `up` cases of `origin: python` families. Recording and replay therefore skip
+every `down` case, which is authored by hand from the gdaemon contract. Replay runs
+against the isolated `daemon_instance`, as in 3.1.
+
+Rust harness (`crates/gdaemon/tests/http_contracts.rs`, as landed by #23109): the harness
+dispatches on the case's `backend` instead of its family's `origin`.
+- `up`: the case-driven stub on `127.0.0.1:0`.
+- `down`: the held, bound, non-listening socket (`refusing_backend`), kept until after
+  the assertion.
+- The routes map keeps `{family: parity}` for registered families. The synthetic
+  `front_door` family keeps the empty map and its proxy fallback.
+
+The isolation stays in process. `serve::serve` builds the front-door state with
+`BackendState::Down`, the route table, and the accept tasks, and starts no lease, backend,
+home, or child process. The Adversary confirmed on 2026-10-01 that this meets finding A's
+isolation intent, so no isolated lease is needed. Front-door 5.2 keeps this entry
+unsupervised (front-door 5.2.20).
+
+Ordering (PD gobby#14972, 2026-10-01): this leaf lands before front-door 4.3 and 5.2,
+which edit the same case and harness files. Front-door 4.3 then advances every case
+this leaf leaves, including both `down` cases, to `schema_version` 2.
+
+Native health down: `native_health` calls `proxy::forward`. On a connect error that
+returns `unavailable(target, state.backend_state)`, and `native_health` then sets
+`x-gobby-served-by: gdaemon`. The new `health_backend_down.json` is therefore:
+- family `health`, backend `down`, credential `none`;
+- request `GET /api/health`;
+- response 503 with `content-type` and `retry-after`, and body
+  `{"status":"unavailable","backend":{"state":"down","target":"@mask@"}}`;
+- mask `/response/body/backend/target`.
+
+It replays under `native` routing, and the harness asserts the served-by header
+separately, as 3.2.2 does for `up`. `manifest.json` lists it after `health_ok`. The
+completeness precheck is unchanged, because `health` already has a case.
+
+`README.md` documents the `backend` field, which state each language replays, and the
+rule that `down` cases are hand-authored.
+
+Verification planned: `cargo test -p gobby-daemon --test http_contracts`, then
+`DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/contracts/test_http_corpus.py -v`.
+
+**Acceptance:**
+
+- 3.3.1 - On a synthetic manifest, the Python loader rejects a case whose `backend` is missing or is neither `up` nor `down`, and returns only `up` cases of `origin: python` families. test: `tests/contracts/test_http_corpus.py::test_loader_rejects_missing_or_invalid_backend`.
+- 3.3.2 - Every committed case declares `backend`, and every Python-replayed case replays equal in its declared `up` state through the front-door e2e fixture. test: `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+- 3.3.3 - The Rust harness replays every case in its declared backend state: `up` against the case stub and `down` against the held non-listening address. test: `crates/gdaemon/tests/http_contracts.rs::cases_replay_in_declared_backend_state`.
+- 3.3.4 - The `health` family replays equal under `native` routing in both its `up` and `down` cases, each carrying `x-gobby-served-by: gdaemon`. The `down` case is the typed 503. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal_up_and_down`.
+- 3.3.5 - The README documents the `backend` field and which states each language replays. file: `tests/contracts/http/README.md`.
+
 ## V1: Plan Changelog
 `kind: framing`
 
@@ -448,6 +542,50 @@ the 3.1 pytest command to confirm the Python replay still skips the new
 - 2026-09-29: Consensus with the Adversary (gobby#14579) at 9c519b3. HC-01 to
   HC-04 and the normalization residual are resolved, with no open design
   objection. The Adversary derives and applies M1 from these bytes.
+- 2026-10-01: #23192 reconciles this slice with the plan of record's #22951 repairs
+  under PD rulings (gobby#14972).
+  - The 3.1-on-1.3 ordering is recorded as satisfied.
+  - New leaf 3.3 (option (b)) owns per-case `backend: up | down`, the loader rejection,
+    the declared-state replay, and the native health `up` and `down` cases. It lands after
+    #23109, so #23108 and #23109 stay unchanged.
+  - The Adversary (gobby#14579) confirmed that 3.2.3's in-process held-socket design
+    meets finding A's isolation intent, so the isolated-lease design is not ported.
+- 2026-10-01: Renewed consensus required. The M1 from `4790490` is withdrawn per memory
+  `f5577ae0`. Its bytes stay in Git history, and the Adversary derives a fresh M1 covering
+  3.1, 3.2, and the new 3.3.
+- 2026-10-01: Retarget against `0.5.0` `8fd2bfd3f2` under #23192 (PD gobby#14972). 3.1
+  landed (#23108 at `dbdb68518f`), so its created files take `::*` with a landed-in
+  reason, and 3.2 and 3.3 name their edits on those now-indexed files with `::*` and a
+  reason. `crates/gdaemon/tests/http_contracts.rs` stays a bare path in 3.3 until #23109
+  lands it.
+- 2026-10-01: PD (gobby#14972) ordering ruling on the Adversary's (gobby#14579) review of
+  `a30789f`: 3.3 lands before front-door 4.3 and 5.2, and front-door 4.3's version-2 bump
+  covers 3.3's cases. #23109 stays frozen.
+- 2026-10-01: Renewed consensus. The Adversary (gobby#14579) rechecked `b9015c8` and
+  reports no blocking disagreement or proportionality objection. The 4.3 corpus finding
+  is resolved, and the Ask drops, the unsupervised in-process harness, and the 3.3
+  backend-state contract are accepted. The Adversary derives the fresh M1 from these
+  bytes. #23109 stays frozen.
+- 2026-10-01: Index drift repair under #23192 (PD gobby#14972). #23109 landed
+  `crates/gdaemon/tests/http_contracts.rs` and
+  `tests/contracts/http/front_door_backend_down.json` in package 3 (`b1dc981f1f`), so
+  both are indexed and base validation rejected their bare-path Targets. 3.2 names them
+  `::*` with a landed-in reason, and 3.3 names its edits on them `::*` with a reason.
+  Targets only; acceptance items and criteria are unchanged, so #23248 keeps its
+  criteria.
+- 2026-10-01: Renewed consensus required. The index drift repair leaves the M1 source
+  hash stale, so M1 is withdrawn (memory `f5577ae0`). Its bytes stay in Git history.
+  The Adversary checks the repair and derives a fresh M1.
+- 2026-10-01: Renewed consensus. The Adversary (gobby#14579) independently checked
+  `5032400525` against the landed Rust replay harness, indexed corpus case, bootstrap
+  consumers, and agent-route fixture. The index drift and P4-10 carryover are resolved.
+  Front-door 4.2 names the approved API keys/nodes slice's 4.2 (`7f49b4dc61`) as its
+  execution authority and is not expanded independently. No blocking finding remains.
+  All 99 acceptance items are unchanged: 81 across thirteen front-door leaves and 18
+  across three corpus leaves. Corpus 3.3's criteria and labels remain byte-identical to
+  #23248 (per-case backend state), and the canonical M1 routing and dependency decisions
+  from `4cc206f4d9` are preserved. The superseded M1s remain in Git history. The
+  Adversary derives and applies fresh M1 to both committed narratives.
 
 ## V2: Verification
 `kind: verification`
@@ -540,5 +678,37 @@ is active. Do not run the full pytest suite.
   - covers:gdaemon-http-contract-corpus:3.2:3.2.6
   tdd: false
   source_section: '3.2'
+  assigned_agent: backend-developer
+- title: Per-case backend state and the native health down case
+  category: test
+  task_type: feature
+  depends_on:
+  - '3.2'
+  validation_criteria: '3.3.1: On a synthetic manifest, the Python loader rejects
+    a case whose `backend` is missing or is neither `up` nor `down`, and returns only
+    `up` cases of `origin: python` families. test: `tests/contracts/test_http_corpus.py::test_loader_rejects_missing_or_invalid_backend`.
+
+    3.3.2: Every committed case declares `backend`, and every Python-replayed case
+    replays equal in its declared `up` state through the front-door e2e fixture. test:
+    `tests/contracts/test_http_corpus.py::test_case_replays_equal`.
+
+    3.3.3: The Rust harness replays every case in its declared backend state: `up`
+    against the case stub and `down` against the held non-listening address. test:
+    `crates/gdaemon/tests/http_contracts.rs::cases_replay_in_declared_backend_state`.
+
+    3.3.4: The `health` family replays equal under `native` routing in both its `up`
+    and `down` cases, each carrying `x-gobby-served-by: gdaemon`. The `down` case
+    is the typed 503. test: `crates/gdaemon/tests/http_contracts.rs::native_health_replays_equal_up_and_down`.
+
+    3.3.5: The README documents the `backend` field and which states each language
+    replays. file: `tests/contracts/http/README.md`.'
+  labels:
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.1
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.2
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.3
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.4
+  - covers:gdaemon-http-contract-corpus:3.3:3.3.5
+  tdd: false
+  source_section: '3.3'
   assigned_agent: backend-developer
 ```

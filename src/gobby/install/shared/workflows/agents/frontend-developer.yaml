@@ -14,24 +14,6 @@ isolation: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  baseline:
-    - component authoring
-    - routing and client state
-    - bundling with vite or webpack
-    - frontend testing with playwright and storybook
-    - accessibility, lighthouse, eslint, and responsive UI conventions
-  tool_allowlist:
-    - npm
-    - pnpm
-    - yarn
-    - playwright
-    - vite
-    - webpack
-    - storybook
-    - lighthouse
-    - eslint
-
 prompts:
   persona: |
     Provide interactive frontend engineering guidance for Gobby's React application. Ground recommendations in the design contract, accessibility requirements, established components, and focused UI verification.

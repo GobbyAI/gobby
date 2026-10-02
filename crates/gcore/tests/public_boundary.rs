@@ -21,7 +21,7 @@ fn cargo_features_define_public_boundary() {
 
     for expected in [
         "default = []",
-        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2", "dep:time"]"#,
+        r#"postgres = ["dep:postgres", "dep:postgres-openssl", "dep:base64", "dep:scrypt", "dep:sha2"]"#,
         r#"falkor = ["dep:redis"]"#,
         r#"qdrant = ["dep:reqwest", "dep:urlencoding"]"#,
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
@@ -45,7 +45,6 @@ fn cargo_features_define_public_boundary() {
         r#"ureq = { version = "2", features = ["json"] }"#,
         r#"ignore = { version = "0.4", optional = true }"#,
         r#"sha2 = { version = "0.11", optional = true }"#,
-        r#"time = { version = "0.3", features = ["parsing"], optional = true }"#,
         r#"urlencoding = { version = "2", optional = true }"#,
     ] {
         assert!(

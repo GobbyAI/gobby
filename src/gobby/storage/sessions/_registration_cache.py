@@ -168,7 +168,7 @@ def _validated_session_mapping(
     source: str,
     project_id: str | None,
     session_type: str,
-) -> str | None:
+) -> Session | None:
     session_id = _get_session_mapping(
         state,
         external_id=external_id,
@@ -179,17 +179,34 @@ def _validated_session_mapping(
     if session_id is None:
         return None
     session = state.get(session_id)
-    if (
-        session is not None
-        and session.external_id == external_id
+    if session is not None and session_matches_registration(
+        session,
+        external_id=external_id,
+        source=source,
+        project_id=project_id,
+        session_type=session_type,
+    ):
+        return session
+    invalidate_session_caches(state, session_id)
+    return None
+
+
+def session_matches_registration(
+    session: Session,
+    *,
+    external_id: str,
+    source: str,
+    project_id: str | None,
+    session_type: str = "terminal",
+) -> bool:
+    """Whether a loaded row still backs the cached registration identity."""
+    return (
+        session.external_id == external_id
         and session.source == source
         and (project_id is None or session.project_id == project_id)
         and session.session_type == session_type
         and session.status not in {"expired", "deleted"}
-    ):
-        return session_id
-    invalidate_session_caches(state, session_id)
-    return None
+    )
 
 
 class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
@@ -248,15 +265,15 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
             session_id (database PK) or None if not found
         """
         try:
-            cached_session_id = _validated_session_mapping(
+            cached_session = _validated_session_mapping(
                 self,
                 external_id=external_id,
                 source=source,
                 project_id=project_id,
                 session_type=session_type,
             )
-            if cached_session_id is not None:
-                return cached_session_id
+            if cached_session is not None:
+                return cached_session.id
 
             session = self.find_by_external_id(external_id, project_id, source, session_type)
             if session and session.status not in {"expired", "deleted"}:
@@ -304,6 +321,27 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         Returns:
             session_id or None if not cached
         """
+        session = _validated_session_mapping(
+            self,
+            external_id=external_id,
+            source=source,
+            project_id=project_id,
+            session_type=session_type,
+        )
+        return session.id if session is not None else None
+
+    def get_cached_session(
+        self: _ManagerState,
+        external_id: str,
+        source: str,
+        project_id: str | None = None,
+        session_type: str = "terminal",
+    ) -> Session | None:
+        """Return the row that validated the cached registration mapping, if any.
+
+        Callers that need more than the id keep this row instead of reading it
+        again: each read is a pooled hub round trip (#23063).
+        """
         return _validated_session_mapping(
             self,
             external_id=external_id,
@@ -342,17 +380,20 @@ class _RegistrationCacheMixin(_RegistrationRecoveryMixin):
         self: _ManagerState,
         session_id: str,
         terminal_context: dict[str, Any] | None,
+        current: Session | None = None,
     ) -> tuple[Session | None, bool]:
         """Merge newly discovered terminal context into an existing session.
+
+        ``current`` is this session's row when the caller already loaded it;
+        the merge compares against it instead of reading the row again.
 
         Returns the updated session plus a flag indicating whether a tmux pane
         became available as part of the merge.
         """
+        if current is None or current.id != session_id:
+            current = self.get(session_id)
         if not terminal_context:
-            session = self.get(session_id)
-            return session, False
-
-        current = self.get(session_id)
+            return current, False
         if current is None:
             return None, False
 

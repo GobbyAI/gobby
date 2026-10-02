@@ -6,6 +6,7 @@ selective syncing, and force mode.
 
 import logging
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -318,28 +319,43 @@ def _reinstall_bundled_definitions(
 
 
 def _delete_installed_definitions(db: HubDatabase, kinds: set[str]) -> int:
-    """Hard-delete bundled installed rows for the requested domain kinds."""
+    """Hard-delete the bundled rows each domain's sync owns for the requested kinds.
+
+    MCP, HTTP, and imported definitions share ``source='installed'``, so only the
+    domain's own sync-managed predicate decides what reinstall may delete.
+    """
+    from gobby.agents.sync import _is_sync_managed_bundled_agent
     from gobby.storage.definitions.agents import AgentDefinitionManager
     from gobby.storage.definitions.pipelines import PipelineDefinitionManager
     from gobby.storage.definitions.rules import RuleDefinitionManager
     from gobby.storage.definitions.variables import SessionVariableDefaultManager
+    from gobby.workflows.sync_pipelines import _is_sync_managed_bundled_pipeline
+    from gobby.workflows.sync_rules import _is_sync_managed_rule
+    from gobby.workflows.sync_variables import _is_sync_managed_variable
 
     deleted = 0
     if "rules" in kinds:
-        deleted += _hard_delete_installed(RuleDefinitionManager(db))
+        deleted += _hard_delete_owned(
+            RuleDefinitionManager(db), lambda row: _is_sync_managed_rule(row, "gobby", None)
+        )
     if "agents" in kinds:
-        deleted += _hard_delete_installed(AgentDefinitionManager(db))
+        deleted += _hard_delete_owned(AgentDefinitionManager(db), _is_sync_managed_bundled_agent)
     if "pipelines" in kinds:
-        deleted += _hard_delete_installed(PipelineDefinitionManager(db))
+        deleted += _hard_delete_owned(
+            PipelineDefinitionManager(db), _is_sync_managed_bundled_pipeline
+        )
     if "variables" in kinds:
-        deleted += _hard_delete_installed(SessionVariableDefaultManager(db))
+        deleted += _hard_delete_owned(
+            SessionVariableDefaultManager(db),
+            lambda row: _is_sync_managed_variable(row, "gobby"),
+        )
     return deleted
 
 
-def _hard_delete_installed(manager: _InstalledDefinitionManager) -> int:
+def _hard_delete_owned(manager: _InstalledDefinitionManager, owned: Callable[[Any], bool]) -> int:
     deleted = 0
     for row in manager.list_all():
-        if row.source != "installed":
+        if not owned(row):
             continue
         if manager.hard_delete(str(row.id)):
             deleted += 1

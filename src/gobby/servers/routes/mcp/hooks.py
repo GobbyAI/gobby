@@ -34,7 +34,6 @@ from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
     clear_stale_envelope_processing_marker,
-    envelope_processing_owner_token,
     envelope_terminal_response,
     finalize_envelope_processed,
     mark_envelope_processed,
@@ -399,9 +398,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     source=source,
                 )
 
-            if envelope_id and not await timed_hop(
-                "envelope_claim", claim_envelope_processing, envelope_id
-            ):
+            if envelope_id:
+                owner_token = await timed_hop(
+                    "envelope_claim", claim_envelope_processing, envelope_id
+                )
+            if envelope_id and not owner_token:
                 stored_response = await timed_hop(
                     "envelope_claim", envelope_terminal_response, envelope_id
                 )
@@ -409,8 +410,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
                 marker = await timed_hop("envelope_claim", read_envelope_marker, envelope_id)
-                if marker is None and await timed_hop(
-                    "envelope_claim", claim_envelope_processing, envelope_id
+                if marker is None and (
+                    owner_token := await timed_hop(
+                        "envelope_claim", claim_envelope_processing, envelope_id
+                    )
                 ):
                     logger.info("Reclaimed expired hook envelope marker %s", envelope_id)
                 elif not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
@@ -422,7 +425,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
                 elif await timed_hop(
                     "envelope_claim", clear_stale_envelope_processing_marker, envelope_id
-                ) and await timed_hop("envelope_claim", claim_envelope_processing, envelope_id):
+                ) and (
+                    owner_token := await timed_hop(
+                        "envelope_claim", claim_envelope_processing, envelope_id
+                    )
+                ):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
                     status = marker["status"]
@@ -440,12 +447,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         },
                     )
 
-            if envelope_id:
-                owner_token = await timed_hop(
-                    "envelope_claim", envelope_processing_owner_token, envelope_id
-                )
-                if owner_token:
-                    lease_renewal = start_envelope_lease_renewal(envelope_id, owner_token)
+            if envelope_id and owner_token:
+                lease_renewal = start_envelope_lease_renewal(envelope_id, owner_token)
 
             # Select adapter based on source
             from gobby.adapters.agy import AgyAdapter
@@ -500,7 +503,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 inc_counter("hooks_failed_total")
                 released = bool(
                     envelope_id
-                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                    and owner_token
+                    and await asyncio.to_thread(
+                        release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                    )
                 )
                 logger.warning(
                     "Retrying hook after startup-claim preflight timeout",
@@ -574,7 +580,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 released = bool(
                     envelope_id
-                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                    and owner_token
+                    and await asyncio.to_thread(
+                        release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                    )
                 )
                 logger.warning(
                     "Retrying managed hook until durable run identity is available",
@@ -604,7 +613,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     await asyncio.to_thread(rollback_agy_startup_claim, hook_manager, claim_lease)
                 released = bool(
                     envelope_id
-                    and await asyncio.to_thread(release_envelope_processing_claim, envelope_id)
+                    and owner_token
+                    and await asyncio.to_thread(
+                        release_envelope_processing_claim, envelope_id, owner_token=owner_token
+                    )
                 )
                 logger.warning(
                     "Retrying hook after daemon-not-ready gate",
@@ -699,8 +711,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     if not live_worker:
                         released = bool(
                             envelope_id
+                            and owner_token
                             and await asyncio.to_thread(
-                                release_envelope_processing_claim, envelope_id
+                                release_envelope_processing_claim,
+                                envelope_id,
+                                owner_token=owner_token,
                             )
                         )
                     logger.warning(

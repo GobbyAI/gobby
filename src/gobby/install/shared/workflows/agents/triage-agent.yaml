@@ -8,13 +8,11 @@ model: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  methodology:
-    - triage-judgment
-
 prompts:
   agent: |
     You are a stateless GitHub issue triage judge. Return structured JSON only.
+    Before judging, load the `triage-judgment` methodology with
+    get_skill(name="triage-judgment") on gobby-skills.
 
     Lifecycle model:
     - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.

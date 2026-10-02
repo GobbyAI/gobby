@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -24,6 +24,7 @@ import psutil
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
+from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.storage.session_models import Session
 from gobby.tasks import transcript_evidence_pool, transcript_outcomes
 from gobby.tasks.acceptance_artifacts import AcceptanceTest
@@ -1903,15 +1904,207 @@ async def test_codex_native_recall_keeps_the_failed_execution_outcome(tmp_path: 
     assert red.output_recovered_at == receipt.completed_at
 
 
+_RED4_COMMAND = (
+    "DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test "
+    "GOBBY_TEST_PROTECT=1 uv run --directory "
+    "/Users/josh/.gobby/worktrees/gobby/fix-23194-srt-shared-cargo-home pytest "
+    "tests/agents/test_sandbox_policy.py::test_run_paths_refuse_a_sandbox_cache_entry_linked_outside "
+    "tests/agents/test_sandbox_policy.py::test_run_paths_refuse_a_sandbox_cache_root_linked_outside "
+    "tests/agents/test_srt_runtime.py::test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render "
+    "tests/agents/test_cargo_target.py::test_cleanup_keeps_what_a_linked_sandbox_target_points_to "
+    "-q -p no:randomly --tb=line"
+)
+_RED4_WT = "/Users/josh/.gobby/worktrees/gobby/fix-23194-srt-shared-cargo-home"
+_RED4_TMP = "/private/var/folders/5w/9cmg71vd2m108t5r_fb77l0h0000gn/T/pytest-of-josh/pytest-3268"
+_RED4_PATHLIB = (
+    "/Users/josh/.local/share/uv/python/cpython-3.14.3-macos-aarch64-none/lib/python3.14/"
+    "pathlib/__init__.py:1011"
+)
+_RED4_HOME_EXISTS = (
+    "FileExistsError: [Errno 17] File exists: "
+    f"'{_RED4_TMP}/test_run_paths_refuse_a_sandbo1/gobby-home/cache/sandbox/cargo-home'"
+)
+_RED4_TARGET_EXISTS = (
+    "FileExistsError: [Errno 17] File exists: "
+    f"'{_RED4_TMP}/test_run_paths_refuse_a_sandbo3/gobby-home/cache/sandbox/cargo-target/"
+    "workspace-44a3a53692b7b56a'"
+)
+_RED4_DID_NOT_RAISE = "Failed: DID NOT RAISE <class 'PermissionError'>"
+_RED4_SWAPPED = "Failed: no policy may be rendered for a swapped cache grant"
+_RED4_FAILED = (
+    "FAILED tests/agents/test_sandbox_policy.py::"
+    "test_run_paths_refuse_a_sandbox_cache_entry_linked_outside[cargo_home-existing]",
+    "FAILED tests/agents/test_sandbox_policy.py::"
+    "test_run_paths_refuse_a_sandbox_cache_entry_linked_outside[cargo_home-dangling]",
+    "FAILED tests/agents/test_sandbox_policy.py::"
+    "test_run_paths_refuse_a_sandbox_cache_entry_linked_outside[cargo_target-existing]",
+    "FAILED tests/agents/test_sandbox_policy.py::"
+    "test_run_paths_refuse_a_sandbox_cache_entry_linked_outside[cargo_target-dangling]",
+    "FAILED tests/agents/test_sandbox_policy.py::"
+    "test_run_paths_refuse_a_sandbox_cache_root_linked_outside",
+    "FAILED tests/agents/test_srt_runtime.py::"
+    "test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render[before-grants]",
+    "FAILED tests/agents/test_srt_runtime.py::"
+    "test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render[after-grants]",
+)
+_RED4_TOTAL = "=================== 7 failed, 1 passed in 133.49s (0:02:13) ===================="
+# #23194's red4 as RTK left it in the transcript: no FAILURES or summary headers,
+# both pathlib locations dropped, one path truncated, and blank-line separators.
+_RED4_RTK = "\n\n".join(
+    (
+        "Exit code 1",
+        f"E   {_RED4_DID_NOT_RAISE}",
+        f"{_RED4_WT}/tests/agents/test_sandbox_policy.py:566: {_RED4_DID_NOT_RAISE}",
+        f"E   {_RED4_HOME_EXISTS}",
+        f"E   {_RED4_DID_NOT_RAISE}",
+        f"{_RED4_WT}/tests/agents/test_sandbox_policy.py:566: {_RED4_DID_NOT_RAISE}",
+        f"E   FileExistsError: [Errno 17] File exists: '{_RED4_TMP}/"
+        "test_run_paths_refuse_a_sandbo3/gobby-home/cache/sandbox/cargo-targ...",
+        f"E   {_RED4_DID_NOT_RAISE}",
+        f"{_RED4_WT}/tests/agents/test_sandbox_policy.py:586: {_RED4_DID_NOT_RAISE}",
+        f"E   {_RED4_SWAPPED}",
+        f"{_RED4_WT}/tests/agents/test_srt_runtime.py:990: {_RED4_SWAPPED}",
+        f"E   {_RED4_SWAPPED}",
+        f"{_RED4_WT}/tests/agents/test_srt_runtime.py:990: {_RED4_SWAPPED}",
+        *_RED4_FAILED,
+        _RED4_TOTAL,
+        "[full output: rtk recall 50d2f60a82a5]",
+    )
+)
+# `rtk recall 50d2f60a82a5`: the same run's raw pytest output.
+_RED4_RAW = "\n".join(
+    (
+        "============================= test session starts ==============================",
+        "platform darwin -- Python 3.14.3, pytest-9.0.3, pluggy-1.6.0",
+        f"rootdir: {_RED4_WT}",
+        "configfile: pyproject.toml",
+        "plugins: mock-3.15.1, xdist-3.8.0, timeout-2.4.0, anyio-4.14.2, asyncio-1.3.0, cov-7.0.0",
+        "asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=None, "
+        "asyncio_default_test_loop_scope=function",
+        "collected 8 items",
+        "",
+        "tests/agents/test_sandbox_policy.py FFFFF                                [ 62%]",
+        "tests/agents/test_srt_runtime.py FF                                      [ 87%]",
+        "tests/agents/test_cargo_target.py .                                      [100%]",
+        "",
+        "=================================== FAILURES ===================================",
+        f"E   {_RED4_DID_NOT_RAISE}",
+        f"{_RED4_WT}/tests/agents/test_sandbox_policy.py:566: {_RED4_DID_NOT_RAISE}",
+        f"E   {_RED4_HOME_EXISTS}",
+        f"{_RED4_PATHLIB}: {_RED4_HOME_EXISTS}",
+        f"E   {_RED4_DID_NOT_RAISE}",
+        f"{_RED4_WT}/tests/agents/test_sandbox_policy.py:566: {_RED4_DID_NOT_RAISE}",
+        f"E   {_RED4_TARGET_EXISTS}",
+        f"{_RED4_PATHLIB}: {_RED4_TARGET_EXISTS}",
+        f"E   {_RED4_DID_NOT_RAISE}",
+        f"{_RED4_WT}/tests/agents/test_sandbox_policy.py:586: {_RED4_DID_NOT_RAISE}",
+        f"E   {_RED4_SWAPPED}",
+        f"{_RED4_WT}/tests/agents/test_srt_runtime.py:990: {_RED4_SWAPPED}",
+        f"E   {_RED4_SWAPPED}",
+        f"{_RED4_WT}/tests/agents/test_srt_runtime.py:990: {_RED4_SWAPPED}",
+        "=========================== short test summary info ============================",
+        *_RED4_FAILED,
+        _RED4_TOTAL,
+    )
+)
+
+
+@pytest.mark.parametrize(
+    "test_path,symbol,recalled,expected",
+    [
+        pytest.param(
+            "tests/agents/test_sandbox_policy.py",
+            "test_run_paths_refuse_a_sandbox_cache_entry_linked_outside",
+            False,
+            "no attributable failure section for "
+            "'test_run_paths_refuse_a_sandbox_cache_entry_linked_outside'",
+            id="rtk-form-unpaired",
+        ),
+        pytest.param(
+            "tests/agents/test_sandbox_policy.py",
+            "test_run_paths_refuse_a_sandbox_cache_entry_linked_outside",
+            True,
+            None,
+            id="recalled-did-not-raise",
+        ),
+        pytest.param(
+            "tests/agents/test_sandbox_policy.py",
+            "test_run_paths_refuse_a_sandbox_cache_root_linked_outside",
+            True,
+            None,
+            id="recalled-sole-section",
+        ),
+        pytest.param(
+            "tests/agents/test_srt_runtime.py",
+            "test_prepare_srt_launch_refuses_a_cargo_home_swapped_in_at_render",
+            True,
+            None,
+            id="recalled-pytest-fail",
+        ),
+    ],
+)
+async def test_red4_23194_tb_line_red_is_credited_from_its_recalled_output(
+    tmp_path: Path, test_path: str, symbol: str, recalled: bool, expected: str | None
+) -> None:
+    source_path = "src/gobby/agents/sandbox_policy.py"
+    await _derive_claude_tdd_cycle(
+        tmp_path,
+        red_command=_RED4_COMMAND,
+        red_output=_RED4_RTK,
+        green_command=_RED4_COMMAND,
+        test_path=test_path,
+        source_path=source_path,
+    )
+    transcript = tmp_path / "claude-tdd.jsonl"
+    records = [json.loads(line) for line in transcript.read_text().splitlines()]
+    if recalled:
+        # The recall followed the implementation edit, as #23194's did.
+        records.extend(
+            _claude_tool_pair(
+                command="rtk recall 50d2f60a82a5",
+                call_id="recall",
+                start=BASE_TIME + timedelta(seconds=8),
+                result=_RED4_RAW,
+            )
+        )
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, source_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::{symbol}",
+        path=test_path,
+        symbol=symbol,
+        body=f"def {symbol}():\n    ...\n",
+    )
+
+    result = evaluate_tdd_evidence((test,), evidence)
+
+    red = next(run for run in evidence.validation_runs if run.outcome == "failure")
+    source_edit = next(edit for edit in evidence.edits if edit.path == source_path)
+    assert red.order < source_edit.order
+    if expected is None:
+        assert result.passed is True, result
+        assert result.red_runs == (_RED4_COMMAND,)
+        assert red.output_recovered_from == "rtk recall 50d2f60a82a5"
+    else:
+        assert result.passed is False
+        assert any(expected in finding for finding in result.findings), result.findings
+
+
 async def _derive_claude_tdd_cycle(
     tmp_path: Path,
     *,
     red_command: str,
     red_output: str,
     green_command: str,
+    test_path: str = "tests/hooks/test_session_coordinator.py",
+    source_path: str = "src/gobby/hooks/session_coordinator.py",
 ) -> TranscriptEvidence:
-    test_path = "tests/hooks/test_session_coordinator.py"
-    source_path = "src/gobby/hooks/session_coordinator.py"
     transcript = tmp_path / "claude-tdd.jsonl"
     _write_jsonl(
         transcript,
@@ -4420,3 +4613,38 @@ async def test_large_transcript_derivation_does_not_stall_event_loop(tmp_path: P
     assert heartbeat_gaps
     assert max(heartbeat_gaps) < 0.5
     assert validation_command in [run.command for run in evidence.validation_runs]
+
+
+class _CpuClock:
+    """Stands in for the worker's CPU clock so the reported CPU is exact."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+async def test_pool_reports_worker_cpu_beside_work_wall_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pool reports the worker clock's CPU delta as its own key (#23063)."""
+    cpu_clock = _CpuClock()
+
+    def burn_cpu(seconds: float) -> float:
+        cpu_clock.now += seconds
+        return seconds
+
+    monkeypatch.setattr(transcript_evidence_pool, "process_time", cpu_clock)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(
+            transcript_evidence_pool, "_get_pool", lambda: cast(ProcessPoolExecutor, executor)
+        )
+        timings = HookPhaseTimings()
+        with hook_phase_timing_scope(timings):
+            result = await transcript_evidence_pool.run_in_transcript_evidence_pool(burn_cpu, 0.25)
+
+    assert result == 0.25
+    breakdown = timings.breakdown()
+    assert breakdown["prelude_transcript_pool_cpu"] == 0.25
+    assert breakdown["prelude_transcript_pool_work"] >= 0

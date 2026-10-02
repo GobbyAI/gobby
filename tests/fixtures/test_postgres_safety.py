@@ -341,7 +341,7 @@ def test_isolated_test_schema_recovers_after_maintenance_epoch_terminates_backen
     with isolated_test_schema(isolated_postgres_database_url, "epoch") as schema:
         epoch = open_maintenance_epoch(
             isolated_postgres_database_url,
-            campaign="schema-apply",
+            campaign="purge",
             opened_by="test-isolated-schema-teardown",
             scope_note="terminate the fixture backend",
         )

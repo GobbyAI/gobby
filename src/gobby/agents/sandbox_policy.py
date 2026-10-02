@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from gobby.agents.cargo_target import sandbox_checkout_cargo_target_dir
+from gobby.agents.constants import CARGO_HOME, CARGO_TARGET_DIR, sandbox_agent_cache_dir
 from gobby.agents.credential_inventory import denied_ambient_keys
 from gobby.agents.sandbox_domains import GIT_DOMAINS, PACKAGE_REGISTRY_DOMAINS
 from gobby.agents.sandbox_run_environment import RUN_CACHE_ENV_VARS, SandboxRunPaths
@@ -813,6 +815,22 @@ def prepare_short_run_tmp(root: Path) -> Path:
     return path
 
 
+def sandbox_cache_path(path: Path) -> str:
+    """Return a sandbox cache path in canonical form, refusing one reached through a link.
+
+    Every sandboxed run may write the shared Cargo home and its checkout's
+    target, so one run can leave a link at either for the next run's grant to
+    follow. Only links above the cache root, which no run can write, may resolve.
+    """
+    shared = sandbox_agent_cache_dir()
+    expected = str(Path(canonical_path(shared.parent)) / path.relative_to(shared.parent))
+    if canonical_path(path) != expected:
+        raise PermissionError(
+            f"Sandbox cache path {path} resolves outside the sandbox cache {shared}; remove it"
+        )
+    return expected
+
+
 def prepare_sandbox_run_paths(
     run_id: str,
     env: Mapping[str, str],
@@ -838,10 +856,17 @@ def prepare_sandbox_run_paths(
         hooks=root / "hooks",
         logs=root / "logs",
         cache=root / "cache",
+        shared_cache=sandbox_agent_cache_dir(),
+        cargo_target=sandbox_checkout_cargo_target_dir(workspace),
     )
+    zig_cache = paths.shared_cache / "zig-packages"
+    for path in (paths.cargo_home, paths.cargo_target, zig_cache):
+        sandbox_cache_path(path)
     for path in (paths.assets, *paths.writable):
         path.mkdir(mode=0o700, parents=True, exist_ok=True)
         path.chmod(0o700)
+    for path in (paths.cargo_home, paths.cargo_target):
+        path.mkdir(parents=True, exist_ok=True)
     for cache_path in paths.environment("unknown").values():
         candidate = Path(cache_path)
         if candidate.is_relative_to(paths.cache):
@@ -850,10 +875,8 @@ def prepare_sandbox_run_paths(
         workspace=workspace,
         destination=Path(paths.environment("unknown")["XDG_CACHE_HOME"]) / "pre-commit",
     )
-    zig_system_dir = _prepare_zig_system_dir(
-        workspace=workspace,
-        cache_root=Path(paths.environment("unknown")["ZIG_GLOBAL_CACHE_DIR"]),
-    )
+    # Stable across runs: gterminal's build script reruns whenever the dir changes.
+    zig_system_dir = _prepare_zig_system_dir(workspace=workspace, cache_root=zig_cache)
     return replace(paths, zig_system_dir=zig_system_dir)
 
 
@@ -890,5 +913,11 @@ def previous_run_write_paths(env: Mapping[str, str]) -> set[str]:
 
     The hook inbox remains shared: ghook's durable transport always resolves
     ``$GOBBY_HOME/hooks/inbox`` and must be able to enqueue and unlink there.
+    The spawn env's ``CARGO_HOME`` and ``CARGO_TARGET_DIR`` are the ones
+    unsandboxed builds use, so their grants are superseded by the run's own.
     """
-    return {canonical_path(value) for name in RUN_CACHE_ENV_VARS if (value := env.get(name))}
+    return {
+        canonical_path(value)
+        for name in (*RUN_CACHE_ENV_VARS, CARGO_HOME, CARGO_TARGET_DIR)
+        if (value := env.get(name))
+    }

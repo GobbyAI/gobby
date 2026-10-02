@@ -17,6 +17,7 @@ from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.project_context import HookProjectResolution
 from gobby.hooks.session_activation import (
     _ACTIVE_RULE_NAMES_CACHE,
     _ACTIVE_RULE_NAMES_CACHE_MAX_ENTRIES,
@@ -1472,10 +1473,10 @@ def test_hook_manager_reconciles_before_rules(
     with (
         patch("gobby.hooks.hook_manager.HookManagerFactory.create", return_value=components),
         patch("gobby.hooks.hook_manager.asyncio.get_running_loop", side_effect=RuntimeError),
-        patch("gobby.hooks.hook_manager.record_session_activity"),
+        patch("gobby.hooks.hook_manager_ingress.record_session_activity"),
         patch(
             "gobby.hooks.hook_manager.resolve_hook_project_context",
-            return_value=SimpleNamespace(skipped=False, reason=None, project_id="proj"),
+            return_value=HookProjectResolution("proj"),
         ),
         patch(
             "gobby.hooks.hook_manager.reconcile_session_activation",

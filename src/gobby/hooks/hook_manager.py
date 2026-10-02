@@ -11,9 +11,6 @@ import logging
 import threading
 from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any, cast
-from uuid import UUID
-
-import psycopg
 
 from gobby.hooks import grok_pending_context
 from gobby.hooks.agent_run_ingress import (
@@ -34,20 +31,15 @@ from gobby.hooks.events import (
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
 from gobby.hooks.hook_manager_dispatch import HookManagerDispatchMixin
+from gobby.hooks.hook_manager_ingress import HookManagerIngressMixin
 from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
 from gobby.hooks.session_materialize import activate_deferred_session, has_deferred_help_activation
-from gobby.hooks.session_ref_resolution import (
-    resolve_session_refs_in_tool_input,
-)
 from gobby.hooks.session_summary_wiring import build_session_summary_dispatcher
 from gobby.hooks.session_types import HookSessionManager
-from gobby.sessions.activity import record_session_activity
-from gobby.storage.machines import LocalMachineManager
 from gobby.telemetry.tracing import create_span
-from gobby.utils.session_refs import try_resolve_session_field
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -60,15 +52,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 
-def _hook_text_field(data: dict[str, Any], *keys: str) -> str | None:
-    for key in keys:
-        value = data.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return None
-
-
-class HookManager(HookManagerDispatchMixin):
+class HookManager(HookManagerDispatchMixin, HookManagerIngressMixin):
     """Session-scoped coordinator for hook events."""
 
     def __init__(
@@ -237,51 +221,6 @@ class HookManager(HookManagerDispatchMixin):
         """Get cached daemon status without making an HTTP call."""
         return self._health_monitor.get_cached_status()
 
-    def _record_machine_ingress(self, event: HookEvent) -> None:
-        db = self._database or getattr(self._session_manager, "db", None)
-        if db is None:
-            return
-
-        data = event.data if isinstance(event.data, dict) else {}
-        machine_id = None
-        for candidate in (
-            event.machine_id,
-            _hook_text_field(data, "machine_id", "machineId"),
-        ):
-            try:
-                machine_id = str(UUID(candidate.strip())) if candidate else None
-            except (AttributeError, ValueError):
-                # Hook payloads are untrusted input; a non-UUID identity is
-                # unattributable, never fatal to hook processing.
-                self.logger.debug(
-                    "Ignoring non-UUID machine id from hook ingress",
-                    extra={"machine_id": candidate},
-                )
-                continue
-            if machine_id is not None:
-                break
-        if machine_id is None:
-            return
-        try:
-            machine = LocalMachineManager(db).refresh_seen(
-                machine_id,
-                hostname=_hook_text_field(data, "hostname", "host_name", "host"),
-                os=_hook_text_field(data, "os", "platform", "operating_system"),
-                label=_hook_text_field(data, "machine_label", "machineLabel"),
-                tailscale_name=_hook_text_field(data, "tailscale_name", "tailscaleName"),
-            )
-            if machine is None:
-                self.logger.debug(
-                    "Ignoring unknown machine id from hook ingress",
-                    extra={"machine_id": machine_id},
-                )
-        except psycopg.Error as exc:
-            self.logger.debug(
-                "Failed to refresh machine registry from hook ingress",
-                extra={"error": str(exc), "machine_id": machine_id},
-                exc_info=True,
-            )
-
     def handle(
         self,
         event: HookEvent,
@@ -340,14 +279,20 @@ class HookManager(HookManagerDispatchMixin):
 
     def _handle_internal(self, event: HookEvent) -> HookResponse:
         """Internal handle logic wrapped by span."""
-        daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
+        # A not-ready cached status makes this gate check synchronously and, for
+        # critical hooks, sleep between retries on the adapter thread (#23063).
+        with measure_hook_phase("daemon_ready_gate"):
+            daemon_unavailable = ensure_daemon_ready(event, self._health_monitor, self.logger)
         if daemon_unavailable:
             return daemon_unavailable
 
         response = self._handle_after_daemon_ready(event)
         if isinstance(response, HookResponse):
             return response
-        return asyncio.run(response)
+        # Inclusive elapsed time: loop setup and teardown, the awaited handler
+        # (handler_body), and response completion on a to_thread hop (#23063).
+        with measure_hook_phase("async_handler_run"):
+            return asyncio.run(response)
 
     async def _handle_internal_async(self, event: HookEvent) -> HookResponse:
         """Internal async handle logic wrapped by span."""
@@ -419,6 +364,7 @@ class HookManager(HookManagerDispatchMixin):
                 platform_session_id = self._session_lookup.resolve(
                     event,
                     apply_session_mutations=not gated,
+                    cached_session=project_resolution.session,
                 )
             if event.metadata.get("_native_subagent_binding") and event.event_type in (
                 HookEventType.STOP,
@@ -662,7 +608,7 @@ class HookManager(HookManagerDispatchMixin):
         if isinstance(normalized_tool_name, str):
             observer_response.metadata.setdefault("_normalized_tool_name", normalized_tool_name)
 
-        with create_span("hook.enrich"):
+        with create_span("hook.enrich"), measure_hook_phase("response_enrich"):
             try:
                 self._enricher.enrich(event, observer_response, workflow_context=workflow_context)
             except Exception as e:
@@ -702,74 +648,6 @@ class HookManager(HookManagerDispatchMixin):
     def _get_event_handler(self, event_type: HookEventType) -> Any | None:
         """Get the handler method for a HookEventType."""
         return self._event_handlers.get_handler(event_type)
-
-    def _recheck_pending_transcript(self, event: HookEvent) -> None:
-        """Complete a pending transcript association after canonical session resolve."""
-        if event.event_type == HookEventType.SESSION_END:
-            self._discard_pending_transcript_recheck(event)
-            return
-        if event.event_type not in {
-            HookEventType.BEFORE_TOOL,
-            HookEventType.AFTER_TOOL,
-            HookEventType.AFTER_AGENT,
-            HookEventType.STOP,
-        }:
-            return
-        from gobby.hooks.event_handlers._session_start.transcripts import (
-            recheck_pending_transcript_path,
-            replace_session_message_processor,
-        )
-
-        tracking = recheck_pending_transcript_path(
-            event,
-            session_manager=self._session_manager,
-            budgets=self._pending_transcript_rechecks,
-            local_machine_id=self.get_machine_id(),
-        )
-        if tracking is not None:
-            session_id, transcript_path, source = tracking
-            handler = self._event_handlers
-            processor = handler._resolve_message_processor()
-            if processor is not None:
-                # Registration is idempotent for an unchanged path; it also repairs
-                # pre-created sessions whose initial SessionStart never arrived.
-                replace_session_message_processor(
-                    handler, session_id, processor, transcript_path, source=source
-                )
-
-    def _discard_pending_transcript_recheck(self, event: HookEvent) -> None:
-        """Drop the resolved session's bounded recheck budget.
-
-        A session start opens a fresh recheck window for that platform session
-        (a resumed or revived row must not inherit an exhausted budget), and a
-        session end closes the hook stream that could still complete the
-        association, so the entry would otherwise outlive the session.
-        """
-        platform_session_id = event.metadata.get("_platform_session_id")
-        if isinstance(platform_session_id, str) and platform_session_id:
-            self._pending_transcript_rechecks.pop(platform_session_id, None)
-
-    @staticmethod
-    def _record_session_activity_pulse(event: HookEvent) -> None:
-        """Record a non-statusline activity pulse for the event's platform session."""
-        platform_id = event.metadata.get("_platform_session_id")
-        if isinstance(platform_id, str) and platform_id:
-            record_session_activity(platform_id)
-
-    def _resolve_session_refs_in_tool_input(self, event: HookEvent) -> None:
-        """Resolve #N session references to UUIDs in MCP tool arguments."""
-        resolve_session_refs_in_tool_input(event, self._session_manager)
-
-    def _try_resolve_session_field(
-        self, d: dict[str, Any], field: str, project_id: str | None
-    ) -> bool:
-        """Resolve a #N session reference in d[field] to UUID in place."""
-        return try_resolve_session_field(
-            d,
-            field,
-            session_manager=self._session_manager,
-            project_id=project_id,
-        )
 
     @staticmethod
     def _summarize_mcp_calls(mcp_calls: list[dict[str, Any]]) -> list[str]:
@@ -835,10 +713,6 @@ class HookManager(HookManagerDispatchMixin):
     def _format_discovery_result(dr: dict[str, Any]) -> str:
         """Format a proxy discovery result for context injection."""
         return mcp_dispatcher.format_discovery_result(dr)
-
-    def _dedup_memory_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
-        """Filter already-injected memories and track newly-injected IDs."""
-        return self._create_rule_evaluator().dedup_memory_results(result, session_id)
 
     def _dedup_skill_results(self, result: dict[str, Any], session_id: str) -> dict[str, Any]:
         """Filter already-suggested skills and low-relevance results."""

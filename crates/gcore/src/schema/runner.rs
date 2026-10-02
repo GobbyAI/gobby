@@ -10,7 +10,6 @@ use super::assets::{
     PRIOR_RECEIPT_CHECKSUMS, baseline_filename, is_prior_baseline_receipt, sha256_hex,
 };
 use super::error::SchemaError;
-use super::gate::{SourceIdentity, VerifiedBackupManifest};
 use super::sql_splitter::split_sql_statements;
 use super::verify::{VerificationReport, qualified_name, validate_identifier, verify_schema};
 
@@ -68,14 +67,22 @@ impl<'a> SchemaRunner<'a> {
     }
 
     pub fn apply(&mut self) -> Result<ApplyReport, SchemaError> {
-        self.apply_internal(None)
-    }
-
-    pub fn apply_with_backup(
-        &mut self,
-        backup: &VerifiedBackupManifest,
-    ) -> Result<ApplyReport, SchemaError> {
-        self.apply_internal(Some(backup))
+        verify_embedded_assets(self.migrations)?;
+        ensure_schema(self.client, &self.schema)?;
+        set_search_path(self.client, &self.schema)?;
+        acquire_apply_lock(self.client)?;
+        let result = self.apply_locked();
+        let unlock = release_apply_lock(self.client);
+        match result {
+            Err(error) => {
+                let _ = unlock;
+                Err(error)
+            }
+            Ok(report) => {
+                unlock?;
+                Ok(report)
+            }
+        }
     }
 
     pub fn verify(&mut self) -> Result<VerificationReport, SchemaError> {
@@ -98,33 +105,8 @@ impl<'a> SchemaRunner<'a> {
         Ok(runner)
     }
 
-    fn apply_internal(
-        &mut self,
-        backup: Option<&VerifiedBackupManifest>,
-    ) -> Result<ApplyReport, SchemaError> {
-        verify_embedded_assets(self.migrations)?;
-        ensure_schema(self.client, &self.schema)?;
-        set_search_path(self.client, &self.schema)?;
-        acquire_apply_lock(self.client)?;
-        let result = self.apply_locked(backup);
-        let unlock = release_apply_lock(self.client);
-        match result {
-            Err(error) => {
-                let _ = unlock;
-                Err(error)
-            }
-            Ok(report) => {
-                unlock?;
-                Ok(report)
-            }
-        }
-    }
-
-    fn apply_locked(
-        &mut self,
-        backup: Option<&VerifiedBackupManifest>,
-    ) -> Result<ApplyReport, SchemaError> {
-        let (_database_head, state) = self.validate_lineage(backup)?;
+    fn apply_locked(&mut self) -> Result<ApplyReport, SchemaError> {
+        let (_database_head, state) = self.validate_lineage()?;
         let baseline_applied = if state.is_fresh_lineage() {
             require_pg_search(self.client)?;
             verify_adopted_columns(self.client, &self.schema, state)?;
@@ -133,13 +115,8 @@ impl<'a> SchemaRunner<'a> {
         } else {
             false
         };
-        let migrations_applied = apply_pending_migrations(
-            self.client,
-            &self.schema,
-            self.migrations,
-            state,
-            backup.is_some(),
-        )?;
+        let migrations_applied =
+            apply_pending_migrations(self.client, &self.schema, self.migrations)?;
         Ok(ApplyReport {
             baseline_applied,
             migrations_applied,
@@ -162,10 +139,6 @@ impl BaselineState {
             self,
             Self::Fresh | Self::FreshWithInstallInfra | Self::GcoreCodeIndex
         )
-    }
-
-    fn stamps_destructive_migrations(self) -> bool {
-        self.is_fresh_lineage()
     }
 }
 
@@ -358,19 +331,6 @@ fn read_schema_head(client: &mut Client, schema: &str) -> Result<i32, SchemaErro
             &[],
         )?
         .get(0))
-}
-
-fn read_source_identity(client: &mut Client) -> Result<SourceIdentity, SchemaError> {
-    let row = client.query_one(
-        "SELECT (pg_control_system()).system_identifier::text, current_database(), oid \
-         FROM pg_database WHERE datname = current_database()",
-        &[],
-    )?;
-    Ok(SourceIdentity {
-        pg_system_identifier: row.get(0),
-        database_name: row.get(1),
-        database_oid: row.get(2),
-    })
 }
 
 fn require_pg_search(client: &mut Client) -> Result<(), SchemaError> {
@@ -631,20 +591,12 @@ fn apply_pending_migrations(
     client: &mut Client,
     schema: &str,
     migrations: &[EmbeddedMigration],
-    lineage: BaselineState,
-    destructive_authorized: bool,
 ) -> Result<usize, SchemaError> {
     let table = qualified_name(schema, "schema_migrations")?;
-    let pending =
-        resolve_pending_migrations(client, schema, migrations, lineage, destructive_authorized)?;
-    let stamp_destructive = lineage.stamps_destructive_migrations();
+    let pending = resolve_pending_migrations(client, schema, migrations)?;
     let mut count = 0;
     for migration in pending {
-        let destructive = has_directive(migration.sql, "-- gobby:destructive");
-        let non_transactional = has_directive(migration.sql, "-- gobby:non-transactional");
-        if destructive && stamp_destructive {
-            stamp_receipt_only(client, &table, migration)?;
-        } else if non_transactional {
+        if has_directive(migration.sql, "-- gobby:non-transactional") {
             apply_non_transactional(client, schema, &table, migration)?;
         } else {
             apply_transactional(client, schema, &table, migration)?;
@@ -652,17 +604,6 @@ fn apply_pending_migrations(
         count += 1;
     }
     Ok(count)
-}
-
-fn stamp_receipt_only(
-    client: &mut Client,
-    receipt_table: &str,
-    migration: &EmbeddedMigration,
-) -> Result<(), SchemaError> {
-    let mut transaction = client.transaction()?;
-    insert_receipt(&mut transaction, receipt_table, migration)?;
-    transaction.commit()?;
-    Ok(())
 }
 
 fn apply_transactional(

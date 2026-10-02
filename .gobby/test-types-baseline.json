@@ -2211,16 +2211,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/hooks/event_handlers/test_activate_agent_override.py::::mypy:union-attr",
-      "issue_code": "mypy:union-attr",
-      "line": 77,
-      "message": "Item \"None\" of \"HookSessionManager | None\" has no attribute \"db\"",
-      "occurrences": 7,
-      "path": "tests/hooks/event_handlers/test_activate_agent_override.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/hooks/event_handlers/test_plan.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 24,
@@ -2237,26 +2227,6 @@
       "message": "Item \"None\" of \"PlanRecord | None\" has no attribute \"state\"",
       "occurrences": 1,
       "path": "tests/hooks/event_handlers/test_plan.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/event_handlers/test_session_variable_preservation.py::::mypy:no-any-return",
-      "issue_code": "mypy:no-any-return",
-      "line": 82,
-      "message": "Returning Any from function declared to return \"dict[Any, Any]\"",
-      "occurrences": 1,
-      "path": "tests/hooks/event_handlers/test_session_variable_preservation.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/hooks/event_handlers/test_session_variable_preservation.py::::mypy:type-arg",
-      "issue_code": "mypy:type-arg",
-      "line": 56,
-      "message": "Missing type parameters for generic type \"dict\"",
-      "occurrences": 4,
-      "path": "tests/hooks/event_handlers/test_session_variable_preservation.py",
       "severity": "high",
       "test_name": ""
     },
@@ -9277,16 +9247,6 @@
       "message": "Item \"None\" of \"list[RuleEffect] | None\" has no attribute \"__iter__\" (not iterable)",
       "occurrences": 3,
       "path": "tests/workflows/rules/test_destructive_shell_rules.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/workflows/test_agent_definitions_v2.py::::mypy:index",
-      "issue_code": "mypy:index",
-      "line": 517,
-      "message": "Value of type \"list[RuleEffect] | None\" is not indexable",
-      "occurrences": 1,
-      "path": "tests/workflows/test_agent_definitions_v2.py",
       "severity": "high",
       "test_name": ""
     },
