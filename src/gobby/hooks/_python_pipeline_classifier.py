@@ -9,6 +9,7 @@ unsupported dynamic execution.
 """
 
 import ast
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -215,23 +216,23 @@ def _argument_names(arguments: ast.arguments) -> frozenset[str]:
     )
 
 
-def _rebound_names(tree: ast.AST) -> frozenset[str]:
-    """Every name the script binds other than through ``from ... import``."""
-    names: set[str] = set()
+def _binding_counts(tree: ast.AST) -> Counter[str]:
+    """Count every site where the script binds a name other than through imports."""
+    names: Counter[str] = Counter()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            names.add(node.id)
+            names[node.id] += 1
         elif isinstance(node, ast.FunctionDef):
-            names.add(node.name)
+            names[node.name] += 1
         elif isinstance(node, ast.arg):
-            names.add(node.arg)
+            names[node.arg] += 1
         elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
+            names[node.name] += 1
         elif isinstance(node, ast.MatchAs | ast.MatchStar) and node.name:
-            names.add(node.name)
+            names[node.name] += 1
         elif isinstance(node, ast.MatchMapping) and node.rest:
-            names.add(node.rest)
-    return frozenset(names)
+            names[node.rest] += 1
+    return names
 
 
 def _imported_bindings(tree: ast.AST) -> Mapping[str, str]:
@@ -273,9 +274,16 @@ def _call_name(node: ast.Call, imported_bindings: Mapping[str, str]) -> str | No
 def _path_value_names(
     tree: ast.AST,
     imported_bindings: Mapping[str, str],
+    binding_counts: Counter[str],
 ) -> Mapping[str, str | None]:
-    """Map names bound to ``pathlib.Path(...)`` to their literal path, or None."""
+    """Map names bound to ``pathlib.Path(...)`` to their literal path, or None.
+
+    A name keeps its literal only when every binding of it is that same literal
+    assignment; any other binding (loop, ``with``, augmented, argument, unpacking)
+    leaves its value unknown.
+    """
     names: dict[str, str | None] = {}
+    literal_sites: Counter[str] = Counter()
     for node in ast.walk(tree):
         target: ast.expr | None = None
         value: ast.expr | None = None
@@ -292,6 +300,10 @@ def _path_value_names(
         ):
             literal = _literal_path_call(value)
             names[target.id] = literal if names.get(target.id, literal) == literal else None
+            literal_sites[target.id] += 1
+    for name in names:
+        if literal_sites[name] != binding_counts[name]:
+            names[name] = None
     return names
 
 
@@ -731,9 +743,10 @@ def _classify_python_source_with_targets(
         tree = parse_agent_source(script)
     except SyntaxError:
         return _PythonExecutionClassification.INDETERMINATE, ()
-    rebound_names = _rebound_names(tree)
+    binding_counts = _binding_counts(tree)
+    rebound_names = frozenset(binding_counts)
     imported_bindings = _imported_bindings(tree)
-    path_value_names = _path_value_names(tree, imported_bindings)
+    path_value_names = _path_value_names(tree, imported_bindings, binding_counts)
     mutation = _proven_python_mutation(
         tree,
         rebound_names,

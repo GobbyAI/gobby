@@ -469,6 +469,54 @@ def test_python_source_mutation_without_literal_scope_has_no_targets(script: str
     assert targets == ()
 
 
+@pytest.mark.parametrize(
+    "script",
+    [
+        pytest.param(
+            "p = Path('/tmp/safe')\nfor p in [Path('src/a.py')]:\n    p.write_text('x')",
+            id="for-target",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\n[p.write_text('x') for p in [Path('src/a.py')]]",
+            id="comprehension-target",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nwith nullcontext(Path('src/a.py')) as p:\n"
+            "    p.write_text('x')",
+            id="with-as-target",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\np /= '/repo/src/a.py'\np.write_text('x')",
+            id="augmented-assignment",
+        ),
+        pytest.param(
+            "def touch(p):\n    p.write_text('x')\np = Path('/tmp/safe')\ntouch(Path('src/a.py'))",
+            id="argument",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\np, other = Path('src/a.py'), 1\np.write_text('x')",
+            id="tuple-unpack",
+        ),
+    ],
+)
+def test_path_name_rebound_by_another_binding_has_no_targets(script: str) -> None:
+    source = f"from contextlib import nullcontext\nfrom pathlib import Path\n{script}\n"
+
+    classification, targets = _classify_python_source_with_targets(source)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+def test_path_name_with_repeated_identical_literal_keeps_its_target() -> None:
+    source = "from pathlib import Path\np = Path('/tmp/a')\np = Path('/tmp/a')\np.write_text('x')\n"
+
+    assert _classify_python_source_with_targets(source) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/a",),
+    )
+
+
 def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
     assert _classify_python_source_with_targets("print(open('a.md').read())") == (
         _PythonExecutionClassification.READ_ONLY,
