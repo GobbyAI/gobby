@@ -80,8 +80,8 @@ def runtime_hub_database(
     db = PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
     try:
         if apply_migrations:
-            gobby_home = Path(config_file).expanduser().parent if config_file else get_gobby_home()
-            with hub_migration_claim(gobby_home) as owns_hub:
+            # The daemon singleton lives in GOBBY_HOME whatever bootstrap path was given.
+            with hub_migration_claim(get_gobby_home()) as owns_hub:
                 if owns_hub:
                     db.apply_migrations()
                     from gobby.storage.projects import ensure_personal_project

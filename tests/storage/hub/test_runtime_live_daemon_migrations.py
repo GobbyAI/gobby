@@ -142,11 +142,29 @@ def _open_init_local_storage() -> object:
 _OPENERS: list[Callable[[], object]] = [_open_default_runtime, _open_init_local_storage]
 
 
-@pytest.mark.parametrize("explicit_bootstrap", [False, True])
+_BOOTSTRAP_LOCATIONS = ["default", "in_home", "outside_home"]
+
+
+def _config_file(
+    location: str, gobby_home: Path, tmp_path_factory: pytest.TempPathFactory
+) -> str | None:
+    """Bootstrap path as `gobby --config` passes it; GOBBY_HOME stays the daemon home."""
+    if location == "default":
+        return None
+    if location == "in_home":
+        return str(gobby_home / "bootstrap.yaml")
+    return str(tmp_path_factory.mktemp("elsewhere") / "bootstrap.yaml")
+
+
+@pytest.mark.parametrize("bootstrap_location", _BOOTSTRAP_LOCATIONS)
 def test_runtime_opener_skips_migrations_under_live_daemon(
-    gobby_home: Path, foreign_daemon: None, gdaemon_apply: Mock, explicit_bootstrap: bool
+    gobby_home: Path,
+    foreign_daemon: None,
+    gdaemon_apply: Mock,
+    bootstrap_location: str,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    config_file = str(gobby_home / "bootstrap.yaml") if explicit_bootstrap else None
+    config_file = _config_file(bootstrap_location, gobby_home, tmp_path_factory)
 
     opened = _open_runtime(config_file)
 
@@ -165,11 +183,14 @@ def test_init_local_storage_skips_migrations_under_live_daemon(
     gdaemon_apply.assert_not_called()
 
 
-@pytest.mark.parametrize("explicit_bootstrap", [False, True])
+@pytest.mark.parametrize("bootstrap_location", _BOOTSTRAP_LOCATIONS)
 def test_runtime_opener_migrates_without_daemon(
-    gobby_home: Path, gdaemon_apply: Mock, explicit_bootstrap: bool
+    gobby_home: Path,
+    gdaemon_apply: Mock,
+    bootstrap_location: str,
+    tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    config_file = str(gobby_home / "bootstrap.yaml") if explicit_bootstrap else None
+    config_file = _config_file(bootstrap_location, gobby_home, tmp_path_factory)
 
     _open_runtime(config_file)
 
