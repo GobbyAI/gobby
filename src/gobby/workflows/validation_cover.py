@@ -6,6 +6,7 @@ import os.path
 import re
 import shlex
 from collections.abc import Sequence
+from functools import lru_cache
 from pathlib import Path
 
 from gobby.tasks.command_equivalence import target_covers
@@ -90,6 +91,9 @@ def run_targets(run: TranscriptValidationRun) -> tuple[str, ...]:
     )
 
 
+# A long session's cover check compares every failure with every green; parse each
+# command once rather than once per pair.
+@lru_cache(maxsize=4096)
 def _command_targets(command: str) -> tuple[str, ...]:
     try:
         tokens = _drop_python_launcher(shlex.split(command))
@@ -167,6 +171,7 @@ def green_covers_failure(
     )
 
 
+@lru_cache(maxsize=4096)
 def _source_tree(command: str, base: str | None) -> tuple[str | None, str | None]:
     """Return the ``(directory, pythonpath)`` a validation command runs against.
 

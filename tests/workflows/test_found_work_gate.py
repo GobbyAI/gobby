@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import shlex
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -972,6 +974,75 @@ class TestCrossTreeCover:
         assert facts.terminal_validation_failures == (_BASE_RED,)
 
 
+class TestStopCoverCost:
+    """A long session's Stop must not pay per failure-green pair, or block the event loop."""
+
+    def test_cover_check_parses_each_command_a_bounded_number_of_times(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Unique paths keep commands parsed by earlier tests out of this count.
+        tag = id(self)
+        failures = [
+            _run(index, "failure", f"uv run pytest tests/cost/test_red_{index}_{tag}.py")
+            for index in range(40)
+        ]
+        greens = [
+            _run(100 + index, "success", f"uv run pytest tests/cost/test_green_{index}_{tag}.py")
+            for index in range(40)
+        ]
+        parses = 0
+        split = shlex.split
+
+        def counting_split(command: str) -> list[str]:
+            nonlocal parses
+            parses += 1
+            return split(command)
+
+        monkeypatch.setattr(shlex, "split", counting_split)
+
+        unresolved = unresolved_validation_failures(
+            [*failures, *greens], owner_handoff=False, project_path="/repo"
+        )
+
+        assert unresolved == tuple(failures)
+        # Two parsers per distinct command, not two per failure-green pair (3,200).
+        assert parses <= 2 * (len(failures) + len(greens))
+
+    @pytest.mark.asyncio
+    async def test_cover_check_runs_off_the_event_loop(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        derive = AsyncMock(return_value=TranscriptEvidence(validation_runs=(_run(1, "failure"),)))
+        monkeypatch.setattr("gobby.workflows.found_work_gate.derive_transcript_evidence", derive)
+        threads: list[int] = []
+
+        def recording_unresolved(*args: Any, **kwargs: Any) -> tuple[TranscriptValidationRun, ...]:
+            threads.append(threading.get_ident())
+            return unresolved_validation_failures(*args, **kwargs)
+
+        monkeypatch.setattr(
+            "gobby.workflows.found_work_gate.unresolved_validation_failures", recording_unresolved
+        )
+        session = SimpleNamespace(created_at=datetime.now(UTC))
+        analyzer = FoundWorkStopAnalyzer(
+            llm_service_resolver=lambda: None,
+            config_resolver=_Config,
+            session_manager=SimpleNamespace(get=lambda _session_id: session),
+            session_task_manager=None,
+        )
+
+        facts = await analyzer.analyze(
+            event=_event(HookEventType.STOP),
+            session_id=SESSION_ID,
+            variables={},
+            project_path=str(tmp_path),
+        )
+
+        assert facts.terminal_validation_failures == ("pytest tests/unit/test_widget.py",)
+        assert threads
+        assert threading.get_ident() not in threads
+
+
 def _claimed_task_link() -> dict[str, Any]:
     """Mirror a ``get_session_tasks`` link for a task this session holds open."""
     task = SimpleNamespace(
@@ -1161,7 +1232,9 @@ async def test_two_sessions_owner_filed_disposition_survives_later_turn(
         source="codex",
         project_id=sample_project["id"],
     )
-    failed_at = datetime.now(UTC)
+    # The task's created_at comes from the database clock, which can trail this
+    # process's clock by a fraction of a millisecond; the red ran well before filing.
+    failed_at = datetime.now(UTC) - timedelta(seconds=5)
     _window_bound_derive(
         monkeypatch,
         _run(

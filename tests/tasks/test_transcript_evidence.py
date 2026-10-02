@@ -218,6 +218,19 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert fake.shutdown_args == (False, True)
 
 
+@pytest.fixture
+def _no_pending_pool_exit() -> None:
+    """Let an earlier test's pool-exit thread finish before tracker calls are recorded.
+
+    A real worker that outlives the shutdown timeout leaves its exit thread
+    running; it would later call the patched tracker stop and record into
+    another test's events.
+    """
+    for thread in threading.enumerate():
+        if thread.name == "transcript-evidence-pool-exit":
+            thread.join(10)
+
+
 class _RecordingExecutor:
     def __init__(self, events: list[str], *, block_on_wait: threading.Event | None = None) -> None:
         self._events = events
@@ -229,6 +242,7 @@ class _RecordingExecutor:
             self._block_on_wait.wait()
 
 
+@pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -245,6 +259,7 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     assert transcript_evidence_pool._pool is None
 
 
+@pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
