@@ -584,7 +584,7 @@ async def test_send_rejects_a_session_id_without_an_exact_session_row(
         else:
             await manager.send_attachment("test-channel", attachment, session_id=session_id)
 
-    for unknown in ("55555555-5555-4555-8555-555555555555", session.id[:8]):
+    for unknown in ("55555555-5555-4555-8555-555555555555", session.id[:8], ""):
         with pytest.raises(ValueError, match="Unknown session"):
             await send_with(unknown)
 

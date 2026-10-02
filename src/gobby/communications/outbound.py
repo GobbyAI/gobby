@@ -86,7 +86,7 @@ class OutboundCommunications:
         Delivery comes before storage, so an unknown id would otherwise reach the channel
         and then fail the stored row's session foreign key (#23292).
         """
-        if session_id and not await asyncio.to_thread(
+        if session_id is not None and not await asyncio.to_thread(
             self._manager._store.session_exists, session_id
         ):
             raise ValueError(f"Unknown session {session_id!r}")
