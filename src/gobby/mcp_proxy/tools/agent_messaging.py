@@ -381,6 +381,10 @@ def add_messaging_tools(
                 brief_response["wake_declines"] = wake_declines
             return brief_response
 
+        except ValueError as e:
+            # Session resolution and MailboxService raise ValueError only for
+            # caller input (unknown or out-of-scope targets), which is not a fault.
+            return {"success": False, "error": str(e), "error_code": "invalid_message_target"}
         except Exception as e:
             logger.error("send_message failed: %s", e)
             return {"success": False, "error": str(e)}
