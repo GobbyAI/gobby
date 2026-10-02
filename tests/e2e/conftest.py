@@ -336,6 +336,10 @@ def _checkout_gdaemon_bin_dir(
     The runner resolves every native binary from one dir, so a test pinning its
     gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
     stays out: it describes the gdaemon this dir replaces.
+
+    Pinned binaries are hard links, never copies: gterm pins its own executable
+    and refuses to host when that executable is a symlink. The checkout gdaemon
+    stays a symlink so a rebuild that replaces its inode is still followed.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
@@ -343,7 +347,7 @@ def _checkout_gdaemon_bin_dir(
     skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            (composite / entry.name).symlink_to(entry.resolve())
+            os.link(entry.resolve(), composite / entry.name)
     (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
     return composite
 

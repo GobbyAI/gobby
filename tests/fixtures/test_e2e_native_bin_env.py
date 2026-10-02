@@ -56,7 +56,9 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
 
     for bin_dir in (first, second):
         assert (bin_dir / GDAEMON).resolve() == checkout_gdaemon.resolve()
-        assert (bin_dir / GTERM).resolve() == (installed_dir / GTERM).resolve()
+        # gterm pins its own executable, so a symlinked gterm can never host.
+        assert not (bin_dir / GTERM).is_symlink()
+        assert os.path.samefile(bin_dir / GTERM, installed_dir / GTERM)
         assert not (bin_dir / IDENTITY_STAMP_NAME).exists()
     assert first != second
     assert sorted(entry.name for entry in installed_dir.iterdir()) == before
