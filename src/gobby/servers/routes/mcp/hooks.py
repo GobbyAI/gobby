@@ -8,8 +8,7 @@ Extracted from base.py as part of Strangler Fig decomposition.
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import APIRouter, HTTPException, Request
@@ -44,8 +43,6 @@ from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.inbox import consume_pending_delivery_receipts
 from gobby.hooks.phase_timing import (
     HookPhaseTimings,
-    SlowHookSummaryReporter,
-    SlowHookWindowSummary,
     hook_phase_timing_scope,
     observe_hook_phase_timings,
     timed_to_thread,
@@ -89,18 +86,6 @@ logger = logging.getLogger(__name__)
 
 HOOK_ADAPTER_MAX_WORKERS = _HOOK_ADAPTER_MAX_WORKERS
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
-
-
-def _log_slow_hook_summary(summary: SlowHookWindowSummary) -> None:
-    logger.warning(
-        "Slow hook summary: count=%d suppressed=%d max_seconds=%.1f "
-        "window_seconds=%.0f by_phase=%s",
-        summary.count,
-        summary.suppressed,
-        summary.max_seconds,
-        summary.window_seconds,
-        summary.by_phase,
-    )
 
 
 def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -182,17 +167,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
     Returns:
         Configured APIRouter with hooks endpoints
     """
-    slow_hook_reporter = SlowHookSummaryReporter(emit=_log_slow_hook_summary)
-
-    @asynccontextmanager
-    async def drain_slow_hook_summary(_app: Any) -> AsyncIterator[None]:
-        try:
-            yield
-        finally:
-            slow_hook_reporter.close()
-
-    # FastAPI nests this inside the app lifespan, so the drain runs while logging is live.
-    router = APIRouter(prefix="/api/hooks", tags=["hooks"], lifespan=drain_slow_hook_summary)
+    router = APIRouter(prefix="/api/hooks", tags=["hooks"])
 
     @router.post("/execute")
     async def execute_hook(request: Request) -> Any:
@@ -831,29 +806,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                             owner_token=owner_token,
                         )
             total_seconds = time.perf_counter() - start_time
-            dominant_phase, dominant_seconds, phase_durations = observe_hook_phase_timings(
+            observe_hook_phase_timings(
                 phase_timings,
                 total_seconds=total_seconds,
                 hook_type=hook_type,
                 source=source,
             )
-            if slow_hook_reporter.observe(
-                total_seconds=total_seconds, dominant_phase=dominant_phase
-            ):
-                logger.warning(
-                    "Slow hook execution dominated by %s",
-                    dominant_phase,
-                    extra={
-                        "hook_type": hook_type,
-                        "source": source,
-                        "total_seconds": total_seconds,
-                        "dominant_phase": dominant_phase,
-                        "dominant_phase_seconds": dominant_seconds,
-                        "session_id": phase_timings.session_id,
-                        "rule_evaluation_breakdown_seconds": phase_timings.breakdown(),
-                        "hub_query_latency_ms": phase_timings.query_latency_summary_ms(),
-                        "hook_phase_durations_seconds": phase_durations,
-                    },
-                )
 
     return router
