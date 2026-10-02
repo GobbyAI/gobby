@@ -328,6 +328,26 @@ class DaemonInstance:
             )
 
 
+def _checkout_gdaemon_bin_dir(
+    checkout_gdaemon: Path, pinned_bin_dir: Path, home_dir: str | Path | None
+) -> Path:
+    """Link the pinned dir's binaries beside the checkout gdaemon in a fresh dir.
+
+    The runner resolves every native binary from one dir, so a test pinning its
+    gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
+    stays out: it describes the gdaemon this dir replaces.
+    """
+    from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
+
+    composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
+    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
+    for entry in pinned_bin_dir.iterdir():
+        if entry.is_file() and entry.name not in skipped:
+            (composite / entry.name).symlink_to(entry.resolve())
+    (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+    return composite
+
+
 def prepare_daemon_env(
     base_env: dict[str, str] | None = None,
     *,
@@ -392,11 +412,20 @@ def prepare_daemon_env(
     # Pin native binaries before HOME moves, or ~/.gobby/bin would resolve inside
     # the temp home and the runner could not find the gdaemon front door it
     # spawns. GOBBY_TEST_GDAEMON=checkout selects this checkout's debug build; a
-    # GOBBY_NATIVE_BIN_DIR the test already set wins.
+    # GOBBY_NATIVE_BIN_DIR the test already set supplies every other binary.
     from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_dir, native_bin_name
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
     checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
+    pinned_bin_dir = env.get(NATIVE_BIN_DIR_ENV)
+    if (
+        checkout_gdaemon is not None
+        and pinned_bin_dir is not None
+        and Path(pinned_bin_dir).resolve() != checkout_gdaemon.parent.resolve()
+    ):
+        env[NATIVE_BIN_DIR_ENV] = str(
+            _checkout_gdaemon_bin_dir(checkout_gdaemon, Path(pinned_bin_dir), home_dir)
+        )
     env.setdefault(
         NATIVE_BIN_DIR_ENV,
         str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
