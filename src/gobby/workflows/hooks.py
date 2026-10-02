@@ -23,14 +23,16 @@ from gobby.storage.hub.operation_deadline import (
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
 from gobby.workflows.block_audit import audit_source_block, audit_source_block_sync
 from gobby.workflows.engine.event_utils import _get_tool_identity, _target_task_id_for_event
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import (
+    ChildEvaluationCancelled,
+    WorkflowEvaluationTimeout,
+)
 from gobby.workflows.found_work_gate import (
     FOUND_WORK_GATE_ARMED_AT_VARIABLE,
     FoundWorkStopAnalyzer,
-    capture_found_work_handoff,
-    capture_turn_prompt,
     is_found_work_deferral,
 )
+from gobby.workflows.observer_dispatch import run_observers as _dispatch_observers
 from gobby.workflows.step_context import get_active_step_workflow_context
 from gobby.workflows.tool_context import WorkflowToolContextMixin
 
@@ -255,7 +257,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
             if controlled_shutdown and event.event_type != HookEventType.STOP
             else logger.warning
         )
-        log_cancelled("Workflow evaluation cancelled for %s", event.event_type)
+        log_cancelled(
+            "Workflow evaluation cancelled for %s session=%s source=%s",
+            event.event_type,
+            event.metadata.get("_platform_session_id") or event.session_id or "unknown",
+            getattr(event.source, "value", event.source) or "unknown",
+        )
         if event.event_type == HookEventType.STOP:
             response = HookResponse(
                 decision="block",
@@ -279,122 +286,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         """Run built-in observer functions to populate tracking variables.
 
         Must run BEFORE rule evaluation so conditions have current data.
+        Delegates to ``observer_dispatch.run_observers`` so the dispatch and
+        its per-observer error handling stay a cohesive unit outside this module.
         """
         event.metadata.pop("_observed_claim_task_id", None)
-        from .observer_context_usage import (
-            detect_context_compact_guidance,
-            detect_mid_turn_context_compact_guidance,
-        )
-        from .observer_plan_mode import reconcile_native_mode, resolve_plan_mode
-        from .observers import (
-            detect_bash_commit,
-            detect_commit_link,
-            detect_mcp_call,
-            detect_task_claim,
-            detect_turn_interrupt,
-            reconcile_claimed_tasks,
-        )
-
-        failures: set[str] = set()
-
-        def run_observer(
-            name: str,
-            observer: Callable[..., object],
-            *args: Any,
-            **kwargs: Any,
-        ) -> None:
-            try:
-                observer(*args, **kwargs)
-            except _DATABASE_TIMEOUTS:
-                raise
-            except Exception:
-                failures.add(name)
-                logger.warning(
-                    "Observer %s failed for session=%s event=%s",
-                    name,
-                    session_id,
-                    event.event_type,
-                    exc_info=True,
-                )
-
-        run_observer("detect_turn_interrupt", detect_turn_interrupt, event, variables)
-
-        # Tool and stop payloads carry the provider's live permission mode;
-        # turn-start events (e.g. Claude UserPromptSubmit) omit it and manual
-        # plan-mode toggles fire no hook, so these events are the only
-        # authoritative correction point for a stale plan_mode.
-        if event.event_type in (
-            HookEventType.BEFORE_TOOL,
-            HookEventType.AFTER_TOOL,
-        ) or _is_turn_end_event(event.event_type):
-            run_observer(
-                "reconcile_native_mode",
-                reconcile_native_mode,
-                event,
-                variables,
-                session_id,
-            )
-
-        # SessionStart is the hydration boundary after resume/compaction. Reconcile
-        # there so the first tool gate sees authoritative DB claims.
-        if event.event_type == HookEventType.SESSION_START or _is_turn_end_event(event.event_type):
-            run_observer(
-                "reconcile_claimed_tasks",
-                reconcile_claimed_tasks,
-                variables,
-                session_id,
-                task_manager=self._task_manager,
-                session_manager=self._session_manager,
-                session_task_manager=self._session_task_manager,
-            )
-
-        # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
-        if event.event_type == HookEventType.AFTER_TOOL:
-            run_observer(
-                "detect_task_claim",
-                detect_task_claim,
-                event,
-                variables,
-                session_id,
-                session_task_manager=self._session_task_manager,
-                task_manager=self._task_manager,
-                project_id=event.project_id,
-            )
-            run_observer("detect_commit_link", detect_commit_link, event, variables, session_id)
-            run_observer("detect_bash_commit", detect_bash_commit, event, variables, session_id)
-            run_observer("detect_mcp_call", detect_mcp_call, event, variables, session_id)
-            run_observer("capture_found_work_handoff", capture_found_work_handoff, event, variables)
-            run_observer(
-                "detect_mid_turn_context_compact_guidance",
-                detect_mid_turn_context_compact_guidance,
-                event,
-                variables,
-                session_id,
-                self._session_manager,
-                config=getattr(self._config_resolver(), "context_handoff", None),
-            )
-
-        # Plan mode detection on the semantic start-of-turn boundary
-        if _is_turn_start_event(event.event_type):
-            run_observer("capture_turn_prompt", capture_turn_prompt, event, variables)
-            run_observer(
-                "resolve_plan_mode",
-                resolve_plan_mode,
-                event,
-                variables,
-                session_id,
-                self._session_manager,
-            )
-            run_observer(
-                "detect_context_compact_guidance",
-                detect_context_compact_guidance,
-                variables,
-                session_id,
-                self._session_manager,
-                config=getattr(self._config_resolver(), "context_handoff", None),
-            )
-
-        return failures
+        return _dispatch_observers(self, event, session_id, variables)
 
     async def _evaluate_rules(
         self,
@@ -916,6 +812,14 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     record_worker_staging(staged)
                 return response
 
+        except ChildEvaluationCancelled:
+            # An in-band child of the evaluation cancelled; the evaluation
+            # task itself was never cancelled, so this is an ordinary
+            # failure, not a canceller of the evaluation (#22706). Do not
+            # route it to _handle_cancelled, which would both drop the
+            # turn-start work the cancellation is blamed for and mislabel
+            # the source.
+            raise
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
         except WorkflowEvaluationTimeout:

@@ -29,6 +29,10 @@ from gobby.sessions.compact_markers import (
     HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
+from gobby.sessions.continuation_retry import (
+    resubmit_until_before_agent,
+    turn_lifecycle_generation,
+)
 from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE, build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.handoff_records import record_handoff_delivery
@@ -308,6 +312,7 @@ def schedule_handoff_compact_continuation(
         cli_source=cli_source,
         on_send_failure=on_send_failure,
         composer_read=_composer_reader(db, cli_source),
+        db=db,
     )
     return _schedule_coroutine(coro, loop=loop)
 
@@ -538,9 +543,35 @@ async def _send_handoff_compact_continuation(
     cli_source: str | None = None,
     on_send_failure: Callable[[], None] | None = None,
     composer_read: ComposerReader | None = None,
+    db: HubDatabase | None = None,
 ) -> bool:
+    """Type the pull prompt; with ``db``, confirm it by the session's BEFORE_AGENT.
+
+    A composer read that reported the draft left can be a false positive (the
+    22:28:40 CDT read on 2026-09-21), so a typed prompt is not delivery. When a
+    hub database is supplied the continuation is re-submitted until the
+    BEFORE_AGENT it triggers arrives or the bounded budget is spent, then durable
+    fallback delivers it exactly once. When the hub database is supplied but the
+    session's turn lifecycle cannot be read, a screen-verified type is not
+    delivery: the unreadable proof cannot confirm BEFORE_AGENT, so the caller
+    takes the durable fallback instead of reporting a composer-only success.
+    Without a hub database there is no lifecycle to read at all and the single
+    verified submit the CLI already acked stands.
+    """
+    baseline: int | None = None
+    lifecycle_unreadable = False
+    if db is not None:
+        # Read the turn generation before typing: the continuation prompt's own
+        # BEFORE_AGENT is what bumps it, so anything above this baseline proves
+        # the prompt reached the CLI.
+        try:
+            baseline = await asyncio.to_thread(turn_lifecycle_generation, db, session_id)
+        except Exception:
+            baseline = None
+        lifecycle_unreadable = baseline is None
     # The pull prompt is typed into the same physical composer a wake drains and
-    # submits, so hold the shared lock across its whole clear/submit/verify run.
+    # submits, so hold the shared lock across its whole clear/submit/verify run and
+    # the BEFORE_AGENT re-submit ladder that may type it again.
     async with composer_action_lock(str(getattr(pane, "target", "") or "")):
         sent = await _type_handoff_compact_continuation(
             pane,
@@ -551,6 +582,22 @@ async def _send_handoff_compact_continuation(
             composer_read=composer_read,
             verify_seconds=SUBMIT_VERIFY_SECONDS,
         )
+        if sent and db is not None and baseline is not None:
+            sent = await resubmit_until_before_agent(
+                pane,
+                prompt,
+                session_id,
+                db=db,
+                baseline_generation=baseline,
+                cli_source=cli_source,
+                composer_read=composer_read,
+                verify_seconds=SUBMIT_VERIFY_SECONDS,
+            )
+    if lifecycle_unreadable:
+        # An unreadable lifecycle can neither confirm nor refute BEFORE_AGENT, so
+        # the composer read is not delivery. Report unconfirmed and let the
+        # caller queue the durable pull prompt instead of trusting the screen.
+        sent = False
     if not sent and on_send_failure is not None:
         on_send_failure()
     return sent
@@ -738,6 +785,7 @@ async def _continue_after_codex_compaction_ready(
                     persist_pull_prompt_message, db, pending_session_id, prompt, attempt_id
                 ),
                 composer_read=_composer_reader(db, "codex"),
+                db=db,
             )
             return
 

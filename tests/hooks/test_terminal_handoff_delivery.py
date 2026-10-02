@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.adapters.grok import GrokAdapter
-from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.idle_detector import ComposerRead, IdleDetector
 from gobby.hooks import terminal_handoff_delivery
 from gobby.hooks._normalization_tools import normalize_tool_fields
 from gobby.hooks.event_handlers import EventHandlers
@@ -1729,3 +1729,301 @@ def test_stop_recovers_only_a_dispatch_this_daemon_does_not_own(
     else:
         assert marker["dispatch_owner"] == dispatch_owner
         assert marker["dispatch_started_at"] == started_at
+
+
+@pytest.mark.asyncio
+async def test_continuation_resubmits_until_before_agent_observed(
+    hub_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A false 'draft left' read keeps re-submitting until BEFORE_AGENT arrives.
+
+    The 22:28:40 CDT read on 2026-09-21 reported the composer left the draft while
+    the prompt was still unsent. Only the session's BEFORE_AGENT (a turn-lifecycle
+    generation bump) settles the continuation, and no retry may follow it.
+    """
+    from gobby.agents.idle_detector import ComposerRead
+    from gobby.sessions import continuation_retry
+    from gobby.sessions.turn_lifecycle import TurnEvidence, TurnLifecycleReducer
+
+    session_manager = _compact_session_manager(hub_db, {"tmux_pane": "%12"})
+    pane = SimpleNamespace(
+        backend="native",
+        snapshot=AsyncMock(return_value=""),
+        type_text=AsyncMock(return_value=(True, None)),
+    )
+
+    # The first (entry) read is the false positive: it reports the draft left while
+    # the prompt never reached the CLI. The read after the bare Enter correctly
+    # shows the prompt still held, so the bounded budget re-sends Enter.
+    entry_reads = {"count": 0}
+
+    def composer_read(_snapshot: str | None) -> ComposerRead:
+        entry_reads["count"] += 1
+        if entry_reads["count"] == 1:
+            return ComposerRead(state="empty")
+        return ComposerRead(state="draft", line="continue the handoff")
+
+    resent_enters: list[str] = []
+
+    async def fake_send_key(pane: Any, key: str, session_id: str, *, action: str) -> Any:
+        resent_enters.append(key)
+        return True, None
+
+    recorded_attempts: list[int] = []
+
+    async def fake_await_before_agent(
+        db: HubDatabase, session_id: str, *, baseline_generation: int | None, **kwargs: Any
+    ) -> bool:
+        recorded_attempts.append(len(recorded_attempts) + 1)
+        # The BEFORE_AGENT arrives once the second Enter has been sent.
+        return len(resent_enters) >= 2
+
+    with (
+        caplog.at_level(logging.WARNING, logger="gobby.sessions.continuation_retry"),
+        patch.object(continuation_retry, "send_pane_key", fake_send_key),
+        patch.object(continuation_retry, "await_before_agent", fake_await_before_agent),
+    ):
+        confirmed = await continuation_retry.resubmit_until_before_agent(
+            pane,
+            "continue the handoff",
+            SESSION_ID,
+            db=hub_db,
+            baseline_generation=7,
+            cli_source="claude",
+            composer_read=composer_read,
+            verify_seconds=0.0,
+            retry_limit=3,
+        )
+
+    assert confirmed is True
+    # Two re-submits happened before the hook arrived, and no retry after it.
+    assert len(resent_enters) == 2
+    # Retries are bounded, not logged (daemon-loop logging ban, #23303).
+    assert caplog.records == []
+    # Every check before the arrival returned False; the loop never re-submitted
+    # past the confirmed hook.
+    assert len(recorded_attempts) >= 3
+    # The turn-lifecycle reducer is what the confirmation reads; a bump past the
+    # baseline is what proves BEFORE_AGENT for this session.
+    reducer = TurnLifecycleReducer(session_manager)
+    assert continuation_retry.turn_lifecycle_generation(hub_db, SESSION_ID) == 0
+    reducer.begin_turn(SESSION_ID, TurnEvidence(source="claude"))
+    assert continuation_retry.turn_lifecycle_generation(hub_db, SESSION_ID) == 1
+
+
+@pytest.mark.asyncio
+async def test_continuation_does_not_repaste_when_enter_delivered_before_agent(
+    hub_db: HubDatabase,
+) -> None:
+    """An Enter that delivered BEFORE_AGENT must not be followed by a re-paste.
+
+    The entry read can report the draft gone while the composer still holds it, so
+    the retry sends Enter first. That Enter submits the held draft and the
+    session's BEFORE_AGENT arrives immediately; the composer is then empty, which
+    the next read cannot distinguish from a lost prompt. Re-pasting would queue a
+    duplicate continuation, so the hook is rechecked after the Enter and the
+    re-paste is skipped (#22706 MEDIUM).
+    """
+    from gobby.agents.idle_detector import ComposerRead
+    from gobby.sessions import continuation_retry
+
+    class _Pane:
+        backend = "native"
+
+        def __init__(self) -> None:
+            self.typed: list[str] = []
+            self.keys: list[str] = []
+
+        async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
+            return ""
+
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.typed.append(text)
+            return True, None
+
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            self.keys.append(key)
+            return True, None
+
+    def composer_read(_snapshot: str | None) -> ComposerRead:
+        # The false positive: it reports the draft left while it is still held.
+        return ComposerRead(state="empty")
+
+    async def hook_after_enter() -> bool:
+        # The Enter in resubmit_continuation submitted the held draft, so the
+        # session's BEFORE_AGENT has already arrived by the time this runs.
+        return True
+
+    async def hook_not_arrived() -> bool:
+        return False
+
+    pane: Any = _Pane()
+    resent = await continuation_retry.resubmit_continuation(
+        pane,
+        "continue the handoff",
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=composer_read,
+        verify_seconds=0.0,
+        before_agent_check=hook_after_enter,
+    )
+
+    assert resent is True
+    assert pane.keys == ["enter"]
+    assert pane.typed == [], "a delivered BEFORE_AGENT must not be re-pasted"
+
+    # Without the hook the same inputs do re-paste the lost copy, so the check
+    # above is what prevents the duplicate rather than the composer state.
+    pane_without_hook: Any = _Pane()
+    await continuation_retry.resubmit_continuation(
+        pane_without_hook,
+        "continue the handoff",
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=composer_read,
+        verify_seconds=0.0,
+        before_agent_check=hook_not_arrived,
+    )
+    assert pane_without_hook.typed == ["continue the handoff\n"]
+
+
+async def test_continuation_repastes_the_prompt_when_the_composer_is_empty() -> None:
+    """An empty composer is positive evidence the prompt was lost, so it is re-typed.
+
+    ``resubmit_continuation`` used to send a bare Enter only, which cannot recover a
+    prompt the false-positive read consumed. With an ``empty`` read the text is
+    re-pasted and verified (#22706 MEDIUM).
+    """
+    from gobby.agents.idle_detector import ComposerRead
+    from gobby.sessions import continuation_retry
+
+    class _Pane:
+        backend = "native"
+
+        def __init__(self) -> None:
+            self.typed: list[str] = []
+            self.keys: list[str] = []
+
+        async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
+            return ""
+
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.typed.append(text)
+            return True, None
+
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            self.keys.append(key)
+            return True, None
+
+    def composer_read(_snapshot: str | None) -> ComposerRead:
+        return ComposerRead(state="empty")
+
+    pane: Any = _Pane()
+    resent = await continuation_retry.resubmit_continuation(
+        pane,
+        "continue the handoff",
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=composer_read,
+        verify_seconds=0.0,
+    )
+
+    assert resent is True
+    # The lost prompt was re-typed (with its newline) exactly once.
+    assert pane.typed == ["continue the handoff\n"]
+    # One bare Enter at entry, then submit_text's own Enter after the paste.
+    assert pane.keys == ["enter", "enter"]
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        pytest.param(ComposerRead(state="unknown"), id="unreadable"),
+        pytest.param(ComposerRead(state="draft", line="half-typed operator note"), id="draft"),
+    ],
+)
+async def test_continuation_never_writes_over_unknown_or_operator_text(
+    read: ComposerRead,
+) -> None:
+    """A frame that may hold operator text gets no Enter, drain or re-paste.
+
+    #22915 gates every composer write on a confirmed-empty read: an operator draft
+    belongs to the operator, and an unclassifiable frame may hide one. The retry
+    writes nothing and reports False, so the caller's durable fallback delivers
+    the continuation instead.
+    """
+    from gobby.sessions import continuation_retry
+
+    class _Pane:
+        backend = "native"
+
+        def __init__(self) -> None:
+            self.typed: list[str] = []
+            self.keys: list[str] = []
+
+        async def snapshot(self, *_args: Any, **_kwargs: Any) -> str:
+            return ""
+
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.typed.append(text)
+            return True, None
+
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            self.keys.append(key)
+            return True, None
+
+    def composer_read(_snapshot: str | None) -> ComposerRead:
+        return read
+
+    pane: Any = _Pane()
+    resent = await continuation_retry.resubmit_continuation(
+        pane,
+        "continue the handoff",
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=composer_read,
+        verify_seconds=0.0,
+    )
+
+    assert resent is False
+    assert pane.typed == []
+    assert pane.keys == []
+
+
+async def test_continuation_without_a_composer_reader_only_resends_enter() -> None:
+    """With no reader to verify a paste, a bare Enter is the only safe retry.
+
+    Enter submits a held copy and is a no-op on an empty composer; a re-paste
+    nothing can verify could only duplicate the prompt.
+    """
+    from gobby.sessions import continuation_retry
+
+    class _Pane:
+        backend = "native"
+
+        def __init__(self) -> None:
+            self.typed: list[str] = []
+            self.keys: list[str] = []
+
+        async def type_text(self, text: str) -> tuple[bool, str | None]:
+            self.typed.append(text)
+            return True, None
+
+        async def send_key(self, key: str) -> tuple[bool, str | None]:
+            self.keys.append(key)
+            return True, None
+
+    pane: Any = _Pane()
+    resent = await continuation_retry.resubmit_continuation(
+        pane,
+        "continue the handoff",
+        SESSION_ID,
+        cli_source="claude",
+        composer_read=None,
+        verify_seconds=0.0,
+    )
+
+    assert resent is True
+    assert pane.keys == ["enter"]
+    assert pane.typed == []
