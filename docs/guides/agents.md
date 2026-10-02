@@ -372,7 +372,9 @@ send_message(
 A `task_blocker` message must identify the assigned task in `metadata.task_id`
 and use `target="parent"` (or omit `target`, which defaults to `parent` for
 spawned agents). Spawned agents may send only to this target and
-cannot override `from_session`. In configured worker step workflows, successful
+cannot override `from_session`. Runbook seats are the one exception: a seat may
+also send `target="session"` to a sibling seat of its pipeline execution or to
+the session that launched that execution. In configured worker step workflows, successful
 delivery sets `blocker_handed_off` and advances to the termination step. The worker
 still calls `end_agent_run` with a structured blocker handoff; sending a message
 alone is not a universal process-exit operation. Inspect the installed definition

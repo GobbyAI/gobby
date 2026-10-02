@@ -52,6 +52,8 @@ class MockSession:
     agent_depth: int = 0
     terminal_context: dict[str, Any] | None = None
     agent_run_id: str | None = None
+    source: str = "claude"
+    external_id: str = ""
 
 
 def _spawned_child_session_lookup(session_id: str) -> MockSession | None:
@@ -1796,3 +1798,131 @@ class TestGetInterSessionMessages:
         assert kwargs["message_type"] == "command_result"
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 5
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Runbook seats (#23350): siblings of one execution and its launcher
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class _RunbookSessions:
+    registry: InternalToolRegistry
+    messages: InterSessionMessageManager
+    ids: dict[str, str]
+
+
+@pytest.fixture
+def runbook_sessions(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _RunbookSessions:
+    """Two runbook executions launched by one operator, plus non-runbook sessions."""
+    from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+    sessions = SessionManager(temp_db)
+    project_id = sample_project["id"]
+
+    def register(name: str, source: str, parent: str | None, depth: int = 0) -> str:
+        return sessions.register(
+            external_id=name,
+            machine_id=None,
+            source=source,
+            project_id=project_id,
+            parent_session_id=parent,
+            agent_depth=depth,
+        ).id
+
+    ids: dict[str, str] = {"operator": register("operator", "claude", None)}
+    for execution in ("a", "b"):
+        ids[f"exec-{execution}"] = register(f"pipeline-{execution}", "pipeline", ids["operator"])
+    ids["writer"] = register("writer", "claude", ids["exec-a"], depth=1)
+    ids["enhancer"] = register("enhancer", "claude", ids["exec-a"], depth=1)
+    ids["other-seat"] = register("other-seat", "claude", ids["exec-b"], depth=1)
+    ids["unrelated"] = register("unrelated", "claude", None)
+    ids["worker"] = register("worker", "claude", ids["unrelated"], depth=1)
+    ids["worker-sibling"] = register("worker-sibling", "claude", ids["unrelated"], depth=1)
+
+    messages = InterSessionMessageManager(temp_db)
+    registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
+    add_messaging_tools(
+        registry=registry,
+        message_manager=messages,
+        session_manager=sessions,
+        db=temp_db,
+        wake_dispatcher=FakeWakeDispatcher(),
+    )
+    return _RunbookSessions(registry=registry, messages=messages, ids=ids)
+
+
+async def _send_as(env: _RunbookSessions, caller: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    with session_context_for_test(env.ids[caller]):
+        result: dict[str, Any] = await env.registry.call(
+            "send_message", {"content": "consensus draft", "wake": False, **arguments}
+        )
+    return result
+
+
+@pytest.mark.parametrize("recipient", ["enhancer", "operator"])
+async def test_runbook_seat_reaches_sibling_seat_and_launcher(
+    runbook_sessions: _RunbookSessions, recipient: str
+) -> None:
+    result = await _send_as(
+        runbook_sessions,
+        "writer",
+        {"target": "session", "target_id": runbook_sessions.ids[recipient]},
+    )
+
+    assert result["success"] is True, result
+    stored = runbook_sessions.messages.get_message(result["message_ids"][0])
+    assert stored is not None
+    assert (stored.from_session, stored.to_session) == (
+        runbook_sessions.ids["writer"],
+        runbook_sessions.ids[recipient],
+    )
+
+
+@pytest.mark.parametrize(
+    ("caller", "arguments", "error_code"),
+    [
+        ("writer", {"target": "session", "target_id": "other-seat"}, "send_message_parent_only"),
+        ("writer", {"target": "session", "target_id": "unrelated"}, "send_message_parent_only"),
+        ("writer", {"target": "session", "target_id": "exec-b"}, "send_message_parent_only"),
+        ("writer", {"target": "project"}, "send_message_parent_only"),
+        ("writer", {"target": "global"}, "send_message_parent_only"),
+        (
+            "worker",
+            {"target": "session", "target_id": "worker-sibling"},
+            "send_message_parent_only",
+        ),
+        (
+            "writer",
+            {"target": "session", "target_id": "enhancer", "from_session": "enhancer"},
+            "send_message_sender_mismatch",
+        ),
+    ],
+    ids=[
+        "other-execution-seat",
+        "unrelated-session",
+        "other-execution",
+        "project-fanout",
+        "global-fanout",
+        "non-runbook-sibling",
+        "spoofed-sender",
+    ],
+)
+async def test_runbook_seat_refused_outside_its_execution(
+    runbook_sessions: _RunbookSessions,
+    caller: str,
+    arguments: dict[str, Any],
+    error_code: str,
+) -> None:
+    resolved = {
+        key: runbook_sessions.ids[value] if key in {"target_id", "from_session"} else value
+        for key, value in arguments.items()
+    }
+
+    result = await _send_as(runbook_sessions, caller, resolved)
+
+    assert (result["success"], result.get("error_code")) == (False, error_code)
+    sent = runbook_sessions.messages.list_messages(
+        session_id=runbook_sessions.ids[caller], direction="sent"
+    )
+    assert sent == []
