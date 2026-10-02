@@ -153,13 +153,13 @@ async def test_poll_loop_logs_one_traceback_per_failure_streak(
 
 
 @pytest.mark.asyncio
-async def test_poll_loop_reports_only_an_outage_that_reaches_the_backoff_ceiling(
+async def test_poll_loop_leaves_network_failures_to_the_backoff_without_logging(
     polling_manager: PollingManager,
     mock_adapter: MagicMock,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Network blips the backoff absorbs log nothing; a sustained outage logs once (#23292)."""
+    """Network failures, even at the backoff ceiling, log nothing; success resets it (#23292)."""
     sleep = AsyncMock()
     monkeypatch.setattr("gobby.communications.polling.asyncio.sleep", sleep)
     request = httpx.Request("POST", "https://api.telegram.org/bot***/getUpdates")
@@ -186,23 +186,14 @@ async def test_poll_loop_reports_only_an_outage_that_reaches_the_backoff_ceiling
     with caplog.at_level(logging.DEBUG, logger="gobby.communications.polling"):
         await polling_manager._poll_loop("test-channel", mock_adapter, interval=0)
 
-    assert [(r.levelno, r.getMessage(), r.exc_info) for r in caplog.records] == [
-        (
-            logging.ERROR,
-            "Channel 'test-channel' unreachable for 7 polls in a row: read timed out "
-            "(retrying every 300s)",
-            None,
-        ),
-        (
-            logging.ERROR,
-            "Channel 'test-channel' unreachable for 7 polls in a row: network unreachable "
-            "(retrying every 300s)",
-            None,
-        ),
-    ]
+    assert caplog.records == []
     backoffs = [entry.args[0] for entry in sleep.await_args_list if entry.args[0]]
-    assert backoffs[:2] == [5, 10]
-    assert backoffs[2:10] == [5, 10, 20, 40, 80, 160, 300, 300]
+    assert backoffs == [
+        5,
+        10,
+        *[5, 10, 20, 40, 80, 160, 300, 300],
+        *[5, 10, 20, 40, 80, 160, 300],
+    ]
 
 
 @pytest.mark.asyncio

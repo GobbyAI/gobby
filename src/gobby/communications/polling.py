@@ -95,7 +95,6 @@ class PollingManager:
         """
         consecutive_failures = 0
         traceback_logged = False
-        outage_logged = False
         max_backoff = 300  # 5 minutes max backoff
         base_backoff = 5  # start with 5 seconds backoff
 
@@ -110,7 +109,6 @@ class PollingManager:
 
                 consecutive_failures = 0
                 traceback_logged = False
-                outage_logged = False
                 await asyncio.sleep(interval)
 
             except asyncio.CancelledError:
@@ -122,17 +120,8 @@ class PollingManager:
                 error = str(e) or type(e).__name__
                 sleep_duration = min(base_backoff * (2 ** (consecutive_failures - 1)), max_backoff)
                 if isinstance(e, httpx.TransportError | OSError):
-                    # The backoff absorbs a network blip; only an outage that holds the
-                    # backoff at its ceiling is reported, once per streak (#23292).
-                    if sleep_duration >= max_backoff and not outage_logged:
-                        logger.error(
-                            "Channel %r unreachable for %s polls in a row: %s (retrying every %ss)",
-                            channel_name,
-                            consecutive_failures,
-                            error,
-                            sleep_duration,
-                        )
-                        outage_logged = True
+                    # The backoff absorbs network failures, so they log nothing (#23292).
+                    pass
                 elif not traceback_logged:
                     # One traceback per failure streak; repeats stay one line so a
                     # transient outage cannot flood the log (#20867).
