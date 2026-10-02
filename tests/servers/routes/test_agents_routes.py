@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import yaml
 from fastapi.routing import APIRoute
 from starlette.testclient import TestClient
 
@@ -640,6 +641,72 @@ class TestExportDefinition:
         assert response.status_code == 200
         assert "name: db-agent" in response.text
 
+    def test_export_round_trips_through_import(
+        self,
+        client: TestClient,
+        agent_manager: AgentDefinitionManager,
+        tmp_path: Path,
+    ) -> None:
+        """An HTTP export is a valid import file that restores every stored field."""
+        from gobby.workflows.imports import sync_imported_workflow_file
+
+        created = client.post(
+            "/api/agents/definitions",
+            json=_agent_request(
+                "exported",
+                version="3.1.0",
+                step_workflow={
+                    "steps": [{"name": "work", "description": "Do the work"}],
+                    "exit_condition": "done == true",
+                },
+            ),
+        ).json()["definition"]
+        original = AgentDefinitionBody.model_validate_json(created["definition_json"])
+
+        export = client.get("/api/agents/definitions/exported/export")
+        assert export.status_code == 200
+        assert export.text.startswith("type: agent\n")
+        exported_file = tmp_path / "exported.yaml"
+        exported_file.write_text(export.text)
+
+        assert agent_manager.hard_delete(created["id"])
+        sync_imported_workflow_file(agent_manager.db, exported_file, None)
+
+        restored = agent_manager.get_by_name("exported")
+        assert restored is not None
+        assert AgentDefinitionBody.model_validate(restored.definition_json) == original
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_put_enabled_survives_export_import(
+        self,
+        client: TestClient,
+        agent_manager: AgentDefinitionManager,
+        tmp_path: Path,
+        enabled: bool,
+    ) -> None:
+        """A PUT enabled change exports and re-imports with the same state."""
+        from gobby.workflows.imports import sync_imported_workflow_file
+
+        created = client.post(
+            "/api/agents/definitions",
+            json=_agent_request("toggled", enabled=not enabled),
+        ).json()["definition"]
+        put = client.put(f"/api/agents/definitions/{created['id']}", json={"enabled": enabled})
+        assert put.status_code == 200, put.text
+
+        export = client.get("/api/agents/definitions/toggled/export")
+        assert export.status_code == 200
+        assert yaml.safe_load(export.text)["enabled"] is enabled
+        exported_file = tmp_path / "toggled.yaml"
+        exported_file.write_text(export.text)
+
+        assert agent_manager.hard_delete(created["id"])
+        sync_imported_workflow_file(agent_manager.db, exported_file, None)
+
+        restored = agent_manager.get_by_name("toggled")
+        assert restored is not None
+        assert restored.enabled is enabled
+
     def test_export_not_found(self, client: TestClient) -> None:
         response = client.get("/api/agents/definitions/missing/export")
         assert response.status_code == 404
@@ -679,7 +746,7 @@ class TestCreateDefinition:
                 },
                 "provider": "codex",
                 "model": "gpt-5.4",
-                "mode": "interactive",
+                "version": "1.2.0",
                 "isolation": "worktree",
                 "base_branch": "develop",
                 "timeout": 300.0,
@@ -691,6 +758,81 @@ class TestCreateDefinition:
         assert defn["description"] == "Full test"
         body = AgentDefinitionBody.model_validate_json(defn["definition_json"])
         assert body.surfaces == ["spawn", "persona"]
+        assert body.version == "1.2.0"
+
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("mode", "interactive"),
+            ("default_workflow", "review"),
+            ("sandbox_config", {"network": False}),
+            ("lifecycle_variables", {"on_start": "hello"}),
+            ("default_variables", {"key": "val"}),
+        ],
+    )
+    def test_create_rejects_fields_the_body_cannot_store(
+        self, client: TestClient, field: str, value: object
+    ) -> None:
+        """Unstorable fields fail loudly instead of being dropped (plan D1)."""
+        response = client.post(
+            "/api/agents/definitions",
+            json={"name": "lossy-agent", "provider": "claude", field: value},
+        )
+        assert response.status_code == 422
+        assert field in response.text
+        assert client.get("/api/agents/definitions/lossy-agent").status_code == 404
+
+    def test_gobby_tag_cannot_hand_http_agents_to_reinstall(
+        self, client: TestClient, agent_manager: AgentDefinitionManager
+    ) -> None:
+        """A web duplicate of a bundled agent posts its "gobby" tag; HTTP create and
+        update strip it so reinstall never treats the user's copy as bundled."""
+        from gobby.cli.sync import _delete_installed_definitions
+
+        created = client.post(
+            "/api/agents/definitions",
+            json=_agent_request("developer-copy", tags=["gobby", "default"]),
+        ).json()["definition"]
+        assert created["tags"] == ["default"]
+        updated = client.put(
+            f"/api/agents/definitions/{created['id']}",
+            json={"tags": ["gobby", "edited"]},
+        ).json()["definition"]
+        assert updated["tags"] == ["edited"]
+
+        _delete_installed_definitions(agent_manager.db, {"agents"})
+
+        kept = agent_manager.get(created["id"])
+        assert kept.name == "developer-copy"
+        assert kept.tags == ["edited"]
+
+    @pytest.mark.parametrize("tags", [["gobby", "default"], ["default"]])
+    def test_update_keeps_bundled_agent_sync_managed(
+        self, client: TestClient, agent_manager: AgentDefinitionManager, tags: list[str]
+    ) -> None:
+        """The web enable toggle PUTs the agent's own tags; a bundled row keeps "gobby"
+        whether or not the request carries it, so bundled sync still owns it."""
+        from gobby.agents.sync import _is_sync_managed_bundled_agent
+
+        bundled = agent_manager.create(
+            "developer",
+            {
+                "name": "developer",
+                "provider": "claude",
+                "prompts": {"agent": "Do the work."},
+                "workflows": {"rule_selectors": {"include": []}},
+            },
+            tags=["gobby", "default"],
+        )
+
+        response = client.put(
+            f"/api/agents/definitions/{bundled.id}",
+            json={"enabled": False, "tags": tags},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["definition"]["tags"] == ["gobby", "default"]
+        assert _is_sync_managed_bundled_agent(agent_manager.get(bundled.id))
 
     def test_create_with_project_id(
         self,
@@ -1427,38 +1569,47 @@ class TestUpdateDefinitionNestedFields:
         )
         assert response.status_code == 200
 
-    def test_update_sandbox_config(self, client: TestClient) -> None:
-        """Update sandbox_config maps to sandbox field."""
-        created = client.post("/api/agents/definitions", json=_agent_request("sb-update")).json()[
-            "definition"
-        ]
+    @pytest.mark.parametrize(
+        "field, value",
+        [
+            ("mode", "interactive"),
+            ("default_workflow", "review"),
+            ("sandbox_config", {"network": False}),
+            ("lifecycle_variables", {"on_start": "hello"}),
+            ("default_variables", {"key": "val"}),
+        ],
+    )
+    def test_update_rejects_fields_the_body_cannot_store(
+        self, client: TestClient, field: str, value: object
+    ) -> None:
+        """Unstorable fields fail loudly and leave the stored body unchanged (plan D1)."""
+        created = client.post(
+            "/api/agents/definitions", json=_agent_request("lossy-update")
+        ).json()["definition"]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
-            json={"sandbox_config": {"network": False}},
+            json={field: value},
         )
-        assert response.status_code == 200
+        assert response.status_code == 422
+        assert field in response.text
+        stored = client.get("/api/agents/definitions/lossy-update").json()["definition"]
+        assert AgentDefinitionBody.model_validate(
+            stored["definition"]
+        ) == AgentDefinitionBody.model_validate_json(created["definition_json"])
 
-    def test_update_lifecycle_variables(self, client: TestClient) -> None:
-        """Update lifecycle_variables."""
-        created = client.post("/api/agents/definitions", json=_agent_request("lv-update")).json()[
+    def test_update_version(self, client: TestClient) -> None:
+        created = client.post("/api/agents/definitions", json=_agent_request("ver-update")).json()[
             "definition"
         ]
         response = client.put(
             f"/api/agents/definitions/{created['id']}",
-            json={"lifecycle_variables": {"on_start": "hello"}},
+            json={"version": "2.0.0"},
         )
         assert response.status_code == 200
-
-    def test_update_default_variables(self, client: TestClient) -> None:
-        """Update default_variables."""
-        created = client.post("/api/agents/definitions", json=_agent_request("dv-update")).json()[
-            "definition"
-        ]
-        response = client.put(
-            f"/api/agents/definitions/{created['id']}",
-            json={"default_variables": {"key": "val"}},
+        body = AgentDefinitionBody.model_validate_json(
+            response.json()["definition"]["definition_json"]
         )
-        assert response.status_code == 200
+        assert body.version == "2.0.0"
 
     def test_update_step_workflow(self, client: TestClient) -> None:
         created = client.post(

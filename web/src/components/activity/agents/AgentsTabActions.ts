@@ -78,7 +78,6 @@ export function buildAgentDefinitionBody(
         ? false
         : draft.form.reasoning_required,
     fallback_agent: optionalString(draft.form.fallback_agent),
-    mode: draft.form.mode,
     isolation: draft.form.isolation,
     base_branch: draft.form.base_branch,
     timeout: requireNonNegativeNumber(draft.form.timeout, "Timeout"),
@@ -102,16 +101,13 @@ export function buildDuplicateAgentBody(
   newName: string,
   projectId?: string | null,
 ): Record<string, unknown> {
-  const body: Record<string, unknown> = {
-    ...agent.definition,
-    name: newName.trim(),
-    sandbox_config: agent.definition.sandbox,
-    enabled: agent.enabled,
-    tags: agent.tags ?? [],
-  };
-  delete body.is_local;
-  delete body.sandbox;
-  if (projectId) body.project_id = projectId;
+  // Build through the same request shape as create/edit: the API rejects
+  // response-only keys (is_local, network) that a spread of the definition carries.
+  const draft = agentToDraft(agent);
+  draft.form.name = newName;
+  const body = buildAgentDefinitionBody(draft, projectId);
+  if (agent.definition.sources) body.sources = agent.definition.sources;
+  if (agent.definition.version) body.version = agent.definition.version;
   return body;
 }
 

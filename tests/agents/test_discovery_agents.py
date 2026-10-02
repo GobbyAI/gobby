@@ -21,25 +21,21 @@ DISCOVERY_AGENTS = {
     "analyst": {
         "stage": "ideation",
         "skill": "ideate",
-        "skills": ["ideate"],
         "section": "Discovery Brief",
     },
     "researcher": {
         "stage": "research",
         "skill": "research",
-        "skills": ["research"],
         "section": "Research Findings",
     },
     "architect": {
         "stage": "architecture",
         "skill": "architecture",
-        "skills": ["architecture"],
         "section": "Architecture Brief",
     },
     "product-manager": {
         "stage": "prd",
         "skill": "prd",
-        "skills": ["prd"],
         "section": "Product Reference Document",
     },
 }
@@ -100,7 +96,7 @@ def test_discovery_agent_yaml_validates_and_is_enabled(slug: str, spec: dict[str
     assert agent.isolation == "none"
     assert len(agent.surfaces) == len(set(agent.surfaces))
     assert set(agent.surfaces) == {"spawn", "persona"}
-    assert raw["skills"]["methodology"] == spec["skills"]
+    assert "skills" not in raw
     assert f"Gobby acting as {slug.replace('-', ' ')}" in (agent.prompts.agent or "")
 
 

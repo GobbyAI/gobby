@@ -11,9 +11,13 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.sync import _reinstall_bundled_definitions, sync
+from gobby.storage.definitions.agents import AgentDefinitionManager
+from gobby.storage.definitions.pipelines import PipelineDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
+from gobby.storage.definitions.variables import SessionVariableDefaultManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.sync.integrity import IntegrityResult
+from gobby.workflows.imports import sync_imported_definition
 
 pytestmark = pytest.mark.unit
 
@@ -180,3 +184,87 @@ def test_reinstall_partial_disposition_failure_raises_click(
     assert result.exit_code == 1
     assert "partial failure" in result.output
     assert "Warning:" not in result.output
+
+
+_AGENT_BODY = {
+    "provider": "claude",
+    "prompts": {"agent": "Run the assigned task."},
+    "workflows": {"rule_selectors": {"include": []}},
+}
+
+
+def test_reinstall_deletes_only_rows_bundled_sync_owns(hub_db: HubDatabase) -> None:
+    """MCP, HTTP, and imported definitions share source='installed' with bundled
+    rows; reinstall must replace the bundled rows and keep every user row."""
+    agents = AgentDefinitionManager(hub_db)
+    rules = RuleDefinitionManager(hub_db)
+    pipelines = PipelineDefinitionManager(hub_db)
+    variables = SessionVariableDefaultManager(hub_db)
+
+    bundled = [
+        agents.create("bundled-agent", {"name": "bundled-agent", **_AGENT_BODY}, tags=["gobby"]),
+        rules.create(
+            name="bundled-rule",
+            definition_json={"event": "before_tool", "action": "allow"},
+            source="installed",
+            tags=["gobby"],
+        ),
+        pipelines.create(
+            "bundled-pipeline",
+            {"name": "bundled-pipeline", "steps": [{"id": "s1", "exec": "echo hi"}]},
+            tags=["gobby"],
+        ),
+        variables.create("bundled-variable", 1, tags=["gobby"]),
+    ]
+    user_agents = [
+        agents.create("mcp-agent", {"name": "mcp-agent", **_AGENT_BODY}, tags=["user"]),
+        agents.create("http-agent", {"name": "http-agent", **_AGENT_BODY}),
+        sync_imported_definition(
+            hub_db, {"name": "imported-agent", "type": "agent", **_AGENT_BODY}, None
+        ),
+    ]
+    user_others = [
+        sync_imported_definition(
+            hub_db,
+            {
+                "name": "imported-rule",
+                "type": "rule",
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "nope"}],
+            },
+            None,
+        ),
+        sync_imported_definition(
+            hub_db,
+            {
+                "name": "imported-pipeline",
+                "type": "pipeline",
+                "steps": [{"id": "s1", "exec": "echo hi"}],
+            },
+            None,
+        ),
+        sync_imported_definition(
+            hub_db, {"name": "imported-variable", "type": "variable", "value": 1}, None
+        ),
+    ]
+    before = {row.id: agents.get(row.id).definition_json for row in user_agents}
+
+    def ok_sync(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        return {"total_synced": 0, "errors": [], "details": {}}
+
+    with patch("gobby.sync_registry.sync_bundled_content_to_db", side_effect=ok_sync):
+        deleted, result = _reinstall_bundled_definitions(
+            hub_db, {"agents", "rules", "pipelines", "variables"}, skip_types=None
+        )
+
+    assert result["errors"] == []
+    assert deleted == len(bundled)
+    assert agents.get_by_name("bundled-agent") is None
+    assert rules.get_by_name("bundled-rule") is None
+    assert pipelines.get_by_name("bundled-pipeline") is None
+    assert variables.get_by_name("bundled-variable") is None
+    for row in user_agents:
+        assert agents.get(row.id).definition_json == before[row.id]
+    assert rules.get(user_others[0].id).name == "imported-rule"
+    assert pipelines.get(user_others[1].id).name == "imported-pipeline"
+    assert variables.get(user_others[2].id).name == "imported-variable"

@@ -32,12 +32,11 @@ export interface AgentDefInfo {
     reasoning_effort?: string | null;
     reasoning_required?: boolean | null;
     fallback_agent: string | null;
-    mode: string;
+    sources?: string[] | null;
+    version?: string | null;
     isolation: string | null;
     base_branch: string;
     timeout: number;
-    default_workflow: string | null;
-    sandbox: Record<string, unknown> | null;
     workflows: {
       pipeline?: string;
       rules?: string[];
@@ -46,8 +45,6 @@ export interface AgentDefInfo {
       skill_selectors?: { include?: string[]; exclude?: string[] };
       [key: string]: unknown;
     } | null;
-    lifecycle_variables: Record<string, unknown>;
-    default_variables: Record<string, unknown>;
     step_workflow?: {
       steps?: WorkflowStep[] | null;
       variables?: Record<string, unknown> | null;
@@ -98,7 +95,6 @@ export const DEFAULT_AGENT_FORM: AgentFormData = {
   reasoning_effort: "auto",
   reasoning_required: false,
   fallback_agent: "",
-  mode: "inherit",
   isolation: "inherit",
   base_branch: "inherit",
   timeout: 0,
@@ -252,7 +248,6 @@ export function agentToDraft(agent: AgentDefInfo): AgentDraft {
       reasoning_effort: definition.reasoning_effort ?? "auto",
       reasoning_required: Boolean(definition.reasoning_required),
       fallback_agent: definition.fallback_agent ?? "",
-      mode: definition.mode,
       isolation: definition.isolation ?? "inherit",
       base_branch: definition.base_branch,
       timeout: definition.timeout,

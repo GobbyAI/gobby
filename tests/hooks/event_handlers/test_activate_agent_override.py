@@ -29,6 +29,12 @@ def _make_event_handlers() -> EventHandlers:
     )
 
 
+def _db(handlers: EventHandlers) -> object:
+    session_manager = handlers._session_manager
+    assert session_manager is not None
+    return session_manager.db
+
+
 def _make_agent_body(name: str = "test-agent") -> MagicMock:
     """Create a mock agent body returned by resolve_agent."""
     body = MagicMock()
@@ -41,7 +47,6 @@ def _make_agent_body(name: str = "test-agent") -> MagicMock:
     body.workflows.skills = []
     body.workflows.rule_selectors = SimpleNamespace(include=[], exclude=[])
     body.rules = []
-    body.skills = []
     body.variables = None
     body.steps = None
     body.step_variables = {}
@@ -73,9 +78,7 @@ class TestAgentNameOverride:
             assert mock_repo.call_count == 0
             assert not mock_repo.called
 
-        mock_resolve.assert_called_once_with(
-            "custom-agent", handlers._session_manager.db, project_id="proj-1"
-        )
+        mock_resolve.assert_called_once_with("custom-agent", _db(handlers), project_id="proj-1")
         assert mock_resolve.call_count == 1
         assert mock_resolve.call_args is not None
 
@@ -103,13 +106,13 @@ class TestAgentNameOverride:
             )
 
             assert mock_repo.call_count == 1
-            assert mock_repo.call_args == call(handlers._session_manager.db)
+            assert mock_repo.call_args == call(_db(handlers))
             assert mock_repo.return_value.read.call_count == 1
             assert mock_repo.return_value.read.call_args == call(resolve_secrets=False)
             assert mock_resolve.call_count == 1
             assert mock_resolve.call_args == call(
                 configured_agent,
-                handlers._session_manager.db,
+                _db(handlers),
                 project_id=None,
             )
 
@@ -130,9 +133,7 @@ class TestAgentNameOverride:
         )
 
         assert mock_resolve.call_count == 1
-        assert mock_resolve.call_args == call(
-            "my-agent", handlers._session_manager.db, project_id="proj-2"
-        )
+        assert mock_resolve.call_args == call("my-agent", _db(handlers), project_id="proj-2")
         assert mock_resolve.return_value.name == "my-agent"
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
@@ -190,10 +191,10 @@ class TestAgentNameOverride:
 
         assert result is not None
         assert result.agent_name == "scoped-agent"
-        mock_session_project.assert_called_once_with(handlers._session_manager.db, "sess-1")
+        mock_session_project.assert_called_once_with(_db(handlers), "sess-1")
         mock_resolve.assert_called_once_with(
             "scoped-agent",
-            handlers._session_manager.db,
+            _db(handlers),
             project_id="proj-from-session",
         )
         mock_rules_cls.return_value.list_all.assert_called_once_with(
@@ -235,7 +236,7 @@ class TestAgentNameOverride:
         mock_session_project.assert_not_called()
         mock_resolve.assert_called_once_with(
             "scoped-agent",
-            handlers._session_manager.db,
+            _db(handlers),
             project_id="proj-1",
         )
         mock_rules_cls.return_value.list_all.assert_called_once_with(

@@ -14,18 +14,6 @@ isolation: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  baseline:
-    - technical writing
-    - documentation structure and style
-    - markdown, docs sites, changelogs, and release notes
-    - task-focused validation
-  tool_allowlist:
-    - pytest
-    - ruff
-    - uv
-    - markdown tools
-
 prompts:
   persona: |
     Provide interactive technical-writing guidance grounded in the current product and source tree. Optimize for accuracy, discoverability, concise structure, and terminology consistency.
