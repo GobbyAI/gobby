@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::http::header::{HeaderName, HeaderValue};
+use axum::http::header::{CONNECTION, HeaderName, HeaderValue};
 use axum::http::{HeaderMap, Request, Response};
 
 use health::BackendState;
@@ -79,10 +79,32 @@ const FORWARDING_HEADERS: [&str; 5] = [
 ];
 
 /// Replace every forwarding header with the transport's own view: the peer's
-/// IP in `X-Forwarded-For` and the scheme in `X-Forwarded-Proto`.
+/// IP in `X-Forwarded-For` and the scheme in `X-Forwarded-Proto`. A client
+/// `Connection` field naming a forwarding header is dropped from it, or the
+/// downstream hop-by-hop strip would delete the observed values.
 fn observe_peer(headers: &mut HeaderMap, peer: SocketAddr, https: bool) {
     for name in FORWARDING_HEADERS {
         headers.remove(name);
+    }
+    let nominations: Vec<String> = headers
+        .get_all(CONNECTION)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .flat_map(|value| value.split(','))
+        .map(str::trim)
+        .filter(|token| {
+            !token.is_empty()
+                && !FORWARDING_HEADERS
+                    .iter()
+                    .any(|n| token.eq_ignore_ascii_case(n))
+        })
+        .map(str::to_owned)
+        .collect();
+    headers.remove(CONNECTION);
+    if let Ok(value) = HeaderValue::try_from(nominations.join(", "))
+        && !nominations.is_empty()
+    {
+        headers.insert(CONNECTION, value);
     }
     if let Ok(value) = HeaderValue::try_from(peer.ip().to_canonical().to_string()) {
         headers.insert(HeaderName::from_static("x-forwarded-for"), value);

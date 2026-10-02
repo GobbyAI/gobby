@@ -854,6 +854,10 @@ fn forged(path: &str) -> Request<Full<Bytes>> {
         .header("x-real-ip", "6.6.6.6")
         .header("x-forwarded-proto", "https")
         .header("x-forwarded-host", "evil.example")
+        // Nominating the observed fields as hop-by-hop, across duplicate
+        // fields and mixed case, must not let them be stripped downstream.
+        .header("connection", "X-Forwarded-For, keep-alive")
+        .header("connection", "x-FORWARDED-proto")
         .body(Full::new(Bytes::new()))
         .expect("request")
 }
@@ -923,7 +927,8 @@ async fn forwarding_headers_carry_only_observed_peer() {
         front_door,
         "/ws",
         "forwarded: for=6.6.6.6\r\nx-forwarded-for: 6.6.6.6\r\nx-real-ip: 6.6.6.6\r\n\
-         x-forwarded-proto: https\r\nx-forwarded-host: evil.example\r\n",
+         x-forwarded-proto: https\r\nx-forwarded-host: evil.example\r\n\
+         connection: X-Forwarded-For, x-FORWARDED-proto\r\n",
     )
     .await;
     assert!(head.starts_with("HTTP/1.1 101"), "{head}");

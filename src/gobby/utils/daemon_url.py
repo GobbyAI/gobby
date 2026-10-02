@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -60,13 +61,19 @@ def normalize_dial_host(host: str) -> str:
     The daemon always serves loopback, in plaintext, on its own ports: a
     wildcard bind covers it, and a concrete non-loopback bind gets a companion
     loopback listener. A concrete address may require TLS, so local clients
-    never dial it. IPv6 literals map to `[::1]`; everything else to `127.0.0.1`.
+    never dial it. A loopback IPv4 bind gets no companion, so it dials itself.
+    IPv6 literals map to `[::1]`; everything else to `127.0.0.1`.
     """
     stripped = host.strip()
     if stripped in {"", "0.0.0.0", "::", "::0", "[::]"}:
         return "127.0.0.1"
     if ":" in stripped:
         return "[::1]"
+    try:
+        if ipaddress.IPv4Address(stripped).is_loopback:
+            return stripped
+    except ValueError:
+        pass
     return "127.0.0.1"
 
 

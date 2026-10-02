@@ -60,6 +60,8 @@ def test_localhost_normalizes_to_numeric_loopback(tmp_path: Path) -> None:
     [
         ("0.0.0.0", "127.0.0.1"),
         ("localhost", "127.0.0.1"),
+        ("127.0.0.1", "127.0.0.1"),
+        ("127.0.0.2", "127.0.0.2"),
         ("10.0.0.5", "127.0.0.1"),
         ("hub.example.test", "127.0.0.1"),
         ("2001:db8::1", "[::1]"),

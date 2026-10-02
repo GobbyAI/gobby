@@ -82,13 +82,20 @@ fn endpoint_to_url(endpoint: &DaemonEndpoint) -> String {
 ///
 /// Local clients dial the front door over loopback whatever `bind_host`
 /// names, because only loopback peers are served in plaintext. A concrete
-/// IPv6 bind dials `[::1]`. Wildcards (`::`, `::0`, `[::]`), IPv4, hostnames
-/// and empty hosts dial `127.0.0.1`.
-fn dial_host(host: &str) -> &'static str {
+/// IPv6 bind dials `[::1]`. A loopback IPv4 bind gets no companion listener,
+/// so it dials its own address. Wildcards (`::`, `::0`, `[::]`), other IPv4,
+/// hostnames and empty hosts dial `127.0.0.1`.
+fn dial_host(host: &str) -> String {
     match host.trim() {
-        "::" | "::0" | "[::]" => "127.0.0.1",
-        host if host.contains(':') => "[::1]",
-        _ => "127.0.0.1",
+        "::" | "::0" | "[::]" => "127.0.0.1".to_owned(),
+        host if host.contains(':') => "[::1]".to_owned(),
+        host if host
+            .parse::<std::net::Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback()) =>
+        {
+            host.to_owned()
+        }
+        _ => "127.0.0.1".to_owned(),
     }
 }
 
@@ -151,6 +158,8 @@ bind_host: "::0"
         for (host, expected) in [
             ("0.0.0.0", "127.0.0.1"),
             ("localhost", "127.0.0.1"),
+            ("127.0.0.1", "127.0.0.1"),
+            ("127.0.0.2", "127.0.0.2"),
             ("10.0.0.5", "127.0.0.1"),
             ("hub.example.test", "127.0.0.1"),
             ("2001:db8::1", "[::1]"),
