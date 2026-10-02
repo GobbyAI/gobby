@@ -129,8 +129,9 @@ removal needs no Targets.
     Director included, from `gobby-workflows:run_pipeline`, the exposed
     `gobby-workflows:pipeline:<name>` tools and a shell `gobby pipelines
     run`. Runbooks launch from the operator's CLI, web or gclient surfaces or
-    an authorized cron job. This plan adds no enforcement and does not assume
-    that rule is live.
+    an authorized cron job. #22995 closed on 2026-10-01, and its
+    `seat-no-pipeline-launch` and `seat-no-launch-cli` rules are on 0.5.0 in
+    `roles/seat-spawn-policy.yaml`. This plan adds no enforcement.
 15. **Out of scope, with owners.** The parked meeseeks lifecycle input
     (memory 7faa183d) stays with its existing owner. Definition persistence
     (#22906), seat definitions (#22988, #22992), interactive activation
@@ -167,15 +168,15 @@ removal needs no Targets.
   It restores completed outputs on resume (`:571-585`) and runs a step's
   handler before writing the step `COMPLETED` with its output (`:716-722`).
   A resumed `failed` execution resets every step (`:546-561`).
-- `run_pipeline` pre-creates the execution without `definition_json`
-  (`mcp_proxy/tools/workflows/_pipeline_execution.py:333-350`), and
+- `run_pipeline` pre-creates the execution without `definition_json` or
+  `project_id` (`mcp_proxy/tools/workflows/_pipeline_execution.py:333-350`), and
   `resume_interrupted_pipelines` (`:611`) reloads the pipeline by name. The
   column exists and the direct executor path fills it
   (`pipeline_executor.py:167-188`). Only MCP `resume_pipeline` (`:377`)
   resumes a `failed` execution.
 - Daemon startup re-queues `running` executions of `resume_on_restart`
   pipelines and marks the rest `interrupted`
-  (`storage/pipeline_executions.py:715`).
+  (`storage/pipeline_executions.py:712`).
 - `_close_pipeline_session` (`pipeline_executor_events.py`) marks the child
   session `deleted` when the pipeline ends. `cancel_pipeline`
   (`_pipeline_execution.py:188`) kills runs listed by the active child.
@@ -190,17 +191,17 @@ removal needs no Targets.
 - `StepRenderer.build_render_context` (`pipeline/renderer.py:99`) exposes
   `inputs`, `steps`, session and project keys, and no step identity.
   `reserved_run_id` is accepted only for the task-close reviewer
-  (`spawn_agent/_factory.py:420-440`), and a spawn uses it as the new run's
-  id (`_implementation.py:569`). A run records `started_at` and
+  (`spawn_agent/_factory.py:450-471`), and a spawn uses it as the new run's
+  id (`_implementation.py:589`). A run records `started_at` and
   `terminal_id` (`storage/agents/_models.py:57-63`).
 - `spawn_agent` builds the resume snapshot in
   `spawn_agent/_runtime.py::build_spawn_context` and persists it on the run
-  row during preparation, before provider exec (`_implementation.py:575`,
-  `:689`). Task spawns already answer a retry with the existing active run
+  row during preparation, before provider exec (`_implementation.py:595`,
+  `:710`). Task spawns already answer a retry with the existing active run
   (`spawn_agent/_idempotency.py::active_task_spawn_response`).
 - `_list_run_payload` (`mcp_proxy/tools/agents_query_tools.py:74`) exposes
   `task_ref`, `agent_name` and `branch_name` from resume metadata. The file is
-  998 lines.
+  999 lines.
 - `reserve_agent_slot` (`spawn_agent/_spawn_guards.py:374`) serializes the
   per-project cap check from `max_active_agents_for_project(project_path)`
   under an in-process lock, one launch at a time. Hand-launched sessions are
@@ -248,19 +249,19 @@ parent-only move. Each keeps its criteria, commits, dependencies and
 historical `covers:placed-agent-launch:*` labels. This plan references each
 one through a typed deferral carrying that leaf's exact acceptance item IDs:
 
-| Deferral | Task | Placed-launch section | State |
+| Deferral | Task | Placed-launch section | State (2026-10-02) |
 | --- | --- | --- | --- |
-| D2 | #23009 | 1.1 Agent pane reservation primitives | open |
-| D3 | #23010 | 1.2 Executor binds a placed terminal before exec | open |
-| D4 | #23011 | 1.3 One daemon-scoped reserver reaches spawn_agent | open |
-| D5 | #23012 | 1.4 spawn_agent placement input, compensation and reply | open |
-| D6 | #23013 | 1.5 Workspace mutations refuse in-flight panes atomically | open, retained |
+| D2 | #23009 | 1.1 Agent pane reservation primitives | closed |
+| D3 | #23010 | 1.2 Executor binds a placed terminal before exec | closed |
+| D4 | #23011 | 1.3 One daemon-scoped reserver reaches spawn_agent | closed |
+| D5 | #23012 | 1.4 spawn_agent placement input, compensation and reply | closed |
+| D6 | #23013 | 1.5 Workspace mutations refuse in-flight panes atomically | closed, retained |
 | D7 | #23014 | 1.6 Spawn failure cleanup | closed |
-| D8 | #23015 | 1.7 Placed resume re-places against current state | open, retained |
+| D8 | #23015 | 1.7 Placed resume re-places against current state | open, retained; reviewer LAND, lands in package 9 |
 | D9 | #23017 | 1.9 In-doubt spawn ownership and restart recovery | closed |
-| D10 | #23016 | 1.8 spawn_agent and resume never launch unsandboxed | open |
-| D11 | #23018 | 2.1 gclient reconciliation of daemon-placed terminals | open |
-| D12 | #23019 | 3.1 Two-seat placement acceptance fixture | open |
+| D10 | #23016 | 1.8 spawn_agent and resume never launch unsandboxed | open; reviewer LAND, lands in package 9 |
+| D11 | #23018 | 2.1 gclient reconciliation of daemon-placed terminals | closed |
+| D12 | #23019 | 3.1 Two-seat placement acceptance fixture | open, unblocked |
 
 Item 1.8.4 moved to placed-launch 4.3.1 and stays with the P4 owners.
 Closed planning evidence: #22904 (placed launch) and #22899 (sandbox
@@ -344,6 +345,7 @@ Consumers unchanged:
 - `tests/workflows/test_pipeline_loader.py` — no-edit-reason: its existing calls keep their arguments, and the new `tag` filter is optional.
 - `tests/workflows/test_retired_bundled_definitions.py` — no-edit-reason: its existing calls keep their arguments, and the new `tag` filter is optional.
 - `tests/workflows/test_workflow_variables.py` — no-edit-reason: its existing calls keep their arguments, and the new `tag` filter is optional.
+- `tests/cli/test_sync_reinstall.py` — no-edit-reason: it creates `gobby`-tagged rows through the unchanged `create` call, and the new `tag` filter is optional.
 
 **Acceptance:**
 
@@ -376,7 +378,7 @@ Targets:
 
 **Research context:** `_list_run_payload` (`agents_query_tools.py:74`) is
 used by `list_agent_runs` (`:755`) and `list_running_agents` (`:897`). The file
-is 998 lines. Split: `src/gobby/mcp_proxy/tools/agents_query_tools.py::_list_run_payload`
+is 999 lines. Split: `src/gobby/mcp_proxy/tools/agents_query_tools.py::_list_run_payload`
 moves unchanged to `src/gobby/mcp_proxy/tools/agents_run_payload.py`, and
 only there gains `seat`. #23015 (D8) adds `placement` to the resume snapshot
 (`agents/resume_metadata.py::build_resume_metadata`) with the kind, workspace
@@ -418,7 +420,7 @@ checks only the requested seats. Called from a pipeline `mcp` step, its
 ambient session is the pipeline child. It finds its own execution id from
 the child's external id `pipeline-<execution id>`, and refuses when that
 session is not a pipeline child. `workspace` resolves through
-`WorkspaceManager.resolve_reference` (`storage/workspaces.py:496`). Each
+`WorkspaceManager.resolve_reference` (`storage/workspaces.py:353`). Each
 title is canonicalized with `truncate_title`, and two requested seats with
 the same `(workspace_id, title)` key refuse. The guard returns
 `success: True` with the checked seats and the free slot count only when
@@ -431,13 +433,13 @@ every check below passes. Otherwise it returns `success: False` with an
    The caller's own row exists before step 1 runs, so two concurrent runs each
    see the other and both refuse, or one refuses.
 2. Runbook-launched seats. Every run in the project whose status is in
-   `ACTIVE_AGENT_RUN_STATUSES` (`storage/agents/_constants.py:31`) is read
+   `ACTIVE_AGENT_RUN_STATUSES` (`storage/agents/_constants.py:39`) is read
    with no page cap. A run whose 6.1 `seat` equals a requested key refuses,
    naming its `run_id`.
 3. Hand-launched seats. `.gobby/roles/roster.md` under the project root is
    parsed with the pinned row form. A seat resolves the `gobby#N` of every
    row whose file equals its `role_file` through the session manager. Any
-   session in `LIVE_SESSION_STATUSES` (`storage/sessions/_constants.py:23`)
+   session in `LIVE_SESSION_STATUSES` (`storage/sessions/_constants.py:49`)
    refuses, naming the ref. Any ref that does not resolve refuses. The seat
    passes only when every matching row's session has ended. A seat with no
    row passes. A requested seat whose role file is missing refuses.
@@ -489,14 +491,21 @@ Targets:
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::run_pipeline`
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::resume_interrupted_pipelines`
 - `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::resume_pipeline`
-- `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::*` — scope-reason: cover the snapshot on pre-create, startup resume and failed resume
+- `src/gobby/mcp_proxy/tools/workflows/_pipeline_execution.py::PipelineExecutionManager`
+- `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::*` — scope-reason: cover the snapshot and project on pre-create, startup resume and failed resume
 
 **Research context:** `run_pipeline` pre-creates the execution without
-`definition_json` (`_pipeline_execution.py:333-350`), so startup recovery
+`definition_json` or `project_id` (`_pipeline_execution.py:333-350`), so startup recovery
 reloads the pipeline by name (`:655-678`). Bundled sync runs at daemon start,
 the same moment recovery runs. The column already exists, and the direct
 executor path fills it (`pipeline_executor.py:167-188`). `run_pipeline`
-writes `pipeline.model_dump_json()` on pre-create. `resume_interrupted_pipelines`
+writes `pipeline.model_dump_json()` and its `project_id` argument on
+pre-create. Without `project_id`, `create_execution` takes the execution
+manager's bound project (`storage/pipeline_executions.py:58`), and 7.2's
+same-project check would compare against that. The
+`PipelineExecutionManager` protocol's `create_execution` gains both keyword
+arguments; its only consumers are in this file. The file is 805 lines.
+`resume_interrupted_pipelines`
 and `resume_pipeline` (which today reloads by name, `:423-449`) validate that
 snapshot into `PipelineDefinition` before any claim or reset and resume from
 it. A missing or malformed snapshot refuses with a typed error: startup
@@ -519,6 +528,10 @@ Consumers unchanged:
   recovery, is refused by `resume_pipeline` with its steps unchanged, and
   runs no step. test:
   `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_missing_snapshot_fails_closed`.
+- 7.1.3 - A pipeline launched through `run_pipeline` for a project
+  pre-creates its execution with that `project_id`, even when the
+  execution manager is bound to another project. test:
+  `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_precreate_records_caller_project`.
 
 ### 7.2 Pipeline spawns reconcile by step invocation id [category: code] (depends: 7.1)
 `kind: deliverable`
@@ -529,6 +542,7 @@ Targets:
 - `src/gobby/workflows/pipeline/renderer.py::_RESERVED_CONTEXT_KEYS`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_seat_adoption.py`
 - `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py::*` — scope-reason: route reserved_run_id from an authenticated pipeline caller to authority checks and reconciliation before any placement or launch work
+- `src/gobby/storage/workspaces.py::*` — scope-reason: add the terminal-to-refs query an adopted reply reads
 - `tests/workflows/test_pipeline_invocation_id.py`
 - `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py`
 
@@ -540,9 +554,9 @@ in each step's context, and `StepRenderer.build_render_context` and
 flattened over it (`:118`, `:357`). It is stable across restarts, because
 the execution id and step ids are.
 
-`reserved_run_id` is reviewer-internal today (`_factory.py:420-440`). The
+`reserved_run_id` is reviewer-internal today (`_factory.py:450-471`). The
 factory separates the ambient caller (`get_current_session_id()`,
-`:401`) from the declared `parent_session_id`, and any caller may name a
+`:431`) from the declared `parent_session_id`, and any caller may name a
 pipeline child as its declared parent. Authority therefore comes from the
 ambient caller: a pipeline MCP step calls the proxy with the pipeline
 child as its ambient session (`pipeline/handlers.py:47-83`).
@@ -555,7 +569,8 @@ these hold:
   is not deleted.
 - The resolved declared parent is the caller itself.
 - Execution `<execution_id>` exists, is `running`, and has the caller's
-  `project_id`, which is also the spawn's project.
+  `project_id` (written at pre-create by 7.1), which is also the spawn's
+  project.
 - `reserved_run_id` equals the `invocation_id` of a step in that
   execution's launch snapshot (7.1).
 
@@ -574,24 +589,35 @@ placement preflight, isolation and launch:
   `success: True`, `adopted: True`, its `run_id` and `status`, and the
   `workspace`, `tab_ref` and `pane_ref` of the workspace pane bound to its
   `terminal_id`, else `null`. Nothing is reserved, isolated or launched.
+  The refs come from the new
+  `WorkspaceManager.placement_refs_for_terminal(terminal_id)` in
+  `storage/workspaces.py`: one query joins `workspace_panes`,
+  `workspace_tabs` and `workspaces` on `terminal_id`, takes the node ref
+  from the workspace's machine, and returns `None` or the three strings in
+  the format of a fresh placement reply (`spawn_agent/_placement.py:121-125`).
+  The existing
+  `get_pane_for_terminal` (`storage/workspaces.py:824`) returns the pane
+  row alone, without its tab, workspace or node refs.
 - Any other run with that id (prepared and never started, or failed before
   start): refuse `seat_launch_unsettled` naming the run and its status.
   Nothing launches, and the operator stops or settles that run before a
   relaunch.
 
 `started_at` is the launch witness: `start_run_or_cleanup`
-(`_failure_cleanup.py:368`) runs after the provider process and its
-terminal exist (`_execution.py:170`) and sets `status = 'running'` with
+(`_failure_cleanup.py:417`) runs after the provider process and its
+terminal exist (`_execution.py:172`) and sets `status = 'running'` with
 `started_at` (`storage/agents/_lifecycle.py:328`). A prepared or rolled-back
 run never gets it. An adopted seat whose pane is gone leaves `pane_ref`
 null, so a following split step fails `not_found`. The tests use a mock
 reserver and launcher, so this leaf closes without #23012. The live proof
 through the real preflight with the original seat still held is D1's 8.1.9.
 
-Split: `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` is 784 lines and
+Split: `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py` is 821 lines and
 `src/gobby/workflows/pipeline_executor.py` is 866, so the reconciliation
 lives in the new `src/gobby/mcp_proxy/tools/spawn_agent/_seat_adoption.py`,
 and each existing file gains only a call or one context key.
+`src/gobby/storage/workspaces.py` is 938 lines and gains only the one
+query method.
 
 Consumers unchanged:
 - `src/gobby/dispatch/stage_pipeline.py` — no-edit-reason: it constructs `StepRenderer` unchanged, and the new reserved `invocation_id` name only adds a context key.
@@ -626,6 +652,10 @@ Consumers unchanged:
   same external id adopts. The queued task-close reviewer spawn is
   unchanged. test:
   `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_invocation_authority`.
+- 7.2.6 - An adopted reply's `workspace`, `tab_ref` and `pane_ref` name the
+  pane bound to the run's `terminal_id` in the fresh-placement format, and
+  each is `null` when no pane holds that terminal. test:
+  `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_adopted_reply_names_bound_pane`.
 
 ### 7.3 Cron pipeline launch requires a cron session [category: code]
 `kind: deliverable`
@@ -1142,14 +1172,14 @@ deferral:
 
 Reused leaf #23016, placed-launch 1.8. Seats launch only under managed SRT
 (Decision 12). Item 1.8.4 moved to placed-launch 4.3.1 and is outside this
-lane.
+lane. Item 1.8.2 was dropped from #23016 by the PD's 2026-10-01 ruling
+after #23055 retired Ask; 1.8.1 covers the write-grant config.
 
 Provenance: task #23016. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
 
 | Item | Artifact of record |
 | --- | --- |
 | 1.8.1 | test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_unsandboxed_config_refused_before_side_effects` |
-| 1.8.2 | test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_runtime_profile_config_is_gated` |
 | 1.8.3 | test: `tests/agents/test_resume_sandbox_gate.py::test_resume_refuses_unsandboxed_config` |
 | 1.8.5 | test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_loopback_mcp_calls_are_rule_enforced` |
 | 1.8.6 | test: `tests/mcp_proxy/tools/spawn_agent/test_sandbox_gate.py::test_gate_refuses_when_isolated_srt_is_missing` |
@@ -1161,7 +1191,6 @@ deferral:
   owner: "program-director"
   original_acceptance_items:
     - 1.8.1
-    - 1.8.2
     - 1.8.3
     - 1.8.5
     - 1.8.6
@@ -1272,6 +1301,18 @@ deferral:
   (Decision 7, 6.2, 6.2.2). The Adversary (gobby#14579) rechecked
   4fbd036 and confirmed renewed consensus. The superseded M1 is withdrawn
   for a fresh derive.
+- 2026-10-02: Freshness pass after Josh approved the plan (PD gobby#14972
+  GO, 13:26 CT). The reconciliation table records leaf states as of
+  2026-10-02. D10 drops 1.8.2 to match #23016's criteria; 7.2 and D1 do not
+  depend on it. Decision 14 records that #22995 closed with its launch
+  rules on 0.5.0. 5.1 lists `tests/cli/test_sync_reinstall.py` as an
+  unchanged consumer. From L2's read-ahead (PD 13:31): 7.1 pre-create
+  also writes `project_id`, which 7.2's same-project check reads (7.1.3),
+  and 7.2 names the new `placement_refs_for_terminal` query for adopted
+  replies (7.2.6). Line citations in As-Is Facts, 6.x and 7.x are
+  refreshed against `4a947aa473`. The plan claims no migration, and the branch merges
+  cleanly onto 0.5.0 `4a947aa473`. The stale M1 is withdrawn (memory
+  `f5577ae0`), and the acting Adversary (gobby#14550) derives a fresh M1.
 
 
 ## V2: Verification
@@ -1289,225 +1330,3 @@ Validate the absolute artifact path: from a task worktree, a relative path
 under `-p` resolves to the main checkout's copy. After the PD-owned restart,
 `gobby pipelines list --tag runbook` lists the bundled `planning-council`.
 Do not run the full pytest suite.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Pipeline tags from YAML and a tag filter
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '5.1.1: A project pipeline YAML with `tags: [runbook]` imports
-    with `runbook` in the row''s tags, and a re-import with changed tags updates them.
-    test: `tests/workflows/test_imports.py::test_pipeline_yaml_tags_persist_on_import`.
-
-    5.1.2: A bundled pipeline YAML with tags syncs with `gobby` plus those tags. test:
-    `tests/workflows/test_workflows_sync.py::test_bundled_pipeline_tags_merge_with_gobby`.
-
-    5.1.3: `list_pipelines(tag="runbook")` returns only tagged pipelines in scope,
-    and a project YAML declaring `gobby` is rejected. test: `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::test_list_pipelines_filters_by_tag`.
-
-    5.1.4: `gobby pipelines list --tag runbook` prints only tagged pipelines. test:
-    `tests/cli/test_cli_pipelines.py::test_list_filters_by_tag`.'
-  labels:
-  - covers:deploy-runbook:5.1:5.1.1
-  - covers:deploy-runbook:5.1:5.1.2
-  - covers:deploy-runbook:5.1:5.1.3
-  - covers:deploy-runbook:5.1:5.1.4
-  tdd: true
-  source_section: '5.1'
-  implementation_domain: backend
-- title: Seat field in run listings
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '6.1.1: A run whose resume metadata carries a placement lists
-    `seat: {workspace, title}` in `list_running_agents` and `list_agent_runs`, and
-    an unplaced run lists `seat: null`. test: `tests/mcp_proxy/tools/test_agents_run_payload.py::test_seat_from_placement_metadata`.
-
-    6.1.2: `agents_query_tools.py` ends the leaf under 1,000 lines and the existing
-    payload fields are unchanged. symbol: `src/gobby/mcp_proxy/tools/agents_run_payload.py::_list_run_payload`.
-    test: `tests/mcp_proxy/tools/test_agents_run_payload.py::test_payload_fields_unchanged`.'
-  labels:
-  - covers:deploy-runbook:6.1:6.1.1
-  - covers:deploy-runbook:6.1:6.1.2
-  tdd: true
-  source_section: '6.1'
-  implementation_domain: backend
-- title: Runbook seat guard tool
-  category: code
-  task_type: feature
-  depends_on:
-  - '6.1'
-  validation_criteria: '6.2.1: A seat held by a run in any active status (queued,
-    pending or running) refuses with that run id, and an ended run''s seat passes.
-    test: `tests/agents/test_runbook_seats.py::test_live_run_seat_refuses`.
-
-    6.2.2: A roster row whose session is in any `LIVE_SESSION_STATUSES` member (active,
-    paused, interrupted, awaiting_input, awaiting_approval, awaiting_handoff) refuses
-    with the session ref; an ended session passes; an unresolvable ref, a missing
-    roster, a malformed roster and a missing role file each refuse. A role file with
-    two rows, one session ended and one live, refuses with the live ref whichever
-    row comes first. test: `tests/agents/test_runbook_seats.py::test_roster_seats_and_stale_refs`.
-
-    6.2.3: Two executions of one runbook that both reach the guard both see a live
-    sibling, and at most one passes. test: `tests/agents/test_runbook_seats.py::test_concurrent_executions_admit_at_most_one`.
-
-    6.2.4: A storage error, a truncated run query and a caller that is not a pipeline
-    child session each refuse. test: `tests/agents/test_runbook_seats.py::test_uncertain_lookup_fails_closed`.
-
-    6.2.5: Fewer free slots than requested seats refuses before any launch. test:
-    `tests/agents/test_runbook_seats.py::test_capacity_shortfall_refuses`.
-
-    6.2.6: An empty, duplicate, unknown or whitespace-padded seat name, and two seats
-    with one canonical key, each refuse before any seat lookup. test: `tests/agents/test_runbook_seats.py::test_requested_seats_validated`.'
-  labels:
-  - covers:deploy-runbook:6.2:6.2.1
-  - covers:deploy-runbook:6.2:6.2.2
-  - covers:deploy-runbook:6.2:6.2.3
-  - covers:deploy-runbook:6.2:6.2.4
-  - covers:deploy-runbook:6.2:6.2.5
-  - covers:deploy-runbook:6.2:6.2.6
-  tdd: true
-  source_section: '6.2'
-  implementation_domain: backend
-- title: Pipeline resume runs the launch-time definition
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '7.1.1: A pipeline launched through `run_pipeline` stores its
-    definition snapshot, and a definition changed after launch leaves the resumed
-    step graph unchanged. test: `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_resume_uses_launch_snapshot`.
-
-    7.1.2: A missing or malformed snapshot fails the execution on startup recovery,
-    is refused by `resume_pipeline` with its steps unchanged, and runs no step. test:
-    `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_missing_snapshot_fails_closed`.'
-  labels:
-  - covers:deploy-runbook:7.1:7.1.1
-  - covers:deploy-runbook:7.1:7.1.2
-  tdd: true
-  source_section: '7.1'
-  implementation_domain: backend
-- title: Pipeline spawns reconcile by step invocation id
-  category: code
-  task_type: feature
-  depends_on:
-  - '7.1'
-  validation_criteria: '7.2.1: A step''s `invocation_id` is the same before and after
-    a restart, two steps of one execution get different ids, and a step whose id is
-    `invocation_id` does not override the reserved name. test: `tests/workflows/test_pipeline_invocation_id.py::test_invocation_id_is_stable_per_step`.
-
-    7.2.2: A placed spawn from a pipeline child whose `reserved_run_id` names a started
-    run returns that run with `adopted: true` and makes no placement, reserver or
-    launch call, whether the seat is still live or ended, moved or was renamed. test:
-    `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_started_run_is_adopted`.
-
-    7.2.3: Two steps that spawn the same seat in sequence create two runs, and neither
-    adopts the other. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_distinct_steps_do_not_share_runs`.
-
-    7.2.4: A run with the id that was prepared and never started, or failed before
-    start, refuses `seat_launch_unsettled` and launches nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_unstarted_run_refuses`.
-
-    7.2.5: A non-pipeline caller that names a real pipeline child as `parent_session_id`
-    keeps the reviewer-internal refusal and reaches no lookup. A pipeline caller refuses
-    `invocation_unauthorized` when its declared parent is another session, its execution
-    is missing, not running or in another project, or the id is not one of its steps''
-    invocation ids. A run with the id under another execution or another project refuses
-    `invocation_conflict`. A replacement child with the same external id adopts. The
-    queued task-close reviewer spawn is unchanged. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_invocation_authority`.'
-  labels:
-  - covers:deploy-runbook:7.2:7.2.1
-  - covers:deploy-runbook:7.2:7.2.2
-  - covers:deploy-runbook:7.2:7.2.3
-  - covers:deploy-runbook:7.2:7.2.4
-  - covers:deploy-runbook:7.2:7.2.5
-  tdd: true
-  source_section: '7.2'
-  implementation_domain: backend
-- title: Cron pipeline launch requires a cron session
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '7.3.1: A cron `pipeline` job parents the pipeline child to
-    the cron session, and each spawn the pipeline makes carries that child as parent
-    and the job''s project. test: `tests/scheduler/test_cron_runbook_chain.py::test_cron_chain_identity`.
-
-    7.3.2: A failed cron session create, and a missing session manager, fail the cron
-    run with a typed error and create no execution. test: `tests/scheduler/test_cron_runbook_chain.py::test_cron_session_failure_refuses`.'
-  labels:
-  - covers:deploy-runbook:7.3:7.3.1
-  - covers:deploy-runbook:7.3:7.3.2
-  tdd: true
-  source_section: '7.3'
-  implementation_domain: backend
-- title: Bundled planning council runbook
-  category: code
-  task_type: feature
-  depends_on:
-  - '5.1'
-  - '6.2'
-  - '7.1'
-  - '7.2'
-  validation_criteria: '8.1.1: Bundled sync installs the runbook with the `gobby`
-    and `runbook` tags, and it validates as a `PipelineDefinition`. file: `src/gobby/install/shared/workflows/pipelines/planning-council.yaml`.
-    test: `tests/workflows/test_runbook_pipeline.py::test_runbook_syncs_bundled_and_tagged`.
-
-    8.1.2: MCP and HTTP launches parent both seats to the pipeline child session,
-    whose parent is the caller or the system session, and resolve the project. test:
-    `tests/workflows/test_runbook_pipeline.py::test_entrypoint_parent_chain`.
-
-    8.1.3: A restart between the writer''s spawn and its completed write re-runs the
-    writer step on the reused pipeline child, and the second spawn carries the same
-    parent and the same `reserved_run_id`. A restart after the writer completed keeps
-    its `run_id`, skips the guard and launches only the adversary. test: `tests/workflows/test_runbook_pipeline.py::test_restart_reruns_on_same_child`.
-
-    8.1.4: A partial deploy keeps the launched seat''s output. A fresh run with `seats:
-    "adversary"` passes the guard and launches only the adversary, and a run that
-    asks for the writer while its run is active is refused. `gobby pipelines run -i
-    seats=adversary` hands the executor that string unchanged. test: `tests/workflows/test_runbook_pipeline.py::test_partial_deploy_relaunches_missing_seat`.
-    test: `tests/cli/test_cli_pipelines.py::test_run_passes_seats_input_as_string`.
-
-    8.1.5: `resume_pipeline` on a failed runbook execution refuses with the typed
-    error and changes no step or output, including after the current definition lost
-    its `runbook` tag, changed or was deleted. test: `tests/workflows/test_runbook_pipeline.py::test_failed_runbook_resume_refused`.
-
-    8.1.6: `gobby pipelines runs show --json` includes each seat step''s `run_id`
-    for a completed and for a failed runbook execution. test: `tests/cli/test_cli_pipelines.py::test_runs_show_includes_step_outputs`.'
-  labels:
-  - covers:deploy-runbook:8.1:8.1.1
-  - covers:deploy-runbook:8.1:8.1.2
-  - covers:deploy-runbook:8.1:8.1.3
-  - covers:deploy-runbook:8.1:8.1.4
-  - covers:deploy-runbook:8.1:8.1.5
-  - covers:deploy-runbook:8.1:8.1.6
-  tdd: true
-  source_section: '8.1'
-  implementation_domain: backend
-- title: Runbook guide and pipeline reference
-  category: docs
-  task_type: chore
-  depends_on:
-  - '7.3'
-  - '8.1'
-  validation_criteria: '9.1.1: The pipelines guide documents runbooks, their guard,
-    entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
-
-    9.1.2: The skill reference names `check_runbook_seats`, the `seats` input, `runs
-    show --json` and `kill_agent` by recorded run id. file: `src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md`.
-
-    9.1.3: The recovery reference explains the post-restart `seat_launch_unsettled`,
-    `invocation_conflict` and `seat_live` failures. behavior: "seat_launch_unsettled"
-    in `src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md`.
-
-    9.1.4: The runbooks reference is a registered pipelines topic that the catalog
-    lists and `get_skill_file` loads. test: `tests/skills/test_reference_library.py::test_pipelines_runbooks_topic_is_registered`.'
-  labels:
-  - covers:deploy-runbook:9.1:9.1.1
-  - covers:deploy-runbook:9.1:9.1.2
-  - covers:deploy-runbook:9.1:9.1.3
-  - covers:deploy-runbook:9.1:9.1.4
-  tdd: false
-  source_section: '9.1'
-  assigned_agent: tech-writer
-```
