@@ -5,12 +5,19 @@ use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 const FAILURE_SCHEMA_VERSION: u32 = 1;
 const RESPONSE_BODY_MAX_BYTES: usize = 8192;
 const RECENT_FAILURE_LIMIT: usize = 10;
+/// Retaining only the 10 listed by `--diagnose` let a burst of tool-hook
+/// failures prune the record of a Stop that failed open (#20744) before anyone
+/// read it (#23266).
+const FAILURE_RETENTION_LIMIT: usize = 100;
+/// Matches the daemon's inbox orphan-temp window: an older `.json.tmp` belongs
+/// to a writer that died between create and rename.
+const ORPHAN_TMP_MAX_AGE: Duration = Duration::from_secs(60 * 60);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -227,8 +234,9 @@ fn read_failure_entries(dir: &Path) -> Vec<FailureEntry> {
 }
 
 fn prune_old_failure_artifacts(dir: &Path, keep_path: &Path) -> Result<()> {
+    sweep_orphan_tmp_files(dir);
     let mut entries = read_failure_entries(dir);
-    if entries.len() <= RECENT_FAILURE_LIMIT {
+    if entries.len() <= FAILURE_RETENTION_LIMIT {
         return Ok(());
     }
 
@@ -238,12 +246,34 @@ fn prune_old_failure_artifacts(dir: &Path, keep_path: &Path) -> Result<()> {
             .then_with(|| b.modified_at.cmp(&a.modified_at))
             .then_with(|| b.path.cmp(&a.path))
     });
-    for entry in entries.into_iter().skip(RECENT_FAILURE_LIMIT) {
+    for entry in entries.into_iter().skip(FAILURE_RETENTION_LIMIT) {
         fs::remove_file(&entry.path).with_context(|| {
             format!("remove old ghook failure artifact {}", entry.path.display())
         })?;
     }
     Ok(())
+}
+
+/// Best-effort: a concurrent ghook may be mid-write, so only stale temps go.
+fn sweep_orphan_tmp_files(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let is_artifact_tmp = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.ends_with(".json.tmp"));
+        let is_stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > ORPHAN_TMP_MAX_AGE);
+        if is_artifact_tmp && is_stale {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn cap_response_body(body: &str) -> (String, bool) {
@@ -442,8 +472,8 @@ mod tests {
     #[test]
     fn record_failure_prunes_oldest_json_artifacts() {
         let dir = tempdir().unwrap();
-        for index in 0..RECENT_FAILURE_LIMIT {
-            fs::write(dir.path().join(format!("{index:02}-old.json")), "{}").unwrap();
+        for index in 0..FAILURE_RETENTION_LIMIT {
+            fs::write(dir.path().join(format!("{index:03}-old.json")), "{}").unwrap();
         }
         fs::write(dir.path().join("ignored.tmp"), "{}").unwrap();
 
@@ -468,8 +498,57 @@ mod tests {
             .filter_map(Result::ok)
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
             .count();
-        assert_eq!(json_files, RECENT_FAILURE_LIMIT);
+        assert_eq!(json_files, FAILURE_RETENTION_LIMIT);
         assert!(path.exists(), "newly written failure artifact is retained");
         assert!(dir.path().join("ignored.tmp").exists());
+    }
+
+    #[test]
+    fn stop_failure_artifact_survives_newer_failures_and_orphan_tmps_are_swept() {
+        let dir = tempdir().unwrap();
+        let stale_tmp = dir.path().join("1-n-connect-dead.json.tmp");
+        let fresh_tmp = dir.path().join("2-n-connect-live.json.tmp");
+        fs::write(&stale_tmp, "{}").unwrap();
+        fs::write(&fresh_tmp, "{}").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(&stale_tmp)
+            .unwrap()
+            .set_modified(SystemTime::now() - std::time::Duration::from_secs(2 * 60 * 60))
+            .unwrap();
+
+        let record = |hook_type: &str| {
+            let mut envelope = envelope();
+            envelope.critical = false;
+            envelope.hook_type = hook_type.to_string();
+            record_failure_to_dir(
+                dir.path(),
+                FailureContext {
+                    envelope: &envelope,
+                    envelope_id: Some("env"),
+                    failure_kind: FailureKind::Connect,
+                    status_code: None,
+                    error: Some("connection refused"),
+                    response_body: None,
+                    transport_error: Some("connection refused"),
+                    daemon_url: "http://localhost:60887",
+                },
+            )
+            .unwrap()
+        };
+        let stop_artifact = record("Stop");
+        for _ in 0..=RECENT_FAILURE_LIMIT {
+            record("PostToolUse");
+        }
+
+        assert!(
+            stop_artifact.exists(),
+            "turn-end failure evidence is pruned"
+        );
+        assert!(!stale_tmp.exists(), "orphan tmp from a dead writer is kept");
+        assert!(
+            fresh_tmp.exists(),
+            "in-flight tmp of a live writer is removed"
+        );
     }
 }

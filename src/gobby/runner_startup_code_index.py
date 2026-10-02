@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -43,6 +44,11 @@ async def _repair_code_index_bm25(
     else:
         status = unavailable_bm25_status("PostgreSQL database_url is not configured")
 
+    # Daemon status reports this result; it checks only index presence per request.
+    runner.code_index_bm25_verification = {
+        "verified_at": datetime.now(UTC).isoformat(),
+        "healthy": bool(status["healthy"]),
+    }
     if status["healthy"]:
         repaired = [item["name"] for item in status["indexes"] if item["repaired"]]
         if repaired:

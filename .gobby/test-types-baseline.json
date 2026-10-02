@@ -8851,16 +8851,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/telemetry/test_metrics.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 24,
-      "message": "Function is missing a return type annotation",
-      "occurrences": 9,
-      "path": "tests/telemetry/test_metrics.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/telemetry/test_middleware.py::::mypy:no-untyped-def",
       "issue_code": "mypy:no-untyped-def",
       "line": 18,

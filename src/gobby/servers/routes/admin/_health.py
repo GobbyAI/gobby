@@ -60,13 +60,21 @@ async def _collect_status_item(
     awaitable: Awaitable[Any],
     result: _StatusCollection,
 ) -> None:
+    started = time.monotonic()
     try:
         result.values[name] = await awaitable
     except asyncio.CancelledError:
         raise
-    except (TimeoutError, DatabaseOperationDeadlineExceeded, QueryCanceled):
+    except (TimeoutError, DatabaseOperationDeadlineExceeded, QueryCanceled) as exc:
         result.timed_out.append(name)
-        logger.warning("Status collector %s timed out", name)
+        # The type separates a canceled statement (QueryCanceled) from pool or
+        # executor waits that exhausted the shared deadline.
+        logger.warning(
+            "Status collector %s timed out after %.3fs: %s",
+            name,
+            time.monotonic() - started,
+            type(exc).__name__,
+        )
     except Exception as exc:
         result.failed[name] = type(exc).__name__
         logger.warning(
@@ -268,10 +276,19 @@ async def _get_postgres_dashboard_status(
 
     from gobby.cli.installers.postgres import get_postgres_status
 
-    return await get_postgres_status(
+    status = await get_postgres_status(
         database=server.services.database,
         run_db=server.run_db,
     )
+    code_index = status.get("code_index")
+    if isinstance(code_index, dict):
+        # Per-request status checks presence only; segment verification ran at startup.
+        runner = server.get_runner()
+        verification = getattr(runner, "code_index_bm25_verification", None)
+        code_index["verification"] = verification if isinstance(verification, dict) else None
+        if code_index["verification"] and not code_index["verification"].get("healthy"):
+            code_index["healthy"] = False
+    return status
 
 
 def _unavailable_falkordb_memory_status(server: "HTTPServer | None" = None) -> dict[str, Any]:
@@ -668,10 +685,13 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         postgres_status = collection.values.get("postgres")
         if "postgres" in collection.timed_out:
+            # A slow collector proves nothing about the hub; unavailable means a
+            # failed connection.
             postgres_status = {
-                "available": False,
-                "healthy": False,
-                "error": "status collection timed out",
+                "status": "unknown",
+                "available": None,
+                "healthy": None,
+                "error": "collector timed out",
             }
         elif "postgres" in collection.failed:
             postgres_status = {
@@ -682,7 +702,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
 
         postgres_healthy = True
         postgres_code_index_healthy = True
-        if postgres_status is not None:
+        if postgres_status is not None and postgres_status.get("status") != "unknown":
             postgres_healthy = bool(postgres_status.get("healthy"))
             code_index_status = postgres_status.get("code_index")
             if isinstance(code_index_status, dict):

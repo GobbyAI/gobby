@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.3"
+version = "0.4.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -25,6 +25,7 @@ axum = { version = "0.8", default-features = false }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres"] }
+gobby-terminals = { path = "../gterminals" }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }

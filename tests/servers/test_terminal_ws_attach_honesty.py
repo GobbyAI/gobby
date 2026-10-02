@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -503,3 +504,48 @@ async def test_proxy_attach_waits_for_terminal_host_startup(
         assert runtime.resolved == 0
         assert result["code"] == "host_not_ready"
         assert result["reason"] == "terminal host has not finished starting"
+
+
+class _ThreadRecordingManager(TerminalManager):
+    """Records the thread each row read runs on."""
+
+    def __init__(self, db: HubDatabase) -> None:
+        super().__init__(db)
+        self.get_threads: list[int] = []
+
+    def get(self, terminal_id: str) -> Any:
+        self.get_threads.append(threading.get_ident())
+        return super().get(terminal_id)
+
+
+@pytest.mark.asyncio
+async def test_attach_resolves_the_row_on_the_db_executor(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    """D1a.1: the attach row lookup runs on a worker thread, never the event loop."""
+    terminal_id = _live_row(temp_db, sample_project)
+    manager = _ThreadRecordingManager(temp_db)
+    assert manager.mark_exited(terminal_id) is not None
+    server = _ws_server()
+    leases = TerminalLeaseRegistry(daemon_epoch="test-epoch")
+    registry = TerminalRuntimeRegistry()
+    server.configure_terminals(
+        manager,
+        registry,
+        MagicMock(),
+        lease_registry=leases,
+        write_coordinator=WriteCoordinator(manager, registry, lease_registry=leases),
+    )
+    ws = MockWebSocket()
+    server.clients[ws] = {"subscriptions": {"*"}}
+    loop_thread = threading.get_ident()
+
+    await _send(
+        server,
+        ws,
+        {"type": "terminal_attach", "request_id": "executor-row", "terminal_id": terminal_id},
+    )
+
+    assert ws.messages_of_type("terminal_attach_result")[-1]["code"] == "terminal_exited"
+    assert len(manager.get_threads) == 1
+    assert manager.get_threads[0] != loop_thread

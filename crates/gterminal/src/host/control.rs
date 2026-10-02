@@ -7,7 +7,7 @@ use std::io;
 use std::sync::{Arc, Mutex as StdMutex};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::net::{unix::OwnedReadHalf, UnixStream};
-use tokio::sync::{mpsc, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
 use super::backpressure::{enqueue_control, send_control};
@@ -19,6 +19,11 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// Additive features a client may use only when the hello lists them.
 /// `terminal_theme`: frame streams accept `ClientMessage::SetTerminalTheme`,
 /// and `spawn` accepts a `terminal_theme` field.
+/// `host_upgrade`: the host accepts `host_upgrade` and `ping` reports
+/// `generation` and `upgrade`.
+#[cfg(all(unix, feature = "vt-engine"))]
+pub const HOST_CAPABILITIES: &[&str] = &["terminal_theme", "host_upgrade"];
+#[cfg(not(all(unix, feature = "vt-engine")))]
 pub const HOST_CAPABILITIES: &[&str] = &["terminal_theme"];
 const MAX_CONTROL_LINE: usize = 2 * 1024 * 1024;
 const MAX_INFLIGHT_PER_CONNECTION: usize = 64;
@@ -279,8 +284,11 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
         let task_event_tasks = event_tasks.clone();
         dispatch_tasks.spawn(async move {
             let _permit = permit;
-            let DispatchResult { response, events } =
-                dispatch(&task_state, conn_id, &request).await;
+            let DispatchResult {
+                response,
+                events,
+                replied,
+            } = dispatch(&task_state, conn_id, &request).await;
             if let Some(events) = events {
                 let event_outbound = task_outbound.clone();
                 let event_task = tokio::spawn(recv_event(events, event_outbound));
@@ -290,6 +298,9 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
                     .push(event_task);
             }
             let _ = send_control(&task_outbound, with_id(response, &request.id)).await;
+            if let Some(replied) = replied {
+                let _ = replied.send(());
+            }
             task_in_flight
                 .lock()
                 .expect("in-flight request lock poisoned")
@@ -333,6 +344,8 @@ async fn recv_event(mut rx: EventReceiver, outbound: mpsc::Sender<Value>) {
 struct DispatchResult {
     response: Value,
     events: Option<EventReceiver>,
+    /// Fired once `response` is queued on the connection.
+    replied: Option<oneshot::Sender<()>>,
 }
 
 struct QueuedRequest {
@@ -358,12 +371,14 @@ async fn dispatch_ordered(
         return DispatchResult {
             response: json!({"ok": false, "error": "host_draining"}),
             events: None,
+            replied: None,
         };
     }
     let Some(seq) = request.operation_seq else {
         return DispatchResult {
             response: json!({"ok": false, "error": "operation_seq_required"}),
             events: None,
+            replied: None,
         };
     };
     let fingerprint = fingerprint_json(&request.method, &Value::Object(request.extra.clone()));
@@ -371,18 +386,22 @@ async fn dispatch_ordered(
         LedgerDecision::Gap => DispatchResult {
             response: json!({"ok": false, "error": "operation_gap"}),
             events: None,
+            replied: None,
         },
         LedgerDecision::Expired => DispatchResult {
             response: json!({"ok": false, "error": "operation_expired"}),
             events: None,
+            replied: None,
         },
         LedgerDecision::FingerprintMismatch => DispatchResult {
             response: json!({"ok": false, "error": "operation_conflict"}),
             events: None,
+            replied: None,
         },
         LedgerDecision::Replay(outcome) => DispatchResult {
             response: outcome,
             events: None,
+            replied: None,
         },
         LedgerDecision::Execute => {
             let result = dispatch(state, conn_id, request).await;
@@ -403,9 +422,15 @@ async fn dispatch(
             state.expire_prepared().await;
             state.list_json().await
         }
-        "host_shutdown" => {
-            state.begin_shutdown(request.grace_ms.unwrap_or(0));
-            json!({"ok": true, "accepted": true, "draining": true})
+        "host_shutdown" => state.begin_shutdown(request.grace_ms.unwrap_or(0)),
+        #[cfg(all(unix, feature = "vt-engine"))]
+        "host_upgrade" => {
+            let (response, replied) = super::upgrade::host_upgrade(state, &request.extra).await;
+            return DispatchResult {
+                response,
+                events: None,
+                replied,
+            };
         }
         "spawn" if state.draining.load(std::sync::atomic::Ordering::SeqCst) => {
             json!({"ok": false, "error": "host_draining"})
@@ -428,6 +453,7 @@ async fn dispatch(
             return DispatchResult {
                 response: ack,
                 events: Some(rx),
+                replied: None,
             };
         }
         other => json!({"ok": false, "error": format!("unknown_method:{other}")}),
@@ -435,5 +461,6 @@ async fn dispatch(
     DispatchResult {
         response,
         events: None,
+        replied: None,
     }
 }

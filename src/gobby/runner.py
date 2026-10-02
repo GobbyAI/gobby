@@ -169,6 +169,7 @@ class GobbyRunner:
     _model_metadata_refresh_task: asyncio.Task[None] | None
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
+    code_index_bm25_verification: dict[str, Any] | None
     daemon_lease: ActiveDaemonLease
 
     _memory_reconcile_task: asyncio.Task[None] | None
@@ -311,6 +312,7 @@ class GobbyRunner:
 
     def _prepare_base_state(self) -> None:
         self.degraded_services = set()
+        self.code_index_bm25_verification = None
         # Captured by run_daemon once the daemon's long-lived loop is running;
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None

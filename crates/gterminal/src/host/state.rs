@@ -8,7 +8,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use serde_json::{json, Map, Value};
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{watch, Mutex, RwLock};
 
 use super::backpressure::FrameMailbox;
 use super::config::HostConfig;
@@ -188,7 +188,8 @@ pub struct HostState {
     /// The pinned image this host runs from; `version` is its `CARGO_PKG_VERSION`.
     pub image: PinnedImage,
     pub host_pid: u32,
-    pub draining: AtomicBool,
+    /// Shared with the SIGTERM handler, which sets it; see `sigterm`.
+    pub draining: Arc<AtomicBool>,
     pub socket_dir_removed: AtomicBool,
     pub shutdown: watch::Sender<bool>,
     pub next_conn: AtomicU64,
@@ -198,6 +199,12 @@ pub struct HostState {
     /// The last upgrade attempt and its outcome, carried across the exec.
     #[cfg(all(unix, feature = "vt-engine"))]
     pub(crate) upgrade: std::sync::Mutex<Option<super::handover::UpgradeRecord>>,
+    /// `upgrade_lock` and the attempt in progress.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub(crate) attempts: super::upgrade::Attempts,
+    /// Decision 9: gated verbs hold the read side while they mutate; an
+    /// upgrade holds the write side from acceptance until exec or rollback.
+    pub(crate) mutation_gate: Arc<RwLock<()>>,
     pub(crate) events: HostEvents,
     pub(crate) inner: Mutex<Inner>,
     pub(crate) polls: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
@@ -223,7 +230,7 @@ impl HostState {
             version: env!("CARGO_PKG_VERSION").to_string(),
             image,
             host_pid,
-            draining: AtomicBool::new(false),
+            draining: Arc::new(AtomicBool::new(false)),
             socket_dir_removed: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
@@ -231,6 +238,9 @@ impl HostState {
             generation: 0,
             #[cfg(all(unix, feature = "vt-engine"))]
             upgrade: std::sync::Mutex::new(None),
+            #[cfg(all(unix, feature = "vt-engine"))]
+            attempts: Default::default(),
+            mutation_gate: Default::default(),
             events,
             polls: Mutex::new(HashMap::new()),
             inner: Mutex::new(inner),
@@ -257,12 +267,14 @@ impl HostState {
             version: env!("CARGO_PKG_VERSION").to_string(),
             image,
             host_pid,
-            draining: AtomicBool::new(false),
+            draining: Arc::new(AtomicBool::new(false)),
             socket_dir_removed: AtomicBool::new(false),
             shutdown,
             next_conn: AtomicU64::new(1),
             generation: carried.generation,
             upgrade: std::sync::Mutex::new(Some(carried.upgrade)),
+            attempts: Default::default(),
+            mutation_gate: Default::default(),
             events: carried.events,
             polls: Mutex::new(HashMap::new()),
             inner: Mutex::new(carried.inner),
@@ -279,14 +291,19 @@ impl HostState {
     }
 
     pub async fn ping_json(&self) -> Value {
-        json!({
+        self.with_upgrade(json!({
             "ok": true,
             "host_epoch": self.host_epoch,
             "version": self.version,
             "binary_version": self.version,
             "binary_sha256": self.image.sha256,
             "host_pid": self.host_pid,
-        })
+        }))
+    }
+
+    #[cfg(not(all(unix, feature = "vt-engine")))]
+    fn with_upgrade(&self, ping: Value) -> Value {
+        ping
     }
 
     pub async fn list_json(&self) -> Value {
@@ -310,6 +327,9 @@ impl HostState {
     }
 
     pub async fn spawn(&self, conn_id: u64, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         if self.draining.load(Ordering::SeqCst) {
             return err("host_draining");
         }
