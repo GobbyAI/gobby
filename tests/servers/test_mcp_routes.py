@@ -31,7 +31,6 @@ import time
 from collections.abc import Iterator, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
@@ -3475,63 +3474,10 @@ class TestHooksEndpoints:
         assert response.json()["continue"] is True
         mock_handle_native.assert_called_once()
 
-    def test_execute_hook_exports_every_phase_and_its_sub_phases(
-        self, session_storage: SessionManager
-    ) -> None:
-        from gobby.hooks import phase_timing
-        from gobby.hooks.phase_timing import HOOK_PHASES
-
-        server = create_http_server(
-            port=60887,
-            test_mode=True,
-            session_manager=session_storage,
-        )
-        server.app.state.hook_manager = _mock_hook_manager()
-
-        with (
-            TestClient(server.app) as client,
-            patch(
-                "gobby.adapters.claude_code.ClaudeCodeAdapter.handle_native",
-                return_value={"continue": True},
-            ),
-            patch(
-                "gobby.servers.routes.mcp.hooks.observe_hook_phase_timings",
-                wraps=phase_timing.observe_hook_phase_timings,
-            ) as observe_timings,
-            patch("gobby.hooks.phase_timing.observe_histogram") as observe,
-        ):
-            response = client.post(
-                "/api/hooks/execute",
-                json=_hook_envelope(hook_type="session-start", source="claude"),
-            )
-
-        assert response.status_code == 200
-        assert observe.call_count == len(HOOK_PHASES)
-        assert {entry.kwargs["attributes"]["phase"] for entry in observe.call_args_list} == set(
-            HOOK_PHASES
-        )
-        timings = observe_timings.call_args.args[0]
-        # The mock hook manager evaluates no rules, so there is no session or rule sub-phase;
-        # the route's own hops still split executor queue from work, and the adapter worker
-        # and loop resume are attributed apart from the `response` residual (#23063).
-        assert timings.session_id is None
-        assert set(timings.breakdown()) == {
-            "request_body",
-            "adapter_worker",
-            "adapter_worker_cpu",
-            "adapter_resume",
-            "persistence_consume_receipts",
-            "persistence_consume_receipts_queue",
-            "persistence_consume_receipts_work",
-            "persistence_receipt",
-            "persistence_receipt_queue",
-            "persistence_receipt_work",
-        }
-
     def test_execute_hook_logs_no_slow_hook_line_at_any_level(
         self, session_storage: SessionManager
     ) -> None:
-        """#22866: hook timing goes to the histogram only; no slow-hook line, sampled or summary."""
+        """#22866: no slow-hook line, sampled or summary."""
         from gobby.servers.routes.mcp import hooks as hooks_route
 
         server = create_http_server(
@@ -4002,37 +3948,8 @@ class TestHooksEndpoints:
         assert await asyncio.wait_for(asyncio.to_thread(lambda: True), timeout=0.2)
 
     @pytest.mark.asyncio
-    async def test_adapter_worker_cpu_separates_waiting_from_work(self) -> None:
-        """A worker that only waits reports its wall time with almost no CPU (#23063)."""
-        from gobby.hooks.adapter_execution import run_adapter_hook
-        from gobby.hooks.phase_timing import HookPhaseTimings
-
-        wait_seconds = 0.2
-        # Controlled clocks: the adapter's wait advances wall time and burns no CPU.
-        clock = SimpleNamespace(wall=0.0, cpu=0.0)
-        fake_time = SimpleNamespace(perf_counter=lambda: clock.wall, thread_time=lambda: clock.cpu)
-        adapter = MagicMock()
-
-        def wait_then_respond(*_args: object) -> dict[str, object]:
-            clock.wall += wait_seconds
-            return {}
-
-        adapter.handle_native.side_effect = wait_then_respond
-        timings = HookPhaseTimings()
-
-        with patch("gobby.hooks.adapter_execution.time", fake_time):
-            await run_adapter_hook(
-                adapter, {}, MagicMock(), timeout_seconds=None, phase_timings=timings
-            )
-
-        breakdown = timings.breakdown()
-        assert breakdown["adapter_worker"] == pytest.approx(wait_seconds)
-        assert breakdown["adapter_worker_cpu"] == 0.0
-
-    @pytest.mark.asyncio
     async def test_adapter_executor_runs_sixteen_sessions_concurrently(self) -> None:
         from gobby.hooks.adapter_execution import run_adapter_hook
-        from gobby.hooks.phase_timing import HookPhaseTimings
         from gobby.servers.routes.mcp import hooks as hook_routes
 
         worker_limit = hook_routes.HOOK_ADAPTER_MAX_WORKERS
@@ -4049,7 +3966,6 @@ class TestHooksEndpoints:
 
         adapter = MagicMock()
         adapter.handle_native.side_effect = handle_native
-        timings = [HookPhaseTimings() for _ in range(worker_limit + 1)]
         hooks = [
             asyncio.create_task(
                 run_adapter_hook(
@@ -4057,7 +3973,6 @@ class TestHooksEndpoints:
                     {"_platform_session_id": f"session-{seq}", "seq": seq},
                     MagicMock(),
                     timeout_seconds=5.0,
-                    phase_timings=timings[seq],
                 )
             )
             for seq in range(worker_limit + 1)
@@ -4071,35 +3986,6 @@ class TestHooksEndpoints:
         assert worker_limit == 16
         assert [result["seq"] for result in first_wave] == list(range(worker_limit))
         assert late == {"continue": True, "seq": worker_limit}
-        assert timings[worker_limit].snapshot()["executor_queue"] > 0
-
-    @pytest.mark.asyncio
-    async def test_adapter_executor_propagates_phase_collector_to_worker(self) -> None:
-        from gobby.hooks.adapter_execution import run_adapter_hook
-        from gobby.hooks.phase_timing import HookPhaseTimings, measure_hook_phase
-
-        timings = HookPhaseTimings()
-
-        def handle_native(*_args: object, **_kwargs: object) -> dict[str, bool]:
-            with measure_hook_phase("handler_body"):
-                return {"continue": True}
-
-        adapter = MagicMock()
-        adapter.handle_native.side_effect = handle_native
-
-        response = await run_adapter_hook(
-            adapter,
-            {"_platform_session_id": "timed-session"},
-            MagicMock(),
-            timeout_seconds=1.0,
-            phase_timings=timings,
-        )
-
-        durations = timings.snapshot()
-        assert response == {"continue": True}
-        assert durations["admission_wait"] >= 0
-        assert durations["executor_queue"] >= 0
-        assert durations["handler_body"] > 0
 
     @pytest.mark.asyncio
     async def test_session_hook_flood_holds_one_adapter_worker(self) -> None:

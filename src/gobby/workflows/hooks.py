@@ -15,13 +15,6 @@ from gobby.hooks.effect_deadline import (
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.fifo_lock import CrossLoopFifoLock
-from gobby.hooks.phase_timing import (
-    add_hook_phase,
-    measure_hook_phase,
-    note_hook_session,
-    timed_await,
-    timed_to_thread,
-)
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD, record_worker_staging
 from gobby.storage.hub.operation_deadline import (
     DatabaseOperationDeadlineExceeded,
@@ -427,17 +420,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
 
             try:
                 if eval_lock_state:
-                    note_hook_session(session_id)
                     lock_wait_started = monotonic()
                     await eval_lock_state.lock.acquire()
                     eval_lock_acquired = True
                     lock_wait = monotonic() - lock_wait_started
-                    add_hook_phase("rule_eval_lock_wait", lock_wait)
                     if blocking_deadline is not None:
                         blocking_deadline.extend(lock_wait)
-                # Sub-phases split a slow rule_evaluation into the work the per-rule
-                # audit cannot see (#22708 criterion 7).
-                prelude_started = monotonic()
 
                 self._sync_tool_context(event, session_id)
                 if isinstance(event.data, dict) and not event.metadata.get(
@@ -455,8 +443,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if self._session_var_manager and session_id:
                     try:
                         variables = dict(
-                            await timed_to_thread(
-                                "prelude_session_variables",
+                            await asyncio.to_thread(
                                 self._session_var_manager.get_variables,
                                 session_id,
                             )
@@ -474,14 +461,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                 decision="block",
                                 reason="Could not load session state. Try again.",
                             )
-                            await timed_await(
-                                "prelude_variable_failure_audit",
-                                audit_source_block(
-                                    self,
-                                    event,
-                                    rule_id="variable-load-failure",
-                                    reason=response.reason or "",
-                                ),
+                            await audit_source_block(
+                                self,
+                                event,
+                                rule_id="variable-load-failure",
+                                reason=response.reason or "",
                             )
                             return response
                         variable_load_failed = True
@@ -497,8 +481,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 # lifecycle instructions.
                 if variables.get("is_spawned_agent"):
                     try:
-                        step_context = await timed_to_thread(
-                            "prelude_step_context",
+                        step_context = await asyncio.to_thread(
                             get_active_step_workflow_context,
                             self.rule_engine.db,
                             session_id,
@@ -533,8 +516,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                             merge_unloaded_variable_defaults,
                         )
 
-                        defaults = await timed_to_thread(
-                            "prelude_variable_defaults",
+                        defaults = await asyncio.to_thread(
                             merge_unloaded_variable_defaults,
                             self.rule_engine.db,
                             session_id,
@@ -547,8 +529,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                                 and session_id
                                 and not variable_load_failed
                             ):
-                                await timed_to_thread(
-                                    "prelude_store_variable_defaults",
+                                await asyncio.to_thread(
                                     self._session_var_manager.merge_variables,
                                     session_id,
                                     defaults,
@@ -567,14 +548,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 from gobby.workflows.git_utils import resolve_git_worktree_root_async
 
                 metadata_path = event.metadata.get("project_path")
-                worktree_root = await timed_await(
-                    "prelude_git_worktree_root",
-                    resolve_git_worktree_root_async(
-                        event.cwd, metadata_path if isinstance(metadata_path, str) else None
-                    ),
+                worktree_root = await resolve_git_worktree_root_async(
+                    event.cwd, metadata_path if isinstance(metadata_path, str) else None
                 )
-                project_path = await timed_to_thread(
-                    "prelude_project_path", self._resolve_project_path, event, worktree_root
+                project_path = await asyncio.to_thread(
+                    self._resolve_project_path, event, worktree_root
                 )
                 if not project_path:
                     message = (
@@ -631,8 +609,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     }
                 ):
                     try:
-                        task = await timed_to_thread(
-                            "prelude_target_task_commits",
+                        task = await asyncio.to_thread(
                             self._task_manager.get_task,
                             target_task_id,
                         )
@@ -657,29 +634,27 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         foreign_staged_commit_conflict,
                     )
 
-                    eval_context["foreign_staged_commit_conflict"] = await timed_await(
-                        "prelude_foreign_staged_commit",
-                        foreign_staged_commit_conflict(
-                            self.rule_engine.db,
-                            event,
-                            session_id=session_id,
-                            project_id=event.project_id,
-                            project_path=project_path,
-                        ),
+                    eval_context[
+                        "foreign_staged_commit_conflict"
+                    ] = await foreign_staged_commit_conflict(
+                        self.rule_engine.db,
+                        event,
+                        session_id=session_id,
+                        project_id=event.project_id,
+                        project_path=project_path,
                     )
                     canonical_paths = event_data.get("canonical_file_paths") or event_data.get(
                         "canonical_file_path"
                     )
                     if event_data.get("canonical_repo_mutation") is True and canonical_paths:
-                        eval_context["foreign_dirty_edit_conflict"] = await timed_await(
-                            "prelude_foreign_dirty_edit",
-                            foreign_dirty_edit_conflict(
-                                self.rule_engine.db,
-                                event,
-                                session_id=session_id,
-                                project_id=event.project_id,
-                                project_path=project_path,
-                            ),
+                        eval_context[
+                            "foreign_dirty_edit_conflict"
+                        ] = await foreign_dirty_edit_conflict(
+                            self.rule_engine.db,
+                            event,
+                            session_id=session_id,
+                            project_id=event.project_id,
+                            project_path=project_path,
                         )
                 else:
                     eval_context["foreign_staged_commit_conflict"] = ""
@@ -691,10 +666,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 if event.event_type == HookEventType.BEFORE_TOOL and project_path:
                     from gobby.workflows.code_review_scope import inspect_commit_review_scope
 
-                    review_scope = await timed_await(
-                        "prelude_commit_review_scope",
-                        inspect_commit_review_scope(event, project_path, variables),
-                    )
+                    review_scope = await inspect_commit_review_scope(event, project_path, variables)
                     eval_context["commit_has_reviewable_paths"] = review_scope.has_reviewable_paths
                     owned_paths = review_scope.session_owned_reviewable_paths
                     eval_context["session_owned_reviewable_paths"] = (
@@ -705,8 +677,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     from gobby.workflows.code_review_freshness import is_foreign_landing_merge
                     from gobby.workflows.observer_utils import _extract_shell_command
 
-                    eval_context["foreign_landing_merge"] = await timed_to_thread(
-                        "prelude_foreign_landing_merge",
+                    eval_context["foreign_landing_merge"] = await asyncio.to_thread(
                         is_foreign_landing_merge,
                         self.rule_engine.db,
                         _extract_shell_command(event),
@@ -718,8 +689,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                 pre_eval = deepcopy(variables)
 
                 # Run built-in observers BEFORE rule evaluation
-                observer_failures = await timed_to_thread(
-                    "prelude_observers",
+                observer_failures = await asyncio.to_thread(
                     self._run_observers,
                     event,
                     session_id,
@@ -733,15 +703,12 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         decision="block",
                         reason="Could not reconcile claimed tasks. Try again.",
                     )
-                    await timed_await(
-                        "prelude_reconciliation_failure_audit",
-                        audit_source_block(
-                            self,
-                            event,
-                            rule_id="reconciliation-failure",
-                            reason=response.reason or "",
-                            variables=variables,
-                        ),
+                    await audit_source_block(
+                        self,
+                        event,
+                        rule_id="reconciliation-failure",
+                        reason=response.reason or "",
+                        variables=variables,
                     )
                     return response
 
@@ -755,14 +722,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and not variable_load_failed
                     and git_activity_detected(event)
                 ):
-                    released = await timed_await(
-                        "prelude_edit_ledger_reconcile",
-                        reconcile_edit_ledgers(
-                            variables,
-                            session_id,
-                            variable_manager=self._session_var_manager,
-                            project_path=project_path,
-                        ),
+                    released = await reconcile_edit_ledgers(
+                        variables,
+                        session_id,
+                        variable_manager=self._session_var_manager,
+                        project_path=project_path,
                     )
                     if released:
                         logger.debug(
@@ -793,14 +757,11 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     and not variables.get("plan_mode")
                     and not variables.get("is_spawned_agent")
                 ):
-                    facts = await timed_await(
-                        "prelude_found_work_analyze",
-                        self._found_work_analyzer.analyze(
-                            event=event,
-                            session_id=session_id,
-                            variables=variables,
-                            project_path=project_path,
-                        ),
+                    facts = await self._found_work_analyzer.analyze(
+                        event=event,
+                        session_id=session_id,
+                        variables=variables,
+                        project_path=project_path,
                     )
                     eval_context["found_work_shirk"] = facts.shirk
                     eval_context["found_work_shirk_confirmed"] = facts.shirk_confirmed
@@ -817,8 +778,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         for ref in (variables.get("_found_work_deferred_tasks") or ())
                         if isinstance(ref, str)
                     }
-                    unclaimed_tasks = await timed_to_thread(
-                        "prelude_unclaimed_found_work",
+                    unclaimed_tasks = await asyncio.to_thread(
                         self._found_work_analyzer.unclaimed_found_work,
                         session_id,
                         armed_at=variables.get(FOUND_WORK_GATE_ARMED_AT_VARIABLE),
@@ -836,15 +796,13 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                     eval_context["unclaimed_found_work"] = bool(unclaimed_tasks)
                     eval_context["unclaimed_found_work_tasks"] = list(unclaimed_tasks)
 
-                add_hook_phase("rule_prelude", monotonic() - prelude_started)
-                with measure_hook_phase("rule_engine"):
-                    response = await self.rule_engine.evaluate(
-                        event=event,
-                        session_id=session_id,
-                        variables=variables,
-                        eval_context=eval_context,
-                        blocking_deadline=blocking_deadline,
-                    )
+                response = await self.rule_engine.evaluate(
+                    event=event,
+                    session_id=session_id,
+                    variables=variables,
+                    eval_context=eval_context,
+                    blocking_deadline=blocking_deadline,
+                )
 
                 staged_payload = response.metadata.get(STAGED_EFFECTS_FIELD)
                 staged_keys: set[str] = set()
@@ -864,8 +822,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         if k not in staged_keys and (k not in pre_eval or pre_eval[k] != v)
                     }
                     if changed:
-                        await timed_to_thread(
-                            "rule_persist_variables",
+                        await asyncio.to_thread(
                             self._session_var_manager.merge_variables,
                             session_id,
                             changed,
@@ -895,11 +852,8 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
         event: HookEvent,
         *,
         blocking_deadline: BlockingEffectDeadline | None = None,
-        submitted_at: float | None = None,
     ) -> HookResponse:
         """Evaluate rules asynchronously for callers that already own the loop."""
-        if submitted_at is not None:
-            add_hook_phase("rule_runtime_queue", monotonic() - submitted_at)
         enabled, timeout = self._resolve_policy()
         if not enabled:
             return HookResponse(decision="allow")
@@ -947,9 +901,7 @@ class WorkflowHookHandler(WorkflowToolContextMixin):
                         "Synchronous workflow evaluation requires a runtime"
                     ) from None
                 response = self._evaluation_runtime.run(
-                    self.evaluate_async(
-                        event, blocking_deadline=blocking_deadline, submitted_at=monotonic()
-                    ),
+                    self.evaluate_async(event, blocking_deadline=blocking_deadline),
                     timeout=runtime_wait,
                 )
                 # The runtime evaluates on its own "gobby-workflow-runtime"

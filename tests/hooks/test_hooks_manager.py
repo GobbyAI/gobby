@@ -5,8 +5,7 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import Iterator
-from contextlib import contextmanager
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -27,7 +26,7 @@ from gobby.hooks.events import (
     SessionSource,
 )
 from gobby.hooks.hook_manager import HookManager
-from gobby.hooks.phase_timing import measure_hook_phase
+from gobby.hooks.project_context import resolve_hook_project_context
 from gobby.hooks.session_lookup import NON_MATERIALIZING_EVENTS
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -3381,17 +3380,15 @@ def test_session_resolution_reads_the_session_row_once(
 
     resolving = threading.Event()
 
-    @contextmanager
-    def flag_resolution(phase: str) -> Iterator[None]:
-        with measure_hook_phase(phase):
-            if phase != "session_resolution":
-                yield
-                return
+    def flag_resolution[**P, R](function: Callable[P, R]) -> Callable[P, R]:
+        def resolve(*args: P.args, **kwargs: P.kwargs) -> R:
             resolving.set()
             try:
-                yield
+                return function(*args, **kwargs)
             finally:
                 resolving.clear()
+
+        return resolve
 
     reads: list[str] = []
     original_get = SessionManager.get
@@ -3401,7 +3398,13 @@ def test_session_resolution_reads_the_session_row_once(
             reads.append(session_id)
         return original_get(self, session_id)
 
-    monkeypatch.setattr("gobby.hooks.hook_manager.measure_hook_phase", flag_resolution)
+    monkeypatch.setattr(
+        "gobby.hooks.hook_manager.resolve_hook_project_context",
+        flag_resolution(resolve_hook_project_context),
+    )
+    monkeypatch.setattr(
+        manager._session_lookup, "resolve", flag_resolution(manager._session_lookup.resolve)
+    )
     monkeypatch.setattr(SessionManager, "get", counting_get)
 
     def after_tool() -> HookEvent:

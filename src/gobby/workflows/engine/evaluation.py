@@ -17,7 +17,6 @@ from gobby.hooks.events import (
     HookEventType,
     HookResponse,
 )
-from gobby.hooks.phase_timing import add_hook_phase, measure_hook_phase
 from gobby.hooks.receipt_effects import (
     STAGED_EFFECTS_FIELD,
     merge_staged_payloads,
@@ -114,24 +113,13 @@ class _RuleLoopBridge:
             future.cancel()
 
     async def call(self, make_coro: Callable[[], Awaitable[T]]) -> T:
-        # Daemon-loop wait and execution are timed from this worker: the
-        # bridged coroutine may not see the delivery's timing collector.
-        started_at: float | None = None
-        finished_at: float | None = None
-
         async def on_daemon_loop() -> T:
-            nonlocal started_at, finished_at
-            started_at = time.perf_counter()
-            try:
-                with inline_offload_scope(False):
-                    return await make_coro()
-            finally:
-                finished_at = time.perf_counter()
+            with inline_offload_scope(False):
+                return await make_coro()
 
         with self._lock:
             if self.cancelled.is_set():
                 raise asyncio.CancelledError
-            submitted_at = time.perf_counter()
             future = asyncio.run_coroutine_threadsafe(on_daemon_loop(), self.loop)
             self._pending.add(future)
         try:
@@ -139,12 +127,6 @@ class _RuleLoopBridge:
         finally:
             with self._lock:
                 self._pending.discard(future)
-            if started_at is None:
-                add_hook_phase("rule_loop_bridge_queue", time.perf_counter() - submitted_at)
-            else:
-                add_hook_phase("rule_loop_bridge_queue", started_at - submitted_at)
-                if finished_at is not None:
-                    add_hook_phase("rule_loop_bridge_work", finished_at - started_at)
 
 
 def _repeat_block_reason(rule_name: str, reason: str) -> str:
@@ -540,15 +522,13 @@ class EvaluationMixin:
         ctx = evaluation.rule_context
         allowed_funcs = evaluation.rule_allowed_funcs
         if ctx is None or allowed_funcs is None:
-            with measure_hook_phase("rule_context_build"):
-                ctx = await offload(
-                    self._build_eval_context,
-                    evaluation.event,
-                    evaluation.variables,
-                    evaluation.eval_context,
-                )
-            with measure_hook_phase("rule_allowed_funcs_build"):
-                allowed_funcs = await offload(self._build_allowed_funcs, ctx)
+            ctx = await offload(
+                self._build_eval_context,
+                evaluation.event,
+                evaluation.variables,
+                evaluation.eval_context,
+            )
+            allowed_funcs = await offload(self._build_allowed_funcs, ctx)
             evaluation.rule_context = ctx
             evaluation.rule_allowed_funcs = allowed_funcs
             project_value = evaluation.variables.get("project")
@@ -588,14 +568,13 @@ class EvaluationMixin:
             # Check rule-level `when` condition
             if body.when:
                 fail_closed = any(effect.type == "block" for effect in body.resolved_effects)
-                with measure_hook_phase("rule_condition_eval"):
-                    condition_matches = await offload(
-                        self._evaluate_condition,
-                        body.when,
-                        ctx,
-                        allowed_funcs=allowed_funcs,
-                        fail_closed=fail_closed,
-                    )
+                condition_matches = await offload(
+                    self._evaluate_condition,
+                    body.when,
+                    ctx,
+                    allowed_funcs=allowed_funcs,
+                    fail_closed=fail_closed,
+                )
                 if not condition_matches:
                     continue
 
@@ -625,14 +604,13 @@ class EvaluationMixin:
                     ):
                         continue
                     if effect.when:
-                        with measure_hook_phase("rule_condition_eval"):
-                            condition_matches = await offload(
-                                self._evaluate_condition,
-                                effect.when,
-                                ctx,
-                                effect.type,
-                                allowed_funcs,
-                            )
+                        condition_matches = await offload(
+                            self._evaluate_condition,
+                            effect.when,
+                            ctx,
+                            effect.type,
+                            allowed_funcs,
+                        )
                         if not condition_matches:
                             continue
                     reason = await offload(
@@ -684,14 +662,13 @@ class EvaluationMixin:
 
                 # Check per-effect `when` condition
                 if effect.when:
-                    with measure_hook_phase("rule_condition_eval"):
-                        condition_matches = await offload(
-                            self._evaluate_condition,
-                            effect.when,
-                            ctx,
-                            effect.type,
-                            allowed_funcs,
-                        )
+                    condition_matches = await offload(
+                        self._evaluate_condition,
+                        effect.when,
+                        ctx,
+                        effect.type,
+                        allowed_funcs,
+                    )
                     if not condition_matches:
                         continue
 
@@ -716,10 +693,9 @@ class EvaluationMixin:
                     evaluation.staged_variable_updates,
                 )
                 if effect.type == "mcp_call":
-                    with measure_hook_phase(f"rule_mcp_call:{effect.server}:{effect.tool}"):
-                        inline_block_reason = await bridge.call(
-                            partial(self._apply_effect, *effect_args)
-                        )
+                    inline_block_reason = await bridge.call(
+                        partial(self._apply_effect, *effect_args)
+                    )
                 elif effect.type == "run_command":
                     inline_block_reason = await bridge.call(
                         partial(self._apply_effect, *effect_args)

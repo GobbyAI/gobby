@@ -284,10 +284,6 @@ class TelemetryMetrics:
             "hooks_failed_total",
             "Total number of failed hook executions",
         )
-        self._register_histogram(
-            "hook_phase_duration_seconds",
-            "Hook execution duration in seconds by phase, source, and hook type",
-        )
         self._register_counter(
             "adapter_degradations_total",
             "Lossy adapter response translations by provider and hook",

@@ -16,7 +16,6 @@ from jinja2.exceptions import SecurityError
 from gobby.config.app import DaemonConfig
 from gobby.config.runtime_models import ConfigSnapshot
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.storage.definitions.agents import AgentDefinitionManager
@@ -196,40 +195,6 @@ async def test_task_tree_condition_runs_outside_event_loop_thread(
 
 
 @pytest.mark.asyncio
-async def test_rule_engine_reports_untimed_setup_and_database_reads(
-    db: HubDatabase,
-    manager: RuleDefinitionManager,
-) -> None:
-    _insert_rule(
-        manager,
-        "timed-condition",
-        RuleDefinitionBody(
-            event=RuleTriggerEvent.AFTER_TOOL,
-            when="flag == True",
-            effects=[RuleEffect(type="set_variable", variable="observed", value=True)],
-        ),
-    )
-    timings = HookPhaseTimings()
-    variables: dict[str, Any] = {
-        "project": {"id": "project-id", "path": "/tmp/project"},
-        "flag": True,
-    }
-
-    with hook_phase_timing_scope(timings):
-        await RuleEngine(db).evaluate(_make_event(HookEventType.AFTER_TOOL), SESSION_ID, variables)
-
-    assert variables["observed"] is True
-    breakdown = timings.breakdown()
-    for phase in (
-        "rule_engine_db_reads",
-        "rule_context_build",
-        "rule_allowed_funcs_build",
-        "rule_condition_eval",
-    ):
-        assert breakdown[phase] > 0
-
-
-@pytest.mark.asyncio
 async def test_rule_context_is_built_once_and_sees_earlier_variable_effects(
     db: HubDatabase,
     manager: RuleDefinitionManager,
@@ -394,56 +359,6 @@ async def test_inline_mcp_effect_runs_on_daemon_loop(
     )
 
     assert dispatch_loops == [loop]
-
-
-@pytest.mark.asyncio
-async def test_rule_loop_timing_attributes_executor_bridge_and_mcp_call(
-    db: HubDatabase,
-    manager: RuleDefinitionManager,
-) -> None:
-    _insert_rule(
-        manager,
-        "timed-dispatch",
-        RuleDefinitionBody(
-            event=RuleTriggerEvent.AFTER_TOOL,
-            effects=[
-                RuleEffect(type="mcp_call", server="gobby-test", tool="slow", inject_result=True)
-            ],
-        ),
-    )
-
-    async def dispatcher(
-        _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
-    ) -> dict[str, Any]:
-        released = asyncio.Event()
-        asyncio.get_running_loop().call_later(0.01, released.set)
-        await released.wait()
-        return {"success": True, "result": {}}
-
-    timings = HookPhaseTimings()
-    with hook_phase_timing_scope(timings):
-        await RuleEngine(db, mcp_dispatcher=dispatcher).evaluate(
-            _make_event(HookEventType.AFTER_TOOL),
-            SESSION_ID,
-            {"project": {"id": "project-id", "path": "/tmp/project"}},
-        )
-
-    breakdown = timings.breakdown()
-    assert "rule_loop_executor_queue" in breakdown
-    assert "rule_loop_bridge_queue" in breakdown
-    assert breakdown["rule_loop_bridge_work"] > 0
-    assert breakdown["rule_mcp_call:gobby-test:slow"] >= breakdown["rule_loop_bridge_work"]
-    assert breakdown["rule_loop_pass_work"] >= breakdown["rule_mcp_call:gobby-test:slow"]
-    assert "rule_loop_pass_resume" in breakdown
-    for key in ("rule_step_after_tool", "rule_late_mcp_injections", "rule_finalize_response"):
-        assert key in breakdown
-    # A fresh engine misses the rule cache, so both read sites run and split.
-    for site in ("rule_db_load_rules", "rule_db_active_rules"):
-        for part in ("queue", "work", "resume"):
-            assert f"{site}_{part}" in breakdown
-    assert breakdown["rule_engine_db_reads"] >= (
-        breakdown["rule_db_load_rules_work"] + breakdown["rule_db_active_rules_work"]
-    )
 
 
 async def _assert_evaluation(
