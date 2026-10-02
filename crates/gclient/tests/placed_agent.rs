@@ -187,6 +187,8 @@ async fn bind_then_created_opens_once_in_pane() {
     let mut s = session(&[(&["existing"], "existing")], &["existing"]).await;
     s.mock
         .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
+    let active = s.chrome.active_tab().map(|tab| tab.id.clone());
+    assert!(active.is_some(), "a prior active tab");
 
     let tab_id = s.bind_agent_tab().await;
     s.sync();
@@ -202,16 +204,14 @@ async fn bind_then_created_opens_once_in_pane() {
     assert_eq!(s.workspace.pane_count(), 2, "existing plus the agent");
     assert_eq!(
         s.agent_surfaces(),
-        vec![(tab_id.clone(), false)],
+        vec![(tab_id, false)],
         "the agent shows once, in its bound daemon pane"
     );
     assert_eq!(s.local_tabs(), 0, "no local surface");
-    let active = s.chrome.active_tab().expect("an active tab");
-    assert_eq!(active.id, tab_id, "the placed pane is recorded as placed");
     assert_eq!(
-        s.chrome.focused_pane(),
-        s.workspace.pane_for_terminal(AGENT),
-        "focus follows the placement"
+        s.chrome.active_tab().map(|tab| tab.id.clone()),
+        active,
+        "an unrequested placement leaves the active tab"
     );
     s.mock.shutdown().await;
 }
@@ -221,6 +221,8 @@ async fn created_then_bind_moves_into_pane() {
     let mut s = session(&[(&["existing"], "existing")], &["existing"]).await;
     s.mock
         .enqueue("GET", &format!("/api/terminals/{AGENT}"), 200, agent_row());
+    let active = s.chrome.active_tab().map(|tab| tab.id.clone());
+    assert!(active.is_some(), "a prior active tab");
 
     s.created(2).await;
     s.sync();
@@ -239,16 +241,14 @@ async fn created_then_bind_moves_into_pane() {
     );
     assert_eq!(
         s.agent_surfaces(),
-        vec![(tab_id.clone(), false)],
+        vec![(tab_id, false)],
         "the agent moved into its bound daemon pane"
     );
     assert_eq!(s.local_tabs(), 0, "no local tab");
-    let active = s.chrome.active_tab().expect("an active tab");
-    assert_eq!(active.id, tab_id, "the placed pane is recorded as placed");
     assert_eq!(
-        s.chrome.focused_pane(),
-        Some(unplaced),
-        "focus follows the placement"
+        s.chrome.active_tab().map(|tab| tab.id.clone()),
+        active,
+        "an unrequested placement leaves the active tab"
     );
     s.mock.shutdown().await;
 }
@@ -270,6 +270,7 @@ async fn reconnect_projects_bound_terminal_once() {
     );
     assert_eq!(s.local_tabs(), 0, "no local surface");
     let active = s.chrome.active_tab().map(|tab| tab.id.clone());
+    assert!(active.is_some(), "a prior active tab");
     let focus = s.chrome.focused_pane();
 
     s.workspace
