@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 from httpx2 import Response
 from starlette.testclient import TestClient
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from gobby.config.app import DaemonConfig
 from gobby.identity import hash_password
@@ -65,7 +66,13 @@ def _cookie_client(server: HTTPServer, email: str = TEST_USER_EMAIL) -> TestClie
     return client
 
 
-def _bootstrap(client: TestClient, password: str, machine_id: str = NEW_MACHINE) -> Response:
+def _bootstrap(
+    client: TestClient,
+    password: str,
+    machine_id: str = NEW_MACHINE,
+    *,
+    forwarded_for: str | None = None,
+) -> Response:
     return client.post(
         "/api/auth/keys/bootstrap",
         json={
@@ -76,6 +83,7 @@ def _bootstrap(client: TestClient, password: str, machine_id: str = NEW_MACHINE)
             "os": "linux",
             "label": "node-1 daemon",
         },
+        headers={"X-Forwarded-For": forwarded_for} if forwarded_for else None,
     )
 
 
@@ -130,6 +138,17 @@ def test_bootstrap_mints_bound_key(db: HubDatabase) -> None:
     locked = _bootstrap(client, PASSWORD)
     assert locked.status_code == 429
     assert locked.headers["Retry-After"] == "60"
+
+    # The backend trusts the front door's forwarded peer exactly as runner_lifecycle
+    # configures uvicorn, so distinct peers behind gdaemon keep distinct buckets.
+    behind_front_door = TestClient(
+        ProxyHeadersMiddleware(server.app, trusted_hosts="127.0.0.1,::1"),
+        client=("127.0.0.1", 50001),
+    )
+    for _ in range(5):
+        assert _bootstrap(behind_front_door, "wrong", forwarded_for="192.0.2.10").status_code == 401
+    assert _bootstrap(behind_front_door, PASSWORD, forwarded_for="192.0.2.10").status_code == 429
+    assert _bootstrap(behind_front_door, PASSWORD, forwarded_for="192.0.2.20").status_code == 200
 
     login_locked = TestClient(server.app, client=("127.0.0.2", 50000))
     for _ in range(5):

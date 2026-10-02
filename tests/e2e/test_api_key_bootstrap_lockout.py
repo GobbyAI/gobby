@@ -20,22 +20,14 @@ _BAD_BOOTSTRAP = {
 }
 
 
-def _bootstrap(client: httpx.Client, host: str, port: int, forged_for: str | None) -> int:
-    headers = {"X-Forwarded-For": forged_for} if forged_for else {}
-    response = client.post(
-        f"http://{host}:{port}/api/auth/keys/bootstrap", json=_BAD_BOOTSTRAP, headers=headers
-    )
-    return response.status_code
-
-
 def test_forged_forwarding_cannot_reset_lockout(daemon_instance: DaemonInstance) -> None:
-    port = daemon_instance.http_port
+    url = f"http://127.0.0.1:{daemon_instance.http_port}/api/auth/keys/bootstrap"
     with httpx.Client(timeout=10.0) as client:
-        ipv4 = [
-            _bootstrap(client, "127.0.0.1", port, f"203.0.113.{attempt}")
+        statuses = [
+            client.post(
+                url, json=_BAD_BOOTSTRAP, headers={"X-Forwarded-For": f"203.0.113.{attempt}"}
+            ).status_code
             for attempt in range(_ALLOWED_FAILURES + 3)
         ]
-        ipv6 = _bootstrap(client, "[::1]", port, None)
 
-    assert ipv4 == [401] * _ALLOWED_FAILURES + [429] * 3
-    assert ipv6 == 401
+    assert statuses == [401] * _ALLOWED_FAILURES + [429] * 3
