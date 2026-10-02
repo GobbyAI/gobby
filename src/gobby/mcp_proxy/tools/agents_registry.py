@@ -11,6 +11,7 @@ from gobby.mcp_proxy.tools.agents_lifecycle_tools import register_agent_lifecycl
 from gobby.mcp_proxy.tools.agents_query_tools import register_agent_query_tools
 from gobby.mcp_proxy.tools.agents_spawn_tools import register_agent_spawn_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.runbook_seat_tools import register_runbook_seat_tools
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
@@ -131,4 +132,5 @@ def create_agents_registry(
     register_agent_lifecycle_tools(registry, ctx)
     register_agent_checkpoint_tools(registry, ctx)
     register_agent_spawn_tools(registry, ctx)
+    register_runbook_seat_tools(registry, ctx)
     return registry

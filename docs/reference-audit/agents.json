@@ -338,6 +338,21 @@
     },
     {
       "surface": "mcp",
+      "reference": "src/gobby/install/shared/skills/gobby/references/agents/spawning.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/runbook_seat_tools.py",
+        "symbol": "register_runbook_seat_tools.check_runbook_seats_tool"
+      },
+      "verification": [
+        "source-audit",
+        "focused-agents"
+      ],
+      "audience": "agent",
+      "server": "gobby-agents",
+      "tool": "check_runbook_seats"
+    },
+    {
+      "surface": "mcp",
       "reference": "src/gobby/install/shared/skills/gobby/references/agents/lifecycle.md",
       "implementation": {
         "path": "src/gobby/mcp_proxy/tools/agents_lifecycle_tools.py",
