@@ -11,7 +11,22 @@ async fn read_json_response(response: &'static [u8]) -> Result<Value, DaemonErro
         tokio::time::timeout(REQUEST_DEADLINE, async move {
             let (mut stream, _) = listener.accept().await.expect("accept");
             let mut request = [0_u8; 4096];
-            stream.read(&mut request).await.expect("read request");
+            let mut received = 0;
+            while !request[..received]
+                .windows(4)
+                .any(|boundary| boundary == b"\r\n\r\n")
+            {
+                assert!(
+                    received < request.len(),
+                    "request headers exceed fixture buffer"
+                );
+                let count = stream
+                    .read(&mut request[received..])
+                    .await
+                    .expect("read request");
+                assert_ne!(count, 0, "request closed before headers completed");
+                received += count;
+            }
             stream.write_all(response).await.expect("write response");
             stream.shutdown().await.expect("end response");
         })
