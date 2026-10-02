@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes._database import require_hub_database
@@ -59,11 +59,11 @@ class BootstrapKeyRequest(BaseModel):
     machine_id: uuid.UUID
     hostname: str | None = None
     os: str | None = None
-    label: str | None = None
+    label: str = Field(min_length=1)
 
 
 class MintKeyRequest(BaseModel):
-    label: str | None = None
+    label: str = Field(min_length=1)
 
 
 def _resolve_principal(server: HTTPServer, db: HubDatabase, request: Request) -> KeyPrincipal:

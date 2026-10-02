@@ -36,7 +36,7 @@ class ApiKey:
     user_id: str
     machine_id: str
     hint: str
-    label: str | None
+    label: str
     created_at: datetime
     last_used_at: datetime | None
     revoked_at: datetime | None
@@ -68,7 +68,7 @@ class ApiKeyManager:
     def __init__(self, db: HubDatabase) -> None:
         self.db = db
 
-    def mint(self, user_id: str, machine_id: str, label: str | None) -> tuple[str, ApiKey]:
+    def mint(self, user_id: str, machine_id: str, label: str) -> tuple[str, ApiKey]:
         """Insert a new key and return its plaintext, which is never stored."""
         plaintext = api_key_format.generate()
         row = self.db.fetchone(

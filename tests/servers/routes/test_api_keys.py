@@ -141,10 +141,9 @@ def test_bootstrap_mints_bound_key(db: HubDatabase) -> None:
 
     # The backend trusts the front door's forwarded peer exactly as runner_lifecycle
     # configures uvicorn, so distinct peers behind gdaemon keep distinct buckets.
-    behind_front_door = TestClient(
-        ProxyHeadersMiddleware(server.app, trusted_hosts="127.0.0.1,::1"),
-        client=("127.0.0.1", 50001),
-    )
+    front_door_app = _server(db).app
+    front_door_app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="127.0.0.1,::1")
+    behind_front_door = TestClient(front_door_app, client=("127.0.0.1", 50001))
     for _ in range(5):
         assert _bootstrap(behind_front_door, "wrong", forwarded_for="192.0.2.10").status_code == 401
     assert _bootstrap(behind_front_door, PASSWORD, forwarded_for="192.0.2.10").status_code == 429
@@ -157,6 +156,28 @@ def test_bootstrap_mints_bound_key(db: HubDatabase) -> None:
         )
         assert response.status_code == 401
     assert _bootstrap(login_locked, PASSWORD).status_code == 429
+
+
+@pytest.mark.parametrize("label", ["omitted", None, ""], ids=["omitted", "null", "empty"])
+def test_issuance_routes_require_label(db: HubDatabase, label: str | None) -> None:
+    """Both issuance routes reject a missing label before reaching storage."""
+    label_field = {} if label == "omitted" else {"label": label}
+    app = _server(db).app
+    bootstrap = TestClient(app).post(
+        "/api/auth/keys/bootstrap",
+        json={
+            "email": TEST_USER_EMAIL,
+            "password": PASSWORD,
+            "machine_id": NEW_MACHINE,
+            **label_field,
+        },
+    )
+    mint = TestClient(app, headers={"X-Gobby-Local-Token": OPERATOR_TOKEN}).post(
+        "/api/auth/keys", json=label_field
+    )
+
+    assert (bootstrap.status_code, mint.status_code) == (422, 422)
+    assert db.fetchone("SELECT 1 FROM api_keys") is None
 
 
 def test_management_routes_admit_only_resolved_principals(db: HubDatabase) -> None:
