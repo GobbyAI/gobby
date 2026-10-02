@@ -15,6 +15,8 @@ from uuid import uuid4
 import pytest
 
 from gobby.agents.constants import GOBBY_TERMINAL_ID
+from gobby.agents.credential_inventory import CLI_DENIED_AMBIENT_KEYS
+from gobby.agents.spawners.auth_env import CLI_ENV_ALLOWLIST
 from gobby.terminals.native_runtime import NativeTerminalRuntime
 from gobby.terminals.runtime import TerminalSpawnRequest
 
@@ -86,6 +88,14 @@ async def _spawn(
     sent_env: dict[str, str] = fields["env"]
     assert sent_env[GOBBY_TERMINAL_ID] == str(terminal_id)
     return list(fields["argv"]), sent_env
+
+
+@pytest.fixture(autouse=True)
+def _no_real_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the runner's own provider env out of recorded spawns and failure diffs."""
+    for keys in (*CLI_ENV_ALLOWLIST.values(), *CLI_DENIED_AMBIENT_KEYS.values()):
+        for key in keys:
+            monkeypatch.delenv(key, raising=False)
 
 
 def _ambient_agy_keys(monkeypatch: pytest.MonkeyPatch) -> None:
