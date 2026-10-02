@@ -266,6 +266,52 @@ root, and sandboxed runs never write the unsandboxed
 Inspect effective run policy;
 Git network access remains independent. Web chat has its own configured defaults.
 
+## Agent network policy
+
+An agent definition's `network` field picks the egress of the agents it spawns.
+Both values keep managed SRT and `allow_network: false`. Neither turns the
+sandbox off or opens unrestricted network.
+
+| `network` | Allowlist |
+|-----------|-----------|
+| `none` (default) | The `agent_sandbox` policy above, unchanged. |
+| `trusted` | That policy plus the vendored Trusted seed, with `allow_git_network` and `allow_package_registries` set. |
+
+The Trusted seed is a developer-dependency allowlist. Its categories cover
+Anthropic services, version control, container registries, cloud platforms,
+language package managers, Linux distributions, development tools, monitoring,
+CDNs and mirrors, schema hosts and the Model Context Protocol. It holds no search
+engines or general research sites, so `trusted` does not mean general web access.
+The cloud environment's own bypasses, such as its GitHub proxy and connector
+routing, are properties of that cloud proxy. Local SRT does not have them.
+
+The seed is vendored at `src/gobby/data/sandbox/trusted_domains.json`. It records
+its provenance in `source_url` (the "Default allowed domains" list in the Claude
+Code cloud environments docs), `fetched_at` and `sha256`, and lists its domains
+under `categories`. The daemon never fetches it. To refresh it, run:
+
+```bash
+uv run python scripts/refresh_trusted_domains.py          # print the diff only
+uv run python scripts/refresh_trusted_domains.py --write  # rewrite the seed
+```
+
+The script fetches the source, checks every entry against SRT's domain rule and
+exits nonzero listing any offenders. It prints a unified diff against the vendored
+file and writes only with `--write`. Commit the rewritten file and land it through
+review like any other change.
+
+Only the bundled template sync may set `trusted`. Every other definition write
+(the HTTP routes, MCP tools and YAML import) is refused with `network is
+sync-owned` when it brings in a widened `network` or touches a row that already
+has one. Operator-created definitions therefore stay `none`.
+
+A `trusted` spawn whose seed is missing, unreadable or the wrong shape is refused
+with `error_code: sandbox_required` before any terminal, worktree or pane is
+created. A placed spawn's refusal also carries `placement_error: sandbox_required`.
+A `none` spawn never reads the seed. A resumed run replays the sandbox snapshot
+stored at spawn time and never resolves `network` again, so a later seed or
+definition change does not alter a run that is already going.
+
 ## Launch And Lifecycle
 
 Gobby constructs the complete Claude, Codex, Qwen, Grok, Droid, or Antigravity command first,
