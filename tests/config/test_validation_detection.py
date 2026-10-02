@@ -521,6 +521,8 @@ def test_env_with_options_or_no_command_is_not_credited(command: str) -> None:
         ("A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
         ("env A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
         ("env A=1 B=2 -- uv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("env A=1 --\tuv run pytest tests/a.py", "uv run pytest tests/a.py"),
+        ("env A=1 --x uv run pytest tests/a.py", "env A=1 --x uv run pytest tests/a.py"),
         ("cd /repo && env A=1 uv run pytest tests/a.py", "uv run pytest tests/a.py"),
         ("env -u A uv run pytest tests/a.py", "env -u A uv run pytest tests/a.py"),
         ("env -i A=1 uv run pytest tests/a.py", "env -i A=1 uv run pytest tests/a.py"),

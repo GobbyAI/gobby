@@ -572,6 +572,7 @@ def normalize_validation_evidence_command(command: str) -> str:
         if next_cursor is None:
             break
         cursor = _evidence_skip_whitespace(command, next_cursor)
+    env_start = cursor
     env_command = _EVIDENCE_ENV_COMMAND_PREFIX.match(command, cursor)
     if env_command is not None:
         cursor = env_command.end()
@@ -580,8 +581,17 @@ def normalize_validation_evidence_command(command: str) -> str:
         if word_end is None or word_end >= len(command) or not command[word_end].isspace():
             break
         cursor = _evidence_skip_whitespace(command, word_end)
-    if env_command is not None and command.startswith("-- ", cursor):
-        cursor = _evidence_skip_whitespace(command, cursor + 2)
+    if env_command is not None and command.startswith("-", cursor):
+        delimiter_end = cursor + 2
+        if (
+            command.startswith("--", cursor)
+            and delimiter_end < len(command)
+            and command[delimiter_end].isspace()
+        ):
+            cursor = _evidence_skip_whitespace(command, delimiter_end)
+        else:
+            # An env option after the assignments: leave the whole form as written.
+            cursor = env_start
     core = _EVIDENCE_RTK_PREFIX.sub(r"\1", command[cursor:].strip(), count=1)
     parsed = parse_shell_command(core)
     if len(parsed.segments) == 1 and not parsed.operators:
