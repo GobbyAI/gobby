@@ -207,7 +207,7 @@ async fn each_verb_sends_its_workspace_op() {
         (vec!["title", "0:0:0", "renamed"], "tab.rename"),
         (
             vec!["select", pane, "--workspace", "default", "--tab-ref", tab],
-            "workspace.set_focus_hints",
+            "workspace.select",
         ),
         (
             vec!["send-keys", pane, "hello", "--enter"],

@@ -65,6 +65,7 @@ WorkspaceEventKind = Literal[
     "pane.renamed",
     "pane.removed",
     "focus_hints",
+    "focus_requested",
 ]
 
 
@@ -81,7 +82,9 @@ class WorkspaceEvent(TypedDict):
 
     ``pane.removed`` carries the removed panes and the survivors' rewritten tabs;
     ``tab.removed`` the tabs a removal emptied; ``tab.closed`` the closed tab
-    with its panes; ``workspace.*`` and ``focus_hints`` the workspace row.
+    with its panes; ``workspace.*``, ``focus_hints`` and ``focus_requested`` the
+    workspace row. ``focus_requested`` (an explicit select) asks attached windows
+    to show its focus; ``focus_hints`` only persists a window's own.
     """
 
     kind: WorkspaceEventKind

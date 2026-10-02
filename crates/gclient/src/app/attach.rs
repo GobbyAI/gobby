@@ -142,6 +142,7 @@ impl Pane {
         self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = reason;
+        self.viewport_deferred = false;
         let _ = self.take_frame_source();
         true
     }

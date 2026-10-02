@@ -183,15 +183,50 @@ class WorkspaceOps(WorkspacePaneIOMixin):
             if pane is None
             else _pane_of(await self._db(self._resolve, pane, node), pane)[1].id
         )
+        return await self._store_focus("focus_hints", target.id, project_id, tab_id, pane_id)
+
+    async def workspace_select(
+        self,
+        actor: str,
+        workspace: str,
+        tab: str,
+        *,
+        pane: str | None = None,
+        node: str | None = None,
+    ) -> tuple[Workspace, WorkspaceTab | None]:
+        """Focus ``tab`` (on ``pane``, else its own focused pane) for every window.
+
+        Unlike a window persisting its own focus, the ``focus_requested`` event
+        asks each attached window to show it.
+        """
+        target = _workspace_of(await self._enter(workspace, node), workspace)
+        selected = _tab_of(await self._db(self._resolve, tab, node), tab)
+        pane_id = (
+            selected.focused_pane_id
+            if pane is None
+            else _pane_of(await self._db(self._resolve, pane, node), pane)[1].id
+        )
+        return await self._store_focus(
+            "focus_requested", target.id, selected.project_id, selected.id, pane_id
+        )
+
+    async def _store_focus(
+        self,
+        kind: WorkspaceEventKind,
+        workspace_id: str,
+        project_id: str | None,
+        tab_id: str | None,
+        pane_id: str | None,
+    ) -> tuple[Workspace, WorkspaceTab | None]:
         hinted, focused = await self._db_guarded(
             self._workspaces.set_focus_hints,
-            target.id,
+            workspace_id,
             project_id=project_id,
             tab_id=tab_id,
             pane_id=pane_id,
         )
         await self._emit(
-            "focus_hints", hinted.id, workspace=hinted, tabs=() if focused is None else (focused,)
+            kind, hinted.id, workspace=hinted, tabs=() if focused is None else (focused,)
         )
         return hinted, focused
 

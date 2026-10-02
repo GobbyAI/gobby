@@ -160,7 +160,7 @@ impl Target {
 }
 
 /// `op` aimed at the resolved row. A title or kill whose short ID named a tab
-/// becomes the tab op; focus hints take the pane's tab too.
+/// becomes the tab op; a select takes the pane's tab too.
 pub(super) fn retarget(op: WorkspaceOp, row: Row) -> WorkspaceOp {
     let (id, tab_id) = match &row {
         Row::Pane { id, tab_id } => (id.clone(), Some(tab_id.clone())),
@@ -183,23 +183,18 @@ pub(super) fn retarget(op: WorkspaceOp, row: Row) -> WorkspaceOp {
         WorkspaceOp::TabClose { node, .. } if tab_id.is_some() => {
             WorkspaceOp::PaneClose { pane: id, node }
         }
-        WorkspaceOp::WorkspaceSetFocusHints {
-            workspace,
-            project_id,
-            node,
-            ..
+        WorkspaceOp::WorkspaceSelect {
+            workspace, node, ..
         } => match tab_id {
-            Some(tab) => WorkspaceOp::WorkspaceSetFocusHints {
+            Some(tab) => WorkspaceOp::WorkspaceSelect {
                 workspace,
-                project_id,
-                tab: Some(tab),
+                tab,
                 pane: Some(id),
                 node,
             },
-            None => WorkspaceOp::WorkspaceSetFocusHints {
+            None => WorkspaceOp::WorkspaceSelect {
                 workspace,
-                project_id,
-                tab: Some(id),
+                tab: id,
                 pane: None,
                 node,
             },

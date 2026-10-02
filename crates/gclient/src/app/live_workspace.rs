@@ -3,7 +3,7 @@
 //! the daemon's events name, and open their terminals on demand.
 
 use super::*;
-use crate::daemon::WorkspaceEvent;
+use crate::daemon::{WorkspaceEvent, WorkspaceEventKind};
 
 impl Workspace<LiveDaemon> {
     /// Attach the window's workspace (`attach_target`; absent fields leave
@@ -63,7 +63,19 @@ impl Workspace<LiveDaemon> {
                     .push((pane.tab_id.clone(), pane.id.clone()));
             }
         }
+        // Only an explicit select moves the view; a `focus_hints` event is
+        // another window persisting its own focus (#23265).
+        if event.kind == WorkspaceEventKind::FocusRequested {
+            if let Some(tab) = event.tabs.first() {
+                self.requested_focus = Some((tab.project_id.clone(), tab.id.clone()));
+            }
+        }
         true
+    }
+
+    /// `(project, tab)` of the select waiting to be shown.
+    pub(super) fn take_requested_focus(&mut self) -> Option<(String, String)> {
+        self.requested_focus.take()
     }
 
     /// Remember that `terminal_id`'s placement op is in flight, so the

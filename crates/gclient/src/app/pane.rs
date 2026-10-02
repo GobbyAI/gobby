@@ -219,6 +219,10 @@ pub struct Pane {
     pub(super) attach_retry_delay: Duration,
     pub(super) tombstones: HashSet<String>,
     pub(super) status_message: Option<String>,
+    /// The direct writer refused the latest `SetViewport`; the resize
+    /// waits for it to drain and clears once a retry is queued or the
+    /// source is removed or replaced.
+    pub(super) viewport_deferred: bool,
     pub(super) terminating: bool,
     pub(super) viewport: (u16, u16),
     /// The viewer the daemon says sizes this terminal, from a refused
@@ -288,6 +292,7 @@ impl Pane {
             attach_retry_delay: ATTACH_RETRY_BASE,
             tombstones: HashSet::new(),
             status_message: None,
+            viewport_deferred: false,
             terminating: false,
             viewport: (24, 80),
             sized_by: None,
@@ -611,6 +616,10 @@ impl Pane {
         self.status_message.as_deref()
     }
 
+    pub fn viewport_deferred(&self) -> bool {
+        self.viewport_deferred
+    }
+
     pub fn is_terminating(&self) -> bool {
         self.terminating
     }
@@ -643,10 +652,12 @@ impl Pane {
     }
 
     pub(super) fn take_frame_source(&mut self) -> Option<PaneFrameSource> {
+        self.viewport_deferred = false;
         self.frame_source.take()
     }
 
     pub(super) fn install_frame_source(&mut self, source: PaneFrameSource) {
+        self.viewport_deferred = false;
         if let AttachState::Attached { transport, .. } = &mut self.attach {
             *transport = source.transport();
         }
