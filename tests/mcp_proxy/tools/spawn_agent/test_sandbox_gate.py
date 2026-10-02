@@ -108,6 +108,8 @@ async def test_gate_refuses_when_isolated_srt_is_missing(
 
     assert result["success"] is False
     assert result["error_code"] == "sandbox_required"
+    # The default config is enabled srt, so the refusal is the real verifier's.
+    assert result["error"].startswith("managed SRT is unavailable:")
     runner.can_spawn.assert_not_called()
     isolation.assert_not_called()
     execute.assert_not_called()
