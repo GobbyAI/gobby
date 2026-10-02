@@ -8,7 +8,6 @@ Extracted from base.py as part of Strangler Fig decomposition.
 import asyncio
 import logging
 import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Final
 
 from fastapi import APIRouter, HTTPException, Request
@@ -41,12 +40,6 @@ from gobby.hooks.envelope_dedupe import (
 )
 from gobby.hooks.health_gate import DaemonNotReadyError
 from gobby.hooks.inbox import consume_pending_delivery_receipts
-from gobby.hooks.phase_timing import (
-    HookPhaseTimings,
-    hook_phase_timing_scope,
-    observe_hook_phase_timings,
-    timed_to_thread,
-)
 from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.hooks.receipt_redelivery import (
     attach_delivery_receipt,
@@ -188,7 +181,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             Hook execution result with status
         """
         start_time = time.perf_counter()
-        phase_timings = HookPhaseTimings()
         inc_counter("hooks_total")
         hook_type: str | None = None  # Track for error handling
         source: str | None = None  # Track for error handling
@@ -275,22 +267,12 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         async def mark_processed_and_return(response: dict[str, Any]) -> Any:
             # Receipt and envelope persistence block on the database and inbox
             # files, so they stay off the HTTP loop (#22708).
-            with phase_timings.measure("persistence_broadcast"):
-                return await timed_hop("persistence_receipt", _mark_processed_and_return, response)
-
-        async def timed_hop[T](
-            phase: str, function: Callable[..., T], /, *args: Any, **kwargs: Any
-        ) -> T:
-            # Route hops run outside the adapter worker's timing scope; without
-            # their own, their wall time lands unattributed in `response` (#23063).
-            with hook_phase_timing_scope(phase_timings):
-                return await timed_to_thread(phase, function, *args, **kwargs)
+            return await asyncio.to_thread(_mark_processed_and_return, response)
 
         try:
             # Parse request
             try:
-                with phase_timings.measure("request_body"):
-                    raw_payload = await request.json()
+                raw_payload = await request.json()
             except ClientDisconnect:
                 logger.debug(
                     "Hook client disconnected before request body was read",
@@ -332,12 +314,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # carry-forward can presume the previous delivery lost and bump
             # the generation those acks would CAS against.
             try:
-                with phase_timings.measure("persistence_broadcast"):
-                    await timed_hop(
-                        "persistence_consume_receipts",
-                        consume_pending_delivery_receipts,
-                        request.app,
-                    )
+                await asyncio.to_thread(consume_pending_delivery_receipts, request.app)
             except Exception:
                 logger.warning(
                     "Pending delivery-receipt sweep failed; the periodic drain remains",
@@ -374,21 +351,15 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
 
             if envelope_id:
-                owner_token = await timed_hop(
-                    "envelope_claim", claim_envelope_processing, envelope_id
-                )
+                owner_token = await asyncio.to_thread(claim_envelope_processing, envelope_id)
             if envelope_id and not owner_token:
-                stored_response = await timed_hop(
-                    "envelope_claim", envelope_terminal_response, envelope_id
-                )
+                stored_response = await asyncio.to_thread(envelope_terminal_response, envelope_id)
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                marker = await timed_hop("envelope_claim", read_envelope_marker, envelope_id)
+                marker = await asyncio.to_thread(read_envelope_marker, envelope_id)
                 if marker is None and (
-                    owner_token := await timed_hop(
-                        "envelope_claim", claim_envelope_processing, envelope_id
-                    )
+                    owner_token := await asyncio.to_thread(claim_envelope_processing, envelope_id)
                 ):
                     logger.info("Reclaimed expired hook envelope marker %s", envelope_id)
                 elif not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
@@ -398,12 +369,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         status_code=409,
                         content={"status": "malformed_marker", "reason": reason},
                     )
-                elif await timed_hop(
-                    "envelope_claim", clear_stale_envelope_processing_marker, envelope_id
+                elif await asyncio.to_thread(
+                    clear_stale_envelope_processing_marker, envelope_id
                 ) and (
-                    owner_token := await timed_hop(
-                        "envelope_claim", claim_envelope_processing, envelope_id
-                    )
+                    owner_token := await asyncio.to_thread(claim_envelope_processing, envelope_id)
                 ):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
@@ -507,7 +476,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     payload,
                     hook_manager,
                     timeout_seconds=hook_timeout,
-                    phase_timings=phase_timings,
                 )
 
                 # Rule and adapter denials are final. Never let web-chat approval,
@@ -794,23 +762,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             # The lease dies with this execution, including a client
             # disconnect or a cancelled replay. Releasing is a CAS on the live
             # lease this request owns, so a finalized marker is untouched.
-            with phase_timings.measure("persistence_broadcast"):
-                if not lease_outlives_request:
-                    if lease_renewal is not None:
-                        lease_renewal.cancel()
-                    if envelope_id and owner_token:
-                        await timed_hop(
-                            "persistence_release_claim",
-                            release_envelope_processing_claim,
-                            envelope_id,
-                            owner_token=owner_token,
-                        )
-            total_seconds = time.perf_counter() - start_time
-            observe_hook_phase_timings(
-                phase_timings,
-                total_seconds=total_seconds,
-                hook_type=hook_type,
-                source=source,
-            )
+            if not lease_outlives_request:
+                if lease_renewal is not None:
+                    lease_renewal.cancel()
+                if envelope_id and owner_token:
+                    await asyncio.to_thread(
+                        release_envelope_processing_claim,
+                        envelope_id,
+                        owner_token=owner_token,
+                    )
 
     return router
