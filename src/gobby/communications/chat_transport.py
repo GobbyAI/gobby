@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable
 from typing import Any, Protocol
 
+from gobby.communications.adapters.base import MessageEditNotApplied
 from gobby.communications.models import CommsMessage
 from gobby.communications.responder import ResponderContext
 
@@ -143,9 +144,13 @@ class CommunicationsChatStreamTransport:
         now = self._clock()
         if now - self._last_edit_at < self._edit_interval:
             return
-        await self._edit(self._text)
-        self._last_delivered_text = self._text
         self._last_edit_at = now
+        try:
+            await self._edit(self._text)
+        except MessageEditNotApplied:
+            # A later update or the final delivery carries this text (#23292).
+            return
+        self._last_delivered_text = self._text
 
     async def _finalize(self) -> None:
         if self._finalized or not self._text.strip():
@@ -158,10 +163,14 @@ class CommunicationsChatStreamTransport:
             await self._send(self._text)
             self._last_delivered_text = self._text
             return
-        if self._platform_message_id is not None:
-            await self._edit(self._text)
-        else:
+        if self._platform_message_id is None:
             await self._send(self._text)
+        else:
+            try:
+                await self._edit(self._text)
+            except MessageEditNotApplied:
+                # The platform refused the edit; deliver the whole answer anew (#23292).
+                await self._send(self._text)
         self._last_delivered_text = self._text
 
     async def _send(self, content: str) -> CommsMessage:

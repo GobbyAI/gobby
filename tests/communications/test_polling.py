@@ -5,6 +5,7 @@ import logging
 from collections.abc import Iterator
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from gobby.communications.polling import PollingManager
@@ -152,43 +153,56 @@ async def test_poll_loop_logs_one_traceback_per_failure_streak(
 
 
 @pytest.mark.asyncio
-async def test_poll_loop_quiets_resume_errors_then_surfaces_persistent_failure(
+async def test_poll_loop_reports_only_an_outage_that_reaches_the_backoff_ceiling(
     polling_manager: PollingManager,
     mock_adapter: MagicMock,
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("gobby.communications.polling.asyncio.sleep", AsyncMock())
-    wake_tracker = MagicMock()
-    wake_tracker.observe_resume.side_effect = [True, True, False]
-    monkeypatch.setattr(
-        "gobby.communications.polling.HostSleepTracker",
-        lambda: wake_tracker,
-    )
-    outcomes: Iterator[BaseException] = iter(
+    """Network blips the backoff absorbs log nothing; a sustained outage logs once (#23292)."""
+    sleep = AsyncMock()
+    monkeypatch.setattr("gobby.communications.polling.asyncio.sleep", sleep)
+    request = httpx.Request("POST", "https://api.telegram.org/bot***/getUpdates")
+    outcomes: Iterator[BaseException | list[object]] = iter(
         [
-            OSError("network resuming"),
-            OSError("dns resuming"),
-            OSError("persistent outage"),
+            httpx.ReadTimeout("read timed out", request=request),
+            httpx.ConnectTimeout("connect timed out", request=request),
+            [],
+            *[httpx.ReadTimeout("read timed out", request=request) for _ in range(8)],
+            [],
+            *[OSError("network unreachable") for _ in range(7)],
             asyncio.CancelledError(),
         ]
     )
 
     async def poll_side_effect() -> list[object]:
-        raise next(outcomes)
+        outcome = next(outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
 
     mock_adapter.poll.side_effect = poll_side_effect
 
     with caplog.at_level(logging.DEBUG, logger="gobby.communications.polling"):
         await polling_manager._poll_loop("test-channel", mock_adapter, interval=0)
 
-    resume_records = [r for r in caplog.records if "after host resume" in r.message]
-    assert len(resume_records) == 2
-    assert all(r.levelno == logging.DEBUG and not r.exc_info for r in resume_records)
-    persistent = [r for r in caplog.records if "persistent outage" in r.message]
-    assert len(persistent) == 1
-    assert persistent[0].levelno == logging.ERROR
-    assert persistent[0].exc_info
+    assert [(r.levelno, r.getMessage(), r.exc_info) for r in caplog.records] == [
+        (
+            logging.ERROR,
+            "Channel 'test-channel' unreachable for 7 polls in a row: read timed out "
+            "(retrying every 300s)",
+            None,
+        ),
+        (
+            logging.ERROR,
+            "Channel 'test-channel' unreachable for 7 polls in a row: network unreachable "
+            "(retrying every 300s)",
+            None,
+        ),
+    ]
+    backoffs = [entry.args[0] for entry in sleep.await_args_list if entry.args[0]]
+    assert backoffs[:2] == [5, 10]
+    assert backoffs[2:10] == [5, 10, 20, 40, 80, 160, 300, 300]
 
 
 @pytest.mark.asyncio
@@ -198,11 +212,11 @@ async def test_poll_loop_names_the_exception_class_when_its_message_is_empty(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bare ``TimeoutError()`` renders as ``''``; the line names the class (#20981)."""
+    """A bare ``RuntimeError()`` renders as ``''``; the line names the class (#20981)."""
     monkeypatch.setattr("gobby.communications.polling.asyncio.sleep", AsyncMock())
 
     outcomes: Iterator[BaseException] = iter(
-        [TimeoutError(), TimeoutError(), asyncio.CancelledError()]
+        [RuntimeError(), RuntimeError(), asyncio.CancelledError()]
     )
 
     async def poll_side_effect() -> list[object]:
@@ -215,8 +229,8 @@ async def test_poll_loop_names_the_exception_class_when_its_message_is_empty(
 
     messages = [r.getMessage() for r in caplog.records if "Error polling channel" in r.message]
     assert messages == [
-        "Error polling channel 'test-channel': TimeoutError (backing off 5s)",
-        "Error polling channel 'test-channel': TimeoutError (failure 2 in a row, backing off 10s)",
+        "Error polling channel 'test-channel': RuntimeError (backing off 5s)",
+        "Error polling channel 'test-channel': RuntimeError (failure 2 in a row, backing off 10s)",
     ]
 
 

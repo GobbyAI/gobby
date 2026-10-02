@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-from gobby.host_lifecycle import HostSleepTracker
+import httpx
 
 if TYPE_CHECKING:
     from gobby.communications.adapters.base import BaseChannelAdapter
@@ -95,9 +95,9 @@ class PollingManager:
         """
         consecutive_failures = 0
         traceback_logged = False
+        outage_logged = False
         max_backoff = 300  # 5 minutes max backoff
         base_backoff = 5  # start with 5 seconds backoff
-        sleep_wake = HostSleepTracker()
 
         while True:
             try:
@@ -110,6 +110,7 @@ class PollingManager:
 
                 consecutive_failures = 0
                 traceback_logged = False
+                outage_logged = False
                 await asyncio.sleep(interval)
 
             except asyncio.CancelledError:
@@ -120,15 +121,18 @@ class PollingManager:
                 # still says what failed (#20981).
                 error = str(e) or type(e).__name__
                 sleep_duration = min(base_backoff * (2 ** (consecutive_failures - 1)), max_backoff)
-                if sleep_wake.observe_resume():
-                    logger.debug(
-                        "Polling channel %r waiting for connectivity after host resume: "
-                        "%s (failure %s in a row, backing off %ss)",
-                        channel_name,
-                        error,
-                        consecutive_failures,
-                        sleep_duration,
-                    )
+                if isinstance(e, httpx.TransportError | OSError):
+                    # The backoff absorbs a network blip; only an outage that holds the
+                    # backoff at its ceiling is reported, once per streak (#23292).
+                    if sleep_duration >= max_backoff and not outage_logged:
+                        logger.error(
+                            "Channel %r unreachable for %s polls in a row: %s (retrying every %ss)",
+                            channel_name,
+                            consecutive_failures,
+                            error,
+                            sleep_duration,
+                        )
+                        outage_logged = True
                 elif not traceback_logged:
                     # One traceback per failure streak; repeats stay one line so a
                     # transient outage cannot flood the log (#20867).
