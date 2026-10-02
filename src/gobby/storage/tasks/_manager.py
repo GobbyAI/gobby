@@ -549,9 +549,10 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         return self.get_task(task_id)
 
     def unlink_commit(self, task_id: str, commit_sha: str) -> Task:
-        """Remove ``commit_sha`` from the task's commits array if present."""
-        if _unlink_commit(self.db, task_id, commit_sha):
-            self._notify_listeners()
+        """Remove ``commit_sha`` from the task's commits array, failing when it is not linked."""
+        if not _unlink_commit(self.db, task_id, commit_sha):
+            raise ValueError(f"Commit {commit_sha} is not linked to task {task_id}")
+        self._notify_listeners()
         return self.get_task(task_id)
 
     def delete_task(self, task_id: str, cascade: bool = False, unlink: bool = False) -> bool:

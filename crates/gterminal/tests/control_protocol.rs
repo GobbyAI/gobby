@@ -6,8 +6,10 @@ mod embed_support;
 mod host_support;
 
 use host_support::{
-    connect, recv_json, rpc, send_json, send_json_without_id, spawn_host, temp_socket_dir,
-    wait_exit, wait_socket, wait_until, write_token, CONTROL_SOCKET,
+    candidate_script, committed_pane, connect, control, gterm_bin, held_probe, host_upgrade,
+    pane_text, recv_json, recv_json_within, rpc, send_held_upgrade, send_json,
+    send_json_without_id, send_upgrade, spawn_host, temp_socket_dir, wait_exit, wait_outcome,
+    wait_socket, wait_until, write_text, write_token, CONTROL_SOCKET,
 };
 use serde_json::json;
 use std::collections::HashMap;
@@ -2254,4 +2256,446 @@ fn list_rows(host: &host_support::HostProc) -> Vec<serde_json::Value> {
 /// The stored byte length of one row's title.
 fn title_bytes(row: &serde_json::Value) -> Option<usize> {
     row["title"].as_str().map(str::len)
+}
+
+/// Echoes each input line back as `got:<line>`; typed input itself is not echoed.
+const ECHO_LINES: &str =
+    "stty -echo; echo READY; while IFS= read -r l; do printf 'got:%s\\n' \"$l\"; done";
+
+fn b64(text: &str) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(text)
+}
+
+fn ping(stream: &mut std::os::unix::net::UnixStream) -> serde_json::Value {
+    rpc(stream, "ping", json!({}))
+}
+
+fn assert_deferred(stream: &mut std::os::unix::net::UnixStream, attempt_id: &str, reason: &str) {
+    let ping = ping(stream);
+    let upgrade = &ping["upgrade"];
+    assert_eq!(upgrade["phase"], "idle", "{ping}");
+    let outcome = &upgrade["last_outcome"];
+    assert_eq!(outcome["attempt_id"], attempt_id, "{ping}");
+    assert_eq!(outcome["outcome"], "deferred", "{ping}");
+    assert_eq!(outcome["reason"], reason, "{ping}");
+}
+
+fn shutdown_host(child: &mut host_support::HostProc, stream: &mut std::os::unix::net::UnixStream) {
+    send_json(stream, &json!({"method": "host_shutdown", "grace_ms": 50}));
+    let _ = recv_json(stream);
+    assert!(
+        wait_exit(child, Duration::from_secs(10)).is_some(),
+        "host exits after host_shutdown"
+    );
+}
+
+/// Plan gterm-host-handover 1.3.5.
+#[test]
+fn ping_reports_generation_and_attempt() {
+    let dir = temp_socket_dir();
+    let token = "control-token-upgrade-ping";
+    write_token(dir.path(), token);
+    let mut child = spawn_host(dir.path());
+    wait_socket(&dir.path().join(CONTROL_SOCKET));
+    let mut stream = connect(&dir.path().join(CONTROL_SOCKET));
+    let hello = host_support::hello_control(&mut stream, token);
+    let capabilities = hello["capabilities"].as_array().expect("capabilities");
+    assert!(capabilities.contains(&json!("host_upgrade")), "{hello}");
+    assert!(capabilities.contains(&json!("terminal_theme")), "{hello}");
+
+    let idle = ping(&mut stream);
+    assert_eq!(idle["generation"], 0, "{idle}");
+    assert_eq!(idle["upgrade"]["phase"], "idle", "{idle}");
+    for field in [
+        "attempt_id",
+        "candidate_sha256",
+        "remaining_ms",
+        "last_outcome",
+    ] {
+        assert_eq!(
+            idle["upgrade"].get(field),
+            Some(&serde_json::Value::Null),
+            "{field} before any attempt: {idle}"
+        );
+    }
+
+    let candidate = candidate_script(dir.path(), "slow-refusal", "sleep 1\nexit 3");
+    let mut upgrader = control(dir.path(), token);
+    send_upgrade(
+        &mut upgrader,
+        &candidate,
+        "attempt-ping",
+        serde_json::Value::Null,
+    );
+    let mut probing = serde_json::Value::Null;
+    wait_until("ping reports the probe", || {
+        probing = ping(&mut stream);
+        probing["upgrade"]["phase"] == "probing"
+            && probing["upgrade"]["candidate_sha256"].is_string()
+    });
+    assert_eq!(probing["generation"], 0, "{probing}");
+    let upgrade = &probing["upgrade"];
+    assert_eq!(upgrade["attempt_id"], "attempt-ping", "{probing}");
+    let sha = upgrade["candidate_sha256"].as_str().unwrap().to_string();
+    assert!(
+        sha.len() == 64 && sha.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "{probing}"
+    );
+    assert_ne!(
+        probing["binary_sha256"],
+        sha.as_str(),
+        "the probed candidate is the script, not the running image"
+    );
+    let remaining = upgrade["remaining_ms"]
+        .as_u64()
+        .expect("remaining_ms while probing");
+    assert!(remaining > 0 && remaining <= 15_000, "{probing}");
+    assert_eq!(
+        upgrade.get("last_outcome"),
+        Some(&serde_json::Value::Null),
+        "{probing}"
+    );
+
+    let refused = recv_json(&mut upgrader);
+    assert_eq!(refused["ok"], false, "{refused}");
+    assert_eq!(refused["error"], "upgrade_refused", "{refused}");
+
+    let after = ping(&mut stream);
+    assert_eq!(after["generation"], 0, "{after}");
+    let upgrade = &after["upgrade"];
+    assert_eq!(upgrade["phase"], "idle", "{after}");
+    for field in ["attempt_id", "candidate_sha256", "remaining_ms"] {
+        assert_eq!(
+            upgrade.get(field),
+            Some(&serde_json::Value::Null),
+            "{field} once idle: {after}"
+        );
+    }
+    let outcome = &upgrade["last_outcome"];
+    assert_eq!(outcome["attempt_id"], "attempt-ping", "{after}");
+    assert_eq!(outcome["outcome"], "refused", "{after}");
+    assert_eq!(outcome["candidate_sha256"], sha.as_str(), "{after}");
+
+    shutdown_host(&mut child, &mut stream);
+}
+
+/// Plan gterm-host-handover 1.3.2.
+#[test]
+fn host_upgrade_admission_is_serialized_and_rechecked() {
+    let dir = temp_socket_dir();
+    let token = "control-token-upgrade-admission";
+    write_token(dir.path(), token);
+    let (mut child, mut stream) = authed(dir.path(), token);
+    let gterm = gterm_bin();
+    let wait = Duration::from_secs(10);
+
+    // An unconsumed reservation refuses at entry and leaves no record.
+    let pending = rpc(
+        &mut stream,
+        "reserve_observer",
+        json!({"terminal_id": "pending", "reserve_key": "pending"}),
+    );
+    assert_eq!(pending["ok"], true, "{pending}");
+    let busy = host_upgrade(
+        &mut stream,
+        &gterm,
+        "attempt-pending",
+        serde_json::Value::Null,
+    );
+    assert_eq!(busy["ok"], false, "{busy}");
+    assert_eq!(busy["error"], "host_busy", "{busy}");
+    let untouched = ping(&mut stream);
+    assert_eq!(untouched["upgrade"]["phase"], "idle", "{untouched}");
+    assert_eq!(
+        untouched["upgrade"].get("last_outcome"),
+        Some(&serde_json::Value::Null),
+        "{untouched}"
+    );
+    let released = rpc(
+        &mut stream,
+        "release_observer",
+        json!({"reservation_id": pending["reservation_id"], "reserve_key": "pending"}),
+    );
+    assert_eq!(released["released"], true, "{released}");
+
+    // Two simultaneous upgrades: one attempt runs and the other is refused.
+    let slow_refusal = candidate_script(dir.path(), "slow-refusal", "sleep 1\nexit 3");
+    let mut first = control(dir.path(), token);
+    let mut second = control(dir.path(), token);
+    send_upgrade(
+        &mut first,
+        &slow_refusal,
+        "attempt-first",
+        serde_json::Value::Null,
+    );
+    send_upgrade(
+        &mut second,
+        &slow_refusal,
+        "attempt-second",
+        serde_json::Value::Null,
+    );
+    let replies = [
+        recv_json_within(&mut first, wait),
+        recv_json_within(&mut second, wait),
+    ];
+    let winner = match (replies[0]["error"].as_str(), replies[1]["error"].as_str()) {
+        (Some("upgrade_refused"), Some("upgrade_in_progress")) => "attempt-first",
+        (Some("upgrade_in_progress"), Some("upgrade_refused")) => "attempt-second",
+        _ => panic!("one attempt runs and one is refused: {replies:?}"),
+    };
+    let record = ping(&mut stream);
+    let outcome = &record["upgrade"]["last_outcome"];
+    assert_eq!(outcome["attempt_id"], winner, "{record}");
+    assert_eq!(outcome["outcome"], "refused", "{record}");
+
+    // A committed pane admits the attempt, so each probe reaches the recheck.
+    let pane = committed_pane(&mut child, &mut stream, 1, "admitted", "exec sleep 60");
+    let (held, fifo) = held_probe(dir.path(), "held-accept");
+    let mut upgrader = control(dir.path(), token);
+
+    // A reservation made during the probe.
+    let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-reserve");
+    let late = rpc(
+        &mut stream,
+        "reserve_observer",
+        json!({"terminal_id": "late", "reserve_key": "late"}),
+    );
+    assert_eq!(late["ok"], true, "{late}");
+    drop(release);
+    let deferred = recv_json_within(&mut upgrader, wait);
+    assert_eq!(deferred["error"], "host_busy", "{deferred}");
+    assert_deferred(&mut stream, "attempt-reserve", "host_busy");
+    let released = rpc(
+        &mut stream,
+        "release_observer",
+        json!({"reservation_id": late["reservation_id"], "reserve_key": "late"}),
+    );
+    assert_eq!(released["released"], true, "{released}");
+
+    // A spawn during the probe points the pane's reservation at an
+    // uncommitted slot. The respawned pane ignores the drain's SIGHUP, so the
+    // shutdown below lasts its grace.
+    let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-spawn");
+    let respawned = rpc(
+        &mut stream,
+        "spawn",
+        json!({
+            "operation_seq": 2,
+            "terminal_id": "admitted",
+            "spawn_key": "admitted-respawn",
+            "reservation_id": pane.reservation_id,
+            "reserve_key": "admitted",
+            "argv": ["/bin/sh", "-c", "trap '' HUP; exec sleep 60"],
+            "cwd": dir.path().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    assert_eq!(respawned["ok"], true, "{respawned}");
+    child.track_pgid(respawned["pgid"].as_i64().unwrap() as i32);
+    drop(release);
+    let deferred = recv_json_within(&mut upgrader, wait);
+    assert_eq!(deferred["error"], "host_busy", "{deferred}");
+    assert_deferred(&mut stream, "attempt-spawn", "host_busy");
+    let committed = rpc(
+        &mut stream,
+        "spawn_commit",
+        json!({"terminal_id": "admitted", "spawn_key": "admitted-respawn"}),
+    );
+    assert_eq!(committed["ok"], true, "{committed}");
+
+    // host_shutdown during the probe: the recheck answers host_draining, and
+    // a later attempt is refused at entry without a new record.
+    let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-shutdown");
+    let draining = rpc(&mut stream, "host_shutdown", json!({"grace_ms": 3000}));
+    assert_eq!(draining["ok"], true, "{draining}");
+    drop(release);
+    let deferred = recv_json_within(&mut upgrader, wait);
+    assert_eq!(deferred["error"], "host_draining", "{deferred}");
+    assert_deferred(&mut stream, "attempt-shutdown", "host_draining");
+    let refused = host_upgrade(
+        &mut stream,
+        &gterm,
+        "attempt-drained",
+        serde_json::Value::Null,
+    );
+    assert_eq!(refused["error"], "host_draining", "{refused}");
+    assert_deferred(&mut stream, "attempt-shutdown", "host_draining");
+    assert!(wait_exit(&mut child, Duration::from_secs(15)).is_some());
+}
+
+/// Plan gterm-host-handover 1.3.6.
+#[test]
+fn mutation_gate_blocks_and_refuses_during_upgrade() {
+    use gobby_terminal::protocol::{ClientMessage, ServerMessage};
+    use gobby_terminal::terminal_theme::{RgbColor, ThemeDeclaration};
+
+    let dir = temp_socket_dir();
+    let token = "control-token-upgrade-gate";
+    write_token(dir.path(), token);
+    std::fs::write(dir.path().join("local_cli_token"), embed_support::LOCAL).unwrap();
+    let (mut child, mut stream) = authed(dir.path(), token);
+    let pane = committed_pane(&mut child, &mut stream, 1, "gated", ECHO_LINES);
+    let id = pane.host_terminal_id.clone();
+    wait_until("the echo pane is ready", || {
+        pane_text(&mut stream, &id).contains("READY")
+    });
+
+    // A delayed write_batch operation holds the gate, so the upgrade defers.
+    // The probe waits for the batch to start, and the batch outlasts the
+    // gate wait after it.
+    let (held, fifo) = held_probe(dir.path(), "held-accept");
+    let mut upgrader = control(dir.path(), token);
+    let release = send_held_upgrade(&mut upgrader, &held, &fifo, "attempt-batch");
+    let mut batcher = control(dir.path(), token);
+    send_json(
+        &mut batcher,
+        &json!({
+            "method": "write_batch",
+            "operation_seq": 1,
+            "targets": [{
+                "recipient_id": "gated",
+                "host_terminal_id": id,
+                "operations": [
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("first\n"), "delay_ms": 0},
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("second\n"), "delay_ms": 1000},
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("third\n"), "delay_ms": 1000},
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("fourth\n"), "delay_ms": 1000},
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("fifth\n"), "delay_ms": 1000},
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("sixth\n"), "delay_ms": 1000},
+                ],
+            }],
+        }),
+    );
+    wait_until("the batch's first operation lands", || {
+        pane_text(&mut stream, &id).contains("got:first")
+    });
+    drop(release);
+    let busy = recv_json_within(&mut upgrader, Duration::from_secs(20));
+    assert_eq!(busy["error"], "host_busy", "{busy}");
+    assert_deferred(&mut stream, "attempt-batch", "host_busy");
+    let batch = recv_json_within(&mut batcher, Duration::from_secs(10));
+    assert_eq!(batch["ok"], true, "{batch}");
+    wait_until("the last delayed operation lands", || {
+        pane_text(&mut stream, &id).contains("got:sixth")
+    });
+
+    // A granted frame attachment types before the upgrade.
+    let granted = rpc(
+        &mut stream,
+        "grant_input",
+        json!({"host_terminal_id": id, "attachment_id": "att-gate"}),
+    );
+    assert_eq!(granted["granted"], true, "{granted}");
+    let mut frames = connect_ansi_frames(&child);
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::AttachTerminal {
+            host_terminal_id: id.clone(),
+            reservation_id: None,
+            locator: None,
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::Attached { .. } => {}
+        other => panic!("expected attached: {other:?}"),
+    }
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::BindAttachment {
+            attachment_id: "att-gate".into(),
+        },
+    );
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"framed\n".to_vec(),
+        },
+    );
+    wait_until("frame input lands", || {
+        pane_text(&mut stream, &id).contains("got:framed")
+    });
+
+    // After acceptance each gated mutation answers host_upgrading.
+    let accepted = host_upgrade(
+        &mut stream,
+        &gterm_bin(),
+        "attempt-gate",
+        json!({"hold_accepted_ms": 2000}),
+    );
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert_eq!(accepted["accepted"], true, "{accepted}");
+    assert_eq!(accepted["attempt_id"], "attempt-gate", "{accepted}");
+    assert_eq!(accepted["generation"], 0, "{accepted}");
+    assert!(accepted["candidate_sha256"].is_string(), "{accepted}");
+    assert!(
+        accepted["remaining_ms"]
+            .as_u64()
+            .is_some_and(|ms| ms > 0 && ms <= 15_000),
+        "{accepted}"
+    );
+    let write = write_text(&mut stream, 2, &id, "refused-write\n");
+    assert_eq!(write["error"], "host_upgrading", "{write}");
+    let batch = rpc(
+        &mut stream,
+        "write_batch",
+        json!({
+            "operation_seq": 3,
+            "targets": [{
+                "recipient_id": "gated",
+                "host_terminal_id": id,
+                "operations": [
+                    {"kind": "text", "encoding": "utf8-b64", "data": b64("refused-batch\n"), "delay_ms": 0},
+                ],
+            }],
+        }),
+    );
+    assert_eq!(batch["error"], "host_upgrading", "{batch}");
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::Input {
+            data: b"refused-frame\n".to_vec(),
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::InputRefused { code } => assert_eq!(code, "host_upgrading"),
+        other => panic!("expected an input refusal: {other:?}"),
+    }
+    embed_support::write_msg(
+        &mut frames,
+        &ClientMessage::SetTerminalTheme {
+            theme: ThemeDeclaration {
+                foreground: Some(RgbColor { r: 1, g: 2, b: 3 }),
+                background: Some(RgbColor { r: 4, g: 5, b: 6 }),
+                palette: Vec::new(),
+            },
+        },
+    );
+    match frame_reply(&mut frames) {
+        ServerMessage::Error { code, .. } => assert_eq!(code, "host_upgrading"),
+        other => panic!("expected a theme refusal: {other:?}"),
+    }
+
+    // The restored host takes new input; nothing refused is ever written.
+    let restored = wait_outcome(dir.path(), token, "attempt-gate", Duration::from_secs(30));
+    assert_eq!(restored["generation"], 1, "{restored}");
+    assert_eq!(
+        restored["upgrade"]["last_outcome"]["outcome"], "succeeded",
+        "{restored}"
+    );
+    let mut after = control(dir.path(), token);
+    let written = write_text(&mut after, 1, &id, "after\n");
+    assert_eq!(written["ok"], true, "{written}");
+    let mut text = String::new();
+    wait_until("input after the restore lands", || {
+        text = pane_text(&mut after, &id);
+        text.contains("got:after")
+    });
+    assert!(
+        !text.contains("got:refused"),
+        "refused input was written: {text}"
+    );
+    shutdown_host(&mut child, &mut after);
 }

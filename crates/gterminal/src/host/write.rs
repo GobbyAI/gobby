@@ -38,6 +38,9 @@ struct ScheduledOperation {
 
 impl HostState {
     pub async fn write(&self, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let host_terminal_id = s(extra, "host_terminal_id");
         let kind = s(extra, "kind");
         let encoding = extra
@@ -86,6 +89,9 @@ impl HostState {
     /// Grants one daemon attachment id the right to type on `host_terminal_id`
     /// over the frame stream. Replaces any previous holder; unledgered.
     pub async fn grant_input(&self, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let attachment_id = s(extra, "attachment_id");
         if attachment_id.is_empty() {
             return err("invalid_request");
@@ -104,6 +110,9 @@ impl HostState {
     /// Clears the input grant on `host_terminal_id` when `attachment_id`
     /// matches the holder, or unconditionally when it is omitted. Unledgered.
     pub async fn revoke_input(&self, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let attachment_id = extra.get("attachment_id").and_then(Value::as_str);
         let mut inner = self.inner.lock().await;
         let slot = match native_slot_mut(&mut inner, &s(extra, "host_terminal_id")) {
@@ -124,6 +133,9 @@ impl HostState {
         attachment_id: Option<u64>,
         input: NativeInput,
     ) -> Result<(), &'static str> {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return Err("host_upgrading");
+        };
         let Some(attachment_id) = attachment_id else {
             return Err("attach_required");
         };
@@ -166,6 +178,11 @@ impl HostState {
     }
 
     pub async fn write_batch(&self, extra: &Map<String, Value>) -> Value {
+        // Every delayed operation runs inside this call, so this one guard,
+        // taken before any is scheduled, is held across each `sleep_until`.
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let Some(raw_targets) = extra.get("targets").and_then(Value::as_array) else {
             return err("invalid_targets");
         };

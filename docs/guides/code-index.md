@@ -312,6 +312,12 @@ Operators inspect BM25 verification with `gobby postgres status --json`, in the
 using `pdb.verify_index`. Read `healthy` and each index's state/error; status does
 not exit nonzero solely for unhealthy BM25.
 
+`gobby status` and `/api/admin/status` check only that both indexes exist. They
+report the startup verification time and result in `code_index.verification`,
+because a full `pdb.verify_index` checksums every segment (about 210 ms warm on
+1 GB of indexes, far longer under I/O contention) and would blow the status
+collector budget. Run `gobby postgres status` for a fresh full check.
+
 For a damaged index, run `gobby postgres repair-code-index --json` (omit `--json`
 for text). It reads credentials from the bootstrap configuration, uses
 `code_index.maintenance_index_timeout_seconds` (default 900 seconds), acquires

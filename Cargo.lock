@@ -2503,7 +2503,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-daemon"
-version = "0.4.3"
+version = "0.4.4"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -2511,6 +2511,7 @@ dependencies = [
  "bytes",
  "clap",
  "gobby-core",
+ "gobby-terminals",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -2524,7 +2525,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-hooks"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2544,7 +2545,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-terminal"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "base64 0.22.1",
  "bincode",
@@ -2559,6 +2560,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "signal-hook 0.3.18",
  "tempfile",
  "tokio",
  "tracing",
@@ -2568,6 +2570,19 @@ dependencies = [
  "widestring",
  "windows-sys 0.61.2",
  "wmi",
+]
+
+[[package]]
+name = "gobby-terminals"
+version = "0.5.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bincode",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
 ]
 
 [[package]]

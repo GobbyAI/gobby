@@ -1,6 +1,6 @@
 [package]
 name = "gobby-terminal"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -18,7 +18,7 @@ path = "src/lib.rs"
 
 [features]
 default = []
-vt-engine = []
+vt-engine = ["dep:signal-hook"]
 
 [dependencies]
 base64 = "0.22.1"
@@ -39,6 +39,9 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 unicode-width = "0.2"
 uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = { version = "0.3", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"

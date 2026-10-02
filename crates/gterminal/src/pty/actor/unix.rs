@@ -82,7 +82,18 @@ enum PtyIoControlCommand {
     RollbackHandoff(std_mpsc::Sender<std::io::Result<()>>),
     ReleaseAfterCommit(std_mpsc::Sender<std::io::Result<()>>),
     ResumeRestored,
+    ArmHandoffAckFault(HandoffAckFault),
     Shutdown,
+}
+
+/// Test-only misbehavior of this actor's next BeginHandoff acknowledgement,
+/// armed through `host_upgrade`'s `test_fault` under `GTERM_TEST_HELPER=1`.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum HandoffAckFault {
+    /// Acknowledge no earlier than this instant.
+    DelayUntil(Instant),
+    /// Withhold the acknowledgement until the next RollbackHandoff drops it.
+    Withhold,
 }
 
 #[derive(Clone)]
@@ -98,6 +109,14 @@ pub(crate) struct PtyIoActorHandle {
 #[derive(Debug)]
 struct UserWriteGate {
     accepting: bool,
+    /// Set when the actor parks at EOF: the child's side of the PTY is gone.
+    hung_up: bool,
+}
+
+impl UserWriteGate {
+    fn open(&self) -> bool {
+        self.accepting && !self.hung_up
+    }
 }
 
 impl PtyIoActorHandle {
@@ -110,7 +129,7 @@ impl PtyIoActorHandle {
                 .user_writes
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if !user_writes.accepting {
+            if !user_writes.open() {
                 return Err(mpsc::error::SendError(bytes));
             }
         }
@@ -124,7 +143,7 @@ impl PtyIoActorHandle {
             .user_writes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !user_writes.accepting {
+        if !user_writes.open() {
             return Err(mpsc::error::SendError(bytes));
         }
         permit.send(PtyIoDataCommand::WriteUserInput(bytes));
@@ -140,7 +159,7 @@ impl PtyIoActorHandle {
             .user_writes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !user_writes.accepting {
+        if !user_writes.open() {
             return Err(mpsc::error::TrySendError::Closed(bytes));
         }
         match self
@@ -344,6 +363,15 @@ impl PtyIoActorHandle {
         })?
     }
 
+    /// Test-only: arms how this actor answers its next BeginHandoff.
+    pub(crate) fn arm_handoff_ack_fault(&self, fault: HandoffAckFault) -> std::io::Result<()> {
+        self.control_tx
+            .send(PtyIoControlCommand::ArmHandoffAckFault(fault))
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::BrokenPipe, "pty actor closed"))?;
+        self.wake_actor();
+        Ok(())
+    }
+
     pub(crate) fn shutdown(&self) {
         {
             let mut user_writes = self
@@ -383,6 +411,7 @@ impl PtyIoActor {
         let wake_pipe = fd::create_wake_pipe()?;
         let user_writes = Arc::new(Mutex::new(UserWriteGate {
             accepting: !config.initially_quiesced,
+            hung_up: false,
         }));
         let controls = Arc::new(Mutex::new(SharedPtyControls::default()));
         let response_order = Arc::new(Mutex::new(()));
@@ -390,7 +419,7 @@ impl PtyIoActor {
             data_tx,
             control_tx,
             wake: wake_pipe.writer,
-            user_writes,
+            user_writes: Arc::clone(&user_writes),
             controls: Arc::clone(&controls),
             response_order: Arc::clone(&response_order),
         };
@@ -405,11 +434,15 @@ impl PtyIoActor {
             } else {
                 ActorState::Running
             },
+            hung_up: false,
             pending_writes: VecDeque::new(),
             current_write_offset: 0,
             wake_read_fd: wake_pipe.read_fd,
+            user_writes,
             controls,
             response_order,
+            ack_fault: None,
+            withheld_ack: None,
             on_read: config.on_read,
             on_reader_exit: config.on_reader_exit,
             poll_observer,
@@ -437,11 +470,17 @@ struct PtyIoActorRunner {
     data_rx: mpsc::Receiver<PtyIoDataCommand>,
     control_rx: std_mpsc::Receiver<PtyIoControlCommand>,
     state: ActorState,
+    /// The PTY read EOF or failed: the child's side is gone. The actor parks,
+    /// keeping its master for the owner to carry or dispose of.
+    hung_up: bool,
     pending_writes: VecDeque<Bytes>,
     current_write_offset: usize,
     wake_read_fd: OwnedFd,
+    user_writes: Arc<Mutex<UserWriteGate>>,
     controls: Arc<Mutex<SharedPtyControls>>,
     response_order: Arc<Mutex<()>>,
+    ack_fault: Option<HandoffAckFault>,
+    withheld_ack: Option<std_mpsc::Sender<std::io::Result<()>>>,
     on_read: ReadCallback,
     on_reader_exit: Option<ReaderExitCallback>,
     poll_observer: Option<std_mpsc::Sender<()>>,
@@ -452,6 +491,28 @@ impl PtyIoActorRunner {
         if !bytes.is_empty() {
             self.pending_writes.push_back(bytes);
         }
+    }
+
+    fn live(&self) -> bool {
+        self.state == ActorState::Running && !self.hung_up
+    }
+
+    /// Writes and terminal responses can no longer reach the child.
+    fn io_closed(&self) -> bool {
+        self.state == ActorState::Released || self.hung_up
+    }
+
+    /// Parks the actor once the child's side is gone. The master stays open
+    /// so a host upgrade can still carry the pane; the actor ends only on
+    /// Shutdown, ReleaseAfterCommit, or a disconnected channel.
+    fn hang_up(&mut self) {
+        self.hung_up = true;
+        self.pending_writes.clear();
+        self.current_write_offset = 0;
+        self.user_writes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .hung_up = true;
     }
 
     fn run(&mut self) {
@@ -475,7 +536,7 @@ impl PtyIoActorRunner {
             match fd::poll_pty_and_wake(
                 self.file.as_raw_fd(),
                 self.wake_read_fd.as_raw_fd(),
-                self.state == ActorState::Running,
+                self.live(),
                 !self.pending_writes.is_empty(),
                 ACTOR_IDLE_POLL_MS,
             ) {
@@ -487,11 +548,8 @@ impl PtyIoActorRunner {
                         }
                         continue;
                     }
-                    if self.state == ActorState::Running
-                        && readiness.pty_read_ready
-                        && !self.read_once()
-                    {
-                        break;
+                    if self.live() && readiness.pty_read_ready && !self.read_once() {
+                        self.hang_up();
                     }
                     if readiness.pty_write_ready && !self.pending_writes.is_empty() {
                         self.flush_pending_writes_once();
@@ -566,7 +624,7 @@ impl PtyIoActorRunner {
     fn handle_data_command(&mut self, command: PtyIoDataCommand) -> bool {
         match command {
             PtyIoDataCommand::WriteUserInput(bytes) => {
-                if self.state == ActorState::Running {
+                if self.live() {
                     self.enqueue_write(bytes);
                 }
             }
@@ -578,7 +636,16 @@ impl PtyIoActorRunner {
         match command {
             PtyIoControlCommand::BeginHandoff(reply) => {
                 let result = self.begin_handoff();
-                let _ = reply.send(result);
+                match self.ack_fault.take() {
+                    Some(HandoffAckFault::DelayUntil(at)) => {
+                        std::thread::sleep(at.saturating_duration_since(Instant::now()));
+                        let _ = reply.send(result);
+                    }
+                    Some(HandoffAckFault::Withhold) => self.withheld_ack = Some(reply),
+                    None => {
+                        let _ = reply.send(result);
+                    }
+                }
             }
             PtyIoControlCommand::DuplicateForHandoff(reply) => {
                 let result = if self.state == ActorState::Quiesced {
@@ -596,6 +663,7 @@ impl PtyIoActorRunner {
                 let _ = reply.send(result);
             }
             PtyIoControlCommand::RollbackHandoff(reply) => {
+                self.withheld_ack = None;
                 let result = if self.state == ActorState::Released {
                     Err(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
@@ -614,6 +682,7 @@ impl PtyIoActorRunner {
                 return true;
             }
             PtyIoControlCommand::ResumeRestored => self.state = ActorState::Running,
+            PtyIoControlCommand::ArmHandoffAckFault(fault) => self.ack_fault = Some(fault),
             PtyIoControlCommand::Shutdown => return true,
         }
         false
@@ -650,10 +719,9 @@ impl PtyIoActorRunner {
                 fd::drain_wake_fd(self.wake_read_fd.as_raw_fd())?;
             }
             if readiness.pty_read_ready && !self.read_once() {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::BrokenPipe,
-                    "PTY closed while draining writes before handoff",
-                ));
+                // The child's side closed mid-drain; its exit is carried
+                // like any other, so park and quiesce.
+                self.hang_up();
             }
             if readiness.pty_write_ready {
                 self.flush_pending_writes_once();
@@ -665,7 +733,7 @@ impl PtyIoActorRunner {
 
     fn drain_pre_quiesce_commands(&mut self) {
         while let Ok(PtyIoDataCommand::WriteUserInput(bytes)) = self.data_rx.try_recv() {
-            if self.state != ActorState::Released {
+            if !self.io_closed() {
                 self.enqueue_write(bytes);
             }
         }
@@ -683,7 +751,7 @@ impl PtyIoActorRunner {
                 std::mem::take(&mut controls.terminal_responses),
             )
         };
-        if self.state == ActorState::Released {
+        if self.io_closed() {
             return;
         }
         if let Some(request) = resize {
@@ -732,7 +800,7 @@ impl PtyIoActorRunner {
     }
 
     fn enqueue_terminal_responses(&mut self, terminal_responses: Vec<Bytes>) {
-        if self.state == ActorState::Released {
+        if self.io_closed() {
             return;
         }
         for bytes in terminal_responses {

@@ -170,6 +170,32 @@ impl HostEvents {
         .await;
     }
 
+    /// Reports an upgrade attempt that rolled back in process (Decision 13).
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub async fn emit_host_upgrade_failed(&self, attempt_id: String, reason: &str) {
+        self.emit(json!({
+            "event": "host_upgrade_failed",
+            "attempt_id": attempt_id,
+            "reason": reason,
+        }))
+        .await;
+    }
+
+    /// The cursor and ring a host upgrade carries. Blocking: the capture
+    /// calls it on its own thread while holding `inner`.
+    #[cfg(all(unix, feature = "vt-engine"))]
+    pub fn carried(&self) -> super::handover::CarriedEvents {
+        let state = self.state.blocking_lock();
+        super::handover::CarriedEvents {
+            cursor: state.seq,
+            ring: state
+                .ring
+                .iter()
+                .map(|(_, _, event)| event.clone())
+                .collect(),
+        }
+    }
+
     async fn emit(&self, mut event: Value) {
         let mut state = self.state.lock().await;
         state.seq = state.seq.saturating_add(1);

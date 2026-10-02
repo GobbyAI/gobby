@@ -560,7 +560,9 @@ class CodexAdapter(BaseAdapter):
             original_tool = "fileChange"
             tool_name = "Write"
             data["tool_name"] = tool_name
-            data["tool_input"] = approval_payload.get("changes", [])
+            changes = approval_payload.get("changes", [])
+            # Codex sends the changes list bare; wrap it so normalization sees an object.
+            data["tool_input"] = {"changes": changes} if isinstance(changes, list) else changes
         elif item_type == "mcpToolCall":
             original_tool = (
                 approval_payload.get("tool_name")
