@@ -169,8 +169,8 @@ class TestModelForProvider:
         [
             ("gpt-5.6-sol", "claude", "opus"),
             ("opus", "codex", "gpt-5.6-sol"),
-            ("gpt-5.6-terra", "claude", "sonnet"),
-            ("sonnet", "codex", "gpt-5.6-terra"),
+            ("gpt-6-luna", "claude", "sonnet"),
+            ("sonnet", "codex", "gpt-6-luna"),
             ("gpt-5.6-luna", "claude", "haiku"),
             ("haiku", "codex", "gpt-5.6-luna"),
         ],
