@@ -247,6 +247,48 @@ fn cold_start_runs_from_pin() {
     host.kill().expect("stop host");
 }
 
+/// A bin dir may hold `gterm` as a symlink to a build. The host pins the
+/// binary the link names, not the link itself, and starts (#23307).
+#[test]
+fn cold_start_through_a_symlink_runs_from_pin() {
+    let dir = host_support::temp_socket_dir();
+    host_support::write_token(dir.path(), "token-link");
+    let real = dir.path().join("real-gterm");
+    std::fs::copy(host_support::gterm_bin(), &real).expect("copy gterm");
+    let link = dir.path().join("gterm");
+    std::os::unix::fs::symlink("real-gterm", &link).expect("symlink gterm");
+    let stderr_path = dir.path().join("gterm.stderr");
+    let mut host = std::process::Command::new(&link)
+        .arg("host")
+        .arg("--socket-dir")
+        .arg(dir.path())
+        .env("GTERM_LOG_FILE", dir.path().join("gterm.log"))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::fs::File::create(&stderr_path).expect("stderr file"))
+        .spawn()
+        .expect("spawn gterm host through a symlink");
+    let control_path = dir.path().join(host_support::CONTROL_SOCKET);
+    let mut exited = None;
+    host_support::wait_until("the host binds its control socket or exits", || {
+        exited = host.try_wait().expect("poll host");
+        exited.is_some() || control_path.exists()
+    });
+    let stderr = std::fs::read_to_string(&stderr_path).unwrap_or_default();
+    assert_eq!(exited, None, "the host exited, stderr: {stderr}");
+
+    let hash = sha256_hex(&std::fs::read(&real).expect("real binary"));
+    let pin_path = dir.path().join(IMAGES_DIR).join(format!("gterm-{hash}"));
+    let pin_meta = std::fs::symlink_metadata(&pin_path).expect("pin metadata");
+    assert!(pin_meta.is_file(), "the pin is the binary, not the link");
+    assert_eq!(
+        pin_meta.ino(),
+        std::fs::metadata(&real).expect("real").ino()
+    );
+    host.kill().expect("stop host");
+    host.wait().expect("reap host");
+}
+
 #[test]
 fn only_the_socket_owner_prunes() {
     let dir = host_support::temp_socket_dir();
