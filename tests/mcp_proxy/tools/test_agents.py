@@ -352,8 +352,8 @@ def _record_result_payload_threads() -> Iterator[dict[str, int]]:
         return {}
 
     with (
-        patch("gobby.mcp_proxy.tools.agents_query_tools.get_agent_end_handoff", handoff),
-        patch("gobby.mcp_proxy.tools.agents_query_tools._agent_result_payload", payload),
+        patch("gobby.mcp_proxy.tools.agents_result_payload.get_agent_end_handoff", handoff),
+        patch("gobby.mcp_proxy.tools.agents_result_payload._agent_result_payload", payload),
     ):
         yield threads
 

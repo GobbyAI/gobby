@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -407,6 +408,56 @@ def test_concurrent_live_log_counts_agree(tmp_path: Path) -> None:
         results = list(pool.map(lambda _: _sandbox_records._count_violation_lines(log), range(32)))
 
     assert results == [(500, False)] * 32
+
+
+def test_delayed_live_log_count_resumes_after_an_append_counted_while_it_waited(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A poll held at the lock while another counts an append never rescans (#23279)."""
+    log = tmp_path / "violations.jsonl"
+    log.write_bytes(b'{"n":0}\n{"n":1}\n')
+    _violation_counts.clear()
+    assert _sandbox_records._count_violation_lines(log) == (2, False)
+    lock = threading.Lock()
+    delayed_waiting = threading.Event()
+    release_delayed = threading.Event()
+
+    class HoldDelayedReader:
+        def __enter__(self) -> None:
+            if threading.current_thread().name == "delayed-reader":
+                delayed_waiting.set()
+                release_delayed.wait(timeout=10)
+            lock.acquire()
+
+        def __exit__(self, *exc_info: object) -> None:
+            lock.release()
+
+    resume_offsets: list[int] = []
+    original_advance = _sandbox_records._advance_violation_count
+
+    def record_resume_offset(path: Path, progress: Any) -> tuple[int, bool]:
+        resume_offsets.append(progress.offset)
+        return original_advance(path, progress)
+
+    monkeypatch.setattr(_sandbox_records, "_violation_counts_lock", HoldDelayedReader())
+    monkeypatch.setattr(_sandbox_records, "_advance_violation_count", record_resume_offset)
+    delayed_results: list[tuple[int, bool]] = []
+    delayed = threading.Thread(
+        target=lambda: delayed_results.append(_sandbox_records._count_violation_lines(log)),
+        name="delayed-reader",
+    )
+    delayed.start()
+    assert delayed_waiting.wait(timeout=10)
+    with log.open("ab") as handle:
+        handle.write(b'{"n":2}\n')
+    assert _sandbox_records._count_violation_lines(log) == (3, False)
+    release_delayed.set()
+    delayed.join(timeout=10)
+
+    assert delayed_results == [(3, False)]
+    # Only the append was read; the delayed poll saw the advanced offset and read nothing.
+    assert resume_offsets == [16]
 
 
 def test_sandbox_record_counts_retained_log_after_the_run_root_is_reaped(

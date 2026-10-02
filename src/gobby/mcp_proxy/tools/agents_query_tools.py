@@ -33,7 +33,6 @@ from gobby.mcp_proxy.tools.agent_live_output import (
     LIVE_OUTPUT_MAX_CHARS,
     LIVE_OUTPUT_MAX_LINES,
     TerminalSnapshotReader,
-    live_output_reference,
     read_live_output,
 )
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
@@ -41,8 +40,8 @@ from gobby.mcp_proxy.tools.agents_payloads import (
     _AGENT_CAPTURE_PAGE_DEFAULT_CHARS,
     _AGENT_CAPTURE_PAGE_MAX_CHARS,
     _agent_capture_parts,
-    _agent_result_payload,
 )
+from gobby.mcp_proxy.tools.agents_result_payload import agent_result_payload
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.headless_waits import headless_wait_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -51,7 +50,6 @@ from gobby.mcp_proxy.wait_tools import (
     MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
     clamp_wait_tool_timeout,
 )
-from gobby.sessions.handoff_records import get_agent_end_handoff
 from gobby.storage.agent_resume import register_daemon_resume_waiter
 from gobby.storage.agents import AgentRun, AgentRunStatus
 from gobby.storage.tasks import TaskNotFoundError
@@ -61,7 +59,6 @@ logger = logging.getLogger(__name__)
 _WAIT_OUTPUT_CAPTURE_LINES = 200
 _WAIT_OUTPUT_CAPTURE_FAILURE_LIMIT = 3
 _WAIT_OUTPUT_EXCERPT_CHARS = 4_096
-_DIRTY_PATHS_UNSET = object()
 
 
 def _clamp_limit(limit: int) -> int:
@@ -185,38 +182,6 @@ def register_agent_query_tools(
         lookup = get if get is not None else ctx.runner.get_run
         return lookup(run_id), None
 
-    async def _result_payload(
-        run: AgentRun,
-        *,
-        include_prompt: bool = False,
-        dirty_paths: list[str] | None | object = _DIRTY_PATHS_UNSET,
-    ) -> dict[str, Any]:
-        # The handoff read and the sandbox violation count both block (#23279).
-        return await asyncio.to_thread(
-            _build_result_payload, run, include_prompt=include_prompt, dirty_paths=dirty_paths
-        )
-
-    def _build_result_payload(
-        run: AgentRun,
-        *,
-        include_prompt: bool,
-        dirty_paths: list[str] | None | object,
-    ) -> dict[str, Any]:
-        try:
-            handoff = get_agent_end_handoff(ctx.db, run.id) if ctx.db is not None else None
-        except Exception:
-            logger.warning("Failed to read final handoff for agent run %s", run.id, exc_info=True)
-            handoff = None
-        kwargs: dict[str, Any] = {
-            "include_prompt": include_prompt,
-            "authoritative_result": handoff.payload.rendered_markdown if handoff else None,
-        }
-        if dirty_paths is not _DIRTY_PATHS_UNSET:
-            kwargs["dirty_paths"] = dirty_paths
-        payload = _agent_result_payload(run, **kwargs)
-        payload["live_output"] = live_output_reference(run)
-        return payload
-
     @registry.tool(
         name="get_agent_result",
         read_only=True,
@@ -254,7 +219,8 @@ def register_agent_query_tools(
             "success": True,
             "recovery_pending": recovery_pending,
             **(
-                await _result_payload(
+                await agent_result_payload(
+                    ctx.db,
                     run,
                     include_prompt=include_prompt,
                     dirty_paths=dirty_paths,
@@ -423,7 +389,8 @@ def register_agent_query_tools(
                 "error_code": "daemon_resume_chain_corrupt",
             }
         if run.status in agents._TERMINAL_AGENT_STATUSES and not recovery_pending:
-            payload = await _result_payload(
+            payload = await agent_result_payload(
+                ctx.db,
                 await overlay_live_activity(run, ctx.transcript_reader),
             )
             return {
@@ -468,7 +435,8 @@ def register_agent_query_tools(
                 }
             run = target_run
             if run.status in agents._TERMINAL_AGENT_STATUSES and not wait_target.recovery_pending:
-                payload = await _result_payload(
+                payload = await agent_result_payload(
+                    ctx.db,
                     await overlay_live_activity(run, ctx.transcript_reader),
                 )
                 return {
@@ -489,7 +457,8 @@ def register_agent_query_tools(
                 # subscription was copied to the successor under the fence,
                 # so drop the stale local entry instead of leaking it.
                 ctx.completion_registry.cleanup(run.id)
-            payload = await _result_payload(
+            payload = await agent_result_payload(
+                ctx.db,
                 await overlay_live_activity(run, ctx.transcript_reader),
             )
             return {
@@ -501,7 +470,8 @@ def register_agent_query_tools(
                 **payload,
             }
 
-        payload = await _result_payload(
+        payload = await agent_result_payload(
+            ctx.db,
             await overlay_live_activity(run, ctx.transcript_reader),
         )
 
@@ -548,7 +518,8 @@ def register_agent_query_tools(
         # ---- end of no-await critical region ----
 
         if terminal is not None:
-            payload = await _result_payload(
+            payload = await agent_result_payload(
+                ctx.db,
                 await overlay_live_activity(terminal, ctx.transcript_reader),
             )
             return {

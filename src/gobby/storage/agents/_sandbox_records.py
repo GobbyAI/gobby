@@ -231,13 +231,15 @@ def _count_violation_lines(path: Path) -> tuple[int, bool]:
     since the last one; an unterminated last line is re-read until it ends (#23279).
     Bytes skip decoding, which halved the cold count on a 1 GB log.
     """
-    try:
-        stat = path.stat()
-    except OSError:
-        return 0, False
     key = str(path)
-    identity = (stat.st_dev, stat.st_ino)
     with _violation_counts_lock:
+        # Stat under the lock: a size taken before another poll advanced the offset
+        # would read as truncation and rescan the whole log.
+        try:
+            stat = path.stat()
+        except OSError:
+            return 0, False
+        identity = (stat.st_dev, stat.st_ino)
         progress = _violation_counts.pop(key, None)
         if progress is None or progress.identity != identity or stat.st_size < progress.offset:
             progress = _ViolationCount(identity)
