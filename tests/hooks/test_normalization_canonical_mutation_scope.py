@@ -585,3 +585,23 @@ def test_python_heredoc_loop_rebinding_a_scratch_path_name_keeps_scope_unknown(
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_python_heredoc_class_rebinding_a_scratch_path_name_keeps_scope_unknown(
+    tmp_path: Path,
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        "class p:\n"
+        "    write_text = Path('src/a.py').write_text\n"
+        "p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True

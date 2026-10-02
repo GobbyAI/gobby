@@ -497,6 +497,41 @@ def test_python_source_mutation_without_literal_scope_has_no_targets(script: str
             "p = Path('/tmp/safe')\np, other = Path('src/a.py'), 1\np.write_text('x')",
             id="tuple-unpack",
         ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nclass p:\n    write_text = Path('src/a.py').write_text\n"
+            "p.write_text('x')",
+            id="class-definition",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nasync def p():\n    pass\np.write_text('x')",
+            id="async-function-definition",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\ndef p():\n    pass\np.write_text('x')",
+            id="function-definition",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\ndef touch[p](q: p) -> None:\n    p.write_text('x')",
+            id="type-parameter",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nglobals()['p'] = Path('src/a.py')\np.write_text('x')",
+            id="globals-subscript",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\ng = globals()\ng.update(p=Path('src/a.py'))\np.write_text('x')",
+            id="globals-alias-update",
+        ),
+        pytest.param(
+            "import sys\np = Path('/tmp/safe')\nsys._getframe(0).f_globals['p'] = Path('src/a.py')\n"
+            "p.write_text('x')",
+            id="frame-globals",
+        ),
+        pytest.param(
+            "from builtins import globals as g\np = Path('/tmp/safe')\n"
+            "g()['p'] = Path('src/a.py')\np.write_text('x')",
+            id="aliased-globals-import",
+        ),
     ],
 )
 def test_path_name_rebound_by_another_binding_has_no_targets(script: str) -> None:
@@ -515,6 +550,13 @@ def test_path_name_with_repeated_identical_literal_keeps_its_target() -> None:
         _PythonExecutionClassification.MUTATION,
         ("/tmp/a",),
     )
+
+
+def test_namespace_inspection_without_a_write_is_not_a_mutation() -> None:
+    classification, targets = _classify_python_source_with_targets("print(sorted(globals()))\n")
+
+    assert classification is not _PythonExecutionClassification.MUTATION
+    assert targets == ()
 
 
 def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:

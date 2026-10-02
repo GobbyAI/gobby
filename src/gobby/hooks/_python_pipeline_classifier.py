@@ -75,6 +75,8 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
 _PYTHON_REFLECTION_ESCAPE_NAMES = frozenset(
     {"__import__", "attrgetter", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
 )
+# Namespace handles rebind names without a binding site the AST can count.
+_PYTHON_NAMESPACE_ESCAPE_NAMES = frozenset({"f_globals", "f_locals", "globals", "locals", "vars"})
 _PYTHON_METADATA_DUNDER_ATTRIBUTES = frozenset(
     {"__doc__", "__file__", "__module__", "__name__", "__version__"}
 )
@@ -222,7 +224,15 @@ def _binding_counts(tree: ast.AST) -> Counter[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             names[node.id] += 1
-        elif isinstance(node, ast.FunctionDef):
+        elif isinstance(
+            node,
+            ast.FunctionDef
+            | ast.AsyncFunctionDef
+            | ast.ClassDef
+            | ast.TypeVar
+            | ast.ParamSpec
+            | ast.TypeVarTuple,
+        ):
             names[node.name] += 1
         elif isinstance(node, ast.arg):
             names[node.arg] += 1
@@ -279,12 +289,20 @@ def _path_value_names(
     """Map names bound to ``pathlib.Path(...)`` to their literal path, or None.
 
     A name keeps its literal only when every binding of it is that same literal
-    assignment; any other binding (loop, ``with``, augmented, argument, unpacking)
-    leaves its value unknown.
+    assignment; any other binding (loop, ``with``, augmented, argument, unpacking,
+    definition) leaves its value unknown. A namespace handle such as ``globals()``
+    can rebind any name, so it leaves every value unknown.
     """
     names: dict[str, str | None] = {}
     literal_sites: Counter[str] = Counter()
+    namespace_escape = False
     for node in ast.walk(tree):
+        if (
+            (isinstance(node, ast.Name) and node.id in _PYTHON_NAMESPACE_ESCAPE_NAMES)
+            or (isinstance(node, ast.Attribute) and node.attr in _PYTHON_NAMESPACE_ESCAPE_NAMES)
+            or (isinstance(node, ast.alias) and node.name in _PYTHON_NAMESPACE_ESCAPE_NAMES)
+        ):
+            namespace_escape = True
         target: ast.expr | None = None
         value: ast.expr | None = None
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
@@ -302,7 +320,7 @@ def _path_value_names(
             names[target.id] = literal if names.get(target.id, literal) == literal else None
             literal_sites[target.id] += 1
     for name in names:
-        if literal_sites[name] != binding_counts[name]:
+        if namespace_escape or literal_sites[name] != binding_counts[name]:
             names[name] = None
     return names
 
