@@ -795,9 +795,10 @@ async def test_spawn_env_carries_terminal_id() -> None:
             )
         )
 
+    blanked = {"VIRTUAL_ENV": "", "VIRTUAL_ENV_PROMPT": ""}
     assert [spawn["env"] for spawn in host.spawns] == [
-        {GOBBY_TERMINAL_ID: str(bare)},
-        {GOBBY_TERMINAL_ID: str(shadowed), "EDITOR": "vi"},
+        {**blanked, GOBBY_TERMINAL_ID: str(bare)},
+        {**blanked, GOBBY_TERMINAL_ID: str(shadowed), "EDITOR": "vi"},
     ]
     assert caller_env == {GOBBY_TERMINAL_ID: "caller-shadow", "EDITOR": "vi"}, (
         "caller env is copied"
