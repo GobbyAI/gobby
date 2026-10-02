@@ -229,6 +229,10 @@ async def run_daemon(
             access_log=False,
             ws="websockets-sansio",
             timeout_graceful_shutdown=uvicorn_drain_timeout,
+            # The front door replaces every client forwarding header with the
+            # peer it observed; only a loopback caller may set request.client.
+            proxy_headers=True,
+            forwarded_allow_ips="127.0.0.1,::1",
         )
         server = uvicorn.Server(config)
         # Gobby owns process signals so lifecycle events can finish before

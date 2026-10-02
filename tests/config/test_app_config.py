@@ -800,7 +800,8 @@ class TestBootstrapConfig:
         bootstrap_file = temp_dir / "bootstrap.yaml"
         write_secure_bootstrap(
             bootstrap_file,
-            "daemon_port: 9999\nbind_host: 0.0.0.0\nwebsocket_port: 9998\nui_port: 9997\n",
+            "daemon_port: 9999\nbind_host: 0.0.0.0\nwebsocket_port: 9998\nui_port: 9997\n"
+            "front_door:\n  tls:\n    mode: self-signed\n",
         )
         bootstrap = load_bootstrap(str(bootstrap_file))
         assert bootstrap.daemon_port == 9999
