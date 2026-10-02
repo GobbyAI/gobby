@@ -10,6 +10,7 @@ Provides fixtures for:
 - MCP client connections
 """
 
+import errno
 import json
 import math
 import os
@@ -347,7 +348,16 @@ def _checkout_gdaemon_bin_dir(
     skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
-            os.link(entry.resolve(), composite / entry.name)
+            try:
+                os.link(entry.resolve(), composite / entry.name)
+            except OSError as exc:
+                if exc.errno != errno.EXDEV:
+                    raise
+                # No symlink or copy fallback: either would break gterm or the installed set.
+                raise RuntimeError(
+                    f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
+                    "bin dir and the e2e home must share a filesystem."
+                ) from exc
     (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
     return composite
 

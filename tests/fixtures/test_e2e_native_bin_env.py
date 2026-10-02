@@ -1,5 +1,6 @@
 """Native binary dir selection for e2e daemons, kept outside the e2e autouse-fixture subtree."""
 
+import errno
 import os
 from pathlib import Path
 
@@ -63,6 +64,27 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
     assert first != second
     assert sorted(entry.name for entry in installed_dir.iterdir()) == before
     assert dict(os.environ) == environ_before
+
+
+def test_cross_filesystem_pin_fails_naming_the_cause(
+    checkout_gdaemon: Path,
+    installed_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A pinned dir on another filesystem fails loudly instead of symlinking or copying."""
+
+    def cross_device(src: Path, dst: Path) -> None:
+        raise OSError(errno.EXDEV, os.strerror(errno.EXDEV), str(src), None, str(dst))
+
+    monkeypatch.setattr(os, "link", cross_device)
+    base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
+
+    with pytest.raises(RuntimeError, match="must share a filesystem") as raised:
+        e2e_fixtures.prepare_daemon_env(base, home_dir=tmp_path)
+
+    assert isinstance(raised.value.__cause__, OSError)
+    assert raised.value.__cause__.errno == errno.EXDEV
 
 
 @pytest.mark.parametrize(
