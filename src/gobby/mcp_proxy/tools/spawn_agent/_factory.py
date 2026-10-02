@@ -448,9 +448,13 @@ def create_spawn_agent_registry(
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
+        from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
+
+        # Queued task-close reviewer runs keep their own validation below, even
+        # when a pipeline step is the ambient caller.
         invoking_pipeline = (
             await asyncio.to_thread(pipeline_caller, session_manager, caller_session_id)
-            if reserved_run_id is not None
+            if reserved_run_id is not None and agent != TASK_CLOSE_REVIEWER_AGENT
             else None
         )
         if reserved_run_id is not None and invoking_pipeline is not None:
@@ -469,7 +473,6 @@ def create_spawn_agent_registry(
             from uuid import UUID
 
             from gobby.storage.agents import LocalAgentRunManager
-            from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
             if agent != TASK_CLOSE_REVIEWER_AGENT or task_id is not None or db is None:
                 return {"success": False, "error": "reserved_run_id is reviewer-internal"}

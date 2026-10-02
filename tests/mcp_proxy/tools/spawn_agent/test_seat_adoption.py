@@ -471,6 +471,41 @@ async def test_invocation_authority(
     _assert_nothing_launched(seat)
 
 
+async def test_pipeline_caller_launches_queued_reviewer(
+    seat: _Harness, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A close review promoted inside a pipeline step keeps the queued reviewer launch."""
+    run_id = str(uuid.uuid4())
+    seat.runs.create(
+        parent_session_id=seat.child.id,
+        provider="claude",
+        prompt="Review the close",
+        agent_name=TASK_CLOSE_REVIEWER_AGENT,
+        run_id=run_id,
+    )
+    seat.db.execute("UPDATE agent_runs SET status = 'queued' WHERE id = %s", (run_id,))
+    reviewer_body = MagicMock()
+    reviewer_body.workflows.pipeline = None
+    monkeypatch.setattr(_factory, "_load_agent_body", lambda *a, **k: reviewer_body)
+
+    async def launch(**kwargs: Any) -> dict[str, Any]:
+        seat.launches.append(kwargs)
+        return {"success": True, "run_id": kwargs["reserved_run_id"]}
+
+    monkeypatch.setattr(_factory, "spawn_agent_impl", launch)
+
+    reply = await seat.spawn(
+        seat.child,
+        agent=TASK_CLOSE_REVIEWER_AGENT,
+        prompt="Review the close",
+        placement=None,
+        reserved_run_id=run_id,
+    )
+
+    assert reply == {"success": True, "run_id": run_id}
+    assert [launch["reserved_run_id"] for launch in seat.launches] == [run_id]
+
+
 async def test_adopted_reply_names_bound_pane(seat: _Harness) -> None:
     bound_id = seat.run(seat.step_id("seat_a"), seat.child, started=True)
     unbound_id = seat.run(seat.step_id("seat_b"), seat.child, started=True)
