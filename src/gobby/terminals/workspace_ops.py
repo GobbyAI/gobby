@@ -298,6 +298,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         *,
         worktree_id: str | None = None,
         title: str | None = None,
+        role: str | None = None,
         terminal_id: str | None = None,
         cwd: str | None = None,
         node: str | None = None,
@@ -307,6 +308,8 @@ class WorkspaceOps(WorkspacePaneIOMixin):
 
         ``terminal_theme`` is the requesting client's colours for a spawned shell.
         """
+        if role == "":
+            raise WorkspaceOpError("invalid_op", "Pane role must be non-empty")
         target = await self._enter(workspace, node)
         home = _workspace_of(target, workspace)
         source = await self._db(
@@ -322,6 +325,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                 project_id=project_id,
                 worktree_id=worktree_id,
                 title=title,
+                role=role,
             )
             pane = await self._fill(
                 target.node, home, change.tabs[0], change.panes[0], source, terminal_theme
@@ -400,6 +404,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         pane: str,
         axis: str,
         *,
+        role: str | None = None,
         terminal_id: str | None = None,
         cwd: str | None = None,
         node: str | None = None,
@@ -410,6 +415,8 @@ class WorkspaceOps(WorkspacePaneIOMixin):
         The pane row is inserted (terminal NULL, guarded as in flight) before the
         spawn; a failed spawn removes it again and raises ``terminal_failed``.
         """
+        if role == "":
+            raise WorkspaceOpError("invalid_op", "Pane role must be non-empty")
         target = await self._enter(pane, node)
         tab, beside = _pane_of(target, pane)
         source = await self._db(
@@ -429,6 +436,7 @@ class WorkspaceOps(WorkspacePaneIOMixin):
                 pane_id,
                 beside=beside.id,
                 axis=axis,
+                role=role,
                 expected_workspace_id=target.workspace.id,
                 expected_tab_id=tab.id,
                 expected_project_id=tab.project_id,

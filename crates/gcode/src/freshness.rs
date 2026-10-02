@@ -64,7 +64,7 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
         FreshnessScope::Project => {
             let result =
                 index_lock::with_project_lock(ctx, IndexLockPolicy::brief_freshness_try(), || {
-                    Ok(refresh_files(ctx, Vec::new()).map_err(|error| error.to_string()))
+                    Ok(refresh_files(ctx, Vec::new()).map_err(|error| degraded_detail(&error)))
                 })?;
             Ok(freshness_from_lock(result))
         }
@@ -83,10 +83,16 @@ pub fn ensure_fresh(ctx: &Context, scope: FreshnessScope) -> anyhow::Result<Fres
             match refresh_files(ctx, locks.acquired_files.clone()) {
                 Ok(()) if locks.busy_files.is_empty() => Ok(FreshnessStatus::Checked),
                 Ok(()) => Ok(FreshnessStatus::SkippedBusy(None)),
-                Err(error) => Ok(FreshnessStatus::Degraded(error.to_string())),
+                Err(error) => Ok(FreshnessStatus::Degraded(degraded_detail(&error))),
             }
         }
     }
+}
+
+/// Degraded detail for a failed refresh. A hub failure's `postgres::Error`
+/// displays only "db error"; the SQL cause (an RLS denial, say) is its source.
+fn degraded_detail(error: &anyhow::Error) -> String {
+    format!("{error:#}")
 }
 
 fn refresh_files(ctx: &Context, explicit_files: Vec<PathBuf>) -> anyhow::Result<()> {
@@ -801,6 +807,23 @@ mod tests {
                 status,
                 FreshnessStatus::Degraded("unreadable project root".to_string())
             );
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        fn degraded_detail_keeps_the_sql_cause_of_a_hub_error() {
+            let database_url = crate::test_env::postgres_test_database_url("freshness tests");
+            let mut client = db::connect_readwrite(&database_url).expect("connect hub");
+            let error = client
+                .batch_execute("SELECT 1/0")
+                .expect_err("division by zero fails on the hub");
+
+            let detail = degraded_detail(&anyhow::Error::from(error));
+
+            assert!(detail.contains("division by zero"), "{detail}");
         }
 
         /// Forward the first hub connection and answer nothing afterwards.

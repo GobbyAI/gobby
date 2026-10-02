@@ -330,6 +330,7 @@ def prepare_terminal_spawn(
             prepared,
             timeout_seconds=timeout_seconds,
             credential_manager=credential_manager,
+            workspace_path=workspace_path,
         )
     except Exception:
         cleanup_unlaunched_spawn(
@@ -452,6 +453,7 @@ def prepare_terminal_resume(
         prepared,
         timeout_seconds=timeout_seconds,
         credential_manager=credential_manager,
+        workspace_path=workspace_path,
     )
 
 
@@ -461,8 +463,14 @@ def _issue_prelaunch_credential(
     *,
     timeout_seconds: float | None,
     credential_manager: ManagedCredentialManager | None,
+    workspace_path: str | None = None,
 ) -> PreparedSpawn:
-    """Issue a scoped role and a signed grant file before provider launch."""
+    """Issue a scoped role and a signed grant file before provider launch.
+
+    ``workspace_path`` is the run's checkout. When it is a registered worktree of
+    the run's project, the issuer binds that worktree's code-index overlay, so a
+    run without its own isolation workspace (a close reviewer) can still index it.
+    """
     from gobby.agents.code_index import (
         _active_deployment_grant_context,
         _signed_grant_from_credential,
@@ -491,6 +499,7 @@ def _issue_prelaunch_credential(
         session_id=uuid.UUID(prepared.session_id),
         agent_run_id=uuid.UUID(prepared.agent_run_id),
         expires_at=datetime.now(UTC) + timedelta(seconds=lifetime_seconds),
+        requested_project_path=workspace_path,
     )
     prepared.managed_credential = credential
     grant = _signed_grant_from_credential(
