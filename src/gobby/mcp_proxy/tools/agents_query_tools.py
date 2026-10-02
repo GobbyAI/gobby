@@ -6,7 +6,7 @@ import asyncio
 import logging
 import math
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any, cast
 from uuid import UUID
 
@@ -42,6 +42,7 @@ from gobby.mcp_proxy.tools.agents_payloads import (
     _agent_capture_parts,
 )
 from gobby.mcp_proxy.tools.agents_result_payload import agent_result_payload
+from gobby.mcp_proxy.tools.agents_run_payload import _list_run_payload
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.headless_waits import headless_wait_refusal
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -66,24 +67,6 @@ def _clamp_limit(limit: int) -> int:
 
 
 _RUN_ID_PREFIX_PATTERN = re.compile(r"[0-9a-f]{8,32}")
-
-
-def _list_run_payload(run: Any) -> dict[str, Any]:
-    """Return identity and coordinator decision fields for agent run lists."""
-    metadata = getattr(run, "resume_metadata_json", None)
-    if not isinstance(metadata, Mapping):
-        metadata = {}
-    return {
-        **run.liveness_payload(),
-        "run_id": run.id,
-        "task_ref": metadata.get("task_ref") or getattr(run, "task_id", None),
-        "agent_name": getattr(run, "agent_name", None),
-        "status": run.status,
-        "started_at": getattr(run, "started_at", None),
-        "branch_name": metadata.get("branch_name"),
-        "tool_calls_count": getattr(run, "tool_calls_count", 0),
-        "turns_used": getattr(run, "turns_used", 0),
-    }
 
 
 def _validated_run_ref(run_id: str) -> tuple[str, bool] | None:
