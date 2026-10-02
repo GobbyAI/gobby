@@ -96,7 +96,7 @@ def test_session_manager_requires_sandbox_policy_hash_writer() -> None:
         project_id="project",
         session_manager=cast(Any, manager),
         prepared_spawn=prepared_spawn(),
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
 
     result = _session_manager_validation_error(request, "codex")

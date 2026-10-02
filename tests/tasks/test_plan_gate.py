@@ -397,7 +397,7 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
     monkeypatch.setattr(plan_gate_module, "validate_plan_for_agent_spawn", gate)
 
     result = await spawn_agent_impl(
-        terminal_backend="tmux",
+        terminal_backend="native",
         prompt="review plan",
         runner=MagicMock(),
         agent_lookup_name="planner",
@@ -435,8 +435,6 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
         status="running",
         terminal_type="process",
         terminal_id=None,
-        tmux_socket_name=None,
-        tmux_socket_path=None,
         pid=123,
         message="spawned",
     )
@@ -467,7 +465,7 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
         ) as execute,
     ):
         result = await spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="Repair the plan",
             runner=runner,
             agent_lookup_name="planner",

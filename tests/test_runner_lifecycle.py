@@ -816,9 +816,7 @@ class TestInitSubsystems:
                 "gobby.cli.services.get_local_embedding_service_failure_reason",
                 return_value="LM Studio server start failed: boom",
             ),
-            patch("gobby.agents.tmux.get_tmux_session_manager") as mock_tmux_manager,
         ):
-            mock_tmux_manager.return_value.health_check = AsyncMock()
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
 
         mock_ready.assert_awaited_once_with(
@@ -887,11 +885,7 @@ class TestInitSubsystems:
             websocket_server=None,
         )
 
-        with (
-            patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)),
-            patch("gobby.agents.tmux.get_tmux_session_manager") as mock_tmux_manager,
-        ):
-            mock_tmux_manager.return_value.health_check = AsyncMock()
+        with patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)):
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
 
         assert runner.vector_store is vector_store

@@ -30,7 +30,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "cache_read_tokens: 'int' = 0, context_window: 'int | None' = None, "
     "model: 'str | None' = None) -> 'bool'",
     "backfill_terminal_context": "(self, session_id: 'str', terminal_context: "
-    "'dict[str, Any] | None') -> 'tuple[Session | None, bool]'",
+    "'dict[str, Any] | None', current: 'Session | None' = None) "
+    "-> 'tuple[Session | None, bool]'",
     "cache_session_mapping": "(self, external_id: 'str', source: 'str', "
     "session_id: 'str', project_id: 'str | None' = None, "
     "session_type: 'str' = 'terminal') -> 'None'",
@@ -88,6 +89,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "max_age_minutes: 'int' = 10, terminal_context: 'dict[str, Any] | str | None' = None, "
     "candidate_limit: 'int' = 1) -> 'Session | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
+    "get_cached_session": "(self, external_id: 'str', source: 'str', "
+    "project_id: 'str | None' = None, session_type: 'str' = 'terminal') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10, *, "
     "after: 'tuple[datetime, str] | None' = None) -> 'list[Session]'",
     "get_session_id": "(self, external_id: 'str', source: 'str', "
@@ -106,6 +109,10 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "task_ref_max: 'int | None' = None, task_ref_roles: 'Sequence[str] | None' = None, "
     "created_after: 'str | None' = None, created_before: 'str | None' = None) -> "
     "'list[Session]'",
+    "list_newest_created": "(self, project_id: 'str | None' = None, "
+    "status: 'str | None' = None, source: 'str | None' = None, limit: 'int' = 100, "
+    "from_created_at: 'datetime | None' = None, from_id: 'str | None' = None) "
+    "-> '_Sessions'",
     "lookup_session_id": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None', session_type: 'str' = 'terminal') -> 'str | None'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
@@ -156,7 +163,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "recover_session": "(self, external_id: 'str', source: 'str', "
     "project_id: 'str | None', session_type: 'str | None' = 'terminal') -> 'Session | None'",
     "activate_web_chat_session": "(self, session_id: 'str') -> 'Session | None'",
-    "revive_expired_terminal_session": "(self, session_id: 'str') -> 'Session | None'",
+    "revive_expired_terminal_session": "(self, session_id: 'str', "
+    "current: 'Session | None' = None) -> 'Session | None'",
     "resolve_session_reference": "(self, ref: 'str', project_id: 'str | None' = None) -> 'str'",
     "touch": "(self, session_id: 'str') -> 'None'",
     "unregister_session_change_listener": "(self, listener: 'SessionChangeCallback') -> 'None'",

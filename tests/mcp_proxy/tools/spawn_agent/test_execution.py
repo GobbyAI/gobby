@@ -1570,12 +1570,9 @@ class TestSpawnAgentPreRegistration:
         mock_runner.run_storage.get.return_value = MagicMock(status="running")
         terminal = SimpleNamespace(
             id="gobby-agent",
-            backend="tmux",
+            backend="native",
             state="live",
-            locator={
-                "socket_name": "gobby",
-                "socket_path": "/tmp/tmux-1000/gobby",
-            },
+            locator={"host_epoch": "epoch-1"},
         )
         mock_runner.terminal_manager.get.return_value = terminal
 
@@ -1611,7 +1608,7 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                backend="tmux",
+                backend="native",
                 terminal_id="gobby-agent",
                 message="Spawned",
             )
@@ -1641,7 +1638,7 @@ class TestSpawnAgentPreRegistration:
             ((False, "fatal pane output"), False),
         ],
     )
-    async def test_live_tmux_spawn_starts_without_sessionstart_wait(
+    async def test_live_native_spawn_starts_without_sessionstart_wait(
         self,
         mock_runner: MagicMock,
         agent_body: Any,
@@ -1660,10 +1657,10 @@ class TestSpawnAgentPreRegistration:
         mock_runner.run_storage.get.return_value = MagicMock(status="pending")
         terminal = SimpleNamespace(
             id="gobby-agent-timeout",
-            backend="tmux",
+            backend="native",
             state="pending",
             spawn_key="gobby-agent-timeout",
-            locator={"socket_name": "gobby"},
+            locator={"host_epoch": "epoch-1"},
         )
         mock_runner.terminal_manager.get.return_value = terminal
         runtime = MagicMock()
@@ -1702,7 +1699,7 @@ class TestSpawnAgentPreRegistration:
                 child_session_id="child-456",
                 status="pending",
                 pid=12345,
-                backend="tmux",
+                backend="native",
                 terminal_id="gobby-agent-timeout",
                 message="Spawned",
             )

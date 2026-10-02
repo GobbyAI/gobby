@@ -355,7 +355,6 @@ class TestStatusUtils:
                 "runtime": {"python": _dependency("3.13.5", minimum_version="3.13.0")},
                 "dependencies": {
                     "required": {
-                        "tmux": _dependency("3.7b", minimum_version="3.2"),
                         "git": _dependency("2.50.1", minimum_version="2.38.0"),
                         "node": _dependency("26.5.0", minimum_version="20.11.0"),
                         "srt": _dependency("0.0.66", expected_version="0.0.66"),
@@ -373,7 +372,6 @@ class TestStatusUtils:
         assert "Claude Code:" in msg
         assert "Python:           3.13.5 (min: 3.13.0)" in msg
         assert "Required Dependencies:" in msg
-        assert "tmux:" in msg
         assert "git:" in msg
         assert "SRT:              0.0.66 (managed, verified)" in msg
         assert "Optional Dependencies:" in msg

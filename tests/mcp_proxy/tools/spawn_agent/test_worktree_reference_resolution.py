@@ -179,7 +179,7 @@ class TestSpawnAgentResolvesWorktreeReferences:
                 {
                     "prompt": "Continue the assigned task",
                     "provider": "claude",
-                    "terminal_backend": "tmux",
+                    "terminal_backend": "native",
                     "parent_session_id": "parent-1",
                     "worktree_id": worktree_ref,
                 },
@@ -214,7 +214,7 @@ class TestSpawnAgentResolvesWorktreeReferences:
                 {
                     "prompt": "Continue the assigned task",
                     "provider": "claude",
-                    "terminal_backend": "tmux",
+                    "terminal_backend": "native",
                     "parent_session_id": "parent-1",
                     "worktree_id": worktree_ref,
                 },
