@@ -974,6 +974,72 @@ class TestCrossTreeCover:
         assert facts.terminal_validation_failures == (_BASE_RED,)
 
 
+_GONE = "tests/unit/test_gone.py"
+_ALIVE = "tests/unit/test_alive.py"
+_MISSING_PATH_RED = f"uv run pytest {_GONE} {_ALIVE} -q"
+_SURVIVING_GREEN = f"uv run pytest {_ALIVE} -q"
+_MISSING_PATH_OUTPUT = (
+    "collected 0 items\n\n"
+    "========================= no tests collected in 0.01s ==========================\n\n"
+    f"ERROR: file or directory not found: {_GONE}\n"
+)
+
+
+class TestMissingPathSupersession:
+    """A red that collected nothing because a named path is gone narrows to the survivors."""
+
+    @pytest.fixture
+    def project(self, tmp_path: Path) -> str:
+        (tmp_path / _ALIVE).parent.mkdir(parents=True)
+        (tmp_path / _ALIVE).write_text("")
+        return str(tmp_path)
+
+    def test_missing_path_failure_is_superseded_by_green_over_surviving_paths(
+        self, project: str
+    ) -> None:
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=_MISSING_PATH_OUTPUT),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == ()
+
+    def test_collected_failure_still_requires_full_coverage(self, project: str) -> None:
+        output = (
+            "collected 3 items\n\nFAILED tests/unit/test_alive.py::test_case\n1 failed, 2 passed"
+        )
+        runs = [
+            _run(1, "failure", _MISSING_PATH_RED, output=output),
+            _run(2, "success", _SURVIVING_GREEN),
+        ]
+        assert unresolved_validation_failures(runs, owner_handoff=False, project_path=project) == (
+            runs[0],
+        )
+
+    @pytest.mark.parametrize(
+        ("red_order", "output", "present", "use_project"),
+        [
+            (2, _MISSING_PATH_OUTPUT, False, True),
+            (1, _MISSING_PATH_OUTPUT, True, True),
+            (1, _MISSING_PATH_OUTPUT + "ERROR: usage: pytest [options]\n", False, True),
+            (1, _MISSING_PATH_OUTPUT, False, False),
+        ],
+        ids=["green_before_red", "path_still_present", "other_error", "no_project_path"],
+    )
+    def test_missing_path_red_still_blocks(
+        self, project: str, red_order: int, output: str, present: bool, use_project: bool
+    ) -> None:
+        if present:
+            (Path(project) / _GONE).write_text("")
+        runs = [
+            _run(red_order, "failure", _MISSING_PATH_RED, output=output),
+            _run(3 - red_order, "success", _SURVIVING_GREEN),
+        ]
+        project_path = project if use_project else None
+        assert unresolved_validation_failures(
+            runs, owner_handoff=False, project_path=project_path
+        ) == (runs[0],)
+
+
 class TestStopCoverCost:
     """A long session's Stop must not pay per failure-green pair, or block the event loop."""
 

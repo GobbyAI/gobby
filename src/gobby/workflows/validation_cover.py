@@ -6,6 +6,7 @@ import os.path
 import re
 import shlex
 from collections.abc import Sequence
+from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
 
@@ -36,6 +37,9 @@ _COVER_SUFFIXES = {
     ".go",
 }
 _COVER_ROOTS = ("tests/", "src/", "crates/")
+_NO_TESTS_RE = re.compile(r"^=+ no tests (?:collected|ran) in ", re.MULTILINE)
+_ERROR_LINE_RE = re.compile(r"^\s*ERROR\b.*$", re.MULTILINE)
+_MISSING_PATH_RE = re.compile(r"ERROR: file or directory not found: (\S+)")
 
 
 def run_covers(success: TranscriptValidationRun, failure: TranscriptValidationRun) -> bool:
@@ -168,6 +172,58 @@ def green_covers_failure(
         return False
     return green.order > failure.order or _source_tree(green.command, project_path) != (
         _source_tree(failure.command, project_path)
+    )
+
+
+def surviving_path_failure(
+    failure: TranscriptValidationRun,
+    project_path: str | None,
+) -> TranscriptValidationRun | None:
+    """Narrow a pytest run that collected nothing because named paths are gone.
+
+    Pytest stops with ``file or directory not found`` before collecting when a
+    path argument does not exist. When that is the run's only error, each
+    reported path is one of its targets and is still absent from its source
+    tree's working copy, the red says nothing about the surviving targets, so
+    it narrows to them. Anything else keeps the run as it was.
+    """
+    output = failure.output
+    if not output or failure.output_truncated or not _NO_TESTS_RE.search(output):
+        return None
+    missing: set[str] = set()
+    for line in _ERROR_LINE_RE.findall(output):
+        match = _MISSING_PATH_RE.fullmatch(line.strip())
+        if match is None:
+            return None
+        missing.add(match.group(1).removeprefix("./").rstrip("/"))
+    directory = _source_tree(failure.command, project_path)[0]
+    if not missing or directory is None or not missing <= set(run_targets(failure)):
+        return None
+    if any(os.path.lexists(os.path.join(directory, path.split("::", 1)[0])) for path in missing):
+        return None
+    segments = tuple(
+        TranscriptValidationSegment(
+            command=_drop_targets(segment.command, missing), categories=segment.categories
+        )
+        for segment in _run_segments(failure)
+    )
+    if not any(_command_targets(segment.command) for segment in segments):
+        return None
+    return replace(
+        failure,
+        command=_drop_targets(failure.command, missing),
+        validation_segments=segments if failure.validation_segments else (),
+    )
+
+
+def _drop_targets(command: str, targets: set[str]) -> str:
+    """Drop ``targets`` from ``command``; an unparsable command keeps them all."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return command
+    return shlex.join(
+        token for token in tokens if token.removeprefix("./").rstrip("/") not in targets
     )
 
 
