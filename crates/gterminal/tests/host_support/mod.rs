@@ -158,6 +158,18 @@ pub fn spawn_host_with_env(
     env: &[(&str, &str)],
     removed: &[&str],
 ) -> HostProc {
+    spawn_host_binary(&private_gterm(socket_dir), socket_dir, extra, env, removed)
+}
+
+/// Spawns `binary` as the host, for a test that launches it through a path
+/// other than the private copy.
+pub fn spawn_host_binary(
+    binary: &Path,
+    socket_dir: &Path,
+    extra: &[&str],
+    env: &[(&str, &str)],
+    removed: &[&str],
+) -> HostProc {
     let log_path = socket_dir.join("gterm.log");
     let token_path = socket_dir.join("local_cli_token");
     if !token_path.exists() {
@@ -165,8 +177,7 @@ pub fn spawn_host_with_env(
     }
     let stderr_path = socket_dir.join("gterm.stderr");
     let stderr_file = std::fs::File::create(&stderr_path).ok();
-    let binary = private_gterm(socket_dir);
-    let mut cmd = Command::new(&binary);
+    let mut cmd = Command::new(binary);
     cmd.arg("host")
         .arg("--socket-dir")
         .arg(socket_dir)
