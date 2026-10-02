@@ -11,6 +11,7 @@ import pytest
 from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 
+from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.workflows.definitions import MCPStepConfig, PipelineStep
 from gobby.workflows.pipeline.handlers import execute_mcp_step
 
@@ -417,6 +418,31 @@ class TestExecuteMCPStep:
         context: dict = {"inputs": {}, "steps": {}}
         with pytest.raises(RuntimeError, match="failed"):
             await execute_mcp_step(step, context, lambda: mock_proxy)
+
+    @pytest.mark.asyncio
+    async def test_mcp_step_passes_success_reply_with_null_error(self) -> None:
+        """A success reply whose error field is null passes once the proxy strips success."""
+        reply = normalize_internal_success_result(
+            {"success": True, "run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+        )
+        assert reply == {"run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(return_value=reply)
+        step = PipelineStep(id="seat_a", mcp=MCPStepConfig(server="s", tool="spawn_agent"))
+
+        result = await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: mock_proxy)
+
+        assert result == {"run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+
+    @pytest.mark.asyncio
+    async def test_mcp_step_failure_with_null_error_names_no_none(self) -> None:
+        """A failure reply with a null error reports the fallback message."""
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(return_value={"success": False, "error": None})
+        step = PipelineStep(id="seat_a", mcp=MCPStepConfig(server="s", tool="spawn_agent"))
+
+        with pytest.raises(RuntimeError, match=r"returned error: Unknown MCP tool error$"):
+            await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: mock_proxy)
 
     @pytest.mark.asyncio
     async def test_mcp_step_fails_closed_on_sdk_error_result(self) -> None:
