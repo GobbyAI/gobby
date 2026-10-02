@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -25,7 +25,6 @@ import psutil
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
-from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.storage.session_models import Session
 from gobby.tasks import (
     transcript_evidence,
@@ -4793,38 +4792,3 @@ async def test_chunked_derivation_cancelled_mid_decode_stores_nothing(
 
     assert not finished
     assert load_snapshot(session.id) is None
-
-
-class _CpuClock:
-    """Stands in for the worker's CPU clock so the reported CPU is exact."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-async def test_pool_reports_worker_cpu_beside_work_wall_time(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The pool reports the worker clock's CPU delta as its own key (#23063)."""
-    cpu_clock = _CpuClock()
-
-    def burn_cpu(seconds: float) -> float:
-        cpu_clock.now += seconds
-        return seconds
-
-    monkeypatch.setattr(transcript_evidence_pool, "process_time", cpu_clock)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        monkeypatch.setattr(
-            transcript_evidence_pool, "_get_pool", lambda: cast(ProcessPoolExecutor, executor)
-        )
-        timings = HookPhaseTimings()
-        with hook_phase_timing_scope(timings):
-            result = await transcript_evidence_pool.run_in_transcript_evidence_pool(burn_cpu, 0.25)
-
-    assert result == 0.25
-    breakdown = timings.breakdown()
-    assert breakdown["prelude_transcript_pool_cpu"] == 0.25
-    assert breakdown["prelude_transcript_pool_work"] >= 0

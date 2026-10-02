@@ -758,4 +758,6 @@ async def test_reaper_runs_deferred_isolation_removal_only_after_a_proven_settle
 
     assert handler.cleanup_environment.await_count == removals
     assert row.state == state
-    assert not in_doubt_spawns.holds(row.id)
+    # An unproven reap keeps its claim, and the removal, suspended for a later reap.
+    assert in_doubt_spawns.holds(row.id) is (state == "pending")
+    in_doubt_spawns.release(row.id)

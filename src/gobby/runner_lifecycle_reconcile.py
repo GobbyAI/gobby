@@ -370,6 +370,7 @@ async def _resolve_provisional_daemon_resume_row(
         session_manager=runner.session_manager,
         daemon_config=config,
         completion_registry=runner.completion_registry,
+        agent_pane_reserver=getattr(runner.websocket_server, "agent_pane_reserver", None),
     )
     if not result.success:
         logger.warning(
@@ -523,6 +524,7 @@ async def _cleanup_missing_terminal_agent_run(
         session_manager=runner.session_manager,
         daemon_config=config,
         completion_registry=runner.completion_registry,
+        agent_pane_reserver=getattr(runner.websocket_server, "agent_pane_reserver", None),
     )
     if not result.success:
         logger.warning(

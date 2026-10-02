@@ -24,6 +24,7 @@ from gobby.agents.isolation import (
 )
 from gobby.agents.provider_rotation import model_for_provider
 from gobby.agents.reasoning import resolve_spawn_reasoning
+from gobby.agents.resume_placement import placement_snapshot
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
@@ -38,6 +39,7 @@ from gobby.providers.version_gate import (
     ensure_agy_support,
     peek_agy_support,
 )
+from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.utils.git import run_thread_to_completion, run_to_completion
 from gobby.utils.local_token import read_local_api_token
 from gobby.utils.machine_id import get_machine_id
@@ -51,6 +53,7 @@ from ._failure_cleanup import (
     cleanup_created_isolation,
     cleanup_failed_spawn,
 )
+from ._placement import preflight_placement, run_placed_spawn, task_active_refusal
 from ._provider_resolution import (
     concrete_provider,
     incompatible_spawn_model_provider_after_recollect,
@@ -124,6 +127,9 @@ async def spawn_agent_impl(
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,
     reserved_run_id: str | None = None,
+    placement: dict[str, Any] | None = None,
+    agent_pane_reserver: AgentPaneReserver | None = None,
+    project_context_authoritative: bool = False,
 ) -> dict[str, Any]:
     """Core spawn_agent implementation used by the MCP tool and direct callers."""
     try:
@@ -370,6 +376,20 @@ async def spawn_agent_impl(
     can_spawn, reason, _depth = await asyncio.to_thread(runner.can_spawn, parent_session_id)
     if not can_spawn:
         return {"success": False, "error": reason}
+    placed = await preflight_placement(
+        placement,
+        reserver=agent_pane_reserver,
+        sandbox_config=effective_sandbox_config,
+        parent_session_id=parent_session_id,
+        machine_id=machine_id,
+        project_id=project_id,
+        project_context_authoritative=project_context_authoritative,
+    )
+    if isinstance(placed, dict):
+        return placed
+    if placed is not None:
+        # A refused or failed seat leaves no isolation it created; reuse is never removed.
+        cleanup_isolation_on_failure = True
     task_context = await resolve_spawn_task_context(
         prompt=prompt,
         task_id=task_id,
@@ -587,6 +607,7 @@ async def spawn_agent_impl(
         effective_sandbox_config=effective_sandbox_config,
         effective_workflow=effective_workflow,
         agent_display_name=agent_display_name,
+        placement=placement_snapshot(placed.resolved) if placed is not None else None,
     )
 
     if write_grant:
@@ -616,7 +637,7 @@ async def spawn_agent_impl(
         cleanup=cleanup_unattached_spawn,
     )
     if lease_response is not None:
-        return lease_response
+        return lease_response if placed is None else task_active_refusal(lease_response)
 
     cleanup_once = SpawnCleanupOnce()
 
@@ -850,6 +871,10 @@ async def spawn_agent_impl(
                         exc_info=True,
                     )
 
+            if placed is not None:
+                return await run_placed_spawn(
+                    placed, spawn_phase, worktree_id=isolation_ctx.worktree_id
+                )
             try:
                 schedule_background_task(
                     _spawn_background_tasks,

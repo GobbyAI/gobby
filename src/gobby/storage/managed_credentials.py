@@ -159,7 +159,7 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
             else:
                 row = self._database.fetchone(
                     f"""SELECT * FROM {self.auth_schema}.issue_principal(
-                        %s, %s, %s, %s, %s, %s, %s
+                        %s, %s, %s, %s, %s, %s, %s, %s
                     )""",
                     (
                         managed_execution_id,
@@ -169,6 +169,9 @@ class ManagedCredentialManager(InteractiveCredentialMixin):
                         self._machine_id,
                         normalized_expiry,
                         password,
+                        _canonical_path(requested_project_path)
+                        if requested_project_path is not None
+                        else None,
                     ),
                 )
             if row is None:

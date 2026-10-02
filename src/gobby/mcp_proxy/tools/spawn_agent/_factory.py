@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 
 logger = logging.getLogger(__name__)
 _PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
@@ -186,7 +187,28 @@ def _resolve_spawn_project_context(
     session_manager: Any | None,
     db: HubDatabase | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    """Resolve project context for a spawned agent.
+    """Resolve project context for a spawned agent; see the provenance variant."""
+    ctx, path, _authoritative = _resolve_spawn_project_context_with_provenance(
+        project_path=project_path,
+        parent_session_id=parent_session_id,
+        session_manager=session_manager,
+        db=db,
+    )
+    return ctx, path
+
+
+def _resolve_spawn_project_context_with_provenance(
+    *,
+    project_path: str | None,
+    parent_session_id: str | None,
+    session_manager: Any | None,
+    db: HubDatabase | None,
+) -> tuple[dict[str, Any] | None, str | None, bool]:
+    """Resolve project context for a spawned agent, and whether it is authoritative.
+
+    The context is authoritative when it came from the explicit ``project_path``
+    or the resolved parent session, and not when only the ambient process
+    project supplied it.
 
     Explicit ``project_path`` wins. If that checkout has no project metadata,
     retain the parent session's identity while keeping the explicit path.
@@ -207,8 +229,8 @@ def _resolve_spawn_project_context(
                 session_manager=session_manager,
                 db=db,
             )
-            return parent_ctx, explicit_path
-        return explicit_ctx, _project_path_from_context(explicit_ctx) or explicit_path
+            return parent_ctx, explicit_path, True
+        return explicit_ctx, _project_path_from_context(explicit_ctx) or explicit_path, True
 
     parent_ctx = None
     if parent_session_id:
@@ -219,7 +241,7 @@ def _resolve_spawn_project_context(
         )
         parent_path = _project_path_from_context(parent_ctx)
         if parent_path:
-            return parent_ctx, parent_path
+            return parent_ctx, parent_path, True
 
     try:
         current_ctx = get_project_context()
@@ -228,11 +250,11 @@ def _resolve_spawn_project_context(
         current_ctx = None
     current_path = _project_path_from_context(current_ctx)
     if parent_ctx is not None:
-        return parent_ctx, current_path
+        return parent_ctx, current_path, True
     if current_path:
-        return current_ctx, current_path
+        return current_ctx, current_path, False
 
-    return current_ctx or parent_ctx, None
+    return current_ctx, None, False
 
 
 def _load_agent_body(
@@ -274,6 +296,7 @@ def create_spawn_agent_registry(
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
     code_index: Any | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
+    agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create a spawn_agent tool registry with the unified spawn_agent tool.
@@ -341,6 +364,7 @@ def create_spawn_agent_registry(
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,
         reserved_run_id: str | None = None,
+        placement: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Spawn a subagent with the specified configuration.
@@ -373,6 +397,8 @@ def create_spawn_agent_registry(
             write_paths_reason: Required authorization reason for nonempty external roots
             notify_parent_on_completion: Whether to notify the parent when the agent completes
             droid_mode: Use Droid's one-shot exec runner or interactive terminal UI
+            placement: Bind the agent's terminal into a workspace pane before exec
+                ({"kind": "tab"|"split", ...}); refusals carry ``placement_error``
 
         Returns:
             Dict with success status, run_id, child_session_id, isolation metadata
@@ -388,8 +414,12 @@ def create_spawn_agent_registry(
                 return {"success": False, "error": str(e)}
 
         # Load agent definition body from DB
-        spawn_project_ctx, effective_project_path = await asyncio.to_thread(
-            _resolve_spawn_project_context,
+        (
+            spawn_project_ctx,
+            effective_project_path,
+            project_context_authoritative,
+        ) = await asyncio.to_thread(
+            _resolve_spawn_project_context_with_provenance,
             project_path=project_path,
             parent_session_id=resolved_parent_session_id,
             session_manager=session_manager,
@@ -610,6 +640,13 @@ def create_spawn_agent_registry(
             extra_write_paths=extra_write_paths,
             write_paths_reason=write_paths_reason,
             reserved_run_id=reserved_run_id,
+            placement=placement,
+            agent_pane_reserver=(
+                agent_pane_reserver_resolver()
+                if placement is not None and agent_pane_reserver_resolver is not None
+                else None
+            ),
+            project_context_authoritative=project_context_authoritative,
         )
 
         return result

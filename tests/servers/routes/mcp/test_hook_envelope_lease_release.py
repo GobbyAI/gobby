@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,13 +11,12 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from gobby.hooks import adapter_execution, phase_timing
+from gobby.hooks import adapter_execution
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
     read_envelope_marker,
 )
-from gobby.hooks.phase_timing import timed_to_thread
 from gobby.hooks.runtime_compat import (
     SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION,
     SUPPORTED_HOOK_RESPONSE_CAPABILITY,
@@ -140,95 +137,6 @@ def test_finalized_marker_survives_request_teardown(
     assert claim_envelope_processing(ENVELOPE_ID, processed_dir=processed_dir) is None
 
 
-def test_claim_release_reports_executor_queue_apart_from_work(
-    session_storage: SessionManager,
-    processed_dir: Path,
-    renewal_tasks: list[asyncio.Task[None]],
-) -> None:
-    """The persistence hops split default-executor wait from their own work (#23063)."""
-    server = _server(session_storage)
-    with (
-        TestClient(server.app) as client,
-        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
-        patch.object(phase_timing, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
-        patch.object(hooks_route.logger, "warning") as warning,
-    ):
-        adapter = MagicMock()
-        adapter.handle_native.return_value = {"continue": True}
-        adapter_cls.return_value = adapter
-        response = client.post(
-            "/api/hooks/execute",
-            headers={ENVELOPE_ID_HEADER: ENVELOPE_ID},
-            json=_envelope(),
-        )
-
-    assert response.status_code == 200
-    assert read_envelope_marker(ENVELOPE_ID, processed_dir=processed_dir) is not None
-    assert renewal_tasks[0].done()
-    (slow,) = [
-        entry
-        for entry in warning.call_args_list
-        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
-    ]
-    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
-    # Two envelope_claim hops (claim, owner token) accumulate into one key.
-    for hop in ("envelope_claim", "persistence_receipt", "persistence_release_claim"):
-        assert breakdown[f"{hop}_work"] > 0
-        assert breakdown[hop] >= breakdown[f"{hop}_queue"] + breakdown[f"{hop}_work"]
-    # The worker finished, so the loop's delay in resuming the request is recorded too.
-    assert breakdown["adapter_worker"] > 0
-    assert "adapter_resume" in breakdown
-
-
-def test_duplicate_envelope_attributes_replay_lookups_to_envelope_claim(
-    session_storage: SessionManager,
-    processed_dir: Path,
-    renewal_tasks: list[asyncio.Task[None]],
-) -> None:
-    """A duplicate's replay and marker lookups land in envelope_claim, not `response` (#23063)."""
-    server = _server(session_storage)
-    lookup_seconds = 0.05
-    # Controlled hop clock: the lookup advances wall time by exactly lookup_seconds.
-    clock = SimpleNamespace(wall=0.0)
-    fake_time = SimpleNamespace(perf_counter=lambda: clock.wall)
-
-    def slow_terminal_response(envelope_id: str) -> None:
-        clock.wall += lookup_seconds
-
-    with (
-        TestClient(server.app) as client,
-        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
-    ):
-        adapter = MagicMock()
-        adapter.handle_native.return_value = {"continue": True}
-        adapter_cls.return_value = adapter
-        first = client.post(
-            "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
-        )
-        with (
-            patch.object(hooks_route, "envelope_terminal_response", slow_terminal_response),
-            patch.object(phase_timing, "time", fake_time),
-            patch.object(phase_timing, "SLOW_HOOK_THRESHOLD_SECONDS", 0.0),
-            patch.object(hooks_route.logger, "warning") as warning,
-        ):
-            duplicate = client.post(
-                "/api/hooks/execute", headers={ENVELOPE_ID_HEADER: ENVELOPE_ID}, json=_envelope()
-            )
-
-    assert first.status_code == 200
-    assert duplicate.status_code == 409
-    (slow,) = [
-        entry
-        for entry in warning.call_args_list
-        if entry.args and entry.args[0] == "Slow hook execution dominated by %s"
-    ]
-    breakdown = slow.kwargs["extra"]["rule_evaluation_breakdown_seconds"]
-    assert breakdown["envelope_claim_work"] >= lookup_seconds
-    assert breakdown["envelope_claim"] >= (
-        breakdown["envelope_claim_queue"] + breakdown["envelope_claim_work"]
-    )
-
-
 def test_fresh_envelope_claims_and_learns_its_owner_token_in_one_executor_hop(
     session_storage: SessionManager,
     processed_dir: Path,
@@ -236,14 +144,12 @@ def test_fresh_envelope_claims_and_learns_its_owner_token_in_one_executor_hop(
 ) -> None:
     """Each executor hop pays a loop resume under load; a fresh claim needs one (#23063)."""
     server = _server(session_storage)
-    phases: list[str] = []
+    claims: list[str] = []
     renewals: list[tuple[str, str]] = []
 
-    async def recording_hop(
-        phase: str, function: Callable[..., object], /, *args: object, **kwargs: object
-    ) -> object:
-        phases.append(phase)
-        return await timed_to_thread(phase, function, *args, **kwargs)
+    def counting_claim(envelope_id: str) -> str | None:
+        claims.append(envelope_id)
+        return claim_envelope_processing(envelope_id)
 
     def start(envelope_id: str, owner_token: str) -> None:
         marker = read_envelope_marker(envelope_id, processed_dir=processed_dir)
@@ -251,7 +157,7 @@ def test_fresh_envelope_claims_and_learns_its_owner_token_in_one_executor_hop(
         assert marker["owner_token"] == owner_token
         renewals.append((envelope_id, owner_token))
 
-    monkeypatch.setattr("gobby.servers.routes.mcp.hooks.timed_to_thread", recording_hop)
+    monkeypatch.setattr(hooks_route, "claim_envelope_processing", counting_claim)
     monkeypatch.setattr(hooks_route, "start_envelope_lease_renewal", start)
 
     with (
@@ -266,5 +172,5 @@ def test_fresh_envelope_claims_and_learns_its_owner_token_in_one_executor_hop(
         )
 
     assert response.status_code == 200
-    assert phases.count("envelope_claim") == 1
+    assert claims == [ENVELOPE_ID]
     assert [envelope_id for envelope_id, _ in renewals] == [ENVELOPE_ID]

@@ -2,6 +2,7 @@
 Tests for TelemetryMetrics instruments.
 """
 
+import importlib
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -95,6 +96,21 @@ def test_autonomous_stuck_lifecycle_counter_registered(metrics_collector: Teleme
 
     all_metrics = metrics_collector.get_all_metrics()
     assert all_metrics["counters"]["agent_lifecycle_autonomous_stuck_detected_total"]["value"] == 1
+
+
+def test_hook_phase_duration_histogram_is_not_registered(
+    metrics_collector: TelemetryMetrics,
+) -> None:
+    """#23289 removed the unowned hook phase-timing metric."""
+    histograms = metrics_collector.get_all_metrics()["histograms"]
+
+    assert "hook_phase_duration_seconds" not in histograms
+
+
+def test_hook_phase_timing_module_is_gone() -> None:
+    """#23289 removed the hook phase-timing API that fed the metric."""
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("gobby.hooks.phase_timing")
 
 
 def test_set_gauge(
