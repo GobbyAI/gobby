@@ -8,9 +8,9 @@
 //!
 //! This set is deliberately separate from `live_attach`'s daemon recoveries:
 //! daemon reconnect results and daemon generation changes must not clear it.
-//! It is cancelled only when the pane is replaced or closed, or when the host
-//! answers with a foreign epoch, and a cancelled or failed host recovery falls
-//! through to the daemon path unchanged.
+//! It is cancelled only when the pane is replaced or closed. A foreign host
+//! epoch fails recovery, and a cancelled or failed host recovery falls through
+//! to the daemon path unchanged.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -49,10 +49,10 @@ pub(in crate::app) enum HostRecoveryOutcome {
     /// The host answered on the same epoch and the stream is back. The
     /// attachment id, lease and grant were never given up.
     Restored(UnixSocketFrameSource),
-    /// The pane was closed or replaced, or the host answered a foreign epoch.
+    /// The pane was closed or replaced.
     /// Nothing is sent to the host.
     Cancelled,
-    /// The host refused or never answered inside the budget.
+    /// The host refused, answered a foreign epoch, or never answered inside the budget.
     Failed,
 }
 

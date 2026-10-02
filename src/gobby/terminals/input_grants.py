@@ -145,9 +145,6 @@ async def expire_native_input_handoffs(
             await client.revoke_input(host_terminal_id, attachment_id)
         except _HOST_FAILURES as exc:
             if not (isinstance(exc, HostCommandError) and exc.code == "not_found"):
-                logger.warning(
-                    "preserved input revoke for terminal %s failed: %s", terminal.id, exc
-                )
                 continue
         await asyncio.to_thread(manager.clear_native_input_handoff, terminal.id, attachment_id)
         deadlines.pop(key, None)

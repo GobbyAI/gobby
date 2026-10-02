@@ -535,7 +535,6 @@ class TerminalLeaseRegistry:
                         finally:
                             raise
                     except Exception:
-                        logger.exception("input handoff recording failed for %s", attachment_id)
                         preserve_native_grant = False
                 if not preserve_native_grant:
                     try:
