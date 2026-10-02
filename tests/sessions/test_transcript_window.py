@@ -182,6 +182,22 @@ def _codex_orphan_missing_call() -> list[str]:
     ]
 
 
+def _codex_tool_heavy(rounds: int) -> list[str]:
+    """A long tool-heavy transcript: one opened+resolved call per round.
+
+    Exercises the windowed suppression path (:meth:`RenderState.is_pre_window_tool_call`)
+    across many pages so the ``tool_first_open`` membership test is what keeps a
+    pre-window duplicate suppressed without seeding a stub per prior tool.
+    """
+    lines: list[str] = []
+    for i in range(rounds):
+        lines.append(_codex_msg("user", f"q{i}"))
+        lines.append(_codex_msg("assistant", f"a{i}"))
+        lines.append(_codex_call("read", f"c{i}"))
+        lines.append(_codex_out(f"c{i}", f"result-{i}"))
+    return lines
+
+
 def _claude_multimessage() -> list[str]:
     """A user line that expands to text + orphan tool_result (2 groups; the 2nd
     boundary is *not* resume_safe), plus a normal tool pairing across groups."""
@@ -655,3 +671,30 @@ def test_gzip_block_window_matches_full_render(tmp_path) -> None:
 
     expected_start, expected_end = len(full) - 6, len(full) - 2
     _assert_equiv(full[expected_start:expected_end], result.groups)
+
+
+def test_tool_heavy_paged_window_matches_full_render(tmp_path: Path) -> None:
+    """A long tool-heavy transcript pages identically to a full render.
+
+    Pins the O(1) pre-window suppression: a window that starts after many calls
+    opened must still suppress their pre-window results (no orphan groups) and
+    reconstruct every group exactly, without seeding a stub per prior tool.
+    """
+    lines = _codex_tool_heavy(60)
+    path = _write(tmp_path, "codex-heavy", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    full = _full_render(CodexTranscriptParser, lines)
+    head = _page_head(path, "codex", index, limit=7)
+    tail = _page_tail(path, "codex", index, limit=7)
+    _assert_equiv(full, head)
+    _assert_equiv(full, tail)
+
+    # A window well past the first calls still renders the same region as the
+    # full render, i.e. pre-window results are suppressed rather than orphaned.
+    offset = index.total_groups // 2
+    result = render_window(
+        path, "codex", SESSION, index, limit=8, offset=offset, order="head", max_span=HUGE
+    )
+    _assert_equiv(full[offset : offset + result.returned_count], result.groups)

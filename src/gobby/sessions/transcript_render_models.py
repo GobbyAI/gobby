@@ -14,7 +14,7 @@ ToolResultKind = Literal["text", "json", "image", "error"]
 # belongs here -- see RenderState.__deepcopy__ for why the resolved-id set
 # qualifies. Everything not named is deep-copied, so a field added later is
 # rollback-safe by default rather than silently reset (#20875).
-_SHARED_RENDER_STATE_FIELDS = frozenset({"resolved_tool_call_ids"})
+_SHARED_RENDER_STATE_FIELDS = frozenset({"resolved_tool_call_ids", "pre_window_tool_first_open"})
 
 
 @dataclass
@@ -110,13 +110,32 @@ class RenderState:
     resolved_tool_call_ids: set[str] = field(default_factory=set)
     # Track seen content hashes to deduplicate Claude Code streaming duplicates
     seen_content: set[int] = field(default_factory=set)
+    # Windowed-render suppression, both ``None`` in a whole-transcript render.
+    # ``tool_first_open`` of the transcript being windowed, and the parsed index
+    # at which the window starts; an id whose call opened before that index is
+    # one a full render would have paired, so a result for it is suppressed
+    # rather than emitted as an orphan group. Testing membership here is O(1)
+    # per result, replacing the O(tools) per page stub seeding that made a long
+    # tool-heavy transcript quadratic in ``tools x pages``.
+    pre_window_tool_first_open: dict[str, int] | None = None
+    pre_window_boundary_index: int | None = None
+
+    def is_pre_window_tool_call(self, tool_use_id: str | None) -> TypeGuard[str]:
+        """Whether this id's call opened before a windowed render's start."""
+        if tool_use_id is None:
+            return False
+        first_open = self.pre_window_tool_first_open
+        boundary = self.pre_window_boundary_index
+        if first_open is None or boundary is None:
+            return False
+        return first_open.get(tool_use_id, boundary) < boundary
 
     def __deepcopy__(self, memo: dict[int, Any]) -> RenderState:
         """Copy everything a rollback can undo, and share what it cannot.
 
         The daemon deep-copies this state on its event loop once per transcript
         batch to have something to roll back to, so every field it copies is a
-        per-batch cost (#20859). ``resolved_tool_call_ids`` is the one field a
+        per-batch cost (#20859). ``resolved_tool_call_ids`` is a field a
         rollback has no reason to undo: it only ever grows, and an id in it can
         only suppress a duplicate tool_result, never change how a record renders.
         Re-feeding a rolled-back batch puts its calls back in
@@ -126,6 +145,9 @@ class RenderState:
         is what lets the suppression be unconditional -- remembering every id
         for the life of the session -- without the copy growing with the
         session.
+
+        The prior-index tool lookup is also shared: its suppression boundary is
+        fixed, so later entries cannot suppress calls from a speculative batch.
 
         The field list comes from ``fields(self)`` with the explicit share list
         ``_SHARED_RENDER_STATE_FIELDS`` rather than a hand enumeration, so a
@@ -157,4 +179,8 @@ class RenderState:
         """
         if tool_use_id is None:
             return False
-        return tool_use_id in self.pending_tool_calls or tool_use_id in self.resolved_tool_call_ids
+        return (
+            tool_use_id in self.pending_tool_calls
+            or tool_use_id in self.resolved_tool_call_ids
+            or self.is_pre_window_tool_call(tool_use_id)
+        )

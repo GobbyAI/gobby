@@ -530,6 +530,22 @@
     {
       "surface": "mcp",
       "server": "gobby-tasks",
+      "tool": "transfer_task_authority",
+      "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
+      "implementation": {
+        "path": "src/gobby/mcp_proxy/tools/tasks/_session.py",
+        "symbol": "create_session_registry.transfer_task_authority"
+      },
+      "verification": [
+        "registered-inventory",
+        "source-contract",
+        "focused-task-tests"
+      ],
+      "audience": "agent; a live session in the task's project once its creator and delegator expired"
+    },
+    {
+      "surface": "mcp",
+      "server": "gobby-tasks",
       "tool": "repair_closed_candidate",
       "reference": "src/gobby/install/shared/skills/gobby/references/tasks/closing.md",
       "implementation": {
