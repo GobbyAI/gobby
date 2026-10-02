@@ -15,11 +15,24 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _background_tasks_by_execution,
     resume_interrupted_pipelines,
     resume_pipeline,
+    run_pipeline,
 )
+from gobby.workflows.definitions import PipelineDefinition, PipelineStep
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 from tests._timing import drain_asyncio_tasks
 
 pytestmark = pytest.mark.unit
+
+
+def _definition(step_id: str = "step1", name: str = "test-pipeline") -> PipelineDefinition:
+    return PipelineDefinition(
+        name=name,
+        resume_on_restart=True,
+        steps=[PipelineStep(id=step_id, exec=f"echo {step_id}")],
+    )
+
+
+_SNAPSHOT = _definition().model_dump_json()
 
 
 @pytest.fixture(autouse=True)
@@ -40,7 +53,7 @@ def _make_execution(
     pipeline_name: str = "test-pipeline",
     status: ExecutionStatus = ExecutionStatus.RUNNING,
     inputs_json: str | None = None,
-    definition_json: str | None = None,
+    definition_json: str | None = _SNAPSHOT,
     session_id: str | None = None,
     project_id: str = "test-project",
 ) -> MagicMock:
@@ -397,3 +410,151 @@ async def test_resume_handles_malformed_inputs_json() -> None:
     assert result == [execution.id]
     await drain_asyncio_tasks()
     assert executor.execute.call_args.kwargs["inputs"] == {}
+
+
+def _launch_executor(execution_id: str = "pe-launch-0001") -> MagicMock:
+    blocker = asyncio.Event()
+    executor = MagicMock()
+    executor.execute = AsyncMock(side_effect=lambda **kw: blocker.wait())
+    executor.execution_manager.create_execution.return_value = SimpleNamespace(id=execution_id)
+    return executor
+
+
+def _failed_resume_manager(execution: MagicMock) -> MagicMock:
+    failed_step = SimpleNamespace(step_id="step1", status=StepStatus.FAILED, error="boom")
+    execution_manager = MagicMock()
+    execution_manager.get_execution.return_value = execution
+    execution_manager.get_steps_for_execution.return_value = [failed_step]
+    execution_manager.claim_failed_execution_for_resume.return_value = execution
+    execution_manager.reset_steps_from.return_value = 1
+    return execution_manager
+
+
+@pytest.mark.asyncio
+async def test_resume_uses_launch_snapshot() -> None:
+    """A definition edited after launch leaves the resumed step graph unchanged."""
+    launched = _definition("launch-step")
+    loader = MagicMock()
+    loader.load_pipeline = AsyncMock(return_value=launched)
+    executor = _launch_executor()
+
+    started = await run_pipeline(
+        loader=loader,
+        executor=executor,
+        name="test-pipeline",
+        inputs={},
+        project_id="test-project",
+    )
+
+    assert started["success"] is True
+    create_kwargs = executor.execution_manager.create_execution.call_args.kwargs
+    assert "definition_json" in create_kwargs
+    snapshot = create_kwargs["definition_json"]
+    assert PipelineDefinition.model_validate_json(snapshot) == launched
+
+    loader.load_pipeline.return_value = _definition("edited-step")
+
+    running = _make_execution(execution_id="pe-running-0001", definition_json=snapshot)
+    startup_manager = MagicMock()
+    startup_manager.list_executions.return_value = [running]
+    executor.execute.reset_mock()
+    resumed = await resume_interrupted_pipelines(
+        loader=loader,
+        executor=executor,
+        execution_manager=startup_manager,
+        project_id="test-project",
+    )
+    await drain_asyncio_tasks()
+
+    assert resumed == [running.id]
+    startup_pipeline = executor.execute.call_args.kwargs["pipeline"]
+    assert [step.id for step in startup_pipeline.steps] == ["launch-step"]
+
+    failed = _make_execution(
+        execution_id="pe-failed-0001",
+        status=ExecutionStatus.FAILED,
+        definition_json=snapshot,
+    )
+    executor.execute.reset_mock()
+    result = await resume_pipeline(
+        loader=loader,
+        executor=executor,
+        execution_manager=_failed_resume_manager(failed),
+        execution_id=failed.id,
+        project_id=failed.project_id,
+    )
+    await drain_asyncio_tasks()
+
+    assert result["success"] is True
+    resumed_pipeline = executor.execute.call_args.kwargs["pipeline"]
+    assert [step.id for step in resumed_pipeline.steps] == ["launch-step"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "definition_json",
+    [None, "{not json", json.dumps({"name": "test-pipeline", "steps": "nope"})],
+    ids=["missing", "unparseable", "invalid"],
+)
+async def test_missing_snapshot_fails_closed(definition_json: str | None) -> None:
+    """Startup recovery fails the execution; resume_pipeline refuses and changes nothing."""
+    loader = MagicMock()
+    loader.load_pipeline = AsyncMock(return_value=_definition())
+    executor = _launch_executor()
+
+    running = _make_execution(definition_json=definition_json)
+    startup_manager = MagicMock()
+    startup_manager.list_executions.return_value = [running]
+    resumed = await resume_interrupted_pipelines(
+        loader=loader,
+        executor=executor,
+        execution_manager=startup_manager,
+        project_id="test-project",
+    )
+    await drain_asyncio_tasks()
+
+    assert resumed == []
+    startup_manager.update_execution_status.assert_called_once()
+    failure = startup_manager.update_execution_status.call_args.kwargs
+    assert failure["execution_id"] == running.id
+    assert failure["status"] == ExecutionStatus.FAILED
+    assert json.loads(failure["outputs_json"])["error"] == "definition_snapshot_unusable"
+
+    failed = _make_execution(status=ExecutionStatus.FAILED, definition_json=definition_json)
+    resume_manager = _failed_resume_manager(failed)
+    result = await resume_pipeline(
+        loader=loader,
+        executor=executor,
+        execution_manager=resume_manager,
+        execution_id=failed.id,
+        project_id=failed.project_id,
+    )
+    await drain_asyncio_tasks()
+
+    assert result["success"] is False
+    assert result["error_code"] == "definition_snapshot_unusable"
+    resume_manager.claim_failed_execution_for_resume.assert_not_called()
+    resume_manager.reset_steps_from.assert_not_called()
+    resume_manager.update_execution_status.assert_not_called()
+    executor.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_precreate_records_caller_project() -> None:
+    """The pre-created execution carries the caller's project, not the manager's bound one."""
+    loader = MagicMock()
+    loader.load_pipeline = AsyncMock(return_value=_definition())
+    executor = _launch_executor()
+    executor.execution_manager.project_id = "bound-project"
+
+    started = await run_pipeline(
+        loader=loader,
+        executor=executor,
+        name="test-pipeline",
+        inputs={},
+        project_id="caller-project",
+    )
+
+    assert started["success"] is True
+    create_kwargs = executor.execution_manager.create_execution.call_args.kwargs
+    assert create_kwargs.get("project_id") == "caller-project"
