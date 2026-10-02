@@ -275,16 +275,18 @@ fn extract_symbols(
         }
 
         let docstring = extract_docstring(&node, source, language);
-        let c_hash =
-            symbol_content_hash(source, node.start_byte(), node.end_byte()).unwrap_or_default();
-        let (line_start, line_end) = inclusive_node_lines(&node, source)?;
+        let declaration_start = declaration_start_node(node, language);
+        let byte_start = declaration_start.start_byte();
+        let c_hash = symbol_content_hash(source, byte_start, node.end_byte()).unwrap_or_default();
+        let (_, line_end) = inclusive_node_lines(&node, source)?;
+        let line_start = declaration_start.start_position().row + 1;
         let symbol_id = Symbol::make_id(
             file.project_id,
             file.rel_path,
             file.content_hash,
             &name,
             &kind,
-            node.start_byte(),
+            byte_start,
         );
 
         if seen_ids.contains(&symbol_id) {
@@ -300,7 +302,7 @@ fn extract_symbols(
             qualified_name: name,
             kind,
             language: language.to_string(),
-            byte_start: node.start_byte(),
+            byte_start,
             byte_end: node.end_byte(),
             line_start,
             line_end,
@@ -327,6 +329,62 @@ fn extract_symbols(
     }
 
     Ok(symbols)
+}
+
+/// Metadata can live in a declaration wrapper or as preceding siblings.
+/// Keep the definition node for signatures, documentation and the end boundary.
+fn declaration_start_node<'tree>(
+    node: tree_sitter::Node<'tree>,
+    language: &str,
+) -> tree_sitter::Node<'tree> {
+    let mut start = node;
+    if let Some(parent) = node.parent()
+        && matches!(
+            parent.kind(),
+            "decorated_definition"
+                | "export_statement"
+                | "class_member"
+                | "declaration"
+                | "type_definition"
+        )
+    {
+        let mut cursor = parent.walk();
+        if let Some(attribute) = parent.named_children(&mut cursor).find(|child| {
+            child.end_byte() <= node.start_byte()
+                && matches!(
+                    child.kind(),
+                    "decorator"
+                        | "annotation"
+                        | "attribute_declaration"
+                        | "attribute_specifier"
+                        | "availability_attribute_specifier"
+                )
+        }) {
+            start = attribute;
+        }
+    }
+
+    let mut previous = node.prev_named_sibling();
+    while let Some(sibling) = previous {
+        let attribute = match language {
+            "rust" => sibling.kind() == "attribute_item",
+            "typescript" | "javascript" => sibling.kind() == "decorator",
+            "elixir" => {
+                sibling.kind() == "unary_operator"
+                    && sibling
+                        .child_by_field_name("operator")
+                        .is_some_and(|op| op.kind() == "@")
+            }
+            _ => false,
+        };
+        if attribute {
+            start = sibling;
+        } else if !matches!(sibling.kind(), "comment" | "line_comment" | "block_comment") {
+            break;
+        }
+        previous = sibling.prev_named_sibling();
+    }
+    start
 }
 
 fn inclusive_node_lines(

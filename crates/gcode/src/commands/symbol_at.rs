@@ -691,3 +691,6 @@ mod tests {
         assert_eq!(selected.match_kind, MatchKind::Containing);
     }
 }
+#[cfg(test)]
+#[path = "symbol_at/attribute_ranges_tests.rs"]
+mod attribute_ranges_tests;
