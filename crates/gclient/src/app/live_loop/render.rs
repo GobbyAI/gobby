@@ -1,4 +1,4 @@
-//! Frame drawing and terminal-geometry propagation for the interactive loop.
+//! Frame drawing for the interactive loop.
 
 use ratatui::backend::Backend;
 use ratatui::Terminal;
@@ -7,7 +7,7 @@ use crate::daemon::LiveDaemon;
 use crate::frame_source::FrameError;
 use crate::ui::Chrome;
 
-use super::{PaneId, Workspace};
+use super::Workspace;
 
 /// Draw the whole workspace once, rebuilding the sidebar model the frame reads
 /// first. The loop calls this on the render tick, on stale hit maps, and after
@@ -59,59 +59,4 @@ pub(super) fn pane_hit_map_stale(chrome: &Chrome) -> bool {
             .iter()
             .zip(&chrome.view.pane_infos)
             .any(|(current, drawn)| current.id != drawn.id || current.rect != drawn.rect)
-}
-
-/// One entry of the geometry pass: a shown pane, its inner rect and the
-/// attachment it was sized on (empty while the pane is not live).
-type ShownGeometry = (PaneId, u16, u16, String);
-
-/// Send each shown live pane the geometry of its slot. The pass keys on pane,
-/// rect and attachment, so a slot change, an attach that completed, a transport
-/// fallback or a new terminal size each send once, and a quiet iteration sends
-/// nothing.
-pub(super) async fn resize_live_workspace<B: Backend>(
-    terminal: &mut Terminal<B>,
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &Chrome,
-    sent: &mut Vec<ShownGeometry>,
-) -> Result<(), FrameError> {
-    let area = terminal
-        .size()
-        .map_err(|error| FrameError::Other(error.to_string()))?;
-    if area.width == 0 || area.height == 0 {
-        return Ok(());
-    }
-    let shown: Vec<ShownGeometry> = match chrome.active_tab() {
-        Some(tab) => chrome
-            .view
-            .pane_infos
-            .iter()
-            .filter_map(|info| {
-                let pane_id = *tab.slots.get(&info.id)?;
-                let pane = workspace.panes.get(&pane_id)?;
-                let attachment = if pane.is_live() {
-                    pane.attachment_id().to_string()
-                } else {
-                    String::new()
-                };
-                Some((
-                    pane_id,
-                    info.inner_rect.height,
-                    info.inner_rect.width,
-                    attachment,
-                ))
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-    let updates: Vec<(PaneId, u16, u16)> = shown
-        .iter()
-        .filter(|entry| !entry.3.is_empty() && !sent.contains(entry))
-        .map(|&(pane_id, rows, cols, _)| (pane_id, rows, cols))
-        .collect();
-    *sent = shown;
-    if updates.is_empty() {
-        return Ok(());
-    }
-    workspace.propagate_geometry(&updates).await
 }

@@ -38,9 +38,9 @@ mod actions;
 pub(super) mod arrange;
 mod control;
 mod focus_hints;
+pub(super) mod host_recovery;
 pub(super) mod jobs;
 mod jobs_apply;
-pub(super) mod host_recovery;
 pub(super) mod menu;
 mod menu_bar;
 pub(super) mod menu_dispatch;
@@ -70,7 +70,7 @@ use reconnect::{
     await_reconnect_job, begin_reconnect, handle_live_event, handle_reconnect_outcome,
     recv_daemon_event, settle_sidebar_banner, wait_for_reconnect,
 };
-use render::{pane_hit_map_stale, render_live_workspace, resize_live_workspace};
+use render::{pane_hit_map_stale, render_live_workspace};
 use signals::{recv_exit_signal, recv_resize_signal, recv_suspend_signal};
 use suspend::suspend_process;
 
