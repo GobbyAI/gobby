@@ -262,9 +262,13 @@ class TestCloseTask:
 
     @pytest.fixture(autouse=True)
     def _candidate_is_its_own_identity(self) -> Iterator[None]:
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
-            new=ECHOING_DAEMON_GIT,
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close_preview.daemon_git",
+                new=ECHOING_DAEMON_GIT,
+            ),
+            # The link step stores Git's short form of each close SHA (#23251).
+            patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd: sha),
         ):
             yield
 

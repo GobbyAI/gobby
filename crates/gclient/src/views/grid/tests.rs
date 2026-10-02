@@ -102,6 +102,44 @@ fn a_native_frame_is_unchanged_by_the_letterbox_branch() {
 }
 
 #[test]
+fn successive_native_frames_replace_the_first_content_row() {
+    let mut pane = Pane::new_detached(PaneId(1), "term-1", Backend::Native, "epoch");
+    let mut terminal = Terminal::new(TestBackend::new(8, 5)).expect("test backend");
+    let area = Rect::new(0, 1, 8, 4);
+
+    for step in 0..5 {
+        let mut source = coordinate_frame(8, 4, None);
+        for row in 0..4 {
+            let label = if step == 4 && row == 0 {
+                String::new()
+            } else {
+                format!("row{}", step + row)
+            };
+            for col in 0..8 {
+                source.cells[row * 8 + col].symbol =
+                    label.chars().nth(col).unwrap_or(' ').to_string();
+            }
+        }
+        let first_row = source.cells[..8]
+            .iter()
+            .map(|cell| cell.symbol.clone())
+            .collect::<Vec<_>>();
+        pane.latest_frame = Some(source);
+        terminal
+            .draw(|frame| render(frame, area, &pane, true))
+            .expect("draw frame");
+
+        for col in 0..8u16 {
+            assert_eq!(
+                symbol_at(&terminal, col, 1),
+                first_row[usize::from(col)],
+                "first content row after frame {step}, column {col}"
+            );
+        }
+    }
+}
+
+#[test]
 fn the_cursor_follows_the_same_origin_and_leaves_the_viewport_when_clipped() {
     let cursor = |x, y| {
         Some(CursorState {

@@ -416,7 +416,9 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     assert focused["id"] == tab["id"]
     written = await op("pane.send_text", pane=first["id"], text="echo ready", submit=True)
     assert set(written) == {"idempotency_key", "indeterminate", "detail"}
-    assert written["indeterminate"] is False
+    # The pane runs no CLI session, so no composer reader can confirm the submit.
+    assert written["indeterminate"] is True
+    assert "no composer reader" in written["detail"]
     keyed = await op("pane.send_keys", pane=first["id"], keys="ls\n", idempotency_key="keys-1")
     assert keyed["idempotency_key"] == "keys-1"
     stack.native.snapshot_text = "ready\n"
