@@ -4,6 +4,28 @@ impl PaneRuntime {
         self.io.duplicate_handoff_fd()
     }
 
+    /// The pane's PTY actor, for a thread that works apart from this runtime,
+    /// which is not `Sync`: a host upgrade quiesces and rolls back each pane
+    /// on its own thread.
+    #[cfg(unix)]
+    pub(crate) fn handoff_actor(&self) -> Option<PtyIoActorHandle> {
+        match &self.io {
+            PaneRuntimeIo::Actor(actor) => Some(actor.clone()),
+            #[cfg(test)]
+            PaneRuntimeIo::TestChannel { .. } => None,
+        }
+    }
+
+    /// Rows, cols, and cell pixels, as a carried pane restores them.
+    pub fn handover_size(&self) -> (u16, u16, u32, u32) {
+        self.current_size.get()
+    }
+
+    /// The cwd the child last reported, which a carried pane keeps.
+    pub fn reported_cwd(&self) -> Option<std::path::PathBuf> {
+        self.reported_cwd.lock().ok().and_then(|cwd| cwd.clone())
+    }
+
     #[cfg(unix)]
     pub fn preserve_for_handoff(mut self) {
         if let Err(err) = self.io.release_after_commit() {

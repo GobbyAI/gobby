@@ -259,11 +259,32 @@ def remove_label(db: HubDatabase, task_id: str, label: str) -> Task:
     return get_task(db, task_id)
 
 
+# A linked SHA and a requested one name the same commit when they are equal, or
+# when one abbreviates the other: ``rev-parse --short`` grows with the
+# repository, and some rows hold full SHAs (#23251). Below seven characters a
+# SHA matches only exactly, so a short value cannot sweep up unrelated links.
+_SAME_COMMIT_SQL = """
+    lower(linked.sha) = lower(%(sha)s)
+    OR (
+        length(linked.sha) >= 7 AND length(%(sha)s) >= 7
+        AND (
+            starts_with(lower(linked.sha), lower(%(sha)s))
+            OR starts_with(lower(%(sha)s), lower(linked.sha))
+        )
+    )
+"""
+
+
+def _require_commit_sha(commit_sha: str) -> None:
+    if re.fullmatch(r"[0-9a-fA-F]{4,64}", commit_sha) is None:
+        raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
+
+
 def link_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     """Link a commit SHA to a task.
 
-    Adds the commit SHA to the task's commits array if not already present.
-    The caller supplies a Git-resolved canonical short SHA.
+    Adds the commit SHA unless the task already links the same commit in either
+    SHA form. The caller supplies a Git-resolved canonical short SHA.
 
     Args:
         db: Database protocol instance
@@ -276,21 +297,25 @@ def link_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     Raises:
         ValueError: If task not found or SHA cannot be resolved.
     """
-    if re.fullmatch(r"[0-9a-fA-F]{4,64}", commit_sha) is None:
-        raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
+    _require_commit_sha(commit_sha)
 
     get_task(db, task_id)  # Validate identity without reading mutation state.
     with db.transaction() as conn:
         cursor = conn.execute(
-            """
+            f"""
             UPDATE tasks
                SET commits = COALESCE(commits, '[]'::jsonb)
-                             || jsonb_build_array(%s::text),
-                   updated_at = %s
-             WHERE id = %s
-               AND NOT COALESCE(commits, '[]'::jsonb) @> jsonb_build_array(%s::text)
+                             || jsonb_build_array(%(sha)s::text),
+                   updated_at = %(now)s
+             WHERE id = %(task_id)s
+               AND NOT EXISTS (
+                   SELECT 1
+                     FROM jsonb_array_elements_text(COALESCE(commits, '[]'::jsonb))
+                          AS linked(sha)
+                    WHERE {_SAME_COMMIT_SQL}
+               )
             """,
-            (commit_sha, utc_now(), task_id, commit_sha),
+            {"sha": commit_sha, "now": utc_now(), "task_id": task_id},
         )
     if cursor.rowcount > 0:
         return True
@@ -300,8 +325,7 @@ def link_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
 def unlink_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
     """Unlink a commit SHA from a task.
 
-    Removes the commit SHA from the task's commits array if present.
-    Uses the caller-supplied canonical short SHA for exact matching.
+    Removes every link to the same commit, stored in either SHA form.
 
     Args:
         db: Database protocol instance
@@ -312,23 +336,32 @@ def unlink_commit(db: HubDatabase, task_id: str, commit_sha: str) -> bool:
         True if commit was removed, False if not found.
 
     Raises:
-        ValueError: If task not found.
+        ValueError: If task not found or the SHA is not a commit SHA.
     """
+    _require_commit_sha(commit_sha)
     get_task(db, task_id)  # Validate identity without reading mutation state.
 
-    if not commit_sha:
-        return False
-
+    # One statement, so concurrent unlinks each re-read the row they rewrite.
     with db.transaction() as conn:
         cursor = conn.execute(
-            """
+            f"""
             UPDATE tasks
-               SET commits = NULLIF(commits - %s::text, '[]'::jsonb),
-                   updated_at = %s
-             WHERE id = %s
-               AND COALESCE(commits, '[]'::jsonb) @> jsonb_build_array(%s::text)
+               SET commits = (
+                       SELECT jsonb_agg(linked.sha ORDER BY linked.position)
+                         FROM jsonb_array_elements_text(commits)
+                              WITH ORDINALITY AS linked(sha, position)
+                        WHERE NOT ({_SAME_COMMIT_SQL})
+                   ),
+                   updated_at = %(now)s
+             WHERE id = %(task_id)s
+               AND EXISTS (
+                   SELECT 1
+                     FROM jsonb_array_elements_text(COALESCE(commits, '[]'::jsonb))
+                          AS linked(sha)
+                    WHERE {_SAME_COMMIT_SQL}
+               )
             """,
-            (commit_sha, utc_now(), task_id, commit_sha),
+            {"sha": commit_sha, "now": utc_now(), "task_id": task_id},
         )
     if cursor.rowcount > 0:
         return True

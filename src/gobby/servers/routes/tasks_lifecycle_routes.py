@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
+from gobby.servers.routes.source_control_git import _resolve_project
 from gobby.servers.routes.tasks_assignment import TaskAssignmentNotifier
 from gobby.storage.tasks._models import TaskNotFoundError
 
@@ -210,6 +211,7 @@ def register_task_lifecycle_routes(
             )
 
             if body.commit_sha:
+                repo_path = await server.run_db(_resolve_project, server, task.project_id)
                 closed = await server.run_db(
                     server.task_manager.close_task_with_commit,
                     resolved_id,
@@ -218,6 +220,7 @@ def register_task_lifecycle_routes(
                     force=body.force,
                     closed_in_session_id=resolved_session_id,
                     validation_override_reason=body.validation_override_reason,
+                    cwd=repo_path,
                 )
             else:
                 closed = await server.run_db(

@@ -758,6 +758,66 @@ class TestAdminRoutes:
         assert data["status"] == "degraded"
         assert data["postgres"]["code_index"]["healthy"] is False
 
+    @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    def test_status_endpoint_reports_timed_out_postgres_collector_as_unknown(
+        self,
+        mock_psutil: MagicMock,
+        mock_get_postgres_status: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
+    ) -> None:
+        mock_psutil.Process.return_value.memory_info.return_value = MagicMock(rss=1, vms=1)
+        mock_server.services.config.hub_backend = "postgres"
+        mock_get_postgres_status.side_effect = TimeoutError
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["postgres"] == {
+            "status": "unknown",
+            "available": None,
+            "healthy": None,
+            "error": "collector timed out",
+        }
+        assert data["status_collection"]["timed_out"] == ["postgres"]
+
+    @patch("gobby.cli.installers.postgres.get_postgres_status", new_callable=AsyncMock)
+    @patch("gobby.servers.routes.admin._health.psutil")
+    def test_status_endpoint_labels_bm25_with_startup_verification(
+        self,
+        mock_psutil: MagicMock,
+        mock_get_postgres_status: AsyncMock,
+        client: TestClient,
+        mock_server: MagicMock,
+    ) -> None:
+        mock_psutil.Process.return_value.memory_info.return_value = MagicMock(rss=1, vms=1)
+        mock_server.services.config.hub_backend = "postgres"
+        mock_server._runner.code_index_bm25_verification = {
+            "verified_at": "2026-10-01T15:54:00+00:00",
+            "healthy": False,
+        }
+        mock_get_postgres_status.return_value = {
+            "healthy": True,
+            "code_index": {
+                "healthy": True,
+                "repair_command": "gobby postgres repair-code-index",
+                "indexes": [],
+            },
+        }
+
+        response = client.get("/api/admin/status")
+
+        assert response.status_code == 200
+        code_index = response.json()["postgres"]["code_index"]
+        assert code_index["verification"] == {
+            "verified_at": "2026-10-01T15:54:00+00:00",
+            "healthy": False,
+        }
+        assert code_index["healthy"] is False
+        assert response.json()["status"] == "degraded"
+
     @patch("gobby.servers.routes.admin._health.get_all_metrics")
     @patch("gobby.servers.routes.admin._health.generate_latest")
     @patch("gobby.servers.routes.admin._health.psutil")

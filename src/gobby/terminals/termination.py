@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Literal, Protocol
 
@@ -84,7 +85,7 @@ async def kill_terminal(
     async with terminals.settle_lock(terminal.id):
         if in_doubt_spawns.holds(terminal.id):
             raise TerminalInDoubtError(f"Terminal {terminal.id} has a spawn in flight")
-        current = terminals.get(terminal.id)
+        current = await asyncio.to_thread(terminals.get, terminal.id)
         if current is None or current.state == "exited":
             return None
         runtime = registry.resolve(current.backend)
@@ -93,7 +94,7 @@ async def kill_terminal(
             raise TerminalKillUnprovenError(
                 f"Terminal {current.id} is still present after terminate"
             )
-        return terminals.mark_exited(current.id)
+        return await asyncio.to_thread(terminals.mark_exited, current.id)
 
 
 async def terminate_terminal(

@@ -323,6 +323,9 @@ def build_tool_event_data(
             item_data["toolArgs"] = item_data["arguments"]
         elif "input" in item_data:
             item_data["tool_input"] = item_data["input"]
+    if item_type == "fileChange" and isinstance(item_data.get("tool_input"), list):
+        # Codex sends the changes list bare; wrap it so normalization sees an object.
+        item_data["tool_input"] = {"changes": item_data["tool_input"]}
 
     if item_type == "commandExecution":
         item_data.setdefault("tool_input", codex_command_input(item_data))

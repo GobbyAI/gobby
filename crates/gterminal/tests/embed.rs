@@ -7,7 +7,8 @@ mod host_support;
 
 use embed_support::{
     attach, connect_frames, crate_src, gclient_views, list_terminals, read_msg, read_msg_timeout,
-    spawn_host, spawn_host_with_env_removed, start_tmux, start_tmux_sized, wait_until, write_msg,
+    spawn_host, spawn_host_with_env, spawn_host_with_env_removed, start_tmux, start_tmux_sized,
+    wait_until, write_msg,
 };
 use gobby_terminal::host::{
     classify_poll, parse_poll_batch, truncate_attach_history, PollClass, POLL_FIELD_COUNT,
@@ -114,6 +115,41 @@ fn tmux_capture_poll_round_trip() {
         .any(|m| frame_text(m).is_some_and(|t| t.contains("GOBBY-SECOND"))));
     let log = std::fs::read_to_string(host.socket_dir().join("gterm.log")).unwrap_or_default();
     assert!(!log.contains("send-keys"), "host must not write to tmux");
+}
+
+/// The host blocks SIGTERM on every thread but one; the tmux clients it runs
+/// must not inherit that mask.
+#[test]
+fn tmux_clients_start_unmasked() {
+    use std::os::unix::fs::PermissionsExt;
+    let bin = tempfile::tempdir().expect("wrapper dir");
+    let wrapper = bin.path().join("tmux-wrapper");
+    std::fs::write(
+        &wrapper,
+        "#!/bin/sh\ndir=$(dirname \"$0\")\n\
+         (sh -c 'kill -TERM $$; : >>\"$1/blocked\"' sh \"$dir\") 2>/dev/null\n\
+         : >>\"$dir/ran\"\nexec tmux \"$@\"\n",
+    )
+    .expect("write the wrapper");
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755))
+        .expect("make the wrapper executable");
+    let pane = start_tmux();
+    let host = spawn_host_with_env(
+        &[],
+        &[("GTERM_TMUX_BIN", wrapper.to_str().expect("utf-8 path"))],
+        &[],
+    );
+    let mut stream = connect_frames(&host, None);
+    let attached = attach(&mut stream, pane.locator());
+    assert!(
+        matches!(attached, ServerMessage::Attached { .. }),
+        "{attached:?}"
+    );
+    wait_until(Duration::from_secs(5), || bin.path().join("ran").exists());
+    assert!(
+        !bin.path().join("blocked").exists(),
+        "a tmux client started with SIGTERM blocked"
+    );
 }
 
 /// A host started the way a daemon starts it, with no UTF-8 locale and outside

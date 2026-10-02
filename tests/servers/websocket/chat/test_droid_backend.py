@@ -32,6 +32,7 @@ from gobby.servers.websocket.chat.backends.droid import (
     droid_tool_name_adapter,
     parse_droid_stream_line,
 )
+from tests.servers.websocket.chat._progress_clock import ClockedStdout, install_fake_loop_clock
 
 pytestmark = pytest.mark.unit
 
@@ -1359,20 +1360,25 @@ async def test_send_message_progress_timeout_emits_one_error_and_is_reconnectabl
 
 
 @pytest.mark.asyncio
-async def test_send_message_progress_timeout_renews_on_parsed_event() -> None:
+async def test_send_message_progress_timeout_renews_on_parsed_event(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = install_fake_loop_clock(monkeypatch)
     _result_ack, text_line, idle_line = _turn_response_lines("Still going")
     del _result_ack
     process = _FakeProcess(
-        stdout=_TimedStdout(
+        stdout=ClockedStdout(
+            clock,
             [
                 (0.0, _session_init_line()),
-                # Each gap fits the timeout with load headroom; together they exceed it.
-                (0.2, text_line),
-                (0.2, idle_line),
-            ]
+                # Each gap fits the timeout; together they exceed it, so the turn
+                # survives only if each parsed event renews the deadline.
+                (2.0, text_line),
+                (2.0, idle_line),
+            ],
         )
     )
-    backend, session = _attached_session(process, prompt_timeout=0.3)
+    backend, session = _attached_session(process, prompt_timeout=3.0)
 
     with (
         patch(

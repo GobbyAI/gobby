@@ -65,11 +65,18 @@ fn actor_runner_for_unit_test() -> (PtyIoActorRunner, UnixStream) {
         data_rx,
         control_rx,
         state: ActorState::Running,
+        hung_up: false,
         pending_writes: VecDeque::new(),
         current_write_offset: 0,
         wake_read_fd: wake_pipe.read_fd,
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::new(Mutex::new(SharedPtyControls::default())),
         response_order: Arc::new(Mutex::new(())),
+        ack_fault: None,
+        withheld_ack: None,
         on_read: Box::new(|_| PtyReadResult::empty()),
         on_reader_exit: None,
         poll_observer: None,
@@ -331,7 +338,10 @@ fn resize_and_nudge_keep_latest_request_when_command_queue_is_full() {
         data_tx,
         control_tx,
         wake,
-        user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::clone(&controls),
         response_order: Arc::new(Mutex::new(())),
     };
@@ -389,11 +399,18 @@ fn appearance_transition_report_precedes_query_of_new_scheme() {
         data_rx,
         control_rx,
         state: ActorState::Running,
+        hung_up: false,
         pending_writes: VecDeque::new(),
         current_write_offset: 0,
         wake_read_fd: wake_pipe.read_fd,
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::clone(&controls),
         response_order: Arc::clone(&response_order),
+        ack_fault: None,
+        withheld_ack: None,
         on_read: Box::new(move |_| PtyReadResult {
             terminal_responses: vec![if query_light.load(Ordering::Acquire) {
                 Bytes::from_static(b"query-light")
@@ -408,7 +425,10 @@ fn appearance_transition_report_precedes_query_of_new_scheme() {
         data_tx,
         control_tx,
         wake: wake_pipe.writer,
-        user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls,
         response_order,
     };
@@ -471,19 +491,23 @@ async fn async_user_input_waits_for_queue_capacity() {
         data_tx,
         control_tx,
         wake,
-        user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::new(Mutex::new(SharedPtyControls::default())),
         response_order: Arc::new(Mutex::new(())),
     };
 
-    let write = tokio::spawn(async move {
+    let mut write = tokio::spawn(async move {
         handle
             .write_user_input(Bytes::from_static(b"wait-for-capacity"))
             .await
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
     assert!(
-        !write.is_finished(),
+        tokio::time::timeout(Duration::from_millis(50), &mut write)
+            .await
+            .is_err(),
         "async input should wait for queue capacity"
     );
 
@@ -517,17 +541,25 @@ async fn async_user_input_waiting_for_capacity_is_rejected_after_handoff_begins(
         data_tx,
         control_tx,
         wake,
-        user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::new(Mutex::new(SharedPtyControls::default())),
         response_order: Arc::new(Mutex::new(())),
     };
     let write_handle = handle.clone();
-    let write = tokio::spawn(async move {
+    let mut write = tokio::spawn(async move {
         write_handle
             .write_user_input(Bytes::from_static(b"after-handoff-start"))
             .await
     });
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut write)
+            .await
+            .is_err(),
+        "async input should wait for queue capacity before the handoff"
+    );
 
     let handoff = std::thread::spawn(move || handle.begin_handoff(Duration::from_secs(1)));
     match control_rx
@@ -572,7 +604,10 @@ fn handoff_control_is_not_blocked_by_full_data_queue() {
         data_tx,
         control_tx,
         wake,
-        user_writes: Arc::new(Mutex::new(UserWriteGate { accepting: true })),
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::new(Mutex::new(SharedPtyControls::default())),
         response_order: Arc::new(Mutex::new(())),
     };
@@ -615,11 +650,18 @@ fn begin_handoff_drains_user_writes_already_in_command_queue() {
         data_rx,
         control_rx,
         state: ActorState::Running,
+        hung_up: false,
         pending_writes: VecDeque::new(),
         current_write_offset: 0,
         wake_read_fd: fd::create_wake_pipe().expect("wake pipe").read_fd,
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::new(Mutex::new(SharedPtyControls::default())),
         response_order: Arc::new(Mutex::new(())),
+        ack_fault: None,
+        withheld_ack: None,
         on_read: Box::new(|_| PtyReadResult::empty()),
         on_reader_exit: None,
         poll_observer: None,
@@ -686,11 +728,18 @@ fn data_drain_applies_resume_queued_before_a_write() {
         data_rx,
         control_rx,
         state: ActorState::Quiesced,
+        hung_up: false,
         pending_writes: VecDeque::new(),
         current_write_offset: 0,
         wake_read_fd: fd::create_wake_pipe().expect("wake pipe").read_fd,
+        user_writes: Arc::new(Mutex::new(UserWriteGate {
+            accepting: true,
+            hung_up: false,
+        })),
         controls: Arc::new(Mutex::new(SharedPtyControls::default())),
         response_order: Arc::new(Mutex::new(())),
+        ack_fault: None,
+        withheld_ack: None,
         on_read: Box::new(|_| PtyReadResult::empty()),
         on_reader_exit: None,
         poll_observer: None,
@@ -713,4 +762,117 @@ fn data_drain_applies_resume_queued_before_a_write() {
         runner.pending_writes,
         VecDeque::from([Bytes::from_static(b"first")])
     );
+}
+
+/// Half-closes the peer so the actor reads EOF, as a PTY master does once the
+/// child's side closes, and checks the actor parked rather than exiting.
+fn parked_actor(
+    poll_observer: Option<std_mpsc::Sender<()>>,
+) -> (PtyIoActorHandle, UnixStream, std_mpsc::Receiver<Bytes>) {
+    let (handle, peer, read_rx) = actor_with_socket_pair_and_poll_observer(false, poll_observer);
+    peer.shutdown(std::net::Shutdown::Write)
+        .expect("peer half-close");
+    assert_master_open(&peer);
+    (handle, peer, read_rx)
+}
+
+/// The peer's 1 s read timeout passes while the actor still holds its end.
+fn assert_master_open(mut peer: &UnixStream) {
+    let mut buf = [0u8; 1];
+    let err = peer
+        .read(&mut buf)
+        .expect_err("the actor keeps its master open");
+    assert!(
+        matches!(
+            err.kind(),
+            std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+        ),
+        "{err}"
+    );
+}
+
+/// What a peer read returns once the actor ends; 0 means the master closed.
+fn read_after_close(mut peer: &UnixStream) -> usize {
+    let mut buf = [0u8; 1];
+    peer.read(&mut buf).expect("peer read after the actor ends")
+}
+
+fn polls_within(poll_rx: &std_mpsc::Receiver<()>, window: Duration) -> usize {
+    let deadline = Instant::now() + window;
+    let mut polls = 0;
+    while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        if poll_rx.recv_timeout(left).is_err() {
+            break;
+        }
+        polls += 1;
+    }
+    polls
+}
+
+fn assert_writes_refused(handle: &PtyIoActorHandle) {
+    assert!(matches!(
+        handle.try_write_user_input(Bytes::from_static(b"late")),
+        Err(mpsc::error::TrySendError::Closed(_))
+    ));
+}
+
+#[test]
+fn actor_parks_at_eof_without_polling_the_pty() {
+    let (poll_tx, poll_rx) = std_mpsc::channel();
+    let (handle, _peer, _read_rx) = parked_actor(Some(poll_tx));
+
+    let stale = poll_rx.try_iter().take(16).count();
+    assert!(stale < 16, "a parked actor spins on poll");
+    let polls = polls_within(&poll_rx, Duration::from_millis(500));
+    assert!(polls <= 2, "a parked actor polled {polls} times in 500 ms");
+    assert_writes_refused(&handle);
+    handle.shutdown();
+}
+
+#[test]
+fn parked_actor_hands_off_and_rolls_back() {
+    let (handle, mut peer, _read_rx) = parked_actor(None);
+
+    handle
+        .begin_handoff(Duration::from_secs(1))
+        .expect("a parked actor quiesces");
+    let duplicate = handle
+        .duplicate_for_handoff()
+        .expect("a parked actor duplicates its master");
+    let mut duplicate = UnixStream::from(unsafe { OwnedFd::from_raw_fd(duplicate) });
+    duplicate
+        .write_all(b"dup")
+        .expect("write through the duplicate");
+    let mut buf = [0u8; 3];
+    peer.read_exact(&mut buf)
+        .expect("peer reads through the duplicate");
+    assert_eq!(&buf, b"dup");
+    drop(duplicate);
+
+    handle
+        .rollback_handoff()
+        .expect("a parked actor rolls back");
+    assert_writes_refused(&handle);
+    assert_master_open(&peer);
+
+    handle.shutdown();
+    assert_eq!(read_after_close(&peer), 0, "the actor closed its master");
+}
+
+#[test]
+fn release_after_commit_closes_a_parked_master() {
+    let (handle, peer, _read_rx) = parked_actor(None);
+
+    handle
+        .release_after_commit()
+        .expect("a parked actor releases");
+    assert_eq!(read_after_close(&peer), 0, "the actor closed its master");
+}
+
+#[test]
+fn dropping_every_handle_closes_a_parked_master() {
+    let (handle, peer, _read_rx) = parked_actor(None);
+
+    drop(handle);
+    assert_eq!(read_after_close(&peer), 0, "the actor closed its master");
 }

@@ -214,6 +214,36 @@ mod fallback;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub use fallback::*;
 
+/// Applies `how` (`SIG_BLOCK` or `SIG_UNBLOCK`) for SIGTERM to the calling
+/// thread's mask.
+#[cfg(unix)]
+pub(crate) fn set_sigterm_mask(how: libc::c_int) {
+    // SAFETY: sigemptyset initializes the set before sigaddset and
+    // pthread_sigmask read it; all three are async-signal-safe, as `pre_exec`
+    // requires.
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        libc::sigaddset(&mut set, libc::SIGTERM);
+        libc::pthread_sigmask(how, &set, std::ptr::null_mut());
+    }
+}
+
+/// Unblocks SIGTERM in `command`'s child, which otherwise inherits the
+/// spawning thread's mask: the gterm host blocks SIGTERM on every thread but
+/// main (`host::sigterm`).
+#[cfg(unix)]
+pub(crate) fn unmask_sigterm(command: &mut std::process::Command) {
+    // SAFETY: the hook only changes the child's signal mask, which is
+    // async-signal-safe.
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(command, || {
+            set_sigterm_mask(libc::SIG_UNBLOCK);
+            Ok(())
+        });
+    }
+}
+
 #[cfg(test)]
 fn normalized_process_name(name: &str) -> String {
     name.rsplit(['/', '\\'])

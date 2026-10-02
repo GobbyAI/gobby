@@ -22,8 +22,13 @@ TRUNCATED = '{"file_path": "/repo/src/app.py", "content": "VALUE = '
         ({"tool_name": "Write", "args": TRUNCATED}, "args", "invalid_json"),
         ({"tool_name": "Read", "toolArgs": "[1]"}, "toolArgs", "non_object_json"),
         ({"tool_name": "Bash", "tool_input": '"ls"'}, "tool_input", "non_object_json"),
+        (
+            {"tool_name": "Write", "toolArgs": '[{"path": "/repo/a.py"}]'},
+            "toolArgs",
+            "non_object_json",
+        ),
     ],
-    ids=["toolArgs", "tool_input", "parameters", "args", "array", "json-string"],
+    ids=["toolArgs", "tool_input", "parameters", "args", "array", "json-string", "write-array"],
 )
 def test_unparseable_string_tool_input_is_marked_without_content(
     data: dict[str, Any], field: str, code: str
@@ -44,8 +49,9 @@ def test_unparseable_string_tool_input_is_marked_without_content(
         ({"tool_name": "Read", "toolArgs": []}, "toolArgs"),
         ({"tool_name": "Read", "parameters": 1.5}, "parameters"),
         ({"tool_name": "apply_patch", "args": ["*** Begin Patch"]}, "args"),
+        ({"tool_name": "Write", "tool_input": [{"path": "/repo/a.py"}]}, "tool_input"),
     ],
-    ids=["list", "int", "bool", "empty-list", "float", "apply-patch-list"],
+    ids=["list", "int", "bool", "empty-list", "float", "apply-patch-list", "write-list"],
 )
 def test_non_object_tool_input_is_marked_never_coerced(data: dict[str, Any], field: str) -> None:
     normalize_tool_fields(data)

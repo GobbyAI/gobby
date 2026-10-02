@@ -574,6 +574,8 @@ fn tmux_command() -> Command {
     // a daemon, tmux rewrites control and non-ASCII bytes in display-message
     // output to `_`, and the poll batch's length-framed title needs them intact.
     command.arg("-u");
+    #[cfg(unix)]
+    crate::platform::unmask_sigterm(&mut command);
     command
 }
 

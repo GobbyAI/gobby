@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1277,6 +1278,28 @@ class TestGetRunningAgent:
         assert result["agent"]["pid"] == 12345
         assert result["agent"]["session_id"] == "sess-456"
         assert "resume_metadata_json" not in result["agent"]
+
+    @pytest.mark.asyncio
+    async def test_agent_projection_runs_off_the_event_loop(self) -> None:
+        """The projection reads violation logs, so it must not block the loop."""
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(run_id=self.RUN_ID, status="running")
+        projected = dict(mock_run.to_dict.return_value)
+        projection_threads: list[int] = []
+
+        def project() -> dict[str, Any]:
+            projection_threads.append(threading.get_ident())
+            return projected
+
+        mock_run.to_dict.side_effect = project
+        runner.run_storage.get.return_value = mock_run
+        get_running = create_agents_registry(runner)._tools["get_running_agent"].func
+
+        result = await get_running(run_id=self.RUN_ID)
+
+        assert result["success"] is True
+        assert projection_threads
+        assert threading.get_ident() not in projection_threads
 
     @pytest.mark.asyncio
     async def test_agent_not_found(self) -> None:

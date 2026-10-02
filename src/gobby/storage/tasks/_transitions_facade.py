@@ -219,9 +219,17 @@ class TaskTransitionsMixin:
         validation_override_reason: str | None = None,
         cwd: str | Path | None = None,
     ) -> Task:
-        """Link a commit and close the task in one transaction."""
+        """Link a commit and close the task in one transaction.
+
+        The link stores Git's canonical short SHA, like every other commit writer (#23251).
+        """
+        from gobby.utils.git import normalize_commit_sha
+
+        short_sha = normalize_commit_sha(commit_sha, cwd=cwd)
+        if short_sha is None:
+            raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
         with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
-            _link_commit(self.db, task_id, commit_sha)
+            _link_commit(self.db, task_id, short_sha)
             _close_task(
                 self.db,
                 task_id=task_id,

@@ -6,7 +6,7 @@ import asyncio
 import base64
 import json
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -110,10 +110,35 @@ class HelloResult:
 
 
 @dataclass(frozen=True)
+class UpgradeOutcome:
+    """How the host's last finished upgrade attempt ended."""
+
+    attempt_id: str
+    outcome: str
+    candidate_sha256: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class UpgradeStatus:
+    """The host's upgrade record from ``ping`` (plan gterm-host-handover 1.3)."""
+
+    phase: str
+    attempt_id: str | None = None
+    candidate_sha256: str | None = None
+    remaining_ms: int | None = None
+    last_outcome: UpgradeOutcome | None = None
+
+
+@dataclass(frozen=True)
 class PingResult:
     host_epoch: str
     version: str
     host_pid: int
+    # Hosts that predate in-place upgrades report none of these.
+    binary_sha256: str | None = None
+    generation: int | None = None
+    upgrade: UpgradeStatus | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +153,55 @@ class HostBatchTarget:
     recipient_id: str
     host_terminal_id: str
     operations: tuple[HostBatchOperation, ...]
+
+
+def _opt_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _opt_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _parse_outcome(raw: Any) -> UpgradeOutcome | None:
+    if not isinstance(raw, dict):
+        return None
+    attempt_id = _opt_str(raw.get("attempt_id"))
+    outcome = _opt_str(raw.get("outcome"))
+    if attempt_id is None or outcome is None:
+        return None
+    return UpgradeOutcome(
+        attempt_id=attempt_id,
+        outcome=outcome,
+        candidate_sha256=_opt_str(raw.get("candidate_sha256")),
+        reason=_opt_str(raw.get("reason")),
+    )
+
+
+def _parse_upgrade(raw: Any) -> UpgradeStatus | None:
+    phase = raw.get("phase") if isinstance(raw, dict) else None
+    if not isinstance(phase, str) or not phase:
+        return None
+    return UpgradeStatus(
+        phase=phase,
+        attempt_id=_opt_str(raw.get("attempt_id")),
+        candidate_sha256=_opt_str(raw.get("candidate_sha256")),
+        remaining_ms=_opt_int(raw.get("remaining_ms")),
+        last_outcome=_parse_outcome(raw.get("last_outcome")),
+    )
+
+
+def parse_ping(payload: dict[str, Any]) -> PingResult:
+    """Decode a ``ping`` reply, including binary identity and the upgrade record."""
+    HostClient.require_ping(payload)
+    return PingResult(
+        host_epoch=str(payload.get("host_epoch", "")),
+        version=str(payload.get("version", "")),
+        host_pid=int(payload["host_pid"]),
+        binary_sha256=_opt_str(payload.get("binary_sha256")),
+        generation=_opt_int(payload.get("generation")),
+        upgrade=_parse_upgrade(payload.get("upgrade")),
+    )
 
 
 def encode_control_line(payload: dict[str, Any]) -> bytes:
@@ -401,12 +475,15 @@ class HostClient:
         )
 
     async def ping(self) -> PingResult:
-        payload = self.require_ping(await self._roundtrip({"method": "ping"}))
+        payload = await self._roundtrip({"method": "ping"})
+        ping = parse_ping(payload)
         self.host_epoch = str(payload.get("host_epoch", self.host_epoch or ""))
-        return PingResult(
-            host_epoch=self.host_epoch,
-            version=str(payload.get("version", "")),
-            host_pid=int(payload["host_pid"]),
+        return replace(ping, host_epoch=self.host_epoch)
+
+    async def host_upgrade(self, exe: str, attempt_id: str) -> dict[str, Any]:
+        """Ask the host to exec ``exe`` in place; the reply accepts or refuses it."""
+        return await self._roundtrip(
+            {"method": "host_upgrade", "exe": exe, "attempt_id": attempt_id}
         )
 
     async def list_terminals(self) -> list[HostListRow]:
@@ -727,6 +804,10 @@ __all__ = [
     "HostManagerStopped",
     "HostNotAdoptedError",
     "HostUnavailableError",
+    "PingResult",
+    "UpgradeOutcome",
+    "UpgradeStatus",
     "decode_control_line",
     "encode_control_line",
+    "parse_ping",
 ]

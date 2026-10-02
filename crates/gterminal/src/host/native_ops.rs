@@ -264,17 +264,20 @@ fn native_slot_alive(_slot: &TerminalSlot) -> bool {
 }
 
 impl HostState {
-    pub fn begin_shutdown(self: &Arc<Self>, grace_ms: u64) {
-        if self.draining.swap(true, Ordering::SeqCst) {
-            return;
+    pub fn begin_shutdown(self: &Arc<Self>, grace_ms: u64) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
+        if !self.draining.swap(true, Ordering::SeqCst) {
+            let state = Arc::clone(self);
+            tokio::spawn(async move {
+                state
+                    .drain_native_children(Duration::from_millis(grace_ms))
+                    .await;
+                let _ = state.shutdown.send(true);
+            });
         }
-        let state = Arc::clone(self);
-        tokio::spawn(async move {
-            state
-                .drain_native_children(Duration::from_millis(grace_ms))
-                .await;
-            let _ = state.shutdown.send(true);
-        });
+        json!({"ok": true, "accepted": true, "draining": true})
     }
 
     async fn drain_native_children(&self, grace: Duration) {
@@ -327,6 +330,9 @@ impl HostState {
     }
 
     pub async fn reserve_observer(&self, conn_id: u64, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let terminal_id = extra
             .get("terminal_id")
             .and_then(Value::as_str)
@@ -379,6 +385,9 @@ impl HostState {
     }
 
     pub async fn release_observer(&self, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let reservation_id = extra
             .get("reservation_id")
             .and_then(Value::as_str)
@@ -401,6 +410,9 @@ impl HostState {
     }
 
     pub async fn spawn_commit(self: &Arc<Self>, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let identity = Identity {
             terminal_id: s(extra, "terminal_id"),
             spawn_key: s(extra, "spawn_key"),
@@ -511,10 +523,16 @@ impl HostState {
         exit_watch: crate::pane::ChildExitWatch,
     ) {
         let state = Arc::clone(self);
+        #[cfg(unix)]
+        let hold = exit_watcher_holds(self.generation, &identity.terminal_id);
         tokio::spawn(async move {
             let Some(exit) = exit_watch.wait().await else {
                 return;
             };
+            #[cfg(unix)]
+            if hold {
+                until_write_owned(&state.mutation_gate).await;
+            }
             state
                 .settle_leader_exit(&identity, &host_terminal_id, exit.exit_code)
                 .await;
@@ -527,6 +545,10 @@ impl HostState {
         extra: &Map<String, Value>,
         grace_ms: Option<u64>,
     ) -> Value {
+        // Owned: the proof task below outlives a dropped connection.
+        let Ok(gate) = Arc::clone(&self.mutation_gate).try_read_owned() else {
+            return err("host_upgrading");
+        };
         let host_terminal_id = s(extra, "host_terminal_id");
         let grace_ms = grace_ms.unwrap_or(100);
         // Mark the slot in flight and keep it listed: a listing taken during
@@ -556,6 +578,7 @@ impl HostState {
         let state = Arc::clone(self);
         let grace = Duration::from_millis(grace_ms);
         let proof = tokio::spawn(async move {
+            let _gate = gate;
             let proven = terminate_group(pgid, grace).await;
             let mut inner = state.inner.lock().await;
             if proven {
@@ -580,6 +603,9 @@ impl HostState {
     }
 
     pub async fn resize(&self, extra: &Map<String, Value>) -> Value {
+        let Ok(_gate) = self.mutation_gate.try_read() else {
+            return err("host_upgrading");
+        };
         let host_terminal_id = s(extra, "host_terminal_id");
         let rows = extra.get("rows").and_then(Value::as_i64).unwrap_or(0);
         let cols = extra.get("cols").and_then(Value::as_i64).unwrap_or(0);
@@ -674,6 +700,7 @@ impl HostState {
         host_terminal_id: &str,
         exit_code: Option<u32>,
     ) -> bool {
+        let _gate = self.mutation_gate.read().await;
         let mut inner = self.inner.lock().await;
         if let Some(slot) = inner
             .terminals
@@ -698,6 +725,7 @@ impl HostState {
     }
 
     pub async fn expire_prepared(&self) {
+        let _gate = self.mutation_gate.read().await;
         let mut inner = self.inner.lock().await;
         let now = Instant::now();
         let expired: Vec<Identity> = inner
@@ -852,6 +880,32 @@ impl HostState {
 
     pub fn lag_timeout(&self) -> Duration {
         self.config.lag_timeout()
+    }
+}
+
+/// Bounds a held exit watcher when no upgrade takes the write guard.
+#[cfg(all(unix, feature = "vt-engine"))]
+const EXIT_WATCHER_HOLD_CAP: Duration = Duration::from_secs(20);
+
+/// Test-only (plan gterm-host-handover 1.3.9): under `GTERM_TEST_HELPER=1`,
+/// `GTERM_TEST_EXIT_WATCHER_HOLD=<terminal_id>` holds that pane's exit
+/// watcher between the exit and the gate until an upgrade owns the write
+/// guard, so the exit settles only after it. Only a cold-start image holds:
+/// the restored one inherits the environment.
+#[cfg(all(unix, feature = "vt-engine"))]
+fn exit_watcher_holds(generation: u64, terminal_id: &str) -> bool {
+    let helper = std::env::var_os("GTERM_TEST_HELPER").is_some_and(|value| value == "1");
+    helper
+        && generation == 0
+        && std::env::var("GTERM_TEST_EXIT_WATCHER_HOLD").is_ok_and(|pane| pane == terminal_id)
+}
+
+/// Returns once a writer owns `gate`, or after `EXIT_WATCHER_HOLD_CAP`.
+#[cfg(all(unix, feature = "vt-engine"))]
+async fn until_write_owned(gate: &tokio::sync::RwLock<()>) {
+    let give_up = Instant::now() + EXIT_WATCHER_HOLD_CAP;
+    while gate.try_read().is_ok() && Instant::now() < give_up {
+        tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 

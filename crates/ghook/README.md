@@ -39,6 +39,11 @@ outages so `turn_end` gates cannot be bypassed; the Qwen session can remain
 active until the daemon recovers or hooks are disabled. Claude's Stop posture
 remains fail open.
 
+When a noncritical Stop's live POST fails, the turn ends with no daemon verdict
+and `ghook` records a failure artifact. The failures directory keeps the newest
+100 artifacts (`--diagnose` lists the newest 10), and each prune also removes
+`.json.tmp` files more than an hour old, left by writers that died.
+
 ## Planned shutdown Stop handling
 
 For Stop hooks only, `ghook` recognizes fresh daemon shutdown markers in

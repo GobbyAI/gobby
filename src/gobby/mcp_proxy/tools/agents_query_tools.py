@@ -935,7 +935,8 @@ def register_agent_query_tools(
             return {"success": False, "error": f"No running agent found with ID {run_id}"}
         run = await overlay_live_activity(run, ctx.transcript_reader)
 
-        agent = run.to_dict()
+        # The projection reads the run's violation log, so keep it off the loop.
+        agent = await asyncio.to_thread(run.to_dict)
         if not include_resume_metadata:
             agent.pop("resume_metadata_json", None)
         return {"success": True, "agent": agent}

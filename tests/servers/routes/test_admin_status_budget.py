@@ -195,22 +195,24 @@ async def test_postgres_dashboard_uses_managed_database_executor(
 
 
 @pytest.mark.asyncio
-async def test_postgres_status_retains_index_diagnostics_after_sql_error(
+async def test_daemon_postgres_status_checks_bm25_presence_without_verify_index(
     postgres_db: HubDatabase, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    executor = DatabaseExecutor(max_workers=1, thread_name_prefix="status-index-error-db")
+    # pdb.verify_index checksums every segment (~210 ms warm on the 1 GB live indexes,
+    # far more under I/O contention); per-request status must not pay that.
+    executor = DatabaseExecutor(max_workers=1, thread_name_prefix="status-index-presence-db")
     execute = _PostgresTransaction.execute
+    statements: list[str] = []
 
-    def fail_verification(
+    def record_statement(
         transaction: _PostgresTransaction,
         query: str,
         params: Sequence[Any] | Mapping[str, Any] = (),
     ) -> Cursor:
-        if "FROM pdb.verify_index" in query:
-            return execute(transaction, "SELECT 1 / 0")
+        statements.append(query)
         return execute(transaction, query, params)
 
-    monkeypatch.setattr(_PostgresTransaction, "execute", fail_verification)
+    monkeypatch.setattr(_PostgresTransaction, "execute", record_statement)
     monkeypatch.setattr(
         bm25_health,
         "_required_index_names",
@@ -220,14 +222,13 @@ async def test_postgres_status_retains_index_diagnostics_after_sql_error(
         with database_operation_deadline(timeout_seconds=2):
             status = await get_postgres_status(database=postgres_db, run_db=executor.run)
 
+        assert [query for query in statements if "pdb.verify_index" in query] == []
         assert status["healthy"] is True
         assert set(status["extensions"]) == {"pg_search", "pgaudit", "pgcrypto"}
         assert status["code_index"]["healthy"] is False
         assert status["code_index"]["repair_command"] == bm25_health.BM25_REPAIR_COMMAND
         first, second = status["code_index"]["indexes"]
-        assert first["state"] == "error"
-        assert "division by zero" in first["error"]
-        assert second["state"] == "missing"
+        assert (first["state"], second["state"]) == ("present", "missing")
         assert await executor.run(postgres_db.fetchone, "SELECT 1 AS value") == {"value": 1}
     finally:
         executor.shutdown()

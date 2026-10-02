@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections import deque
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -18,6 +18,8 @@ from gobby.paths import get_gobby_home
 
 _MAX_EXPOSED_VIOLATIONS = 100
 _MAX_COUNTED_VIOLATIONS = 10_000
+_MAX_TAIL_BYTES = 16 * 1024 * 1024
+_TAIL_BLOCK_BYTES = 64 * 1024
 
 
 def sandbox_list_record(raw: object, *, active: bool) -> dict[str, Any] | None:
@@ -150,28 +152,39 @@ def _read_violations(
 ) -> tuple[int, list[Any], bool]:
     if path is None:
         return 0, [], False
-    if not include_events:
-        count, truncated = _count_violation_lines(path)
-        return count, [], truncated
-    recent: deque[Any] = deque(maxlen=_MAX_EXPOSED_VIOLATIONS)
-    count = 0
-    truncated = False
+    count, truncated = _count_violation_lines(path)
+    return count, _recent_violations(path) if include_events else [], truncated
+
+
+def _recent_violations(path: Path) -> list[Any]:
+    """Decode only the newest events; a log can reach gigabytes, so never parse it whole."""
+    recent: list[Any] = []
+    pending = b""
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                count += 1
-                if include_events:
-                    recent.append(value)
-                elif count >= _MAX_COUNTED_VIOLATIONS:
-                    truncated = next(handle, None) is not None
-                    break
+        with path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            floor = max(0, position - _MAX_TAIL_BYTES)
+            while position > floor and len(recent) < _MAX_EXPOSED_VIOLATIONS:
+                size = min(_TAIL_BLOCK_BYTES, position - floor)
+                position -= size
+                handle.seek(position)
+                lines = (handle.read(size) + pending).split(b"\n")
+                # Above the file start the first piece may continue in the block before it;
+                # at the byte ceiling that partial line is dropped.
+                pending = lines.pop(0) if position > 0 else b""
+                for line in reversed(lines):
+                    if len(recent) == _MAX_EXPOSED_VIOLATIONS:
+                        break
+                    if not line.strip():
+                        continue
+                    try:
+                        recent.append(json.loads(line.decode("utf-8", errors="replace")))
+                    except json.JSONDecodeError:
+                        continue
     except OSError:
-        return 0, [], False
-    return count, list(recent), truncated
+        return []
+    recent.reverse()
+    return recent
 
 
 def _count_violation_lines(path: Path) -> tuple[int, bool]:

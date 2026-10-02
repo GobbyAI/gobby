@@ -150,6 +150,10 @@ pub fn spawn_host(extra: &[&str]) -> HostProc {
 }
 
 pub fn spawn_host_with_env_removed(extra: &[&str], removed: &[&str]) -> HostProc {
+    spawn_host_with_env(extra, &[], removed)
+}
+
+pub fn spawn_host_with_env(extra: &[&str], env: &[(&str, &str)], removed: &[&str]) -> HostProc {
     let dir = crate::host_support::temp_socket_dir();
     let token_path = dir.path().join("gterm-control.token");
     std::fs::write(&token_path, "control-token").unwrap();
@@ -163,7 +167,7 @@ pub fn spawn_host_with_env_removed(extra: &[&str], removed: &[&str]) -> HostProc
     std::fs::write(dir.path().join("local_cli_token"), LOCAL).unwrap();
     let mut args = vec!["--tmux-poll-interval-ms", "50"];
     args.extend_from_slice(extra);
-    let mut host = crate::host_support::spawn_host_with_env_removed(dir.path(), &args, removed);
+    let mut host = crate::host_support::spawn_host_with_env(dir.path(), &args, env, removed);
     host.own_socket_dir(dir);
     wait_socket(&host.socket_dir().join(CONTROL_SOCKET));
     wait_socket(&host.socket_dir().join(FRAMES_SOCKET));

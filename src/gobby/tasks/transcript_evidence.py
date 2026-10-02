@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
@@ -54,6 +54,13 @@ from gobby.tasks.transcript_evidence_snapshots import (
     read_transcript_suffix,
     store_durable_snapshot,
     store_snapshot,
+)
+from gobby.tasks.transcript_evidence_transfer import (
+    ChunkedPayload,
+    decode,
+    decode_cooperatively,
+    encode,
+    encode_cooperatively,
 )
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
@@ -104,6 +111,8 @@ WINDOW_LOOKBACK = timedelta(hours=2)
 _UTC_LINE_TIMESTAMP_RE = re.compile(
     r'"timestamp"\s*:\s*"(\d{4}-\d{2}-\d{2}T[0-9:.]{8,})(?:Z|\+00:00)"'
 )
+# The general exit-preserving normalizer strips the `rtk` executable itself.
+_RTK_RECALL_RE = re.compile(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})")
 
 _SHELL_TOOLS = {
     "bash",
@@ -187,8 +196,9 @@ async def derive_transcript_evidence(
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
-    evidence, snapshot = await run_in_transcript_evidence_pool(
-        _derive_transcript_evidence_sync,
+    resume = load_snapshot(session.id)
+    payload = await run_in_transcript_evidence_pool(
+        _derive_chunked_transcript_evidence,
         session,
         _coerce_datetime(window_start),
         detection_config,
@@ -197,7 +207,11 @@ async def derive_transcript_evidence(
         task_checkout_paths,
         archive_dir,
         local_machine_id,
-        load_snapshot(session.id),
+        None if resume is None else await encode_cooperatively(resume),
+    )
+    evidence, snapshot = cast(
+        tuple[TranscriptEvidence, EvidenceSnapshot | None],
+        await decode_cooperatively(payload),
     )
     if snapshot is not None:
         store_snapshot(session.id, snapshot)
@@ -294,6 +308,33 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
             ),
             default=None,
         ),
+    )
+
+
+def _derive_chunked_transcript_evidence(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
+    archive_dir: str | None,
+    local_machine_id: str,
+    resume: ChunkedPayload | None,
+) -> ChunkedPayload:
+    """Pool entry: records cross the boundary in chunks the event loop decodes."""
+    return encode(
+        _derive_transcript_evidence_sync(
+            session,
+            window_start,
+            detection_config,
+            task_edited_files,
+            repo_path,
+            task_checkout_paths,
+            archive_dir,
+            local_machine_id,
+            None if resume is None else cast(EvidenceSnapshot, decode(resume)),
+        )
     )
 
 
@@ -604,6 +645,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             else not classify_validation_command_equivalence(outcome.command).wrapped
         ),
     )
+    output, output_truncated = _retained_output(outcome.command, segments, output, output_truncated)
     provenance = outcome.result.get("outcome_provenance")
     if provenance == "codex.functions_exec.wrapper" and state.runs:
         prior = state.runs[-1]
@@ -737,7 +779,7 @@ def _record_validation_run(
     segments = _validation_segments(matches)
     # A literal recall carries the original failure sections, often larger than
     # the ordinary command summary. Keep that native receipt bounded separately.
-    recall = re.fullmatch(r"(?:uv run )?rtk recall [0-9a-f]{12,64}", command.strip())
+    recall = _RTK_RECALL_RE.fullmatch(command.strip())
     output, output_truncated = (
         _extract_output(result, max_chars=64_000) if recall else _extract_output(result)
     )
@@ -755,6 +797,7 @@ def _record_validation_run(
             f"{source_label} lacks a definitive exit outcome for {match.label if match else 'command'}; "
             "re-run the command in a supported shell tool"
         )
+    output, output_truncated = _retained_output(command, segments, output, output_truncated)
     state.runs.append(
         TranscriptValidationRun(
             session_id=state.session.id,
@@ -777,11 +820,26 @@ def _record_validation_run(
     _recover_rtk_output(state, result)
 
 
+def _retained_output(
+    command: str,
+    segments: tuple[TranscriptValidationSegment, ...],
+    output: str | None,
+    output_truncated: bool,
+) -> tuple[str | None, bool]:
+    """Keep output only where a gate reads it: validation runs and recall receipts.
+
+    Review-only shell output is never read after outcome extraction, and every
+    retained byte is unpickled from the derivation pool while holding the GIL.
+    """
+    if segments or _RTK_RECALL_RE.fullmatch(command.strip()):
+        return output, output_truncated
+    return None, False
+
+
 def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
     """Attach a native recall receipt to its unique original failed test run."""
     receipt = state.runs[-1]
-    # The general exit-preserving normalizer strips the `rtk` executable itself.
-    match = re.fullmatch(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})", receipt.command.strip())
+    match = _RTK_RECALL_RE.fullmatch(receipt.command.strip())
     if match is None or receipt.wrapped:
         return
     # Retrieval output contains the old pytest failure. Its transport outcome,
