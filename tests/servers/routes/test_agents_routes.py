@@ -17,6 +17,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import yaml
 from fastapi.routing import APIRoute
 from starlette.testclient import TestClient
 
@@ -646,6 +647,37 @@ class TestExportDefinition:
         restored = agent_manager.get_by_name("exported")
         assert restored is not None
         assert AgentDefinitionBody.model_validate(restored.definition_json) == original
+
+    @pytest.mark.parametrize("enabled", [False, True])
+    def test_put_enabled_survives_export_import(
+        self,
+        client: TestClient,
+        agent_manager: AgentDefinitionManager,
+        tmp_path: Path,
+        enabled: bool,
+    ) -> None:
+        """A PUT enabled change exports and re-imports with the same state."""
+        from gobby.workflows.imports import sync_imported_workflow_file
+
+        created = client.post(
+            "/api/agents/definitions",
+            json=_agent_request("toggled", enabled=not enabled),
+        ).json()["definition"]
+        put = client.put(f"/api/agents/definitions/{created['id']}", json={"enabled": enabled})
+        assert put.status_code == 200, put.text
+
+        export = client.get("/api/agents/definitions/toggled/export")
+        assert export.status_code == 200
+        assert yaml.safe_load(export.text)["enabled"] is enabled
+        exported_file = tmp_path / "toggled.yaml"
+        exported_file.write_text(export.text)
+
+        assert agent_manager.hard_delete(created["id"])
+        sync_imported_workflow_file(agent_manager.db, exported_file, None)
+
+        restored = agent_manager.get_by_name("toggled")
+        assert restored is not None
+        assert restored.enabled is enabled
 
     def test_export_not_found(self, client: TestClient) -> None:
         response = client.get("/api/agents/definitions/missing/export")

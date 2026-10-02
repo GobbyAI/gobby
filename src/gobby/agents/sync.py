@@ -68,9 +68,11 @@ def _is_sync_managed_bundled_agent(existing: AgentDefinitionRow) -> bool:
     )
 
 
-def _definition_json_equal(existing_json: Any, desired_json: Any) -> bool:
-    """Compare definition JSON semantically across text and Postgres JSONB formats."""
-    return json_equal(existing_json, desired_json)
+def _definition_json_equal(existing_json: dict[str, Any], desired_json: dict[str, Any]) -> bool:
+    """Compare parent bodies semantically; the row's enabled scalar owns ``enabled``."""
+    existing = {key: value for key, value in existing_json.items() if key != "enabled"}
+    desired = {key: value for key, value in desired_json.items() if key != "enabled"}
+    return json_equal(existing, desired)
 
 
 def _was_swept_before_marker(existing: AgentDefinitionRow) -> bool:

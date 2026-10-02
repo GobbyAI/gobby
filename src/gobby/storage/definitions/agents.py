@@ -115,6 +115,11 @@ def parent_body(body_json: Mapping[str, Any] | str) -> dict[str, Any]:
     return body
 
 
+def _with_enabled(body: Mapping[str, Any], enabled: bool) -> dict[str, Any]:
+    """Store the row's ``enabled`` scalar in its body; dispatch and export read the body."""
+    return {**body, "enabled": bool(enabled)}
+
+
 _parent_body = parent_body
 
 
@@ -136,12 +141,12 @@ def _child_columns(
 def _find_live(txn: Transaction, name: str, project_id: str | None) -> Mapping[str, Any] | None:
     if project_id is None:
         return txn.execute(
-            "SELECT id, enabled_pinned FROM agent_definitions "
+            "SELECT id, enabled, enabled_pinned FROM agent_definitions "
             "WHERE name = %s AND project_id IS NULL AND deleted_at IS NULL FOR UPDATE",
             (name,),
         ).fetchone()
     return txn.execute(
-        "SELECT id, enabled_pinned FROM agent_definitions "
+        "SELECT id, enabled, enabled_pinned FROM agent_definitions "
         "WHERE name = %s AND project_id = %s AND deleted_at IS NULL FOR UPDATE",
         (name, project_id),
     ).fetchone()
@@ -312,7 +317,7 @@ class AgentDefinitionManager:
         tags: list[str] | None = None,
         source: DefinitionSource = "installed",
     ) -> AgentDefinitionRow:
-        parent = _parent_body(definition_json)
+        parent = _with_enabled(_parent_body(definition_json), enabled)
         _refuse_network_write(parent, None)
         definition_id = new_definition_id()
         now = utc_now()
@@ -416,6 +421,10 @@ class AgentDefinitionManager:
                 incoming = prepare_sync_values(current.__dict__, fields, allowed=allowed)
                 if not incoming:
                     return current
+            if "enabled" in incoming or "definition_json" in incoming:
+                body = _parent_body(incoming.get("definition_json", current.definition_json))
+                enabled = incoming.get("enabled", current.enabled)
+                incoming = {**incoming, "definition_json": _with_enabled(body, enabled)}
             values: dict[str, Any] = {}
             for key, value in incoming.items():
                 if key == "tags":
@@ -441,20 +450,18 @@ class AgentDefinitionManager:
         return self.get(definition_id)
 
     def toggle_enabled(self, definition_id: str) -> AgentDefinitionRow:
-        now = utc_now()
         with self.db.transaction() as txn:
             _refuse_locked_network(txn, definition_id)
-            row = txn.execute(
-                """
-                UPDATE agent_definitions
-                SET enabled = NOT enabled, enabled_pinned = TRUE, updated_at = %s
-                WHERE id = %s AND deleted_at IS NULL
-                RETURNING id
-                """,
-                (now, definition_id),
-            ).fetchone()
-            if row is None:
-                raise DefinitionNotFoundError(f"{_WHAT} {definition_id} not found")
+            current = _lock_live_row(txn, definition_id)
+            enabled = not current.enabled
+            body = _with_enabled(_parent_body(current.definition_json), enabled)
+            values = {
+                "enabled": enabled,
+                "enabled_pinned": True,
+                "definition_json": encode_json_value(body),
+                "updated_at": utc_now(),
+            }
+            apply_definition_update(txn, _TABLE, definition_id, values, what=_WHAT)
             touch_revision(txn, "agents")
         return self.get(definition_id)
 
@@ -609,7 +616,7 @@ class AgentDefinitionManager:
         description: str | None = None,
         create_only: bool = False,
     ) -> AgentDefinitionRow:
-        parent_body = _parent_body(body_json)
+        parent_body = _with_enabled(_parent_body(body_json), enabled)
         _refuse_network_write(parent_body, None)
         now = utc_now()
         with self.db.transaction() as txn:
@@ -686,21 +693,21 @@ class AgentDefinitionManager:
         description: str | None = None,
         restore: bool = False,
     ) -> AgentDefinitionRow:
-        parent_body = _parent_body(body_json)
+        parent_body = _with_enabled(_parent_body(body_json), enabled)
         now = utc_now()
         with self.db.transaction() as txn:
             existing = _find_live(txn, name, project_id)
             if existing is None and restore:
                 if project_id is None:
                     existing = txn.execute(
-                        "SELECT id, enabled_pinned FROM agent_definitions "
+                        "SELECT id, enabled, enabled_pinned FROM agent_definitions "
                         "WHERE name = %s AND project_id IS NULL AND deleted_at IS NOT NULL "
                         "ORDER BY deleted_at DESC LIMIT 1",
                         (name,),
                     ).fetchone()
                 else:
                     existing = txn.execute(
-                        "SELECT id, enabled_pinned FROM agent_definitions "
+                        "SELECT id, enabled, enabled_pinned FROM agent_definitions "
                         "WHERE name = %s AND project_id = %s AND deleted_at IS NOT NULL "
                         "ORDER BY deleted_at DESC LIMIT 1",
                         (name, project_id),
@@ -746,14 +753,16 @@ class AgentDefinitionManager:
                     {
                         "description": description,
                         "enabled": bool(enabled),
-                        "definition_json": encode_json_value(parent_body),
                         "tags": encode_json_list(tags),
                     },
                     allowed=_SYNC_FIELDS,
                 )
-                if values:
-                    values["updated_at"] = now
-                    apply_definition_update(txn, _TABLE, definition_id, values, what=_WHAT)
+                body_enabled = values.get("enabled", bool(existing["enabled"]))
+                values["definition_json"] = encode_json_value(
+                    _with_enabled(parent_body, body_enabled)
+                )
+                values["updated_at"] = now
+                apply_definition_update(txn, _TABLE, definition_id, values, what=_WHAT)
             child_written = _write_child(txn, definition_id, step_workflow)
             touch_revision(txn, "agents")
             if child_written:

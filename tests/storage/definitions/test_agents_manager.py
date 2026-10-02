@@ -14,7 +14,7 @@ from gobby.storage.definitions import (
     get_definitions_revision,
     register_revision_listener,
 )
-from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG
+from gobby.storage.definitions.agents import SYNC_ORPHAN_TAG, AgentDefinitionRow
 from gobby.storage.hub.postgres import PostgresHubDatabase
 
 _PROJECT = str(uuid4())
@@ -420,3 +420,53 @@ def test_widened_network_row_is_immutable_outside_sync(
     assert stored.project_id is None
     assert stored.definition_json["network"] == "trusted"
     assert stored.definition_json["step_workflow"] == _STEPS
+
+
+def _assert_body_agrees(row: AgentDefinitionRow, enabled: bool) -> None:
+    assert row.enabled is enabled
+    assert row.definition_json["enabled"] is enabled
+
+
+def test_scalar_enabled_writes_keep_body_in_agreement(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    manager = _mgr(definition_db)
+    created = manager.create("toggled", _body("toggled"))
+    _assert_body_agrees(created, True)
+
+    _assert_body_agrees(manager.update(created.id, enabled=False), False)
+    _assert_body_agrees(manager.toggle_enabled(created.id), True)
+    _assert_body_agrees(manager.toggle_enabled(created.id), False)
+    replaced = manager.update(created.id, definition_json=_body("toggled", {"enabled": True}))
+    _assert_body_agrees(replaced, False)
+    _assert_body_agrees(manager.update(created.id, enabled=True), True)
+
+
+def test_create_and_upsert_store_the_scalar_in_the_body(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    manager = _mgr(definition_db)
+    _assert_body_agrees(manager.create("created", _body("created"), enabled=False), False)
+    upserted = manager.upsert_with_steps("upserted", _body("upserted"), None, enabled=False)
+    _assert_body_agrees(upserted, False)
+    _assert_body_agrees(manager.duplicate(upserted.id, "copied"), False)
+    synced = manager.upsert_from_sync("synced", _body("synced"), None, enabled=False)
+    _assert_body_agrees(synced, False)
+
+
+def test_pinned_sync_keeps_body_on_the_pinned_scalar(
+    definition_db: PostgresHubDatabase,
+) -> None:
+    manager = _mgr(definition_db)
+    row = manager.upsert_from_sync("pinned", _body("pinned"), None)
+    manager.update(row.id, enabled=False)
+
+    resynced = manager.upsert_from_sync(
+        "pinned", _body("pinned", {"description": "new"}), None, enabled=True
+    )
+    _assert_body_agrees(resynced, False)
+    assert resynced.definition_json["description"] == "new"
+    updated = manager.update_from_sync(
+        row.id, enabled=True, definition_json=_body("pinned", {"enabled": True})
+    )
+    _assert_body_agrees(updated, False)

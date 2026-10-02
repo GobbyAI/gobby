@@ -1102,6 +1102,10 @@ class TestSyncBundledAgents:
         assert pinned_row is not None
         assert pinned_row.enabled is False
         assert pinned_row.enabled_pinned is True
+        assert pinned_row.definition_json["enabled"] is False
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            assert sync_bundled_agents(db)["updated"] == 0
 
     def test_sync_preserves_trusted_network(
         self, tmp_path: Path, definition_db: PostgresHubDatabase
