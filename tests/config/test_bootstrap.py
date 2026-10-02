@@ -14,8 +14,13 @@ from gobby.config.bootstrap import (
     FrontDoorConfig,
     backend_ports,
     load_bootstrap,
+    resolve_bootstrap_path,
 )
-from gobby.config.bootstrap_io import _merge_owner_fields, inject_local_files_home
+from gobby.config.bootstrap_io import (
+    _merge_owner_fields,
+    inject_local_files_home,
+    update_bootstrap_yaml,
+)
 
 
 def _write_bootstrap(path: Path, content: str) -> None:
@@ -425,3 +430,40 @@ def test_writers_emit_hub_flag(tmp_path: Path) -> None:
         {"datastore_mode": "local", "hub": True}, {"datastore_mode": "remote"}
     )
     assert "hub" not in merged
+
+
+def test_api_key_fields_parse_and_write(tmp_path: Path) -> None:
+    """4.2.9: api_key, api_key_id and hub_cert are absent by default and round-trip."""
+    path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(path, "datastore_mode: local\n")
+    absent = load_bootstrap(str(path))
+    assert (absent.api_key, absent.api_key_id, absent.hub_cert) == (None, None, None)
+
+    def _enroll(data: dict[str, object]) -> None:
+        data["api_key"] = "gobby_example"
+        data["api_key_id"] = "0b6c8f5e-2d7a-4c1e-9f3b-5a8d7e6c4b21"
+        data["hub_cert"] = str(tmp_path / "hub.pem")
+
+    update_bootstrap_yaml(path, _enroll)
+
+    loaded = load_bootstrap(str(path))
+    assert loaded.api_key == "gobby_example"
+    assert loaded.api_key_id == "0b6c8f5e-2d7a-4c1e-9f3b-5a8d7e6c4b21"
+    assert loaded.hub_cert == str(tmp_path / "hub.pem")
+
+    _write_bootstrap(path, "datastore_mode: local\napi_key: 42\n")
+    with pytest.raises(BootstrapConfigError, match="api_key"):
+        load_bootstrap(str(path))
+
+
+def test_resolve_bootstrap_path_prefers_sibling_bootstrap(tmp_path: Path) -> None:
+    legacy = tmp_path / "config.yaml"
+    sibling = tmp_path / "bootstrap.yaml"
+    with patch.object(bootstrap_config, "default_bootstrap_path", return_value=sibling):
+        assert resolve_bootstrap_path(None) == sibling
+    assert resolve_bootstrap_path(str(legacy)) == legacy
+    assert resolve_bootstrap_path(str(sibling)) == sibling
+
+    _write_bootstrap(sibling, "datastore_mode: local\n")
+    assert resolve_bootstrap_path(str(legacy)) == sibling
+    assert resolve_bootstrap_path("~/bootstrap.yaml") == Path.home() / "bootstrap.yaml"
