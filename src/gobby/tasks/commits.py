@@ -105,7 +105,7 @@ async def collect_commit_diff_text_async(
     net = await _net_commit_patch(commit_shas, cwd=cwd)
     if net is not None:
         return net
-    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await ancestry_order(commit_shas, cwd=cwd)
     if ordered is None:
         raise RuntimeError("git show failed while assembling the close criteria-review diff")
     streamed = await _stream_commit_patches(ordered, cwd=cwd)
@@ -154,7 +154,7 @@ async def _git_bytes(
     return result.stdout.encode("utf-8", errors="surrogateescape")
 
 
-async def _ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
+async def ancestry_order(commit_shas: list[str], *, cwd: str | Path) -> list[str] | None:
     """Canonicalize the linked commits and order them oldest-first by topology.
 
     Commit timestamps cannot order commits made within one second, so the walk
@@ -185,7 +185,7 @@ async def collect_commit_rename_aliases_async(
     """Collect prior test paths for files renamed by linked commits."""
     if not commit_shas:
         return {}
-    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await ancestry_order(commit_shas, cwd=cwd)
     if ordered is None:
         return {}
     aliases: dict[str, tuple[str, ...]] = {}
@@ -317,7 +317,7 @@ async def _net_commit_patch(
 
     ``output`` selects the diff format; the replay itself always applies binary patches.
     """
-    ordered = await _ancestry_order(commit_shas, cwd=cwd)
+    ordered = await ancestry_order(commit_shas, cwd=cwd)
     if not ordered:
         return None
     landing = await _landing_merge_patch(ordered, cwd=cwd, output=output)

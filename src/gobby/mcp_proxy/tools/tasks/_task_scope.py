@@ -18,8 +18,8 @@ from gobby.plans.semantic_lint import collect_description_target_inventory
 from gobby.storage.project_checkouts import resolve_operation_root
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.tasks.acceptance_artifacts import extract_artifact_references
-from gobby.tasks.commits import collect_net_name_status_async
-from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.tasks.commits import ancestry_order, collect_net_name_status_async
+from gobby.utils.daemon_git import GitFailed, GitOk, daemon_git
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -236,22 +236,29 @@ async def collect_commit_paths_async(commit_shas: Iterable[str], repo_path: str)
 
 @dataclass(frozen=True)
 class NetCommitPaths:
-    """Paths a close set changes on net, and those it leaves deleted."""
+    """Paths a close set changes on net, those it leaves deleted, and links it never delivered."""
 
     changed: frozenset[str] = frozenset()
     deleted: frozenset[str] = frozenset()
+    undelivered: tuple[str, ...] = ()
 
 
-async def collect_net_commit_paths_async(commit_shas: list[str], repo_path: str) -> NetCommitPaths:
+async def collect_net_commit_paths_async(
+    commit_shas: list[str], repo_path: str, *, candidate: str | None = None
+) -> NetCommitPaths:
     """Return what the linked commits change on net against the close review's base.
 
     A file a later link reverts, or one only edited and never committed, is absent.
     Deletion is Git's record alone: a file the candidate tracks but the worktree
-    lacks is never reported.
+    lacks is never reported. A linked commit the candidate does not reach is not
+    delivered, so it is listed as undelivered and never netted.
     """
-    if not commit_shas:
-        return NetCommitPaths()
-    listing = await collect_net_name_status_async(commit_shas, cwd=repo_path)
+    delivered, undelivered = await _partition_delivered_commits(commit_shas, candidate, repo_path)
+    if not delivered:
+        return NetCommitPaths(undelivered=tuple(undelivered))
+    listing = await collect_net_name_status_async(delivered, cwd=repo_path)
+    if listing is None:
+        listing = await _last_touch_name_status(delivered, repo_path)
     if listing is None:
         raise RuntimeError("Cannot compute the net diff of the linked commits against their base.")
     changed: set[str] = set()
@@ -271,7 +278,73 @@ async def collect_net_commit_paths_async(commit_shas: list[str], repo_path: str)
                 changed.add(path)
         if kind in "DR" and paths[0] is not None:
             deleted.add(paths[0])
-    return NetCommitPaths(frozenset(changed), frozenset(deleted))
+    return NetCommitPaths(frozenset(changed), frozenset(deleted), tuple(undelivered))
+
+
+async def _partition_delivered_commits(
+    commit_shas: list[str], candidate: str | None, repo_path: str
+) -> tuple[list[str], list[str]]:
+    """Split the linked commits into those the close candidate reaches and those it does not.
+
+    A rebase leaves the pre-replay originals linked beside their replays, since both
+    carry the task tag, and the candidate delivers only the commits it reaches.
+    """
+    if candidate is None:
+        return list(commit_shas), []
+    delivered: list[str] = []
+    undelivered: list[str] = []
+    for sha in commit_shas:
+        result = await daemon_git.run(
+            ["merge-base", "--is-ancestor", sha, candidate], cwd=repo_path, timeout=10
+        )
+        if isinstance(result, GitOk):
+            delivered.append(sha)
+        elif isinstance(result, GitFailed) and result.returncode == 1:
+            undelivered.append(sha)
+        else:
+            raise RuntimeError(f"Cannot check whether the close candidate delivers commit {sha}.")
+    return delivered, undelivered
+
+
+async def _last_touch_name_status(commit_shas: list[str], repo_path: str) -> str | None:
+    """List each path once, with the status of the last linked commit that touches it.
+
+    A merge-free set whose replay fails builds on foreign commits interleaved
+    between its links, and each link's own patch is exactly what the task
+    authored. A merge's first-parent diff can carry unlinked content, so a set
+    holding one stays un-nettable (#23314).
+    """
+    ordered = await ancestry_order(commit_shas, cwd=repo_path)
+    if ordered is None:
+        return None
+    merges = await daemon_git.run(
+        ["rev-list", "--no-walk", "--min-parents=2", *ordered], cwd=repo_path, timeout=10
+    )
+    if not isinstance(merges, GitOk) or merges.stdout.strip():
+        return None
+    last: dict[str, str] = {}
+    for sha in ordered:
+        result = await daemon_git.run(
+            [
+                "diff-tree",
+                "--root",
+                "--no-commit-id",
+                "--name-status",
+                "--no-renames",
+                "-z",
+                "-r",
+                sha,
+            ],
+            cwd=repo_path,
+            timeout=10,
+        )
+        if not isinstance(result, GitOk):
+            return None
+        fields = iter(result.stdout.split("\0"))
+        for status in fields:
+            if status:
+                last[next(fields, "")] = status
+    return "".join(f"{status}\0{path}\0" for path, status in last.items())
 
 
 async def _diff_tree_paths(commit_shas: Iterable[str], repo_path: str) -> set[str]:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -522,3 +522,128 @@ async def test_net_commit_paths_fail_closed_on_an_unknown_commit(tmp_path: Path)
 
     with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
         await task_scope.collect_net_commit_paths_async(["0" * 40], str(tmp_path))
+
+
+def _commit_files(
+    tmp_path: Path, git: Callable[..., str], message: str, files: Mapping[str, str | None]
+) -> str:
+    """Write (or, for None, delete) each file, commit everything, and return the commit."""
+    for name, content in files.items():
+        if content is None:
+            (tmp_path / name).unlink()
+        else:
+            (tmp_path / name).write_text(content)
+    git("add", "-A")
+    git("commit", "-qm", message)
+    return git("rev-parse", "HEAD")
+
+
+async def test_net_commit_paths_skip_a_stranded_original_whose_replay_the_candidate_joins(
+    tmp_path: Path,
+) -> None:
+    """#23261: the original and its rebase replay both carry the task tag and stay linked."""
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    base = _commit_files(tmp_path, git, "base", {"f.py": "A = 1\n"})
+    _commit_files(tmp_path, git, "foreign old base", {"old.py": "OLD = 1\n"})
+    original = _commit_files(tmp_path, git, "original", {"f.py": "A = 2\n"})
+    git("checkout", "-qb", "rebased", base)
+    new_base = _commit_files(tmp_path, git, "foreign new base", {"new.py": "NEW = 1\n"})
+    replay = _commit_files(tmp_path, git, "replay", {"f.py": "A = 2\n"})
+    git("checkout", "-qb", "joined", new_base)
+    sibling = _commit_files(tmp_path, git, "sibling", {"g.py": "G = 1\n"})
+    git("merge", "-q", "--no-ff", "-m", "join", replay)
+    join = git("rev-parse", "HEAD")
+    linked = [original, sibling, replay, join]
+
+    net = await task_scope.collect_net_commit_paths_async(linked, str(tmp_path), candidate=join)
+
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset({"f.py", "g.py"}), undelivered=(original,)
+    )
+    with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
+        await task_scope.collect_net_commit_paths_async(linked, str(tmp_path))
+
+
+async def test_net_commit_paths_skip_originals_an_inexact_rebase_left_behind(
+    tmp_path: Path,
+) -> None:
+    """#23076: a conflict-resolved replay and a pin bump the rebase dropped stay linked."""
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    base = _commit_files(tmp_path, git, "base", {"f.py": "A = 1\nB = 1\n", "pins.toml": "v = 1\n"})
+    original = _commit_files(tmp_path, git, "original", {"f.py": "A = 2\nB = 1\n"})
+    dropped_bump = _commit_files(tmp_path, git, "pin bump", {"pins.toml": "v = 2\n"})
+    git("checkout", "-qb", "rebased", base)
+    _commit_files(tmp_path, git, "foreign", {"f.py": "A = 1\nB = 3\n"})
+    replay = _commit_files(tmp_path, git, "inexact replay", {"f.py": "A = 2\nB = 3\n"})
+    candidate = _commit_files(tmp_path, git, "follow-up", {"h.py": "H = 1\n"})
+    linked = [original, dropped_bump, replay, candidate]
+
+    net = await task_scope.collect_net_commit_paths_async(
+        linked, str(tmp_path), candidate=candidate
+    )
+
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset({"f.py", "h.py"}), undelivered=(original, dropped_bump)
+    )
+
+
+@pytest.mark.parametrize("foreign_via_sync_merge", [False, True])
+async def test_net_commit_paths_take_each_links_last_status_over_interleaved_foreign_edits(
+    tmp_path: Path, foreign_via_sync_merge: bool
+) -> None:
+    """#22866 and #23291: a later link rewrites lines an unlinked foreign commit changed.
+
+    No replay onto the pre-task base applies, and a merge-free set's own patches
+    are exactly what the task authored, so the paths come from those patches.
+    """
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    base = _commit_files(
+        tmp_path, git, "base", {"shared.py": "a\nb\nc\nd\n", "gone.py": "GONE = 1\n"}
+    )
+    git("checkout", "-qb", "task", base)
+    first = _commit_files(tmp_path, git, "first link", {"task.py": "T = 1\n"})
+    foreign_edit = {"shared.py": "a\nB\nc\nd\n"}
+    if foreign_via_sync_merge:
+        git("checkout", "-q", "main")
+        _commit_files(tmp_path, git, "foreign", foreign_edit)
+        git("checkout", "-q", "task")
+        git("merge", "-q", "--no-ff", "-m", "unlinked sync", "main")
+    else:
+        _commit_files(tmp_path, git, "foreign", foreign_edit)
+    second = _commit_files(
+        tmp_path, git, "second link", {"shared.py": "a\nd\n", "task.py": "T = 2\n", "gone.py": None}
+    )
+
+    net = await task_scope.collect_net_commit_paths_async([first, second], str(tmp_path))
+
+    assert net == task_scope.NetCommitPaths(
+        changed=frozenset({"gone.py", "shared.py", "task.py"}), deleted=frozenset({"gone.py"})
+    )
+
+
+async def test_net_commit_paths_stay_unavailable_when_a_linked_merge_needs_foreign_content(
+    tmp_path: Path,
+) -> None:
+    """A linked merge's first-parent diff can carry unlinked content, so no per-link fallback."""
+    git = _git_repo(tmp_path)
+    git("checkout", "-qb", "main")
+    _commit_files(tmp_path, git, "base", {"base.py": "BASE = 1\n"})
+    git("checkout", "-qb", "early")
+    started = _commit_files(tmp_path, git, "started", {"early.py": "EARLY = True\n"})
+    git("checkout", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "land early", "early")
+    early = git("rev-parse", "HEAD")
+    _commit_files(tmp_path, git, "unlinked foreign", {"probe.py": "PROBE = 5\n"})
+    git("checkout", "-qb", "late")
+    change = _commit_files(tmp_path, git, "change", {"probe.py": "PROBE = 6\n"})
+    git("checkout", "-q", "main")
+    git("merge", "-q", "--no-ff", "-m", "land late", "late")
+    late = git("rev-parse", "HEAD")
+
+    with pytest.raises(RuntimeError, match="Cannot compute the net diff"):
+        await task_scope.collect_net_commit_paths_async(
+            [started, early, change, late], str(tmp_path)
+        )

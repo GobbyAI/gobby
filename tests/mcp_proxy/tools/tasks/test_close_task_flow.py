@@ -150,6 +150,8 @@ async def _evaluate_named_test_close(
     tdd_result: TddEvidenceResult | None,
     named_tests: bool = True,
     net_paths: NetCommitPaths | None = None,
+    linked: tuple[str, ...] = ("abc123",),
+    diff_text: AsyncMock | None = None,
 ) -> tuple[CloseEvaluation, MagicMock]:
     review = AsyncMock(
         return_value=ValidationResult(
@@ -192,7 +194,7 @@ async def _evaluate_named_test_close(
         patch.object(
             lifecycle,
             "resolve_close_commit_shas",
-            return_value=(["abc123"], None),
+            return_value=(list(linked), None),
         ),
         patch.object(lifecycle, "active_validation_backoff", return_value=None),
         patch.object(
@@ -210,7 +212,9 @@ async def _evaluate_named_test_close(
             lifecycle, "collect_net_commit_paths", return_value=net_paths or NetCommitPaths()
         ),
         patch.object(lifecycle, "evaluate_tdd_evidence", tdd_check),
-        patch.object(lifecycle, "collect_commit_diff_text", return_value="diff"),
+        patch.object(
+            lifecycle, "collect_commit_diff_text", diff_text or AsyncMock(return_value="diff")
+        ),
         patch.object(lifecycle, "evaluate_close_review", review),
         patch("gobby.workflows.task_claim_state.target_task_has_edits", return_value=False),
         patch("gobby.workflows.task_claim_state.task_edited_file_set", return_value=set()),
@@ -873,6 +877,25 @@ async def test_named_acceptance_test_keeps_tdd_gate_when_task_requires_tdd() -> 
     assert tdd_gate.name == "tdd_evidence"
     assert tdd_gate.status == "failed"
     tdd_check.assert_called_once()
+
+
+async def test_close_names_undelivered_links_and_reviews_only_delivered_ones() -> None:
+    """A rebase leaves its pre-replay original linked; the candidate never delivers it."""
+    diff_text = AsyncMock(return_value="diff")
+
+    evaluation, _ = await _evaluate_named_test_close(
+        _task(),
+        tdd_result=None,
+        named_tests=False,
+        net_paths=NetCommitPaths(undelivered=("0ld0r1g",)),
+        linked=("0ld0r1g", "abc123"),
+        diff_text=diff_text,
+    )
+
+    response = evaluation.response(preview=True)
+    assert response["undelivered_commit_shas"] == ["0ld0r1g"]
+    assert response["commit_shas"] == ["0ld0r1g", "abc123"]
+    assert diff_text.call_args.args[0] == ["abc123"]
 
 
 async def test_tdd_close_receives_only_surviving_net_implementation_paths() -> None:

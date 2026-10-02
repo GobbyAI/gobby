@@ -536,9 +536,12 @@ async def _evaluate_close(
     )
 
     # Gate 10 attributes only the candidate's net diff: edit history still lists
-    # files reverted before commit or by a later link (#23181).
+    # files reverted before commit or by a later link (#23181). A linked commit the
+    # candidate does not reach is not delivered, so neither gate 10 nor gate 13 nets it.
     try:
-        net_paths = await collect_net_commit_paths(commit_shas, repo_path)
+        net_paths = await collect_net_commit_paths(
+            commit_shas, repo_path, candidate=evaluation.candidate_commit_sha
+        )
     except RuntimeError as exc:
         return evaluation.fail(
             10,
@@ -546,6 +549,9 @@ async def _evaluate_close(
             "validation_paths_unavailable",
             f"Cannot determine changed paths for validation requirements: {exc}",
         ).block_remaining()
+    if net_paths.undelivered:
+        evaluation.extra["undelivered_commit_shas"] = list(net_paths.undelivered)
+    delivered_shas = [sha for sha in commit_shas if sha not in net_paths.undelivered]
     validation_paths = set(net_paths.changed)
     deleted_paths = set(net_paths.deleted)
     transcript = TranscriptEvidence()
@@ -807,7 +813,7 @@ async def _evaluate_close(
         )
 
     try:
-        diff_text = await collect_commit_diff_text(commit_shas, cwd=repo_path)
+        diff_text = await collect_commit_diff_text(delivered_shas, cwd=repo_path)
     except RuntimeError as exc:
         infra = record_validation_infrastructure_failure(
             task,
