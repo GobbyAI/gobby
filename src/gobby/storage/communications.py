@@ -384,6 +384,15 @@ class LocalCommunicationsStore:
             raise RuntimeError("Failed to create communications message")
         return CommsMessage.from_row(row), inserted
 
+    def session_exists(self, session_id: str) -> bool:
+        """Whether a session row has exactly this id (no prefix or external-id match)."""
+        try:
+            session_uuid = uuid.UUID(session_id)
+        except ValueError:
+            return False
+        row = self.db.fetchone("SELECT 1 FROM sessions WHERE id = %s", (session_uuid,))
+        return row is not None
+
     def get_message(self, message_id: str) -> CommsMessage | None:
         """Get a message by ID."""
         row = self.db.fetchone("SELECT * FROM comms_messages WHERE id = %s", (message_id,))

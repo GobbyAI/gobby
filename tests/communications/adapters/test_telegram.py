@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import httpx
 import pytest
 
-from gobby.communications.adapters.telegram import TelegramAdapter
+from gobby.communications.adapters.telegram import TelegramAdapter, TelegramEditNotApplied
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
 
@@ -713,20 +713,60 @@ async def test_edit_message_labels_after_rendering_fenced_markdown(
 async def test_edit_message_treats_not_modified_as_success(
     adapter: TelegramAdapter,
 ) -> None:
-    adapter._client = MagicMock()
-    adapter._api_base = "https://api.telegram.org/bottest-token"
-    post_json = AsyncMock(
-        return_value={
+    # Telegram reports an unchanged edit as HTTP 400 with the reason in the JSON body (#23292).
+    response = httpx.Response(
+        400,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/editMessageText"),
+        json={
             "ok": False,
-            "description": "Bad Request: message is not modified",
-        }
+            "error_code": 400,
+            "description": "Bad Request: message is not modified: specified new message content "
+            "and reply markup are exactly the same as a current content and reply markup of the "
+            "message",
+        },
     )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
 
-    with patch.object(adapter, "_post_json", post_json):
-        await adapter.edit_message("12345", "unchanged", "chat999")
+    await adapter.edit_message("12345", "unchanged", "chat999")
 
-    assert post_json.await_count == 1
-    post_json.assert_awaited_once()
+    assert ("chat999", "12345") not in adapter._edit_overflow_ids
+    assert mock_client.post.await_args.kwargs["json"]["text"] == "unchanged"
+
+
+@pytest.mark.asyncio
+async def test_edit_message_rejection_keeps_reason_and_redacts_token(
+    adapter: TelegramAdapter,
+) -> None:
+    token = "test-token"
+    response = httpx.Response(
+        400,
+        request=httpx.Request("POST", f"https://api.telegram.org/bot{token}/editMessageText"),
+        json={
+            "ok": False,
+            "error_code": 400,
+            "description": "Bad Request: can't parse entities: unsupported start tag",
+        },
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = f"https://api.telegram.org/bot{token}"
+    adapter._bot_token = token
+
+    with pytest.raises(TelegramEditNotApplied) as exc_info:
+        await adapter.edit_message("12345", "changed", "chat999")
+
+    cause = exc_info.value.__cause__
+    assert isinstance(cause, httpx.HTTPStatusError)
+    assert cause.response.json()["description"] == (
+        "Bad Request: can't parse entities: unsupported start tag"
+    )
+    assert token not in str(cause)
+    assert token not in str(cause.request.url)
+    assert token not in str(cause.response.request.url)
 
 
 @pytest.mark.asyncio

@@ -213,6 +213,71 @@ async def test_comms_session_inbound_remains_for_responder() -> None:
     mailbox.send.assert_not_awaited()
 
 
+_EXPIRED_REPLY = "Session #7 is no longer active; this message was not delivered to it."
+
+
+@pytest.mark.parametrize("route", ["reply", "attached", "callback"])
+async def test_explicit_route_to_an_expired_session_says_so_instead_of_the_responder(
+    route: str,
+) -> None:
+    """A message aimed at one session never silently reaches the responder instead (#23292)."""
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(
+        id=SESSION_ID, seq_num=7, status="expired", source="claude"
+    )
+    manager.responder.will_respond.return_value = True
+
+    message = _message(content="still there?", metadata={"session_route": route})
+    assert await controller.handle(_channel().name, message) is True
+
+    manager.send_message.assert_awaited_once()
+    assert manager.send_message.await_args.args[1] == _EXPIRED_REPLY
+    mailbox.send.assert_not_awaited()
+
+
+async def test_identity_route_to_an_expired_session_falls_through_to_the_responder() -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(
+        id=SESSION_ID, seq_num=7, status="expired", source="claude"
+    )
+    manager.responder.will_respond.return_value = True
+
+    assert await controller.handle(_channel().name, _message(content="hello")) is False
+
+    manager.send_message.assert_not_awaited()
+    mailbox.send.assert_not_awaited()
+
+
+async def test_identity_route_to_an_expired_session_says_so_when_no_responder_turn_runs() -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(
+        id=SESSION_ID, seq_num=7, status="expired", source="claude"
+    )
+    manager.responder.will_respond.return_value = False
+    message = _message(content="hello")
+
+    assert await controller.handle(_channel().name, message) is True
+
+    manager.responder.will_respond.assert_called_once_with(message)
+    manager.send_message.assert_awaited_once()
+    assert manager.send_message.await_args.args[1] == _EXPIRED_REPLY
+    mailbox.send.assert_not_awaited()
+
+
+async def test_reaction_on_an_expired_session_gets_no_reply() -> None:
+    controller, manager, sessions, mailbox = _controller()
+    sessions.get.return_value = SimpleNamespace(
+        id=SESSION_ID, seq_num=7, status="expired", source="claude"
+    )
+    manager.responder.will_respond.return_value = False
+    message = _message(content="👍", content_type="reaction", metadata={"session_route": "reply"})
+
+    assert await controller.handle(_channel().name, message) is False
+
+    manager.send_message.assert_not_awaited()
+    mailbox.send.assert_not_awaited()
+
+
 async def test_mailbox_failure_cannot_start_responder_turn() -> None:
     controller, manager, sessions, mailbox = _controller()
     sessions.get.return_value = SimpleNamespace(id=SESSION_ID, status="active", source="codex")

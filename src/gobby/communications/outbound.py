@@ -80,6 +80,17 @@ class OutboundCommunications:
                     )
         return effective
 
+    async def _require_session(self, session_id: str | None) -> None:
+        """Reject an outbound session id before delivery unless a session has exactly that id.
+
+        Delivery comes before storage, so an unknown id would otherwise reach the channel
+        and then fail the stored row's session foreign key (#23292).
+        """
+        if session_id is not None and not await asyncio.to_thread(
+            self._manager._store.session_exists, session_id
+        ):
+            raise ValueError(f"Unknown session {session_id!r}")
+
     async def send_message(
         self,
         channel_name: str,
@@ -94,6 +105,7 @@ class OutboundCommunications:
             raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
+        await self._require_session(session_id)
 
         platform_thread_id = None
         if session_id:
@@ -167,6 +179,7 @@ class OutboundCommunications:
             raise ChannelNotFoundError(channel_name)
 
         channel = manager._channel_by_name[channel_name]
+        await self._require_session(session_id)
         size_bytes = file_path.stat().st_size
 
         if not manager.attachment_manager.validate_size(size_bytes, channel.channel_type):
