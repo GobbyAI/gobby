@@ -8,10 +8,10 @@
 //! `ROLLBACK` is therefore never logged or returned: its connection is
 //! discarded and the caller gets the closure's own error.
 
-use std::sync::Mutex;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tokio_postgres::Row;
-use tokio_postgres::error::SqlState;
+use tokio_postgres::error::{DbError, SqlState};
 use tokio_postgres::types::ToSql;
 
 use super::row::RowError;
@@ -61,7 +61,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<Row>, TransactionError> {
-        todo!()
+        Ok(self.inner.query(statement, params).await?)
     }
 
     pub async fn query_opt(
@@ -69,7 +69,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Option<Row>, TransactionError> {
-        todo!()
+        Ok(self.inner.query_opt(statement, params).await?)
     }
 
     pub async fn query_one(
@@ -77,7 +77,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Row, TransactionError> {
-        todo!()
+        Ok(self.inner.query_one(statement, params).await?)
     }
 
     pub async fn execute(
@@ -85,30 +85,173 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<u64, TransactionError> {
-        todo!()
+        Ok(self.inner.execute(statement, params).await?)
     }
 
+    /// Take `target`'s locks until the transaction ends. A target already
+    /// held is a no-op; any other must outrank every target held, and both
+    /// refusals are decided before any SQL is sent.
     pub async fn acquire_lock(&self, target: &dyn LockTarget) -> Result<(), TransactionError> {
-        todo!()
+        let identity = (target.priority(), target.keys());
+        {
+            let locks = locked(&self.locks);
+            if locks.contains(&identity) {
+                return Ok(());
+            }
+            if identity.1.is_empty() {
+                return Err(TransactionError::EmptyLockTarget);
+            }
+            if let Some(&(held, _)) = locks.last()
+                && identity.0 <= held
+            {
+                return Err(TransactionError::LockOrder {
+                    held,
+                    requested: identity.0,
+                });
+            }
+        }
+        for key in &identity.1 {
+            self.execute("SELECT pg_advisory_xact_lock(hashtext($1))", &[key])
+                .await?;
+        }
+        locked(&self.locks).push(identity);
+        Ok(())
     }
 
+    /// Run `callback` after a successful `COMMIT`, once the checkout is back
+    /// in the pool, in registration order. Its error is discarded: it cannot
+    /// change the committed result, and the remaining callbacks still run.
     pub fn after_commit(&self, callback: Callback) {
-        todo!()
+        locked(&self.callbacks).push(callback);
+    }
+}
+
+/// Owns the pooled connection while a transaction is open.
+struct Checkout {
+    object: Option<deadpool_postgres::Client>,
+    /// Set while `COMMIT` or `ROLLBACK` is unresolved, when the session's
+    /// transaction state is unknown.
+    armed: bool,
+}
+
+impl Drop for Checkout {
+    fn drop(&mut self) {
+        if self.armed
+            && let Some(object) = self.object.take()
+        {
+            drop(deadpool_postgres::Object::take(object));
+        }
     }
 }
 
 impl Pool {
+    /// Check out a connection, `BEGIN`, take `lock`, and run `f`; commit on
+    /// `Ok` and run the after-commit callbacks, roll back on `Err`.
+    ///
+    /// The two lifetimes in `f`'s argument are independent: tying them
+    /// (`&'t Transaction<'t>`) fails the `Send` check of a spawned call.
     pub async fn transaction<T, E, F>(&self, lock: Option<&dyn LockTarget>, f: F) -> Result<T, E>
     where
-        F: for<'t> AsyncFnOnce(&'t Transaction<'t>) -> Result<T, E>,
+        F: AsyncFnOnce(&Transaction<'_>) -> Result<T, E>,
         E: From<TransactionError>,
     {
-        todo!()
+        // The checkout drops at the end of this block, after everything that
+        // borrows it, so the callbacks run with the connection back in the pool.
+        let (value, callbacks) = {
+            let mut checkout = Checkout {
+                object: None,
+                armed: false,
+            };
+            let object = checkout
+                .object
+                .insert(self.get().await.map_err(TransactionError::from)?);
+            let transaction = Transaction {
+                inner: object.transaction().await.map_err(TransactionError::from)?,
+                locks: Mutex::default(),
+                callbacks: Mutex::default(),
+            };
+            let lock_outcome = match lock {
+                Some(target) => transaction.acquire_lock(target).await,
+                None => Ok(()),
+            };
+            let outcome = match lock_outcome {
+                Ok(()) => f(&transaction).await,
+                Err(error) => Err(error.into()),
+            };
+            let Transaction {
+                inner, callbacks, ..
+            } = transaction;
+
+            checkout.armed = true;
+            let value = match outcome {
+                Ok(value) => value,
+                Err(error) => {
+                    #[cfg(test)]
+                    self.pause_at_rollback_gate().await;
+                    if inner.rollback().await.is_ok() {
+                        checkout.armed = false;
+                    }
+                    return Err(error);
+                }
+            };
+            if let Err(error) = inner.commit().await {
+                let severity = error
+                    .as_db_error()
+                    .and_then(DbError::parsed_severity)
+                    .map(|severity| severity.to_string());
+                if is_definite_commit_rejection(error.code(), severity.as_deref()) {
+                    checkout.armed = false;
+                    return Err(TransactionError::Server(error).into());
+                }
+                return Err(TransactionError::IndeterminateCommit(error).into());
+            }
+            checkout.armed = false;
+            (value, callbacks)
+        };
+        let callbacks = callbacks
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner);
+        for callback in callbacks {
+            let _ = callback();
+        }
+        Ok(value)
+    }
+
+    /// Test seam: signal the armed rollback once, then suspend before it.
+    #[cfg(test)]
+    async fn pause_at_rollback_gate(&self) {
+        let gate = locked(&self.rollback_gate).take();
+        if let Some(gate) = gate {
+            let _ = gate.send(());
+            std::future::pending::<()>().await;
+        }
     }
 }
 
+/// No critical section here can leave its data half-updated, so a poisoned
+/// lock is still sound to use.
+fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Whether a failed `COMMIT` definitely rolled back: an integrity (23) or
+/// transaction-rollback (40) class, or any other ERROR-severity response.
+/// Cancellation, lock timeout, and statement-completion-unknown leave the
+/// outcome unknown, as does a lost connection.
 fn is_definite_commit_rejection(code: Option<&SqlState>, severity: Option<&str>) -> bool {
-    todo!()
+    let Some(code) = code else {
+        return false;
+    };
+    if [
+        SqlState::QUERY_CANCELED,
+        SqlState::LOCK_NOT_AVAILABLE,
+        SqlState::T_R_STATEMENT_COMPLETION_UNKNOWN,
+    ]
+    .contains(code)
+    {
+        return false;
+    }
+    code.code().starts_with("23") || code.code().starts_with("40") || severity == Some("ERROR")
 }
 
 #[cfg(test)]

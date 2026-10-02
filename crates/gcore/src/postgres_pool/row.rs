@@ -26,7 +26,11 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<T>, TransactionError> {
-        todo!()
+        let rows = self.query(statement, params).await?;
+        Ok(rows
+            .iter()
+            .map(T::from_row)
+            .collect::<Result<Vec<_>, RowError>>()?)
     }
 
     pub async fn query_opt_as<T: FromRow>(
@@ -34,6 +38,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Option<T>, TransactionError> {
-        todo!()
+        let row = self.query_opt(statement, params).await?;
+        Ok(row.as_ref().map(T::from_row).transpose()?)
     }
 }

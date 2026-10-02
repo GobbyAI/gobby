@@ -137,7 +137,7 @@ impl Pool {
 
     /// Pool size and idle connections, for observation.
     pub fn status(&self) -> deadpool_postgres::Status {
-        todo!()
+        self.inner.status()
     }
 
     /// Check out a verified connection within `acquire_timeout`. Expiry, or
@@ -174,7 +174,14 @@ pub struct IdentifierError(pub String);
 /// Double-quote `name` for SQL text; only `^[A-Za-z_][A-Za-z0-9_]*$` is
 /// accepted, as the Python daemon's `validate_identifier` does.
 pub fn quote_identifier(name: &str) -> Result<String, IdentifierError> {
-    todo!()
+    let mut bytes = name.bytes();
+    let valid = matches!(bytes.next(), Some(byte) if byte.is_ascii_alphabetic() || byte == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_');
+    if valid {
+        Ok(format!("\"{name}\""))
+    } else {
+        Err(IdentifierError(name.to_owned()))
+    }
 }
 
 /// One hook's session invariants.

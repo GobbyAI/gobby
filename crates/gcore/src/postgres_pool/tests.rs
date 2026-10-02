@@ -182,9 +182,11 @@ async fn dropped_transaction_is_rolled_back() -> anyhow::Result<()> {
     let mut borrower = pool.get().await?;
     let (pid, ..) = session(&borrower).await?;
     let transaction = borrower.transaction().await?;
+    // The runtime role has no TEMPORARY (migration 422), so this transaction
+    // takes the login role for its scratch table.
     transaction
         .batch_execute(
-            "CREATE TEMP TABLE pool_dropped_writes (value int); \
+            "SET LOCAL ROLE NONE; CREATE TEMP TABLE pool_dropped_writes (value int); \
              INSERT INTO pool_dropped_writes VALUES (1)",
         )
         .await?;
@@ -220,9 +222,11 @@ async fn raw_transaction_never_reaches_the_next_borrower() -> anyhow::Result<()>
 
     let borrower = pool.get().await?;
     let (pid, ..) = session(&borrower).await?;
+    // The runtime role has no TEMPORARY (migration 422), so this transaction
+    // takes the login role for its scratch table.
     borrower
         .batch_execute(
-            "BEGIN; CREATE TEMP TABLE pool_raw_writes (value int); \
+            "BEGIN; SET LOCAL ROLE NONE; CREATE TEMP TABLE pool_raw_writes (value int); \
              INSERT INTO pool_raw_writes VALUES (1)",
         )
         .await?;
@@ -580,7 +584,8 @@ async fn transaction_status(
 }
 
 async fn next_checkout_pid(pool: &Pool) -> anyhow::Result<i32> {
-    Ok(session(&pool.get().await?).await?.0)
+    let client = pool.get().await?;
+    Ok(session(&client).await?.0)
 }
 
 /// A callback that records that it ran.
@@ -710,6 +715,9 @@ async fn commit_outcome_is_classified() -> anyhow::Result<()> {
     let rejected: anyhow::Result<()> = pool
         .transaction(None, async |transaction| {
             rejected_pid = backend_pid(transaction).await?;
+            // The runtime role has no TEMPORARY (migration 422), so this
+            // transaction takes the login role for its scratch table.
+            transaction.execute("SET LOCAL ROLE NONE", &[]).await?;
             transaction
                 .execute(
                     "CREATE TEMP TABLE commit_rejection \
@@ -783,7 +791,10 @@ async fn cancelled_commit_discards_connection() -> anyhow::Result<()> {
             pool.transaction(None, async move |transaction| {
                 transaction.after_commit(mark(&ran));
                 let pid = backend_pid(transaction).await?;
+                // The runtime role has no TEMPORARY (migration 422), so this
+                // transaction takes the login role for its scratch objects.
                 for statement in [
+                    "SET LOCAL ROLE NONE".to_string(),
                     format!(
                         "CREATE FUNCTION pg_temp.block_commit() RETURNS trigger \
                          LANGUAGE plpgsql AS $$BEGIN \
