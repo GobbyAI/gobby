@@ -1199,7 +1199,7 @@ pytest suite.
   - covers:pane-seat-titles:4.2:4.2.3
   tdd: true
   source_section: '4.2'
-  implementation_domain: backend
+  implementation_domain: frontend
 - title: Session naming docs
   category: docs
   task_type: feature
