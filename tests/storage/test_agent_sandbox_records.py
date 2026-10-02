@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ from gobby.storage.agents import AgentRun, _sandbox_records
 from gobby.storage.agents._sandbox_records import (
     _MAX_COUNTED_VIOLATIONS,
     _MAX_EXPOSED_COMMAND_CHARS,
-    _cached_violation_count,
+    _violation_counts,
     sandbox_list_record,
     sandbox_record,
 )
@@ -279,7 +280,7 @@ def test_violation_count_reads_bytes_and_matches_the_decoded_count(
     # CRLF, blank, whitespace-only, invalid UTF-8 and an unterminated last line.
     log.write_bytes(b'{"a":1}\r\n\n \t\r\n\xff\xfe\n{"b":2}')
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
-    _cached_violation_count.cache_clear()
+    _violation_counts.clear()
     original_open = Path.open
     modes: list[str] = []
 
@@ -307,7 +308,7 @@ def test_live_list_count_reuses_unchanged_log(
     log.parent.mkdir(parents=True)
     log.write_text('{"event":1}\n', encoding="utf-8")
     monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
-    _cached_violation_count.cache_clear()
+    _violation_counts.clear()
     original_open = Path.open
     opens = 0
 
@@ -330,6 +331,82 @@ def test_live_list_count_reuses_unchanged_log(
     assert updated is not None
     assert updated["violation_count"] == 2
     assert opens == 2
+
+
+def test_growing_live_log_count_reads_only_appended_bytes(tmp_path: Path) -> None:
+    """A poll never rescans counted bytes; ~590 MB per poll stalled the loop (#23279)."""
+    log = tmp_path / "violations.jsonl"
+    log.write_bytes(b'{"a":1}\n{"b":2}\n')
+    _violation_counts.clear()
+    assert _sandbox_records._count_violation_lines(log) == (2, False)
+
+    # Blank the counted lines in place, then append: a rescan would count only one line.
+    with log.open("r+b") as handle:
+        handle.write(b" " * 7 + b"\n" + b" " * 7 + b"\n")
+    with log.open("ab") as handle:
+        handle.write(b'{"c":3}\n')
+
+    assert _sandbox_records._count_violation_lines(log) == (3, False)
+
+
+def test_live_log_count_waits_for_an_unterminated_line_to_end(tmp_path: Path) -> None:
+    log = tmp_path / "violations.jsonl"
+    log.write_bytes(b'{"a":1}\n{"b"')
+    _violation_counts.clear()
+    assert _sandbox_records._count_violation_lines(log) == (2, False)
+
+    with log.open("ab") as handle:
+        handle.write(b":2}\n")
+    assert _sandbox_records._count_violation_lines(log) == (2, False)
+
+    with log.open("ab") as handle:
+        handle.write(b'\n{"c":3}\n')
+    assert _sandbox_records._count_violation_lines(log) == (3, False)
+
+
+@pytest.mark.parametrize("replacement", ["new_file", "truncated_in_place"])
+def test_live_log_count_restarts_when_the_log_is_replaced(tmp_path: Path, replacement: str) -> None:
+    log = tmp_path / "violations.jsonl"
+    log.write_bytes(b'{"a":1}\n{"b":2}\n{"c":3}\n')
+    _violation_counts.clear()
+    assert _sandbox_records._count_violation_lines(log) == (3, False)
+
+    if replacement == "new_file":
+        fresh = tmp_path / "fresh.jsonl"
+        fresh.write_bytes(b'{"d":4}\n{"e":5}\n{"f":6}\n{"g":7}\n')
+        fresh.replace(log)
+    else:
+        log.write_bytes(b'{"d":4}\n')
+
+    expected = 4 if replacement == "new_file" else 1
+    assert _sandbox_records._count_violation_lines(log) == (expected, False)
+
+
+def test_capped_live_log_count_reports_truncation_once_it_grows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(_sandbox_records, "_MAX_COUNTED_VIOLATIONS", 2)
+    log = tmp_path / "violations.jsonl"
+    log.write_bytes(b'{"a":1}\n{"b":2}\n')
+    _violation_counts.clear()
+    assert _sandbox_records._count_violation_lines(log) == (2, False)
+
+    with log.open("ab") as handle:
+        handle.write(b'{"c":3}\n')
+
+    assert _sandbox_records._count_violation_lines(log) == (2, True)
+
+
+def test_concurrent_live_log_counts_agree(tmp_path: Path) -> None:
+    log = tmp_path / "violations.jsonl"
+    log.write_bytes(b"".join(b'{"n":%d}\n' % value for value in range(500)))
+    _violation_counts.clear()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: _sandbox_records._count_violation_lines(log), range(32)))
+
+    assert results == [(500, False)] * 32
 
 
 def test_sandbox_record_counts_retained_log_after_the_run_root_is_reaped(

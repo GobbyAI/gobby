@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from functools import lru_cache
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ _MAX_EXPOSED_VIOLATIONS = 100
 # A prefix this long identifies a denied command; 100 events stay near 200 KB.
 _MAX_EXPOSED_COMMAND_CHARS = 2048
 _MAX_COUNTED_VIOLATIONS = 10_000
+_MAX_TRACKED_LOGS = 512
 _MAX_TAIL_BYTES = 16 * 1024 * 1024
 _TAIL_BLOCK_BYTES = 64 * 1024
 
@@ -205,33 +207,64 @@ def _bounded_command(event: Any) -> Any:
     }
 
 
+@dataclass
+class _ViolationCount:
+    """Progress through one append-only log: complete lines before ``offset`` are counted."""
+
+    identity: tuple[int, int]
+    offset: int = 0
+    lines: int = 0
+    capped: bool = False
+    size: int = -1
+    mtime_ns: int = -1
+    result: tuple[int, bool] = (0, False)
+
+
+_violation_counts: dict[str, _ViolationCount] = {}
+_violation_counts_lock = threading.Lock()
+
+
 def _count_violation_lines(path: Path) -> tuple[int, bool]:
-    """Count log lines without decoding event bodies."""
+    """Count nonblank log lines, resuming where the last count of this log stopped.
+
+    A live log grows while its run is polled, so each poll reads only the bytes appended
+    since the last one; an unterminated last line is re-read until it ends (#23279).
+    Bytes skip decoding, which halved the cold count on a 1 GB log.
+    """
     try:
         stat = path.stat()
     except OSError:
         return 0, False
-    return _cached_violation_count(str(path), stat.st_size, stat.st_mtime_ns)
+    key = str(path)
+    identity = (stat.st_dev, stat.st_ino)
+    with _violation_counts_lock:
+        progress = _violation_counts.pop(key, None)
+        if progress is None or progress.identity != identity or stat.st_size < progress.offset:
+            progress = _ViolationCount(identity)
+        if (progress.size, progress.mtime_ns) != (stat.st_size, stat.st_mtime_ns):
+            try:
+                progress.result = _advance_violation_count(path, progress)
+            except OSError:
+                return 0, False
+            progress.size, progress.mtime_ns = stat.st_size, stat.st_mtime_ns
+        _violation_counts[key] = progress
+        if len(_violation_counts) > _MAX_TRACKED_LOGS:
+            del _violation_counts[next(iter(_violation_counts))]
+        return progress.result
 
 
-@lru_cache(maxsize=512)
-def _cached_violation_count(path: str, size: int, mtime_ns: int) -> tuple[int, bool]:
-    """Reuse a live count until the external runtime changes the log.
-
-    Bytes skip decoding, which halved the cold count on a 1 GB log (#23279).
-    """
-    del size, mtime_ns
-    count = 0
-    truncated = False
-    try:
-        with Path(path).open("rb") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                count += 1
-                if count >= _MAX_COUNTED_VIOLATIONS:
-                    truncated = next(handle, None) is not None
-                    break
-    except OSError:
-        return 0, False
-    return count, truncated
+def _advance_violation_count(path: Path, progress: _ViolationCount) -> tuple[int, bool]:
+    with path.open("rb") as handle:
+        handle.seek(progress.offset)
+        if progress.capped:
+            return progress.lines, bool(handle.read(1))
+        for line in handle:
+            if not line.endswith(b"\n"):
+                return progress.lines + bool(line.strip()), False
+            progress.offset += len(line)
+            if line.strip():
+                progress.lines += 1
+                if progress.lines >= _MAX_COUNTED_VIOLATIONS:
+                    progress.capped = True
+                    return progress.lines, bool(handle.read(1))
+    return progress.lines, False

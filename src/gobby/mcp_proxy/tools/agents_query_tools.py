@@ -185,11 +185,22 @@ def register_agent_query_tools(
         lookup = get if get is not None else ctx.runner.get_run
         return lookup(run_id), None
 
-    def _result_payload(
+    async def _result_payload(
         run: AgentRun,
         *,
         include_prompt: bool = False,
         dirty_paths: list[str] | None | object = _DIRTY_PATHS_UNSET,
+    ) -> dict[str, Any]:
+        # The handoff read and the sandbox violation count both block (#23279).
+        return await asyncio.to_thread(
+            _build_result_payload, run, include_prompt=include_prompt, dirty_paths=dirty_paths
+        )
+
+    def _build_result_payload(
+        run: AgentRun,
+        *,
+        include_prompt: bool,
+        dirty_paths: list[str] | None | object,
     ) -> dict[str, Any]:
         try:
             handoff = get_agent_end_handoff(ctx.db, run.id) if ctx.db is not None else None
@@ -242,10 +253,12 @@ def register_agent_query_tools(
         return {
             "success": True,
             "recovery_pending": recovery_pending,
-            **_result_payload(
-                run,
-                include_prompt=include_prompt,
-                dirty_paths=dirty_paths,
+            **(
+                await _result_payload(
+                    run,
+                    include_prompt=include_prompt,
+                    dirty_paths=dirty_paths,
+                )
             ),
         }
 
@@ -410,7 +423,7 @@ def register_agent_query_tools(
                 "error_code": "daemon_resume_chain_corrupt",
             }
         if run.status in agents._TERMINAL_AGENT_STATUSES and not recovery_pending:
-            payload = _result_payload(
+            payload = await _result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
             )
             return {
@@ -455,7 +468,7 @@ def register_agent_query_tools(
                 }
             run = target_run
             if run.status in agents._TERMINAL_AGENT_STATUSES and not wait_target.recovery_pending:
-                payload = _result_payload(
+                payload = await _result_payload(
                     await overlay_live_activity(run, ctx.transcript_reader),
                 )
                 return {
@@ -476,7 +489,7 @@ def register_agent_query_tools(
                 # subscription was copied to the successor under the fence,
                 # so drop the stale local entry instead of leaking it.
                 ctx.completion_registry.cleanup(run.id)
-            payload = _result_payload(
+            payload = await _result_payload(
                 await overlay_live_activity(run, ctx.transcript_reader),
             )
             return {
@@ -488,7 +501,7 @@ def register_agent_query_tools(
                 **payload,
             }
 
-        payload = _result_payload(
+        payload = await _result_payload(
             await overlay_live_activity(run, ctx.transcript_reader),
         )
 
@@ -535,7 +548,7 @@ def register_agent_query_tools(
         # ---- end of no-await critical region ----
 
         if terminal is not None:
-            payload = _result_payload(
+            payload = await _result_payload(
                 await overlay_live_activity(terminal, ctx.transcript_reader),
             )
             return {

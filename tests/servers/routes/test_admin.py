@@ -6,6 +6,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -1702,6 +1703,61 @@ class TestTestEndpoints:
         assert data["agent"]["run_id"] == "run-1"
         mock_arm.create.assert_called_once()
         mock_arm.start.assert_called_once_with("run-1")
+
+    @patch(
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
+        new_callable=AsyncMock,
+    )
+    @patch("gobby.storage.agents.LocalAgentRunManager")
+    def test_test_agent_routes_touch_runs_off_the_event_loop(
+        self,
+        mock_arm_cls: MagicMock,
+        mock_deliver_terminal_run: AsyncMock,
+        client: TestClient,
+    ) -> None:
+        """Terminal transitions and to_dict read violation logs, so they stay off the loop."""
+        on_loop: dict[str, bool] = {}
+
+        def record(name: str, value: Any = None) -> Any:
+            def call(*_args: Any, **_kwargs: Any) -> Any:
+                try:
+                    asyncio.get_running_loop()
+                    on_loop[name] = True
+                except RuntimeError:
+                    on_loop[name] = False
+                return value
+
+            return call
+
+        mock_run = MagicMock()
+        mock_run.to_dict.side_effect = record("to_dict", {"run_id": "run-1"})
+        mock_arm = MagicMock()
+        mock_arm.create.side_effect = record("create")
+        mock_arm.complete.side_effect = record("complete")
+        mock_arm.fail.side_effect = record("fail")
+        mock_arm.get.side_effect = record("get", mock_run)
+        mock_arm_cls.return_value = mock_arm
+
+        registered = client.post(
+            "/api/admin/test/register-agent",
+            json={
+                "run_id": "run-1",
+                "session_id": "sess-1",
+                "parent_session_id": "parent-1",
+                "status": "success",
+            },
+        )
+        unregistered = client.delete("/api/admin/test/unregister-agent/run-1")
+
+        assert registered.status_code == 200
+        assert unregistered.status_code == 200
+        assert on_loop == {
+            "create": False,
+            "complete": False,
+            "get": False,
+            "to_dict": False,
+            "fail": False,
+        }
 
     def test_register_agent_forbidden_when_not_test_mode(self, mock_server: MagicMock) -> None:
         mock_server.test_mode = False
