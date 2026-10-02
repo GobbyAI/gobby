@@ -1,11 +1,11 @@
 header:
   plan_id: gdaemon-api-keys-nodes
-  plan_hash: 26549a7494f1b57faf710ae7325b0d78357f58006ef1e8bbceb293515e76a9b9
+  plan_hash: 89b6a1465085efe78b173aa97d69e8d3858415553041c383d94f6c61d5e3928c
   root_task_ref: '21555'
   project_id: d45545c5-ded5-4335-b115-0245752edacf
-  generated_at: '2026-10-01T18:11:57Z'
+  generated_at: '2026-10-02T16:57:14Z'
   task_tree_source: db
-  task_tree_source_hash: d3481ec12b76ba5158dbc2fb6a80a33d9f52598a32ccb18f1f49d1449cac7c32
+  task_tree_source_hash: 0f9a6cab022e9fe798cb67c432395d96376c66f88aaad4fbed37cd5ca29923b0
   evidence_summary: []
   evidence: []
 rows:
@@ -299,13 +299,13 @@ rows:
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.1
-  plan_node_hash: 5d80f973cf88751eadfc20c837ee393f1f64c399a64bb85c827893bedccd9c75
+  plan_node_hash: 27cf2a86b2704e146656e7c1ffb45590656803f1be7daa66236f38e37cab50de
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
-    matched_artifact_ref: crates/gcore/assets/schema/migrations/456_add_api_keys.sql
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
+    matched_artifact_ref: crates/gcore/assets/schema/migrations/458_add_api_keys.sql
   deferral_target: null
   detail: ''
 - section_id: '4.2'
@@ -314,8 +314,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/utils/test_api_key_format.py::test_shared_vectors_and_rejections
   deferral_target: null
   detail: ''
@@ -325,8 +325,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key
   deferral_target: null
   detail: ''
@@ -336,8 +336,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_follows_publication_point
   deferral_target: null
   detail: ''
@@ -347,8 +347,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/storage/test_api_keys.py::test_concurrent_adoption_mints_one_key
   deferral_target: null
   detail: ''
@@ -358,8 +358,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/storage/test_api_keys.py::test_legacy_config_path_skips_adoption
   deferral_target: null
   detail: ''
@@ -369,8 +369,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/test_runner_init.py::test_failing_local_key_adoption_does_not_block_start
   deferral_target: null
   detail: ''
@@ -380,8 +380,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/e2e/test_api_key_bootstrap_lockout.py::test_forged_forwarding_cannot_reset_lockout
   deferral_target: null
   detail: ''
@@ -391,8 +391,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_management_routes_admit_only_resolved_principals
   deferral_target: null
   detail: ''
@@ -402,8 +402,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/e2e/test_local_api_key_adoption.py::test_startup_adopts_local_key_once
   deferral_target: null
   detail: ''
@@ -413,8 +413,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/cli/test_cli_install.py::test_install_mints_local_api_key
   deferral_target: null
   detail: ''
@@ -424,19 +424,19 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted
   deferral_target: null
   detail: ''
 - section_id: '4.2'
   item_id: 4.2.7
-  plan_node_hash: d8398e1d7b9f54466a888b485ee9f2ca02bea4a10541a7f6d40dee0e1c3e81f3
+  plan_node_hash: 9aaea0dca4f4bf57074d2db28031e4e794560f09a0bc6aeafc6d969a96ec2874
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity
   deferral_target: null
   detail: ''
@@ -446,8 +446,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/runtime_grants/golden/brokered_datastores.json
   deferral_target: null
   detail: ''
@@ -457,8 +457,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: crates/gcore/assets/config/runtime_config_contract.json
   deferral_target: null
   detail: ''
@@ -468,8 +468,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/cli/test_pack.py::test_unpack_drops_machine_bound_api_key
   deferral_target: null
   detail: ''
@@ -479,8 +479,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/cli/test_pack.py::test_unpack_restore_identity_keeps_api_key_pair
   deferral_target: null
   detail: ''
@@ -490,8 +490,8 @@ rows:
   status: covered
   leaves:
   - leaf_task_ref: '#23271'
-    validation_criteria_snippet: '4.2.1: Migration 456 creates `api_keys` and the
-      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_...'
+    validation_criteria_snippet: '4.2.1: Migration 458 creates `api_keys` and the
+      two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_...'
     matched_artifact_ref: tests/storage/test_api_keys.py::test_ensure_local_api_key_replaces_stale_bootstrap_key
   deferral_target: null
   detail: ''
