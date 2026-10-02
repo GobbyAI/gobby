@@ -4635,6 +4635,34 @@ class TestCodeIndexNavigationRules:
         assert 'gcode grep -F "literal"' in (response.reason or "")
 
     @pytest.mark.asyncio
+    async def test_sibling_checkout_read_redirect_names_gcode_project(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        primary, linked = self._linked_checkouts(tmp_path)
+        for checkout in (primary, linked):
+            (checkout / "src/long.py").write_text("value = 1\n" * 60, encoding="utf-8")
+        engine = RuleEngine(db)
+
+        async def reason(target: Path) -> str:
+            event = self._normalized_bash_event(
+                f"cat {target}", cwd=str(primary), project_path=str(primary)
+            )
+            response = await engine.evaluate(
+                event, session_id=SESSION_ID, variables=self._variables(loaded=True)
+            )
+            assert response.decision == "block"
+            return response.reason or ""
+
+        sibling = await reason(linked / "src/long.py")
+        own = await reason(primary / "src/long.py")
+
+        assert f"gcode --project {linked} outline <file>" in sibling
+        assert f"gcode --project {linked} symbol-at <file>:<line>" in sibling
+        assert "gcode outline <file>" in own
+        assert "--project" not in own
+
+    @pytest.mark.asyncio
     async def test_pathless_search_in_linked_worktree_defaults_scope_to_cwd(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
