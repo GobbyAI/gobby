@@ -206,6 +206,7 @@ def validate_symbol_targets(
     code_index: Any | None,
     required: bool,
     consumer_coverage_blocking: bool = False,
+    completed_section_ids: frozenset[str] = frozenset(),
 ) -> SymbolValidationResult:
     """Validate parsed targets against a fresh project code index."""
 
@@ -276,6 +277,7 @@ def validate_symbol_targets(
                 scope=scope,
                 file_path=file_path,
                 targets=file_targets,
+                completed_section_ids=completed_section_ids,
             )
         )
 
@@ -465,6 +467,7 @@ def _validate_file_targets(
     scope: SymbolValidationScope,
     file_path: str,
     targets: list[SymbolTarget],
+    completed_section_ids: frozenset[str] = frozenset(),
 ) -> list[SymbolValidationIssue]:
     try:
         selected_project_id, indexed_file = _visible_indexed_file(storage, scope, file_path)
@@ -523,7 +526,7 @@ def _validate_file_targets(
         if target.wildcard:
             continue
         if target.symbol is None:
-            if symbols:
+            if symbols and target.section_id not in completed_section_ids:
                 issues.append(
                     SymbolValidationIssue(
                         code=MISSING_SYMBOL_SCOPE,

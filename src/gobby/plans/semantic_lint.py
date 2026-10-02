@@ -186,6 +186,7 @@ def lint_plan_document(
     plan_doc: PlanDocument,
     *,
     project_root: Path | None = None,
+    completed_section_ids: frozenset[str] = frozenset(),
 ) -> SemanticLintResult:
     """Run deterministic semantic lint against a parsed plan document."""
     issues: list[SemanticLintIssue] = []
@@ -199,7 +200,7 @@ def lint_plan_document(
         table_issue = _lint_table_row_decomposition(plan_doc, section)
         if table_issue is not None:
             issues.append(table_issue)
-        if project_root is not None:
+        if project_root is not None and section.section_id not in completed_section_ids:
             issues.extend(_lint_production_size_growth(plan_doc, section, project_root))
     _, consumer_issues = collect_unchanged_consumers(plan_doc, project_root)
     issues.extend(consumer_issues)
