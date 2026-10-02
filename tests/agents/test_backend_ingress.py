@@ -20,7 +20,7 @@ from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 from gobby.servers.routes.agent_spawn import AgentSpawnRequest, BatchSpawnRequest
 from tests.agents.prepared_spawn import prepared_spawn
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 ROOT = Path(__file__).resolve().parents[2]
 SPAWN_REQUEST_SCAN_PATHS = (

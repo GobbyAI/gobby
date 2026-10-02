@@ -252,6 +252,15 @@ async fn direct_frame_eof_detaches_before_reattach() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "term-a".into(),
+            },
+        )
+        .await
+        .expect("attached");
     });
     let source = UnixSocketFrameSource::connect_stream(
         client,
@@ -386,6 +395,15 @@ async fn direct_and_proxy_panes_run_together() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("direct attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "terminal-direct".into(),
+            },
+        )
+        .await
+        .expect("direct attached");
         write_message_async(&mut host, &semantic_frame("D"))
             .await
             .expect("direct frame");

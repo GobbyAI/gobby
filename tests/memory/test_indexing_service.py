@@ -4,15 +4,22 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService, VectorStoreProtocol
-from gobby.memory.vectorstore import VectorStore
+from gobby.memory.vectorstore import VectorStore, VectorStoreUnavailableError
 from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 from gobby.projects.write_fence import ProjectWriteFence
+from gobby.runner_init.services import (
+    MemoryServiceBundle,
+    _background_runtime_tasks,
+    _request_memory_projection_repair,
+)
+from gobby.storage.embedding_generation_state import EmbeddingGenerationLeaseLost
 from gobby.storage.memories import Memory
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_matches_scope
 from tests.projects.fence_helpers import wait_for_exclusive_claim
@@ -935,3 +942,41 @@ async def test_project_reindex_embeds_content_with_rationale_and_keeps_payload_b
         "is_global": False,
         "memory_type": "fact",
     }
+
+
+@pytest.mark.asyncio
+async def test_projection_repair_after_lease_reack_reconciles_without_unavailable_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    fenced = True
+
+    def serving_guard() -> None:
+        if fenced:
+            raise EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+
+    vector_store = VectorStore(
+        collection_name="repair_test", embedding_dim=2, serving_guard=serving_guard
+    )
+    client = MagicMock()
+    client.scroll.return_value = ([SimpleNamespace(id="mem-1")], None)
+    vector_store._client = client
+    service = _service(_MemoryStorage([_memory("mem-1", "alpha")]), vector_store)
+    bundle = MagicMock(spec=MemoryServiceBundle)
+    bundle.memory_manager.reconcile_stores = service.reconcile_stores
+    runner = MagicMock()
+    runner.bootstrap_config.run_mode.return_value = "hub"
+    runner.config_runtime.capture.return_value.services = {"memory_services": bundle}
+
+    with pytest.raises(VectorStoreUnavailableError):
+        await vector_store.scroll_ids()
+    fenced = False
+
+    with caplog.at_level(logging.WARNING):
+        _request_memory_projection_repair(runner, asyncio.get_running_loop())
+        await asyncio.sleep(0)
+        await asyncio.gather(*_background_runtime_tasks)
+
+    assert client.scroll.call_count == 1
+    assert vector_store._next_retry_at == 0.0
+    assert "Qdrant reconciliation failed" not in caplog.text
+    assert "Embedding projection repair failed" not in caplog.text

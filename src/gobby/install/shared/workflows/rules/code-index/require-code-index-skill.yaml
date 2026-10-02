@@ -51,7 +51,7 @@ rules:
     when: >
       event.data.get('canonical_tool_kind') == 'write'
       and event.data.get('canonical_file_paths')
-      and not event.data.get('is_error')
+      and not tool_call_failed()
     effects:
       - type: set_variable
         variable: turn_written_paths

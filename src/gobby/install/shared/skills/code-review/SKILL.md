@@ -140,6 +140,10 @@ Every finding carries `path`, `start_line`, `end_line` (new-file numbering),
   is reported with context. Low is dropped unless clearly valuable.
 - Discard likely false positives silently. A finding you cannot ground in the
   diff or tool output is not a finding.
+- A finding that claims what specific code does takes its `path` and lines
+  from a `gcode evidence` read and quotes the `excerpt_hash`, as
+  `gobby:references/code-index/evidence.md` describes, fallbacks included.
+  Design, scope, and proportionality findings need no citation.
 
 ## Reporting
 

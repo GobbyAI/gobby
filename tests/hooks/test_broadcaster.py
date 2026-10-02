@@ -1019,6 +1019,31 @@ async def test_broadcast_event_after_tool_success_stays_post_tool_use(
 
 
 @pytest.mark.asyncio
+async def test_broadcast_event_after_tool_provider_success_overrides_stale_is_error(
+    mock_websocket_server: MagicMock, default_config: DaemonConfig
+) -> None:
+    """Provider-reported success outranks a stale is_error alias (#22821)."""
+    default_config.hook_extensions.websocket.broadcast_events.append("post-tool-use-failure")
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = _make_after_tool_event(
+        {
+            "tool_name": "shell",
+            "tool_input": {"cmd": "ls"},
+            "is_error": True,
+        }
+    )
+    event.metadata["is_failure"] = False
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == "post-tool-use"
+    assert "error" not in call_args["data"]
+
+
+@pytest.mark.asyncio
 async def test_broadcast_event_after_tool_success_backfills_tool_name_from_response(
     mock_websocket_server: MagicMock,
     default_config: DaemonConfig,

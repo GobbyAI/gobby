@@ -416,7 +416,7 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
     assert focused["id"] == tab["id"]
     written = await op("pane.send_text", pane=first["id"], text="echo ready", submit=True)
     assert set(written) == {"idempotency_key", "indeterminate", "detail"}
-    # The pane runs no CLI session, so no composer reader can confirm the submit.
+    # The pane runs no CLI with a composer reader, so the submit is unverified (#23188).
     assert written["indeterminate"] is True
     assert "no composer reader" in written["detail"]
     keyed = await op("pane.send_keys", pane=first["id"], keys="ls\n", idempotency_key="keys-1")

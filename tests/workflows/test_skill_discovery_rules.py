@@ -4908,6 +4908,29 @@ class TestCodeIndexNavigationRules:
             assert blocked.decision == "block", command
 
     @pytest.mark.asyncio
+    async def test_provider_success_records_write_despite_stale_error_alias(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables(loaded=False)
+        write = self._event(
+            HookEventType.AFTER_TOOL,
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/app.py"},
+                "canonical_tool_kind": "write",
+                "canonical_file_paths": ["src/app.py"],
+                "is_error": True,
+            },
+        )
+        write.metadata["is_failure"] = False
+
+        await engine.evaluate(write, session_id=SESSION_ID, variables=variables)
+
+        assert variables["turn_written_paths"] == ["src/app.py"]
+
+    @pytest.mark.asyncio
     async def test_gcode_fail_open_allows_fallback_search(self, db: HubDatabase) -> None:
         _sync_bundled(db)
         variables = self._variables(loaded=False)

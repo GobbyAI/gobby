@@ -117,12 +117,10 @@ def detect_override_conflict(user_row: Any, bundled_row: Any | None) -> None:
 
 def _row_definition_dict(row: PipelineDefinitionRow) -> dict[str, Any]:
     payload = row.definition_json
-    if isinstance(payload, dict):
-        return dict(payload)
     if isinstance(payload, str):
-        loaded = json.loads(payload)
-        if isinstance(loaded, dict):
-            return loaded
+        payload = json.loads(payload)
+    if isinstance(payload, dict):
+        return {**payload, "tags": row.tags or []}
     raise ValueError(f"Pipeline '{row.name}' has a non-object definition_json")
 
 

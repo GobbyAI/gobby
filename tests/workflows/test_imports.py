@@ -20,9 +20,49 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.imports import sync_imported_definition, sync_imported_workflow_file
 from gobby.workflows.pipeline_loader import PipelineLoader
+from gobby.workflows.pipeline_models import PipelineDefinition
 from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.integration
+
+
+def test_pipeline_yaml_tags_persist_on_import(
+    temp_db: HubDatabase,
+    isolated_checkout_factory: IsolatedCheckoutFactory,
+    tmp_path: Path,
+) -> None:
+    project = isolated_checkout_factory(temp_db, "pipeline-tags").project
+    path = tmp_path / "tagged.yaml"
+    payload: dict[str, Any] = {
+        "name": "tagged-import",
+        "type": "pipeline",
+        "tags": ["runbook"],
+        "steps": [{"id": "work", "exec": "echo done"}],
+    }
+    manager = PipelineDefinitionManager(temp_db)
+    for tags in (["runbook"], ["release", "operations"], []):
+        payload["tags"] = tags
+        path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+        imported = sync_imported_workflow_file(temp_db, path, project.id)
+        persisted = manager.get(imported.id)
+        assert persisted.tags == tags
+        assert persisted.project_id == project.id
+        assert persisted.definition_json["tags"] == tags
+
+    payload.pop("tags")
+    path.write_text(yaml.safe_dump(payload), encoding="utf-8")
+    imported = sync_imported_workflow_file(temp_db, path, project.id)
+    assert manager.get(imported.id).tags == []
+
+
+@pytest.mark.parametrize("tags", [[""], ["   "], [1], "runbook"])
+def test_pipeline_yaml_rejects_invalid_tags(tags: object) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PipelineDefinition.model_validate(
+            {"name": "invalid-tags", "tags": tags, "steps": [{"id": "work", "exec": "true"}]}
+        )
 
 
 def _write_pipeline(path: Path, name: str) -> None:

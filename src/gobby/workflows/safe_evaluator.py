@@ -752,22 +752,29 @@ def build_condition_helpers(
 
     def _tool_call_succeeded() -> bool:
         """Check whether the current normalized after-tool event succeeded."""
-        from gobby.hooks.tool_outcomes import normalize_tool_outcome
+        from gobby.hooks.tool_outcomes import hook_event_tool_outcome
 
         event = ctx.get("event")
         data = _event_field(event, "data", None)
         if not isinstance(data, dict):
             return False
-
-        metadata = _event_field(event, "metadata", {})
-        is_failure = metadata.get("is_failure") if isinstance(metadata, dict) else None
-        explicit_success = not is_failure if isinstance(is_failure, bool) else None
-        outcome = normalize_tool_outcome(
-            data,
-            explicit_success=explicit_success,
-            provenance="hook_event.metadata.is_failure" if explicit_success is not None else None,
-        )
+        outcome = hook_event_tool_outcome(data, _event_field(event, "metadata", {}))
         return outcome.succeeded is True
+
+    def _tool_call_failed() -> bool:
+        """Check whether the current after-tool event demonstrably failed.
+
+        An indeterminate outcome is not a failure.
+        """
+        from gobby.hooks.tool_outcomes import hook_event_tool_outcome
+
+        event = ctx.get("event")
+        if event is None:
+            return False
+        outcome = hook_event_tool_outcome(
+            _event_field(event, "data", None), _event_field(event, "metadata", {})
+        )
+        return outcome.succeeded is False
 
     def _projected_monolith_paths(
         tool_input: Any = None,
@@ -864,6 +871,7 @@ def build_condition_helpers(
     funcs["mcp_failed"] = _mcp_failed
     funcs["mcp_result_has"] = _mcp_result_has
     funcs["tool_call_succeeded"] = _tool_call_succeeded
+    funcs["tool_call_failed"] = _tool_call_failed
     funcs["projected_monolith_paths"] = _projected_monolith_paths
     funcs["outstanding_monolith_paths"] = _outstanding_monolith_paths
     funcs["has_open_tool_error"] = _has_open_tool_error

@@ -24,6 +24,18 @@ _background_tasks_by_execution: dict[str, asyncio.Task[None]] = {}
 
 RunDb = Callable[..., Awaitable[Any]]
 
+DEFINITION_SNAPSHOT_UNUSABLE = "definition_snapshot_unusable"
+
+
+def _definition_snapshot(execution: PipelineExecution) -> PipelineDefinition | None:
+    """Parse the launch-time definition; None when it is missing or malformed."""
+    if not execution.definition_json:
+        return None
+    try:
+        return PipelineDefinition.model_validate_json(execution.definition_json)
+    except ValueError:
+        return None
+
 
 async def _run_sync_db(
     run_db: RunDb | None,
@@ -93,7 +105,12 @@ class PipelineExecutionManager(Protocol):
     ) -> StepExecution | None: ...
     def reset_steps_from(self, execution_id: str, from_step_id: str) -> int: ...
     def create_execution(
-        self, pipeline_name: str, inputs_json: str, session_id: str | None = None
+        self,
+        pipeline_name: str,
+        inputs_json: str,
+        session_id: str | None = None,
+        definition_json: str | None = None,
+        project_id: str | None = None,
     ) -> PipelineExecution: ...
     def list_executions(
         self,
@@ -347,6 +364,8 @@ async def run_pipeline(
             inputs_json=json.dumps(inputs),
             session_id=session_id,
             continuation_prompt=continuation_prompt,
+            definition_json=pipeline.model_dump_json(),
+            project_id=project_id,
         )
         execution_id = execution.id
     except Exception as e:
@@ -440,6 +459,15 @@ async def resume_pipeline(
             "error": f"Pipeline '{execution.pipeline_name}' is disabled",
         }
 
+    # The live definition above is only a kill switch; the step graph is the launch snapshot.
+    snapshot = _definition_snapshot(execution)
+    if snapshot is None:
+        return {
+            "success": False,
+            "error_code": DEFINITION_SNAPSHOT_UNUSABLE,
+            "error": f"Execution '{execution_id}' has no usable definition snapshot",
+        }
+
     # Determine resume point and reset steps
     steps = execution_manager.get_steps_for_execution(execution_id)
     if from_step:
@@ -508,7 +536,7 @@ async def resume_pipeline(
     task = asyncio.create_task(
         _execute_pipeline_background(
             executor,
-            pipeline,
+            snapshot,
             inputs,
             project_id,
             execution_id,
@@ -677,6 +705,17 @@ async def resume_interrupted_pipelines(
         if not getattr(pipeline, "resume_on_restart", False):
             continue
 
+        snapshot = _definition_snapshot(execution)
+        if snapshot is None:
+            await _run_sync_db(
+                run_db,
+                execution_manager.update_execution_status,
+                execution_id=execution.id,
+                status=ExecutionStatus.FAILED,
+                outputs_json=json.dumps({"error": DEFINITION_SNAPSHOT_UNUSABLE}),
+            )
+            continue
+
         # Parse stored inputs
         inputs: dict[str, Any] = {}
         if execution.inputs_json:
@@ -691,7 +730,7 @@ async def resume_interrupted_pipelines(
         task = asyncio.create_task(
             _execute_pipeline_background(
                 executor,
-                pipeline,
+                snapshot,
                 inputs,
                 execution.project_id,
                 execution.id,

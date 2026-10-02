@@ -39,8 +39,10 @@ def register_coordination_tools(registry: InternalToolRegistry, ctx: AgentsRegis
             "set of canonical session statuses, or reply=true for the next ordinary message "
             "that owner sends you after this call. Omit owner_session with reply=true to wait "
             "on the session that spawned you. Returns wait_id and waiting/terminal outcome. "
-            "Default timeout 900 seconds, maximum 3600. Repeating the same condition returns "
-            "the original wait without extending expiry. Completion uses protected wake delivery."
+            "Default timeout 900 seconds, maximum 3600. While waiting, repeating the same "
+            "owner and condition returns the original wait and expiry. After completion, "
+            "repeating the same owner and condition creates a new wait. Use a fresh key for "
+            "a separate keyed hold. Completion uses protected wake delivery."
         ),
     )
     async def wait_for_coordination(

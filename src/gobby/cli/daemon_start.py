@@ -69,7 +69,7 @@ def _start_dependency_errors() -> list[str]:
         bootstrap.datastore_mode == "local"
         and (gobby_home / "services" / "docker-compose.yml").is_file()
     )
-    report = collect_dependency_report(managed_services=managed_services, include_srt=True)
+    report = collect_dependency_report(managed_services=managed_services, include_srt=False)
     return required_dependency_errors(report)
 
 

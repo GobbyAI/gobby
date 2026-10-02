@@ -9,6 +9,7 @@ threading scenarios:
 - Exception handling in all cases
 """
 
+import asyncio
 import concurrent.futures
 import json
 import logging
@@ -22,15 +23,18 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.ai import embedding_cache as cache_module
+from gobby.ai import embeddings as embedding_module
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.receipt_effects import STAGED_EFFECTS_FIELD
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._transitions import claim_task
 from gobby.tasks.state_semantics import current_stage_state
 from gobby.utils.daemon_git import GitOk, GitTimeout, daemon_git
 from gobby.workflows.engine.core import RuleEngine
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
+from gobby.workflows.evaluation_runtime import ChildEvaluationCancelled, WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from tests._timing import wait_forever
@@ -540,6 +544,37 @@ class TestCancelledErrorHandling:
             data={},
         )
 
+    def test_cancellation_warning_names_session_and_source(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The cancellation warning is attributable: it names session and CLI source."""
+        runtime = MagicMock()
+        runtime.is_closing = False
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="external-abc",
+            source=SessionSource.CODEX,
+            timestamp=datetime.now(),
+            data={},
+            metadata={"_platform_session_id": "11111111-1111-4111-8111-111111111111"},
+        )
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"):
+            result = handler._handle_cancelled(event)
+
+        records = [
+            record
+            for record in caplog.records
+            if "Workflow evaluation cancelled" in record.getMessage()
+        ]
+        assert result.decision == "allow"
+        assert len(records) == 1
+        message = records[0].getMessage()
+        assert "11111111-1111-4111-8111-111111111111" in message
+        assert "source=codex" in message
+
     def test_cancelled_error_blocks_stop_evaluate(self) -> None:
         """CancelledError on STOP event should block (fail-closed)."""
         event = self._make_event(HookEventType.STOP)
@@ -644,6 +679,650 @@ class TestCancelledErrorHandling:
         assert result.decision == "block"
         assert [record.levelno for record in records] == [logging.WARNING]
         audit.assert_called_once()
+
+    def test_runtime_shutdown_cancels_the_in_flight_evaluation(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The named canceller: a runtime teardown cancels the pending evaluation (#22706).
+
+        ``WorkflowEvaluationRuntime.shutdown()`` stops its loop and
+        ``_cancel_pending_tasks`` cancels every task still scheduled on it, so an
+        in-flight ``evaluate_async`` coroutine is cancelled out from under the
+        adapter thread. ``run()`` maps that to ``concurrent.futures.CancelledError``
+        and ``evaluate`` hands the event to ``_handle_cancelled``. This is the
+        only code path that cancels the evaluation from inside the runtime; the
+        timeout path is a ``TimeoutError`` and does not reach here.
+        """
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
+            entered = threading.Event()
+
+            async def hold(
+                event: HookEvent,
+                *,
+                blocking_deadline: BlockingEffectDeadline | None = None,
+            ) -> HookResponse:
+                del event, blocking_deadline
+                entered.set()
+                await wait_forever()
+                raise AssertionError("the evaluation must be cancelled, not complete")
+
+            event = self._make_event(HookEventType.BEFORE_AGENT)
+            outcome: dict[str, HookResponse] = {}
+
+            def run_evaluate() -> None:
+                # No running loop on this thread, so evaluate() bridges to the
+                # isolated runtime, exactly as the hook adapter does.
+                outcome["response"] = handler.evaluate(event)
+
+            worker = threading.Thread(target=run_evaluate)
+            with patch.object(handler, "_evaluate_rules", hold):
+                worker.start()
+                assert entered.wait(timeout=5), "evaluation never reached the runtime loop"
+
+                with caplog.at_level(logging.DEBUG, logger="gobby.workflows.hooks"):
+                    runtime.shutdown()
+                worker.join(timeout=5)
+
+            assert not worker.is_alive()
+            response = outcome["response"]
+            assert response.decision == "allow"
+            assert runtime.is_closing is True
+            cancelled = [
+                record.getMessage()
+                for record in caplog.records
+                if "Workflow evaluation cancelled" in record.getMessage()
+            ]
+            assert cancelled, "the shutdown cancellation never reached _handle_cancelled"
+        finally:
+            runtime.shutdown()
+
+    def test_child_cancel_outside_an_effect_propagates_without_replaying(
+        self,
+    ) -> None:
+        """An unhandled child failure cannot replay completed turn-start work."""
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
+            event = self._make_event(HookEventType.BEFORE_AGENT)
+            calls = 0
+
+            async def cancel_then_complete(
+                hook_event: HookEvent,
+                *,
+                blocking_deadline: BlockingEffectDeadline | None = None,
+            ) -> HookResponse:
+                nonlocal calls
+                del hook_event, blocking_deadline
+                calls += 1
+                if calls == 1:
+                    child = asyncio.create_task(wait_forever())
+                    child.cancel()
+                    await child
+                    raise AssertionError("the child cancellation must propagate")
+                return HookResponse(decision="allow", metadata={"evaluated": True})
+
+            with patch.object(handler, "_evaluate_rules", cancel_then_complete):
+                with pytest.raises(ChildEvaluationCancelled):
+                    handler.evaluate(event)
+
+            assert calls == 1
+        finally:
+            runtime.shutdown()
+
+
+class TestChildCancelRetryIsEffectSafe:
+    """An effect's child cancellation preserves the live evaluation's outputs."""
+
+    @pytest.fixture
+    def db(self, temp_db: HubDatabase) -> HubDatabase:
+        return temp_db
+
+    @staticmethod
+    def _insert_inline_mcp_rule(db: HubDatabase, name: str) -> None:
+        definition = {
+            "event": "before_agent",
+            "effects": [
+                {
+                    "type": "mcp_call",
+                    "server": "gobby-test",
+                    "tool": "side_effect",
+                    "inject_result": True,
+                }
+            ],
+        }
+        db.execute(
+            """
+            INSERT INTO rule_definitions (
+                id, name, definition_json, enabled, source
+            )
+            VALUES (%s, %s, %s, %s, 'custom')
+            """,
+            (str(uuid4()), name, json.dumps(definition), True),
+        )
+
+    @staticmethod
+    def _before_agent_event() -> HookEvent:
+        return HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(),
+            data={"prompt": "continue"},
+            metadata={
+                "_platform_session_id": SESSION_ID,
+                "project_path": "/tmp/project",
+            },
+        )
+
+    def test_child_cancel_applies_the_inline_effect_once(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        """An inline mcp_call runs once in the live evaluation (#22706)."""
+        self._insert_inline_mcp_rule(db, "inline-effect-once")
+        effect_runs: list[int] = []
+
+        async def dispatcher(
+            _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            effect_runs.append(len(effect_runs) + 1)
+            if len(effect_runs) == 1:
+                # The effect already ran when its awaited child cancels.
+                child = asyncio.create_task(wait_forever())
+                child.cancel()
+                await child
+            return {"success": True, "result": {}}
+
+        engine = RuleEngine(db, mcp_dispatcher=dispatcher)
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(rule_engine=engine, evaluation_runtime=runtime)
+            response = handler.evaluate(self._before_agent_event())
+        finally:
+            runtime.shutdown()
+
+        assert response.decision == "allow"
+        assert len(effect_runs) == 1, "the inline effect must not be replayed on retry"
+
+    def test_child_cancel_preserves_context_and_receipt_updates(self, db: HubDatabase) -> None:
+        """A cancelled lookup retains the earlier effects of this response."""
+        self._insert_inline_mcp_rule(db, "keep-completed-output")
+        db.execute(
+            "UPDATE rule_definitions SET definition_json = %s WHERE name = %s",
+            (
+                json.dumps(
+                    {
+                        "event": "before_agent",
+                        "effects": [
+                            {"type": "inject_context", "template": "kept-context"},
+                            {
+                                "type": "set_variable",
+                                "variable": "kept_receipt",
+                                "value": True,
+                                "delivery": "on_receipt",
+                            },
+                            {
+                                "type": "mcp_call",
+                                "server": "gobby-test",
+                                "tool": "cancelled_lookup",
+                                "inject_result": True,
+                            },
+                            {"type": "inject_context", "template": "remaining-context"},
+                        ],
+                    }
+                ),
+                "keep-completed-output",
+            ),
+        )
+        calls: list[str] = []
+
+        async def dispatcher(
+            _server: str, tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            calls.append(tool)
+            child = asyncio.create_task(wait_forever())
+            child.cancel()
+            await child
+            raise AssertionError("cancelled child returned")
+
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(
+                rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher), evaluation_runtime=runtime
+            )
+            response = handler.evaluate(self._before_agent_event())
+        finally:
+            runtime.shutdown()
+
+        assert response.decision == "allow"
+        assert calls == ["cancelled_lookup"]
+        assert "kept-context" in (response.context or "")
+        assert "remaining-context" in (response.context or "")
+        staged = response.metadata[STAGED_EFFECTS_FIELD]
+        assert staged["session_variables"]["kept_receipt"] is True
+
+    def test_reusing_event_runs_a_new_evaluation(self, db: HubDatabase) -> None:
+        """A later hook cannot inherit an earlier evaluation's skip list."""
+        self._insert_inline_mcp_rule(db, "fresh-evaluation")
+        calls: list[int] = []
+
+        async def dispatcher(
+            _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            calls.append(len(calls) + 1)
+            if len(calls) == 1:
+                child = asyncio.create_task(wait_forever())
+                child.cancel()
+                await child
+            return {"success": True, "result": {}}
+
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(
+                rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher), evaluation_runtime=runtime
+            )
+            event = self._before_agent_event()
+            first = handler.evaluate(event)
+            second = handler.evaluate(event)
+        finally:
+            runtime.shutdown()
+
+        assert first.decision == second.decision == "allow"
+        assert calls == [1, 2]
+
+    def test_child_cancel_preserves_an_earlier_inline_block(self, db: HubDatabase) -> None:
+        """An unknown later outcome cannot undo a completed interception."""
+        self._insert_inline_mcp_rule(db, "keep-interception")
+        db.execute(
+            "UPDATE rule_definitions SET definition_json = %s WHERE name = %s",
+            (
+                json.dumps(
+                    {
+                        "event": "before_agent",
+                        "effects": [
+                            {
+                                "type": "mcp_call",
+                                "server": "gobby-test",
+                                "tool": "intercept",
+                                "inject_result": True,
+                                "block_on_success": True,
+                            },
+                            {
+                                "type": "mcp_call",
+                                "server": "gobby-test",
+                                "tool": "cancelled_lookup",
+                                "inject_result": True,
+                            },
+                        ],
+                    }
+                ),
+                "keep-interception",
+            ),
+        )
+        calls: list[str] = []
+
+        async def dispatcher(
+            _server: str, tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            calls.append(tool)
+            if tool == "cancelled_lookup":
+                child = asyncio.create_task(wait_forever())
+                child.cancel()
+                await child
+            return {"success": True, "result": {}}
+
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(
+                rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher), evaluation_runtime=runtime
+            )
+            response = handler.evaluate(self._before_agent_event())
+        finally:
+            runtime.shutdown()
+
+        assert calls == ["intercept", "cancelled_lookup"]
+        assert response.decision == "block"
+        assert "gobby-test/intercept" in (response.reason or "")
+
+    @pytest.mark.asyncio
+    async def test_concurrent_sessions_keep_their_outputs(self, db: HubDatabase) -> None:
+        """One session's cancelled lookup does not consume another's effects."""
+        self._insert_inline_mcp_rule(db, "parallel-lookup")
+        first_entered = asyncio.Event()
+        second_entered = asyncio.Event()
+        calls: list[str] = []
+
+        async def dispatcher(
+            _server: str, _tool: str, _args: dict[str, Any], event: HookEvent
+        ) -> dict[str, Any]:
+            session_id = event.metadata["_platform_session_id"]
+            calls.append(session_id)
+            if session_id == SESSION_A_ID:
+                first_entered.set()
+                await second_entered.wait()
+                child = asyncio.create_task(wait_forever())
+                child.cancel()
+                await child
+            else:
+                await first_entered.wait()
+                second_entered.set()
+            return {"success": True, "result": {"content": "second-session-context"}}
+
+        handler = WorkflowHookHandler(rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher))
+        first_event = self._before_agent_event()
+        first_event.metadata["_platform_session_id"] = SESSION_A_ID
+        second_event = self._before_agent_event()
+        second_event.metadata["_platform_session_id"] = SESSION_B_ID
+        responses = await asyncio.wait_for(
+            asyncio.gather(
+                handler.evaluate_async(first_event), handler.evaluate_async(second_event)
+            ),
+            timeout=5,
+        )
+
+        assert sorted(calls) == sorted([SESSION_A_ID, SESSION_B_ID])
+        assert [response.decision for response in responses] == ["allow", "allow"]
+        assert "second-session-context" in (responses[1].context or "")
+
+    def test_remaining_effects_run_after_child_cancel(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        """The remaining effects still take effect after a child cancels (#22706)."""
+        self._insert_inline_mcp_rule(db, "inline-first")
+        self._insert_inline_mcp_rule(db, "inline-second")
+        dispatched: list[str] = []
+
+        async def dispatcher(
+            _server: str, _tool: str, args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            del args
+            dispatched.append(_tool)
+            if len(dispatched) == 1:
+                child = asyncio.create_task(wait_forever())
+                child.cancel()
+                await child
+            return {"success": True, "result": {}}
+
+        # Distinguish the two rules by the tool they call.
+        db.execute(
+            "UPDATE rule_definitions SET definition_json = %s WHERE name = %s",
+            (
+                json.dumps(
+                    {
+                        "event": "before_agent",
+                        "effects": [
+                            {
+                                "type": "mcp_call",
+                                "server": "gobby-test",
+                                "tool": "second",
+                                "inject_result": True,
+                            }
+                        ],
+                    }
+                ),
+                "inline-second",
+            ),
+        )
+        engine = RuleEngine(db, mcp_dispatcher=dispatcher)
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(rule_engine=engine, evaluation_runtime=runtime)
+            response = handler.evaluate(self._before_agent_event())
+        finally:
+            runtime.shutdown()
+
+        assert response.decision == "allow"
+        assert dispatched == ["side_effect", "second"], dispatched
+
+    def test_dispatcher_child_cancel_completes_the_live_rule_pass(
+        self,
+        db: HubDatabase,
+    ) -> None:
+        """Finite wait_for passes a child cancellation to the effect boundary.
+
+        This reproduces propagation, not the unknown historical initiator.
+        """
+        self._insert_inline_mcp_rule(db, "dispatcher-child-cancel")
+        # A finite effect timeout puts the effect on the engine's
+        # ``asyncio.wait_for(dispatch, timeout=...)`` path, which is where the
+        # child cancel leaks through instead of becoming a TimeoutError.
+        db.execute(
+            "UPDATE rule_definitions SET definition_json = %s WHERE name = %s",
+            (
+                json.dumps(
+                    {
+                        "event": "before_agent",
+                        "effects": [
+                            {
+                                "type": "mcp_call",
+                                "server": "gobby-test",
+                                "tool": "side_effect",
+                                "inject_result": True,
+                                "timeout_seconds": 5,
+                            }
+                        ],
+                    }
+                ),
+                "dispatcher-child-cancel",
+            ),
+        )
+        attempts: list[int] = []
+
+        async def production_style_dispatcher(
+            _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            attempts.append(len(attempts) + 1)
+            if len(attempts) == 1:
+                # The awaited child is cancelled from elsewhere and awaited, so
+                # the CancelledError originates below the wait_for wrapper.
+                child = asyncio.create_task(wait_forever())
+                child.cancel()
+                await asyncio.wait_for(child, timeout=10)
+            return {"success": True, "result": {}}
+
+        engine = RuleEngine(db, mcp_dispatcher=production_style_dispatcher)
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(rule_engine=engine, evaluation_runtime=runtime)
+            response = handler.evaluate(self._before_agent_event())
+        finally:
+            runtime.shutdown()
+
+        assert response.decision == "allow"
+        assert attempts == [1], "the cancelled attempt's effect must not run twice"
+
+    @pytest.mark.parametrize(
+        ("block_on_success", "block_on_failure", "decision"),
+        [
+            pytest.param(False, False, "allow", id="optional"),
+            pytest.param(True, False, "block", id="success-blocking"),
+            pytest.param(False, True, "block", id="failure-blocking"),
+            pytest.param(True, True, "block", id="both-blocking"),
+        ],
+    )
+    def test_unknown_child_cancel_respects_inline_blocking_policy(
+        self,
+        db: HubDatabase,
+        block_on_success: bool,
+        block_on_failure: bool,
+        decision: str,
+    ) -> None:
+        self._insert_inline_mcp_rule(db, "unknown-prerequisite")
+        db.execute(
+            "UPDATE rule_definitions SET definition_json = %s WHERE name = %s",
+            (
+                json.dumps(
+                    {
+                        "event": "before_tool",
+                        "effects": [
+                            {"type": "inject_context", "template": "kept-context"},
+                            {
+                                "type": "set_variable",
+                                "variable": "kept_receipt",
+                                "value": True,
+                                "delivery": "on_receipt",
+                            },
+                            {
+                                "type": "mcp_call",
+                                "server": "gobby-test",
+                                "tool": "prerequisite",
+                                "inject_result": True,
+                                "block_on_success": block_on_success,
+                                "block_on_failure": block_on_failure,
+                            },
+                        ],
+                    }
+                ),
+                "unknown-prerequisite",
+            ),
+        )
+        calls: list[str] = []
+
+        async def dispatcher(
+            _server: str, tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            calls.append(tool)
+            child: asyncio.Future[None] = asyncio.get_running_loop().create_future()
+            child.cancel()
+            await child
+            raise AssertionError("cancelled child returned")
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"tool_name": "Bash", "tool_input": {"command": "gated-operation"}},
+            metadata={"_platform_session_id": SESSION_ID, "project_path": "/tmp/project"},
+        )
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(
+                rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher), evaluation_runtime=runtime
+            )
+            response = handler.evaluate(event)
+        finally:
+            runtime.shutdown()
+
+        assert calls == ["prerequisite"]
+        assert response.decision == decision
+        assert "kept-context" in (response.context or "")
+        assert response.metadata[STAGED_EFFECTS_FIELD]["session_variables"]["kept_receipt"] is True
+
+    def test_embedding_waiter_timeout_completes_before_agent_dispatch(
+        self, db: HubDatabase
+    ) -> None:
+        self._insert_inline_mcp_rule(db, "embedding-cancellation-origin")
+        fetch_count = 0
+        dispatch_count = 0
+
+        async def dispatcher(
+            _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            nonlocal dispatch_count
+            dispatch_count += 1
+            started = asyncio.Event()
+            peer_lookup = asyncio.Event()
+            release = asyncio.Event()
+            original_key = cache_module._cache_key
+            lookup_count = 0
+            tasks: list[asyncio.Task[list[float]]] = []
+
+            def tracking_key(text: str, model: str, api_base: str | None) -> str:
+                nonlocal lookup_count
+                lookup_count += 1
+                if lookup_count == 2:
+                    peer_lookup.set()
+                return original_key(text, model, api_base)
+
+            async def fetch(texts: list[str], **_kwargs: object) -> list[list[float]]:
+                nonlocal fetch_count
+                fetch_count += 1
+                started.set()
+                await release.wait()
+                return [[0.25, 0.0, 0.0, 0.0] for _text in texts]
+
+            with (
+                patch.object(embedding_module, "_fetch_embeddings", new=fetch),
+                patch.object(cache_module, "_cache_key", new=tracking_key),
+            ):
+                try:
+                    producer = asyncio.create_task(
+                        embedding_module._generate_embedding("same", model="test-model")
+                    )
+                    tasks.append(producer)
+                    async with asyncio.timeout(2):
+                        await started.wait()
+                    peer = asyncio.create_task(
+                        embedding_module._generate_embedding("same", model="test-model")
+                    )
+                    tasks.append(peer)
+                    async with asyncio.timeout(2):
+                        await peer_lookup.wait()
+                    with pytest.raises(TimeoutError):
+                        async with asyncio.timeout(0):
+                            await embedding_module._generate_embedding("same", model="test-model")
+                    release.set()
+                    assert await peer == [0.25, 0.0, 0.0, 0.0]
+                    assert await producer == [0.25, 0.0, 0.0, 0.0]
+                    return {"success": True, "result": {"content": "embedding-complete"}}
+                finally:
+                    release.set()
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.gather(*tasks, return_exceptions=True)
+
+        embedding_module.clear_cache()
+        runtime = WorkflowEvaluationRuntime(max_workers=1)
+        try:
+            handler = WorkflowHookHandler(
+                rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher), evaluation_runtime=runtime
+            )
+            response = handler.evaluate(self._before_agent_event())
+        finally:
+            runtime.shutdown()
+            embedding_module.clear_cache()
+
+        assert response.decision == "allow"
+        assert "embedding-complete" in (response.context or "")
+        assert dispatch_count == fetch_count == 1
+
+    @pytest.mark.asyncio
+    async def test_cancelling_the_evaluation_still_cancels_its_dispatch(
+        self, db: HubDatabase
+    ) -> None:
+        """Real evaluation cancellation reaches the dispatcher and propagates."""
+        self._insert_inline_mcp_rule(db, "real-cancel")
+        entered = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def dispatcher(
+            _server: str, _tool: str, _args: dict[str, Any], _event: HookEvent
+        ) -> dict[str, Any]:
+            entered.set()
+            try:
+                await wait_forever()
+            finally:
+                cancelled.set()
+            raise AssertionError("dispatch returned")
+
+        handler = WorkflowHookHandler(rule_engine=RuleEngine(db, mcp_dispatcher=dispatcher))
+        task = asyncio.create_task(handler.evaluate_async(self._before_agent_event()))
+        try:
+            await asyncio.wait_for(entered.wait(), timeout=5)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            await asyncio.wait_for(cancelled.wait(), timeout=5)
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
 
 class TestVariablePersistence:

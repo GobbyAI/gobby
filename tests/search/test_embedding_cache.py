@@ -3,16 +3,22 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.ai.embeddings import (
+from gobby.ai.embedding_cache import (
     _CACHE_TTL,
-    EmbeddingGenerationError,
     _cache,
     _cache_key,
+    _inflight,
+)
+from gobby.ai.embeddings import (
+    EmbeddingGenerationError,
     _reachability_cache,
     _reachability_cache_key,
     _ReachabilityEntry,
@@ -30,7 +36,7 @@ LOCAL_API_BASE = "http://localhost:1234/v1"
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
+def _clean_cache() -> Iterator[None]:
     """Ensure cached embeddings are cleared before and after each client test."""
     clear_cache()
     yield
@@ -45,14 +51,14 @@ def _make_mock_client(dim: int = 4) -> AsyncMock:
     """
     mock_client = AsyncMock()
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         items = []
@@ -74,10 +80,10 @@ async def test_cache_hit_avoids_api_call() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -155,10 +161,10 @@ async def test_cache_miss_on_different_text() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -177,16 +183,16 @@ async def test_ttl_expiry() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.ai.embeddings.time") as mock_time,
+        patch("gobby.ai.embedding_cache.time") as mock_time,
     ):
         mock_time.monotonic.return_value = 1000.0
         await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
@@ -205,9 +211,9 @@ async def test_batch_dedup_within_request() -> None:
     captured_inputs: list[list[str]] = []
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         captured_inputs.append(input)
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -228,6 +234,213 @@ async def test_batch_dedup_within_request() -> None:
     assert results[0] != results[2]  # "alpha" != "beta"
 
 
+async def _cancel_embedding_tasks(tasks: list[asyncio.Task[list[float]]]) -> None:
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_waiter_timeout_does_not_cancel_shared_fetch() -> None:
+    started = asyncio.Event()
+    peer_lookup = asyncio.Event()
+    release = asyncio.Event()
+    tasks: list[asyncio.Task[list[float]]] = []
+    lookup_count = 0
+    fetch_count = 0
+    vector = [0.25, 0.0, 0.0, 0.0]
+
+    def tracking_key(text: str, model: str, api_base: str | None) -> str:
+        nonlocal lookup_count
+        lookup_count += 1
+        if lookup_count == 2:
+            peer_lookup.set()
+        return _cache_key(text, model, api_base)
+
+    async def fetch(texts: list[str], **_kwargs: object) -> list[list[float]]:
+        nonlocal fetch_count
+        fetch_count += 1
+        started.set()
+        await release.wait()
+        return [vector for _text in texts]
+
+    with (
+        patch("gobby.ai.embeddings._fetch_embeddings", new=fetch),
+        patch("gobby.ai.embedding_cache._cache_key", new=tracking_key),
+    ):
+        try:
+            tasks.append(asyncio.create_task(generate_embedding("same", model="test-model")))
+            async with asyncio.timeout(2):
+                await started.wait()
+            tasks.append(asyncio.create_task(generate_embedding("same", model="test-model")))
+            async with asyncio.timeout(2):
+                await peer_lookup.wait()
+            with pytest.raises(TimeoutError):
+                async with asyncio.timeout(0):
+                    await generate_embedding("same", model="test-model")
+            release.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            assert results == [vector, vector]
+            assert fetch_count == 1
+        finally:
+            release.set()
+            await _cancel_embedding_tasks(tasks)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_producer_releases_key_and_waiting_peer_recovers() -> None:
+    started = asyncio.Event()
+    peer_lookup = asyncio.Event()
+    release = asyncio.Event()
+    tasks: list[asyncio.Task[list[float]]] = []
+    lookup_count = 0
+    fetch_count = 0
+    vector = [0.5, 0.0, 0.0, 0.0]
+    key = _cache_key("same", "test-model", None)
+
+    def tracking_key(text: str, model: str, api_base: str | None) -> str:
+        nonlocal lookup_count
+        lookup_count += 1
+        if lookup_count == 2:
+            peer_lookup.set()
+        return _cache_key(text, model, api_base)
+
+    async def fetch(texts: list[str], **_kwargs: object) -> list[list[float]]:
+        nonlocal fetch_count
+        fetch_count += 1
+        if fetch_count == 1:
+            started.set()
+            await release.wait()
+        return [vector for _text in texts]
+
+    with (
+        patch("gobby.ai.embeddings._fetch_embeddings", new=fetch),
+        patch("gobby.ai.embedding_cache._cache_key", new=tracking_key),
+    ):
+        try:
+            producer = asyncio.create_task(generate_embedding("same", model="test-model"))
+            tasks.append(producer)
+            async with asyncio.timeout(2):
+                await started.wait()
+            peer = asyncio.create_task(generate_embedding("same", model="test-model"))
+            tasks.append(peer)
+            async with asyncio.timeout(2):
+                await peer_lookup.wait()
+            producer.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await producer
+            assert key not in _inflight, "cancelled producer left an orphaned fill"
+            async with asyncio.timeout(2):
+                assert await peer == vector
+                assert await generate_embedding("same", model="test-model") == vector
+            assert fetch_count == 2
+        finally:
+            release.set()
+            await _cancel_embedding_tasks(tasks)
+
+
+@pytest.mark.asyncio
+async def test_cache_clear_keeps_new_fill_owned_until_it_completes() -> None:
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    first_finished = asyncio.Event()
+    release_first = asyncio.Event()
+    release_second = asyncio.Event()
+    tasks: list[asyncio.Task[list[float]]] = []
+    fetch_count = 0
+    key = _cache_key("same", "test-model", None)
+    old_vector = [0.25, 0.0, 0.0, 0.0]
+    new_vector = [0.5, 0.0, 0.0, 0.0]
+
+    async def fetch(texts: list[str], **_kwargs: object) -> list[list[float]]:
+        nonlocal fetch_count
+        fetch_count += 1
+        if fetch_count == 1:
+            first_started.set()
+            await release_first.wait()
+            first_finished.set()
+            return [old_vector for _text in texts]
+        second_started.set()
+        await release_second.wait()
+        return [new_vector for _text in texts]
+
+    with patch("gobby.ai.embeddings._fetch_embeddings", new=fetch):
+        try:
+            tasks.append(asyncio.create_task(generate_embedding("same", model="test-model")))
+            async with asyncio.timeout(2):
+                await first_started.wait()
+            old_fill = _inflight[key]
+            clear_cache()
+            tasks.append(asyncio.create_task(generate_embedding("same", model="test-model")))
+            async with asyncio.timeout(2):
+                await second_started.wait()
+            new_fill = _inflight[key]
+            assert new_fill is not old_fill
+            release_first.set()
+            async with asyncio.timeout(2):
+                await first_finished.wait()
+            assert _inflight[key] is new_fill
+            assert key not in _cache, "an invalidated producer published its obsolete result"
+            release_second.set()
+            async with asyncio.timeout(2):
+                results = await asyncio.gather(*tasks)
+            assert results == [new_vector, new_vector]
+            assert await generate_embedding("same", model="test-model") == new_vector
+            assert fetch_count == 2
+        finally:
+            release_first.set()
+            release_second.set()
+            await _cancel_embedding_tasks(tasks)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_misses_across_event_loops_share_fetch() -> None:
+    started = threading.Event()
+    peer_lookup = threading.Event()
+    release = threading.Event()
+    lookup_lock = threading.Lock()
+    lookup_count = 0
+    fetch_count = 0
+    tasks: list[asyncio.Task[list[float]]] = []
+    vector = [0.75, 0.0, 0.0, 0.0]
+
+    def tracking_key(text: str, model: str, api_base: str | None) -> str:
+        nonlocal lookup_count
+        with lookup_lock:
+            lookup_count += 1
+            if lookup_count == 2:
+                peer_lookup.set()
+        return _cache_key(text, model, api_base)
+
+    async def fetch(texts: list[str], **_kwargs: object) -> list[list[float]]:
+        nonlocal fetch_count
+        fetch_count += 1
+        started.set()
+        assert await asyncio.to_thread(release.wait, 2)
+        return [vector for _text in texts]
+
+    def generate_on_new_loop() -> list[float]:
+        return asyncio.run(generate_embedding("same", model="test-model"))
+
+    with (
+        patch("gobby.ai.embeddings._fetch_embeddings", new=fetch),
+        patch("gobby.ai.embedding_cache._cache_key", new=tracking_key),
+    ):
+        try:
+            tasks.append(asyncio.create_task(asyncio.to_thread(generate_on_new_loop)))
+            assert await asyncio.to_thread(started.wait, 2)
+            tasks.append(asyncio.create_task(asyncio.to_thread(generate_on_new_loop)))
+            assert await asyncio.to_thread(peer_lookup.wait, 2)
+            release.set()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            assert results == [vector, vector]
+            assert fetch_count == 1
+        finally:
+            release.set()
+            await _cancel_embedding_tasks(tasks)
+
+
 @pytest.mark.asyncio
 async def test_concurrent_identical_misses_share_inflight_fetch() -> None:
     """Concurrent cache misses for the same key should share one provider call."""
@@ -246,18 +459,18 @@ async def test_concurrent_identical_misses_share_inflight_fetch() -> None:
             second_lookup.set()
         return _cache_key(text, model, api_base)
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
         started.set()
         await release.wait()
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.ai.embeddings._cache_key", side_effect=tracking_cache_key),
+        patch("gobby.ai.embedding_cache._cache_key", side_effect=tracking_cache_key),
     ):
         first = asyncio.create_task(
             generate_embedding("same", model="test-model", api_base=LOCAL_API_BASE)
@@ -281,9 +494,9 @@ async def test_cross_call_dedup() -> None:
     captured_inputs: list[list[str]] = []
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         captured_inputs.append(input)
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -311,10 +524,10 @@ async def test_different_model_is_cache_miss() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -332,10 +545,10 @@ async def test_different_api_base_is_cache_miss() -> None:
     call_count = 0
     original_create = mock_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     mock_client.embeddings.with_raw_response.create = tracking_create
 
@@ -353,7 +566,7 @@ async def test_max_size_eviction() -> None:
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.ai.embeddings._CACHE_MAX_SIZE", 5),
+        patch("gobby.ai.embedding_cache._CACHE_MAX_SIZE", 5),
     ):
         # Fill cache with 5 entries
         for i in range(5):

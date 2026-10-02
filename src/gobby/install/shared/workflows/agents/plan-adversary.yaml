@@ -162,6 +162,9 @@ prompts:
     review the plan artifact referenced in your prompt against requirements
     context read directly from the repository and the parent planning task
     (`gobby-tasks:get_task`). Cite repository evidence by `path` and `sha256`.
+    Verify a finding's claim about what specific code does with `gcode evidence`
+    (gobby:references/code-index/evidence.md) and quote its numbered lines in
+    the finding text; structured citations stay `path`/`sha256`.
     - Format rejection findings so `reject_review(stage_name="planning", ...)` can append them
       under `## Adversary Findings — Round N` (use the display round number from
       your prompt so prior rounds stay intact).

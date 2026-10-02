@@ -8,6 +8,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -439,6 +440,73 @@ async def test_mcp_registration_and_cancellation(harness: CoordinationHarness) -
         assert row["outcome"] == "waiting"
         cancelled = await registry.call("cancel_coordination_wait", {"wait_id": row["wait_id"]})
         assert cancelled["outcome"] == "cancelled"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "guidance_source",
+    [
+        "mcp",
+        "docs/guides/agents.md",
+        "src/gobby/install/shared/skills/gobby/references/agents/messaging.md",
+    ],
+)
+async def test_mcp_replay_contract_matches_public_guidance(
+    harness: CoordinationHarness, guidance_source: str
+) -> None:
+    registry = create_agents_registry(
+        MagicMock(),
+        session_manager=SessionManager(harness.db),
+        db=harness.db,
+        completion_registry=CompletionEventRegistry(),
+    )
+    arguments = {
+        "owner_session": harness.owner,
+        "coordination_key": "release-replay",
+        "timeout": 30,
+    }
+    with session_context_for_test(harness.waiter):
+        original = await registry.call("wait_for_coordination", arguments)
+        assert original["outcome"] == "waiting"
+        repeated = await registry.call("wait_for_coordination", {**arguments, "timeout": 3600})
+        assert repeated["wait_id"] == original["wait_id"]
+        assert repeated["expires_at"] == original["expires_at"]
+
+        release_id = harness.release("release-replay")
+        completed = coordination_wait_payload(harness.row(original["wait_id"]))
+        assert completed["outcome"] == "released"
+        assert completed["message_id"] == release_id
+
+        rearmed = await registry.call("wait_for_coordination", arguments)
+        assert rearmed["wait_id"] != original["wait_id"]
+        assert rearmed["outcome"] == "waiting"
+        assert rearmed["expires_at"] > original["expires_at"]
+        assert rearmed["message_id"] is None
+        active_replay = await registry.call("wait_for_coordination", arguments)
+        assert active_replay["wait_id"] == rearmed["wait_id"]
+        assert active_replay["expires_at"] == rearmed["expires_at"]
+
+        fresh_key = await registry.call(
+            "wait_for_coordination", {**arguments, "coordination_key": "next-release"}
+        )
+        assert fresh_key["wait_id"] not in {original["wait_id"], rearmed["wait_id"]}
+        assert fresh_key["outcome"] == "waiting"
+        assert harness.row(original["wait_id"])["outcome"] == "released"
+
+    if guidance_source == "mcp":
+        schema = registry.get_schema("wait_for_coordination")
+        assert schema is not None
+        guidance = schema["description"]
+    else:
+        guidance = (Path(__file__).resolve().parents[2] / guidance_source).read_text()
+    normalized = " ".join(guidance.split())
+    assert (
+        "While waiting, repeating the same owner and condition returns the original wait and expiry."
+        in normalized
+    )
+    assert (
+        "After completion, repeating the same owner and condition creates a new wait." in normalized
+    )
 
 
 @pytest.mark.asyncio

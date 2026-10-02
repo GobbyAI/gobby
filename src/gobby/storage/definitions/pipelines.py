@@ -315,6 +315,7 @@ class PipelineDefinitionManager:
         project_id: str | None = None,
         enabled: bool | None = None,
         include_deleted: bool = False,
+        tag: str | None = None,
     ) -> list[PipelineDefinitionRow]:
         return [
             PipelineDefinitionRow.from_row(row)
@@ -324,6 +325,8 @@ class PipelineDefinitionManager:
                 project_id=project_id,
                 enabled=enabled,
                 include_deleted=include_deleted,
+                extra_conditions=("tags @> %s::jsonb",) if tag is not None else (),
+                extra_params=(json.dumps([tag]),) if tag is not None else (),
             )
         ]
 

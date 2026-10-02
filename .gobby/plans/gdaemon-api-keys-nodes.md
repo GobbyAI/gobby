@@ -248,7 +248,7 @@ Targets:
 - `crates/gdaemon/src/serve.rs::*` — scope-reason: `bind` adds the companion loopback listener, `accept` keeps the peer and moves the first-byte peek, TLS handshake, and loopback gate into the per-connection task under a deadline, and `run` loads or generates the certificate
 - `crates/gdaemon/src/front_door/mod.rs::*` — scope-reason: registers the new `tls` module, and `FrontDoor::handle` takes the observed peer and rewrites the forwarding headers
 - `src/gobby/runner_lifecycle.py::*` — scope-reason: the backend `uvicorn.Config` pins `proxy_headers=True` and `forwarded_allow_ips="127.0.0.1,::1"`; its `_healthy_daemon_running(port, backend.host)` call keeps its signature and a `127.0.0.1` host
-- `crates/gdaemon/src/front_door/tls.rs`
+- `crates/gdaemon/src/front_door/tls.rs::*` — scope-reason: the new `tls` module this leaf creates, landed by #23270 at `4d1c9bf195`
 - `crates/gdaemon/tests/front_door.rs::*` — scope-reason: gains the TLS, loopback-gate, and companion-listener tests
 - `crates/gcore/assets/config/runtime_config_contract.json::*` — scope-reason: regenerated derived carrier of `src/gobby/config/`
 - `tests/config/test_bootstrap.py::*` — scope-reason: the TLS block's default, refusal, and loopback-host cases, and the disabled-front-door refusal
@@ -431,6 +431,9 @@ Consumers unchanged:
 - `tests/e2e/test_worktrees_e2e.py` — no-edit-reason: same.
 - `tests/mcp_proxy/test_annotate_mcp.py` — no-edit-reason: same.
 - `tests/terminals/test_runtime_contract.py` — no-edit-reason: same.
+- `tests/e2e/composer_proof_live.py` — no-edit-reason: types `DaemonInstance`; `cert_path` stays unset, so URLs and behavior are unchanged.
+- `tests/e2e/test_composer_live_proof.py` — no-edit-reason: constructs `DaemonInstance` positionally without `cert_path`; plaintext URLs unchanged.
+- `tests/terminals/test_composer_proof_events.py` — no-edit-reason: casts a stub with a fixed `ws://` URL; verification only.
 
 Verification planned:
 `cargo test -p gobby-daemon --test front_door`,
@@ -470,11 +473,11 @@ connect; shipping the dial-host change alone has no observable effect.
 `kind: deliverable`
 
 Targets:
-- `crates/gcore/assets/schema/migrations/456_add_api_keys.sql`
+- `crates/gcore/assets/schema/migrations/458_add_api_keys.sql`
 - `crates/gcore/src/schema/assets.rs::MIGRATIONS`
 - `crates/gcore/assets/schema/catalog.manifest.json::*` — scope-reason: regenerated derived schema carrier
 - `crates/gcore/src/grant/bundle.rs::*` — scope-reason: `GOLDEN_LATEST_CHECKSUM` and `GOLDEN_ASSETS_ROOT_HASH` regenerated
-- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the latest-asset filename assertion moves to 456
+- `crates/gcore/tests/schema_contract.rs::*` — scope-reason: the latest-asset filename assertion moves to 458
 - `crates/gcore/tests/catalog_manifest_freshness.rs::*` — scope-reason: gains the `api_keys` migration assertion
 - `crates/gdaemon/tests/cli_contract.rs::*` — scope-reason: derived schema carrier; it reads `schema_identity()` at run time, so it is re-run as verification with no edit
 - `src/gobby/storage/schema_expected_identity.json::*` — scope-reason: regenerated derived schema carrier
@@ -514,7 +517,7 @@ Targets:
 
 **Research context:**
 
-Migration `456_add_api_keys.sql` (Decision 7), registered in
+Migration `458_add_api_keys.sql` (Decision 7), registered in
 `crates/gcore/src/schema/assets.rs::MIGRATIONS` after the `455_drop_ask_artifacts.sql`
 entry (`filename` plus `include_str!`):
 
@@ -709,7 +712,7 @@ first one an unpack could carry to another machine.
 
 **Acceptance:**
 
-- 4.2.1 - Migration 456 creates `api_keys` and the two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_api_keys.sql`.
+- 4.2.1 - Migration 458 creates `api_keys` and the two `machines` columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_api_keys.sql`.
 - 4.2.2 - `generate`, `parse`, and `hash` match the shared vectors and `parse` rejects a bad checksum, bad alphabet, and wrong length. test: `tests/utils/test_api_key_format.py::test_shared_vectors_and_rejections`.
 - 4.2.3 - Through the full app and its middleware, the bootstrap route verifies the password, binds the machine, and returns the plaintext once with `no-store`; a foreign-owned machine gets 403; repeated bad passwords hit `_LoginRateLimiter` lockout keyed by `_login_client_id`, and a success resets it. test: `tests/servers/routes/test_api_keys.py::test_bootstrap_mints_bound_key`.
 - 4.2.4 - Startup adoption mints the local machine's key into bootstrap once; a failure before the rename revokes the new key, and a failure injected after `os.replace` (at the directory fsync and at the readback) keeps the committed key live, so a retry mints nothing and bootstrap never names a revoked key. test: `tests/storage/test_api_keys.py::test_ensure_local_api_key_mints_once_and_follows_publication_point`.
@@ -721,7 +724,7 @@ first one an unpack could carry to another machine.
 - 4.2.11 - A real isolated daemon launched with `--config config.yaml` mints one key bound to its machine into the sibling `bootstrap.yaml`, leaves `config.yaml` byte-identical, and mints nothing on a second start. test: `tests/e2e/test_local_api_key_adoption.py::test_startup_adopts_local_key_once`.
 - 4.2.5 - `gobby install` with a reachable hub writes the minted key to bootstrap. test: `tests/cli/test_cli_install.py::test_install_mints_local_api_key`.
 - 4.2.6 - Through the full app with two distinct users, list and revoke are owner-scoped and redacted: a foreign revoke answers 404 with a body identical to an absent id's, and list responses carry neither `key_hash` nor plaintext. test: `tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted`.
-- 4.2.7 - The catalog manifest, `grant/bundle.rs` golden checksums, `schema_contract.rs`, and `schema_expected_identity.json` name migration 456. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+- 4.2.7 - The catalog manifest, `grant/bundle.rs` golden checksums, `schema_contract.rs`, and `schema_expected_identity.json` name migration 458. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 - 4.2.8 - The five signed goldens under `tests/runtime_grants/golden/` carry the new schema identity and the golden-vector tests pass. file: `tests/runtime_grants/golden/brokered_datastores.json`.
 - 4.2.9 - Bootstrap parses and writes `api_key`, `api_key_id`, and `hub_cert`, and the config carrier is regenerated. file: `crates/gcore/assets/config/runtime_config_contract.json`.
 - 4.2.16 - An ordinary cross-machine unpack of an archive whose bootstrap names an `api_key` restores a bootstrap with neither the archived nor the destination's `api_key` and `api_key_id`, and a `remote` archive prints the `gobby auth login` re-enrollment line. test: `tests/cli/test_pack.py::test_unpack_drops_machine_bound_api_key`.
@@ -875,7 +878,7 @@ hold:
    the install owner (0600), has no network exposure, and survives the shared-token cutover.
    D1.12 tests it. D1's planning pass makes the break-glass its first leaf, landed on its own
    ahead of the cutover leaf, so reverting the cutover code leaves the break-glass in place.
-2. A rollback rehearsal has passed: on an isolated install at schema 456, revert the D1 code,
+2. A rollback rehearsal has passed: on an isolated install at schema 458, revert the D1 code,
    start the daemon, and authenticate through the break-glass (D1.13).
 
 The D1 planner owns this order and makes it enforceable: live activation is a separate
@@ -957,7 +960,7 @@ Acceptance items D1.1 to D1.11, carried from the plan of record:
 - D1.12: with key verification forced to fail, the break-glass admits a loopback operator
   holding the host-local credential and refuses a non-loopback peer and a loopback peer
   without it.
-- D1.13: the rollback rehearsal reverts the D1 code at schema 456, starts, and authenticates
+- D1.13: the rollback rehearsal reverts the D1 code at schema 458, starts, and authenticates
   through the break-glass.
 
 ```yaml
@@ -1243,6 +1246,14 @@ deferral:
   this completes the approved destination-owns-credentials requirement. The entire
   superseded M1 remains withdrawn in Git history. The Adversary derives and applies
   fresh M1 from these committed bytes.
+- 2026-10-02: Migration renumbered under #23193 (PD gobby#14972 ruling). Package 7 took
+  migrations 456 and 457, so under Decision 7, 4.2 takes `458_add_api_keys.sql`. 4.2's
+  Targets and research context, 4.2.1, 4.2.7, the D1 rollback rehearsal, D1.13, and the V2
+  rollback rule now name 458. Index drift in 4.1 is repaired in the same pass: the `tls.rs`
+  Target takes a `::*` scope now that #23270 landed it, and three #22915 consumers of
+  `DaemonInstance` join Consumers unchanged. Acceptance item counts and scope are unchanged.
+  Renewed consensus required: M1 is withdrawn (memory `f5577ae0`), and the Adversary checks
+  the correction and derives a fresh M1.
 
 ## V2: Verification
 `kind: verification`
@@ -1262,8 +1273,8 @@ uv run gobby plans validate .gobby/plans/gdaemon-api-keys-nodes.md -p .
 
 Run these from the worktree root. Do not run the full pytest suite.
 
-Rollback — PD ruling (L7 gobby#14682 finding): a code revert after migration 456 has applied
-keeps the schema at 456 and reverts behavior only. The revert keeps `456_add_api_keys.sql`, its
+Rollback — PD ruling (L7 gobby#14682 finding): a code revert after migration 458 has applied
+keeps the schema at 458 and reverts behavior only. The revert keeps `458_add_api_keys.sql`, its
 `MIGRATIONS` entry, and the identity carriers, because
 `crates/gcore/src/schema/runner_plan.rs` (42-46) refuses a database schema newer than the
 runner. No down-migration exists.
@@ -1406,8 +1417,8 @@ runner. No down-migration exists.
   task_type: feature
   depends_on:
   - '4.1'
-  validation_criteria: '4.2.1: Migration 456 creates `api_keys` and the two `machines`
-    columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/456_add_api_keys.sql`.
+  validation_criteria: '4.2.1: Migration 458 creates `api_keys` and the two `machines`
+    columns and is registered in `MIGRATIONS`. file: `crates/gcore/assets/schema/migrations/458_add_api_keys.sql`.
 
     4.2.2: `generate`, `parse`, and `hash` match the shared vectors and `parse` rejects
     a bad checksum, bad alphabet, and wrong length. test: `tests/utils/test_api_key_format.py::test_shared_vectors_and_rejections`.
@@ -1455,7 +1466,7 @@ runner. No down-migration exists.
     id''s, and list responses carry neither `key_hash` nor plaintext. test: `tests/servers/routes/test_api_keys.py::test_key_management_is_owner_scoped_and_redacted`.
 
     4.2.7: The catalog manifest, `grant/bundle.rs` golden checksums, `schema_contract.rs`,
-    and `schema_expected_identity.json` name migration 456. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
+    and `schema_expected_identity.json` name migration 458. test: `crates/gcore/tests/schema_contract.rs::embedded_assets_publish_a_complete_schema_identity`.
 
     4.2.8: The five signed goldens under `tests/runtime_grants/golden/` carry the
     new schema identity and the golden-vector tests pass. file: `tests/runtime_grants/golden/brokered_datastores.json`.

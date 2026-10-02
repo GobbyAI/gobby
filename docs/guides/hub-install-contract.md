@@ -51,6 +51,13 @@ unless `--allow-dirty` is passed.
 Every migration applies through the same `schema apply` chain, including one
 that drops or rewrites data; there is no separate destructive-migration path.
 
+The live hub's schema advances only when the daemon that will serve it starts
+(`gobby start`, `gobby restart`, or `gobby cutover`). A `gobby` CLI command never
+applies migrations while a daemon holds `$GOBBY_HOME/gobby.pid`. It opens the
+hub at the running daemon's schema, so a promoted but not yet restarted
+`gdaemon` cannot move the hub ahead of that daemon. With no daemon running,
+first install and other CLI commands still apply pending migrations.
+
 ## Files and client credentials
 
 Hub-local installation requires an existing absolute, non-root `files_home` and

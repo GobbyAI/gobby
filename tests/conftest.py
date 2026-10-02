@@ -111,6 +111,22 @@ def _clear_service_launch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _clear_provider_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test without the runner's provider credentials.
+
+    Native spawns pass allowlisted provider env through from os.environ, so a real
+    key would land in recorded spawn fakes and print in any failing diff. Tests that
+    need one set a dummy explicitly.
+    """
+    from gobby.agents.credential_inventory import CLI_DENIED_AMBIENT_KEYS
+    from gobby.agents.spawners.auth_env import CLI_ENV_ALLOWLIST
+
+    for keys in (*CLI_ENV_ALLOWLIST.values(), *CLI_DENIED_AMBIENT_KEYS.values()):
+        for key in keys:
+            monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _clear_invoking_agent_identity(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start every test outside the invoking agent's identity, as CI runs.
 
@@ -313,6 +329,13 @@ def temp_dir() -> Iterator[Path]:
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
+
+
+@pytest.fixture
+def stub_srt_verifier() -> Iterator[MagicMock]:
+    """Pass the managed-SRT gate without the pinned install; unit spawn modules opt in."""
+    with patch("gobby.agents.sandbox_gate.verify_srt_installation") as verifier:
+        yield verifier
 
 
 @pytest.fixture(scope="session")

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import logging
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -516,6 +517,42 @@ class TestSendMessage:
 
         assert result["success"] is False
         assert result["error_code"] == "target_id_forbidden"
+        mock_message_manager.create_message.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_message_unresolvable_target_returns_typed_error_without_logging(
+        self,
+        messaging_registry: InternalToolRegistry,
+        mock_session_manager: MagicMock,
+        mock_message_manager: MagicMock,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """A caller-supplied session ref that does not resolve is input, not a fault."""
+
+        def resolve(ref: str, project_id: str | None = None) -> str:
+            if ref == "project":
+                raise ValueError("Session 'project' not found")
+            return ref
+
+        mock_session_manager.resolve_session_reference.side_effect = resolve
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.mcp_proxy.tools.agent_messaging"):
+            result = await messaging_registry.call(
+                "send_message",
+                {
+                    "from_session": "s-from",
+                    "target": "session",
+                    "target_id": "project",
+                    "content": "hi",
+                },
+            )
+
+        assert result == {
+            "success": False,
+            "error": "Session 'project' not found",
+            "error_code": "invalid_message_target",
+        }
+        assert caplog.records == []
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio

@@ -1,5 +1,6 @@
 """Test endpoints for admin router (E2E simulation)."""
 
+import asyncio
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -168,25 +169,32 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             arm = LocalAgentRunManager(db)
 
-            # Create agent run in DB
-            arm.create(
-                run_id=request.run_id,
-                parent_session_id=request.parent_session_id,
-                provider="test",
-                prompt="test agent",
-                agent_name=request.agent_name,
-            )
-            if request.status != STATUS_PENDING:
-                arm.start(request.run_id)
-            arm.update_child_session(request.run_id, request.session_id)
-            if request.status == STATUS_SUCCESS:
-                arm.complete(request.run_id, result="test agent completed")
-            elif request.status == STATUS_CANCELLED:
-                arm.cancel(request.run_id)
-            elif request.status == STATUS_ERROR:
-                arm.fail(request.run_id, error="test agent failed")
-            elif request.status == STATUS_TIMEOUT:
-                arm.timeout(request.run_id)
+            def register() -> None:
+                arm.create(
+                    run_id=request.run_id,
+                    parent_session_id=request.parent_session_id,
+                    provider="test",
+                    prompt="test agent",
+                    agent_name=request.agent_name,
+                )
+                if request.status != STATUS_PENDING:
+                    arm.start(request.run_id)
+                arm.update_child_session(request.run_id, request.session_id)
+                if request.status == STATUS_SUCCESS:
+                    arm.complete(request.run_id, result="test agent completed")
+                elif request.status == STATUS_CANCELLED:
+                    arm.cancel(request.run_id)
+                elif request.status == STATUS_ERROR:
+                    arm.fail(request.run_id, error="test agent failed")
+                elif request.status == STATUS_TIMEOUT:
+                    arm.timeout(request.run_id)
+
+            def project() -> dict[str, Any]:
+                run = arm.get(request.run_id)
+                return run.to_dict() if run else {"run_id": request.run_id}
+
+            # Terminal transitions count the violation log and to_dict reads it (#23279).
+            await asyncio.to_thread(register)
 
             if request.status in TERMINAL_AGENT_RUN_STATUSES:
                 await deliver_existing_terminal_run(
@@ -197,13 +205,13 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                     run_db=server.services.run_db,
                 )
 
-            run = arm.get(request.run_id)
+            agent = await asyncio.to_thread(project)
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             return {
                 "status": "success",
                 "message": f"Registered test agent {request.run_id}",
-                "agent": run.to_dict() if run else {"run_id": request.run_id},
+                "agent": agent,
                 "response_time_ms": response_time_ms,
             }
 
@@ -238,12 +246,12 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         try:
             db = server.services.database
             arm = LocalAgentRunManager(db)
-            run = arm.get(run_id)
+            run = await asyncio.to_thread(arm.get, run_id)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
             if run:
-                arm.fail(run_id, error="Unregistered via test endpoint")
+                await asyncio.to_thread(arm.fail, run_id, error="Unregistered via test endpoint")
                 await deliver_existing_terminal_run(
                     db=db,
                     agent_run_manager=arm,
