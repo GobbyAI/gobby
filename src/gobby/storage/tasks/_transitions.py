@@ -303,6 +303,30 @@ def release_task_claim_if_owned(
     return _release_if_owned(db, task_id, expected_owner, "", [])
 
 
+def release_escalated_task_claim(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    expected_owner: str,
+) -> Task | None:
+    """Clear the owner's claim on an escalated task, keeping its escalation metadata."""
+    now = utc_now()
+    with db.transaction() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE tasks
+               SET claimed_by_session_id = NULL,
+                   updated_at = %s
+             WHERE id = %s
+               AND claimed_by_session_id = %s
+               AND closed_at IS NULL
+               AND escalated_at IS NOT NULL
+            """,
+            (now, task_id, expected_owner),
+        )
+    return get_task(db, task_id) if cursor.rowcount == 1 else None
+
+
 def release_abandoned_task_claim(
     db: HubDatabase,
     task_id: str,
