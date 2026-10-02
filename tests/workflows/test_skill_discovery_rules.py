@@ -7,6 +7,7 @@ have valid structure, and evaluate conditions properly.
 from __future__ import annotations
 
 import json
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -4639,14 +4640,15 @@ class TestCodeIndexNavigationRules:
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
         _sync_bundled(db)
-        primary, linked = self._linked_checkouts(tmp_path)
+        # A space and an apostrophe in the root prove the rendered command quotes it.
+        primary, linked = self._linked_checkouts(tmp_path / "team's checkouts")
         for checkout in (primary, linked):
             (checkout / "src/long.py").write_text("value = 1\n" * 60, encoding="utf-8")
         engine = RuleEngine(db)
 
         async def reason(target: Path) -> str:
             event = self._normalized_bash_event(
-                f"cat {target}", cwd=str(primary), project_path=str(primary)
+                f"cat {shlex.quote(str(target))}", cwd=str(primary), project_path=str(primary)
             )
             response = await engine.evaluate(
                 event, session_id=SESSION_ID, variables=self._variables(loaded=True)
@@ -4657,8 +4659,9 @@ class TestCodeIndexNavigationRules:
         sibling = await reason(linked / "src/long.py")
         own = await reason(primary / "src/long.py")
 
-        assert f"gcode --project {linked} outline <file>" in sibling
-        assert f"gcode --project {linked} symbol-at <file>:<line>" in sibling
+        outline, symbol_at = sibling.split("`")[1:4:2]
+        assert shlex.split(outline) == ["gcode", "--project", str(linked), "outline", "<file>"]
+        assert shlex.split(symbol_at)[:3] == ["gcode", "--project", str(linked)]
         assert "gcode outline <file>" in own
         assert "--project" not in own
 
