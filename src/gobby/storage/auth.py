@@ -161,6 +161,18 @@ class AuthStore:
 
         return True
 
+    def session_user_id(self, token: str) -> str | None:
+        """Return the user owning an unexpired session, or None."""
+        if not token:
+            return None
+        row = self.db.fetchone(
+            "SELECT user_id, expires_at FROM auth_sessions WHERE token_hash = %s",
+            (hash_token(token),),
+        )
+        if not row or utc_now() > require_stored_datetime(row["expires_at"], "expires_at"):
+            return None
+        return str(row["user_id"])
+
     def delete_session(self, token: str) -> bool:
         """Delete a session (logout)."""
         cursor = self.db.execute(

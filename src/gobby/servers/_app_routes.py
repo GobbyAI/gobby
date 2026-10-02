@@ -59,9 +59,12 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_voice_router,
         create_webhooks_router,
     )
-    from gobby.servers.routes.auth import create_auth_router
+    from gobby.servers.routes.api_keys import create_api_keys_router
+    from gobby.servers.routes.auth import LoginRateLimiter, create_auth_router
 
-    app.include_router(create_auth_router(server))
+    login_rate_limiter = LoginRateLimiter()
+    app.include_router(create_auth_router(server, login_rate_limiter))
+    app.include_router(create_api_keys_router(server, login_rate_limiter))
     app.include_router(create_health_router(server))
     app.include_router(create_admin_router(server))
     app.include_router(create_agent_spawn_router(server))

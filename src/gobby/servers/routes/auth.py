@@ -42,7 +42,7 @@ class _FailedLoginState:
     locked_until: float
 
 
-class _LoginRateLimiter:
+class LoginRateLimiter:
     """Bound failed-login tracking by client address."""
 
     def __init__(self) -> None:
@@ -119,10 +119,17 @@ def _login_client_id(server: "HTTPServer", request: Request) -> str:
     return f"peer:{peer}"
 
 
-def create_auth_router(server: "HTTPServer") -> APIRouter:
+def login_lockout_response(retry_after: int) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"ok": False, "error": "Too many failed login attempts"},
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def create_auth_router(server: "HTTPServer", login_rate_limiter: LoginRateLimiter) -> APIRouter:
     """Create the authentication API router."""
     router = APIRouter(prefix="/api/auth", tags=["auth"])
-    login_rate_limiter = _LoginRateLimiter()
 
     @router.post("/login")
     async def login(req: LoginRequest, request: Request) -> JSONResponse:
@@ -130,11 +137,7 @@ def create_auth_router(server: "HTTPServer") -> APIRouter:
         client_id = _login_client_id(server, request)
         retry_after = login_rate_limiter.retry_after(client_id)
         if retry_after is not None:
-            return JSONResponse(
-                status_code=429,
-                content={"ok": False, "error": "Too many failed login attempts"},
-                headers={"Retry-After": str(retry_after)},
-            )
+            return login_lockout_response(retry_after)
 
         user = await server.run_db(server.auth_service.verify_password, req.email, req.password)
         if user is None:
