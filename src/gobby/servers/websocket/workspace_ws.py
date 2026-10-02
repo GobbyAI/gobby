@@ -14,12 +14,12 @@ import inspect
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from types import NoneType, UnionType
 from typing import TYPE_CHECKING, Any, Final, get_args, get_type_hints
 
 from gobby.servers.websocket.terminal_ws_create import _bounded_code
-from gobby.storage.workspaces import Workspace
+from gobby.storage.workspaces import Workspace, WorkspacePane
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
 from gobby.terminals.leases import LifecyclePublicationError
 from gobby.terminals.workspace_contract import WorkspaceOpError, WorkspaceSnapshot
@@ -99,10 +99,12 @@ def _arguments(method: str, data: Mapping[str, Any], envelope: frozenset[str]) -
 def _result(value: object) -> Any:
     if isinstance(value, tuple):
         return [_result(item) for item in value]
-    if isinstance(value, Workspace):
+    if isinstance(value, (Workspace, WorkspacePane)):
         return to_json_safe(value.to_dict())
     if is_dataclass(value) and not isinstance(value, type):
-        return to_json_safe(asdict(value))
+        return to_json_safe(
+            {field.name: _result(getattr(value, field.name)) for field in fields(value)}
+        )
     return value
 
 

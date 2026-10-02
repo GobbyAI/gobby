@@ -5,7 +5,8 @@ from __future__ import annotations
 import time
 import uuid
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from threading import Event, Thread, current_thread
 from typing import Any
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from unittest.mock import patch
 import psycopg
 import pytest
 
+from gobby.servers.websocket.workspace_ws import _result
 from gobby.storage import workspaces as workspaces_module
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
@@ -21,9 +23,11 @@ from gobby.storage.terminals import Terminal, TerminalManager, native_locator_ke
 from gobby.storage.workspaces import (
     InvalidWorkspaceOpError,
     InvalidWorkspaceRefError,
+    LayoutChange,
     WorkspaceBusyError,
     WorkspaceManager,
     WorkspaceNotFoundError,
+    WorkspacePane,
     WorkspaceTarget,
     layout_pane_ids,
     validate_layout,
@@ -116,6 +120,104 @@ def test_refs_are_lowest_free_and_reused(
     moved = manager.move_pane(split_b.id, tab_id=second.tabs[0].id).panes[0]
     assert (moved.tab_id, moved.ref) == (second.tabs[0].id, 1)
     assert manager.add_pane(_pane_id(), beside=root.id, axis="vertical").panes[0].ref == 2
+
+
+def test_pane_role_persists_and_defaults_null(
+    manager: WorkspaceManager, sample_project: dict[str, Any]
+) -> None:
+    workspace, _ = manager.create(manager.resolve_node().id)
+    first = manager.create_tab(
+        workspace.id, pane_id=_pane_id(), project_id=sample_project["id"], role="reviewer"
+    ).panes[0]
+    split = manager.add_pane(_pane_id(), beside=first.id, axis="horizontal", role="operator").panes[
+        0
+    ]
+    default = manager.create_tab(
+        workspace.id, pane_id=_pane_id(), project_id=sample_project["id"]
+    ).panes[0]
+    default_split = manager.add_pane(_pane_id(), beside=default.id, axis="vertical").panes[0]
+    expected = {
+        first.id: "reviewer",
+        split.id: "operator",
+        default.id: None,
+        default_split.id: None,
+    }
+
+    assert {pane.id: pane.role for pane in manager.list_panes(workspace.id)} == expected
+    for pane_id, role in expected.items():
+        resolved = manager.resolve_reference(pane_id).pane
+        assert resolved is not None and resolved.role == role
+    stored = manager.db.fetchall("SELECT id, role FROM workspace_panes")
+    assert {str(row["id"]): row["role"] for row in stored} == expected
+    assert manager.rename_pane(first.id, "Review").role == "reviewer"
+
+
+@pytest.mark.parametrize("role", [None, "reviewer"])
+def test_pane_to_dict_omits_null_role(
+    manager: WorkspaceManager, sample_project: dict[str, Any], role: str | None
+) -> None:
+    workspace, _ = manager.create(manager.resolve_node().id)
+    pane = manager.create_tab(
+        workspace.id, pane_id=_pane_id(), project_id=sample_project["id"]
+    ).panes[0]
+    pane = replace(pane, role=role)
+    event_row = pane.to_dict()
+    snapshot_row = _result((pane,))[0]
+    assert event_row["id"] == snapshot_row["id"] == pane.id
+    if role is None:
+        assert "role" not in event_row
+        assert "role" not in snapshot_row
+    else:
+        assert event_row["role"] == snapshot_row["role"] == role
+
+
+@pytest.mark.parametrize("role", ["", "r" * 1025, "é" * 513], ids=["empty", "ascii", "unicode"])
+def test_pane_role_rejects_empty_or_excess_bytes(
+    manager: WorkspaceManager, sample_project: dict[str, Any], role: str
+) -> None:
+    workspace, _ = manager.create(manager.resolve_node().id)
+    pane = manager.create_tab(
+        workspace.id, pane_id=_pane_id(), project_id=sample_project["id"]
+    ).panes[0]
+    with pytest.raises(psycopg.errors.CheckViolation) as error:
+        manager.db.execute("UPDATE workspace_panes SET role = %s WHERE id = %s", (role, pane.id))
+    assert error.value.diag.constraint_name == "workspace_panes_role_byte_limit"
+    assert manager.db.fetchone("SELECT role FROM workspace_panes WHERE id = %s", (pane.id,)) == {
+        "role": None
+    }
+
+
+@pytest.mark.parametrize("role", [None, "reviewer"])
+def test_workspace_op_result_omits_null_pane_role(role: str | None) -> None:
+    pane = WorkspacePane(
+        id=_pane_id(),
+        tab_id=str(uuid.uuid4()),
+        ref=0,
+        terminal_id=None,
+        owns_terminal=False,
+        label=None,
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        role=role,
+    )
+    row = _result(LayoutChange(panes=(pane,)))["panes"][0]
+    assert row["id"] == pane.id
+    if role is None:
+        assert "role" not in row
+    else:
+        assert row["role"] == role
+
+
+@pytest.mark.parametrize("role", ["r" * 1024, "é" * 512], ids=["ascii", "unicode"])
+def test_pane_role_accepts_byte_ceiling(
+    manager: WorkspaceManager, sample_project: dict[str, Any], role: str
+) -> None:
+    workspace, _ = manager.create(manager.resolve_node().id)
+    pane = manager.create_tab(
+        workspace.id, pane_id=_pane_id(), project_id=sample_project["id"], role=role
+    ).panes[0]
+    assert pane.role == role
+    assert manager.list_panes(workspace.id)[0].role == role
 
 
 def test_workspace_manager_resolves_every_reference_form(
