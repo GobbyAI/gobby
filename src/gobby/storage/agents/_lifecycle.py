@@ -40,6 +40,8 @@ def _execute_terminal_transition(
     sql: str,
     params: Sequence[object],
 ) -> AgentRun | None:
+    from gobby.terminals.in_doubt import in_doubt_spawns
+
     if ambient_transaction(host.db) is not None:
         raise TerminalTransitionNestedError(
             f"Terminal transition for agent {run_id} cannot run inside a transaction"
@@ -54,6 +56,9 @@ def _execute_terminal_transition(
         if not _positive_rowcount(cursor):
             return None
         now = utc_now()
+        # Orphaned and held rows belong to proof-based settlement. Keep held rows
+        # protected through compensation too: an old run's rollback must not exit
+        # a newer attempt bound to that terminal id.
         txn.execute(
             """
             UPDATE terminals
@@ -62,9 +67,10 @@ def _execute_terminal_transition(
                 automatic_write_quarantined_at = NULL,
                 automatic_write_quarantine_action_key = NULL
             WHERE id = (SELECT terminal_id FROM agent_runs WHERE id = %s)
-              AND state IN ('pending', 'live', 'orphaned')
+              AND state IN ('pending', 'live')
+              AND id::text <> ALL(%s)
             """,
-            (now, run_id),
+            (now, run_id, list(in_doubt_spawns.held_ids())),
         )
         updated_run = host.get(run_id)
         if updated_run is None:

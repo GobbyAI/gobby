@@ -244,7 +244,66 @@ async def _cleanup_failed_spawn(
             _forget_spawn_run(run_id)
         except Exception as exc:
             _log_step_failure("forget_run", run_id, terminal_id, exc)
-    if run_storage is not None and not foreign_run:
+    if not foreign_run:
+        rollback = functools.partial(
+            _roll_back_run,
+            runner,
+            run_id,
+            error,
+            completion_registry=completion_registry,
+            task_manager=task_manager,
+            child_session_id=child_session_id,
+            terminal_id=terminal_id,
+        )
+        # Terminalizing the run exits its bound terminal row, so a held attempt's run
+        # and child session wait for its owner's settlement: proven exit and kept
+        # orphan alike. Isolation removal stays proven-only.
+        if not (
+            held
+            and terminal_id is not None
+            and in_doubt_spawns.defer(terminal_id, rollback, on_orphan=True)
+        ):
+            await rollback()
+    try:
+        await _cleanup_isolation_step(
+            handler,
+            spawn_config,
+            cleanup=cleanup_isolation,
+            run_id=run_id,
+            terminal_id=terminal_id,
+            terminal_manager=terminal_manager,
+            held=held,
+            settled=settled,
+            prior_attempt=prior_attempt,
+        )
+    except Exception as exc:
+        _log_step_failure("isolation", run_id, terminal_id, exc)
+    if foreign_run:
+        return
+    delete_child = functools.partial(
+        _delete_child_step, runner, run_id, child_session_id, terminal_id
+    )
+    if not (
+        held
+        and terminal_id is not None
+        and in_doubt_spawns.defer(terminal_id, delete_child, on_orphan=True)
+    ):
+        await delete_child()
+
+
+async def _roll_back_run(
+    runner: Any,
+    run_id: str,
+    error: str,
+    *,
+    completion_registry: Any | None,
+    task_manager: Any | None,
+    child_session_id: str | None,
+    terminal_id: str | None,
+) -> None:
+    """Cancel the run and clear its runtime state."""
+    run_storage = getattr(runner, "run_storage", None)
+    if run_storage is not None:
         from gobby.mcp_proxy.tools.agent_cancellation import (
             terminalize_cancelled_agent_run,
         )
@@ -275,22 +334,12 @@ async def _cleanup_failed_spawn(
                 )
             except Exception as exc:
                 _log_step_failure("runtime_state", run_id, terminal_id, exc)
-    try:
-        await _cleanup_isolation_step(
-            handler,
-            spawn_config,
-            cleanup=cleanup_isolation,
-            run_id=run_id,
-            terminal_id=terminal_id,
-            terminal_manager=terminal_manager,
-            held=held,
-            settled=settled,
-            prior_attempt=prior_attempt,
-        )
-    except Exception as exc:
-        _log_step_failure("isolation", run_id, terminal_id, exc)
-    if foreign_run:
-        return
+
+
+async def _delete_child_step(
+    runner: Any, run_id: str, child_session_id: str | None, terminal_id: str | None
+) -> None:
+    run_storage = getattr(runner, "run_storage", None)
     try:
         await asyncio.to_thread(
             _delete_child_session, runner, run_storage, run_id, child_session_id

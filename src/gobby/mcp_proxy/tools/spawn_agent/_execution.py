@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import (
@@ -110,6 +111,7 @@ async def finalize_executed_spawn(
     effective_initial_variables: Any,
     reasoning: Any,
     cleanup_once: SpawnCleanupOnce | None = None,
+    placement: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
     """Persist runtime, verify liveness, start the run, auto-claim, and build the response."""
     failure_identity = {
@@ -375,5 +377,6 @@ async def finalize_executed_spawn(
         ),
         reasoning=reasoning,
         terminal=terminal,
+        placement=placement,
     )
     return response

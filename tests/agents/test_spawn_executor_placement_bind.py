@@ -1449,12 +1449,16 @@ async def test_owner_retry_survives_cancellation_until_shutdown(
     backoff = _Backoff(monkeypatch)
     releases: list[str] = []
     release = in_doubt_spawns.release
+    drain = in_doubt_spawns.drain
 
-    def counting_release(terminal_id: str) -> list[Any]:
-        releases.append(terminal_id)
-        return release(terminal_id)
+    def counting_drain(terminal_id: str, *, proven: bool) -> list[Any]:
+        held = in_doubt_spawns.holds(terminal_id)
+        steps = drain(terminal_id, proven=proven)
+        if held and not in_doubt_spawns.holds(terminal_id):
+            releases.append(terminal_id)
+        return steps
 
-    monkeypatch.setattr(in_doubt_spawns, "release", counting_release)
+    monkeypatch.setattr(in_doubt_spawns, "drain", counting_drain)
     store = _StagedStore()
     runtime = _StagedRuntime(backend="tmux", spawn_hold=asyncio.Event())
     if point == "first-settlement":
@@ -1536,9 +1540,7 @@ async def test_cancelled_release_still_runs_every_deferred_step_once() -> None:
     assert in_doubt_spawns.claim(terminal_id)
     assert in_doubt_spawns.defer(terminal_id, blocking_step)
     assert in_doubt_spawns.defer(terminal_id, second)
-    releasing = asyncio.create_task(
-        spawn_in_doubt_owner.release_claim(terminal_id, run_deferred=True)
-    )
+    releasing = asyncio.create_task(spawn_in_doubt_owner.release_claim(terminal_id, proven=True))
     await entered.wait()
     releasing.cancel()
     with pytest.raises(asyncio.CancelledError):
