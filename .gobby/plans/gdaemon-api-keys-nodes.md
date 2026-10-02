@@ -962,7 +962,7 @@ Acceptance items D1.1 to D1.11, carried from the plan of record:
 
 ```yaml
 deferral:
-  task_ref: "TBD-token-cutover"
+  task_ref: "#23273"
   reason: "Bumps the corpus created by the corpus slice's 3.1 (#21552) to schema_version 2 and re-records every case; gated on that leaf landing. Created at expansion under #21555 with a blocked-by edge to the 3.1 leaf."
   owner: "program-director"
   original_acceptance_items:
@@ -1029,7 +1029,7 @@ Acceptance items D2.1 to D2.7, carried from the plan of record:
 
 ```yaml
 deferral:
-  task_ref: "TBD-node-relay"
+  task_ref: "#23274"
   reason: "Needs the run-modes slice's 2.1 (#21553) hub flag and D1's key validation; gated on both. Created at expansion under #21555 with blocked-by edges to the 2.1 leaf and the D1 task."
   owner: "program-director"
   original_acceptance_items:
@@ -1055,7 +1055,7 @@ D1's dispatch seam. Owned by S2.10 and S2.12. It also waits on D2 (node relay).
 
 ```yaml
 deferral:
-  task_ref: "TBD-gobby-mcp"
+  task_ref: "#23275"
   reason: "The MCP crate, its HTTP transport, and OAuth/DCR issuance belong to the Stage 2 MCP takeover; this slice delivers the API-key identity they build on."
   owner: "gobby-1.0 stage 2"
   original_acceptance_items:
@@ -1071,7 +1071,7 @@ Owned by S2.7 and S4.1b. It also waits on D2 (node relay).
 
 ```yaml
 deferral:
-  task_ref: "TBD-node-index-writes"
+  task_ref: "#23276"
   reason: "Requires the Stage 2 native code-index family; out of Stage 1 scope."
   owner: "gobby-1.0 stage 2"
   original_acceptance_items:
@@ -1088,7 +1088,7 @@ inherits D1's corpus wait.
 
 ```yaml
 deferral:
-  task_ref: "TBD-hook-envelope-content"
+  task_ref: "#23277"
   reason: "Depends on the S2.11 hook ingress design; the rule inventory is not yet verified."
   owner: "gobby-1.0 stage 2"
   original_acceptance_items:
