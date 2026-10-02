@@ -335,6 +335,7 @@ async def _net_commit_patch(
             return None
         absorbed.update(set(carried.decode("ascii", errors="replace").split()) - {merge})
     replayable = [sha for sha in replayable if sha not in absorbed]
+    syncs = [sha for sha in syncs if sha not in absorbed]
     if not replayable:
         return await _stream_commit_patches(ordered, cwd=cwd, output=output)
     parent = await _git_bytes(["rev-parse", "--verify", "--quiet", f"{replayable[0]}^"], cwd=cwd)

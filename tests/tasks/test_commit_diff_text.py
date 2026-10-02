@@ -334,3 +334,35 @@ async def test_merge_that_needs_unlinked_first_parent_content_stays_unavailable(
     linked = [started, early, change, late]
 
     assert await collect_net_name_status_async(linked, cwd=repo) is None
+
+
+async def test_conflicted_sync_inside_a_linked_merge_applies_once(repo: Path) -> None:
+    """A sync merge reached only through a linked merge's second parent arrives
+    with that merge's first-parent diff, so its resolution is not appended again."""
+    _commit(repo, "f.py", "BASE = True\n", "base f")
+    _branch_commit(repo, "q", "main", "f.py", "Q = True\n")
+    branch_work = _branch_commit(repo, "p", "main", "f.py", "P = True\n")
+    conflict = subprocess.run(
+        ["git", *_GIT_IDENTITY, "merge", "--no-ff", "--no-gpg-sign", "-m", "sync q", "q"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert conflict.returncode != 0
+    (repo / "f.py").write_text("RESOLVED = True\n")
+    _git(repo, "add", "f.py")
+    _git(repo, "commit", "--no-gpg-sign", "-q", "-m", "sync q")
+    sync = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    landing = _merge(repo, "p", "land p")
+    follow = _commit(repo, "g.py", "G = True\n", "follow-up")
+    linked = [branch_work, sync, landing, follow]
+
+    listing = await collect_net_name_status_async(linked, cwd=repo)
+    diff = await collect_commit_diff_text_async(linked, cwd=repo)
+
+    assert _paths(listing) == ["f.py", "g.py"]
+    assert diff.count("diff --git a/f.py b/f.py") == 1
+    assert diff.count("+RESOLVED = True") == 1
