@@ -216,12 +216,15 @@ def _count_violation_lines(path: Path) -> tuple[int, bool]:
 
 @lru_cache(maxsize=512)
 def _cached_violation_count(path: str, size: int, mtime_ns: int) -> tuple[int, bool]:
-    """Reuse a live count until the external runtime changes the log."""
+    """Reuse a live count until the external runtime changes the log.
+
+    Bytes skip decoding, which halved the cold count on a 1 GB log (#23279).
+    """
     del size, mtime_ns
     count = 0
     truncated = False
     try:
-        with Path(path).open(encoding="utf-8", errors="replace") as handle:
+        with Path(path).open("rb") as handle:
             for line in handle:
                 if not line.strip():
                     continue

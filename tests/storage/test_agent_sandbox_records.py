@@ -268,6 +268,36 @@ def test_sandbox_brief_caps_violation_count_scan(
     assert record["violation_count_truncated"] is True
 
 
+def test_violation_count_reads_bytes_and_matches_the_decoded_count(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Counting skips decoding, which halved the cold count on a 1 GB log (#23279)."""
+    gobby_home = tmp_path / "gobby-home"
+    log = gobby_home / "run" / "sandbox" / "run-bytes" / "violations.jsonl"
+    log.parent.mkdir(parents=True)
+    # CRLF, blank, whitespace-only, invalid UTF-8 and an unterminated last line.
+    log.write_bytes(b'{"a":1}\r\n\n \t\r\n\xff\xfe\n{"b":2}')
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    _cached_violation_count.cache_clear()
+    original_open = Path.open
+    modes: list[str] = []
+
+    def record_mode(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if path == log:
+            modes.append(mode)
+        return original_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", record_mode)
+    record = sandbox_list_record({"backend": "srt", "violation_path": str(log)}, active=True)
+
+    assert record is not None
+    # The text-mode counter this replaced counted the same three lines.
+    assert record["violation_count"] == 3
+    assert "violation_count_truncated" not in record
+    assert modes == ["rb"]
+
+
 def test_live_list_count_reuses_unchanged_log(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
