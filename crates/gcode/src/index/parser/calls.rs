@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 
 use crate::index::import_resolution::{self, ImportBindings};
@@ -29,6 +30,7 @@ pub(in crate::index::parser) struct CallExtractionContext<'a> {
     pub(super) ts_lang: &'a tree_sitter::Language,
     pub(super) rel_path: &'a str,
     pub(super) symbols: &'a [Symbol],
+    pub(super) definition_starts: &'a HashMap<String, usize>,
     pub(super) import_context: &'a ImportResolutionContext,
     pub(super) import_bindings: &'a ImportBindings,
     pub(super) file_path: &'a Path,
@@ -67,8 +69,11 @@ pub(in crate::index::parser) fn materialize_call(
     site: CallSite,
     semantic_resolver: Option<&mut (dyn SemanticCallResolver + '_)>,
 ) -> anyhow::Result<CallRelation> {
-    let caller_symbol = resolution::enclosing_symbol(ctx.symbols, site.scope_byte);
+    let caller_symbol =
+        resolution::enclosing_symbol(ctx.symbols, ctx.definition_starts, site.scope_byte);
     let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
+    let caller_definition_start =
+        caller_symbol.map(|symbol| resolution::definition_start(symbol, ctx.definition_starts));
     let lua_qualifier_path = if ctx.language == "lua"
         && (site.qualifier_path.is_none() || site.qualifier_path.as_deref() == Some("require"))
     {
@@ -104,7 +109,7 @@ pub(in crate::index::parser) fn materialize_call(
     let external_shadowed = !lua_require_bound
         && shadowing::external_call_is_shadowed(
             source,
-            caller_symbol,
+            caller_definition_start,
             site.scope_byte,
             &site.callee_name,
             root_alias.as_deref(),

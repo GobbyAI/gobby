@@ -157,7 +157,17 @@ fn parse_source_with_identity(
         rel_path,
         content_hash: &file_content_hash,
     };
-    let mut symbols = extract_symbols(&tree, &source, spec, language, &ts_lang, symbol_file)?;
+    // Retrieval ranges include metadata; call scope starts at the original AST definition.
+    let mut definition_starts = HashMap::new();
+    let mut symbols = extract_symbols(
+        &tree,
+        &source,
+        spec,
+        language,
+        &ts_lang,
+        symbol_file,
+        &mut definition_starts,
+    )?;
     link_parents(&mut symbols);
     collapse_rust_impl_symbols(&mut symbols);
     let extracted_imports = extract_imports(
@@ -174,6 +184,7 @@ fn parse_source_with_identity(
         ts_lang: &ts_lang,
         rel_path,
         symbols: &symbols,
+        definition_starts: &definition_starts,
         import_context,
         import_bindings: &extracted_imports.bindings,
         file_path,
@@ -204,6 +215,7 @@ fn extract_symbols(
     language: &str,
     ts_lang: &tree_sitter::Language,
     file: SymbolFileIdentity<'_>,
+    definition_starts: &mut HashMap<String, usize>,
 ) -> anyhow::Result<Vec<Symbol>> {
     if spec.symbol_query.trim().is_empty() {
         return Ok(Vec::new());
@@ -293,6 +305,7 @@ fn extract_symbols(
             continue;
         }
         seen_ids.insert(symbol_id.clone());
+        definition_starts.insert(symbol_id.clone(), node.start_byte());
 
         let symbol = Symbol {
             id: symbol_id,
@@ -318,6 +331,7 @@ fn extract_symbols(
         match replaced_slot {
             Some(index) => {
                 seen_ids.remove(&symbols[index].id);
+                definition_starts.remove(&symbols[index].id);
                 symbols[index] = symbol;
                 definition_slots.insert(slot_key, (m.pattern_index, index));
             }

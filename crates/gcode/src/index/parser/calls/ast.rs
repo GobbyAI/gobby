@@ -165,11 +165,13 @@ mod tests {
             inheritance_query: "",
         };
         let import_context = ImportResolutionContext::default();
+        let definition_starts = std::collections::HashMap::new();
         let ctx = CallExtractionContext {
             language,
             ts_lang: &ts_lang,
             rel_path: "src/app.js",
             symbols: &[],
+            definition_starts: &definition_starts,
             import_context: &import_context,
             import_bindings,
             file_path: Path::new("src/app.js"),
