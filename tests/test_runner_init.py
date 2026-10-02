@@ -13,7 +13,7 @@ from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.config import DaemonConfig
-from gobby.config.bootstrap import BootstrapConfig
+from gobby.config.bootstrap import BootstrapConfig, resolve_bootstrap_path
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
@@ -311,6 +311,31 @@ class TestGobbyRunnerInit:
             "ensure_local_api_token",
         ]
         ensure_token.assert_called_once_with(auth_store)
+
+    def test_failing_local_key_adoption_does_not_block_start(
+        self,
+        mock_config_with_websocket: DaemonConfig,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """4.2.15: adoption failure is logged and startup continues."""
+        patches = create_base_patches(mock_config=mock_config_with_websocket)
+
+        with ExitStack() as stack, caplog.at_level("WARNING", logger="gobby.runner_init.storage"):
+            entered = [stack.enter_context(patch_context) for patch_context in patches]
+            mocks = {
+                patch_context.attribute: entered_mock
+                for patch_context, entered_mock in zip(patches, entered, strict=True)
+            }
+            adopt = mocks["ensure_local_api_key"]
+            adopt.side_effect = RuntimeError('relation "api_keys" does not exist')
+
+            runner = GobbyRunner()
+
+        adopt.assert_called_once_with(
+            runner.database, runner.machine_id, resolve_bootstrap_path(runner._config_file)
+        )
+        assert 'relation "api_keys" does not exist' in caplog.text
+        assert runner.startup_config is not None
 
     def test_memory_stack_uses_embedding_secret_when_runtime_config_has_no_key(self) -> None:
         from gobby.runner_init import services
