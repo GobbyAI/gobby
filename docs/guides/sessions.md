@@ -283,7 +283,10 @@ call_tool("gobby-sessions", "get_session_commits", {
 ```
 
 `get_session_messages` returns chronological windows. Page with `offset` and
-`limit`; `truncated=false` describes full bodies, not an exhaustive transcript.
+`limit`, both counted in rendered groups. `total_count` is the rendered-group
+total, so `offset = total_count - limit` reads the last page; advance by
+`returned_count`. `truncated=false` describes full bodies, not an exhaustive
+transcript.
 The accepted `full_content` argument is unused: bodies are always full. Search
 also returns full bodies and scans a bounded set of sessions when no session is
 specified. Use explicit session reads when complete evidence matters.
