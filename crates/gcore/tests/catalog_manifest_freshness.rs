@@ -504,6 +504,53 @@ fn migration_retires_ask_artifacts_and_index() -> anyhow::Result<()> {
 }
 
 #[test]
+fn migration_adds_api_keys_and_machine_liveness_columns() -> anyhow::Result<()> {
+    let _serial = DATABASE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let Some((_database, mut client)) = scratch_database()? else {
+        return Ok(());
+    };
+    SchemaRunner::new(&mut client, "public")?.apply()?;
+    let columns: Vec<String> = client
+        .query(
+            "SELECT column_name::text FROM information_schema.columns \
+             WHERE table_schema = 'public' AND table_name = 'api_keys' ORDER BY column_name",
+            &[],
+        )?
+        .iter()
+        .map(|row| row.get(0))
+        .collect();
+    assert_eq!(
+        columns,
+        [
+            "created_at",
+            "id",
+            "key_hash",
+            "key_hint",
+            "label",
+            "last_used_at",
+            "machine_id",
+            "revoked_at",
+            "user_id",
+        ]
+    );
+    let index: Option<String> = client
+        .query_one("SELECT to_regclass('public.idx_api_keys_machine')::text", &[])?
+        .get(0);
+    assert_eq!(index.as_deref(), Some("idx_api_keys_machine"));
+    let machine_columns: i64 = client
+        .query_one(
+            "SELECT count(*) FROM information_schema.columns WHERE table_schema = 'public' \
+             AND table_name = 'machines' AND column_name IN ('last_heartbeat_at', 'node_version')",
+            &[],
+        )?
+        .get(0);
+    assert_eq!(machine_columns, 2);
+    Ok(())
+}
+
+#[test]
 fn baseline_enforces_workspace_session_machine_ownership() -> anyhow::Result<()> {
     let manifest: serde_json::Value = serde_json::from_str(CATALOG_MANIFEST_JSON)?;
     let entries = |kind: &str| {
