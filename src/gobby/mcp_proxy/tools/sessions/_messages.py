@@ -56,8 +56,10 @@ def register_message_tools(
 
         Args:
             session_id: Session reference - supports <project>#N, local #N/N, UUID, or prefix
-            limit: Max messages to return
-            offset: Offset for pagination
+            limit: Max rendered groups to return
+            offset: Rendered-group offset; advance by the response's returned_count.
+                total_count is the rendered-group total, so offset=total_count-limit
+                returns the last page.
             full_content: Unused. Content is always returned in full.
         """
         try:
@@ -74,7 +76,6 @@ def register_message_tools(
                     order="head",
                 )
                 messages = [m.to_dict() for m in result.groups]
-                session_total = result.parsed_message_count
             else:
                 return {
                     "success": False,
@@ -84,8 +85,8 @@ def register_message_tools(
             return {
                 "success": True,
                 "messages": messages,
-                "total_count": session_total,
-                "returned_count": len(messages),
+                "total_count": result.total_groups,
+                "returned_count": result.returned_count,
                 "limit": limit,
                 "offset": offset,
                 "truncated": False,
