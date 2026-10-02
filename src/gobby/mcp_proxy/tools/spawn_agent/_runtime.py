@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.agents.isolation import IsolationContext, SpawnConfig
@@ -34,6 +34,7 @@ async def build_spawn_context(
     effective_sandbox_config: SandboxConfig,
     effective_workflow: str | None,
     agent_display_name: str | None,
+    placement: Mapping[str, Any] | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Build workflow variables and the matching durable launch snapshot."""
     # Preserve factory defaults before adding launch-owned variables.
@@ -123,6 +124,7 @@ async def build_spawn_context(
         agent_slug=agent_display_name,
         workflow=effective_workflow,
         initial_variables=effective_initial_variables,
+        placement=placement,
     )
     resume_metadata.update(context_updates)
     return effective_initial_variables, resume_metadata

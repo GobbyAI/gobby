@@ -24,6 +24,7 @@ from gobby.agents.isolation import (
 )
 from gobby.agents.provider_rotation import model_for_provider
 from gobby.agents.reasoning import resolve_spawn_reasoning
+from gobby.agents.resume_placement import placement_snapshot
 from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawn_executor import execute_spawn
@@ -606,6 +607,7 @@ async def spawn_agent_impl(
         effective_sandbox_config=effective_sandbox_config,
         effective_workflow=effective_workflow,
         agent_display_name=agent_display_name,
+        placement=placement_snapshot(placed.resolved) if placed is not None else None,
     )
 
     if write_grant:

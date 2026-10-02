@@ -79,6 +79,9 @@ async def try_resume_daemon_stop_run(
         session_manager=session_manager,
         daemon_config=services_daemon_config(services),
         completion_registry=getattr(services, "completion_registry", None),
+        agent_pane_reserver=getattr(
+            getattr(services, "websocket_server", None), "agent_pane_reserver", None
+        ),
     )
     if resume_result.success and resume_result.run_id:
         mutex.attach(str(resume_result.run_id))
