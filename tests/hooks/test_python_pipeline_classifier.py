@@ -669,6 +669,55 @@ def test_public_path_inspection_preserves_literal_write_scope(inspection: str) -
     assert targets == ("/tmp/safe.txt",)
 
 
+@pytest.mark.parametrize(
+    "script",
+    [
+        "def redirect(value):\n    pass\np = Path('/tmp/safe.txt')\nredirect(Path)\np.write_text('x')",
+        "import pathlib\ndef redirect(value):\n    pass\np = Path('/tmp/safe.txt')\n"
+        "redirect(pathlib)\np.write_text('x')",
+        "def redirect(value):\n    pass\nconstructor = Path\np = Path('/tmp/safe.txt')\n"
+        "redirect(constructor)\np.write_text('x')",
+        "import pathlib\ndef redirect(value):\n    pass\nmodule = pathlib\n"
+        "p = Path('/tmp/safe.txt')\nredirect(module)\np.write_text('x')",
+        "def redirect():\n    pass\np = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
+        "from redirector import redirect\np = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
+        "p = Path('/tmp/safe.txt')\nimport redirector\np.write_text('x')",
+        "import redirector\np = Path('/tmp/safe.txt')\np.write_text('x')",
+        "def redirect():\n    pass\nredirect()\nPath('/tmp/safe.txt').write_text('x')",
+    ],
+    ids=[
+        "constructor-argument",
+        "module-argument",
+        "constructor-alias",
+        "module-alias",
+        "local-no-argument-call",
+        "imported-no-argument-call",
+        "import-after-binding",
+        "import-before-binding",
+        "direct-constructor-receiver",
+    ],
+)
+def test_untrusted_execution_invalidates_literal_write_scope(script: str) -> None:
+    classification, targets = _classify_python_source_with_targets(
+        f"from pathlib import Path\n{script}\n"
+    )
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+def test_trusted_stdlib_execution_preserves_literal_write_scope() -> None:
+    script = (
+        "import json\nimport math\nfrom pathlib import Path\np = Path('/tmp/safe.txt')\n"
+        "print(json.dumps({'n': math.ceil(1.5)}), p.name, p.as_posix())\np.write_text('x')\n"
+    )
+
+    assert _classify_python_source_with_targets(script) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/safe.txt",),
+    )
+
+
 def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
     assert _classify_python_source_with_targets("print(open('a.md').read())") == (
         _PythonExecutionClassification.READ_ONLY,

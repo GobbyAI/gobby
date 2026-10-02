@@ -568,6 +568,58 @@ def test_unproven_assignment_keeps_write_scope_unknown(tmp_path: Path, template:
     assert data["canonical_repo_mutation_scope_unknown"] is True
 
 
+@pytest.mark.parametrize(
+    "untrusted_execution",
+    [
+        "def redirect(value):\n    pass\nredirect(Path)",
+        "import pathlib\ndef redirect(value):\n    pass\nredirect(pathlib)",
+        "def redirect(value):\n    pass\nconstructor = Path\nredirect(constructor)",
+        "import pathlib\ndef redirect(value):\n    pass\nmodule = pathlib\nredirect(module)",
+        "def redirect():\n    pass\nredirect()",
+        "from redirector import redirect\nredirect()",
+        "import redirector",
+    ],
+    ids=[
+        "constructor-argument",
+        "module-argument",
+        "constructor-alias",
+        "module-alias",
+        "local-no-argument-call",
+        "imported-no-argument-call",
+        "untrusted-import",
+    ],
+)
+def test_python_heredoc_untrusted_execution_keeps_write_scope_unknown(
+    tmp_path: Path, untrusted_execution: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\nfrom pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n{untrusted_execution}\np.write_text('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_python_heredoc_trusted_stdlib_keeps_literal_scratch_scope(tmp_path: Path) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\nimport json\nimport math\nfrom pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        "print(json.dumps({'n': math.ceil(1.5)}), p.name, p.as_posix())\np.write_text('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is False
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
 def test_python_heredoc_loop_rebinding_a_scratch_path_name_keeps_scope_unknown(
     tmp_path: Path,
 ) -> None:

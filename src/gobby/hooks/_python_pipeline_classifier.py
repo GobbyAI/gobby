@@ -751,6 +751,89 @@ def _literal_process_command(node: ast.Call) -> str | None:
     return None
 
 
+def _has_trusted_mutation_scope(
+    tree: ast.AST,
+    local_names: frozenset[str],
+    imported_bindings: Mapping[str, str],
+    path_value_names: Mapping[str, str | None],
+) -> bool:
+    """Withhold literal targets if any surrounding code can change trusted writers.
+
+    This is a source-wide proof, not an execution-order or alias analysis. Local
+    callables are opaque here even when the read-only pipeline admits their names.
+    """
+    trusted_modules = (
+        _PYTHON_PIPELINE_MODULES
+        | _PYTHON_PIPELINE_PURE_MODULES
+        | {"pathlib", "os", "shutil", "zipfile", "xml.etree.ElementTree"}
+    )
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(tree):
+        if isinstance(node, (*_PYTHON_PIPELINE_BLOCKED_NODES, ast.FunctionDef, ast.Lambda)):
+            return False
+        if isinstance(node, ast.Import):
+            if any(alias.name not in trusted_modules for alias in node.names):
+                return False
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or node.module not in trusted_modules:
+                return False
+        elif isinstance(node, ast.Attribute):
+            parent = parents.get(node)
+            if isinstance(parent, ast.Call) and parent.func is node:
+                continue  # The call below checks its callee and the walk checks its arguments.
+            if node.attr in _PYTHON_PATH_INSPECTION_ATTRIBUTES and (
+                _literal_path(node.value, imported_bindings, path_value_names) is not None
+            ):
+                continue
+            if not _is_safe_python_pipeline_node(node, local_names, imported_bindings):
+                return False
+        elif isinstance(node, ast.Call):
+            if any(isinstance(argument, ast.Starred) for argument in node.args) or any(
+                keyword.arg is None for keyword in node.keywords
+            ):
+                return False
+            call_name = _call_name(node, imported_bindings) or ""
+            known_call = (
+                _mutation_call_targets(node, imported_bindings, path_value_names) is not None
+                or call_name == "pathlib.Path"
+                or call_name in _PYTHON_PIPELINE_BUILTINS | _PYTHON_PIPELINE_STREAM_CALLS
+                or call_name
+                in {"json.load", "json.loads", "json.dumps", "xml.etree.ElementTree.fromstring"}
+                or _is_pure_module_attribute(call_name)
+                or (call_name == "open" and _is_read_only_open_call(node))
+                or (call_name == "zipfile.ZipFile" and _is_read_only_zipfile_call(node))
+            )
+            if isinstance(node.func, ast.Attribute):
+                receiver = node.func.value
+                path_receiver = (
+                    _literal_path(receiver, imported_bindings, path_value_names) is not None
+                )
+                known_call |= (
+                    (path_receiver and node.func.attr in _PYTHON_PATH_NONESCAPING_METHODS)
+                    or (
+                        node.func.attr in _PYTHON_PIPELINE_METHODS
+                        and _is_safe_python_pipeline_node(receiver, local_names, imported_bindings)
+                    )
+                    or (
+                        node.func.attr in {"write", "writelines", "close"}
+                        and isinstance(receiver, ast.Call)
+                        and _call_name(receiver, imported_bindings) == "open"
+                    )
+                )
+            if not known_call or not _has_safe_python_pipeline_callbacks(
+                node, call_name, frozenset(), imported_bindings
+            ):
+                return False
+        elif isinstance(node, ast.With):
+            if any(not isinstance(item.context_expr, ast.Call) for item in node.items):
+                return False
+        elif isinstance(node, ast.AsyncFor) or (
+            isinstance(node, ast.comprehension) and node.is_async
+        ):
+            return False
+    return True
+
+
 def _proven_python_mutation(
     tree: ast.AST,
     rebound_names: frozenset[str],
@@ -818,6 +901,10 @@ def _proven_python_mutation(
             if not call_targets:
                 return _UNKNOWN_SCOPE_MUTATION
             targets.extend(target for target in call_targets if target not in targets)
+    if targets and not _has_trusted_mutation_scope(
+        tree, rebound_names | imported_bindings.keys(), imported_bindings, path_value_names
+    ):
+        return _UNKNOWN_SCOPE_MUTATION
     return _PythonMutationEvidence(tuple(targets)) if targets else None
 
 
