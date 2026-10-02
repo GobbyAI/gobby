@@ -31,6 +31,7 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 
 logger = logging.getLogger(__name__)
 _PROJECT_CONTEXT_ERRORS: tuple[type[Exception], ...] = (
@@ -274,6 +275,7 @@ def create_spawn_agent_registry(
     config_resolver: Callable[[], DaemonConfig | None] | None = None,
     code_index: Any | None = None,
     detection_registry: DetectionManifestRegistry | None = None,
+    agent_pane_reserver_resolver: Callable[[], AgentPaneReserver | None] | None = None,
 ) -> InternalToolRegistry:
     """
     Create a spawn_agent tool registry with the unified spawn_agent tool.

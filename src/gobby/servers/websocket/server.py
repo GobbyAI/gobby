@@ -45,6 +45,7 @@ from gobby.storage.attention import AttentionStateManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.terminals.host_events import InputActivityEvent
+from gobby.terminals.workspace_agent_panes import AgentPaneReserver
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.utils.json_helpers import json_dumps
 
@@ -231,6 +232,7 @@ class WebSocketServer(
         self.terminal_host_manager: Any | None = None
         self.workspace_manager: WorkspaceManager | None = None
         self.workspace_ops: WorkspaceOps | None = None
+        self.agent_pane_reserver: AgentPaneReserver | None = None
         self.terminal_turn_observer: TerminalTurnObserver | None = None
         if session_manager is not None:
             lifecycle = TurnLifecycleReducer(
@@ -318,8 +320,10 @@ class WebSocketServer(
         self.workspace_manager = workspace_manager
         sessions = self.session_manager
         # Actor scope resolves through sessions, so ops need both managers.
-        self.workspace_ops = (
-            WorkspaceOps(
+        self.workspace_ops = None
+        self.agent_pane_reserver = None
+        if workspace_manager is not None and isinstance(sessions, SessionManager):
+            self.workspace_ops = WorkspaceOps(
                 workspaces=workspace_manager,
                 terminals=terminal_manager,
                 registry=runtime_registry,
@@ -327,9 +331,14 @@ class WebSocketServer(
                 sessions=sessions,
                 publish=self.broadcast_workspace_event,
             )
-            if workspace_manager is not None and isinstance(sessions, SessionManager)
-            else None
-        )
+            # One daemon-scoped reserver, so every spawn shares its per-workspace locks.
+            self.agent_pane_reserver = AgentPaneReserver(
+                workspaces=workspace_manager,
+                terminals=terminal_manager,
+                registry=runtime_registry,
+                sessions=sessions,
+                publish=self.broadcast_workspace_event,
+            )
         if self.terminal_turn_observer is not None:
             self.terminal_turn_observer.set_terminal_manager(terminal_manager)
         if host_manager is not None:
