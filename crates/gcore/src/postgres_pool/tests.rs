@@ -766,6 +766,45 @@ async fn commit_outcome_is_classified() -> anyhow::Result<()> {
 }
 
 #[tokio::test]
+async fn swallowed_statement_error_fails_the_transaction() -> anyhow::Result<()> {
+    let Some(database_url) = test_database_url() else {
+        return Ok(());
+    };
+    let name = unique_application_name();
+    let pool = Pool::build(&database_url, settings(&name, 2, Duration::from_secs(5)))?;
+    let _held = pool.get().await?;
+
+    let ran = Arc::new(AtomicBool::new(false));
+    let mut pid = 0;
+    let swallowed: anyhow::Result<()> = pool
+        .transaction(None, async |transaction| {
+            transaction.after_commit(mark(&ran));
+            pid = backend_pid(transaction).await?;
+            let failed = transaction.execute("SELECT 1 / 0", &[]).await;
+            assert!(failed.is_err(), "the swallowed statement fails");
+            Ok(())
+        })
+        .await;
+    assert!(
+        matches!(
+            transaction_error(swallowed),
+            Some(TransactionError::Aborted)
+        ),
+        "a transaction PostgreSQL aborted cannot report Ok"
+    );
+    assert!(
+        !ran.load(Ordering::SeqCst),
+        "no callback runs for a rolled-back transaction"
+    );
+    assert_eq!(
+        next_checkout_pid(&pool).await?,
+        pid,
+        "the rollback keeps its connection"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn cancelled_commit_discards_connection() -> anyhow::Result<()> {
     let Some(database_url) = test_database_url() else {
         return Ok(());

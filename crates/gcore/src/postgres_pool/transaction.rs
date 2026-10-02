@@ -8,6 +8,7 @@
 //! `ROLLBACK` is therefore never logged or returned: its connection is
 //! discarded and the caller gets the closure's own error.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use tokio_postgres::Row;
@@ -39,6 +40,8 @@ pub enum TransactionError {
     Server(#[from] tokio_postgres::Error),
     #[error("the PostgreSQL COMMIT outcome was not observed")]
     IndeterminateCommit(#[source] tokio_postgres::Error),
+    #[error("a statement failed inside the transaction, so it was rolled back")]
+    Aborted,
     #[error("nested lock priority must increase: {held} -> {requested}")]
     LockOrder { held: i32, requested: i32 },
     #[error("a lock target named no keys")]
@@ -50,6 +53,10 @@ pub enum TransactionError {
 /// One open transaction, lent to the `Pool::transaction` closure.
 pub struct Transaction<'c> {
     inner: deadpool_postgres::Transaction<'c>,
+    /// Set when a statement fails. PostgreSQL has then aborted the
+    /// transaction, and the seam has no savepoint to recover it, so a closure
+    /// that swallows the error and returns `Ok` gets `Aborted` instead.
+    failed: AtomicBool,
     /// `(priority, keys)` of each lock target held, outermost first.
     locks: Mutex<Vec<(i32, Vec<String>)>>,
     callbacks: Mutex<Vec<Callback>>,
@@ -61,7 +68,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Vec<Row>, TransactionError> {
-        Ok(self.inner.query(statement, params).await?)
+        self.record(self.inner.query(statement, params).await)
     }
 
     pub async fn query_opt(
@@ -69,7 +76,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Option<Row>, TransactionError> {
-        Ok(self.inner.query_opt(statement, params).await?)
+        self.record(self.inner.query_opt(statement, params).await)
     }
 
     pub async fn query_one(
@@ -77,7 +84,7 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<Row, TransactionError> {
-        Ok(self.inner.query_one(statement, params).await?)
+        self.record(self.inner.query_one(statement, params).await)
     }
 
     pub async fn execute(
@@ -85,7 +92,14 @@ impl Transaction<'_> {
         statement: &str,
         params: &[&(dyn ToSql + Sync)],
     ) -> Result<u64, TransactionError> {
-        Ok(self.inner.execute(statement, params).await?)
+        self.record(self.inner.execute(statement, params).await)
+    }
+
+    fn record<T>(&self, result: Result<T, tokio_postgres::Error>) -> Result<T, TransactionError> {
+        if result.is_err() {
+            self.failed.store(true, Ordering::Relaxed);
+        }
+        Ok(result?)
     }
 
     /// Take `target`'s locks until the transaction ends. A target already
@@ -146,7 +160,8 @@ impl Drop for Checkout {
 
 impl Pool {
     /// Check out a connection, `BEGIN`, take `lock`, and run `f`; commit on
-    /// `Ok` and run the after-commit callbacks, roll back on `Err`.
+    /// `Ok` and run the after-commit callbacks, roll back on `Err`. An `Ok`
+    /// after any statement failed rolls back too and returns `Aborted`.
     ///
     /// The two lifetimes in `f`'s argument are independent: tying them
     /// (`&'t Transaction<'t>`) fails the `Send` check of a spawned call.
@@ -167,6 +182,7 @@ impl Pool {
                 .insert(self.get().await.map_err(TransactionError::from)?);
             let transaction = Transaction {
                 inner: object.transaction().await.map_err(TransactionError::from)?,
+                failed: AtomicBool::default(),
                 locks: Mutex::default(),
                 callbacks: Mutex::default(),
             };
@@ -175,7 +191,12 @@ impl Pool {
                 None => Ok(()),
             };
             let outcome = match lock_outcome {
-                Ok(()) => f(&transaction).await,
+                Ok(()) => match f(&transaction).await {
+                    Ok(_) if transaction.failed.load(Ordering::Relaxed) => {
+                        Err(TransactionError::Aborted.into())
+                    }
+                    outcome => outcome,
+                },
                 Err(error) => Err(error.into()),
             };
             let Transaction {
