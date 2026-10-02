@@ -605,13 +605,10 @@ def _has_python_module_stub(
         ):
             latest_by_path[edit.path] = edit
     for edit in latest_by_path.values():
-        if (
-            not edit.source_created
-            or not _source_confirmed_before(edit, run)
-            or edit.source_after is None
-        ):
+        stub_source = edit.source_after if edit.source_created else edit.python_added_source
+        if stub_source is None or not _source_confirmed_before(edit, run):
             continue
-        classes = python_noop_module(edit.source_after)
+        classes = python_noop_module(stub_source)
         if classes is None:
             continue
         module_name = edit.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
