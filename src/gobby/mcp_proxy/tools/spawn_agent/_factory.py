@@ -23,6 +23,7 @@ from ._provider_resolution import (
     resolve_spawn_provider,
     spawning_session_provider,
 )
+from ._seat_adoption import pipeline_caller, pipeline_invocation_reply
 from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
@@ -447,7 +448,24 @@ def create_spawn_agent_registry(
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
-        if reserved_run_id is not None:
+        invoking_pipeline = (
+            await asyncio.to_thread(pipeline_caller, session_manager, caller_session_id)
+            if reserved_run_id is not None
+            else None
+        )
+        if reserved_run_id is not None and invoking_pipeline is not None:
+            invocation_reply = await asyncio.to_thread(
+                pipeline_invocation_reply,
+                db,
+                session_manager,
+                invoking_pipeline,
+                parent_session_id=resolved_parent_session_id,
+                project_id=project_id,
+                reserved_run_id=reserved_run_id,
+            )
+            if invocation_reply is not None:
+                return invocation_reply
+        elif reserved_run_id is not None:
             from uuid import UUID
 
             from gobby.storage.agents import LocalAgentRunManager
