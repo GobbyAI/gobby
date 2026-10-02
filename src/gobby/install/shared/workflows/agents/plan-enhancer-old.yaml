@@ -1,4 +1,4 @@
-name: plan-enhancer
+name: plan-enhancer-old
 description: |
   Constructive plan enhancer for the stage-native planning flow. Reads a plan,
   records ranked Better/Bigger enhancement suggestions through

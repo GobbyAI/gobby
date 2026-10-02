@@ -62,9 +62,9 @@ def test_reference_contract_4_2_2() -> None:
     expected = {
         "planner": ("plan/drafting", "NARRATIVE ONLY"),
         "plan-adversary": ("plan/review", "review"),
-        "plan-adversary-taskless": ("plan/review", "review"),
-        "plan-enhancer": ("plan/enhancement", "You are advisory only"),
-        "plan-enhancer-taskless": ("plan/enhancement", "You are advisory only"),
+        "plan-adversary-taskless-old": ("plan/review", "review"),
+        "plan-enhancer-old": ("plan/enhancement", "You are advisory only"),
+        "plan-enhancer-taskless-old": ("plan/enhancement", "You are advisory only"),
         "merge-orchestrator": ("build/coordination", "merge"),
         "epic-reviewer": ("review/epic", "Discovery Brief"),
         "backend-developer": ("development/obligations", "test-driven-development"),
