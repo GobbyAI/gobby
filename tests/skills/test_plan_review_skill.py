@@ -96,7 +96,8 @@ def test_repair_class_section() -> None:
         "gobby-format all three",
         "Other categories remain prose",
         "Every referenced section must exist in evidence",
-        "Only coordinator apply_plan_review_repairs writes accepted repairs after a finalized rejection",
+        "Only the coordinator, or the Writer seat in a static-seat round, writes accepted "
+        "repairs through apply_plan_review_repairs after a finalized rejection",
         "fresh reviewer re-runs its check",
     ):
         assert term in body

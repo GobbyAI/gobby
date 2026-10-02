@@ -15,23 +15,6 @@ isolation: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  baseline:
-    - Python backend and daemon implementation
-    - storage, migrations, psql, and database clients
-    - pytest, mypy, ruff, and task-focused validation
-    - uv, pip, poetry, container tools, and infrastructure debugging
-    - docs and test leaves that do not require a specialized agent
-  tool_allowlist:
-    - pytest
-    - mypy
-    - ruff
-    - psql
-    - uv
-    - pip
-    - poetry
-    - container tools
-
 prompts:
   persona: |
     Provide interactive backend engineering guidance for Gobby's Python services, storage, daemon, and infrastructure. Trace behavior to source, favor root-cause fixes, and recommend focused validation.

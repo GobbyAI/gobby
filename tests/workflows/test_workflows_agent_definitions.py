@@ -328,8 +328,8 @@ def test_architect_requires_architecture_and_test_architecture_sections() -> Non
     agent = _agent("architect")
     load_skill = _step(agent, "load_skill")
 
-    assert "architecture" in set(agent["skills"]["methodology"])
-    assert "test-architecture" not in set(agent["skills"]["methodology"])
+    assert 'get_skill(name="architecture")' in agent["prompts"]["agent"]
+    assert 'get_skill(name="test-architecture")' not in agent["prompts"]["agent"]
     assert "## Architecture Brief" in agent["prompts"]["agent"]
     assert "## Test Architecture" in agent["prompts"]["agent"]
     assert "tool_input.name == 'architecture'" in str(load_skill.get("on_mcp_success"))
@@ -375,8 +375,8 @@ def test_developer_agents_support_toolchain_allowlists_and_additional_skills(
     implement = _step(agent, "implement")
     terminate = _step(agent, "terminate")
 
-    tool_allowlist = set(agent["skills"]["tool_allowlist"])
-    assert tool_words.issubset(tool_allowlist)
+    missing_tools = {word for word in tool_words if word not in agent["prompts"]["agent"]}
+    assert not missing_tools
     assert agent["step_workflow"]["variables"]["required_skills"] == [
         "gobby:references/development/obligations.md",
         "restraint",
@@ -544,27 +544,6 @@ def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
         assert marker in epic_skill.lower()
 
 
-def test_agent_definition_model_preserves_skills_blocks() -> None:
-    from gobby.workflows.definitions import AgentDefinitionBody
-
-    body = AgentDefinitionBody.model_validate(
-        {
-            "name": "backend-developer",
-            "prompts": {"agent": "Run the assigned task."},
-            "workflows": {"rule_selectors": {"include": []}},
-            "skills": {
-                "baseline": ["Python backend"],
-                "tool_allowlist": ["pytest", "ruff"],
-            },
-        }
-    )
-
-    assert body.skills == {
-        "baseline": ["Python backend"],
-        "tool_allowlist": ["pytest", "ruff"],
-    }
-
-
 def test_triage_agent_uses_current_agent_schema_and_methodology_skill() -> None:
     from gobby.workflows.definitions import AgentDefinitionBody
 
@@ -572,9 +551,9 @@ def test_triage_agent_uses_current_agent_schema_and_methodology_skill() -> None:
     body = AgentDefinitionBody.model_validate(agent)
 
     assert "prompt" not in agent
-    assert agent["skills"] == {"methodology": ["triage-judgment"]}
     assert body.prompts.agent is not None
     assert "Return structured JSON only" in body.prompts.agent
+    assert 'get_skill(name="triage-judgment")' in body.prompts.agent
 
 
 def test_backend_developer_documents_default_fallback_audit_marker() -> None:

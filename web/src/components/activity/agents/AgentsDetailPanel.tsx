@@ -34,11 +34,6 @@ interface AgentsDetailPanelProps {
   onError: (message: string) => void;
 }
 
-const MODE_OPTIONS = ["inherit", "autonomous", "interactive"].map((value) => ({
-  value,
-  label: value,
-}));
-
 const ISOLATION_OPTIONS = ["inherit", "worktree", "clone", "none"].map(
   (value) => ({
     value,
@@ -194,13 +189,6 @@ export function AgentsDetailPanel({
             value={form.model}
             placeholder={modelOptions[0]?.label ?? "(default)"}
             onChange={(value) => setFormField("model", value)}
-          />
-          <SelectField
-            label="Mode"
-            ariaLabel="Mode"
-            value={form.mode}
-            options={MODE_OPTIONS}
-            onChange={(value) => setFormField("mode", value)}
           />
           <SelectField
             label="Isolation"

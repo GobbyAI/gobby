@@ -4676,7 +4676,7 @@ async def test_derivation_yields_to_event_loop_between_record_chunks(
     assert [type(item) for item in crossed[1:]] == [ChunkedPayload] * 3
     for payload in cast(list[ChunkedPayload], crossed[1:]):
         assert len(payload.chunks) > 1
-        assert all(len(pickle.loads(chunk)) <= CHUNK_RECORDS for chunk in payload.chunks)
+        assert all(len(pickle.loads(chunk)[1]) <= CHUNK_RECORDS for chunk in payload.chunks)
     for name, seen in steps.items():
         assert len(seen) > 2, name
         assert all(later > earlier for earlier, later in zip(seen, seen[1:], strict=False)), (
@@ -4754,6 +4754,17 @@ def test_chunked_derivation_matches_unchunked_derivation_in_order(
     # A resume snapshot crosses the boundary through the same codec.
     resumed = decode(_derive_chunked_transcript_evidence(*args, encode(snapshot)))
     assert resumed == _derive_transcript_evidence_sync(*args, snapshot)
+
+
+def test_payload_shell_does_not_grow_with_record_count() -> None:
+    # The shell is pickled before the first yield and unpickled after the last chunk,
+    # each in one uninterrupted step. A shell of fixed size keeps both steps bounded
+    # however many records a resumed snapshot or derived result carries.
+    def shell(records: int) -> bytes:
+        runs = tuple(_session_run("session-1", f"cmd {i}", BASE_TIME, i) for i in range(records))
+        return encode((runs, list(runs))).shell
+
+    assert len(shell(CHUNK_RECORDS)) == len(shell(8 * CHUNK_RECORDS))
 
 
 def _drop_last_chunk(payload: ChunkedPayload) -> ChunkedPayload:

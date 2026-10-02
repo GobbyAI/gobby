@@ -275,6 +275,7 @@ async fn start_front_door(
         serve(
             vec![PublicListener { listener, backend }],
             &routes,
+            None,
             std::future::pending(),
         )
         .await

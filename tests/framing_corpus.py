@@ -89,6 +89,7 @@ TRUE_RESTRICTION_RULES = frozenset(
         "archivist-write-scope",
         "assistant-write-scope",
         "block-autonomous-clear-session",
+        "block-cross-project-send-keys",
         "block-cross-session-foreign-dirty-edit",
         "block-cross-session-foreign-staged-commit",
         "block-direct-provider-launch",

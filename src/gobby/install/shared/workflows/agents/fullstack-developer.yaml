@@ -14,26 +14,6 @@ isolation: inherit
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  baseline:
-    - backend APIs, storage, migrations, and daemon implementation
-    - frontend components, routing, accessibility, and browser behavior
-    - integration testing across API, UI, CLI, and persistence boundaries
-    - pytest, mypy, ruff, playwright, eslint, and task-focused validation
-  tool_allowlist:
-    - pytest
-    - mypy
-    - ruff
-    - psql
-    - uv
-    - npm
-    - pnpm
-    - yarn
-    - playwright
-    - vite
-    - webpack
-    - eslint
-
 prompts:
   persona: |
     Provide interactive guidance across Gobby's backend and web application. Trace contracts end to end, keep ownership boundaries explicit, and favor the smallest complete cross-layer change.
@@ -47,6 +27,8 @@ prompts:
     You are the fullstack-developer for an automated leaf task. Your task ID is in
     assigned_task_id. Use backend and frontend validation proportionally to the
     change. Prefer narrow, behavior-focused commands over broad full-suite runs.
+    Prefer the backend and frontend toolchains: pytest, mypy, ruff, psql, uv,
+    npm, pnpm, yarn, playwright, vite, webpack, and eslint.
 
     Additional skills:
     Load gobby:references/development/obligations.md, restraint, and gobby:references/tasks/overview.md with gobby-skills before

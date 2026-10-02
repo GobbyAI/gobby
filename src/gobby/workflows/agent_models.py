@@ -80,7 +80,9 @@ class AgentDefinitionBody(BaseModel):
 
     Agent identity with surface-specific prompt blocks, provider config,
     spawn parameters, and orchestration. Behavior is defined by rules
-    and optional pipeline, not embedded workflows.
+    and optional pipeline, not embedded workflows. Skill discovery lives in
+    workflows.skill_selectors and required loads in
+    step_workflow.variables.required_skills.
     """
 
     @model_validator(mode="before")
@@ -98,6 +100,7 @@ class AgentDefinitionBody(BaseModel):
 
     name: str
     description: str | None = None
+    version: StrictStr | None = None
     sources: list[str] | None = None  # Session sources this agent applies to (None = all)
     surfaces: list[Literal["spawn", "persona"]] = Field(
         default_factory=lambda: cast(list[Literal["spawn", "persona"]], ["spawn"]),
@@ -120,13 +123,18 @@ class AgentDefinitionBody(BaseModel):
     )
     model_config = ConfigDict(extra="ignore")  # Tolerate stale YAML with removed fields
 
+    network: Literal["none", "trusted"] = Field(
+        default="none",
+        description=(
+            "Egress for the agent's SRT sandbox; `trusted` is set only by bundled templates"
+        ),
+    )
     isolation: Literal["none", "worktree", "clone", "inherit"] | None = "inherit"
     base_branch: str = "inherit"
     timeout: float = 0
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True
-    skills: dict[str, list[str]] = Field(default_factory=dict)
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
@@ -147,6 +155,13 @@ class AgentDefinitionBody(BaseModel):
         if present:
             named = ", ".join(f"{key} (use {replacements[key]})" for key in present)
             raise ValueError(f"top-level step fields are no longer accepted: {named}")
+
+        if "skills" in data:
+            raise ValueError(
+                "top-level skills map is no longer accepted: use "
+                "workflows.skill_selectors for discovery and "
+                "step_workflow.variables.required_skills for required loads"
+            )
 
         legacy_prompt_fields = [
             key for key in ("role", "goal", "personality", "instructions") if key in data

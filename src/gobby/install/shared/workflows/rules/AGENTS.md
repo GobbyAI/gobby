@@ -7,7 +7,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | Group | Dir | Rules | Purpose |
 |-------|-----|-------|---------|
 | `worker-safety` | `worker-safety/` | 57 | Block git push (global + worker-scoped), force push, destructive git/shell, unmanaged worktree/clone commands, direct provider launches, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, validation runs wrapped in pipes or command sequences, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
-| `tool-hygiene` | `tool-hygiene/` | 7 | Require `uv` and route memory operations through Gobby |
+| `tool-hygiene` | `tool-hygiene/` | 8 | Require `uv`, route memory operations through Gobby, and keep `send_keys` off web-chat callers and inside the caller's project and agent tree |
 | `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
 | `task-enforcement` | `task-enforcement/` | 19 | Require claimed tasks and interactive mutation guidance, block spawned-agent task creation, nudge native trackers after claim, inject claimed-task extras, protect shared-worktree edits and commits, fail closed on unresolved-scope shell writes, and enforce valid task transitions |
 | `stop-gates` | `stop-gates/` | 6 | Require workflow completion and enforce the Found Work ladder before turn end |

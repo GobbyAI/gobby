@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 from collections.abc import Mapping
 from pathlib import Path
@@ -55,13 +56,25 @@ def endpoint_to_url(bootstrap: BootstrapConfig) -> str:
 
 
 def normalize_dial_host(host: str) -> str:
-    """Convert daemon bind hosts into client-dialable hosts."""
+    """Map a daemon bind host to the loopback host a local client dials.
+
+    The daemon always serves loopback, in plaintext, on its own ports: a
+    wildcard bind covers it, and a concrete non-loopback bind gets a companion
+    loopback listener. A concrete address may require TLS, so local clients
+    never dial it. A loopback IPv4 bind gets no companion, so it dials itself.
+    IPv6 literals map to `[::1]`; everything else to `127.0.0.1`.
+    """
     stripped = host.strip()
-    if stripped.lower() == "localhost" or stripped in {"", "0.0.0.0", "::", "::0", "[::]"}:
+    if stripped in {"", "0.0.0.0", "::", "::0", "[::]"}:
         return "127.0.0.1"
-    if ":" in stripped and not stripped.startswith("["):
-        return f"[{stripped}]"
-    return stripped
+    if ":" in stripped:
+        return "[::1]"
+    try:
+        if ipaddress.IPv4Address(stripped).is_loopback:
+            return stripped
+    except ValueError:
+        pass
+    return "127.0.0.1"
 
 
 def validate_daemon_url(url: str, *, source: str = "daemon URL") -> str:

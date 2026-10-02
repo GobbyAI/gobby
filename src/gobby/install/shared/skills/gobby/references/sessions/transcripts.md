@@ -7,7 +7,8 @@ an archive. Discover `gobby-sessions:get_session_messages`,
 
 Resolve the target identity first. Read chronological message windows using
 `limit` and `offset`; inspect returned counts and advance through the required
-windows. `full_content` is accepted but unused: message bodies are always full.
+windows. `limit`, `offset`, `returned_count`, and `total_count` all count
+rendered groups, so `offset = total_count - limit` reads the last page. `full_content` is accepted but unused: message bodies are always full.
 It is not a compact-view switch, and `truncated=false` does not mean every
 message in the session was returned.
 

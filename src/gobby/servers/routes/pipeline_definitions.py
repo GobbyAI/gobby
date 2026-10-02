@@ -24,6 +24,7 @@ from gobby.storage.definitions.pipelines import (
     PipelineDefinitionManager,
     PipelineDefinitionRow,
 )
+from gobby.storage.hub.protocol import WorkflowDefinitionMutation
 from gobby.workflows.pipeline_models import PipelineDefinition
 
 if TYPE_CHECKING:
@@ -339,9 +340,19 @@ def create_pipeline_definitions_router(server: HTTPServer) -> APIRouter:
                 fields["definition_json"] = _parse_definition(fields["definition_json"])
             if "canvas_json" in fields and isinstance(fields["canvas_json"], str):
                 fields["canvas_json"] = json.loads(fields["canvas_json"])
-            if "tags" in fields and fields["tags"] is not None:
-                fields["tags"] = [tag for tag in fields["tags"] if tag != "gobby"]
-            row = await server.run_db(_get_manager().update, definition_id, **fields)
+            manager = _get_manager()
+
+            def _update() -> PipelineDefinitionRow:
+                with manager.db.transaction_immediate(WorkflowDefinitionMutation(definition_id)):
+                    if "tags" in fields:
+                        # An update can neither add nor remove the sync-ownership tag.
+                        tags = [tag for tag in fields["tags"] or [] if tag != "gobby"]
+                        if "gobby" in (manager.get(definition_id).tags or []):
+                            tags.insert(0, "gobby")
+                        fields["tags"] = None if fields["tags"] is None and not tags else tags
+                    return manager.update(definition_id, **fields)
+
+            row = await server.run_db(_update)
             await _broadcast("pipeline_updated", definition_id)
             return {"status": "success", "definition": _row_to_dict(row)}
         except HTTPException:

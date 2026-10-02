@@ -159,16 +159,15 @@ fn retarget_aims_the_op_at_the_resolved_row() {
         retarget(rename, tab),
         WorkspaceOp::TabRename { tab, title: Some(title), .. } if tab == TAB && title == "named"
     ));
-    let focus = WorkspaceOp::WorkspaceSetFocusHints {
+    let select = WorkspaceOp::WorkspaceSelect {
         workspace: "default".into(),
-        project_id: None,
-        tab: None,
+        tab: "7a".into(),
         pane: None,
         node: None,
     };
     assert!(matches!(
-        retarget(focus, pane),
-        WorkspaceOp::WorkspaceSetFocusHints { tab: Some(tab), pane: Some(pane), .. }
+        retarget(select, pane),
+        WorkspaceOp::WorkspaceSelect { tab, pane: Some(pane), .. }
             if tab == TAB && pane == PANE_A
     ));
 }

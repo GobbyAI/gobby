@@ -322,19 +322,6 @@ export function AgentProviderSettings({
         </label>
       </MetaRow>
 
-      <MetaRow label="Mode">
-        <NativeSelect
-          aria-label="Mode"
-          value={form.mode}
-          onChange={(event) => set("mode", event.target.value)}
-        >
-          <option value="inherit">(default)</option>
-          <option value="interactive">Interactive</option>
-          <option value="embedded">Embedded</option>
-          <option value="headless">Headless</option>
-        </NativeSelect>
-      </MetaRow>
-
       <MetaRow label="Surfaces">
         <div className="flex flex-col gap-1.5">
           {["spawn", "persona"].map((surface) => (

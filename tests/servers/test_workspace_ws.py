@@ -51,6 +51,7 @@ OPS = {
     "workspace.rename",
     "workspace.close",
     "workspace.set_focus_hints",
+    "workspace.select",
     "tab.create",
     "tab.rename",
     "tab.move",
@@ -407,6 +408,12 @@ async def test_ops_round_trip_and_errors_are_typed(stack: _Stack) -> None:
         pane=other_pane["id"],
     )
     assert hinted["focused_tab_id"] == other_tab["id"] and focused["id"] == other_tab["id"]
+    selected, focused = await op("workspace.select", workspace=home, tab=tab["id"])
+    assert (selected["focused_project_id"], selected["focused_tab_id"]) == (
+        stack.project_id,
+        tab["id"],
+    )
+    assert focused["id"] == tab["id"]
     written = await op("pane.send_text", pane=first["id"], text="echo ready", submit=True)
     assert set(written) == {"idempotency_key", "indeterminate", "detail"}
     assert written["indeterminate"] is False

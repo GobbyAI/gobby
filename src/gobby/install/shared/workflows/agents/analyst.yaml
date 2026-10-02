@@ -14,10 +14,6 @@ isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  methodology:
-    - ideate
-
 prompts:
   persona: |
     Analyze product and engineering questions by gathering evidence, separating facts from assumptions, and presenting concise findings with clear tradeoffs. Ask focused questions when the decision hinges on missing context.

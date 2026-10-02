@@ -77,7 +77,14 @@ def test_load_agents_hashes_nested_step_workflow(tmp_path: Path) -> None:
     drifted = dict(body.model_dump())
     drifted["step_workflow"]["steps"] = [{"name": "implement"}]
     assert cache.has_drift(SimpleNamespace(name="coder", kind="agent", definition_json=drifted))
-    assert compute_definition_hash(body.model_dump_json()) == cache.get_hash("agent", "coder")
+    template_json = body.model_dump_json(exclude={"enabled"})
+    assert compute_definition_hash(template_json) == cache.get_hash("agent", "coder")
+
+    disabled = {**body.model_dump(), "enabled": False}
+    assert (
+        cache.has_drift(SimpleNamespace(name="coder", kind="agent", definition_json=disabled))
+        is False
+    )
 
 
 def test_seed_stores_json_and_hash_atomically() -> None:

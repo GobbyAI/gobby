@@ -401,6 +401,18 @@ pub fn render_status_line<W: WorkspaceView>(
             " │ ",
         );
     }
+    // A shown pane's direct writer refused its latest viewport: the resize
+    // waits for the backlog, as status rather than a toast (#22573).
+    if viewport_deferred(ws, chrome) {
+        let (glyph, _) = toast_cue(ToastKind::Warning);
+        append(
+            vec![
+                Span::styled(glyph, base.fg(toast_cue_color(ToastKind::Warning, p))),
+                Span::styled(" resize deferred: viewport backlog", base.fg(p.subtext0)),
+            ],
+            " │ ",
+        );
+    }
     // Every agent on this machine by legend class. The roster outlives a
     // disconnect, so the last known counts stay beside an outage.
     let counts = agent_counts(ws);
@@ -574,6 +586,19 @@ pub fn render_status_line<W: WorkspaceView>(
         .map(|count| count.intersection(uncovered))
         .filter(|count| !count.is_empty());
     hits
+}
+
+/// Whether a pane laid out in the active tab is waiting on a refused
+/// viewport; it retries while shown, so a hidden pane says nothing.
+fn viewport_deferred<W: WorkspaceView>(ws: &W, chrome: &Chrome) -> bool {
+    chrome.active_tab().is_some_and(|tab| {
+        chrome
+            .view
+            .pane_infos
+            .iter()
+            .filter_map(|info| tab.slots.get(&info.id))
+            .any(|&pane| ws.pane(pane).viewport_deferred())
+    })
 }
 
 /// The focused pane when its edges cannot place its metadata.

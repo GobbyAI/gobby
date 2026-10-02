@@ -7,6 +7,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -19,10 +20,12 @@ from gobby.tasks import (
     transcript_evidence_models,
     transcript_evidence_pool,
     transcript_evidence_snapshots,
+    transcript_exclusions,
 )
 from gobby.tasks.close_checklist import evaluate_validation_commands
 from gobby.tasks.transcript_evidence import derive_transcript_evidence
 from gobby.tasks.transcript_evidence_snapshots import clear_evidence_snapshots
+from gobby.tasks.transcript_evidence_transfer import ChunkedPayload
 from gobby.tasks.transcript_exclusions import derive_prelink_runs
 from gobby.tasks.transcript_outcomes import (
     ValidationCommandEquivalence,
@@ -139,6 +142,46 @@ async def test_prelink_parse_resumes_from_its_own_snapshot(
     assert (
         await derive_transcript_evidence(session, start, config, set(), str(tmp_path)) == credited
     )
+
+
+@pytest.mark.asyncio
+async def test_prelink_records_cross_the_pool_only_in_chunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #23256: an unchunked snapshot or run tuple is pickled and unpickled in one step
+    # that grows with the transcript. The prelink pass must use the chunked transfer
+    # both ways, like the credited derivation.
+    patch_local_machine_id(monkeypatch, LOCAL_MACHINE_ID)
+    clear_evidence_snapshots()
+    real_pool = transcript_evidence_pool.run_in_transcript_evidence_pool
+    crossed: list[object] = []
+
+    async def recording_pool(function: Any, /, *args: object) -> object:
+        crossed.append(args[-1])
+        result = await real_pool(function, *args)
+        crossed.append(result)
+        return result
+
+    monkeypatch.setattr(transcript_exclusions, "run_in_transcript_evidence_pool", recording_pool)
+    transcript = tmp_path / "chunked.jsonl"
+    _write_jsonl(
+        transcript,
+        _claude_tool_pair(
+            command="pytest tests/old.py", call_id="old", start=BASE_TIME, result="passed"
+        ),
+    )
+    session = _session("claude", transcript)
+    config = default_validation_detection_config()
+    start = BASE_TIME + timedelta(minutes=5)
+
+    first = await derive_prelink_runs(session, start, config, str(tmp_path))
+    second = await derive_prelink_runs(session, start, config, str(tmp_path))
+
+    # crossed holds resume, result, resume, result; only a fresh cache sends no resume.
+    assert crossed[0] is None
+    assert [type(item) for item in crossed[1:]] == [ChunkedPayload] * 3
+    assert [run.command for run in first] == ["pytest tests/old.py"]
+    assert second == first
 
 
 def _no_process_pool() -> ProcessPoolExecutor:

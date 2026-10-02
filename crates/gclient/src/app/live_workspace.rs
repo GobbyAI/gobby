@@ -3,7 +3,7 @@
 //! the daemon's events name, and open their terminals on demand.
 
 use super::*;
-use crate::daemon::WorkspaceEvent;
+use crate::daemon::{WorkspaceEvent, WorkspaceEventKind};
 
 impl Workspace<LiveDaemon> {
     /// Attach the window's workspace (`attach_target`; absent fields leave
@@ -38,19 +38,9 @@ impl Workspace<LiveDaemon> {
         &self.attach
     }
 
-    /// Apply a `workspace_event` and note where a placement landed: a pending
-    /// client placement, or a daemon binding of a terminal the model had not
-    /// bound, whichever lifecycle event came first. `true` when the model changed.
+    /// Apply a `workspace_event` and note where a pending placement landed;
+    /// `true` when the model changed.
     pub(super) fn apply_live_workspace_event(&mut self, event: &WorkspaceEvent) -> bool {
-        let newly_bound: Vec<&str> = event
-            .panes
-            .iter()
-            .filter_map(|pane| pane.terminal_id.as_deref())
-            .filter(|terminal_id| {
-                self.workspace_model()
-                    .is_none_or(|model| model.pane_ref_for_terminal(terminal_id).is_none())
-            })
-            .collect();
         if !self.apply_workspace_event(event) {
             return false;
         }
@@ -58,12 +48,24 @@ impl Workspace<LiveDaemon> {
             let Some(terminal_id) = pane.terminal_id.as_deref() else {
                 continue;
             };
-            if self.pending_placements.remove(terminal_id) || newly_bound.contains(&terminal_id) {
+            if self.pending_placements.remove(terminal_id) {
                 self.placed_panes
                     .push((pane.tab_id.clone(), pane.id.clone()));
             }
         }
+        // Only an explicit select moves the view; a `focus_hints` event is
+        // another window persisting its own focus (#23265).
+        if event.kind == WorkspaceEventKind::FocusRequested {
+            if let Some(tab) = event.tabs.first() {
+                self.requested_focus = Some((tab.project_id.clone(), tab.id.clone()));
+            }
+        }
         true
+    }
+
+    /// `(project, tab)` of the select waiting to be shown.
+    pub(super) fn take_requested_focus(&mut self) -> Option<(String, String)> {
+        self.requested_focus.take()
     }
 
     /// Remember that `terminal_id`'s placement op is in flight, so the

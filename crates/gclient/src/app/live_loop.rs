@@ -36,6 +36,9 @@ use super::{PaneId, SidebarFetch, SidebarFetchFuture, Workspace, WorkspaceModel}
 mod actions;
 pub(super) mod arrange;
 mod control;
+mod focus_hints;
+pub(super) mod jobs;
+mod jobs_apply;
 pub(super) mod menu;
 mod menu_bar;
 pub(super) mod menu_dispatch;
@@ -54,6 +57,9 @@ mod workspaces;
 
 use actions::{apply_live_modal_outcome, apply_live_mouse_outcome, handle_live_action};
 use control::{apply_control_outcome, apply_live_write_outcome, focus_live_pane, send_live_input};
+use focus_hints::{offer_focus_hints, FocusMemo};
+use jobs::{stage_live_geometry, LoopJobs};
+use jobs_apply::apply_job_outcome;
 use modal_input::{route_modal_key, ModalOutcome};
 use mouse::{route_mouse, MouseOutcome};
 use reconnect::{
@@ -61,7 +67,6 @@ use reconnect::{
     recv_daemon_event, settle_sidebar_banner, wait_for_reconnect,
 };
 use suspend::{suspend_process, SuspendSignal};
-use workspace_actions::{send_focus_hints_if_changed, stored_focus};
 
 const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(2);
 
@@ -237,9 +242,8 @@ pub async fn run_live_loop<B: Backend>(
     // pane someone just clicked is waiting for (#22573).
     let (control_tx, mut control_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut sidebar_error_shown = false;
-    // The memo starts on the daemon's stored focus: the window opened on it,
-    // so the first iteration reports nothing unless it shows otherwise.
-    let mut last_focus_hints = stored_focus(workspace);
+    // Focus hints and geometry run as jobs beside the loop (plan A1).
+    let mut jobs = LoopJobs::new(workspace);
 
     // Draw once before the first select: input outranks the render tick, so
     // the earliest event, a click included, would otherwise route against an
@@ -248,13 +252,8 @@ pub async fn run_live_loop<B: Backend>(
         workspace.latch_exit(error.to_string());
         loop_error = Some(error);
     }
-    let mut sent_geometry = Vec::new();
     if workspace.exit_reason().is_none() {
-        if let Err(error) =
-            resize_live_workspace(terminal, workspace, chrome, &mut sent_geometry).await
-        {
-            chrome.notify(Toast::error(error.to_string()));
-        }
+        stage_live_geometry(terminal, workspace, chrome, &mut jobs);
     }
     if !launch_pending {
         if let Some(pane_id) = chrome.focused_pane() {
@@ -297,6 +296,10 @@ pub async fn run_live_loop<B: Backend>(
                 apply_control_outcome(workspace, chrome, outcome).await;
                 sync_live_chrome(workspace, chrome);
             }
+            Some(outcome) = jobs.rx.recv() => {
+                apply_job_outcome(workspace, chrome, &mut jobs, outcome);
+                sync_live_chrome(workspace, chrome);
+            }
             event = input.recv() => {
                 let Some(event) = event else {
                     workspace.latch_exit("terminal input closed");
@@ -324,7 +327,7 @@ pub async fn run_live_loop<B: Backend>(
                     Ok(startup::StartupAnswer::Attached(snapshot)) => {
                         workspace.apply_workspace_snapshot(snapshot);
                         // The daemon's snapshot is the baseline, not a local focus change.
-                        last_focus_hints = stored_focus(workspace);
+                        jobs.focus = FocusMemo::new(workspace);
                         if reconnect_stage.is_none() {
                             startup::mark_done(chrome, StartupStage::WorkspaceAttach);
                             if workspace.project_id().is_none() {
@@ -644,21 +647,13 @@ pub async fn run_live_loop<B: Backend>(
                 chrome.notify(Toast::error(error.to_string()));
             }
         }
-        if let Err(error) =
-            send_focus_hints_if_changed(workspace, chrome, &mut last_focus_hints).await
-        {
-            chrome.notify(Toast::error(error.to_string()));
-        }
+        offer_focus_hints(workspace, chrome, &mut jobs);
         // Every shown live pane carries the geometry of its slot: the pass
         // keys on pane, rect and attachment, so a slot change, an attach
         // that completed, a transport fallback or a new terminal size each
         // send once, and a quiet iteration sends nothing.
         if workspace.exit_reason().is_none() {
-            if let Err(error) =
-                resize_live_workspace(terminal, workspace, chrome, &mut sent_geometry).await
-            {
-                chrome.notify(Toast::error(error.to_string()));
-            }
+            stage_live_geometry(terminal, workspace, chrome, &mut jobs);
         }
     }
 
@@ -672,6 +667,7 @@ pub async fn run_live_loop<B: Backend>(
     // a daemon that is already gone, which is the common reason this loop is
     // exiting.
     control_rx.close();
+    jobs.rx.close();
     supervisor.cancel(DaemonError::Protocol {
         detail: workspace
             .exit_reason()
@@ -925,60 +921,4 @@ fn render_live_workspace<B: Backend>(
         })
         .map(|_| ())
         .map_err(|error| FrameError::Other(error.to_string()))
-}
-
-/// One entry of the geometry pass: a shown pane, its inner rect and the
-/// attachment it was sized on (empty while the pane is not live).
-type ShownGeometry = (PaneId, u16, u16, String);
-
-/// Send every shown live pane the geometry it does not hold yet. `sent` is
-/// what the previous pass sent, so an unchanged pane costs nothing while a
-/// new rect, a new attachment or a pane that just went live is sized. The
-/// rects come from `chrome.view` as the last draw left it: recomputing the
-/// view here would drop the hit areas that draw recorded.
-async fn resize_live_workspace<B: Backend>(
-    terminal: &mut Terminal<B>,
-    workspace: &mut Workspace<LiveDaemon>,
-    chrome: &Chrome,
-    sent: &mut Vec<ShownGeometry>,
-) -> Result<(), FrameError> {
-    let area = terminal
-        .size()
-        .map_err(|error| FrameError::Other(error.to_string()))?;
-    if area.width == 0 || area.height == 0 {
-        return Ok(());
-    }
-    let shown: Vec<ShownGeometry> = match chrome.active_tab() {
-        Some(tab) => chrome
-            .view
-            .pane_infos
-            .iter()
-            .filter_map(|info| {
-                let pane_id = *tab.slots.get(&info.id)?;
-                let pane = workspace.panes.get(&pane_id)?;
-                let attachment = if pane.is_live() {
-                    pane.attachment_id().to_string()
-                } else {
-                    String::new()
-                };
-                Some((
-                    pane_id,
-                    info.inner_rect.height,
-                    info.inner_rect.width,
-                    attachment,
-                ))
-            })
-            .collect(),
-        None => Vec::new(),
-    };
-    let updates: Vec<(PaneId, u16, u16)> = shown
-        .iter()
-        .filter(|entry| !entry.3.is_empty() && !sent.contains(entry))
-        .map(|&(pane_id, rows, cols, _)| (pane_id, rows, cols))
-        .collect();
-    *sent = shown;
-    if updates.is_empty() {
-        return Ok(());
-    }
-    workspace.propagate_geometry(&updates).await
 }

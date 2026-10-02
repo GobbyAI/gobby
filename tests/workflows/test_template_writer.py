@@ -162,6 +162,7 @@ class TestWriteAgentTemplate:
         assert path.exists()
 
         data = read_template(path)
+        assert data["type"] == "agent"
         assert data["name"] == "my-agent"
         assert data["cli"] == "claude"
 

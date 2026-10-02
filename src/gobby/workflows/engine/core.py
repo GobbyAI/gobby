@@ -37,6 +37,7 @@ from gobby.storage.pipeline_subscribers import (
     CompletionSubscriberManager,
     PipelineSubscriberStorageError,
 )
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.telemetry.tracing import create_span
@@ -145,6 +146,7 @@ class RuleEngine(
         config_runtime: ConfigRuntimeReader | None = None,
         skill_script_materializer: SkillScriptMaterializer | None = None,
         internal_manager: "InternalRegistryManager | None" = None,
+        session_manager: SessionManager | None = None,
     ):
         self.db = db
         self.rule_manager = RuleDefinitionManager(db)
@@ -157,6 +159,7 @@ class RuleEngine(
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._session_manager = session_manager or SessionManager(db)
         self._internal_manager = internal_manager
         self._pending_terminal_denials: dict[str, tuple[Any, Any, str]] = {}
         self._config_runtime = config_runtime

@@ -283,7 +283,10 @@ call_tool("gobby-sessions", "get_session_commits", {
 ```
 
 `get_session_messages` returns chronological windows. Page with `offset` and
-`limit`; `truncated=false` describes full bodies, not an exhaustive transcript.
+`limit`, both counted in rendered groups. `total_count` is the rendered-group
+total, so `offset = total_count - limit` reads the last page; advance by
+`returned_count`. `truncated=false` describes full bodies, not an exhaustive
+transcript.
 The accepted `full_content` argument is unused: bodies are always full. Search
 also returns full bodies and scans a bounded set of sessions when no session is
 specified. Use explicit session reads when complete evidence matters.
@@ -494,7 +497,9 @@ Terminal tools prefer the managed terminal runtime and fall back to tmux.
 Capture can fall back to transcript-tail evidence; inspect `via` and truncation
 metadata before treating it as a live screen. `send_keys` requires caller context,
 rejects autonomous agent-run callers, and permits only self, same-project, or
-ancestor/descendant targets. Use `gobby-agents:send_message` for messages.
+ancestor/descendant targets. The bundled `block-cross-project-send-keys` rule
+enforces that target scope before dispatch, and a condition that fails to
+evaluate refuses the call. Use `gobby-agents:send_message` for messages.
 `terminate_terminal` applies the same actor scope and is the explicit operation
 that may kill an external terminal; workspace close operations still release
 external terminals without killing them.
