@@ -3,7 +3,8 @@
 The fixture pipeline is imported into the isolated daemon's database only. The
 provider is a stub ``claude``. The managed SRT wrapper is stubbed at its binary
 boundary: a stub ``node`` first on the daemon's PATH answers the version probe
-and ``--preflight``, and execs the provider argv after ``--``.
+and ``--preflight``, and execs the provider argv after ``--``. Just before that
+exec it reads its spawn's terminal and bound pane once from the isolated hub.
 """
 
 from __future__ import annotations
@@ -74,8 +75,21 @@ if args[-1:] == ["--preflight"]:
     raise SystemExit(0)
 if "--" in args:
     command = args[args.index("--") + 1 :]
+    # One read at the exec boundary, never retried: this spawn's terminal and its pane.
+    try:
+        import psycopg
+
+        with psycopg.connect({dsn!r}) as conn:
+            bound = conn.execute(
+                "SELECT t.id::text, p.id::text FROM terminals t"
+                " LEFT JOIN workspace_panes p ON p.terminal_id = t.id"
+                " WHERE t.agent_run_id::text = %s",
+                (os.environ.get("GOBBY_AGENT_RUN_ID"),),
+            ).fetchall()
+    except Exception as exc:
+        bound = repr(exc)
     marker = state / ("wrapped-" + str(os.getpid()) + ".json")
-    marker.write_text(json.dumps(sys.argv))
+    marker.write_text(json.dumps({{"argv": sys.argv, "bound": bound}}))
     os.execv(command[0], command)
 if real:
     os.execv(real, [real, *args])
@@ -161,6 +175,8 @@ def seat_state(tmp_path: Path) -> Path:
 @pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: HubDatabase,
+    postgres_database_url: str,
+    postgres_schema: str,
     e2e_config: tuple[Path, int, int],
     seat_state: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -169,7 +185,13 @@ def e2e_pre_daemon_setup(
     bin_dir.mkdir()
     node = _write_stub(
         bin_dir / "node",
-        _NODE_STUB.format(python=sys.executable, state=str(seat_state), real=shutil.which("node")),
+        _NODE_STUB.format(
+            python=sys.executable,
+            state=str(seat_state),
+            real=shutil.which("node"),
+            # The daemon's own schema-scoped URL, so the wrapper reads what the daemon wrote.
+            dsn=e2e_fixtures._postgres_url_for_schema(postgres_database_url, postgres_schema),
+        ),
     )
     _write_stub(
         bin_dir / "claude", _PROVIDER_STUB.format(python=sys.executable, state=str(seat_state))
@@ -277,7 +299,7 @@ def _output(step: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
-def _markers(state: Path, kind: str) -> dict[int, list[str]]:
+def _markers(state: Path, kind: str) -> dict[int, Any]:
     return {
         int(path.stem.removeprefix(f"{kind}-")): json.loads(path.read_text())
         for path in state.glob(f"{kind}-*.json")
@@ -352,11 +374,15 @@ def test_two_seat_tab_and_split(
     runner = str((_srt_root(daemon_instance.gobby_home) / "runner.mjs").resolve())
     providers = _providers(seat_state, 2)
     wrapped = _markers(seat_state, "wrapped")
-    assert len(providers) == 2
+    assert len(providers) == len(wrapped) == 2
     for pid, argv in providers.items():
-        wrapper = wrapped[pid]
+        wrapper = wrapped[pid]["argv"]
         assert wrapper[1:3] == [runner, "--settings"]
         assert wrapper[wrapper.index("--") + 1 :] == argv
+    # Each wrapper, before its provider exec, saw its terminal bound to its seat's pane.
+    bound_at_exec = [marker["bound"] for marker in wrapped.values()]
+    for seat, pane in ((seat_a, pane_a), (seat_b, pane_b)):
+        assert [[seat["terminal_id"], pane.id]] in bound_at_exec, bound_at_exec
 
 
 def test_rerun_refuses_live_seat(
