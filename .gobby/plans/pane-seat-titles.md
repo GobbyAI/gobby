@@ -974,6 +974,9 @@ which must return nothing.
   makes the project prefix unconditional, and the pane label leads the
   gclient name ladder (Decision 2, 1.1.7). Found work: the 1.1, 3.4 and V2
   cargo commands use the nextest form.
+- 2026-10-02: Adversary round 2 (gobby#14550): consensus on `86db544`. The
+  PD accepted Decision 12 and the name-ladder call at 16:59. The 1.1
+  granularity nit is non-blocking and left as-is.
 
 ## V2: Verification
 `kind: verification`
