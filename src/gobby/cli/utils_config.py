@@ -86,7 +86,9 @@ def init_local_storage() -> HubDatabase:
         The initialized database instance. The caller owns the returned handle.
     """
     from gobby.config.bootstrap import load_bootstrap
+    from gobby.paths import get_gobby_home
     from gobby.storage.hub.postgres import PostgresHubDatabase
+    from gobby.storage.hub.runtime import live_daemon_serves_hub
     from gobby.storage.projects import ensure_personal_project
 
     config = load_bootstrap(resolve_database_url=True)
@@ -96,13 +98,13 @@ def init_local_storage() -> HubDatabase:
     initialized = False
     claim = None
     if config.datastore_mode == "local":
-        from gobby.paths import get_gobby_home
         from gobby.runner_pid_file import claim_pid_file
 
         claim = claim_pid_file(get_gobby_home() / "gobby.pid", role="maintenance")
     try:
-        hub_db.apply_migrations()
-        ensure_personal_project(hub_db)
+        if not live_daemon_serves_hub(get_gobby_home()):
+            hub_db.apply_migrations()
+            ensure_personal_project(hub_db)
         logger.debug("Database: PostgreSQL hub")
         initialized = True
     finally:
