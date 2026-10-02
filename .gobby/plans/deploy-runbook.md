@@ -857,7 +857,7 @@ needs a PD slot for the isolated daemon.
 
 ```yaml
 deferral:
-  task_ref: "TBD-after-23019"
+  task_ref: "#23335"
   reason: "External prerequisite: placed spawn, placed resume, the SRT launch guard and the placement fixture are reused placed-launch leaves under #22691."
   owner: "program-director"
   original_acceptance_items:
