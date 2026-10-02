@@ -294,6 +294,7 @@ class WebSocketServer(
 
         # Server instance (set when started)
         self._server: Any = None
+        self._terminal_shutdown_in_progress = False
         self._serve_task: asyncio.Task[None] | None = None
         self._cleanup_task: asyncio.Task[None] | None = None
 
@@ -713,6 +714,7 @@ class WebSocketServer(
         Gracefully closes all client connections, chat sessions, and shuts down server.
         """
         logger.debug("Stopping WebSocket server...")
+        self._terminal_shutdown_in_progress = True
         server = self._server
         try:
             # Cancel idle cleanup task
