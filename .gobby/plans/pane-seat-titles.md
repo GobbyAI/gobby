@@ -41,7 +41,9 @@ Outcomes:
    `gobby#15011: Claude` (the Assistant's fallback, adopted by the PD at 15:28).
    This supersedes the 14:16 `<pane label> · <ref>` shape and replaces
    `AgentEntry::definition_label`'s ladder (manual title, then definition name,
-   then provider). Line 2 keeps the task ticker.
+   then provider). Line 2 keeps the task ticker. The pane label also leads
+   `AgentEntry.name`, so attention chrome and the row label name a labelled
+   seat by it.
 3. **Spawn writes the placement title as the pane label for both placement
    kinds.** `title` becomes optional and defaults to the agent definition name
    (Q1). Labels name the role ("L3 hooks"), never the session number.
@@ -75,13 +77,23 @@ Outcomes:
 9. **Migration 458 is its own leaf** (Q4). It nulls every title whose
    `title_source` is not `manual`, keeps communications titles, and drops the
    column. It is irreversible on the live hub and ships in a package whose
-   cutover Josh approves.
+   cutover Josh approves. 4.1 and 4.2 depend on it (PD ruling 16:06): until
+   it runs, legacy automatic titles carry `<project>#<seq>:` prefixes that
+   `display_name` would show and that 4.2 no longer strips.
 10. **tmux window naming is deleted** (Q6). #21565's tmux fallback contract does
     not use it. The repair loop's tmux liveness expiry stays: it expires
     sessions whose tmux server or pane is gone, and the tmux fallback still
     needs that.
 11. **Memories 0f664595 (gclient title ladder) and a3e246d0 (title
     precedence)** are superseded by the PD after the last leaf lands (5.1).
+12. **The project prefix is unconditional** (cbf258a3 read literally, as L1
+    gobby#14909 recommends; a Writer decision for the PD's review). The
+    header and Agents line 1 lead with the project in every sort and
+    grouping, so `agent_reference` drops its all-sessions and priority-sort
+    condition. Grouped lists repeat the project their group row names. The
+    project name is `project_label`: the user's card label, else the
+    daemon's name. A project the sidebar does not list yields the bare
+    `#<seq>`.
 
 ## As-Is Facts
 `kind: framing`
@@ -179,6 +191,11 @@ Outcomes:
   the completion pass.
 - Cross-plan: `.gobby/roles/_common.md` is also edited by other plans. 5.1
   changes one line and rebases onto whatever lands first.
+- Cross-plan: #23280 (L1, in progress) restyles Agents line 1 in
+  `ui/sidebar_rows.rs` and changes the `agent_rows`, `projects_agents`,
+  `monochrome` and `label_ladder` screen fixtures. 1.1 lands after it
+  (package 10) and rebases. 1.1 keeps `SidebarRow.reference` and
+  `SidebarRow.definition`, so the styling carries over.
 - Migration 458 is the next free number at drafting (the latest is
   `457_workspace_pane_role.sql`). If another migration lands first, the 3.4
   executor takes the next free number and renames the file, its `assets.rs`
@@ -196,16 +213,16 @@ Outcomes:
 `kind: deliverable`
 
 Targets:
-- `crates/gclient/src/app/sidebar_model.rs::*` — scope-reason: replace the definition_label ladder with the matched pane's label and drop agent_definition_name and manual_title
+- `crates/gclient/src/app/sidebar_model.rs::*` — scope-reason: replace the definition_label ladder with the matched pane's label, lead the name ladder with it, and drop agent_definition_name and manual_title
 - `crates/gclient/src/daemon/projects.rs::*` — scope-reason: drop SessionRow::manual_title and the title_source field
 - `crates/gclient/src/ui/pane_chrome.rs::*` — scope-reason: render the header as the project ref then the seat label
-- `crates/gclient/src/ui/sidebar/agents.rs::*` — scope-reason: feed the seat label to Agents line 1
+- `crates/gclient/src/ui/sidebar/agents.rs::*` — scope-reason: feed the seat label to Agents line 1 and always prefix the project
 - `crates/gclient/src/ui/sidebar_rows.rs::*` — scope-reason: format Agents line 1 as the project ref then the seat label
 - `crates/gclient/src/app/pane.rs::*` — scope-reason: correct the display_name doc comment that names the session title
 - `crates/gclient/src/ui/pane_chrome/tests.rs::*` — scope-reason: labelled and unlabelled header cases
 - `crates/gclient/src/ui/sidebar_rows/tests.rs::*` — scope-reason: Agents line 1 cases
 - `crates/gclient/tests/sidebar_model.rs::*` — scope-reason: seat label from the matched pane and a pane rename
-- `crates/gclient/tests/attention_flow.rs::*` — scope-reason: expected row text
+- `crates/gclient/tests/attention_flow.rs::*` — scope-reason: expected row text and attention names from pane labels
 - `crates/gclient/tests/parity/sidebar.rs::*` — scope-reason: drop agent_definition_name
 - `crates/gclient/tests/parity/chrome.rs::*` — scope-reason: header digest
 - `crates/gclient/tests/ui_carve_guard.rs::*` — scope-reason: expected row text
@@ -219,6 +236,12 @@ Targets:
 - `crates/gclient/Cargo.toml`
 - `Cargo.lock`
 - `src/gobby/install/version_pins.py::*` — scope-reason: pin the bumped gclient version
+
+**Granularity:** seven production files (six gclient `.rs` files and
+`version_pins.py`), one behavior: the pane label names the seat on every
+gclient surface. The model, header and row edits share `AgentEntry` and the
+same screen fixtures, and the version bump ships them, so they land in one
+commit with one test run.
 
 **Research context:** The ladder lives in `AgentEntry::definition_label`
 (`sidebar_model.rs` ~155-162) over fields `agent_definition_name` (~86) and
@@ -234,14 +257,26 @@ matched pane's `Pane.label`, and a new `AgentEntry::seat_label()` that returns
 the non-blank pane label, else `provider_label` (`PROVIDER_LABELS`, ~195-219).
 Delete `definition_label`, `agent_definition_name` and `manual_title`. Delete
 `SessionRow::manual_title` and the `title_source` field from `SessionRow`.
-`SessionRow.title` stays because `app/live_loop/orphans.rs` (~65-80) still
-reads it as a fallback after the ref. A field the daemon stops sending
-deserializes as `None`. The project-qualified ref is the project name that
-`build_agents` already receives, followed by the session `reference`
-(`#15011`), so `gobby#15011`.
+`SessionRow` has no `deny_unknown_fields`, so the `title_source` the daemon
+sends until 3.2 lands is ignored. `SessionRow.title` stays because
+`app/live_loop/orphans.rs` (~65-80) still reads it as a fallback after the
+ref. A field the daemon stops sending deserializes as `None`. The
+`rows.projects` lookup in `build_agents` (~318-327) serves only
+`manual_title` and goes with it. Rewrite the doc comments on
+`PROVIDER_LABELS` (~194) and `provider_label` (~208) to name the daemon's
+provider label table without a module path, because 4.1 moves that table
+after 1.1 lands.
+
+Project ref (Decision 12): `agent_reference` (`ui/sidebar/agents.rs`
+~300-316) already prefixes the project through `project_label`
+(`ui/sidebar_rows.rs` ~97-111), which honours `chrome.sidebar.project_labels`,
+but only in the all-sessions list sorted by priority. Drop that condition so
+the header and line 1 always read `<project>#<seq>`.
 
 Header: `pane_corners` (`ui/pane_chrome.rs` ~86-168, gate ~108-114, format
-~123) renders `<project>#<seq>: <seat_label>`. Line 1: `agent_candidate`
+~123) renders `<project>#<seq>: <seat_label>`. Its gate becomes: the agent's
+provider is non-blank or its pane label is present. A pane with no agent
+entry (a shell pane) keeps `pane.display_name()`. Line 1: `agent_candidate`
 (`ui/sidebar/agents.rs` ~320-341, `SidebarRow.definition`) carries the seat
 label, and `ui/sidebar_rows.rs` (~401-405) formats line 1 as
 `<project>#<seq>: <seat_label>`. Line 2 (the task ticker) is unchanged. An
@@ -249,22 +284,35 @@ entry with no session ref yet renders the seat label alone. Correct the
 `Pane::display_name` doc comment (`app/pane.rs` ~320-327), which says a
 session's title names the terminal on the sidebar.
 
+Name ladder (Decision 2): `AgentEntry.name` (`sidebar_model.rs` ~302-317)
+ladders the session title, the run's agent name, the tmux name, then
+`Pane::display_name`. It feeds `agent_label`, which names attention chrome
+(`attention_label`, `ui/chrome/labels.rs` ~97-100), and `agent_title`, which
+fills `SidebarRow.label` (`agents.rs` ~331). Put the matched pane's non-blank
+label first so those surfaces name a labelled seat by it. The rest of the
+ladder is unchanged. Update the `agent_label` doc comment (`agents.rs`
+~33-36), which describes `#ref: title`.
+
 Freshness: `WorkspaceModel::apply` bumps the generation on `pane.renamed`, and
 the sidebar rebuilds from live panes every frame, so a rename moves the header
 and line 1 together without new wiring. Scripted panes in tests get
-`label = terminal_id` (`app/mod.rs` ~416-430, memory f5164d15). Regenerate the
-screen fixtures with `GOBBY_UPDATE_SCREENS=1`, review each diff, then rerun
-without the variable.
+`label = terminal_id` (`app/mod.rs` ~416-430, memory f5164d15), so the screen
+fixtures, `attention_flow.rs` and `ui_carve_guard.rs` expect terminal ids as
+seat labels, and the 1.1.2 fallback test sets its pane's label to `None`.
+Regenerate the screen fixtures with `GOBBY_UPDATE_SCREENS=1`, review each
+diff, then rerun without the variable.
 
-Version bump: `crates/gclient/Cargo.toml` (version 0.1.17 at drafting),
-the gclient entry in `Cargo.lock`, and `src/gobby/install/version_pins.py`
-move together, as the release guide prescribes (~19-31). The Release Manager
+Version bump: `crates/gclient/Cargo.toml`, the gclient entry in `Cargo.lock`
+and `src/gobby/install/version_pins.py` move together, +0.0.1 over the
+predecessor at the final rebase (0.1.18 shipped in package 9, and #23280
+bumps it too), as the release guide prescribes (~19-31). The Release Manager
 installs gclient after the land.
 
-Verification planned: `cargo test --manifest-path crates/gclient/Cargo.toml`,
-`cargo clippy --manifest-path crates/gclient/Cargo.toml --all-targets -- -D warnings`,
-then a live check: a labelled pane shows `gobby#<seq>: <label>` in its header
-and Agents row.
+Verification planned: `cargo nextest run -p gobby-client`,
+`cargo clippy -p gobby-client --all-targets -- -D warnings`, then
+`gcode grep -w -E 'manual_title|title_source|definition_label' crates/gclient`,
+which must return nothing, then a live check: a labelled pane shows
+`gobby#<seq>: <label>` in its header and Agents row.
 
 **Acceptance:**
 
@@ -274,16 +322,21 @@ and Agents row.
 - 1.1.2 - An unlabelled pane renders `gobby#15011: Claude` for a Claude session.
   test: `crates/gclient/src/ui/pane_chrome/tests.rs::header_falls_back_to_provider`.
 - 1.1.3 - Agents line 1 renders the same `<project>#<seq>: <seat label>` text as
-  the header, and line 2 keeps the task ticker. test:
+  the header in every sort and grouping (Decision 12), and line 2 keeps the
+  task ticker. test:
   `crates/gclient/src/ui/sidebar_rows/tests.rs::agent_line_one_names_seat`.
 - 1.1.4 - After a `pane.renamed` event, the next frame's header and Agents line
   1 carry the new label. test:
   `crates/gclient/tests/sidebar_model.rs::pane_rename_moves_seat_label`.
-- 1.1.5 - `SessionRow` has no `title_source` field and no `manual_title` method,
-  and `AgentEntry` has no `agent_definition_name`. file:
-  `crates/gclient/src/daemon/projects.rs`.
+- 1.1.5 - A session's title and its run's agent name no longer name the seat:
+  an unlabelled pane running a titled session from a named definition gets the
+  seat label `Claude`, and the 1.1 grep for `manual_title`, `title_source` and
+  `definition_label` returns nothing. test:
+  `crates/gclient/tests/sidebar_model.rs::session_title_does_not_name_seat`.
 - 1.1.6 - The gclient version is bumped in its manifest, the lockfile and the
   install pin. file: `src/gobby/install/version_pins.py`.
+- 1.1.7 - Attention chrome names a labelled seat `#<seq>: <pane label>`. test:
+  `crates/gclient/tests/attention_flow.rs::attention_names_seat_by_pane_label`.
 
 ## P2: Spawn labels its pane
 `kind: framing`
@@ -377,15 +430,16 @@ Targets:
 - `tests/mcp_proxy/tools/tasks/test_create_task.py::*` — scope-reason: import build_task_tree from its new module; create with claim leaves the title alone
 - `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::*` — scope-reason: claim and close leave the title alone
 - `tests/mcp_proxy/tools/spawn_agent/test_execution.py::*` — scope-reason: spawn leaves the child title alone
-- `tests/sessions/test_handoff.py::*` — scope-reason: drop the title lifecycle cases
+- `tests/sessions/test_handoff.py::*` — scope-reason: drop the title lifecycle case and its provider_title_label import
 - `tests/sessions/test_clear_continuation.py::*` — scope-reason: the successor copies the predecessor title verbatim; import from the new module
-- `tests/storage/sessions/test_storage_sessions_registration.py::*` — scope-reason: register leaves an untitled session untitled
+- `tests/storage/sessions/test_storage_sessions_registration.py::*` — scope-reason: register leaves an untitled session untitled; the provider_title_label import goes
 - `tests/storage/sessions/test_register_fallback.py::*` — scope-reason: drop provisional title expectations
 - `tests/storage/sessions/test_title_fields.py::*` — scope-reason: drop the sweep cases
 - `tests/storage/sessions/test_reference_resolution.py::*` — scope-reason: drop the sweep cases
 - `tests/storage/test_sessions_import.py::*` — scope-reason: the session manager surface loses the sweep
 - `tests/hooks/test_session_materialize.py::*` — scope-reason: session start leaves the title alone
 - `tests/servers/test_session_control.py::*` — scope-reason: continue-in-chat leaves the target title alone
+- `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: a spawned conversation starts untitled; the provisional title and source expectation and its import go
 
 **Granularity:** sixteen production files, one behavior: no code path writes an
 automatic title. Each writer alone keeps re-titling sessions while the others
@@ -423,6 +477,17 @@ because each is independently testable once the writes stop.
   inserts the successor with `title` copied from the predecessor row and
   writes no `title_source`. `clear_successor_title` goes with
   `title_lifecycle.py`.
+- Tests that import the retired helpers: `tests/sessions/test_handoff.py`
+  drops `test_title_lifecycle_is_provisional_task_manual_and_clear_sticky`
+  (~1888) and its `provider_title_label` import (~60).
+  `tests/storage/sessions/test_storage_sessions_registration.py` asserts an
+  untitled session where it asserted the provisional title (~592) and drops
+  its `provider_title_label` import (~26).
+  `tests/servers/routes/test_agent_spawn_routes.py` asserts an untitled
+  conversation where it asserted the provisional title and source (~324-328)
+  and drops its `format_provisional_session_title` import (~25). After 3.1 no
+  test imports `provider_title_label`, so 4.1 deletes `_title_defaults.py`
+  without test Targets.
 
 Split: `src/gobby/mcp_proxy/tools/tasks/_crud.py` is 996 lines. Move the
 module-level `build_task_tree` (~917-996) into the new
@@ -439,7 +504,7 @@ Split: `src/gobby/sessions/clear_continuation.py` is 860 lines. Move
 module. The moved code imports the helpers it still needs from
 `clear_continuation.py`.
 
-Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/spawn_agent/test_execution.py tests/sessions/test_handoff.py tests/sessions/test_clear_continuation.py tests/storage/sessions tests/storage/test_sessions_import.py tests/hooks/test_session_materialize.py tests/servers/test_session_control.py -q`,
+Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/spawn_agent/test_execution.py tests/sessions/test_handoff.py tests/sessions/test_clear_continuation.py tests/storage/sessions tests/storage/test_sessions_import.py tests/hooks/test_session_materialize.py tests/servers/test_session_control.py tests/servers/routes/test_agent_spawn_routes.py -q`,
 then `gcode grep -w -E 'title_lifecycle|normalize_automatic_title_refs|format_provisional_session_title' src tests`,
 which must return nothing.
 
@@ -456,8 +521,9 @@ which must return nothing.
 - 3.1.4 - A web-chat `/clear` successor carries its predecessor's title
   verbatim, and an untitled predecessor yields an untitled successor. test:
   `tests/sessions/test_clear_continuation.py::test_clear_successor_copies_title_verbatim`.
-- 3.1.5 - `title_lifecycle.py` and the startup normalization sweep no longer
-  exist. file: `src/gobby/runner_init/storage.py`.
+- 3.1.5 - `SessionManager` no longer exposes `normalize_automatic_title_refs`,
+  and the 3.1 grep for the retired names returns nothing. test:
+  `tests/storage/test_sessions_import.py::test_session_manager_public_method_signatures_are_stable`.
 - 3.1.6 - `build_task_tree` lives in `_crud_tree.py` and the web-chat clear
   successor commit lives in `clear_web_chat_successor.py`. file:
   `src/gobby/sessions/clear_web_chat_successor.py`.
@@ -491,7 +557,6 @@ Targets:
 - `tests/storage/sessions/test_title_fields.py::*` — scope-reason: update_title writes the title alone
 - `tests/storage/test_sessions_import.py::*` — scope-reason: session manager surface without title sources
 - `tests/storage/test_local_model_flags.py::*` — scope-reason: no title_source
-- `tests/servers/routes/test_agent_spawn_routes.py::*` — scope-reason: no title_source
 - `tests/servers/routes/test_servers_routes_sessions_routes.py::*` — scope-reason: rename and list responses without title_source
 - `tests/servers/routes/test_sessions_acp_routes.py::*` — scope-reason: no title_source
 - `tests/servers/test_http_models.py::*` — scope-reason: no title_source
@@ -662,8 +727,8 @@ hours with `global` notices before and after. `gobby cutover` refuses
 uncommitted schema inputs. 3.2 is live before the cutover, so no running code
 reads the column when it drops.
 
-Verification planned: `cargo test --manifest-path crates/gcore/Cargo.toml`,
-`cargo test --manifest-path crates/gdaemon/Cargo.toml --test cli_contract`,
+Verification planned: `cargo nextest run -p gobby-core`,
+`cargo nextest run -p gobby-daemon --test cli_contract`,
 `uv run gobby db schema-identity --check` if the checkout provides it, else the
 `gdaemon schema plan` read-only check that `restart` runs.
 
@@ -684,7 +749,7 @@ Verification planned: `cargo test --manifest-path crates/gcore/Cargo.toml`,
 
 **Goal:** every session list names a session the way gclient names its seat.
 
-### 4.1 One display_name helper for the API, Telegram and the CLI [category: code] (depends: 3.3)
+### 4.1 One display_name helper for the API, Telegram and the CLI [category: code] (depends: 3.4)
 `kind: deliverable`
 
 Targets:
@@ -733,13 +798,16 @@ New `fetch_pane_labels_by_session(session_ids) -> dict[str, str | None]` on the
 ```sql
 SELECT DISTINCT ON (t.session_id) t.session_id, p.label
 FROM terminals t
-JOIN workspace_panes p ON p.terminal_id = t.id
+LEFT JOIN workspace_panes p ON p.terminal_id = t.id
 WHERE t.session_id = ANY(%s) AND t.state IN ('pending', 'live')
 ORDER BY t.session_id, t.updated_at DESC
 ```
 
 This follows the newest-live-terminal rule of `get_live_for_session`
-(`storage/terminals.py` ~633-644, read-only).
+(`storage/terminals.py` ~633-644, read-only). The `LEFT JOIN` keeps a newer
+unplaced terminal (the tmux fallback), so it yields `None` and never falls
+back to an older placed terminal. `idx_workspace_panes_terminal` (migration
+440) makes `terminal_id` unique, so each terminal joins at most one pane.
 
 Readers:
 
@@ -775,8 +843,9 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
   `<Provider> · #<newest claimed seq>`, else `<Provider>`. test:
   `tests/sessions/test_display_name.py::test_display_name_ladder`.
 - 4.1.2 - `fetch_pane_labels_by_session` returns, in one query, the label of the
-  pane bound to each session's newest pending or live terminal, and `None`
-  without one. test:
+  pane bound to each session's newest pending or live terminal. It returns
+  `None` when that terminal has no pane, even if an older terminal has one,
+  and when the session has no such terminal. test:
   `tests/storage/sessions/test_task_refs.py::test_fetch_pane_labels_by_session`.
 - 4.1.3 - Every session in the `/api/sessions` list carries `display_name`.
   test:
@@ -788,7 +857,7 @@ Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1
 - 4.1.6 - `gobby sessions summarize` is registered from `cli/sessions_summary.py`.
   test: `tests/cli/test_cli_sessions_coverage.py::test_summarize_command_registered`.
 
-### 4.2 Web session lists read display_name [category: code] (depends: 4.1)
+### 4.2 Web session lists read display_name [category: code] (depends: 3.4, 4.1)
 `kind: deliverable`
 
 Targets:
@@ -824,8 +893,9 @@ Verification planned: `npm --prefix web run test -- sessionTitle terminalSession
 
 **Acceptance:**
 
-- 4.2.1 - Activity rows render `<ref>: <display_name>`. behavior:
-  "display_name" in `web/src/lib/sessionTitle.ts`.
+- 4.2.1 - Activity rows render `<ref>: <display_name>`, and a row without
+  `display_name` renders the ref alone. test:
+  `web/src/lib/__tests__/sessionTitle.test.ts::renders ref then display_name`.
 - 4.2.2 - The web `Session` type carries `display_name` and no `title_source`.
   file: `web/src/types/sessions.ts`.
 - 4.2.3 - The web tests cover a labelled session, a titled session and the
@@ -895,6 +965,15 @@ which must return nothing.
 
 - 2026-10-02: Initial draft for #23337 on the PD's 15:04 rulings (Q1-Q6), the
   15:28 render format (cbf258a3) and the 15:47 clear-successor ruling.
+- 2026-10-02: Adversary round 1 (gobby#14550) and L1's 1.1 prep
+  (gobby#14909). B1 and B2: 3.1 drops the provisional-title tests and the
+  imports of `format_provisional_session_title` and `provider_title_label`,
+  and targets `test_agent_spawn_routes.py`. N2 (PD ruling 16:06): 4.1 and 4.2
+  depend on 3.4. N3: the pane-label query left-joins panes. N4: 1.1.5, 3.1.5
+  and 4.2.1 name tests. N1, N5, N6 and L1's items revise 1.1. Decision 12
+  makes the project prefix unconditional, and the pane label leads the
+  gclient name ladder (Decision 2, 1.1.7). Found work: the 1.1, 3.4 and V2
+  cargo commands use the nextest form.
 
 ## V2: Verification
 `kind: verification`
@@ -904,8 +983,8 @@ Run after each leaf's final edit and again before the PD lands the branch:
 ```bash
 DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/terminals/test_workspace_agent_panes.py tests/mcp_proxy/tools/spawn_agent tests/mcp_proxy/tools/tasks/test_create_task.py tests/mcp_proxy/tools/tasks/test_close_task_flow.py tests/mcp_proxy/tools/sessions tests/sessions tests/storage/sessions tests/storage/test_sessions_import.py tests/storage/test_local_model_flags.py tests/servers/routes tests/servers/test_http_models.py tests/servers/test_session_control.py tests/servers/websocket/chat/test_stream_persistence.py tests/hooks tests/test_runner_maintenance_tmux_repair.py tests/communications tests/cli/test_cli_sessions.py tests/cli/test_cli_sessions_coverage.py tests/utils/test_daemon_git_inventory.py -q
 uv run ruff format --check src/ && uv run ruff check src/ && uv run mypy src/
-cargo test --manifest-path crates/gclient/Cargo.toml
-cargo test --manifest-path crates/gcore/Cargo.toml
+cargo nextest run -p gobby-client
+cargo nextest run -p gobby-core
 npm --prefix web run test -- sessionTitle terminalSessions SessionsTab
 uv run gobby plans validate .gobby/plans/pane-seat-titles.md -p /Users/josh/Projects/gobby
 ```
