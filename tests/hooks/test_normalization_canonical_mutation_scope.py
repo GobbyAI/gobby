@@ -576,6 +576,7 @@ def test_unproven_assignment_keeps_write_scope_unknown(tmp_path: Path, template:
         "def redirect(value):\n    pass\nconstructor = Path\nredirect(constructor)",
         "import pathlib\ndef redirect(value):\n    pass\nmodule = pathlib\nredirect(module)",
         "def redirect():\n    pass\nredirect()",
+        "redirect()",
         "from redirector import redirect\nredirect()",
         "import redirector",
     ],
@@ -585,6 +586,7 @@ def test_unproven_assignment_keeps_write_scope_unknown(tmp_path: Path, template:
         "constructor-alias",
         "module-alias",
         "local-no-argument-call",
+        "opaque-no-argument-call",
         "imported-no-argument-call",
         "untrusted-import",
     ],
@@ -596,6 +598,23 @@ def test_python_heredoc_untrusted_execution_keeps_write_scope_unknown(
     command = (
         "uv run python - <<'EOF'\nfrom pathlib import Path\n"
         f"p = Path('{scratch}/safe.txt')\n{untrusted_execution}\np.write_text('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("untrusted_execution", ["redirect()", "import redirector"])
+def test_python_heredoc_untrusted_execution_invalidates_direct_constructor_scope(
+    tmp_path: Path, untrusted_execution: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\nfrom pathlib import Path\n"
+        f"{untrusted_execution}\nPath('{scratch}/safe.txt').write_text('x')\nEOF\n"
     )
 
     data = _shell_write_metadata(command, project)

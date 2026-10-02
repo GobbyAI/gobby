@@ -680,6 +680,7 @@ def test_public_path_inspection_preserves_literal_write_scope(inspection: str) -
         "import pathlib\ndef redirect(value):\n    pass\nmodule = pathlib\n"
         "p = Path('/tmp/safe.txt')\nredirect(module)\np.write_text('x')",
         "def redirect():\n    pass\np = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
+        "p = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
         "from redirector import redirect\np = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
         "p = Path('/tmp/safe.txt')\nimport redirector\np.write_text('x')",
         "import redirector\np = Path('/tmp/safe.txt')\np.write_text('x')",
@@ -691,6 +692,7 @@ def test_public_path_inspection_preserves_literal_write_scope(inspection: str) -
         "constructor-alias",
         "module-alias",
         "local-no-argument-call",
+        "opaque-no-argument-call",
         "imported-no-argument-call",
         "import-after-binding",
         "import-before-binding",
