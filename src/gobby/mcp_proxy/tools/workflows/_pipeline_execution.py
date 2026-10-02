@@ -109,6 +109,7 @@ class PipelineExecutionManager(Protocol):
         pipeline_name: str,
         inputs_json: str,
         session_id: str | None = None,
+        *,
         definition_json: str | None = None,
         project_id: str | None = None,
     ) -> PipelineExecution: ...
