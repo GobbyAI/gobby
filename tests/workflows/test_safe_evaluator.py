@@ -405,6 +405,45 @@ class TestToolCallSucceeded:
         assert ev.evaluate("tool_call_succeeded()") is False
 
 
+class TestToolCallFailed:
+    def _eval(self, data: dict[str, Any], metadata: Any = None) -> SafeExpressionEvaluator:
+        ctx: dict[str, Any] = {
+            "variables": {},
+            "event": SimpleNamespace(data=data, metadata=metadata or {}),
+        }
+        return _build_evaluator(ctx)
+
+    def test_provider_success_overrides_stale_error_alias(self) -> None:
+        # Normalization set the legacy alias from the result body before the
+        # provider's success hook arrived; the provider contract is authoritative.
+        ev = self._eval(
+            {"is_error": True, "tool_output": {"success": False, "error": "close_review_required"}},
+            metadata={"is_failure": False},
+        )
+
+        assert ev.evaluate("tool_call_failed()") is False
+
+    def test_provider_failure_is_a_failure(self) -> None:
+        ev = self._eval({"tool_output": {"success": True}}, metadata={"is_failure": True})
+
+        assert ev.evaluate("tool_call_failed()") is True
+
+    def test_nonzero_exit_without_provider_contract_is_a_failure(self) -> None:
+        ev = self._eval({"tool_output": {"result": {"exitCode": 1}}})
+
+        assert ev.evaluate("tool_call_failed()") is True
+
+    def test_unknown_outcome_is_not_a_failure(self) -> None:
+        ev = self._eval({"tool_output": {"status": "completed"}})
+
+        assert ev.evaluate("tool_call_failed()") is False
+
+    def test_missing_event_is_not_a_failure(self) -> None:
+        ev = _build_evaluator({"variables": {}, "event": None})
+
+        assert ev.evaluate("tool_call_failed()") is False
+
+
 # --- mcp_result_has tests ---
 
 

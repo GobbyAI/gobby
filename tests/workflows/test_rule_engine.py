@@ -1910,6 +1910,26 @@ class TestBeforeToolBlockTracking:
 
         assert variables["tool_block_pending"] is True
 
+    async def test_provider_success_clears_tool_block_despite_stale_error_alias(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        """A provider success hook outranks an is_error alias derived from the result body."""
+
+        engine = RuleEngine(db)
+        variables: dict[str, Any] = {"tool_block_pending": True}
+        event = _make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "is_error": True,
+                "tool_output": {"success": False, "error": "close_review_required"},
+            },
+        )
+        event.metadata["is_failure"] = False
+        await engine.evaluate(event, session_id=SESSION_ID, variables=variables)
+
+        assert variables["tool_block_pending"] is False
+
 
 class TestConsecutiveToolBlocks:
     """Tests for consecutive tool block detection (engine-level safety)."""

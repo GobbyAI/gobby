@@ -22,6 +22,7 @@ from gobby.hooks.receipt_effects import (
     merge_staged_payloads,
     peek_worker_staging,
 )
+from gobby.hooks.tool_outcomes import hook_event_tool_outcome
 from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.skills.instruction_requirements import is_instruction_call_line
 from gobby.storage.definitions.rules import RuleDefinitionRow
@@ -262,8 +263,7 @@ class EvaluationMixin:
         variables: dict[str, Any],
     ) -> None:
         """Update failed-tool and edit/write recovery state after tool completion."""
-        is_failure = event.metadata.get("is_failure", False) or event.data.get("is_error", False)
-        if is_failure:
+        if hook_event_tool_outcome(event.data, event.metadata).succeeded is False:
             variables["tool_block_pending"] = True
             self._check_catastrophic_failure(event, variables)
             return
