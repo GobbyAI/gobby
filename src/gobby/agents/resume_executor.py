@@ -66,6 +66,7 @@ from gobby.sessions.context_usage import local_context_variable_updates
 from gobby.storage import daemon_resume_keys
 from gobby.storage.agents import AgentRun
 from gobby.storage.terminals import Terminal
+from gobby.utils.git import run_to_completion
 from gobby.utils.machine_id import get_machine_id
 
 logger = logging.getLogger(__name__)
@@ -328,10 +329,15 @@ async def resume_agent_run(
         child_session_id=spawn_context.session_id,
         completion_registry=completion_registry,
     )
+    # The successor already exists: a refusal or a cancellation parks it exactly once.
+    # A cancelled verifier thread finishes on its own; it reads only the SRT install.
     try:
         sandbox_config = await asyncio.to_thread(resolve_resume_sandbox, resume_metadata)
+    except asyncio.CancelledError:
+        await run_to_completion(park())
+        raise
     except SandboxRequiredError:
-        await park()
+        await run_to_completion(park())
         return ResumeAgentResult(False, run_id=run_id, error="sandbox_required")
     daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
     websocket = getattr(daemon_config, "websocket", None)
