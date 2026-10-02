@@ -340,9 +340,14 @@ def register_terminal_tools(
                     )
                 )
                 and isinstance(gate.get("attempt_id"), str)
-                and isinstance(failed, Mapping)
-                and failed.get("attempt_id") == gate.get("attempt_id")
-                and PENDING_HANDOFF_VARIABLE not in variables
+                and (
+                    gate.get("readiness_unconfirmed") is True
+                    or (
+                        isinstance(failed, Mapping)
+                        and failed.get("attempt_id") == gate.get("attempt_id")
+                        and PENDING_HANDOFF_VARIABLE not in variables
+                    )
+                )
             ):
                 return {
                     "success": False,
