@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Never
 
+import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -34,6 +35,32 @@ from tests.plans.review_evidence_helpers import (
     repair_reviewed_section,
 )
 from tests.review_coverage_helpers import coverage_attestation
+
+
+def test_prepare_round_survives_swallowed_validation_read_error(
+    review_setup: tuple[PlanReviewEvidenceService, str, str, Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symbol validation turns index read errors into findings (#23296)."""
+    service, project_id, session_id, plan_path = review_setup
+
+    def validate_with_swallowed_read(*_args: object, **_kwargs: object) -> dict[str, bool]:
+        with pytest.raises(psycopg.errors.DivisionByZero):
+            service.db.execute("SELECT 1 / 0")
+        return {"valid": True}
+
+    monkeypatch.setattr(
+        "gobby.tasks.expansion._validate.validate_plan_file", validate_with_swallowed_read
+    )
+
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=1,
+        session_id=session_id,
+    )
+
+    assert service.get_evidence(prepared.evidence_id).snapshot == plan_path.read_bytes()
 
 
 def test_prepare_round_snapshot(

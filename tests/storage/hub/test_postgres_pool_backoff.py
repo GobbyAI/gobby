@@ -7,11 +7,12 @@ import time
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from typing import Any, cast
 
 import psycopg
 import pytest
+from psycopg.pq import TransactionStatus
 from psycopg_pool import ConnectionPool, PoolTimeout
 
 from gobby.config.postgres_pool import PostgresPoolConfig, postgres_pool_config_from_mapping
@@ -181,6 +182,7 @@ def test_pool_connection_honors_operation_deadline_without_retry(
 class _TransactionConnection:
     def __init__(self) -> None:
         self.statements: list[tuple[str, tuple[str, ...]]] = []
+        self.info = SimpleNamespace(transaction_status=TransactionStatus.INTRANS)
 
     @contextmanager
     def transaction(self) -> Iterator[None]:

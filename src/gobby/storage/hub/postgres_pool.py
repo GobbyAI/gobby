@@ -23,6 +23,7 @@ from typing import Any, Protocol, cast
 import psycopg
 from psycopg import sql as psycopg_sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.pq import TransactionStatus
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool, PoolTimeout
 
@@ -285,6 +286,15 @@ def transaction_context(
                 if initial_lock is not None:
                     txn._acquire_lock_target(initial_lock)
                 yield txn
+                # PostgreSQL answers COMMIT of an aborted transaction with
+                # ROLLBACK and psycopg reports success, so a swallowed statement
+                # error would silently discard every write and still run the
+                # after-commit callbacks (#23296). Code that recovers from a
+                # statement error must do so inside a savepoint.
+                if conn.info.transaction_status == TransactionStatus.INERROR:
+                    raise psycopg.errors.InFailedSqlTransaction(
+                        "transaction aborted by a swallowed statement error"
+                    )
                 txn._deadline.prepare()
                 commit_submitted = True
         except BaseException as exc:

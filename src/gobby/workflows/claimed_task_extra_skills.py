@@ -118,7 +118,17 @@ def _is_instruction(skill: str) -> bool:
 
 def _load_task(task_manager: LocalTaskManager, task_id: str) -> Any | None:
     try:
-        return task_manager.get_task(task_id)
+        # Claims call this inside their transaction; a savepoint keeps a failed
+        # lookup from aborting it (#23296).
+        with task_manager.db.transaction() as transaction:
+            savepoint = transaction.savepoint("claimed_task_extra_skills_load")
+            try:
+                task = task_manager.get_task(task_id)
+            except (TaskNotFoundError, ValueError, psycopg.Error):
+                savepoint.rollback()
+                raise
+            savepoint.release()
+            return task
     except (TaskNotFoundError, ValueError, psycopg.Error) as exc:
         logger.debug("Failed to load claimed task %s for extra skills: %s", task_id, exc)
         return None

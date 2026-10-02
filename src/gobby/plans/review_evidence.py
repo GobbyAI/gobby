@@ -8,6 +8,8 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+import psycopg
+
 from gobby.code_index.storage import CodeIndexStorage
 from gobby.plans.parser import PlanDocument
 from gobby.plans.plan_roots import resolve_plan_root
@@ -241,15 +243,23 @@ class PlanReviewEvidenceService:
 
         document = parse_plan_bytes(plan_path.name, snapshot)
         context = get_project_context(root)
-        result = validate_plan_file(
-            None,
-            plan_path,
-            plan_document=document,
-            project_context=context,
-            expected_project_id=project_id,
-            code_index=CodeIndexStorage(self.db),
-            require_symbol_validation=bool(document.manifest_entries),
-        )
+        with self.db.transaction() as transaction:
+            # Symbol validation reports code-index read errors as findings, so an
+            # aborted read must not poison the evidence transaction (#23296).
+            savepoint = transaction.savepoint("plan_review_snapshot_validation")
+            result = validate_plan_file(
+                None,
+                plan_path,
+                plan_document=document,
+                project_context=context,
+                expected_project_id=project_id,
+                code_index=CodeIndexStorage(self.db),
+                require_symbol_validation=bool(document.manifest_entries),
+            )
+            try:
+                savepoint.release()
+            except psycopg.errors.InFailedSqlTransaction:
+                savepoint.rollback()
         if not result["valid"]:
             raise ReviewEvidenceError(
                 "plan_validation_failed",

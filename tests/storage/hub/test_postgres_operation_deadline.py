@@ -157,6 +157,24 @@ def test_definite_commit_rejection_preserves_driver_error(database: PostgresHubD
     assert callbacks == []
 
 
+def test_swallowed_statement_error_raises_instead_of_silent_rollback(
+    database: PostgresHubDatabase,
+) -> None:
+    """PostgreSQL answers COMMIT of an aborted transaction with ROLLBACK (#23296)."""
+    database.execute("CREATE TEMP TABLE swallowed_statement_error (value INTEGER UNIQUE)")
+    callbacks: list[str] = []
+    with pytest.raises(psycopg.errors.InFailedSqlTransaction):
+        with database.transaction() as txn:
+            txn.execute("INSERT INTO swallowed_statement_error VALUES (1)")
+            txn.after_commit(lambda: callbacks.append("committed"))
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                txn.execute("INSERT INTO swallowed_statement_error VALUES (1)")
+    assert database.fetchone("SELECT count(*) AS count FROM swallowed_statement_error") == {
+        "count": 0
+    }
+    assert callbacks == []
+
+
 @pytest.mark.parametrize("operation", ["execute", "executemany", "savepoint", "release"])
 def test_expired_scope_prevents_further_operations(
     database: PostgresHubDatabase, operation: str, monkeypatch: pytest.MonkeyPatch
