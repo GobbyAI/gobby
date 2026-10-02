@@ -608,6 +608,53 @@ def test_python_heredoc_class_rebinding_a_scratch_path_name_keeps_scope_unknown(
 
 
 @pytest.mark.parametrize(
+    ("first_import", "second_import", "constructor"),
+    [
+        ("from redirector import Path", "from pathlib import Path", "Path"),
+        ("from pathlib import Path", "from redirector import Path", "Path"),
+        ("from redirector import Path as P", "from pathlib import Path as P", "P"),
+        ("from pathlib import Path as P", "from redirector import Path as P", "P"),
+        ("import redirector as lib", "import pathlib as lib", "lib.Path"),
+        ("import pathlib as lib", "import redirector as lib", "lib.Path"),
+    ],
+)
+def test_python_heredoc_conflicting_path_imports_keep_scope_unknown(
+    tmp_path: Path, first_import: str, second_import: str, constructor: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        f"uv run python - <<'EOF'\n{first_import}\n"
+        f"p = {constructor}('{scratch}/safe.txt')\n{second_import}\np.write_text('x')\nEOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "constructor"),
+    [("from pathlib import Path", "Path"), ("import pathlib as lib", "lib.Path")],
+)
+def test_python_heredoc_identical_path_imports_keep_scratch_scope(
+    tmp_path: Path, import_statement: str, constructor: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        f"uv run python - <<'EOF'\n{import_statement}\n"
+        f"p = {constructor}('{scratch}/safe.txt')\n{import_statement}\np.write_text('x')\nEOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is False
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
+@pytest.mark.parametrize(
     "state_change",
     [
         "p._raw_paths = ['src/a.py']",

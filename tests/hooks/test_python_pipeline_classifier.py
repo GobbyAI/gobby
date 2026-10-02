@@ -560,6 +560,48 @@ def test_namespace_inspection_without_a_write_is_not_a_mutation() -> None:
 
 
 @pytest.mark.parametrize(
+    ("first_import", "second_import", "constructor"),
+    [
+        ("from redirector import Path", "from pathlib import Path", "Path"),
+        ("from pathlib import Path", "from redirector import Path", "Path"),
+        ("from redirector import Path as P", "from pathlib import Path as P", "P"),
+        ("from pathlib import Path as P", "from redirector import Path as P", "P"),
+        ("import redirector as lib", "import pathlib as lib", "lib.Path"),
+        ("import pathlib as lib", "import redirector as lib", "lib.Path"),
+    ],
+)
+def test_conflicting_path_constructor_imports_have_unknown_write_scope(
+    first_import: str, second_import: str, constructor: str
+) -> None:
+    source = (
+        f"{first_import}\np = {constructor}('/tmp/safe.txt')\n{second_import}\np.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(source)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "constructor"),
+    [("from pathlib import Path", "Path"), ("import pathlib as lib", "lib.Path")],
+)
+def test_repeated_identical_constructor_import_keeps_literal_write_scope(
+    import_statement: str, constructor: str
+) -> None:
+    source = (
+        f"{import_statement}\np = {constructor}('/tmp/safe.txt')\n"
+        f"{import_statement}\np.write_text('x')\n"
+    )
+
+    assert _classify_python_source_with_targets(source) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/safe.txt",),
+    )
+
+
+@pytest.mark.parametrize(
     "state_change",
     [
         "p._raw_paths = ['src/a.py']",

@@ -280,18 +280,23 @@ def _binding_counts(tree: ast.AST) -> Counter[str]:
     return names
 
 
-def _imported_bindings(tree: ast.AST) -> Mapping[str, str]:
-    """Map a bound import name to its canonical module or member path."""
+def _imported_bindings(tree: ast.AST) -> Mapping[str, str] | None:
+    """Map stable import names to canonical paths, or refuse conflicting identities."""
     bindings: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 bound_name = alias.asname or alias.name.partition(".")[0]
+                if bindings.get(bound_name, alias.name) != alias.name:
+                    return None
                 bindings[bound_name] = alias.name
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 bound_name = alias.asname or alias.name
-                bindings[bound_name] = f"{node.module}.{alias.name}"
+                canonical_name = f"{node.module}.{alias.name}"
+                if bindings.get(bound_name, canonical_name) != canonical_name:
+                    return None
+                bindings[bound_name] = canonical_name
     return bindings
 
 
@@ -827,6 +832,8 @@ def _classify_python_source_with_targets(
     binding_counts = _binding_counts(tree)
     rebound_names = frozenset(binding_counts)
     imported_bindings = _imported_bindings(tree)
+    if imported_bindings is None:
+        return _PythonExecutionClassification.MUTATION, ()
     path_value_names = _path_value_names(tree, imported_bindings, binding_counts)
     mutation = _proven_python_mutation(
         tree,
