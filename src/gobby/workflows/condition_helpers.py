@@ -20,7 +20,7 @@ from gobby.config.validation_detection import (
     is_validation_command as _config_is_validation_command,
 )
 from gobby.tasks.state_semantics import projected_task_state
-from gobby.tasks.tdd_evidence import is_test_convention_path
+from gobby.tasks.tdd_paths import is_test_convention_path
 from gobby.tasks.transcript_outcomes import (
     wrapped_validation_command as _tasks_wrapped_validation_command,
 )

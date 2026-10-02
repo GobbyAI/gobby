@@ -711,7 +711,11 @@ async def _evaluate_close(
                     commit_shas, cwd=repo_path
                 )
                 tdd = evaluate_tdd_evidence(
-                    artifacts.tests, transcript, renamed_test_paths=rename_aliases
+                    artifacts.tests,
+                    transcript,
+                    renamed_test_paths=rename_aliases,
+                    task_category=task.category,
+                    implementation_paths=committed_paths,
                 )
                 tdd_details = tdd.details()
                 # Gate 12 and gate 13 both ask whether the loop was followed rather than

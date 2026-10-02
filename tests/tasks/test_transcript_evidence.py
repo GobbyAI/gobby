@@ -226,7 +226,7 @@ class _RecordingExecutor:
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         self._events.append(f"shutdown:wait={wait}:cancel={cancel_futures}")
         if wait and self._block_on_wait is not None:
-            self._block_on_wait.wait(5)
+            self._block_on_wait.wait()
 
 
 def test_shutdown_waits_for_worker_exit_then_stops_tracker(
@@ -248,20 +248,28 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
 def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
+    tracker_stopped = threading.Event()
+
+    def stop_tracker() -> None:
+        events.append("tracker")
+        tracker_stopped.set()
+
     fake = _RecordingExecutor(events, block_on_wait=release)
     monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
-    monkeypatch.setattr(
-        transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
-    )
+    monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", stop_tracker)
 
-    started = time.monotonic()
-    transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
-    elapsed = time.monotonic() - started
+    try:
+        started = time.monotonic()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
+        elapsed = time.monotonic() - started
 
-    assert elapsed < 1.0
-    assert events == ["shutdown:wait=True:cancel=True"]
-    assert transcript_evidence_pool._pool is None
-    release.set()
+        assert elapsed < 1.0
+        assert events == ["shutdown:wait=True:cancel=True"]
+        assert transcript_evidence_pool._pool is None
+    finally:
+        release.set()
+        assert tracker_stopped.wait(5), "pool drain must finish before patches are restored"
+    assert events == ["shutdown:wait=True:cancel=True", "tracker"]
 
 
 def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
