@@ -129,10 +129,7 @@ rules:
     # failure signal as error-recovery/inject-tool-error-recovery.
     when: >
       event.data.get('tool_name') == 'Bash'
-      and not (
-        event.metadata.get('is_failure', False)
-        or event.data.get('is_error', False)
-      )
+      and not tool_call_failed()
       and not foreign_landing_merge
       and shell_command_consumes_code_review(tool_input.get('command'))
     effects:
