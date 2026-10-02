@@ -581,12 +581,44 @@ def test_mutable_path_receiver_state_has_unknown_write_scope(state_change: str) 
     assert targets == ()
 
 
-def test_public_path_inspection_preserves_literal_write_scope() -> None:
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "redirect(p.write_text)",
+        "method = p.write_text\nredirect(method)",
+        "redirect(p.as_posix)",
+        "method = p.as_posix\nredirect(method)",
+        "redirect(p.absolute())",
+        "redirect(p.expanduser())",
+        "redirect(p.glob('*'))",
+    ],
+)
+def test_bound_path_receiver_escape_has_unknown_write_scope(escape: str) -> None:
     script = (
         "from pathlib import Path\n"
+        "from redirector import redirect\n"
         "p = Path('/tmp/safe.txt')\n"
-        "print(p.name, p.as_posix())\n"
+        f"{escape}\n"
         "p.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
+    "inspection",
+    [
+        "print(p.name, p.as_posix())",
+        "print(p.suffix, p.parts, p.is_absolute())",
+        "print(p.stat(), p.exists())",
+    ],
+)
+def test_public_path_inspection_preserves_literal_write_scope(inspection: str) -> None:
+    script = (
+        f"from pathlib import Path\np = Path('/tmp/safe.txt')\n{inspection}\np.write_text('x')\n"
     )
 
     classification, targets = _classify_python_source_with_targets(script)

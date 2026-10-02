@@ -116,6 +116,41 @@ _PYTHON_FILESYSTEM_MUTATION_METHODS = frozenset(
         "write_text",
     }
 )
+
+# These properties contain detached strings/parts; other properties may retain a Path.
+_PYTHON_PATH_INSPECTION_ATTRIBUTES = frozenset(
+    {"anchor", "drive", "name", "parts", "root", "stem", "suffix", "suffixes"}
+)
+# Only direct calls qualify. A bound method itself exposes its receiver through __self__.
+# Other methods may return the receiver or retain it in a lazy result.
+_PYTHON_PATH_NONESCAPING_METHODS = _PYTHON_FILESYSTEM_MUTATION_METHODS | frozenset(
+    {
+        "as_posix",
+        "as_uri",
+        "exists",
+        "full_match",
+        "group",
+        "is_absolute",
+        "is_block_device",
+        "is_char_device",
+        "is_dir",
+        "is_fifo",
+        "is_file",
+        "is_mount",
+        "is_relative_to",
+        "is_reserved",
+        "is_socket",
+        "is_symlink",
+        "lstat",
+        "match",
+        "open",
+        "owner",
+        "read_bytes",
+        "read_text",
+        "samefile",
+        "stat",
+    }
+)
 _PYTHON_PROCESS_CALLS = frozenset(
     {
         "asyncio.create_subprocess_exec",
@@ -333,7 +368,16 @@ def _path_value_names(
             and isinstance(node.ctx, ast.Load)
             and node.id in names
             and not (
-                isinstance(parent := parents.get(node), ast.Attribute) and parent.value is node
+                isinstance(parent := parents.get(node), ast.Attribute)
+                and parent.value is node
+                and (
+                    parent.attr in _PYTHON_PATH_INSPECTION_ATTRIBUTES
+                    or (
+                        parent.attr in _PYTHON_PATH_NONESCAPING_METHODS
+                        and isinstance(call := parents.get(parent), ast.Call)
+                        and call.func is parent
+                    )
+                )
             )
         )
         for node in ast.walk(tree)

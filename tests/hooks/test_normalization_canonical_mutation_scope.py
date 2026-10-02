@@ -632,3 +632,36 @@ def test_python_heredoc_mutable_path_receiver_keeps_scope_unknown(
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "redirect(p.write_text)",
+        "method = p.write_text\nredirect(method)",
+        "redirect(p.as_posix)",
+        "method = p.as_posix\nredirect(method)",
+        "redirect(p.absolute())",
+        "redirect(p.expanduser())",
+        "redirect(p.glob('*'))",
+    ],
+)
+def test_python_heredoc_bound_path_receiver_escape_keeps_scope_unknown(
+    tmp_path: Path, escape: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        "from redirector import redirect\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        f"{escape}\n"
+        "p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
