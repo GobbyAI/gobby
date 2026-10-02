@@ -494,7 +494,9 @@ Terminal tools prefer the managed terminal runtime and fall back to tmux.
 Capture can fall back to transcript-tail evidence; inspect `via` and truncation
 metadata before treating it as a live screen. `send_keys` requires caller context,
 rejects autonomous agent-run callers, and permits only self, same-project, or
-ancestor/descendant targets. Use `gobby-agents:send_message` for messages.
+ancestor/descendant targets. The bundled `block-cross-project-send-keys` rule
+enforces that target scope before dispatch, and a condition that fails to
+evaluate refuses the call. Use `gobby-agents:send_message` for messages.
 `terminate_terminal` applies the same actor scope and is the explicit operation
 that may kill an external terminal; workspace close operations still release
 external terminals without killing them.

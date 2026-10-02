@@ -226,6 +226,7 @@ class TemplatingMixin:
         funcs = build_condition_helpers(
             task_manager=getattr(self, "_task_manager", None),
             context=ctx,
+            session_manager=getattr(self, "_session_manager", None),
         )
         funcs["isinstance"] = isinstance
         funcs["is_tool_unlocked"] = lambda ti: is_tool_unlocked(ti, variables)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
@@ -10,6 +11,10 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -497,3 +502,154 @@ class TestBlockWebChatSendKeys:
         if expected_decision == "block":
             assert response.reason is not None
             assert "block-web-chat-send-keys" in response.reason
+
+
+CROSS_PROJECT_SEND_KEYS = "block-cross-project-send-keys"
+
+
+class _UnreachableSessions(SessionManager):
+    """A session store whose lookups fail the way an unavailable hub does."""
+
+    def resolve_session_reference(self, ref: str, project_id: str | None = None) -> str:
+        raise RuntimeError("session store unavailable")
+
+
+def _send_keys_event(caller_id: str, target_ref: str) -> HookEvent:
+    """The before_tool event the MCP proxy builds for one send_keys dispatch."""
+    data: dict[str, Any] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-sessions",
+            "tool_name": "send_keys",
+            "arguments": {"session_id": target_ref, "keys": "ls"},
+        },
+    }
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=caller_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+    )
+
+
+class TestBlockCrossProjectSendKeys:
+    @pytest.fixture
+    def tree(
+        self,
+        session_manager: SessionManager,
+        project_manager: LocalProjectManager,
+        sample_project: dict[str, Any],
+    ) -> dict[str, Session]:
+        """A caller with a cross-project parent and child, a project peer and an outsider."""
+        home = str(sample_project["id"])
+        away = project_manager.create(name="send-keys-elsewhere").id
+
+        def register(name: str, project_id: str, parent: Session | None = None) -> Session:
+            return session_manager.register(
+                external_id=f"send-keys-{name}",
+                machine_id=require_machine_id(),
+                source="claude",
+                project_id=project_id,
+                parent_session_id=None if parent is None else parent.id,
+            )
+
+        ancestor = register("ancestor", away)
+        caller = register("caller", home, ancestor)
+        return {
+            "caller": caller,
+            "own": caller,
+            "same_project": register("peer", home),
+            "ancestor": ancestor,
+            "descendant": register("descendant", away, caller),
+            "cross_project": register("outsider", away),
+        }
+
+    def test_rule_syncs_enabled_with_send_message_redirect(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name(CROSS_PROJECT_SEND_KEYS)
+        assert row is not None
+        assert row.enabled is True
+        effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
+        assert effect.type == "block"
+        assert effect.mcp_tools == ["gobby-sessions:send_keys"]
+        assert effect.reason is not None
+        assert "gobby-agents:send_message" in effect.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("target", "expected_decision"),
+        [
+            ("own", "allow"),
+            ("same_project", "allow"),
+            ("ancestor", "allow"),
+            ("descendant", "allow"),
+            ("cross_project", "block"),
+        ],
+    )
+    async def test_rule_admits_only_the_callers_project_and_agent_tree(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        tree: dict[str, Session],
+        target: str,
+        expected_decision: str,
+    ) -> None:
+        _sync_bundled(db)
+        caller_id = tree["caller"].id
+        engine = RuleEngine(db, session_manager=session_manager)
+
+        response = await engine.evaluate(
+            _send_keys_event(caller_id, tree[target].id), session_id=caller_id, variables={}
+        )
+
+        assert response.decision == expected_decision
+        if expected_decision == "block":
+            assert response.reason is not None
+            assert CROSS_PROJECT_SEND_KEYS in response.reason
+            assert "gobby-agents:send_message" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_disabling_the_rule_lifts_the_cross_project_block(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        session_manager: SessionManager,
+        tree: dict[str, Session],
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name(CROSS_PROJECT_SEND_KEYS)
+        assert row is not None
+        manager.update(row.id, enabled=False)
+        caller_id = tree["caller"].id
+
+        response = await RuleEngine(db, session_manager=session_manager).evaluate(
+            _send_keys_event(caller_id, tree["cross_project"].id),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_evaluation_error_still_refuses_the_cross_project_target(
+        self, db: HubDatabase, tree: dict[str, Session]
+    ) -> None:
+        _sync_bundled(db)
+        caller_id = tree["caller"].id
+        engine = RuleEngine(db, session_manager=_UnreachableSessions(db))
+
+        response = await engine.evaluate(
+            _send_keys_event(caller_id, tree["cross_project"].id),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert CROSS_PROJECT_SEND_KEYS in response.reason

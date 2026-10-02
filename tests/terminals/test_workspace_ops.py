@@ -494,11 +494,12 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     still_live = h.terminals.get(agent.id)
     assert still_live is not None and still_live.state == "live"
 
-    # send_keys authorizes through the same policy.
+    # send_keys refuses autonomous callers itself; target scope is the
+    # block-cross-project-send-keys rule's decision, so the outsider resolves here.
     for caller, error_code in (
         (member, None),
         (lead_child, None),
-        (outsider, "send_keys_target_forbidden"),
+        (outsider, None),
         (autonomous, "send_keys_autonomous_agent_forbidden"),
     ):
         with session_context_for_test(caller.id):
