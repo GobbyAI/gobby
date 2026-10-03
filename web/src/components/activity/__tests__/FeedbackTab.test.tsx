@@ -89,6 +89,20 @@ describe("FeedbackTab", () => {
     expect(rows[1]).toHaveTextContent("Failed");
   });
 
+  it("uses the singular for a run that considered one row", async () => {
+    const user = userEvent.setup();
+    serve(STATUS, [makeRun({ rows_considered: 1 })]);
+    render(<FeedbackTab />);
+
+    const row = await screen.findByTestId("feedback-run-row");
+    expect(row).toHaveTextContent("1 row");
+    expect(row).not.toHaveTextContent("1 rows");
+    await user.click(row);
+    const detail = screen.getByTestId("feedback-run-detail");
+    expect(detail).toHaveTextContent("1 row,");
+    expect(detail).not.toHaveTextContent("1 rows");
+  });
+
   it("labels a disabled or missing schedule", async () => {
     serve({ ...STATUS, schedule: { ...SCHEDULE, enabled: false } }, []);
     const { unmount } = render(<FeedbackTab />);

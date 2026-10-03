@@ -25,6 +25,10 @@ function runStatus(status: string): { kind: StatusKind; label: string } {
   return RUN_STATUS[status] ?? { kind: "disabled", label: status };
 }
 
+function rowCount(count: number): string {
+  return `${count} ${count === 1 ? "row" : "rows"}`;
+}
+
 export const FeedbackTab = memo(function FeedbackTab() {
   const { status, runs, isLoading, error } = useFeedbackReview();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -84,7 +88,7 @@ export const FeedbackTab = memo(function FeedbackTab() {
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-2xs text-muted-foreground">
                     <span className="tabular-nums">
-                      {run.rows_considered} rows
+                      {rowCount(run.rows_considered)}
                     </span>
                     <span>{formatDateTime(run.created_at)}</span>
                   </span>
@@ -149,7 +153,7 @@ function RunDetail({ run }: { run: FeedbackRun }) {
         <span className="font-medium text-foreground">{label}</span>
         {run.dry_run && <span className="text-muted-foreground">Dry run</span>}
         <span className="ml-auto shrink-0 text-muted-foreground tabular-nums">
-          {run.rows_considered} rows, {deduplicated} deduplicated
+          {rowCount(run.rows_considered)}, {deduplicated} deduplicated
         </span>
       </div>
       <div className="flex-1 overflow-y-auto px-3 py-2">
