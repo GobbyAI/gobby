@@ -116,7 +116,7 @@ pub fn render_new_project(
     );
     input(frame, rows[2], chrome, path, Some(cursor));
     error_line(frame, rows[3], chrome, error);
-    buttons(frame, inner, chrome, "open", &["tab"])
+    buttons(frame, inner, chrome, "Open", &["tab"])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -160,7 +160,7 @@ pub fn render_new_worktree(
     render_modal_description(frame, rows[3], "base", label);
     input(frame, rows[4], chrome, base, base_focused.then_some(cursor));
     error_line(frame, rows[5], chrome, error);
-    buttons(frame, inner, chrome, "create", &[])
+    buttons(frame, inner, chrome, "Create", &[])
 }
 
 pub fn render_open_worktree(
@@ -220,7 +220,7 @@ pub fn render_open_worktree(
             rect,
         );
     }
-    buttons(frame, inner, chrome, "open", &[])
+    buttons(frame, inner, chrome, "Open", &[])
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -254,7 +254,7 @@ pub fn render_remove_worktree(
     .areas::<5>(inner);
     let warn = Style::default().fg(p.red).add_modifier(Modifier::BOLD);
     frame.render_widget(
-        Paragraph::new(Line::styled(" delete worktree checkout?", warn)),
+        Paragraph::new(Line::styled(" Delete worktree checkout?", warn)),
         rows[0],
     );
     render_modal_description(

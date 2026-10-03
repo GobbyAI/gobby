@@ -88,7 +88,7 @@ pub fn render_destroy_orphans(
         Style::default().fg(p.overlay0),
     );
     let count = checked.iter().filter(|flag| **flag).count();
-    let destroy = format!("destroy {count}");
+    let destroy = format!("Destroy {count}");
     let specs = [
         ActionButtonSpec {
             hint: Some("↵"),
