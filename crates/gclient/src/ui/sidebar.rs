@@ -28,7 +28,7 @@ use gobby_terminal::layout::ScrollMetrics;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::Span;
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Block, Paragraph};
 use ratatui::Frame;
 
 pub use agents::{
@@ -225,19 +225,24 @@ pub fn section_metrics<W: WorkspaceView>(
     )
 }
 
-/// Draw a section heading into `rect`'s first row: the title at column 1,
-/// bold in the body text colour on the sidebar's own ground. Rows mark
-/// selection and activity with a fill; a heading never has one, so the two
-/// stay apart in every theme, monochrome included.
+/// Draw a section heading into `rect`'s first row: a full-width
+/// `surface_dim` band, between the ground and the `surface0`/`surface1` row
+/// fills in either theme, with the title at column 1 in bold body text
+/// (#23280).
 pub(super) fn render_band(frame: &mut Frame, rect: Rect, title: &str, palette: &Palette) {
     let rect = Rect::new(rect.x, rect.y, rect.width, rect.height.min(BAND_ROWS));
     if rect.width < 3 || rect.height == 0 {
         return;
     }
+    frame.render_widget(
+        Block::default().style(Style::default().bg(palette.surface_dim)),
+        rect,
+    );
     let title = truncate_end(title, usize::from(rect.width) - 2);
     let title_rect = Rect::new(rect.x + 1, rect.y, display_width_u16(&title), 1);
     let style = Style::default()
         .fg(palette.text)
+        .bg(palette.surface_dim)
         .add_modifier(Modifier::BOLD);
     frame.render_widget(Paragraph::new(Span::styled(title, style)), title_rect);
 }

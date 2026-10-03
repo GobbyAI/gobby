@@ -35,8 +35,8 @@ bar's underline.
 The Empty tab uses the same goblin grid with a dim palette that keeps every
 role distinct, glints included, so both eyes survive. In dark mode `a` and
 `n` map to `overlay0`, `o` and `e` to `dim`, `i` to the panel colour and `g`
-to `subtext0`. In light mode `a` and `n` map to `surface1`, `o` and `e` to
-`overlay0`, `i` to `subtext0` and `g` to the panel colour. No separate
+to `glint`, the splash's white. In light mode `a` and `n` map to `surface1`,
+`o` and `e` to `overlay0`, `i` to `subtext0` and `g` to `glint`. No separate
 dimmed grid is stored. The shadow grid places its `d` role one cell to the
 right and half a cell below the letters.
 

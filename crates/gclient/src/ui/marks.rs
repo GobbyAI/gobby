@@ -247,23 +247,21 @@ impl MarkPalette {
         }
     }
 
-    /// Every role keeps its own colour, the eye glint included, so the
-    /// dimmed goblin still has both eyes. The halo's nodes take the dimmed
-    /// fill and its edges the dimmed tablet.
+    /// Every role keeps its own colour, and the eye glint stays the
+    /// splash's white, so the dimmed goblin still has both eyes (#23280).
+    /// The halo's nodes take the dimmed fill and its edges the dimmed tablet.
     pub fn dimmed(palette: &Palette, kind: ThemeKind) -> Self {
-        let (accent, overlay1, ink, glint, dim) = match kind {
+        let (accent, overlay1, ink, dim) = match kind {
             ThemeKind::Dark => (
                 palette.overlay0,
                 palette.dim,
                 palette.panel_bg,
-                palette.subtext0,
                 palette.panel_bg,
             ),
             ThemeKind::Light => (
                 palette.surface1,
                 palette.overlay0,
                 palette.subtext0,
-                palette.panel_bg,
                 palette.overlay0,
             ),
         };
@@ -271,7 +269,7 @@ impl MarkPalette {
             accent: Some(accent),
             overlay1: Some(overlay1),
             ink: Some(ink),
-            glint: Some(glint),
+            glint: Some(palette.glint),
             dim: Some(dim),
             node: Some(accent),
             edge: Some(overlay1),

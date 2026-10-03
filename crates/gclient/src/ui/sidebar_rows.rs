@@ -269,8 +269,8 @@ fn worktree_name_budget(row: &SidebarRow, width: u16) -> usize {
 /// a machine row is the same shape without the indent; an agent row shows
 /// the state glyph, definition and pinned reference; a terminal row shows
 /// the state glyph and foreground app, with the pane's address at the
-/// right edge while the name leaves it room. A group row is the dim
-/// project name and a rule. Agent task titles scroll on the second line;
+/// right edge while the name leaves it room. A group row is the project
+/// name in bold accent and a rule. Agent task titles scroll on the second line;
 /// a worktree name too long for its row drops its task and scrolls.
 pub fn row_line<'a>(
     row: &'a SidebarRow,

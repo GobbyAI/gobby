@@ -119,28 +119,24 @@ fn braille_glyphs_paint_in_the_given_role_and_blank_cells_stay_transparent() {
 #[test]
 fn dimmed_palette_keeps_every_role_distinct_with_the_glint() {
     // Josh's 16:54 empty-tab palette (#23280): every grid role keeps its own
-    // token, and the glint stays so the eyes stay white.
+    // token, and the glint is the splash's white in both themes (Josh 16:39:
+    // "A: white, per design").
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let colors = palette(kind);
         let dimmed = MarkPalette::dimmed(&colors, kind);
-        let (accent, overlay1, ink, glint) = match kind {
-            ThemeKind::Dark => (
-                colors.overlay0,
-                colors.dim,
-                colors.panel_bg,
-                colors.subtext0,
-            ),
-            ThemeKind::Light => (
-                colors.surface1,
-                colors.overlay0,
-                colors.subtext0,
-                colors.panel_bg,
-            ),
+        let (accent, overlay1, ink) = match kind {
+            ThemeKind::Dark => (colors.overlay0, colors.dim, colors.panel_bg),
+            ThemeKind::Light => (colors.surface1, colors.overlay0, colors.subtext0),
         };
         assert_eq!(dimmed.accent, Some(accent), "{kind:?} accent");
         assert_eq!(dimmed.overlay1, Some(overlay1), "{kind:?} overlay1");
         assert_eq!(dimmed.ink, Some(ink), "{kind:?} ink");
-        assert_eq!(dimmed.glint, Some(glint), "{kind:?} glint");
+        assert_eq!(dimmed.glint, Some(colors.glint), "{kind:?} glint");
+        assert_eq!(
+            dimmed.glint,
+            MarkPalette::normal(&colors, false).glint,
+            "{kind:?} dimmed eyes stay white"
+        );
     }
 }
 

@@ -5,19 +5,19 @@
 01 |                                                                                                                        |
 01 : text/panel_bg*120
 02 | Machines                                                                                                               |
-02 : text/panel_bg*1 text/panel_bg+b*8 text/panel_bg*111
+02 : text/surface_dim*1 text/surface_dim+b*8 text/surface_dim*24 text/panel_bg*87
 03 | ○ scripted                                                                                                             |
 03 : text/surface0*1 overlay0/surface0*1 overlay0/surface0+d*1 text/surface0+b*8 text/surface0*22 text/panel_bg*87
 04 |                                                                                                                        |
 04 : text/panel_bg*120
 05 | Projects                                                                                                               |
-05 : text/panel_bg*1 text/panel_bg+b*8 text/panel_bg*111
+05 : text/surface_dim*1 text/surface_dim+b*8 text/surface_dim*24 text/panel_bg*87
 06 | ○ alpha (main ↑2 ↓1)           ▸                                                                                       |
 06 : text/surface0*1 overlay0/surface0*1 overlay0/surface0+d*1 accent/surface0+b*5 subtext0/surface0*2 identifier/surface0*4 green/surface0*3 subtext0/surface0*4 text/surface0*11 accent/surface0*1 text/panel_bg*87
 07 |                                                                                                                        |
 07 : text/panel_bg*120
 08 | Agents                                                                                                                 |
-08 : text/panel_bg*1 text/panel_bg+b*6 text/panel_bg*113
+08 : text/surface_dim*1 text/surface_dim+b*6 text/surface_dim*26 text/panel_bg*87
 09 | ○ #123: backend-developer-workf…                                       ▄▄    ▄  ▄▄                                     |
 09 : text/panel_bg*1 overlay0/panel_bg*1 text/panel_bg*1 identifier/panel_bg*4 subtext0/panel_bg*2 text/panel_bg*63 overlay0/panel_bg*2 text/panel_bg*4 overlay0/panel_bg*1 text/panel_bg*2 overlay0/panel_bg*2 text/panel_bg*37
 10 |   Working task 123 Implement the                                   ▀▀  ▀▀ ▄▄▀▀  ▀▀   ▄▄                                |
@@ -33,7 +33,7 @@
 15 |                                                         ▄▄  ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀   ▄▀▀                       |
 15 : text/panel_bg*57 overlay0/panel_bg*2 text/panel_bg*2 panel_bg/panel_bg*1 overlay0/overlay0*7 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*4 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*4 overlay0/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*5 panel_bg/panel_bg*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*3 dim/panel_bg*1 overlay0/overlay0*2 text/panel_bg*23
 16 |                                                         ▀▀▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▀▀▄▀▀                       |
-16 : text/panel_bg*57 overlay0/dim*1 overlay0/panel_bg*1 dim/panel_bg*2 panel_bg/panel_bg*2 overlay0/panel_bg*5 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/subtext0*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/panel_bg*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/subtext0*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*2 dim/panel_bg*1 dim/dim*2 dim/panel_bg*1 overlay0/overlay0*2 text/panel_bg*23
+16 : text/panel_bg*57 overlay0/dim*1 overlay0/panel_bg*1 dim/panel_bg*2 panel_bg/panel_bg*2 overlay0/panel_bg*5 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/text*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/panel_bg*2 panel_bg/panel_bg*2 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/text*1 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*2 dim/panel_bg*1 dim/dim*2 dim/panel_bg*1 overlay0/overlay0*2 text/panel_bg*23
 17 |                                                        ▀    ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄▄▄▄                         |
 17 : text/panel_bg*56 overlay0/panel_bg*1 text/panel_bg*4 dim/panel_bg*1 panel_bg/panel_bg*1 panel_bg/overlay0*1 overlay0/overlay0*3 panel_bg/overlay0*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/overlay0*1 panel_bg/panel_bg*2 panel_bg/overlay0*1 overlay0/overlay0*2 panel_bg/panel_bg*1 overlay0/overlay0*3 panel_bg/panel_bg*1 overlay0/overlay0*1 panel_bg/overlay0*1 panel_bg/panel_bg*2 panel_bg/overlay0*1 overlay0/overlay0*2 panel_bg/panel_bg*1 dim/panel_bg*3 overlay0/panel_bg*2 text/panel_bg*25
 18 |                                                        ▀▀▀▄▄▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀ ▀▀▀▄▄                       |
@@ -49,7 +49,7 @@
 23 |                                                            ▀▀   ▀▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▄▄                              |
 23 : text/panel_bg*60 overlay0/panel_bg*2 text/panel_bg*3 overlay0/panel_bg*1 dim/panel_bg*1 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*3 panel_bg/panel_bg*1 panel_bg/overlay0*2 dim/panel_bg*1 dim/dim*6 panel_bg/panel_bg*3 text/panel_bg*30
 24 | Terminals                                                        ▄▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                              |
-24 : text/panel_bg*1 text/panel_bg+b*9 text/panel_bg*56 overlay0/panel_bg*1 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*2 overlay0/overlay0*6 overlay0/panel_bg*1 panel_bg/dim*1 dim/dim*3 dim/panel_bg*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*1 text/panel_bg*30
+24 : text/surface_dim*1 text/surface_dim+b*9 text/surface_dim*23 text/panel_bg*33 overlay0/panel_bg*1 panel_bg/panel_bg*1 overlay0/overlay0*4 panel_bg/overlay0*2 overlay0/overlay0*6 overlay0/panel_bg*1 panel_bg/dim*1 dim/dim*3 dim/panel_bg*1 panel_bg/panel_bg*1 overlay0/overlay0*2 panel_bg/panel_bg*1 text/panel_bg*30
 25 | ○ nvim                   gclient                                 ▀ ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                               |
 25 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 text/panel_bg*23 subtext0/panel_bg*7 text/panel_bg*33 overlay0/panel_bg*1 text/panel_bg*1 panel_bg/panel_bg*1 overlay0/overlay0*8 overlay0/panel_bg*2 panel_bg/dim*1 dim/dim*4 panel_bg/panel_bg*1 overlay0/panel_bg*1 overlay0/overlay0*1 overlay0/panel_bg*1 panel_bg/panel_bg*1 text/panel_bg*31
 26 |                                                                     ▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                                 |
