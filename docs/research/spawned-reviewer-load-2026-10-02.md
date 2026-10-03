@@ -35,7 +35,8 @@ process tree was cheap in pane arm A2 and in the natural spawned runs.
    - The replenisher is coalesced. `_schedule_pre_commit_store_spare` returns
      when a spare already exists or a replenisher thread is alive (717-718).
      Otherwise it starts one background clone (`cp -c -R`, then a recursive
-     chmod). A spawn triggers at most one new clone; it is not guaranteed one.
+     chmod). The background replenisher is coalesced; a spare miss can still
+     require a synchronous run-cache clone plus later background replenishment.
    - The store is 393 MB in 17,245 files. `sandbox_reaper` later runs `rmtree`
      on the per-run root.
    - One manual clone, chmod and remove (n=1) took 38.5 s wall and 7.0 s
@@ -237,7 +238,8 @@ UNKNOWN: their total wall time.
 ### 2.9 Health latency and GIL contention (INFERRED association)
 
 - `/api/health` (`servers/routes/admin/_health.py`) does no executor hop (#20839).
-- Per-minute daemon GIL share, 19:06-20:46 (101 one-minute captures):
+- Per-minute daemon GIL share, 19:06-20:46 (100 `gil-190603.txt` through
+  `gil-204605.txt` captures, excluding `exec.txt`):
   - total: 36-76%;
   - loop thread: 2-36%;
   - off-loop threads: 29-72%.
