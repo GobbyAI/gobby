@@ -1,0 +1,69 @@
+name: two-seat-placement-fixture
+type: pipeline
+version: "1.0"
+description: |
+  Test-owned placement fixture: seat A in a new titled tab, seat B in a right
+  split of seat A's pane. Only the isolated test runtime imports it; the
+  refusals it exercises are spawn_agent's placement guards.
+
+enabled: true
+
+inputs:
+  workspace:
+    type: string
+    required: true
+    description: "Workspace ref (node:workspace) that receives seat A's tab"
+  provider:
+    type: string
+    required: true
+    description: "Provider both seats launch"
+  seat_a_title:
+    type: string
+    required: true
+  seat_a_agent:
+    type: string
+    required: true
+  seat_a_prompt:
+    type: string
+    required: true
+  seat_b_title:
+    type: string
+    required: true
+  seat_b_agent:
+    type: string
+    required: true
+  seat_b_prompt:
+    type: string
+    required: true
+  seat_b_pane:
+    type: string
+    default: null
+    description: "Pane seat B splits (null = seat A's pane)"
+
+steps:
+  - id: seat_a
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: "${{ inputs.seat_a_agent }}"
+        provider: "${{ inputs.provider }}"
+        prompt: "${{ inputs.seat_a_prompt }}"
+        placement:
+          tab:
+            workspace: "${{ inputs.workspace }}"
+            title: "${{ inputs.seat_a_title }}"
+
+  - id: seat_b
+    mcp:
+      server: gobby-agents
+      tool: spawn_agent
+      arguments:
+        agent: "${{ inputs.seat_b_agent }}"
+        provider: "${{ inputs.provider }}"
+        prompt: "${{ inputs.seat_b_prompt }}"
+        placement:
+          split:
+            pane: "${{ inputs.seat_b_pane or steps.seat_a.output.pane_ref }}"
+            axis: right
+            title: "${{ inputs.seat_b_title }}"

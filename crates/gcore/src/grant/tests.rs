@@ -866,7 +866,11 @@ fn concurrent_acquires_share_one_slow_handshake() {
         let harness = std::sync::Arc::clone(&harness);
         let url = url.clone();
         handles.push(thread::spawn(move || {
-            let request = harness.request(Some(url));
+            let mut request = harness.request(Some(url));
+            // Lock stamps are whole seconds, so the harness's 200ms threshold lets a
+            // waiter break the live handshake lock at the next second boundary and
+            // dial the exhausted script.
+            request.stale_lock_after = Some(Duration::from_secs(30));
             acquire_with(&request).map(|acquired| acquired.source)
         }));
     }

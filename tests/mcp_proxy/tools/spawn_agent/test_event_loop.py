@@ -16,7 +16,7 @@ from gobby.mcp_proxy.tools.spawn_agent import _implementation
 from gobby.mcp_proxy.tools.spawn_agent._spawn_guards import TaskSpawnLease
 from tests.agents.prepared_spawn import prepared_spawn
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 @pytest.mark.asyncio
@@ -80,7 +80,7 @@ async def test_spawn_preparation_does_not_block_event_loop(
     await heartbeat_started.wait()
     try:
         result = await _implementation.spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="test",
             runner=runner,
             provider="claude",
@@ -150,7 +150,7 @@ async def test_cancelled_prepare_waits_for_worker_and_rolls_back(
     monkeypatch.setattr(_implementation, "execute_spawn", execute_spawn)
     spawn = asyncio.create_task(
         _implementation.spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="test",
             runner=runner,
             provider="claude",
@@ -217,7 +217,7 @@ async def test_cancelled_lease_acquire_waits_then_releases_unattached(
 
     spawn = asyncio.create_task(
         _implementation.spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="test",
             runner=runner,
             provider="claude",
@@ -286,7 +286,7 @@ async def test_cancelled_slot_entry_releases_acquired_lease(
 
     spawn = asyncio.create_task(
         _implementation.spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="test",
             runner=runner,
             provider="claude",
@@ -343,7 +343,7 @@ async def test_cancelled_post_prepare_attach_waits_then_rolls_back_child(
     monkeypatch.setattr(_implementation, "execute_spawn", execute_spawn)
     spawn = asyncio.create_task(
         _implementation.spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="test",
             runner=runner,
             provider="claude",

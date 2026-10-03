@@ -120,6 +120,7 @@ def _agent_definition_detail(row: AgentDefinitionRow) -> dict[str, Any]:
         ),
         "blocked_tools": body.blocked_tools,
         "blocked_mcp_tools": body.blocked_mcp_tools,
+        "send_message_targets": body.send_message_targets,
         "sources": body.sources,
         "tags": row.tags,
         "raw_mode": raw.get("mode"),
@@ -182,7 +183,7 @@ def agents() -> None:
 @click.option("--task", "-t", help="Task ID or reference")
 @click.option(
     "--terminal-backend",
-    type=click.Choice(["tmux", "native"]),
+    type=click.Choice(["native"]),
     help="Terminal backend override",
 )
 @click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")

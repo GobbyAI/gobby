@@ -112,7 +112,7 @@ async def _settle_unprepared(attempt: InDoubtAttempt, stage: OwnerStage, outcome
         row = outcome.value
         if not isinstance(row, Terminal):
             # The bump's CAS matched nothing, so this attempt wrote no row.
-            await release_claim(attempt.terminal_id, run_deferred=True)
+            await release_claim(attempt.terminal_id, proven=True)
             return
         attempt.pair = (row.attempt_generation, row.attempt_started_at)
 
@@ -126,7 +126,7 @@ async def _settle_unprepared(attempt: InDoubtAttempt, stage: OwnerStage, outcome
         return await _write_confirmed(attempt, "exited")
 
     await _until_confirmed(attempt, "fail_pending_attempt", cycle)
-    await release_claim(attempt.terminal_id, run_deferred=True)
+    await release_claim(attempt.terminal_id, proven=True)
 
 
 def _recovered_pair(
@@ -158,7 +158,7 @@ async def _settle_prepared(attempt: InDoubtAttempt, stage: OwnerStage, outcome: 
     identity = prepared_identity(attempt.backend, prepared)
     if await _kill_with_proof(attempt, prepared):
         await _until_confirmed(attempt, "exited", lambda: _write_confirmed(attempt, "exited"))
-        await release_claim(attempt.terminal_id, run_deferred=True)
+        await release_claim(attempt.terminal_id, proven=True)
     elif identity is None:
         await _settle_after_absence(attempt)
     else:
@@ -166,7 +166,7 @@ async def _settle_prepared(attempt: InDoubtAttempt, stage: OwnerStage, outcome: 
             attempt, "orphan", lambda: _write_confirmed(attempt, "orphan", identity)
         )
         # The kept orphan keeps its created isolation, so compensation is dropped.
-        await release_claim(attempt.terminal_id, run_deferred=False)
+        await release_claim(attempt.terminal_id, proven=False)
 
 
 async def _orphan_live_row(attempt: InDoubtAttempt) -> None:
@@ -206,7 +206,7 @@ async def _settle_after_absence(attempt: InDoubtAttempt) -> None:
     await _until_confirmed(
         attempt, "fail_pending_attempt", lambda: _write_confirmed(attempt, "exited")
     )
-    await release_claim(attempt.terminal_id, run_deferred=True)
+    await release_claim(attempt.terminal_id, proven=True)
 
 
 async def _prove_absent(attempt: InDoubtAttempt) -> bool:
@@ -284,7 +284,6 @@ def _kill_target(attempt: InDoubtAttempt, row: Terminal, prepared: PreparedSpawn
         locator_key=identity.locator_key,
         host_epoch=identity.host_epoch if attempt.backend == "native" else row.host_epoch,
         process=process or None,
-        session_name=attempt.spawn_key if attempt.backend == "tmux" else row.session_name,
     )
 
 
@@ -443,15 +442,22 @@ async def confirm_exited(attempt: InDoubtAttempt) -> bool:
     return _confirmed(attempt, await read_row(attempt), "exited", None)
 
 
-async def release_claim(terminal_id: str, *, run_deferred: bool) -> None:
-    """Release after a confirmed settlement and run the returned steps exactly once.
+async def release_claim(terminal_id: str, *, proven: bool) -> None:
+    """Drain compensation exactly once, then release the confirmed settlement's claim.
 
-    The released steps have no other owner, so they run shielded: cancelling the
-    caller mid-step neither abandons that step nor skips the rest.
+    A proven exit runs every deferred step; a kept orphan runs only the steps
+    deferred with ``on_orphan``. The queued steps have no other owner, so they
+    run shielded: cancelling the caller mid-step neither abandons that step nor
+    skips the rest.
     """
-    steps = in_doubt_spawns.release(terminal_id)
-    if run_deferred and steps:
-        await _shielded(_run_deferred(terminal_id, steps))
+
+    async def drain() -> None:
+        while steps := in_doubt_spawns.drain(terminal_id, proven=proven):
+            await _run_deferred(terminal_id, steps)
+
+    # Keep the claim while callbacks run: a run transition must not exit a newer
+    # attempt bound to this id, and concurrent cleanup can still enqueue its steps.
+    await _shielded(drain())
 
 
 async def _run_deferred(terminal_id: str, steps: list[DeferredStep]) -> None:

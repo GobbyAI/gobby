@@ -16,12 +16,12 @@ from gobby.utils.machine_id import require_machine_id
 pytestmark = pytest.mark.unit
 
 
-def _pending(manager: TerminalManager, project_id: str, backend: str) -> Terminal:
+def _pending(manager: TerminalManager, project_id: str) -> Terminal:
     tid = str(uuid.uuid4())
     return manager.create_pending(
         terminal_id=tid,
         project_id=project_id,
-        backend=backend,
+        backend="native",
         ownership="gobby",
         spawn_key=tid,
         machine_id=require_machine_id(),
@@ -29,7 +29,7 @@ def _pending(manager: TerminalManager, project_id: str, backend: str) -> Termina
 
 
 def _live(manager: TerminalManager, project_id: str) -> Terminal:
-    pending = _pending(manager, project_id, "native")
+    pending = _pending(manager, project_id)
     host_id = f"ht-{pending.id[:8]}"
     live = manager.promote_to_live(
         pending.id,
@@ -67,7 +67,7 @@ def test_mark_kill_failed_cas(temp_db: HubDatabase, sample_project: dict[str, An
     assert orphaned.locator_key == live.locator_key
     assert orphaned.host_epoch == "epoch-live"
 
-    native_pending = _pending(manager, project_id, "native")
+    native_pending = _pending(manager, project_id)
     native_identity = OrphanIdentity(
         locator={"host_terminal_id": "ht-unproven"},
         locator_key=native_locator_key("epoch-now", "ht-unproven"),
@@ -83,21 +83,9 @@ def test_mark_kill_failed_cas(temp_db: HubDatabase, sample_project: dict[str, An
     assert native_orphan.process is not None
     assert native_orphan.process["pgid"] == 4242
 
-    tmux_pending = _pending(manager, project_id, "tmux")
-    tmux_identity = OrphanIdentity(
-        locator={"session_name": f"gobby-{tmux_pending.id[:8]}"},
-        locator_key=f"tmux:default:gobby-{tmux_pending.id[:8]}",
-    )
-    tmux_orphan = _kill_failed(manager, tmux_pending, identity=tmux_identity)
-    assert tmux_orphan is not None
-    assert tmux_orphan.state == "orphaned"
-    assert tmux_orphan.locator_key == tmux_identity.locator_key
-    assert tmux_orphan.host_epoch is None
-    assert tmux_orphan.process is None
-
     # Without an identity a pending row cannot become an orphan: it keeps the
     # seat for a strict reaper or reconcile.
-    bare_pending = _pending(manager, project_id, "native")
+    bare_pending = _pending(manager, project_id)
     assert _kill_failed(manager, bare_pending) is None
     assert manager.get(bare_pending.id) == bare_pending
 
@@ -106,7 +94,7 @@ def test_mark_kill_failed_cas(temp_db: HubDatabase, sample_project: dict[str, An
     already_orphaned = manager.get(orphaned.id)
     assert already_orphaned is not None
     moved_on_live = _live(manager, project_id)
-    moved_on_pending = _pending(manager, project_id, "native")
+    moved_on_pending = _pending(manager, project_id)
     unchanged: list[tuple[Terminal, int]] = [
         (exited, 0),
         (already_orphaned, 0),

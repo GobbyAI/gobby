@@ -7,7 +7,7 @@ rules:
     enabled: true
     priority: 24
     group: review-learning
-    agent_scope: [plan-adversary, plan-adversary-taskless]
+    agent_scope: [plan-adversary, plan-adversary-taskless-old]
     when: "True"
     effect:
       type: mcp_call

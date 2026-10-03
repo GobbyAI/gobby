@@ -88,6 +88,8 @@ def mock_agent_run() -> MagicMock:
         "created_at": "2024-01-01T09:59:00Z",
         "updated_at": "2024-01-01T10:01:00Z",
     }
+    # List output serializes the bounded list projection (#22766).
+    run.to_list_dict.return_value = run.to_dict.return_value
     return run
 
 
@@ -502,7 +504,7 @@ class TestAgentsSpawnCommand:
         assert "Error: Unexpected error" in result.output
 
     def test_spawn_terminal_backend_choices(self, runner: CliRunner) -> None:
-        """Test spawn terminal backend option validates choices."""
+        """Test spawn terminal backend option rejects tmux."""
         result = runner.invoke(
             cli,
             [
@@ -512,7 +514,7 @@ class TestAgentsSpawnCommand:
                 "--session",
                 "sess",
                 "--terminal-backend",
-                "invalid_term",
+                "tmux",
             ],
         )
 

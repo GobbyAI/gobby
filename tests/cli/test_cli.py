@@ -1,8 +1,11 @@
 """Tests for the CLI module."""
 
+import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import click
 import pytest
 from click.testing import CliRunner
 
@@ -141,6 +144,34 @@ class TestCLICommands:
         assert result.exit_code == 0
         assert "Gobby" in result.output
         assert "setup" not in cli.commands
+
+    def test_every_listed_command_resolves_under_its_own_name(self) -> None:
+        context = click.Context(cli)
+        names = cli.list_commands(context)
+        assert {"mcp-server", "hub-backup", "agents", "start"} <= set(names)
+        for name in names:
+            command = cli.get_command(context, name)
+            assert isinstance(command, click.Command)
+            assert command.name == name
+
+    def test_mcp_server_resolves_without_importing_other_command_groups(self) -> None:
+        """The stdio bridge starts through this group, so it must not import every command."""
+        probe = (
+            "import sys\n"
+            "from gobby.cli import cli\n"
+            "assert cli.commands['mcp-server'].name == 'mcp-server'\n"
+            "import gobby.mcp_proxy.stdio\n"
+            "heavy = ('gobby.cli.agents', 'gobby.cli.hub_backup.cli', 'gobby.workflows.dry_run')\n"
+            "print(sorted(name for name in heavy if name in sys.modules))\n"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", probe],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=120,
+        )
+        assert result.stdout.strip() == "[]"
 
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help."""

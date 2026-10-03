@@ -402,6 +402,7 @@ async def test_inbound_callback_preserves_registry_session_after_identity_resolu
     handled = await InboundCommunications(manager).handle_messages("telegram", [callback])
 
     assert handled[0].session_id == "originating-session"
+    assert handled[0].metadata_json["session_route"] == "callback"
     assert handled[0].identity_id == "identity-1"
     assert handled[0].content == "approve"
     manager._identity_manager.resolve_inbound_identity.assert_called_once()

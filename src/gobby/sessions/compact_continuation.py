@@ -14,17 +14,29 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import IdleDetector
+from gobby.sessions.compact_continuation_store import (
+    _fail_delivered_readiness,
+    _format_timestamp,
+    _load_session_variables,
+    _merge_session_variable,
+    _parse_timestamp,
+    _pop_session_variable,
+    _restore_session_variable_if_absent,
+)
 from gobby.sessions.compact_markers import (
     COMPACT_HANDOFF_MARKER_VARIABLE,
     HANDOFF_COMPACT_CONTINUE_FRESH_SECONDS,
     HANDOFF_COMPACT_CONTINUE_SEND_DELAY_SECONDS,
     HANDOFF_COMPACT_CONTINUE_VARIABLE,
 )
+from gobby.sessions.continuation_retry import (
+    resubmit_until_before_agent,
+    turn_lifecycle_generation,
+)
 from gobby.sessions.handoff import HANDOFF_DISPATCH_GATE_VARIABLE, build_handoff_continue_prompt
 from gobby.sessions.handoff_identity import terminal_process_contexts_match
 from gobby.sessions.handoff_records import record_handoff_delivery
 from gobby.sessions.tmux_context import parse_terminal_context_value
-from gobby.storage.hub.protocol import SessionVariableMutation
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.session_models import Session
 from gobby.terminals.composer_lock import composer_action_lock
@@ -300,6 +312,7 @@ def schedule_handoff_compact_continuation(
         cli_source=cli_source,
         on_send_failure=on_send_failure,
         composer_read=_composer_reader(db, cli_source),
+        db=db,
     )
     return _schedule_coroutine(coro, loop=loop)
 
@@ -324,10 +337,10 @@ def _continuation_pane(
             exc_info=True,
         )
         pane = None
-    if pane is not None and pane.backend == "native":
+    if pane is not None:
         return pane
     logger.warning(
-        "Cannot schedule set_handoff compact continuation for session %s; no live native terminal",
+        "Cannot schedule set_handoff compact continuation for session %s; no live terminal",
         session_id,
     )
     return None
@@ -530,9 +543,35 @@ async def _send_handoff_compact_continuation(
     cli_source: str | None = None,
     on_send_failure: Callable[[], None] | None = None,
     composer_read: ComposerReader | None = None,
+    db: HubDatabase | None = None,
 ) -> bool:
+    """Type the pull prompt; with ``db``, confirm it by the session's BEFORE_AGENT.
+
+    A composer read that reported the draft left can be a false positive (the
+    22:28:40 CDT read on 2026-09-21), so a typed prompt is not delivery. When a
+    hub database is supplied the continuation is re-submitted until the
+    BEFORE_AGENT it triggers arrives or the bounded budget is spent, then durable
+    fallback delivers it exactly once. When the hub database is supplied but the
+    session's turn lifecycle cannot be read, a screen-verified type is not
+    delivery: the unreadable proof cannot confirm BEFORE_AGENT, so the caller
+    takes the durable fallback instead of reporting a composer-only success.
+    Without a hub database there is no lifecycle to read at all and the single
+    verified submit the CLI already acked stands.
+    """
+    baseline: int | None = None
+    lifecycle_unreadable = False
+    if db is not None:
+        # Read the turn generation before typing: the continuation prompt's own
+        # BEFORE_AGENT is what bumps it, so anything above this baseline proves
+        # the prompt reached the CLI.
+        try:
+            baseline = await asyncio.to_thread(turn_lifecycle_generation, db, session_id)
+        except Exception:
+            baseline = None
+        lifecycle_unreadable = baseline is None
     # The pull prompt is typed into the same physical composer a wake drains and
-    # submits, so hold the shared lock across its whole clear/submit/verify run.
+    # submits, so hold the shared lock across its whole clear/submit/verify run and
+    # the BEFORE_AGENT re-submit ladder that may type it again.
     async with composer_action_lock(str(getattr(pane, "target", "") or "")):
         sent = await _type_handoff_compact_continuation(
             pane,
@@ -543,6 +582,22 @@ async def _send_handoff_compact_continuation(
             composer_read=composer_read,
             verify_seconds=SUBMIT_VERIFY_SECONDS,
         )
+        if sent and db is not None and baseline is not None:
+            sent = await resubmit_until_before_agent(
+                pane,
+                prompt,
+                session_id,
+                db=db,
+                baseline_generation=baseline,
+                cli_source=cli_source,
+                composer_read=composer_read,
+                verify_seconds=SUBMIT_VERIFY_SECONDS,
+            )
+    if lifecycle_unreadable:
+        # An unreadable lifecycle can neither confirm nor refute BEFORE_AGENT, so
+        # the composer read is not delivery. Report unconfirmed and let the
+        # caller queue the durable pull prompt instead of trusting the screen.
+        sent = False
     if not sent and on_send_failure is not None:
         on_send_failure()
     return sent
@@ -730,6 +785,7 @@ async def _continue_after_codex_compaction_ready(
                     persist_pull_prompt_message, db, pending_session_id, prompt, attempt_id
                 ),
                 composer_read=_composer_reader(db, "codex"),
+                db=db,
             )
             return
 
@@ -740,6 +796,8 @@ async def _continue_after_codex_compaction_ready(
         "Timed out waiting for Codex compact readiness for session %s",
         pending_session_id,
     )
+    if attempt_id is not None:
+        await asyncio.to_thread(_fail_delivered_readiness, db, pending_session_id, attempt_id)
 
 
 def _count_codex_compact_ready_status_lines(output: str) -> int:
@@ -827,151 +885,3 @@ def _run_coroutine_thread(coro: Any) -> None:
         asyncio.run(coro)
     except Exception:
         logger.debug("Failed to run set_handoff compact continuation task", exc_info=True)
-
-
-def _merge_session_variable(
-    db: HubDatabase,
-    session_id: str,
-    name: str,
-    value: Any,
-) -> None:
-    now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-        row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = %s",
-            (session_id,),
-        ).fetchone()
-        variables = _load_variables(_row_variables(row))
-        variables[name] = value
-        if row:
-            conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
-                (json.dumps(variables), now, session_id),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO session_variables (session_id, variables, updated_at) "
-                "VALUES (%s, %s, %s)",
-                (session_id, json.dumps(variables), now),
-            )
-
-
-def _restore_session_variable_if_absent(
-    db: HubDatabase,
-    session_id: str,
-    name: str,
-    value: Any,
-) -> bool:
-    """Restore a consumed value without replacing a concurrently written value."""
-    now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-        row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = %s",
-            (session_id,),
-        ).fetchone()
-        variables = _load_variables(_row_variables(row))
-        if name in variables:
-            return False
-        variables[name] = value
-        if row:
-            conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
-                (json.dumps(variables), now, session_id),
-            )
-        else:
-            conn.execute(
-                "INSERT INTO session_variables (session_id, variables, updated_at) "
-                "VALUES (%s, %s, %s)",
-                (session_id, json.dumps(variables), now),
-            )
-        return True
-
-
-def _load_session_variables(db: HubDatabase, session_id: str) -> dict[str, Any]:
-    row = db.fetchone(
-        "SELECT variables FROM session_variables WHERE session_id = %s",
-        (session_id,),
-    )
-    return _load_variables(_row_variables(row))
-
-
-def _remove_session_variable(db: HubDatabase, session_id: str, name: str) -> Any:
-    return _pop_session_variable(db, session_id, name)
-
-
-def _pop_session_variable(
-    db: HubDatabase,
-    session_id: str,
-    name: str,
-    *,
-    expected_attempt_id: str | None = None,
-) -> Any:
-    now = datetime.now(UTC).isoformat()
-    with db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
-        row = conn.execute(
-            "SELECT variables FROM session_variables WHERE session_id = %s",
-            (session_id,),
-        ).fetchone()
-        if not row:
-            return None
-        variables = _load_variables(_row_variables(row))
-        current_value = variables.get(name)
-        if expected_attempt_id is not None and (
-            not isinstance(current_value, dict)
-            or current_value.get("attempt_id") != expected_attempt_id
-        ):
-            return None
-        value = variables.pop(name, None)
-        if value is not None:
-            conn.execute(
-                "UPDATE session_variables SET variables = %s, updated_at = %s WHERE session_id = %s",
-                (json.dumps(variables), now, session_id),
-            )
-        return value
-
-
-def _row_variables(row: Any) -> Any:
-    if row is None:
-        return None
-    try:
-        return row["variables"]
-    except Exception:
-        return None
-
-
-def _load_variables(raw: Any) -> dict[str, Any]:
-    if isinstance(raw, dict):
-        return dict(raw)
-    if isinstance(raw, bytes):
-        raw = raw.decode()
-    if not isinstance(raw, str) or not raw:
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        preview = raw[:80].replace("\n", "\\n")
-        logger.warning(
-            "Corrupt set_handoff compact continuation variables JSON ignored: %s; preview=%r",
-            exc,
-            preview,
-        )
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _format_timestamp(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=UTC)
-    return value.astimezone(UTC).isoformat()
-
-
-def _parse_timestamp(value: Any) -> datetime | None:
-    if not isinstance(value, str) or not value:
-        return None
-    try:
-        parsed = datetime.fromisoformat(value)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)

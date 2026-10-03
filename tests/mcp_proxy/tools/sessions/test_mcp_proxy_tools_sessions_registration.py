@@ -456,6 +456,7 @@ async def test_get_session_commits_uses_machine_checkout(  # tdd-red window
     tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    import os
     import subprocess
     from pathlib import Path
 
@@ -467,9 +468,18 @@ async def test_get_session_commits_uses_machine_checkout(  # tdd-red window
         "gobby.sessions.machine_scope.get_machine_id",
         lambda: isolated.machine_id,
     )
+    session = session_manager.register(
+        external_id="commits-checkout",
+        machine_id=isolated.machine_id,
+        source="codex",
+        project_id=isolated.project.id,
+    )
     subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
     (repo / "note.txt").write_text("checkout", encoding="utf-8")
     subprocess.run(["git", "add", "note.txt"], cwd=repo, check=True)
+    # Pin the commit inside the session's [created_at, updated_at] second window;
+    # a wall-clock commit can cross a second boundary and fall outside it.
+    commit_date = session.created_at.isoformat()
     subprocess.run(
         [
             "git",
@@ -484,12 +494,7 @@ async def test_get_session_commits_uses_machine_checkout(  # tdd-red window
         ],
         cwd=repo,
         check=True,
-    )
-    session = session_manager.register(
-        external_id="commits-checkout",
-        machine_id=isolated.machine_id,
-        source="codex",
-        project_id=isolated.project.id,
+        env={**os.environ, "GIT_AUTHOR_DATE": commit_date, "GIT_COMMITTER_DATE": commit_date},
     )
     registry = create_session_messages_registry(
         session_manager=session_manager,

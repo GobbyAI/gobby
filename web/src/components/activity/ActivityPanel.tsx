@@ -19,6 +19,7 @@ import { PipelinesTab } from "./PipelinesTab";
 import { TasksTab } from "./TasksTab";
 import { FilesTab } from "./FilesTab";
 import { CronTab } from "./CronTab";
+import { FeedbackTab } from "./FeedbackTab";
 import { TracesTab } from "./TracesTab";
 import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import { AgentsTab } from "./AgentsTab";
@@ -455,6 +456,8 @@ export function ActivityPanel({
         return <PipelinesTab projectId={projectId} />;
       case "cron":
         return <CronTab projectId={projectId} />;
+      case "feedback":
+        return <FeedbackTab />;
       case "traces":
         return <TracesTab projectId={projectId} />;
       case "mcp":

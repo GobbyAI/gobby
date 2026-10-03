@@ -14,7 +14,6 @@ import psycopg
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -1021,25 +1020,6 @@ async def test_dirty_foreign_pathspec_commit_still_blocked_and_entry_retained(
     assert foreign_vars["task_edited_file_checkouts"][guard_harness.foreign_task.id] == {
         str(guard_harness.repo): ["foreign.txt"]
     }
-
-
-@pytest.mark.asyncio
-async def test_commit_guard_times_owner_query_and_release_hops(
-    guard_harness: GuardHarness,
-) -> None:
-    """Each guard DB hop reports pool-thread queue apart from its work (#23063)."""
-    timings = HookPhaseTimings()
-
-    with hook_phase_timing_scope(timings):
-        response = await guard_harness.handler._evaluate_rules(
-            guard_harness.event("git commit -m 'stale entry' -- foreign.txt")
-        )
-
-    assert response.decision == "allow"
-    breakdown = timings.breakdown()
-    for hop in ("commit_guard_owner_query", "commit_guard_release_clean"):
-        assert breakdown[f"{hop}_work"] > 0
-        assert breakdown[hop] >= breakdown[f"{hop}_queue"] + breakdown[f"{hop}_work"]
 
 
 @pytest.mark.asyncio

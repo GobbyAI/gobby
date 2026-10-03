@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.terminals.discovery import seed_external_terminal
 from tests.servers.test_terminals_routes import _client
 from tests.storage.test_terminals import (
     LOCAL_MACHINE_ID,
@@ -67,3 +68,42 @@ def test_terminal_list_and_get_exclude_foreign_machine(
 
         foreign_detail = client.get(f"/api/terminals/{foreign.id}")
         assert foreign_detail.status_code == 404
+
+
+@pytest.mark.parametrize("seed_machine", [LOCAL_MACHINE_ID, FOREIGN_MACHINE_ID])
+def test_discovered_terminal_list_uses_daemon_machine_identity(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    seed_machine: str,
+) -> None:
+    manager = _manager(temp_db)
+    with patch("gobby.utils.machine_id._cached_machine_id", seed_machine):
+        terminal = seed_external_terminal(
+            manager,
+            project_id=sample_project["id"],
+            session_id=None,
+            terminal_context={
+                "tmux_socket_path": "/tmp/isolated-restart-proof.sock",
+                "tmux_pane": "%proof",
+                "tmux_server_pid": 12345,
+                "tmux_server_start_time": 100,
+            },
+        )
+    assert terminal is not None
+    assert terminal.machine_id == seed_machine
+    assert manager.get(terminal.id) is not None
+    with _client(temp_db) as client:
+        listing = client.get("/api/terminals", params={"project_id": sample_project["id"]})
+    assert listing.status_code == 200
+    expected = {terminal.id} if seed_machine == LOCAL_MACHINE_ID else set()
+    assert {item["id"] for item in listing.json()["items"]} == expected
+    if expected:
+        item = listing.json()["items"][0]
+        assert item["backend"] == "tmux"
+        # The external pane is attachable through its own tmux server.
+        attach = item["attach"]
+        assert attach["backend"] == "tmux"
+        assert attach["socket_path"] == "/tmp/isolated-restart-proof.sock"
+        assert attach["pane_id"] == "%proof"
+        assert attach["server_pid"] == 12345
+        assert attach["server_start_time"] == 100

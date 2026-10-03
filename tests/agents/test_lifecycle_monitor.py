@@ -31,7 +31,6 @@ import gobby.agents.lifecycle_monitor as lifecycle_monitor_module
 from gobby.agents.idle_detector import COMPOSER_PROBE_LINES, IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.lifecycle_reconciliation import has_dispatch_stage_context
-from gobby.agents.tmux import configure_tmux
 from gobby.autonomous.progress_tracker import ProgressTracker, ProgressType
 from gobby.autonomous.stuck_detector import StuckDetectionResult, StuckDetector
 from gobby.config.tmux import TmuxConfig
@@ -79,12 +78,6 @@ DETECTION_REGISTRY = cast("DetectionManifestRegistry", BundledDetectionRegistry(
 pytestmark = pytest.mark.unit
 
 _DRAIN_KEYS = [("key", key) for key in composer_clear_sequence(None)]
-
-
-@pytest.fixture(autouse=True)
-def _configured_tmux() -> None:
-    """(Re)configure daemon tmux helpers; earlier runner-shutdown tests reset them."""
-    configure_tmux(TmuxConfig())
 
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000001"
@@ -302,6 +295,18 @@ def test_monitor_ignores_other_machines_runs(
 
     assert [run.id for run in monitor._get_active_terminal_runs()] == [local.id]
     run_manager.list_active_for_machine.assert_called_once_with(LOCAL_MACHINE_ID)
+
+
+def test_monitor_without_tmux_config_uses_defaults(temp_db: HubDatabase) -> None:
+    """No daemon tmux singleton exists, so an omitted config falls back to defaults."""
+    monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
+        agent_run_manager=MagicMock(),
+        db=temp_db,
+        terminal_services=_fake_terminal_services(temp_db),
+    )
+
+    assert monitor._tmux_config == TmuxConfig()
 
 
 @pytest.mark.asyncio
@@ -1652,18 +1657,10 @@ class TestCheckDeadAgents:
             pid=None,
         )
 
-        tmux_manager = MagicMock()
-        tmux_manager.has_session = AsyncMock(return_value=False)
-        tmux_manager.kill_session = AsyncMock(return_value=True)
-
-        with (
-            _terminal_liveness(monitor, False),
-            patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux_manager),
-        ):
+        with _terminal_liveness(monitor, False):
             cleaned = await monitor.check_unhealthy_agents()
 
         assert cleaned == 1
-        tmux_manager.kill_session.assert_not_awaited()
 
         updated = agent_run_manager.get(_rid("run-dead-no-pid"))
         assert updated is not None

@@ -1,8 +1,9 @@
 """Live-backend acceptance fixtures (plan 7.2).
 
 Every test in this package drives a real backend: a ``gterm host`` built from
-this tree, or a private tmux server. Spawns take a 120x40 PTY, the geometry the
-plan names for acceptance.
+this tree, or a pane on a private tmux server the test starts itself and records
+as an external terminal (Gobby spawns no tmux). Each child gets a 120x40 PTY,
+the geometry the plan names for acceptance.
 
 The package is gated on ``GOBBY_RUN_VENDOR_BUILD=1`` because it builds the
 vendored libghostty-vt layer. Without the opt-in the whole package skips, so
@@ -19,18 +20,15 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import AsyncIterator, Iterator, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
 import pytest
 
-from gobby.agents.spawn_executor import derive_spawn_key
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.config.terminal_host import TerminalHostConfig
 from gobby.config.terminals import TerminalConfig
-from gobby.config.tmux import TmuxConfig
 from gobby.storage.terminals import Terminal
 from gobby.terminals.host_manager import TerminalHostManager
 from gobby.terminals.native_runtime import HostManagerControl, NativeTerminalRuntime
@@ -42,6 +40,7 @@ from gobby.terminals.runtime import (
 )
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from tests._timing import wait_for_awaited_condition
+from tests.terminals.fakes import make_memory_terminal
 
 ACCEPTANCE_ROWS = 40
 ACCEPTANCE_COLS = 120
@@ -130,16 +129,6 @@ class AcceptanceHost:
 
 
 @dataclass
-class AcceptanceTmux:
-    """A private tmux server and the tmux runtime that drives it."""
-
-    sessions: TmuxSessionManager
-    runtime: TmuxTerminalRuntime
-    socket: Path
-    workdir: Path
-
-
-@dataclass
 class LiveTerminal:
     """One committed terminal plus the runtime that owns it."""
 
@@ -199,28 +188,79 @@ async def native_host(
         shutil.rmtree(socket_dir, ignore_errors=True)
 
 
+def _tmux(socket: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    """Run one tmux command against the private server on ``socket``."""
+    return subprocess.run(
+        ["tmux", "-S", str(socket), "-f", "/dev/null", *args],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={key: value for key, value in os.environ.items() if key != "TMUX"},
+        timeout=10.0,
+    )
+
+
 @pytest.fixture
-async def tmux_server(acceptance_workdir: Path) -> AsyncIterator[AcceptanceTmux]:
-    """Start one private tmux server for a single test."""
+def external_tmux_pane(acceptance_workdir: Path) -> Iterator[LiveTerminal]:
+    """A shell pane on a private tmux server, recorded as an external terminal.
+
+    The test starts the server itself, the way a user starts tmux by hand, and
+    the row carries what a hook records from ``$TMUX``: the socket, the pane,
+    and the server generation. The runtime addresses only that socket. Await
+    ``answering_shell`` on the result before writing to it.
+    """
     if shutil.which("tmux") is None:
         pytest.skip("tmux binary is not available")
     socket = acceptance_workdir / "tmux.sock"
-    sessions = TmuxSessionManager(TmuxConfig(socket_name="", socket_path=str(socket)))
+    name = f"acc-{uuid4().hex[:8]}"
+    started = _tmux(
+        socket,
+        "new-session",
+        "-d",
+        "-x",
+        str(ACCEPTANCE_COLS),
+        "-y",
+        str(ACCEPTANCE_ROWS),
+        "-s",
+        name,
+        "-c",
+        str(acceptance_workdir),
+        "--",
+        "/usr/bin/env",
+        "-i",
+        *(f"{key}={value}" for key, value in SHELL_ENV.items()),
+        *SHELL_COMMAND,
+    )
+    if started.returncode != 0:
+        pytest.fail(f"tmux new-session failed: {started.stderr or started.stdout}")
     try:
-        yield AcceptanceTmux(
-            sessions=sessions,
-            runtime=TmuxTerminalRuntime(sessions),
-            socket=socket,
-            workdir=acceptance_workdir,
+        shown = _tmux(
+            socket, "display-message", "-p", "-t", f"={name}:", "#{pane_id}\t#{pid}\t#{start_time}"
         )
+        assert shown.returncode == 0, shown.stderr
+        pane_id, server_pid, start_time = shown.stdout.strip().split("\t")
+        terminal = replace(
+            make_memory_terminal(session_name=name),
+            backend="tmux",
+            ownership="external",
+            locator={
+                "socket_path": str(socket),
+                "pane_id": pane_id,
+                "server_pid": int(server_pid),
+                "server_start_time": int(start_time),
+            },
+            rows=ACCEPTANCE_ROWS,
+            cols=ACCEPTANCE_COLS,
+        )
+        yield LiveTerminal(backend="tmux", runtime=TmuxTerminalRuntime(), terminal=terminal)
     finally:
-        await sessions._run("kill-server")
+        # The exit and terminate cases already took the server down with the pane.
+        _tmux(socket, "kill-server")
         socket.unlink(missing_ok=True)
 
 
 def terminal_from_prepared(
     *,
-    backend: str,
     terminal_id: UUID,
     spawn_key: str,
     prepared: PreparedSpawn,
@@ -232,7 +272,7 @@ def terminal_from_prepared(
         epoch = str(prepared.locator.frame_host_epoch or "")
     return Terminal(
         id=str(terminal_id),
-        backend=backend,
+        backend="native",
         ownership="gobby",
         state="live",
         machine_id=str(uuid4()),
@@ -245,19 +285,18 @@ def terminal_from_prepared(
         spawn_key=spawn_key,
         locator=dict(prepared.stored_locator or {}),
         locator_key=prepared.locator_key,
-        session_name=spawn_key if backend == "tmux" else None,
         host_epoch=epoch or None,
         rows=ACCEPTANCE_ROWS,
         cols=ACCEPTANCE_COLS,
     )
 
 
-def spawn_request(backend: str, command: tuple[str, ...], cwd: Path) -> TerminalSpawnRequest:
-    """Build the daemon-shaped spawn request for one acceptance child."""
+def spawn_request(command: tuple[str, ...], cwd: Path) -> TerminalSpawnRequest:
+    """Build the daemon-shaped native spawn request for one acceptance child."""
     terminal_id = uuid4()
     return TerminalSpawnRequest(
         terminal_id=terminal_id,
-        spawn_key=derive_spawn_key(backend, str(terminal_id)),
+        spawn_key=str(terminal_id),
         command=list(command),
         cwd=str(cwd),
         env=dict(SHELL_ENV),
@@ -276,7 +315,7 @@ async def prepare_native(
     This is the daemon's own order: reserve, prepare, acknowledge the persist,
     bind the observer, and only then commit.
     """
-    request = spawn_request("native", command, host.workdir)
+    request = spawn_request(command, host.workdir)
     reservation = await host.runtime.reserve_observer(request.terminal_id)
     request.reservation_id = reservation["reservation_id"]
     request.reserve_key = reservation["reserve_key"]
@@ -295,39 +334,16 @@ async def spawn_native(
     request, _reservation, prepared = await prepare_native(host, command=command)
     await host.runtime.commit_spawn(prepared)
     terminal = terminal_from_prepared(
-        backend="native",
         terminal_id=request.terminal_id,
         spawn_key=request.spawn_key,
         prepared=prepared,
     )
-    return await _answering_shell(
+    return await answering_shell(
         LiveTerminal(backend="native", runtime=host.runtime, terminal=terminal)
     )
 
 
-async def spawn_tmux(
-    tmux: AcceptanceTmux,
-    *,
-    command: tuple[str, ...] = SHELL_COMMAND,
-) -> LiveTerminal:
-    """Spawn and commit one tmux terminal on a 120x40 PTY."""
-    request = spawn_request("tmux", command, tmux.workdir)
-    prepared = await tmux.runtime.prepare_spawn(request)
-    prepared.acknowledge_persist()
-    await tmux.runtime.commit_spawn(prepared)
-    assert (prepared.rows, prepared.cols) == (ACCEPTANCE_ROWS, ACCEPTANCE_COLS)
-    terminal = terminal_from_prepared(
-        backend="tmux",
-        terminal_id=request.terminal_id,
-        spawn_key=request.spawn_key,
-        prepared=prepared,
-    )
-    return await _answering_shell(
-        LiveTerminal(backend="tmux", runtime=tmux.runtime, terminal=terminal)
-    )
-
-
-async def _answering_shell(live: LiveTerminal) -> LiveTerminal:
+async def answering_shell(live: LiveTerminal) -> LiveTerminal:
     """Return the terminal once its shell has answered one command."""
     marker = await emit_marker(live, "SHELL-READY")
     await wait_for_text(live, marker, description="the spawned shell to answer")

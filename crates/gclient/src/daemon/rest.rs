@@ -236,16 +236,20 @@ impl RestClient {
         let response = self.send(deadline, method, url, body).await?;
         // The client's total timeout can end the body read first; it is the
         // same deadline, so it reports the same way.
-        timeout_at(deadline, response.json())
+        // Read the complete HTTP body before validating JSON. A stopped daemon
+        // can interrupt a successful response; that is retryable transport loss,
+        // while malformed complete JSON remains a protocol failure.
+        let bytes = timeout_at(deadline, response.bytes())
             .await
             .map_err(|_| DaemonError::timeout(&label))?
             .map_err(|error| {
                 if error.is_timeout() {
                     DaemonError::timeout(&label)
                 } else {
-                    protocol(error)
+                    DaemonError::Unavailable { retry_after: None }
                 }
-            })
+            })?;
+        serde_json::from_slice(&bytes).map_err(protocol)
     }
 
     async fn empty(

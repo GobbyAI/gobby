@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import threading
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, NoReturn
 from unittest.mock import AsyncMock, MagicMock
@@ -124,6 +125,32 @@ async def test_initialize_answered_before_daemon_health(
     await run_stdio_bridge(deps=deps, create_server=create_server)
 
     assert initialize_answered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_daemon_process_scan_leaves_the_event_loop_serving() -> None:
+    # The process scan reads every process's cmdline; stdio must keep serving (#23343).
+    loop_served = threading.Event()
+    scan_saw_loop_serving: list[bool] = []
+
+    def scan_processes() -> bool:
+        scan_saw_loop_serving.append(loop_served.wait(timeout=2))
+        return True
+
+    deps = DaemonStartupDependencies(
+        bootstrap=BRIDGE_BOOTSTRAP,
+        is_daemon_running=scan_processes,
+        get_daemon_pid=lambda: None,
+        check_daemon_http_health=AsyncMock(return_value=True),
+        start_daemon_process=AsyncMock(return_value={"success": True}),
+        logger=logging.getLogger(__name__),
+    )
+    startup = asyncio.create_task(ensure_stdio_daemon_running(deps=deps))
+    await asyncio.sleep(0)
+    loop_served.set()
+    await startup
+
+    assert scan_saw_loop_serving == [True]
 
 
 @pytest.mark.asyncio

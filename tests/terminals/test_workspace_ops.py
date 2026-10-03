@@ -31,6 +31,7 @@ from gobby.agents.detection.registry import (
 )
 from gobby.agents.idle_detector import IdleDetector
 from gobby.mcp_proxy.tools.sessions._terminal_send_keys import _authorize_send_keys_target
+from gobby.servers.websocket.workspace_ws import _OP_ENVELOPE, _arguments, _result
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.machines import LocalMachineManager
@@ -309,6 +310,56 @@ async def test_split_spawns_with_pane_identity_env_and_rolls_back(harness: _Harn
     assert killed is not None and killed.state == "exited"
 
 
+@pytest.mark.parametrize("role", [None, "persistent-reviewer"])
+async def test_tab_create_and_pane_split_carry_role(harness: _Harness, role: str | None) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    first = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=role)).panes[0]
+    split = (await h.ops.pane_split(OPERATOR, first.id, "horizontal", role=role)).panes[0]
+    assert first.role == split.role == role
+    assert {pane.id: pane.role for pane in h.workspaces.list_panes(workspace.id)} == {
+        first.id: role,
+        split.id: role,
+    }
+    snapshot = await h.ops.workspace_snapshot(OPERATOR, workspace.id)
+    snapshot_rows = _result(snapshot.panes)
+    event_rows = [
+        event["panes"][0] for event in h.events if event["kind"] in {"tab.created", "pane.added"}
+    ]
+    assert [row["id"] for row in event_rows] == [first.id, split.id]
+    assert {row["id"] for row in snapshot_rows} == {first.id, split.id}
+    for row in [*event_rows, *snapshot_rows]:
+        if role is None:
+            assert "role" not in row
+        else:
+            assert row["role"] == role
+
+
+async def test_empty_pane_role_is_invalid_before_storage(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    pane = (await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)).panes[0]
+    with (
+        patch.object(h.workspaces, "create_tab") as create,
+        patch.object(h.workspaces, "add_pane") as split,
+    ):
+        await _raises("invalid_op", h.ops.tab_create(OPERATOR, workspace.id, h.project_id, role=""))
+        await _raises("invalid_op", h.ops.pane_split(OPERATOR, pane.id, "horizontal", role=""))
+    create.assert_not_called()
+    split.assert_not_called()
+    assert h.workspaces.list_panes(workspace.id) == [pane]
+
+
+@pytest.mark.parametrize("method", ["tab_create", "pane_split"])
+def test_workspace_ws_accepts_role_argument(method: str) -> None:
+    args: dict[str, object] = {"role": "reviewer"}
+    if method == "tab_create":
+        args.update(workspace="w#0", project_id=str(uuid.uuid4()))
+    else:
+        args.update(pane="p#0:0:0", axis="horizontal")
+    assert _arguments(method, args, _OP_ENVELOPE)["role"] == "reviewer"
+
+
 async def test_spawned_shell_is_killed_when_pane_binding_raises(harness: _Harness) -> None:
     h = harness
     workspace = await h.ops.workspace_create(OPERATOR)
@@ -494,11 +545,12 @@ async def test_actor_scope_guards_kill_spawn_and_adopt(harness: _Harness) -> Non
     still_live = h.terminals.get(agent.id)
     assert still_live is not None and still_live.state == "live"
 
-    # send_keys authorizes through the same policy.
+    # send_keys refuses autonomous callers itself; target scope is the
+    # block-cross-project-send-keys rule's decision, so the outsider resolves here.
     for caller, error_code in (
         (member, None),
         (lead_child, None),
-        (outsider, "send_keys_target_forbidden"),
+        (outsider, None),
         (autonomous, "send_keys_autonomous_agent_forbidden"),
     ):
         with session_context_for_test(caller.id):
@@ -1871,3 +1923,31 @@ async def test_close_refuses_membership_drift_since_read(
         kept = h.terminals.get(terminal_id)
         assert kept is not None and kept.state == "live"
     assert list(h.native.terminated_host_ids) == kills
+
+
+async def test_select_emits_focus_requested_where_hints_stay_passive(harness: _Harness) -> None:
+    h = harness
+    workspace = await h.ops.workspace_create(OPERATOR)
+    spawned = await h.ops.tab_create(OPERATOR, workspace.id, h.project_id)
+    tab, pane = spawned.tabs[0], spawned.panes[0]
+
+    # A window persisting its own focus stays a passive hint.
+    await h.ops.workspace_set_focus_hints(
+        OPERATOR, workspace.id, project_id=h.project_id, tab=tab.id, pane=pane.id
+    )
+    assert h.events[-1]["kind"] == "focus_hints"
+
+    # An explicit select asks live windows to show the tab and pane, and stores
+    # the tab's own project as the hint.
+    selected, focused = await h.ops.workspace_select(OPERATOR, workspace.id, tab.id, pane=pane.id)
+    requested = h.events[-1]
+    assert requested["kind"] == "focus_requested"
+    assert [(row["id"], row["project_id"]) for row in requested["tabs"]] == [(tab.id, h.project_id)]
+    assert (selected.focused_project_id, selected.focused_tab_id) == (h.project_id, tab.id)
+    assert focused is not None and focused.focused_pane_id == pane.id
+
+    # The tab form keeps the tab's own pane focus.
+    await h.ops.workspace_select(OPERATOR, workspace.id, tab.id)
+    reselected = h.events[-1]
+    assert reselected is not requested and reselected["kind"] == "focus_requested"
+    assert [row.focused_pane_id for row in h.workspaces.list_tabs(workspace.id)] == [pane.id]

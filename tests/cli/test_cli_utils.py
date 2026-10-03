@@ -987,7 +987,8 @@ class TestInitLocalStorage:
         assert config.datastore_mode == "remote"
         assert ensure_personal.call_count == 1
         assert ensure_personal.call_args.args == (mock_db,)
-        assert claim.call_count == 0
+        assert claim.call_args.kwargs == {"role": "maintenance"}
+        claim.return_value.release.assert_called_once_with()
 
     def test_closes_database_when_initialization_is_interrupted(self) -> None:
         mock_db = MagicMock()

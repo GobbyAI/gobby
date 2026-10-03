@@ -107,7 +107,10 @@ class TestAgentDefinitionBodyModel:
         from gobby.workflows.definitions import AgentDefinitionBody, AgentStepWorkflowBody
 
         fields = AgentDefinitionBody.model_fields
-        assert len(fields) == 21, f"Expected 21 fields, got {len(fields)}: {list(fields.keys())}"
+        assert len(fields) == 24, f"Expected 24 fields, got {len(fields)}: {list(fields.keys())}"
+        assert "network" in fields
+        assert "spawnable_agents" in fields
+        assert "send_message_targets" in fields
         assert "surfaces" in fields
         assert "prompts" in fields
         assert "reasoning_required" in fields
@@ -514,6 +517,7 @@ class TestAgentScopeStorage:
         restored = RuleDefinitionBody.model_validate(fetched.definition_json)
         assert restored.agent_scope == ["qa"]
         assert restored.group == "qa-agent"
+        assert restored.effects is not None
         assert restored.effects[0].type == "block"
 
     def test_rule_without_agent_scope_storage(self, rule_manager: RuleDefinitionManager) -> None:
@@ -539,3 +543,60 @@ def test_agent_workflows_requires_rule_selectors(payload: dict[str, object]) -> 
 
     with pytest.raises(ValidationError, match="rule_selectors"):
         AgentWorkflows.model_validate(payload)
+
+
+def test_skills_map_is_rejected_with_migration_hint() -> None:
+    from gobby.workflows.definitions import AgentDefinitionBody
+
+    with pytest.raises(ValidationError) as exc_info:
+        AgentDefinitionBody.model_validate(
+            {
+                "name": "legacy-skills",
+                "prompts": {"agent": "Run the task."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "skills": {"methodology": ["research"]},
+            }
+        )
+
+    message = str(exc_info.value)
+    assert "skills" in message
+    assert "workflows.skill_selectors" in message
+    assert "step_workflow.variables.required_skills" in message
+
+
+def test_version_is_stored_in_body(db: HubDatabase) -> None:
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.workflows.definitions import AgentDefinitionBody
+
+    body = AgentDefinitionBody.model_validate(
+        {
+            "name": "versioned",
+            "version": "2.3",
+            "prompts": {"agent": "Run the task."},
+            "workflows": {"rule_selectors": {"include": []}},
+        }
+    )
+    assert body.version == "2.3"
+    assert AgentDefinitionBody.model_validate(body.model_dump()).version == "2.3"
+    assert body.model_dump()["version"] == "2.3"
+
+    result = sync_bundled_agents(db)
+    assert result["errors"] == []
+    row = AgentDefinitionManager(db).get_by_name("backend-developer")
+    assert row is not None
+    assert row.definition_json["version"] == "1.1"
+
+
+def test_bundled_agents_carry_no_skills_map() -> None:
+    import yaml
+
+    from gobby.agents.sync import get_bundled_agents_path
+    from gobby.workflows.definitions import AgentDefinitionBody
+
+    paths = sorted(get_bundled_agents_path().glob("*.yaml"))
+    assert paths
+    for path in paths:
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert isinstance(raw, dict)
+        assert "skills" not in raw, f"{path.name} still has a top-level skills map"
+        assert AgentDefinitionBody.model_validate(raw).name

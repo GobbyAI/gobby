@@ -9,6 +9,7 @@ builds once and invalidates on append.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import json
 import logging
@@ -24,6 +25,8 @@ import pytest
 
 import gobby.sessions.processor_stats as processor_stats
 import gobby.sessions.transcript_index as transcript_index
+import gobby.sessions.transcript_index_resume as index_resume
+import gobby.sessions.transcript_index_sidecar as index_sidecar
 from gobby.sessions.message_stats import empty_message_stats
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_index import (
@@ -45,6 +48,7 @@ from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
 from gobby.sessions.transcript_io import _count_nonempty_lines
 from gobby.sessions.transcript_reader import _activity_counts_from_index
 from gobby.sessions.transcript_renderer import RenderedMessage, RenderState, render_transcript
+from gobby.sessions.transcript_window import render_window
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
@@ -840,6 +844,200 @@ async def test_get_or_build_index_rebuilds_on_sidecar_size_mismatch(
 
     assert calls == 1
     assert rebuilt.size == st2.st_size
+    clear_index_cache()
+
+
+async def _index_after_lag_growth(
+    monkeypatch: pytest.MonkeyPatch, path: str, source: str, prefix: str, tail: str
+) -> tuple[TranscriptIndex, TranscriptIndex, int]:
+    """Persist a sidecar for ``prefix``, append ``tail``, and re-read the grown file.
+
+    Models the lag window: the processor's sidecar covers an older size while the
+    transcript has already grown. Returns the reader's index, a fresh full build of
+    the grown file, and how many full builds the reader ran.
+    """
+    original = transcript_index.build_index_from_file
+    monkeypatch.setattr(transcript_index, "build_index_from_file", original)
+    clear_index_cache()
+    Path(path).write_text(prefix, encoding="utf-8")
+    st = os.stat(path)
+    await get_or_build_index(path, source, SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+    clear_index_cache()
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(tail)
+    grown = os.stat(path)
+    expected = original(path, source, SESSION, mtime_ns=grown.st_mtime_ns, size=grown.st_size)
+    builds = 0
+
+    def count_build(*args: Any, **kwargs: Any) -> TranscriptIndex:
+        nonlocal builds
+        builds += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(transcript_index, "build_index_from_file", count_build)
+    index = await get_or_build_index(
+        path, source, SESSION, mtime_ns=grown.st_mtime_ns, size=grown.st_size
+    )
+    return index, expected, builds
+
+
+def _agy_lines() -> list[str]:
+    return AGY_STATS_FIXTURE.read_text(encoding="utf-8").splitlines()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("append", [False, True], ids=["unchanged", "appended"])
+async def test_stale_agy_sidecar_rebuilds_without_extending_bad_tool_positions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, append: bool
+) -> None:
+    """Old AGY tool-event positions must never seed the reader's append path."""
+    gobby_home = tmp_path / "gobby-home"
+    monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+    clear_index_cache()
+    texts = _line_texts(_agy_lines())
+    # The fourth line ends in a tool event; the old builder did not count it.
+    split = 4
+    path = _write(tmp_path, "agy-stale", texts[:split])
+    prefix = os.stat(path)
+    correct_prefix = build_index_from_file(
+        path, "agy", SESSION, mtime_ns=prefix.st_mtime_ns, size=prefix.st_size
+    )
+
+    def legacy_next_index(records: list[Any], fallback: int, parsed_index: int) -> int:
+        next_index = fallback
+        for record in records:
+            if isinstance(record, ParsedMessage):
+                next_index = max(next_index, record.index + 1)
+        if not records:
+            next_index = max(next_index, parsed_index + 1)
+        return next_index
+
+    # Persist the actual pre-fix builder semantics and the old schema identity.
+    with monkeypatch.context() as legacy:
+        legacy.setattr(transcript_index, "_next_index_after_records", legacy_next_index)
+        legacy.setattr(index_sidecar, "INDEX_SCHEMA_VERSION", 1)
+        stale = build_index_from_file(
+            path, "agy", SESSION, mtime_ns=prefix.st_mtime_ns, size=prefix.st_size
+        )
+        persist_index_sidecar(path, stale)
+    assert stale.next_parser_index is not None
+    assert correct_prefix.next_parser_index == stale.next_parser_index + 1
+
+    if append:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write("".join(texts[split:]))
+    current = os.stat(path)
+    expected = build_index_from_file(
+        path, "agy", SESSION, mtime_ns=current.st_mtime_ns, size=current.st_size
+    )
+    builds = 0
+    extensions = 0
+    build = transcript_index.build_index_from_file
+    extend = index_resume.extend_index_from_file
+
+    def count_build(*args: Any, **kwargs: Any) -> TranscriptIndex:
+        nonlocal builds
+        builds += 1
+        return build(*args, **kwargs)
+
+    def count_extension(*args: Any, **kwargs: Any) -> TranscriptIndex | None:
+        nonlocal extensions
+        result = extend(*args, **kwargs)
+        extensions += int(result is not None)
+        return result
+
+    monkeypatch.setattr(transcript_index, "build_index_from_file", count_build)
+    monkeypatch.setattr(index_resume, "extend_index_from_file", count_extension)
+    index = await get_or_build_index(
+        path, "agy", SESSION, mtime_ns=current.st_mtime_ns, size=current.st_size
+    )
+    assert builds == 1
+    assert extensions == 0
+    assert dataclasses.asdict(index) == dataclasses.asdict(expected)
+    persisted = load_index_sidecar(
+        path, "agy", SESSION, seek_mode="byte", mtime_ns=current.st_mtime_ns, size=current.st_size
+    )
+    assert persisted is not None
+    assert dataclasses.asdict(persisted) == dataclasses.asdict(expected)
+    for order in ("head", "tail"):
+        for offset in range(0, expected.total_groups, 2):
+            actual_window = render_window(
+                path, "agy", SESSION, index, limit=2, offset=offset, order=order
+            )
+            expected_window = render_window(
+                path, "agy", SESSION, expected, limit=2, offset=offset, order=order
+            )
+            assert dataclasses.asdict(actual_window) == dataclasses.asdict(expected_window)
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source", "make_lines"),
+    [
+        ("codex", _codex_lines),
+        ("claude", _claude_lines),
+        ("grok", lambda: _grok_boundary_lines()),
+        ("agy", _agy_lines),
+    ],
+)
+async def test_lag_window_growth_extends_sidecar_without_full_rebuild(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    source: str,
+    make_lines: Callable[[], list[str]],
+) -> None:
+    texts = _line_texts(make_lines())
+    path = str(tmp_path / f"{source}-lag.jsonl")
+
+    for split in range(1, len(texts)):
+        index, expected, builds = await _index_after_lag_growth(
+            monkeypatch, path, source, "".join(texts[:split]), "".join(texts[split:])
+        )
+
+        assert builds == 0, split
+        assert dataclasses.asdict(index) == dataclasses.asdict(expected), split
+        persisted = load_index_sidecar(
+            path, source, SESSION, seek_mode="byte", mtime_ns=index.mtime_ns, size=index.size
+        )
+        assert persisted is not None, split
+        assert dataclasses.asdict(persisted) == dataclasses.asdict(expected), split
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_lag_window_sidecar_ending_mid_line_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    content = "".join(_line_texts(_codex_lines()))
+    cut = content.index("\n", len(content) // 2) + 5
+
+    index, expected, builds = await _index_after_lag_growth(
+        monkeypatch, str(tmp_path / "codex-partial.jsonl"), "codex", content[:cut], content[cut:]
+    )
+
+    assert builds == 1
+    assert dataclasses.asdict(index) == dataclasses.asdict(expected)
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_lag_window_growth_without_incremental_parser_rebuilds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    texts = _line_texts(_qwen_lines())
+    split = len(texts) // 2
+
+    index, expected, builds = await _index_after_lag_growth(
+        monkeypatch,
+        str(tmp_path / "qwen-lag.jsonl"),
+        "qwen",
+        "".join(texts[:split]),
+        "".join(texts[split:]),
+    )
+
+    assert builds == 1
+    assert dataclasses.asdict(index) == dataclasses.asdict(expected)
     clear_index_cache()
 
 

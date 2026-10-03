@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import io
 import os
 import tokenize
@@ -135,10 +136,26 @@ def python_keyword_stub(old: str, new: str) -> tuple[str, tuple[str, ...]] | Non
     return ("" if partial_header else before.name), added
 
 
-def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
+def python_added_source(old: str, new: str) -> str | None:
+    """Return inert module declarations an edit added before or after its intact anchor."""
+    if not old.strip():
+        return None
+    if new.startswith(old):
+        added = new[len(old) :]
+    elif new.endswith(old):
+        added = new[: -len(old)]
+    else:
+        return None
+    return added if python_noop_module(added) is not None else None
+
+
+def python_noop_module(
+    source: str, *, context_source: str | None = None
+) -> dict[str, frozenset[str] | None] | None:
     """Recognize a new API module containing declarations and inert class bodies only."""
     try:
         module = ast.parse(source)
+        context = ast.parse(context_source) if context_source is not None else module
     except (SyntaxError, ValueError):
         return None
     classes: dict[str, frozenset[str] | None] = {}
@@ -159,8 +176,13 @@ def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
                 return None
             classes[statement.name] = frozenset()
             continue
-        if not isinstance(statement, ast.ClassDef) or statement.bases or statement.keywords:
+        if not isinstance(statement, ast.ClassDef) or statement.keywords:
             return None
+        if statement.bases:
+            if not _exception_declaration(statement, context):
+                return None
+            classes[statement.name] = None
+            continue
         if any(
             not isinstance(item, ast.Name) or item.id != "dataclass"
             for item in statement.decorator_list
@@ -181,6 +203,30 @@ def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
             methods.add(member.name)
         classes[statement.name] = frozenset(methods)
     return classes or None
+
+
+def _exception_declaration(statement: ast.ClassDef, module: ast.Module) -> bool:
+    """Allow only inert declarations inheriting one unshadowed builtin exception."""
+    if len(statement.bases) != 1 or statement.decorator_list:
+        return False
+    base = statement.bases[0]
+    if not isinstance(base, ast.Name):
+        return False
+    exception = getattr(builtins, base.id, None)
+    if not isinstance(exception, type) or not issubclass(exception, BaseException):
+        return False
+    for item in ast.walk(module):
+        if (
+            isinstance(item, ast.Name)
+            and isinstance(item.ctx, ast.Store)
+            and item.id == base.id
+            or isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef)
+            and item.name == base.id
+            or isinstance(item, ast.alias)
+            and (item.asname or item.name.split(".")[0]) == base.id
+        ):
+            return False
+    return all(_is_docstring(member) or isinstance(member, ast.Pass) for member in statement.body)
 
 
 def _is_docstring(node: ast.stmt) -> bool:

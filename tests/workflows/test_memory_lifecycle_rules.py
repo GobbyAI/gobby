@@ -782,9 +782,9 @@ class TestGuardPlanMemoryWrites:
         for agent_type in (
             "planner",
             "plan-adversary",
-            "plan-adversary-taskless",
-            "plan-enhancer",
-            "plan-enhancer-taskless",
+            "plan-adversary-taskless-old",
+            "plan-enhancer-old",
+            "plan-enhancer-taskless-old",
         ):
             assert f"'{agent_type}'" in body.when
 
@@ -835,7 +835,7 @@ class TestGuardPlanMemoryWritesEngine:
         [
             {"plan_mode": True},
             {"_agent_type": "planner"},
-            {"_agent_type": "plan-enhancer-taskless"},
+            {"_agent_type": "plan-enhancer-taskless-old"},
         ],
     )
     async def test_plan_memory_write_blocks_once_then_allows_retry(

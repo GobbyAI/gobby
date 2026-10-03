@@ -162,6 +162,174 @@ async def test_reviewer_required_load_transition_releases_deferred_preflight(
     assert "Run the deferred code-review Preflight now" in transition.context
 
 
+def _setup_load_then_review(
+    db: "HubDatabase", manager: AgentDefinitionManager, instance_mgr: AgentStepInstanceManager
+) -> dict[str, Any]:
+    """Install a load_skills -> review workflow; return the get_skill call that moves it."""
+    from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
+
+    sync_bundled_rules(db, get_bundled_rules_path())
+    _setup_step_workflow(
+        db,
+        manager,
+        instance_mgr,
+        current_step="load_skills",
+        workflow_data={
+            "name": "load-then-review",
+            "version": "2.0",
+            "enabled": False,
+            "variables": {"loaded": False, "review_complete": False},
+            "exit_condition": "vars.review_complete",
+            "steps": [
+                {
+                    "name": "load_skills",
+                    "allowed_tools": ["mcp__gobby__call_tool"],
+                    "on_mcp_success": [
+                        {
+                            "server": "gobby-skills",
+                            "tool": "get_skill",
+                            "action": "set_variable",
+                            "variable": "loaded",
+                            "value": True,
+                        }
+                    ],
+                    "transitions": [{"to": "review", "when": "vars.loaded"}],
+                },
+                {
+                    "name": "review",
+                    "status_message": "Run the review now.",
+                    "allowed_tools": "all",
+                },
+            ],
+        },
+    )
+    return {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-skills",
+            "tool_name": "get_skill",
+            "arguments": {"name": "code-review"},
+        },
+        "tool_output": {"success": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_proxy_transition_notice_reaches_next_hook_and_stop_is_held(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """A transition taken on the proxy's direct after_tool reaches the model on its next hook.
+
+    The direct event has no provider response channel, so its notice must survive to the
+    provider's own PostToolUse; a stop attempted after the transition stays held (#23258).
+    """
+    from gobby.workflows.step_context import get_active_step_workflow_context
+
+    call = _setup_load_then_review(db, manager, instance_mgr)
+    # One dict across evaluations stands in for the persisted session variables.
+    variables: dict[str, Any] = {"is_spawned_agent": True}
+
+    await engine.evaluate(
+        _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data=dict(call),
+            metadata={"_mcp_proxy_direct_after_tool": True},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    moved = instance_mgr.get_for_session(SESSION_ID)
+    assert moved is not None and moved.current_step == "review"
+
+    native = await engine.evaluate(
+        _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data=dict(call),
+            metadata={"_native_hook_type": "PostToolUse"},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert native.context is not None
+    assert "Step transition: load_skills -> review" in native.context
+    assert "Run the review now." in native.context
+
+    later = await engine.evaluate(
+        _make_event(data={"tool_name": "Bash", "tool_input": {"command": "git status"}}),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert "Step transition" not in (later.context or "")
+
+    step_context = get_active_step_workflow_context(db, SESSION_ID)
+    assert step_context is not None
+    variables["current_step"] = step_context.current_step
+    variables["current_step_status_message"] = step_context.status_message or ""
+    stop = await engine.evaluate(
+        _make_event(event_type=HookEventType.STOP, source=SessionSource.CODEX),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert stop.decision == "block"
+    assert stop.reason is not None
+    assert "[require-step-completion]" in stop.reason
+    assert "Current step: review. Run the review now." in stop.reason
+
+
+@pytest.mark.asyncio
+async def test_codex_pre_tool_use_leaves_proxy_transition_notice_pending(
+    db: "HubDatabase",
+    manager: AgentDefinitionManager,
+    engine: RuleEngine,
+    instance_mgr: AgentStepInstanceManager,
+) -> None:
+    """Codex PreToolUse context is a systemMessage the model never sees (#23258).
+
+    A pending proxy transition notice must survive it and reach the following PostToolUse.
+    """
+    call = _setup_load_then_review(db, manager, instance_mgr)
+    variables: dict[str, Any] = {"is_spawned_agent": True}
+    await engine.evaluate(
+        _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data=dict(call),
+            metadata={"_mcp_proxy_direct_after_tool": True},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+
+    pre = await engine.evaluate(
+        _make_event(
+            data={"tool_name": "Bash", "tool_input": {"command": "git status"}},
+            metadata={"_native_hook_type": "PreToolUse"},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert "Step transition" not in (pre.context or "")
+
+    post = await engine.evaluate(
+        _make_event(
+            event_type=HookEventType.AFTER_TOOL,
+            data={"tool_name": "Bash", "tool_input": {"command": "git status"}},
+            metadata={"_native_hook_type": "PostToolUse"},
+            source=SessionSource.CODEX,
+        ),
+        session_id=SESSION_ID,
+        variables=variables,
+    )
+    assert post.context is not None
+    assert "Step transition: load_skills -> review" in post.context
+
+
 @pytest.fixture
 def db(hub_db: "HubDatabase") -> "HubDatabase":
     return hub_db
@@ -708,7 +876,7 @@ def test_zsh_quoting_guidance_contract() -> None:
         repo_root / "src/gobby/install/shared/skills/bash/references/quoting-and-data.md"
     ).read_text()
     adversary_guidance = (
-        repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless.yaml"
+        repo_root / "src/gobby/install/shared/workflows/agents/plan-adversary-taskless-old.yaml"
     ).read_text()
 
     for required in ("zsh", "single-quote", "@theme", "@custom-variant", "parenthesized", "#"):
@@ -753,7 +921,7 @@ class TestAgentToolEnforcement:
         variables: dict[str, Any] = {
             "_agent_blocked_tools": ["Edit"],
             "_agent_blocked_mcp_tools": ["gobby-memory:create_memory"],
-            "_agent_type": "plan-adversary-taskless",
+            "_agent_type": "plan-adversary-taskless-old",
         }
 
         response = _check_agent_tool(tool_name, variables)
@@ -765,7 +933,7 @@ class TestAgentToolEnforcement:
         """Explicit blocked_tools entries still win over the catalog-tool exemption."""
         variables: dict[str, Any] = {
             "_agent_blocked_tools": [tool_name],
-            "_agent_type": "plan-adversary-taskless",
+            "_agent_type": "plan-adversary-taskless-old",
         }
 
         response = _check_agent_tool(tool_name, variables)
@@ -3313,7 +3481,7 @@ async def test_capability_neutral_tools_pass_step_allowlist(
 
 _PLAN_ENHANCER_TASKLESS = (
     Path(__file__).resolve().parents[2]
-    / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless.yaml"
+    / "src/gobby/install/shared/workflows/agents/plan-enhancer-taskless-old.yaml"
 )
 
 

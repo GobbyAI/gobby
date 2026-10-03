@@ -1702,6 +1702,37 @@ def test_host_spawn_forwards_attachment_pool_args(tmp_path: Path) -> None:
     assert argv[argv.index("--max-attachments-per-terminal") + 1] == "4"
 
 
+def test_host_spawn_drops_the_daemons_tmux_pane(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Native agents inherit the host env; a daemon started in tmux must not
+    hand them its own pane as their terminal context."""
+    from gobby.config.terminal_host import TerminalHostConfig
+    from gobby.terminals.host_manager import TerminalHostManager
+
+    monkeypatch.setenv("TMUX", "/tmp/tmux-501/default,12345,0")
+    monkeypatch.setenv("TMUX_PANE", "%7")
+    envs: list[dict[str, str]] = []
+
+    class _BoomPopen:
+        def __init__(self, args: list[str], *, env: dict[str, str], **kwargs: object) -> None:
+            del args, kwargs
+            envs.append(env)
+            raise OSError("boom")
+
+    host = TerminalHostManager(
+        config=TerminalHostConfig(socket_dir=str(tmp_path), binary_path="/bin/echo"),
+        terminal_config=TerminalConfig(),
+    )
+    with patch("subprocess.Popen", _BoomPopen):
+        with pytest.raises(OSError, match="boom"):
+            host._spawn_host_process()
+
+    assert "TMUX" not in envs[0]
+    assert "TMUX_PANE" not in envs[0]
+    assert envs[0]["GTERM_LOG_FILE"].endswith(".log")
+
+
 @pytest.mark.asyncio
 async def test_ensure_restart_is_singleflight_with_backoff(
     tmp_path: Path,

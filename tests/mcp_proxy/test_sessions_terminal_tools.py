@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,16 +30,20 @@ def _registered_send_keys(
     temp_db: HubDatabase,
     *,
     context_only: bool = False,
+    backend: Literal["tmux", "native"] = "native",
 ) -> tuple[Callable[..., Any], FakeRuntime, MemoryTerminalStore, WriteCoordinator]:
-    terminal = make_memory_terminal(backend="native")
+    terminal = make_memory_terminal(backend=backend)
     terminal.session_id = None if context_only else "target-session"
+    if backend == "tmux":
+        terminal.ownership = "external"
     if context_only:
         terminal.project_id = "project-1"
     store = MemoryTerminalStore(terminal)
-    runtime = FakeRuntime(backend="native")
+    runtime = FakeRuntime(backend=backend)
+    other = FakeRuntime(backend="native" if backend == "tmux" else "tmux")
     coordinator = WriteCoordinator(
         cast(UnresolvedWriteStore, store),
-        runtime_registry(runtime),
+        runtime_registry(runtime, other),
         lease_registry=TerminalLeaseRegistry(daemon_epoch="test-epoch"),
     )
     caller = MagicMock(id="caller-session", project_id="project-1", agent_run_id=None)
@@ -143,6 +147,29 @@ async def test_send_keys_uses_daemon_origin_and_idempotency(temp_db: HubDatabase
     assert coordinator_write.await_args is not None
     assert coordinator_write.await_args.args[0].origin == "daemon"
     assert runtime.write_log == [("text", "hello"), ("text", "hello")]
+
+
+@pytest.mark.asyncio
+async def test_send_keys_reaches_an_external_tmux_pane(temp_db: HubDatabase) -> None:
+    send, runtime, store, coordinator = _registered_send_keys(temp_db, backend="tmux")
+    terminal = next(iter(store.rows.values()))
+    native = coordinator.runtime_for(make_memory_terminal(backend="native"))
+    await coordinator.lease_registry.attach(terminal.id, attachment_id="operator")
+    await coordinator.lease_registry.take_control(terminal.id, "operator")
+
+    with patch(
+        "gobby.utils.session_context.get_current_session_id",
+        return_value="caller-session",
+    ):
+        result = await send(
+            session_id="target-session",
+            keys="hello",
+            idempotency_key="external-1",
+        )
+
+    assert result == {"success": True, "idempotency_key": "external-1"}
+    assert runtime.write_log == [("text", "hello")]
+    assert cast(FakeRuntime, native).write_log == []
 
 
 @pytest.mark.asyncio

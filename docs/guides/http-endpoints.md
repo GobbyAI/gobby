@@ -525,7 +525,7 @@ inputs return `400` instead of silently choosing one value.
 The planning-seed fields are `planning_seed_state` (`drafted`, `needs_review`,
 or `approved`), `completed_plan_review_rounds` (already-completed adversary
 rounds, `>= 0`), and `plan_enhancement_rounds` (target constructive
-`plan-enhancer` rounds before the adversary gate, `>= 0`, default `0`). Presence
+`plan-enhancer-old` rounds before the adversary gate, `>= 0`, default `0`). Presence
 in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
 `0` overrides the build profile default.
 
@@ -874,6 +874,9 @@ is no HTTP submission route for impersonating the assigned reviewer.
 | GET | `/api/feedback/review/{run_id}` | One durable run and digest |
 | GET | `/api/feedback/review/{run_id}/observations` | Frozen observations, with `offset=0`, `limit=50` defaults |
 | GET | `/api/feedback/review/{run_id}/results` | Accepted clusters and recorded action outcomes, with the same pagination |
+| GET | `/api/feedback/entries` | Newest submitted rows; `limit=50`, optional `unreviewed`, `kind`, `frequency`, `disposition` (unknown vocabulary returns 422) |
+| GET | `/api/feedback/runs` | Recent run summaries without observations, newest first; `limit=20` |
+| GET | `/api/feedback/status` | Unreviewed backlog, latest run summary, and the `gobby:feedback-review` cron schedule (null when unregistered) |
 
 Page limits are 1–100, offsets nonnegative; continue with `next_offset` until
 null. Missing run readers return 404; invalid/unknown paged reads return 400.

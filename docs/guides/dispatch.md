@@ -226,7 +226,7 @@ in `src/gobby/dispatch/_planning_enhancement.py` to keep `rules.py` under the
 1,000-line limit. It fires when planning is `needs_review`, the task artifact
 `plan_enhancement_rounds > 0`, `plan_enhancement_rounds_completed < target`,
 `plan_enhancement_converged` is false, and a plan artifact exists — spawning
-`plan-enhancer` with round and max counters in `initial_variables`. Once the
+`plan-enhancer-old` with round and max counters in `initial_variables`. Once the
 target is reached or the enhancer reports convergence it returns `None`, falling
 through to the unchanged `planning_review_rule` (the adversary). The enhancer
 records each round through the `record_plan_enhancement` verb, which never

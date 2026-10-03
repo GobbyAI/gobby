@@ -5,7 +5,7 @@ from __future__ import annotations
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
 from gobby.hooks.hook_types import SessionEndReason
-from gobby.sessions.tmux_context import is_configured_tmux_socket
+from gobby.terminal_context import terminal_context_has_tmux_target
 
 
 class SessionEndMixin(EventHandlersBase):
@@ -69,8 +69,10 @@ class SessionEndMixin(EventHandlersBase):
         elif (
             session is not None
             and session.session_type == "terminal"
-            and is_configured_tmux_socket(session.terminal_context) is False
+            and terminal_context_has_tmux_target(session.terminal_context)
         ):
+            # Gobby no longer spawns tmux, so every tmux pane is hand-started and
+            # outlives the CLI that ended in it.
             end_status = "paused"
         elif (
             end_reason == SessionEndReason.IDLE

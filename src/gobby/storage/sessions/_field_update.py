@@ -256,8 +256,17 @@ class _FieldUpdateMixin(
             )
         return updated
 
-    def expire_if_active(self: _ManagerState, session_id: str) -> Session | None:
-        """Expire an eligible terminal session without overwriting a newer status."""
+    def expire_if_active(
+        self: _ManagerState,
+        session_id: str,
+        *,
+        machine_id: str,
+        observed_updated_at: datetime,
+    ) -> Session | None:
+        """Expire an eligible terminal session still as observed on ``machine_id``.
+
+        A session rebound or revived since ``observed_updated_at`` is left alone.
+        """
         now = utc_now()
         with self.db.transaction():
             cursor = self.db.execute(
@@ -265,8 +274,15 @@ class _FieldUpdateMixin(
                 UPDATE sessions
                 SET status = 'expired', updated_at = %s
                 WHERE id = %s AND status = ANY(%s)
+                  AND machine_id = %s AND updated_at = %s
                 """,
-                (now, session_id, list(TERMINAL_OWNER_STATUSES)),
+                (
+                    now,
+                    session_id,
+                    list(TERMINAL_OWNER_STATUSES),
+                    machine_id,
+                    observed_updated_at,
+                ),
             )
         if cursor.rowcount <= 0:
             return None

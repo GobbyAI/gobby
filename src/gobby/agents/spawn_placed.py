@@ -47,15 +47,13 @@ async def _placed_runtime_spawn(
     command: list[str],
     existing: Terminal | None,
 ) -> SpawnResult:
-    from gobby.agents.spawn_executor import derive_spawn_key
-
     if existing is not None:
         terminal_id = existing.id
-        spawn_key = existing.spawn_key or derive_spawn_key(backend, terminal_id)
+        spawn_key = existing.spawn_key or terminal_id
         prior = (existing.attempt_generation, existing.attempt_started_at)
     else:
         terminal_id = mint_terminal_id()
-        spawn_key = derive_spawn_key(backend, terminal_id)
+        spawn_key = terminal_id
         prior = None
     if not in_doubt_spawns.claim(terminal_id):
         # Another owner holds this id; nothing of this attempt was written.
@@ -154,7 +152,7 @@ class _PlacedAttempt:
             return
         if confirmed:
             self.owned = True
-            await release_claim(self.attempt.terminal_id, run_deferred=True)
+            await release_claim(self.attempt.terminal_id, proven=True)
 
     def _failed(
         self,
@@ -217,7 +215,7 @@ class _PlacedAttempt:
         if row is None:
             # The bump's CAS matched nothing, so no row of this attempt exists.
             self.owned = True
-            await release_claim(terminal_id, run_deferred=True)
+            await release_claim(terminal_id, proven=True)
             return self._failed("retry_generation_cas_failed", terminal=False)
         pair = attempt.pair = (row.attempt_generation, row.attempt_started_at)
         self.stage = "bind"
@@ -233,7 +231,7 @@ class _PlacedAttempt:
                 return self._cancelled()
             except Exception as exc:
                 logger.warning("Placement bind failed for terminal %s", terminal_id, exc_info=True)
-                code, detail = _deferred_failure_code(backend, exc)
+                code, detail = _deferred_failure_code(exc)
                 await self._settle_inline(self._fail_unprepared(exc, _settle_native_spawn_failure))
                 return self._failed(code, detail=detail)
 
@@ -246,23 +244,22 @@ class _PlacedAttempt:
             title=plan.title,
             auth_cli=plan.auth_cli,
         )
-        if backend == "native":
-            self.stage = "reserve"
-            if not can_reserve_observer(runtime):
-                await self._settle_inline(asyncio.to_thread(manager.fail_pending, terminal_id))
-                return self._failed("native_reserve_unavailable")
-            try:
-                reservation = await asyncio.shield(
-                    self._start("reserve", runtime.reserve_observer(UUID(terminal_id)))
-                )
-            except asyncio.CancelledError:
-                return self._cancelled()
-            except Exception as exc:
-                code, detail = _deferred_failure_code(backend, exc)
-                await self._settle_inline(self._fail_unprepared(exc, _settle_native_spawn_failure))
-                return self._failed(code, detail=detail)
-            spawn_request.reservation_id = reservation.get("reservation_id")
-            spawn_request.reserve_key = reservation.get("reserve_key")
+        self.stage = "reserve"
+        if not can_reserve_observer(runtime):
+            await self._settle_inline(asyncio.to_thread(manager.fail_pending, terminal_id))
+            return self._failed("native_reserve_unavailable")
+        try:
+            reservation = await asyncio.shield(
+                self._start("reserve", runtime.reserve_observer(UUID(terminal_id)))
+            )
+        except asyncio.CancelledError:
+            return self._cancelled()
+        except Exception as exc:
+            code, detail = _deferred_failure_code(exc)
+            await self._settle_inline(self._fail_unprepared(exc, _settle_native_spawn_failure))
+            return self._failed(code, detail=detail)
+        spawn_request.reservation_id = reservation.get("reservation_id")
+        spawn_request.reserve_key = reservation.get("reserve_key")
 
         # From here on a failure is never proof: every outcome but a completed
         # promotion goes to the owner.
@@ -277,19 +274,14 @@ class _PlacedAttempt:
             else:
                 prepared = await asyncio.shield(prepare)
         except TimeoutError:
-            native = backend == "native"
-            return self._failed(
-                "spawn_timeout" if native else "spawn timed out",
-                detail="spawn timed out" if native else None,
-                retryable=True,
-            )
+            return self._failed("spawn_timeout", detail="spawn timed out", retryable=True)
         except asyncio.CancelledError:
             return self._cancelled()
         except Exception as exc:
             logger.warning(
                 "Placed backend spawn raised for terminal %s", terminal_id, exc_info=True
             )
-            code, detail = _deferred_failure_code(backend, exc)
+            code, detail = _deferred_failure_code(exc)
             return self._failed(code, detail=detail, retryable=is_infrastructure_spawn_error(exc))
         finally:
             finish_spawn_phase(request.phase_timings_ms, "runtime_prepare_spawn", prepare_started)
@@ -320,7 +312,7 @@ class _PlacedAttempt:
             result.prior_attempt = attempt.prior_attempt
             return result
         self.owned = True
-        await release_claim(terminal_id, run_deferred=True)
+        await release_claim(terminal_id, proven=True)
         return result
 
     async def _fail_unprepared(
@@ -329,20 +321,10 @@ class _PlacedAttempt:
         settle_native: Callable[..., Awaitable[tuple[str, str | None]]],
     ) -> None:
         attempt = self.attempt
-        if attempt.backend == "native":
-            await settle_native(
-                manager=attempt.manager,
-                runtime=attempt.runtime,
-                terminal_id=attempt.terminal_id,
-                spawn_key=attempt.spawn_key,
-                exc=exc,
-            )
-            return
-        pair = attempt.pair
-        if pair is not None:
-            await asyncio.to_thread(
-                attempt.manager.fail_pending_attempt,
-                attempt.terminal_id,
-                attempt_generation=pair[0],
-                attempt_started_at=pair[1],
-            )
+        await settle_native(
+            manager=attempt.manager,
+            runtime=attempt.runtime,
+            terminal_id=attempt.terminal_id,
+            spawn_key=attempt.spawn_key,
+            exc=exc,
+        )

@@ -74,7 +74,7 @@ def _context(artifacts: SimpleNamespace | None = None, **overrides: Any) -> Simp
     values: dict[str, Any] = {
         "artifacts": artifacts if artifacts is not None else _artifacts(),
         "agents": {
-            "plan-enhancer": {"enabled": True},
+            "plan-enhancer-old": {"enabled": True},
             "plan-adversary": {"enabled": True},
         },
         "agent_definitions": {},
@@ -93,7 +93,7 @@ def test_enhancer_spawns_while_budget_remains() -> None:
     action = planning_enhancement_rule(_task(), _context())
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "plan-enhancer"
+    assert action.agent_slug == "plan-enhancer-old"
     assert action.task_ref == "#1"
     assert action.initial_variables is not None
     assert action.initial_variables["round_number"] == 1
@@ -156,7 +156,7 @@ def test_no_spawn_when_enhancer_agent_missing() -> None:
 def test_no_spawn_when_enhancer_agent_disabled() -> None:
     ctx = _context(
         agents={
-            "plan-enhancer": {"enabled": False},
+            "plan-enhancer-old": {"enabled": False},
             "plan-adversary": {"enabled": True},
         }
     )
@@ -175,7 +175,7 @@ def test_enhancer_preempts_adversary_while_enabled_then_falls_through() -> None:
     # Budget remains: the enhancer preempts the adversary.
     preempt = rules.evaluate(_task(), _context(), rules=ordered)
     assert isinstance(preempt, SpawnAgentAction)
-    assert preempt.agent_slug == "plan-enhancer"
+    assert preempt.agent_slug == "plan-enhancer-old"
 
     # Converged: enhancement no-ops and dispatch falls through to the adversary.
     converged_ctx = _context(artifacts=_artifacts(plan_enhancement_converged=True))

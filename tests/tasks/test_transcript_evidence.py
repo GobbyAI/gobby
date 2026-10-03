@@ -14,7 +14,7 @@ import subprocess
 import sys
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -25,7 +25,6 @@ import psutil
 import pytest
 
 from gobby.config.validation_detection import default_validation_detection_config
-from gobby.hooks.phase_timing import HookPhaseTimings, hook_phase_timing_scope
 from gobby.storage.session_models import Session
 from gobby.tasks import (
     transcript_evidence,
@@ -182,7 +181,8 @@ async def test_prewarmed_pool_runs_four_first_stops_concurrently(tmp_path: Path)
         assert len(set(pids)) == 4
         assert all(pid > 0 for pid in pids)
     finally:
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        # A drain that outlives its test can stop the tracker under later tests' pools.
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
 
 async def test_process_pool_oserror_falls_back_and_warns_once(
@@ -219,6 +219,19 @@ async def test_broken_process_pool_is_discarded_before_thread_fallback(
     assert fake.shutdown_args == (False, True)
 
 
+@pytest.fixture
+def _no_pending_pool_exit() -> None:
+    """Let an earlier test's pool-exit thread finish before tracker calls are recorded.
+
+    A real worker that outlives the shutdown timeout leaves its exit thread
+    running; it would later call the patched tracker stop and record into
+    another test's events.
+    """
+    for thread in threading.enumerate():
+        if thread.name == "transcript-evidence-pool-exit":
+            thread.join(10)
+
+
 class _RecordingExecutor:
     def __init__(self, events: list[str], *, block_on_wait: threading.Event | None = None) -> None:
         self._events = events
@@ -227,9 +240,10 @@ class _RecordingExecutor:
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         self._events.append(f"shutdown:wait={wait}:cancel={cancel_futures}")
         if wait and self._block_on_wait is not None:
-            self._block_on_wait.wait(5)
+            self._block_on_wait.wait()
 
 
+@pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -246,23 +260,32 @@ def test_shutdown_waits_for_worker_exit_then_stops_tracker(
     assert transcript_evidence_pool._pool is None
 
 
+@pytest.mark.usefixtures("_no_pending_pool_exit")
 def test_shutdown_leaves_hung_worker_to_reaper(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     release = threading.Event()
+    tracker_stopped = threading.Event()
+
+    def stop_tracker() -> None:
+        events.append("tracker")
+        tracker_stopped.set()
+
     fake = _RecordingExecutor(events, block_on_wait=release)
     monkeypatch.setattr(transcript_evidence_pool, "_pool", cast(ProcessPoolExecutor, fake))
-    monkeypatch.setattr(
-        transcript_evidence_pool, "_stop_resource_tracker", lambda: events.append("tracker")
-    )
+    monkeypatch.setattr(transcript_evidence_pool, "_stop_resource_tracker", stop_tracker)
 
-    started = time.monotonic()
-    transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
-    elapsed = time.monotonic() - started
+    try:
+        started = time.monotonic()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=0.05)
+        elapsed = time.monotonic() - started
 
-    assert elapsed < 1.0
-    assert events == ["shutdown:wait=True:cancel=True"]
-    assert transcript_evidence_pool._pool is None
-    release.set()
+        assert elapsed < 1.0
+        assert events == ["shutdown:wait=True:cancel=True"]
+        assert transcript_evidence_pool._pool is None
+    finally:
+        release.set()
+        assert tracker_stopped.wait(5), "pool drain must finish before patches are restored"
+    assert events == ["shutdown:wait=True:cancel=True", "tracker"]
 
 
 def test_shutdown_without_pool_is_noop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -345,7 +368,7 @@ def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
 
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
         assert _resource_tracker_pid() is None
         assert transcript_evidence_pool._pool is None
@@ -912,6 +935,218 @@ async def test_python_created_noop_module_red_requires_native_creation_and_origi
     )
     result = evaluate_tdd_evidence((test,), evidence)
     assert result.passed is expected, result
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("added-ni", True),
+        ("added-noop-assertion", True),
+        ("added-real-body", False),
+        ("replaced-anchor", False),
+        ("behavior-before-red", False),
+        ("unrelated-import", False),
+    ],
+)
+async def test_python_stub_added_to_existing_module_credits_top_level_import_red(
+    tmp_path: Path, case: str, expected: bool
+) -> None:
+    test_path = "tests/test_feature.py"
+    product_path = "src/gobby/terminals/feature.py"
+    module = "other.module" if case == "unrelated-import" else "gobby.terminals.feature"
+    body = (
+        f"from {module} import feature_ready\n\ndef test_original():\n    assert feature_ready(3)\n"
+    )
+    stub_body = {
+        "added-noop-assertion": "    return False\n",
+        "added-real-body": "    return value > 2\n",
+    }.get(case, "    raise NotImplementedError\n")
+    anchor = "EXISTING = 1\n"
+    stub = f"\n\ndef feature_ready(value: int) -> bool:\n{stub_body}"
+    records = _claude_edit_pair(
+        "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 0
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": anchor,
+                "new_string": ("EXISTING = 2\n" if case == "replaced-anchor" else anchor) + stub,
+            },
+            "api-shape",
+            2,
+        )
+    )
+    if case == "behavior-before-red":
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": stub_body,
+                    "new_string": "    return value > 2\n",
+                },
+                "behavior-before-red",
+                4,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    failure = (
+        "E   assert False\n" if case == "added-noop-assertion" else "E   NotImplementedError\n"
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": (
+                    f"____ test_original ____\n{test_path}:4: in test_original\n{failure}1 failed"
+                ),
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": stub_body,
+                "new_string": "    return value > 2\n",
+            },
+            "behavior",
+            10,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    transcript = tmp_path / "added-stub-proof.jsonl"
+    records.sort(key=lambda record: record["timestamp"])
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is expected, result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["exception", "unchanged-move", "changed-move"])
+async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case: str) -> None:
+    test_path = "tests/test_provenance.py"
+    product_path = "src/gobby/feature.py"
+    records: list[dict[str, Any]] = []
+    if case == "exception":
+        body = (
+            "import pytest\nfrom gobby.feature import CronSessionError, launch\n\n"
+            "def test_original():\n    with pytest.raises(CronSessionError):\n        launch()\n"
+        )
+        anchor = "    self.output = output\n\n\n"
+        stub = 'class CronSessionError(RuntimeError):\n    """Missing cron session."""\n\n\n'
+        shape = {"old_string": anchor, "new_string": anchor + stub}
+        failure = "E   Failed: DID NOT RAISE <class 'gobby.feature.CronSessionError'>\n"
+        implementation = {"old_string": "return None", "new_string": "raise CronSessionError"}
+    else:
+        body = (
+            "from gobby.feature import payload\n\ndef test_original():\n"
+            "    assert payload({})['seat'] == 'lane-3'\n"
+        )
+        baseline = "def payload(run):\n    return {'id': run.get('id')}\n"
+        repeated = baseline if case == "unchanged-move" else baseline.replace("run.get('id')", "42")
+        records.extend(
+            _claude_edit_pair(
+                "Write", {"file_path": str(tmp_path / product_path), "content": baseline}, "move", 0
+            )
+        )
+        shape = {"content": repeated}
+        failure = "E   KeyError: 'seat'\n"
+        implementation = {
+            "old_string": repeated,
+            "new_string": "def payload(run):\n    return {'seat': 'lane-3'}\n",
+        }
+    records.extend(
+        _claude_edit_pair(
+            "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 2
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit" if case == "exception" else "Write",
+            {"file_path": str(tmp_path / product_path), **shape},
+            "shape",
+            4,
+        )
+    )
+    if case != "exception":
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / "src/gobby/query.py"),
+                    "old_string": "from collections.abc import Callable, Mapping\n",
+                    "new_string": "from collections.abc import Callable\n",
+                },
+                "cleanup",
+                6,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": f"____ test_original ____\n{test_path}:4: in test_original\n{failure}1 failed",
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit", {"file_path": str(tmp_path / product_path), **implementation}, "behavior", 10
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    records.sort(key=lambda record: record["timestamp"])
+    transcript = tmp_path / "provenance.jsonl"
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path, "src/gobby/query.py"},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is (case != "changed-move"), result
 
 
 @pytest.mark.asyncio
@@ -4654,7 +4889,7 @@ async def test_derivation_yields_to_event_loop_between_record_chunks(
     assert [type(item) for item in crossed[1:]] == [ChunkedPayload] * 3
     for payload in cast(list[ChunkedPayload], crossed[1:]):
         assert len(payload.chunks) > 1
-        assert all(len(pickle.loads(chunk)) <= CHUNK_RECORDS for chunk in payload.chunks)
+        assert all(len(pickle.loads(chunk)[1]) <= CHUNK_RECORDS for chunk in payload.chunks)
     for name, seen in steps.items():
         assert len(seen) > 2, name
         assert all(later > earlier for earlier, later in zip(seen, seen[1:], strict=False)), (
@@ -4734,6 +4969,17 @@ def test_chunked_derivation_matches_unchunked_derivation_in_order(
     assert resumed == _derive_transcript_evidence_sync(*args, snapshot)
 
 
+def test_payload_shell_does_not_grow_with_record_count() -> None:
+    # The shell is pickled before the first yield and unpickled after the last chunk,
+    # each in one uninterrupted step. A shell of fixed size keeps both steps bounded
+    # however many records a resumed snapshot or derived result carries.
+    def shell(records: int) -> bytes:
+        runs = tuple(_session_run("session-1", f"cmd {i}", BASE_TIME, i) for i in range(records))
+        return encode((runs, list(runs))).shell
+
+    assert len(shell(CHUNK_RECORDS)) == len(shell(8 * CHUNK_RECORDS))
+
+
 def _drop_last_chunk(payload: ChunkedPayload) -> ChunkedPayload:
     return replace(payload, chunks=payload.chunks[:-1])
 
@@ -4793,38 +5039,3 @@ async def test_chunked_derivation_cancelled_mid_decode_stores_nothing(
 
     assert not finished
     assert load_snapshot(session.id) is None
-
-
-class _CpuClock:
-    """Stands in for the worker's CPU clock so the reported CPU is exact."""
-
-    def __init__(self) -> None:
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        return self.now
-
-
-async def test_pool_reports_worker_cpu_beside_work_wall_time(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The pool reports the worker clock's CPU delta as its own key (#23063)."""
-    cpu_clock = _CpuClock()
-
-    def burn_cpu(seconds: float) -> float:
-        cpu_clock.now += seconds
-        return seconds
-
-    monkeypatch.setattr(transcript_evidence_pool, "process_time", cpu_clock)
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        monkeypatch.setattr(
-            transcript_evidence_pool, "_get_pool", lambda: cast(ProcessPoolExecutor, executor)
-        )
-        timings = HookPhaseTimings()
-        with hook_phase_timing_scope(timings):
-            result = await transcript_evidence_pool.run_in_transcript_evidence_pool(burn_cpu, 0.25)
-
-    assert result == 0.25
-    breakdown = timings.breakdown()
-    assert breakdown["prelude_transcript_pool_cpu"] == 0.25
-    assert breakdown["prelude_transcript_pool_work"] >= 0

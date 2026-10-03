@@ -156,6 +156,7 @@ def test_checked_in_flip_gate_artifacts() -> None:
     assert "qualifying run recorded" in evidence_text
     assert check_native_backend_flip(evidence_text, default_backend)
     assert "native-backend-flip.md" in backend_status
-    assert "`native` is the default backend" in backend_status
-    assert "`tmux` remains supported" in backend_status
-    assert "gobby config set terminals.default_backend tmux" in backend_status
+    assert "`native` is the only spawn backend" in backend_status
+    assert "spawn-less adapter for externally discovered sessions" in backend_status
+    assert "a spawn request for tmux is refused" in backend_status
+    assert "default_backend tmux" not in backend_status

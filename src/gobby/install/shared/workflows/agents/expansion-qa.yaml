@@ -8,9 +8,9 @@ enabled: true
 priority: 20
 # The declared model names a capability tier, not a provider: `inherit` follows
 # the dispatching session, and the spawn resolves the MID candidate for whichever
-# provider that is — gpt-5.6-terra on codex, sonnet on claude.
+# provider that is — gpt-6-luna on codex, sonnet on claude.
 provider: inherit
-model: gpt-5.6-terra
+model: gpt-6-luna
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 

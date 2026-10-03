@@ -7,6 +7,7 @@ import pytest
 import yaml
 
 from gobby.cli.install_setup import ensure_daemon_config
+from gobby.config import bootstrap as bootstrap_config
 from gobby.config.bootstrap import (
     BootstrapConfig,
     BootstrapConfigError,
@@ -237,6 +238,113 @@ def test_front_door_rejects_invalid_block(tmp_path: Path, block: object, message
 
     with pytest.raises(BootstrapConfigError, match=message):
         load_bootstrap(str(bootstrap_path))
+
+
+_PUBLIC_HOST = "100.64.0.10"
+
+
+@pytest.mark.parametrize(
+    ("bind_host", "front_door", "expected"),
+    [
+        ("localhost", "", "off"),
+        ("127.0.0.1", "front_door:\n  enabled: true\n", "off"),
+        ("::1", 'front_door:\n  tls:\n    mode: "off"\n', "off"),
+        ("localhost", "front_door:\n  tls:\n    mode: off\n", "off"),
+        ("localhost", "front_door:\n  tls:\n    mode: self-signed\n", "self-signed"),
+        (_PUBLIC_HOST, "front_door:\n  tls:\n    mode: self-signed\n", "self-signed"),
+        ("0.0.0.0", "front_door:\n  tls:\n    mode: files\n", "files"),
+        (_PUBLIC_HOST, "", None),
+        (_PUBLIC_HOST, "front_door:\n  enabled: true\n", None),
+        (_PUBLIC_HOST, 'front_door:\n  tls:\n    mode: "off"\n', None),
+        ("0.0.0.0", "front_door:\n  tls:\n    mode: off\n", None),
+    ],
+)
+def test_front_door_tls_default_and_refusal(
+    tmp_path: Path, bind_host: str, front_door: str, expected: str | None
+) -> None:
+    """Mirrors gcore `bootstrap::tests::front_door_tls_default_and_refusal`."""
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_path, f'bind_host: "{bind_host}"\n{front_door}')
+
+    if expected is None:
+        with pytest.raises(BootstrapConfigError, match=r"self-signed.*files"):
+            load_bootstrap(str(bootstrap_path))
+    else:
+        assert load_bootstrap(str(bootstrap_path)).front_door.tls.mode == expected
+
+
+def test_front_door_tls_block_parses_paths_and_sans(tmp_path: Path) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_path,
+        f"bind_host: {_PUBLIC_HOST}\n"
+        "front_door:\n"
+        "  tls:\n"
+        "    mode: files\n"
+        "    cert: /etc/gobby/hub.crt\n"
+        "    key: /etc/gobby/hub.key\n"
+        "    sans: [hub.example.test, 100.64.0.11, 'fd7a::1']\n",
+    )
+
+    tls = load_bootstrap(str(bootstrap_path)).front_door.tls
+
+    assert tls == bootstrap_config.FrontDoorTlsConfig(
+        mode="files",
+        cert="/etc/gobby/hub.crt",
+        key="/etc/gobby/hub.key",
+        sans=("hub.example.test", "100.64.0.11", "fd7a::1"),
+    )
+    assert bootstrap_config.FrontDoorTlsConfig().mode == "off"
+
+
+@pytest.mark.parametrize(
+    ("tls", "message"),
+    [
+        ({"mode": "on"}, "front_door.tls.mode"),
+        ({"mode": "files", "sans": ["0.0.0.0"]}, "unspecified address 0.0.0.0"),
+        ({"mode": "self-signed", "sans": ["::"]}, "unspecified address ::"),
+        ({"mode": "self-signed", "sans": "hub"}, "front_door.tls.sans must be a list"),
+        ({"mode": "self-signed", "sans": [""]}, "front_door.tls.sans entries"),
+        ({"mode": "files", "port": 1}, "front_door.tls has unknown keys: port"),
+    ],
+)
+def test_front_door_tls_rejects_invalid_block(tmp_path: Path, tls: object, message: str) -> None:
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_path, yaml.safe_dump({"bind_host": _PUBLIC_HOST, "front_door": {"tls": tls}})
+    )
+
+    with pytest.raises(BootstrapConfigError, match=message):
+        load_bootstrap(str(bootstrap_path))
+
+
+@pytest.mark.parametrize("mode", [None, "off", "self-signed", "files"])
+def test_disabled_front_door_is_loopback_only(tmp_path: Path, mode: str | None) -> None:
+    """A disabled front door binds Python directly, so the TLS block would secure nothing."""
+    tls = "" if mode is None else f'  tls:\n    mode: "{mode}"\n'
+    public_path = tmp_path / "public" / "bootstrap.yaml"
+    public_path.parent.mkdir()
+    _write_bootstrap(
+        public_path, f"bind_host: {_PUBLIC_HOST}\nfront_door:\n  enabled: false\n{tls}"
+    )
+
+    with pytest.raises(BootstrapConfigError, match="loopback bind_host") as refused:
+        load_bootstrap(str(public_path))
+    assert "front_door.enabled" in str(refused.value)
+
+    for index, host in enumerate(("localhost", "127.0.0.1", "::1")):
+        loopback_path = tmp_path / f"loopback-{index}" / "bootstrap.yaml"
+        loopback_path.parent.mkdir()
+        _write_bootstrap(
+            loopback_path, f'bind_host: "{host}"\nfront_door:\n  enabled: false\n{tls}'
+        )
+        assert load_bootstrap(str(loopback_path)).front_door.enabled is False
+
+    absent_path = tmp_path / "absent" / "bootstrap.yaml"
+    absent_path.parent.mkdir()
+    _write_bootstrap(absent_path, f"bind_host: {_PUBLIC_HOST}\n")
+    with pytest.raises(BootstrapConfigError, match=r"self-signed.*files"):
+        load_bootstrap(str(absent_path))
 
 
 @pytest.mark.parametrize(

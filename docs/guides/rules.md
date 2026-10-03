@@ -132,6 +132,11 @@ Allowed helper functions include `len`, `bool`, `str`, `int`, `list`, `dict`,
 tool-policy helpers such as `is_discovery_tool`, `is_operator_tool`, and
 `requires_task_for_any_touched_file`.
 
+`after_tool` rules read the canonical tool outcome through
+`tool_call_succeeded()` and `tool_call_failed()`. Both are false for an
+indeterminate outcome. A provider hook's success or failure outranks signals in
+the result body, so do not test the legacy `event.data['is_error']` alias.
+
 Use defensive variable access in block rules:
 
 ```yaml

@@ -24,7 +24,7 @@ from gobby import runner_shutdown_storage
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.config.app import DaemonConfig
-from gobby.config.bootstrap import BootstrapConfig, FrontDoorConfig
+from gobby.config.bootstrap import BootstrapConfig, BootstrapConfigError, FrontDoorConfig
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
@@ -489,21 +489,22 @@ def _init_servers_runner(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("front_door", "expected"),
+    ("front_door", "bind_host", "expected"),
     [
-        (True, ("127.0.0.1", 60987, 60988)),
-        (False, ("0.0.0.0", 60887, 60888)),  # nosec B104 # asserted, never bound
+        (True, "0.0.0.0", ("127.0.0.1", 60987, 60988)),  # nosec B104 # asserted, never bound
+        # A disabled front door is loopback-only, so Python takes the public pair itself.
+        (False, "127.0.0.1", ("127.0.0.1", 60887, 60888)),
     ],
 )
 async def test_backend_ports_behind_front_door(
-    mock_config: MagicMock, front_door: bool, expected: tuple[str, int, int]
+    mock_config: MagicMock, front_door: bool, bind_host: str, expected: tuple[str, int, int]
 ) -> None:
     """Behind the front door the runner binds the +100 pair on loopback; off, the public pair."""
     from gobby.ai import build_daemon_text_generation_service
     from gobby.runner_init.servers import init_servers
 
     bootstrap = BootstrapConfig(
-        bind_host="0.0.0.0",  # nosec B104 # the public host gdaemon would take
+        bind_host=bind_host,
         daemon_port=60887,
         websocket_port=60888,
         front_door=FrontDoorConfig(enabled=front_door),
@@ -550,6 +551,9 @@ async def test_backend_ports_behind_front_door(
         await daemon.run(ownership_resolution=FailOpenPidOwnership("test"))
 
     assert uvicorn_config.call_args.kwargs["host"] == host
+    # request.client is the front door's observed peer, trusted only from loopback.
+    assert uvicorn_config.call_args.kwargs["proxy_headers"] is True
+    assert uvicorn_config.call_args.kwargs["forwarded_allow_ips"] == "127.0.0.1,::1"
 
 
 class TestInitSubsystems:
@@ -812,9 +816,7 @@ class TestInitSubsystems:
                 "gobby.cli.services.get_local_embedding_service_failure_reason",
                 return_value="LM Studio server start failed: boom",
             ),
-            patch("gobby.agents.tmux.get_tmux_session_manager") as mock_tmux_manager,
         ):
-            mock_tmux_manager.return_value.health_check = AsyncMock()
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
 
         mock_ready.assert_awaited_once_with(
@@ -883,11 +885,7 @@ class TestInitSubsystems:
             websocket_server=None,
         )
 
-        with (
-            patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)),
-            patch("gobby.agents.tmux.get_tmux_session_manager") as mock_tmux_manager,
-        ):
-            mock_tmux_manager.return_value.health_check = AsyncMock()
+        with patch("gobby.cli.services.is_qdrant_healthy", new=AsyncMock(return_value=False)):
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
 
         assert runner.vector_store is vector_store
@@ -1425,11 +1423,11 @@ class TestShutdownDaemonServices:
             _metrics_archive_task=tasks[1],
             _span_cleanup_task=tasks[2],
         )
-        await asyncio.wait_for(all_started.wait(), timeout=0.5)
+        await asyncio.wait_for(all_started.wait(), timeout=10.0)
 
         await asyncio.wait_for(
             runner_lifecycle_shutdown._cancel_periodic_tasks(runner),
-            timeout=0.5,
+            timeout=10.0,
         )
 
         assert cancellation_count == 3
@@ -1529,10 +1527,12 @@ class TestShutdownDaemonServices:
             "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
             0.05,
         )
+        # Both deadlines are armed from one instant. A loop stall past both lets the
+        # overall deadline win and skip the tail, so it stays far from the budget.
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.15,
+            30.0,
         )
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
 
@@ -1552,8 +1552,7 @@ class TestShutdownDaemonServices:
             return None
 
         caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
-        loop = asyncio.get_running_loop()
-        started_at = loop.time()
+        # Finishing well inside the 30s overall deadline proves the budget ended it.
         await asyncio.wait_for(
             runner_lifecycle_shutdown.shutdown_daemon_services(
                 runner,
@@ -1566,11 +1565,9 @@ class TestShutdownDaemonServices:
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_pid_file,
             ),
-            timeout=0.5,
+            timeout=10.0,
         )
-        elapsed = loop.time() - started_at
 
-        assert elapsed < 0.5
         assert "Graceful shutdown exceeded 0.1s budget" in caplog.text
         reap_remaining_child_processes.assert_awaited_once_with(
             preserve_agents=True,
@@ -1777,13 +1774,25 @@ class TestShutdownDaemonServices:
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.05,
+            30.0,
         )
         worker_started = threading.Event()
         release_worker = threading.Event()
         deadline_expired = asyncio.Event()
+        created_timeouts: list[asyncio.Timeout] = []
+        timeout_at = asyncio.timeout_at
+
+        def recording_timeout_at(when: float | None) -> asyncio.Timeout:
+            timeout = timeout_at(when)
+            created_timeouts.append(timeout)
+            return timeout
+
+        monkeypatch.setattr(asyncio, "timeout_at", recording_timeout_at)
 
         async def wait_for_overall_deadline(*_args: object, **_kwargs: object) -> None:
+            # Expire the overall deadline (the first one armed) inside the cleanup tail,
+            # so a loop stall in the phases before it cannot spend it early.
+            created_timeouts[0].reschedule(asyncio.get_running_loop().time())
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -1795,7 +1804,6 @@ class TestShutdownDaemonServices:
             "_run_async_shutdown_cleanup",
             wait_for_overall_deadline,
         )
-        # The 0.05s deadline must expire in the cleanup tail, not in the phases before it.
         monkeypatch.setattr(
             runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()
         )
@@ -1816,7 +1824,7 @@ class TestShutdownDaemonServices:
             runner.worktree_delete_executor.run_delete(blocked_delete)
         )
         try:
-            await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=1.0)
+            await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=10.0)
             shutdown_task = asyncio.create_task(
                 runner_lifecycle_shutdown.shutdown_daemon_services(
                     runner,
@@ -1830,14 +1838,16 @@ class TestShutdownDaemonServices:
                     cleanup_pid_file=MagicMock(),
                 )
             )
-            await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
-            await asyncio.wait_for(deadline_expired.wait(), timeout=1.0)
+            await wait_for_async_condition(
+                lambda: runner.worktree_delete_executor.stats().shutdown, timeout=10.0
+            )
+            await asyncio.wait_for(deadline_expired.wait(), timeout=10.0)
             assert shutdown_task.done() is False
             runner.database.close.assert_not_called()
 
             release_worker.set()
-            await asyncio.wait_for(shutdown_task, timeout=1.0)
-            await asyncio.wait_for(delete_task, timeout=1.0)
+            await asyncio.wait_for(shutdown_task, timeout=10.0)
+            await asyncio.wait_for(delete_task, timeout=10.0)
 
             runner.database.close.assert_called_once_with()
             assert runner.worktree_delete_executor.is_joined() is True
@@ -2225,10 +2235,11 @@ class TestShutdownDaemonServices:
                 "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
                 0.01,
             )
+            # Far from the budget, so a loop stall cannot let the overall deadline win.
             monkeypatch.setattr(
                 runner_lifecycle_shutdown,
                 "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-                0.2,
+                30.0,
             )
 
         await runner_lifecycle_shutdown.shutdown_daemon_services(
@@ -5154,6 +5165,7 @@ class TestAgentRestartRecoveryHelpers:
                 capture=static_runtime_capture(DaemonConfig()),
             ),
             completion_registry=MagicMock(),
+            websocket_server=None,
         )
         resume = AsyncMock(
             side_effect=[
@@ -5393,6 +5405,40 @@ def test_main_refuses_linked_worktree_before_bootstrap(
     assert refusal in capsys.readouterr().err
     load_bootstrap.assert_not_called()
     run_gobby.assert_not_called()
+
+
+def test_disabled_front_door_on_public_bind_refuses_before_bind(tmp_path: Path) -> None:
+    """A disabled front door on a public bind_host would serve plaintext Python publicly."""
+    files_home = tmp_path / "files"
+    files_home.mkdir()
+    bootstrap_path = tmp_path / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        "bind_host: 100.64.0.10\n"
+        "front_door:\n"
+        "  enabled: false\n"
+        "  tls:\n"
+        "    mode: self-signed\n"
+        f"files_home: {files_home}\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    forbidden = AssertionError("a refused bootstrap must not reach the health probe or a bind")
+    with (
+        patch("gobby.utils.dev.worktree_daemon_refusal", return_value=None),
+        patch("gobby.runner._healthy_daemon_running", side_effect=forbidden) as probe,
+        patch("gobby.runner.run_gobby", side_effect=forbidden) as run_gobby,
+        patch("gobby.runner_lifecycle.run_daemon", side_effect=forbidden) as run_daemon,
+        pytest.raises(BootstrapConfigError) as refused,
+    ):
+        main(config_path=bootstrap_path)
+
+    assert str(refused.value) == (
+        "front_door.enabled: false requires a loopback bind_host (got '100.64.0.10'); "
+        "set bind_host to a loopback address, or enable the front door"
+    )
+    probe.assert_not_called()
+    run_gobby.assert_not_called()
+    run_daemon.assert_not_called()
 
 
 def _worktree_package(tmp_path: Path) -> tuple[Path, Path]:

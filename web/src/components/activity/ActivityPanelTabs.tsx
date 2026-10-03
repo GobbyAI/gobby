@@ -5,6 +5,7 @@ export type ActivityTab =
   | "terminal"
   | "pipelines"
   | "cron"
+  | "feedback"
   | "traces"
   | "mcp"
   | "agents"
@@ -203,6 +204,17 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
       <svg {...iconProps}>
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
+      </svg>
+    ),
+  },
+  {
+    id: "feedback",
+    label: "Feedback",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+        <path d="M8 9h8" />
+        <path d="M8 13h5" />
       </svg>
     ),
   },

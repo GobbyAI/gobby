@@ -22,6 +22,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager, PlanNotFoundError
 from gobby.storage.project_checkouts import require_root, resolve_operation_root
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workspace_machine_scope import require_local_machine_id
 from gobby.tasks.expansion._validate import validate_plan_file
 from gobby.utils.json_helpers import json_dumps
@@ -398,10 +399,21 @@ def _validate_plan_for_cli(
     plan_path = plan_file if plan_file.is_absolute() else plan_root / plan_file
     parse_mode: ParseMode = "expansion" if mode == "expansion" else "draft"
     structural_result = validate_plan_file(
-        None, plan_path, project_context=project_context, parse_mode=parse_mode
+        None,
+        plan_path,
+        project_context=project_context,
+        parse_mode=parse_mode,
     )
     if not structural_result.get("valid"):
-        return structural_result
+        # Size growth is the one structural lint that needs landed-task evidence.
+        # Preserve offline parse/contract diagnostics for every other failure.
+        issues = structural_result.get("semantic_lint", {}).get("issues", [])
+        if (
+            project_context is None
+            or not issues
+            or any(issue.get("code") != "production-size-growth" for issue in issues)
+        ):
+            return structural_result
 
     require_symbol_validation = project_ref is not None or mode == "expansion"
     if project_context is None:
@@ -421,6 +433,7 @@ def _validate_plan_for_cli(
             project_context=project_context,
             expected_project_id=expected_project_id,
             code_index=CodeIndexStorage(db),
+            task_manager=LocalTaskManager(db),
             require_symbol_validation=require_symbol_validation,
             consumer_coverage_blocking=mode == "expansion",
             parse_mode=parse_mode,

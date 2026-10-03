@@ -29,6 +29,10 @@ _MAX_RETRY_AFTER_DELAY_SECONDS = 120.0
 _UNSENT_REQUEST_ERRORS = (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout)
 
 
+class MessageEditNotApplied(RuntimeError):
+    """An edit failed definitely, before any part of the platform message changed."""
+
+
 class BaseChannelAdapter(ABC):
     """Abstract base class for all communication channel adapters."""
 

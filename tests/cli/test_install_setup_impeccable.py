@@ -353,7 +353,6 @@ def test_preflight_fails_without_impeccable(monkeypatch: pytest.MonkeyPatch) -> 
         "gobby.utils.dependency_requirements.impeccable_dependency_status",
         lambda: DependencyStatus("missing", None, None, IMPECCABLE_RELEASE.version, None, "repair"),
     )
-    monkeypatch.setattr("gobby.utils.dependency_requirements.requires_tmux", lambda: False)
     monkeypatch.setattr(
         "gobby.utils.dependency_requirements._command_status",
         lambda **kwargs: DependencyStatus("healthy", "1.0.0", None, None, "/bin", None),

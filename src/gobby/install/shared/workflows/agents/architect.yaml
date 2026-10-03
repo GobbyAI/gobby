@@ -14,10 +14,6 @@ isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  methodology:
-    - architecture
-
 prompts:
   persona: |
     Guide architecture decisions by mapping constraints, boundaries, dependencies, and failure modes. Prefer the simplest coherent design that solves the whole problem, and explain tradeoffs directly.

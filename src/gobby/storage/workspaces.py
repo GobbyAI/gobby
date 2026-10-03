@@ -45,6 +45,8 @@ from gobby.storage.workspace_layout import LayoutSplit as LayoutSplit
 from gobby.storage.workspace_layout import WorkspaceNotFoundError as WorkspaceNotFoundError
 from gobby.storage.workspace_layout import layout_pane_ids as layout_pane_ids
 from gobby.storage.workspace_layout import validate_layout as validate_layout
+from gobby.storage.workspace_panes import WorkspacePane as WorkspacePane
+from gobby.storage.workspace_panes import _optional_str
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.uuid_validation import parse_uuid_reference
@@ -81,10 +83,6 @@ def _uuid(value: str) -> str:
 def mint_pane_id() -> str:
     """Mint a pane row identity before its insert; runtimes never generate their own."""
     return str(uuid4())
-
-
-def _optional_str(value: object) -> str | None:
-    return None if value is None else str(value)
 
 
 def _looks_like_ref(text: str) -> bool:
@@ -184,36 +182,6 @@ class WorkspaceTab:
         return asdict(self)
 
 
-@dataclass
-class WorkspacePane:
-    """One workspace_panes row; terminal_id is NULL while its spawn is in flight."""
-
-    id: str
-    tab_id: str
-    ref: int
-    terminal_id: str | None
-    owns_terminal: bool
-    label: str | None
-    created_at: datetime
-    updated_at: datetime
-
-    @classmethod
-    def from_row(cls, row: Mapping[str, Any]) -> WorkspacePane:
-        return cls(
-            id=str(row["id"]),
-            tab_id=str(row["tab_id"]),
-            ref=int(row["ref"]),
-            terminal_id=_optional_str(row["terminal_id"]),
-            owns_terminal=bool(row["owns_terminal"]),
-            label=_optional_str(row["label"]),
-            created_at=row["created_at"],
-            updated_at=row["updated_at"],
-        )
-
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
-
-
 @dataclass(frozen=True)
 class WorkspaceTarget:
     """A resolved reference: the node and workspace, plus the tab and pane it names."""
@@ -259,14 +227,16 @@ def _pane_tab_id(conn: Transaction, pane_id: str) -> str:
     return str(_required(row, f"Pane {pane_id}")["tab_id"])
 
 
-def _insert_pane(conn: Transaction, tab_id: str, pane_id: str) -> WorkspacePane:
+def _insert_pane(
+    conn: Transaction, tab_id: str, pane_id: str, *, role: str | None = None
+) -> WorkspacePane:
     row = conn.execute(
         """
-        INSERT INTO workspace_panes (id, tab_id, ref, terminal_id, owns_terminal)
-        VALUES (%s, %s, %s, NULL, false)
+        INSERT INTO workspace_panes (id, tab_id, ref, terminal_id, owns_terminal, role)
+        VALUES (%s, %s, %s, NULL, false, %s)
         RETURNING *
         """,
-        (pane_id, tab_id, _free_ref(conn, "workspace_panes", tab_id)),
+        (pane_id, tab_id, _free_ref(conn, "workspace_panes", tab_id), role),
     ).fetchone()
     return WorkspacePane.from_row(_required(row, f"Pane {pane_id}"))
 
@@ -536,6 +506,7 @@ class WorkspaceManager:
         project_id: str,
         worktree_id: str | None = None,
         title: str | None = None,
+        role: str | None = None,
     ) -> LayoutChange:
         """Append a tab holding one pane; the caller binds the pane's terminal afterwards."""
         workspace_id, pane_id = _uuid(workspace_id), _uuid(pane_id)
@@ -565,7 +536,7 @@ class WorkspaceManager:
                 ),
             ).fetchone()
             tab = WorkspaceTab.from_row(_required(tab_row, "Tab"))
-            pane = _insert_pane(conn, tab.id, pane_id)
+            pane = _insert_pane(conn, tab.id, pane_id, role=role)
         return LayoutChange(panes=(pane,), tabs=(tab,))
 
     def rename_tab(self, tab_id: str, title: str | None) -> WorkspaceTab:
@@ -666,6 +637,7 @@ class WorkspaceManager:
         *,
         beside: str,
         axis: str,
+        role: str | None = None,
         expected_workspace_id: str | None = None,
         expected_tab_id: str | None = None,
         expected_project_id: str | None = None,
@@ -686,7 +658,7 @@ class WorkspaceManager:
                 for want, have in zip(expected, current, strict=True)
             ):
                 raise WorkspaceNotFoundError(f"Pane {beside_id} left its preflighted tab; retry")
-            pane = _insert_pane(conn, home, pane_id)
+            pane = _insert_pane(conn, home, pane_id, role=role)
             tab = _write_layout(
                 conn, home, _place(tabs[home].layout, pane_id, beside_id, split_axis)
             )
@@ -855,6 +827,25 @@ class WorkspaceManager:
             "SELECT * FROM workspace_panes WHERE terminal_id = %s", (_uuid(terminal_id),)
         )
         return None if row is None else WorkspacePane.from_row(row)
+
+    def placement_refs_for_terminal(self, terminal_id: str) -> dict[str, str] | None:
+        """The placement-reply refs of the pane holding ``terminal_id``, if any."""
+        row = self.db.fetchone(
+            """
+            SELECT m.ref AS node, w.ref AS workspace, t.ref AS tab, p.ref AS pane
+            FROM workspace_panes p
+            JOIN workspace_tabs t ON t.id = p.tab_id
+            JOIN workspaces w ON w.id = t.workspace_id
+            JOIN machines m ON m.id = w.machine_id
+            WHERE p.terminal_id = %s
+            """,
+            (_uuid(terminal_id),),
+        )
+        if row is None:
+            return None
+        workspace = f"{row['node']}:{row['workspace']}"
+        tab_ref = f"{workspace}:{row['tab']}"
+        return {"workspace": workspace, "tab_ref": tab_ref, "pane_ref": f"{tab_ref}:{row['pane']}"}
 
     def sweep_dead_panes(self, workspace_id: str) -> LayoutChange:
         """Prune the workspace's dead panes; read-time derivation, never a hook.

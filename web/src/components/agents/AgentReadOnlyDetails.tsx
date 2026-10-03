@@ -72,9 +72,6 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
             <span>{definition.fallback_agent}</span>
           </MetaRow>
         )}
-        <MetaRow label="Mode">
-          <span>{definition.mode}</span>
-        </MetaRow>
         <MetaRow label="Isolation">
           <span>{definition.isolation || "none"}</span>
         </MetaRow>
@@ -84,11 +81,6 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
         <MetaRow label="Timeout">
           <span>{definition.timeout}s</span>
         </MetaRow>
-        {definition.default_workflow && (
-          <MetaRow label="Default workflow">
-            <span>{definition.default_workflow}</span>
-          </MetaRow>
-        )}
         {definition.workflows?.pipeline && (
           <MetaRow label="Pipeline">
             <span>{definition.workflows.pipeline}</span>
@@ -322,20 +314,6 @@ export function AgentReadOnlyDetails({ agentItem }: AgentReadOnlyDetailsProps) {
             </div>
           </div>
         )}
-
-      {definition.sandbox && (
-        <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
-          <Heading
-            level={4}
-            className="mt-0 mb-1 text-sm font-semibold tracking-wider text-[var(--text-muted)] uppercase"
-          >
-            Sandbox
-          </Heading>
-          <pre className="m-0 overflow-x-auto rounded border border-border bg-[var(--bg-primary)] p-2 font-[inherit] text-xs text-[var(--text-secondary)]">
-            {JSON.stringify(definition.sandbox, null, 2)}
-          </pre>
-        </div>
-      )}
 
       <div className="flex flex-col gap-1.5 border-b border-border px-5 py-3">
         <Heading

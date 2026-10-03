@@ -125,9 +125,8 @@ class ProcessorStatsMixin:
         appender: TranscriptIndexAppender,
         st: os.stat_result,
     ) -> None:
-        # Writing the sidecar re-reads and SHA-256s every indexed byte of the
-        # transcript. On a large transcript that held the loop for two seconds
-        # at a time, at three quarters of the sampled stacks (#20845).
+        # Persistence writes only the pending journal delta after a full build.
+        # Keep its bounded source checks and fsync off the event loop.
         try:
             snapshot = appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size)
             await asyncio.to_thread(persist_index_sidecar, transcript_path, snapshot)

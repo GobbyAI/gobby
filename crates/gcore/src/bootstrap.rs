@@ -15,8 +15,15 @@
 //!
 //! [`daemon_url`]: crate::daemon_url
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+mod front_door;
+
+use front_door::parse_front_door;
+pub use front_door::{
+    DEFAULT_FRONT_DOOR_CERT, DEFAULT_FRONT_DOOR_KEY, FrontDoorBootstrap, RouteBackend,
+    TlsBootstrap, TlsMode, is_loopback_host,
+};
 
 /// Default daemon port when bootstrap.yaml is missing or malformed.
 pub const DEFAULT_DAEMON_PORT: u16 = 60887;
@@ -32,8 +39,6 @@ pub const BACKEND_PORT_OFFSET: u16 = 100;
 
 const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 
-const FRONT_DOOR_KEYS: [&str; 2] = ["enabled", "routes"];
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HubDatabaseBootstrap {
     pub database_url: Option<String>,
@@ -42,42 +47,6 @@ pub struct HubDatabaseBootstrap {
     pub daemon_port: u16,
     pub websocket_port: u16,
     pub front_door: FrontDoorBootstrap,
-}
-
-/// How the front door serves one route family.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RouteBackend {
-    Proxy,
-    Native,
-    Compare,
-}
-
-impl RouteBackend {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "proxy" => Some(Self::Proxy),
-            "native" => Some(Self::Native),
-            "compare" => Some(Self::Compare),
-            _ => None,
-        }
-    }
-}
-
-/// The `front_door` bootstrap block. Families absent from `routes` are proxied.
-/// Unknown family names are accepted because Stage 2 leaves introduce families.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrontDoorBootstrap {
-    pub enabled: bool,
-    pub routes: BTreeMap<String, RouteBackend>,
-}
-
-impl Default for FrontDoorBootstrap {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            routes: BTreeMap::new(),
-        }
-    }
 }
 
 /// Return the loopback `(http, ws)` ports Python binds behind the front door.
@@ -222,17 +191,21 @@ pub fn parse_hub_database_bootstrap(
         anyhow::bail!("bootstrap.yaml must be a mapping");
     };
 
+    // The front-door block's defaults and refusals depend on the bind host,
+    // so it is read first and applies whether `front_door` is present or not.
+    let bind_host = yaml
+        .get("bind_host")
+        .and_then(|v| v.as_str())
+        .map(str::to_owned)
+        .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string());
+    let front_door = parse_front_door(map.get("front_door"), &bind_host)?;
     Ok(Some(HubDatabaseBootstrap {
         database_url: optional_string_field(map, "database_url")?,
         daemon_url: optional_string_field(map, "daemon_url")?,
-        bind_host: yaml
-            .get("bind_host")
-            .and_then(|v| v.as_str())
-            .map(str::to_owned)
-            .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string()),
+        bind_host,
         daemon_port: port_field(&yaml, "daemon_port", DEFAULT_DAEMON_PORT),
         websocket_port: port_field(&yaml, "websocket_port", DEFAULT_WEBSOCKET_PORT),
-        front_door: parse_front_door(map.get("front_door"))?,
+        front_door,
     }))
 }
 
@@ -241,72 +214,6 @@ fn port_field(yaml: &serde_yaml::Value, name: &str, default: u16) -> u16 {
         .and_then(|v| v.as_u64())
         .and_then(|n| u16::try_from(n).ok())
         .unwrap_or(default)
-}
-
-/// Parse a boolean the same way `src/gobby/config/bootstrap.py` does. PyYAML
-/// resolves plain YAML 1.1 words such as `yes` to bool while serde_yaml keeps
-/// them as strings, so both parsers accept a bool or one of these words.
-fn yaml_bool(value: &serde_yaml::Value) -> Option<bool> {
-    if let Some(flag) = value.as_bool() {
-        return Some(flag);
-    }
-    match value.as_str()?.trim().to_ascii_lowercase().as_str() {
-        "true" | "yes" | "on" => Some(true),
-        "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
-fn parse_front_door(value: Option<&serde_yaml::Value>) -> anyhow::Result<FrontDoorBootstrap> {
-    let Some(value) = value.filter(|v| !v.is_null()) else {
-        return Ok(FrontDoorBootstrap::default());
-    };
-    let Some(map) = value.as_mapping() else {
-        anyhow::bail!("bootstrap.yaml field `front_door` must be a mapping");
-    };
-    let mut unknown: Vec<String> = map
-        .keys()
-        .filter(|key| !key.as_str().is_some_and(|k| FRONT_DOOR_KEYS.contains(&k)))
-        .map(|key| {
-            key.as_str()
-                .map_or_else(|| format!("{key:?}"), str::to_owned)
-        })
-        .collect();
-    if !unknown.is_empty() {
-        unknown.sort();
-        anyhow::bail!(
-            "front_door has unknown keys: {} (allowed: enabled, routes)",
-            unknown.join(", ")
-        );
-    }
-    let enabled = match value.get("enabled") {
-        None => true,
-        Some(v) => {
-            yaml_bool(v).ok_or_else(|| anyhow::anyhow!("front_door.enabled must be a boolean"))?
-        }
-    };
-    let mut routes = BTreeMap::new();
-    match value.get("routes") {
-        None | Some(serde_yaml::Value::Null) => {}
-        Some(serde_yaml::Value::Mapping(entries)) => {
-            for (family, backend) in entries {
-                let family = family.as_str().filter(|f| !f.is_empty()).ok_or_else(|| {
-                    anyhow::anyhow!("front_door.routes keys must be non-empty strings")
-                })?;
-                let backend = backend
-                    .as_str()
-                    .and_then(RouteBackend::parse)
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "front_door.routes.{family} must be one of: proxy, native, compare"
-                        )
-                    })?;
-                routes.insert(family.to_owned(), backend);
-            }
-        }
-        Some(_) => anyhow::bail!("front_door.routes must be a mapping"),
-    }
-    Ok(FrontDoorBootstrap { enabled, routes })
 }
 
 pub fn postgres_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
@@ -771,13 +678,13 @@ mod tests {
     #[test]
     fn hub_bootstrap_reads_front_door_block() {
         let parsed = parse_hub_database_bootstrap(
-            "bind_host: 0.0.0.0\ndaemon_port: 61000\nwebsocket_port: 61001\n\
+            "bind_host: '::1'\ndaemon_port: 61000\nwebsocket_port: 61001\n\
              front_door:\n  enabled: false\n  routes:\n    health: native\n    \
              terminal_ws: proxy\n    future_family: compare\n",
         )
         .unwrap()
         .unwrap();
-        assert_eq!(parsed.bind_host, "0.0.0.0");
+        assert_eq!(parsed.bind_host, "::1");
         assert_eq!((parsed.daemon_port, parsed.websocket_port), (61000, 61001));
         assert!(!parsed.front_door.enabled);
         assert_eq!(
@@ -811,6 +718,27 @@ mod tests {
             (
                 "front_door:\n  routes: \"\"\n",
                 "front_door.routes must be a mapping",
+            ),
+            ("front_door:\n  tls:\n    mode: on\n", "front_door.tls.mode"),
+            (
+                "front_door:\n  tls:\n    mode: files\n    sans: ['0.0.0.0']\n",
+                "unspecified address 0.0.0.0",
+            ),
+            (
+                "front_door:\n  tls:\n    mode: self-signed\n    sans: ['::']\n",
+                "unspecified address ::",
+            ),
+            (
+                "front_door:\n  tls:\n    mode: self-signed\n    sans: hub\n",
+                "front_door.tls.sans must be a list",
+            ),
+            (
+                "front_door:\n  tls:\n    mode: self-signed\n    sans: ['']\n",
+                "front_door.tls.sans entries",
+            ),
+            (
+                "front_door:\n  tls:\n    mode: files\n    port: 1\n",
+                "front_door.tls has unknown keys: port",
             ),
         ] {
             let error = parse_hub_database_bootstrap(contents)
@@ -846,6 +774,128 @@ mod tests {
                 None => assert!(parsed.is_err(), "{literal} should be rejected"),
             }
         }
+    }
+
+    const PUBLIC_HOST: &str = "100.64.0.10";
+
+    /// Mirrors `tests/config/test_bootstrap.py::test_front_door_tls_default_and_refusal`.
+    #[test]
+    fn front_door_tls_default_and_refusal() {
+        for (bind_host, front_door, expected) in [
+            ("localhost", "", Some(TlsMode::Off)),
+            (
+                "127.0.0.1",
+                "front_door:\n  enabled: true\n",
+                Some(TlsMode::Off),
+            ),
+            (
+                "::1",
+                "front_door:\n  tls:\n    mode: \"off\"\n",
+                Some(TlsMode::Off),
+            ),
+            (
+                "localhost",
+                "front_door:\n  tls:\n    mode: off\n",
+                Some(TlsMode::Off),
+            ),
+            (
+                "localhost",
+                "front_door:\n  tls:\n    mode: false\n",
+                Some(TlsMode::Off),
+            ),
+            (
+                "localhost",
+                "front_door:\n  tls:\n    mode: self-signed\n",
+                Some(TlsMode::SelfSigned),
+            ),
+            (
+                PUBLIC_HOST,
+                "front_door:\n  tls:\n    mode: self-signed\n",
+                Some(TlsMode::SelfSigned),
+            ),
+            (
+                "0.0.0.0",
+                "front_door:\n  tls:\n    mode: files\n",
+                Some(TlsMode::Files),
+            ),
+            (PUBLIC_HOST, "", None),
+            (PUBLIC_HOST, "front_door:\n  enabled: true\n", None),
+            (
+                PUBLIC_HOST,
+                "front_door:\n  tls:\n    mode: \"off\"\n",
+                None,
+            ),
+            ("0.0.0.0", "front_door:\n  tls:\n    mode: off\n", None),
+            ("::", "front_door:\n  tls:\n    mode: false\n", None),
+        ] {
+            let contents = format!("bind_host: \"{bind_host}\"\n{front_door}");
+            let parsed = parse_hub_database_bootstrap(&contents);
+            match expected {
+                Some(mode) => assert_eq!(
+                    parsed.unwrap().unwrap().front_door.tls.mode,
+                    mode,
+                    "{contents:?}"
+                ),
+                None => {
+                    let error = parsed.unwrap_err().to_string();
+                    assert!(
+                        error.contains("self-signed or files"),
+                        "{contents:?} -> {error}"
+                    );
+                }
+            }
+        }
+        let tls = parse_hub_database_bootstrap(&format!(
+            "bind_host: {PUBLIC_HOST}\nfront_door:\n  tls:\n    mode: files\n    \
+             cert: /etc/gobby/hub.crt\n    key: /etc/gobby/hub.key\n    \
+             sans: [hub.example.test, 100.64.0.11, 'fd7a::1']\n"
+        ))
+        .unwrap()
+        .unwrap()
+        .front_door
+        .tls;
+        assert_eq!(
+            tls,
+            TlsBootstrap {
+                mode: TlsMode::Files,
+                cert: "/etc/gobby/hub.crt".to_owned(),
+                key: "/etc/gobby/hub.key".to_owned(),
+                sans: vec![
+                    "hub.example.test".to_owned(),
+                    "100.64.0.11".to_owned(),
+                    "fd7a::1".to_owned(),
+                ],
+            }
+        );
+        assert_eq!(TlsBootstrap::default().cert, DEFAULT_FRONT_DOOR_CERT);
+    }
+
+    /// Mirrors `tests/config/test_bootstrap.py::test_disabled_front_door_is_loopback_only`.
+    #[test]
+    fn disabled_front_door_is_loopback_only() {
+        for mode in [None, Some("off"), Some("self-signed"), Some("files")] {
+            let tls = mode.map_or_else(String::new, |m| format!("  tls:\n    mode: \"{m}\"\n"));
+            let public = format!("bind_host: {PUBLIC_HOST}\nfront_door:\n  enabled: false\n{tls}");
+            let error = parse_hub_database_bootstrap(&public)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("front_door.enabled") && error.contains("loopback bind_host"),
+                "{mode:?} -> {error}"
+            );
+            assert!(error.contains("enable the front door"), "{error}");
+
+            for host in ["localhost", "127.0.0.1", "::1"] {
+                let contents =
+                    format!("bind_host: \"{host}\"\nfront_door:\n  enabled: false\n{tls}");
+                let parsed = parse_hub_database_bootstrap(&contents).unwrap().unwrap();
+                assert!(!parsed.front_door.enabled, "{host} {mode:?}");
+            }
+        }
+        let error = parse_hub_database_bootstrap(&format!("bind_host: {PUBLIC_HOST}\n"))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("self-signed or files"), "{error}");
     }
 
     #[test]

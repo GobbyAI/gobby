@@ -79,8 +79,31 @@ def test_start_dependency_errors_detects_managed_services_from_home(
 
     assert result == []
     assert required.call_args.args == (report,)
-    collect.assert_called_once_with(managed_services=managed_services, include_srt=True)
+    collect.assert_called_once_with(managed_services=managed_services, include_srt=False)
     required.assert_called_once_with(report)
+
+
+def test_start_dependency_errors_leaves_srt_to_the_config_conditional_check(
+    tmp_path: Path,
+) -> None:
+    """The early preflight must not force SRT; the sandbox config owns that gate.
+
+    The daemon's operational config cannot be read this early, so probing SRT
+    unconditionally refuses every start when the managed runtime is missing —
+    even with ``agent_sandbox`` and ``web_chat_sandbox`` disabled. SRT is
+    verified later, only for the enabled sandboxes.
+    """
+    report = MagicMock()
+    with (
+        patch("gobby.cli.daemon_start.unsupported_platform_error", return_value=None),
+        patch("gobby.cli.daemon_start.get_gobby_home", return_value=tmp_path),
+        patch("gobby.cli.daemon_start.collect_dependency_report", return_value=report) as collect,
+        patch("gobby.cli.daemon_start.required_dependency_errors", return_value=["boom"]),
+    ):
+        result = _start_dependency_errors()
+
+    assert result == ["boom"]
+    assert collect.call_args.kwargs == {"managed_services": False, "include_srt": False}
 
 
 @pytest.fixture(autouse=True)

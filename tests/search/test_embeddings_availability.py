@@ -6,7 +6,8 @@ real endpoint probe (``is_embedding_reachable``), including its cache.
 
 from __future__ import annotations
 
-from typing import Any
+from types import TracebackType
+from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -112,7 +113,12 @@ class TestIsEmbeddingReachable:
                 self.enter_count += 1
                 return self
 
-            def __exit__(self, exc_type, exc, tb) -> bool:
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: TracebackType | None,
+            ) -> Literal[False]:
                 return False
 
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
@@ -120,7 +126,7 @@ class TestIsEmbeddingReachable:
         factory, _client = _mock_httpx_client(status=200)
 
         with (
-            patch("gobby.ai.embeddings._get_lock", return_value=lock),
+            patch("gobby.ai.embeddings._reachability_lock", new=lock),
             patch("gobby.ai.embeddings.httpx.AsyncClient", factory),
         ):
             assert await is_embedding_reachable(api_base="http://localhost:11434/v1") is True
@@ -136,13 +142,18 @@ class TestIsEmbeddingReachable:
                 self.enter_count += 1
                 return self
 
-            def __exit__(self, exc_type, exc, tb) -> bool:
+            def __exit__(
+                self,
+                exc_type: type[BaseException] | None,
+                exc: BaseException | None,
+                tb: TracebackType | None,
+            ) -> Literal[False]:
                 return False
 
         lock = CountingMutex()
-        _reachability_cache[("http://localhost:11434/v1", False)] = MagicMock()
+        _reachability_cache[("http://localhost:11434/v1", None)] = MagicMock()
 
-        with patch("gobby.ai.embeddings._get_lock", return_value=lock):
+        with patch("gobby.ai.embeddings._reachability_lock", new=lock):
             _clear_reachability_cache()
 
         assert lock.enter_count == 1

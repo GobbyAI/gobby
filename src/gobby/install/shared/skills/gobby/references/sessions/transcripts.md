@@ -7,13 +7,18 @@ an archive. Discover `gobby-sessions:get_session_messages`,
 
 Resolve the target identity first. Read chronological message windows using
 `limit` and `offset`; inspect returned counts and advance through the required
-windows. `full_content` is accepted but unused: message bodies are always full.
+windows. `limit`, `offset`, `returned_count`, and `total_count` all count
+rendered groups; the response's `limit` is the effective value after the
+200-group cap, so `offset = total_count - limit` with that `limit` reads the last page. `full_content` is accepted but unused: message bodies are always full.
 It is not a compact-view switch, and `truncated=false` does not mean every
 message in the session was returned.
 
-Search requires a nonblank query and positive limit. A session-specific search
-scans its rendered windows; multi-session search uses project/status/source
-filters and a bounded session scan. A bounded search result is not an exhaustive
+Search requires a nonblank query and positive limit. Each call scans a bounded
+number of rendered messages, oldest first within a session; multi-session search
+uses project/status/source filters and walks matching sessions newest-created
+first, at most 100 per call. `truncated=true` means the scan stopped early: pass `next_cursor` back as
+`cursor` with the same filters to continue, until `next_cursor` is null. An empty
+truncated page is not a miss. A bounded search result is not an exhaustive
 repository history. Use explicit session reads for complete evidence. Commit
 timeframe results are useful leads; verify actual task linkage and diff evidence
 before attributing a change to an agent.

@@ -15,10 +15,6 @@ isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
-skills:
-  methodology:
-    - prd
-
 prompts:
   persona: |
     Clarify product requirements through user outcomes, constraints, acceptance criteria, and priority tradeoffs. Keep the resulting direction specific enough for architecture and implementation.

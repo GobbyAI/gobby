@@ -228,12 +228,19 @@ a long `pane.wait_for_output` delays the messages behind it on that socket.
 | `workspace_error` | Daemon → client | Correlates `request_id` and carries `code` and `reason`. |
 
 `op` is one of `workspace.list`, `workspace.create`, `workspace.rename`, `workspace.close`,
-`workspace.set_focus_hints`, `tab.create`, `tab.rename`, `tab.move`, `tab.close`,
-`pane.split`, `pane.swap`, `pane.move`, `pane.resize`, `pane.rename`,
-`pane.close`, `pane.send_text`, `pane.send_keys`, `pane.read`, and
+`workspace.set_focus_hints`, `workspace.select`, `tab.create`, `tab.rename`,
+`tab.move`, `tab.close`, `pane.split`, `pane.swap`, `pane.move`, `pane.resize`,
+`pane.rename`, `pane.close`, `pane.send_text`, `pane.send_keys`, `pane.read`, and
 `pane.wait_for_output`. Each name maps to the `WorkspaceOps` method of the same
 name with `_` for the first `.`, and its fields are that method's parameters
 after the actor.
+
+`workspace.set_focus_hints` persists a window's own focus and publishes a
+`focus_hints` event, which attached windows apply to their rows without changing
+what they show. `workspace.select {workspace, tab, pane?}` (`gclient select`)
+stores the same focus, with the project taken from the tab and the pane
+defaulting to the tab's own focused pane. It publishes a `focus_requested` event,
+and each attached gclient window switches to that tab and pane.
 
 | `workspace_error.code` | Meaning |
 | --- | --- |

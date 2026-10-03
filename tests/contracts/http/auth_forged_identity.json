@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "auth_forged_identity",
   "family": "auth",
+  "backend": "up",
   "credential": "grant",
   "request": {
     "method": "POST",

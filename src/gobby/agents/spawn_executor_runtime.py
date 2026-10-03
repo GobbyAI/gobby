@@ -113,11 +113,10 @@ async def _unplaced_runtime_spawn(
     from gobby.agents.spawn_executor import (
         _schedule_timeout_cleanup,
         _settle_native_spawn_failure,
-        derive_spawn_key,
     )
 
     terminal_id = mint_terminal_id()
-    spawn_key = derive_spawn_key(backend, terminal_id)
+    spawn_key = terminal_id
     pending = await asyncio.to_thread(
         manager.create_pending,
         terminal_id,
@@ -154,38 +153,37 @@ async def _unplaced_runtime_spawn(
         title=plan.title,
         auth_cli=plan.auth_cli,
     )
-    if backend == "native":
-        if not can_reserve_observer(runtime):
-            await asyncio.to_thread(manager.fail_pending, terminal_id)
-            return SpawnResult(
-                success=False,
-                run_id=plan.agent_run_id,
-                child_session_id=plan.child_session_id,
-                status="failed",
-                error="native_reserve_unavailable",
-                terminal_id=terminal_id,
-            )
-        try:
-            reservation = await runtime.reserve_observer(UUID(terminal_id))
-        except Exception as exc:
-            code, detail = await _settle_native_spawn_failure(
-                manager=manager,
-                runtime=runtime,
-                terminal_id=terminal_id,
-                spawn_key=spawn_key,
-                exc=exc,
-            )
-            return SpawnResult(
-                success=False,
-                run_id=plan.agent_run_id,
-                child_session_id=plan.child_session_id,
-                status="failed",
-                error=code,
-                error_detail=detail,
-                terminal_id=terminal_id,
-            )
-        spawn_request.reservation_id = reservation.get("reservation_id")
-        spawn_request.reserve_key = reservation.get("reserve_key")
+    if not can_reserve_observer(runtime):
+        await asyncio.to_thread(manager.fail_pending, terminal_id)
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error="native_reserve_unavailable",
+            terminal_id=terminal_id,
+        )
+    try:
+        reservation = await runtime.reserve_observer(UUID(terminal_id))
+    except Exception as exc:
+        code, detail = await _settle_native_spawn_failure(
+            manager=manager,
+            runtime=runtime,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            exc=exc,
+        )
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=code,
+            error_detail=detail,
+            terminal_id=terminal_id,
+        )
+    spawn_request.reservation_id = reservation.get("reservation_id")
+    spawn_request.reserve_key = reservation.get("reserve_key")
 
     runtime_prepare_started = start_spawn_phase()
     prepare_task = asyncio.create_task(runtime.prepare_spawn(spawn_request))
@@ -211,9 +209,9 @@ async def _unplaced_runtime_spawn(
             run_id=plan.agent_run_id,
             child_session_id=plan.child_session_id,
             status="failed",
-            error="spawn_timeout" if backend == "native" else "spawn timed out",
+            error="spawn_timeout",
             retryable_infrastructure=True,
-            error_detail="spawn timed out" if backend == "native" else None,
+            error_detail="spawn timed out",
             terminal_id=terminal_id,
         )
     except asyncio.CancelledError:
@@ -231,22 +229,13 @@ async def _unplaced_runtime_spawn(
             terminal_id=terminal_id,
         )
     except TerminalSpawnFailed as exc:
-        if backend == "native":
-            code, detail = await _settle_native_spawn_failure(
-                manager=manager,
-                runtime=runtime,
-                terminal_id=terminal_id,
-                spawn_key=spawn_key,
-                exc=exc,
-            )
-        else:
-            await asyncio.to_thread(
-                manager.fail_pending_attempt,
-                terminal_id,
-                attempt_generation=attempt_generation,
-                attempt_started_at=attempt_started_at,
-            )
-            code, detail = str(exc), None
+        code, detail = await _settle_native_spawn_failure(
+            manager=manager,
+            runtime=runtime,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            exc=exc,
+        )
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -259,16 +248,13 @@ async def _unplaced_runtime_spawn(
         )
     except Exception as exc:
         logger.exception("Backend spawn raised for terminal %s", terminal_id)
-        if backend == "native":
-            code, detail = await _settle_native_spawn_failure(
-                manager=manager,
-                runtime=runtime,
-                terminal_id=terminal_id,
-                spawn_key=spawn_key,
-                exc=exc,
-            )
-        else:
-            code, detail = str(exc), None
+        code, detail = await _settle_native_spawn_failure(
+            manager=manager,
+            runtime=runtime,
+            terminal_id=terminal_id,
+            spawn_key=spawn_key,
+            exc=exc,
+        )
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -328,7 +314,7 @@ async def _promote_prepared(
         settle_promotion,
     )
 
-    if backend == "native" and prepared.host_terminal_id is not None:
+    if prepared.host_terminal_id is not None:
         process_record: dict[str, object] = {"host_terminal_id": prepared.host_terminal_id}
         if prepared.process is not None:
             process_record.update(
@@ -344,38 +330,37 @@ async def _promote_prepared(
     stored = prepared.stored_locator or {}
     locator_key = prepared.locator_key or ""
     prepared.acknowledge_persist()
-    if backend == "native":
-        bind = getattr(runtime, "bind_observer", None)
-        try:
-            if callable(bind) and reservation_id:
-                await bind(prepared, reservation_id)
-            else:
-                prepared.acknowledge_observer()
-        except Exception as exc:
-            if not defer_failure:
-                pending = await asyncio.to_thread(manager.get, terminal_id)
-                await kill_spawn_key(
-                    runtime,
-                    spawn_key,
-                    pending=pending,
-                    host_terminal_id=prepared.host_terminal_id,
-                    host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
-                )
-                await asyncio.to_thread(manager.fail_pending, terminal_id)
-            code, detail, _settlement = classify_native_spawn_failure(exc)
-            return SpawnResult(
-                success=False,
-                run_id=plan.agent_run_id,
-                child_session_id=plan.child_session_id,
-                status="failed",
-                error=code,
-                error_detail=detail,
-                terminal_id=terminal_id,
+    bind = getattr(runtime, "bind_observer", None)
+    try:
+        if callable(bind) and reservation_id:
+            await bind(prepared, reservation_id)
+        else:
+            prepared.acknowledge_observer()
+    except Exception as exc:
+        if not defer_failure:
+            pending = await asyncio.to_thread(manager.get, terminal_id)
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=pending,
+                host_terminal_id=prepared.host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
+            await asyncio.to_thread(manager.fail_pending, terminal_id)
+        code, detail, _settlement = classify_native_spawn_failure(exc)
+        return SpawnResult(
+            success=False,
+            run_id=plan.agent_run_id,
+            child_session_id=plan.child_session_id,
+            status="failed",
+            error=code,
+            error_detail=detail,
+            terminal_id=terminal_id,
+        )
     try:
         handle = await runtime.commit_spawn(prepared)
     except asyncio.CancelledError as exc:
-        if backend == "native" and not defer_failure:
+        if not defer_failure:
             await _settle_native_spawn_failure(
                 manager=manager,
                 runtime=runtime,
@@ -388,8 +373,8 @@ async def _promote_prepared(
         raise
     except CommitSpawnRefusedError as exc:
         if defer_failure:
-            code, detail = _deferred_failure_code(backend, exc)
-        elif backend == "native":
+            code, detail = _deferred_failure_code(exc)
+        else:
             code, detail = await _settle_native_spawn_failure(
                 manager=manager,
                 runtime=runtime,
@@ -399,9 +384,6 @@ async def _promote_prepared(
                 host_terminal_id=prepared.host_terminal_id,
                 host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
             )
-        else:
-            await asyncio.to_thread(manager.fail_pending, terminal_id)
-            code, detail = str(exc), None
         return SpawnResult(
             success=False,
             run_id=plan.agent_run_id,
@@ -412,10 +394,8 @@ async def _promote_prepared(
             terminal_id=terminal_id,
         )
     except Exception as exc:
-        if backend != "native":
-            raise
         if defer_failure:
-            code, detail = _deferred_failure_code(backend, exc)
+            code, detail = _deferred_failure_code(exc)
         else:
             code, detail = await _settle_native_spawn_failure(
                 manager=manager,
@@ -441,9 +421,8 @@ async def _promote_prepared(
         terminal_id,
         locator=stored,
         locator_key=locator_key,
-        session_name=spawn_key if backend == "tmux" else None,
         title=plan.title,
-        host_epoch=None if backend == "tmux" else getattr(handle.locator, "frame_host_epoch", None),
+        host_epoch=getattr(handle.locator, "frame_host_epoch", None),
     )
     if promoted is None:
         current = await asyncio.to_thread(manager.get, terminal_id)
@@ -499,9 +478,7 @@ async def _promote_prepared(
     )
 
 
-def _deferred_failure_code(backend: str, exc: BaseException) -> tuple[str, str | None]:
+def _deferred_failure_code(exc: BaseException) -> tuple[str, str | None]:
     """The failure code a settling path would report, computed without settling."""
-    if backend == "native":
-        code, detail, _settlement = classify_native_spawn_failure(exc)
-        return code, detail
-    return str(exc), None
+    code, detail, _settlement = classify_native_spawn_failure(exc)
+    return code, detail

@@ -152,14 +152,11 @@ def _record_wrap(monkeypatch: pytest.MonkeyPatch, events: list[str]) -> None:
     monkeypatch.setattr(spawn_executor, "wrap_provider_command", wrap)
 
 
-@pytest.mark.parametrize("backend", ["tmux", "native"])
-async def test_bind_follows_wrap_and_precedes_exec(
-    monkeypatch: pytest.MonkeyPatch, backend: str
-) -> None:
+async def test_bind_follows_wrap_and_precedes_exec(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     _record_wrap(monkeypatch, events)
     manager = _OrderedStore(events)
-    runtime = _OrderedRuntime(backend=cast(Any, backend))
+    runtime = _OrderedRuntime(backend="native")
     runtime.events = events
     bound: list[tuple[str, str]] = []
 
@@ -171,7 +168,7 @@ async def test_bind_follows_wrap_and_precedes_exec(
 
     placed = await execute_spawn(_request(manager, runtime, binder=binder))
 
-    exec_steps = ["reserve_observer", "prepare_spawn"] if backend == "native" else ["prepare_spawn"]
+    exec_steps = ["reserve_observer", "prepare_spawn"]
     assert placed.success is True
     assert events == ["wrap_provider_command", "create_pending", "bind", *exec_steps]
     assert bound == [(placed.terminal_id, "pending")]
@@ -186,7 +183,6 @@ async def test_bind_follows_wrap_and_precedes_exec(
     assert not in_doubt_spawns.holds(placed.terminal_id or "")
 
 
-@pytest.mark.parametrize("backend", ["tmux", "native"])
 @pytest.mark.parametrize(
     "failure",
     [
@@ -197,10 +193,10 @@ async def test_bind_follows_wrap_and_precedes_exec(
     ],
 )
 async def test_bind_failure_fails_pending_terminal(
-    monkeypatch: pytest.MonkeyPatch, backend: str, failure: Exception
+    monkeypatch: pytest.MonkeyPatch, failure: Exception
 ) -> None:
     manager = MemoryTerminalStore()
-    runtime = FakeRuntime(backend=cast(Any, backend))
+    runtime = FakeRuntime(backend="native")
     settled: list[str] = []
     settle = spawn_executor._settle_native_spawn_failure
 
@@ -224,7 +220,7 @@ async def test_bind_failure_fails_pending_terminal(
     assert row.state == "exited"
     assert runtime.create_calls == 0
     assert runtime.last_request is None
-    assert settled == ([row.id] if backend == "native" else [])
+    assert settled == [row.id]
     assert not in_doubt_spawns.holds(row.id)
 
 
@@ -337,11 +333,7 @@ class _StagedRuntime(FakeRuntime):
     # Raised by prepare_spawn after the session exists (a lost response).
     fail_after_create: Exception | None = None
     terminate_error: Exception | None = None
-    # Terminates that return without killing anything.
-    ineffective_kills: int = 0
     terminate_calls: int = 0
-    # Raised, in order, by session_present before it answers.
-    present_failures: list[BaseException] = field(default_factory=list)
     prepare_process: ProcessIdentity | None = None
     # The host restarts once the prepare returns, making its epoch stale.
     epoch_after_prepare: str | None = None
@@ -361,18 +353,10 @@ class _StagedRuntime(FakeRuntime):
         self.terminate_started.set()
         if self.terminate_error is not None:
             raise self.terminate_error
-        if self.ineffective_kills:
-            self.ineffective_kills -= 1
-            return
         if self.kill_via is not None:
             await self.kill_via.terminate(terminal, grace_seconds)
             return
         await super().terminate(terminal, grace_seconds)
-
-    async def session_present(self, terminal: Terminal) -> bool:
-        if self.present_failures:
-            raise self.present_failures.pop(0)
-        return await super().session_present(terminal)
 
     async def reserve_observer(self, terminal_id: UUID) -> Mapping[str, str]:
         if self.reserve_started is not None:
@@ -402,12 +386,11 @@ class _StagedRuntime(FakeRuntime):
 class _Exit:
     """One exit: its store and runtime, how the caller ends, and where the row lands."""
 
-    backend: str
     handed_off: bool
     final_state: str | None
     caller: str = "failed"
     store: _StagedStore = field(default_factory=_StagedStore)
-    runtime: _StagedRuntime = field(default_factory=_StagedRuntime)
+    runtime: _StagedRuntime = field(default_factory=lambda: _StagedRuntime(backend="native"))
     binder_hold: asyncio.Event | None = None
     binder_started: asyncio.Event | None = None
     binder_error: Exception | None = None
@@ -453,70 +436,67 @@ async def _blocked_in_commit(case: _Exit) -> Callable[[], None]:
 
 
 def _exit_case(name: str) -> _Exit:
-    tmux, native = "tmux", "native"
     if name == "E1-commit-then-raise":
-        case = _Exit(tmux, True, "exited", caller="raises")
+        case = _Exit(True, "exited", caller="raises")
         case.store.raise_after_commit = ConnectionError("commit acknowledgment lost")
     elif name == "E1-rolled-back":
-        case = _Exit(tmux, True, None, caller="raises")
+        case = _Exit(True, None, caller="raises")
         case.store.raise_before_commit = ConnectionError("insert rolled back")
     elif name == "E2":
-        case = _Exit(tmux, True, "exited", caller="cancelled", blocked_at=_blocked_in_create)
+        case = _Exit(True, "exited", caller="cancelled", blocked_at=_blocked_in_create)
         case.store.create_gate = threading.Event()
     elif name == "E3":
-        case = _Exit(tmux, False, "exited", caller="cancelled")
+        case = _Exit(False, "exited", caller="cancelled")
         cancel = asyncio.Event()
         case.overrides["cancel_event"] = cancel
         case.store.after_create = cancel.set
     elif name == "E4":
-        case = _Exit(native, False, "exited", binder_error=RuntimeError("busy"))
+        case = _Exit(False, "exited", binder_error=RuntimeError("busy"))
     elif name == "E5":
-        case = _Exit(tmux, True, "exited", caller="cancelled", blocked_at=_blocked_in_bind)
+        case = _Exit(True, "exited", caller="cancelled", blocked_at=_blocked_in_bind)
         case.binder_hold, case.binder_started = asyncio.Event(), asyncio.Event()
     elif name == "E6":
-        case = _Exit(native, False, "exited")
+        case = _Exit(False, "exited")
     elif name == "E7":
-        case = _Exit(native, False, "exited")
+        case = _Exit(False, "exited")
         case.runtime.reserve_error = RuntimeError("reserve refused")
     elif name == "E8":
-        case = _Exit(native, True, "exited", caller="cancelled", blocked_at=_blocked_in_reserve)
+        case = _Exit(True, "exited", caller="cancelled", blocked_at=_blocked_in_reserve)
         case.runtime.reserve_hold, case.runtime.reserve_started = asyncio.Event(), asyncio.Event()
     elif name == "E9-timeout":
-        case = _Exit(tmux, True, "exited", blocked_at=_blocked_in_prepare)
+        case = _Exit(True, "exited", blocked_at=_blocked_in_prepare)
         case.runtime.spawn_hold = asyncio.Event()
         case.overrides["timeout_seconds"] = 0.01
     elif name == "E9-cancelled":
-        case = _Exit(native, True, "exited", caller="cancelled", blocked_at=_blocked_in_prepare)
+        case = _Exit(True, "exited", caller="cancelled", blocked_at=_blocked_in_prepare)
         case.runtime.spawn_hold = asyncio.Event()
     elif name == "E10":
-        case = _Exit(tmux, True, "exited")
+        case = _Exit(True, "exited")
         case.runtime.typed_fail = True
     elif name == "E11":
-        case = _Exit(native, False, "live", caller="success")
+        case = _Exit(False, "live", caller="success")
     elif name == "E12-observer":
-        case = _Exit(native, True, "exited")
+        case = _Exit(True, "exited")
         case.runtime.observer_error = RuntimeError("observer bind failed")
     elif name == "E12-commit-refused":
-        case = _Exit(native, True, "exited")
+        case = _Exit(True, "exited")
         case.runtime.commit_error = CommitSpawnRefusedError("refused")
     elif name == "E12-commit-error":
-        case = _Exit(native, True, "exited")
+        case = _Exit(True, "exited")
         case.runtime.commit_error = RuntimeError("commit transport failed")
     elif name == "E12-lost-cas":
-        case = _Exit(tmux, True, "exited")
+        case = _Exit(True, "exited")
         case.store.refuse_promotion = True
-    elif name == "E13-raises":
-        case = _Exit(tmux, True, "exited", caller="raises")
-        case.runtime.commit_error = RuntimeError("tmux commit failed")
     elif name == "E13-cancelled":
-        case = _Exit(tmux, True, "exited", caller="cancelled", blocked_at=_blocked_in_commit)
+        case = _Exit(True, "exited", caller="cancelled", blocked_at=_blocked_in_commit)
         case.runtime.commit_hold, case.runtime.commit_started = asyncio.Event(), asyncio.Event()
     else:
         assert name == "E14"
-        case = _Exit(tmux, False, "pending")
-        case.existing = case.store.create_pending("held-id", "proj", "tmux", "gobby", "gobby-held")
+        case = _Exit(False, "pending")
+        case.existing = case.store.create_pending(
+            "held-id", "proj", "native", "gobby", "gobby-held"
+        )
         case.overrides["retry_terminal_id"] = "held-id"
-    case.runtime.backend = cast(Any, case.backend)
     return case
 
 
@@ -538,7 +518,6 @@ EXITS = [
     "E12-commit-refused",
     "E12-commit-error",
     "E12-lost-cas",
-    "E13-raises",
     "E13-cancelled",
     "E14",
 ]
@@ -606,12 +585,9 @@ async def test_every_exit_releases_or_hands_off_the_claim(
     if case.handed_off:
         # Nothing settles a handed-off row before the owner's proof.
         assert "exited" not in at_return.values()
-    if name.startswith("E12") or name.startswith("E13"):
+    if name.startswith(("E12", "E13")):
         # The owner kills through the prepared identity.
-        if case.backend == "native":
-            assert case.runtime.killed_host_ids == ["ht-1"]
-        else:
-            assert case.runtime.killed == [rows[0].spawn_key]
+        assert case.runtime.killed_host_ids == ["ht-1"]
     for terminal_id in [*handoffs.terminal_ids, *(row.id for row in rows)]:
         assert not in_doubt_spawns.holds(terminal_id)
 
@@ -670,7 +646,7 @@ async def _prepare_dispatched(runtime: FakeRuntime) -> None:
 
 async def test_in_doubt_claim_spans_prepare() -> None:
     store = _StagedStore()
-    runtime = _StagedRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    runtime = _StagedRuntime(backend="native", spawn_hold=asyncio.Event())
     registry = runtime_registry(runtime)
     held_at_create: list[bool] = []
     store.after_create = lambda: held_at_create.extend(
@@ -711,15 +687,12 @@ async def test_in_doubt_claim_spans_prepare() -> None:
     assert not in_doubt_spawns.holds(row.id)
 
 
-ABSENCE_CASES = ["native-probe-raises", "tmux-present-raises", "tmux-kill-unproven", "restart"]
+ABSENCE_CASES = ["native-probe-raises", "restart"]
 
 
 async def _restart_reaping_is_strict() -> None:
     store = MemoryTerminalStore()
-    tmux = _StagedRuntime(backend="tmux", ineffective_kills=1)
     native = _StagedRuntime(backend="native")
-    present = store.create_pending("tmux-present", "proj", "tmux", "gobby", "gobby-present")
-    tmux.live_keys.add("gobby-present")
     unanswered = store.create_pending("native-down", "proj", "native", "gobby", "native-down")
     native.find_host_failures.append(HostUnavailableError("gterm host unavailable"))
     listed = store.create_pending("native-listed", "proj", "native", "gobby", "native-listed")
@@ -729,11 +702,10 @@ async def _restart_reaping_is_strict() -> None:
     assert await _reconciliation(store, None).reap_stale_pending() == 0
     assert {row.state for row in store.rows.values()} == {"pending"}
 
-    assert await _reconciliation(store, runtime_registry(tmux, native)).reap_stale_pending() == 1
+    assert await _reconciliation(store, runtime_registry(native)).reap_stale_pending() == 1
 
     assert absent.state == "exited"
-    assert (present.state, unanswered.state, listed.state) == ("pending", "pending", "pending")
-    assert tmux.terminate_calls == 1
+    assert (unanswered.state, listed.state) == ("pending", "pending")
 
 
 @pytest.mark.parametrize("name", ABSENCE_CASES)
@@ -745,15 +717,9 @@ async def test_identityless_row_stays_pending_until_absence_proven(
         return
     backoff = _Backoff(monkeypatch)
     store = _StagedStore()
-    lost = RuntimeError("spawn response lost")
-    if name == "native-probe-raises":
-        runtime = _StagedRuntime(backend="native", fail_spawn=True)
-        runtime.find_host_failures = [HostUnavailableError("gterm host unavailable")] * 9
-    elif name == "tmux-present-raises":
-        runtime = _StagedRuntime(backend="tmux", fail_after_create=lost)
-        runtime.present_failures = [ConnectionError("tmux server unreachable")] * 9
-    else:
-        runtime = _StagedRuntime(backend="tmux", fail_after_create=lost, ineffective_kills=9)
+    assert name == "native-probe-raises"
+    runtime = _StagedRuntime(backend="native", fail_spawn=True)
+    runtime.find_host_failures = [HostUnavailableError("gterm host unavailable")] * 9
 
     result = await execute_spawn(_request(store, runtime, binder=_noop_binder))
     row = store.get(result.terminal_id or "")
@@ -766,13 +732,8 @@ async def test_identityless_row_stays_pending_until_absence_proven(
     assert row.state == "pending"
     assert in_doubt_spawns.holds(row.id)
     assert runtime.create_calls == 1
-    if name == "tmux-kill-unproven":
-        # Three immediate retries and the first backoff cycle: one kill per cycle.
-        assert runtime.terminate_calls == 4
 
     runtime.find_host_failures.clear()
-    runtime.present_failures.clear()
-    runtime.ineffective_kills = 0
     backoff.resume.set()
     await _drain_owners()
 
@@ -788,7 +749,7 @@ async def test_binder_free_retry_refuses_placed_owner_in_settlement_backoff(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     store = _StagedStore()
-    runtime = _StagedRuntime(backend="tmux", fail_spawn=True)
+    runtime = _StagedRuntime(backend="native", fail_spawn=True)
     backoff = _Backoff(monkeypatch)
     store.down.add("fail_pending_attempt")
 
@@ -797,7 +758,7 @@ async def test_binder_free_retry_refuses_placed_owner_in_settlement_backoff(
     assert failed.terminal_id is not None
     row = store.rows[failed.terminal_id]
     original = replace(row)
-    retry_runtime = FakeRuntime(backend="tmux", fail_spawn=True)
+    retry_runtime = FakeRuntime(backend="native", fail_spawn=True)
     await asyncio.wait_for(backoff.entered.wait(), timeout=2)
 
     try:
@@ -830,14 +791,20 @@ async def test_binder_free_retry_refuses_stale_reaper_mid_kill() -> None:
     kill_resume = asyncio.Event()
 
     class KillHeldRuntime(_StagedRuntime):
-        async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
+        async def terminate_host_id(
+            self, host_terminal_id: str, host_epoch: str | None
+        ) -> object | None:
             self.terminate_started.set()
             await kill_resume.wait()
-            await super().terminate(terminal, grace_seconds)
+            # The held kill ends the host terminal, so the strict listing misses it.
+            self.live_keys.discard("reaper-key")
+            return await super().terminate_host_id(host_terminal_id, host_epoch)
 
     store = _StagedStore()
-    runtime = KillHeldRuntime(backend="tmux")
-    row = store.create_pending(mint_terminal_id(), "proj", "tmux", "gobby", "reaper-key")
+    runtime = KillHeldRuntime(backend="native")
+    row = store.create_pending(mint_terminal_id(), "proj", "native", "gobby", "reaper-key")
+    row.process = {"host_terminal_id": "ht-1"}
+    row.host_epoch = runtime.host_epoch
     pair = (row.attempt_generation, row.attempt_started_at)
     runtime.live_keys.add("reaper-key")
     reaper = asyncio.create_task(
@@ -845,7 +812,7 @@ async def test_binder_free_retry_refuses_stale_reaper_mid_kill() -> None:
             cast(TerminalManager, store), runtime_registry(runtime), in_doubt_seconds=0
         )
     )
-    retry_runtime = FakeRuntime(backend="tmux")
+    retry_runtime = FakeRuntime(backend="native")
     await asyncio.wait_for(runtime.terminate_started.wait(), timeout=2)
 
     try:
@@ -865,18 +832,18 @@ async def test_binder_free_retry_refuses_stale_reaper_mid_kill() -> None:
 
     assert reaped == [row.id]
     assert row.state == "exited"
+    assert runtime.killed_host_ids == ["ht-1"]
     assert not in_doubt_spawns.holds(row.id)
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["tmux", "native"])
 @pytest.mark.parametrize("outcome", ["success", "timeout", "cancelled"])
 async def test_binder_free_retry_retains_claim_until_prepare_settles(
-    handoffs: _Handoffs, backend: str, outcome: str
+    handoffs: _Handoffs, outcome: str
 ) -> None:
     store = _StagedStore()
-    runtime = _StagedRuntime(backend=cast(Any, backend), spawn_hold=asyncio.Event())
-    row = store.create_pending(mint_terminal_id(), "proj", backend, "gobby", "retry-key")
+    runtime = _StagedRuntime(backend="native", spawn_hold=asyncio.Event())
+    row = store.create_pending(mint_terminal_id(), "proj", "native", "gobby", "retry-key")
     prior = (row.attempt_generation, row.attempt_started_at)
     request = _request(
         store,
@@ -911,13 +878,7 @@ async def test_binder_free_retry_retains_claim_until_prepare_settles(
         else:
             assert result.success is False
             assert result.prior_attempt == prior
-            assert result.error == (
-                "cancelled"
-                if outcome == "cancelled"
-                else "spawn_timeout"
-                if backend == "native"
-                else "spawn timed out"
-            )
+            assert result.error == ("cancelled" if outcome == "cancelled" else "spawn_timeout")
             assert handoffs.stages == ["prepare"]
             assert row.state == "pending"
             assert in_doubt_spawns.holds(row.id)
@@ -946,26 +907,22 @@ class _DownHost:
 
 
 TIMEOUT_KILLS = [
-    ("tmux", "proven", "exited"),
-    ("native", "proven", "exited"),
-    ("tmux", "session-present", "orphaned"),
-    ("tmux", "terminate-raises", "orphaned"),
-    ("native", "stale-no-process", "orphaned"),
-    ("native", "stale-dead-group", "exited"),
+    ("proven", "exited"),
+    ("terminate-raises", "orphaned"),
+    ("stale-no-process", "orphaned"),
+    ("stale-dead-group", "exited"),
 ]
 
 
-@pytest.mark.parametrize(("backend", "kill", "final"), TIMEOUT_KILLS)
+@pytest.mark.parametrize(("kill", "final"), TIMEOUT_KILLS)
 async def test_placed_timeout_holds_pending_then_late_settlement(
-    monkeypatch: pytest.MonkeyPatch, handoffs: _Handoffs, backend: str, kill: str, final: str
+    monkeypatch: pytest.MonkeyPatch, handoffs: _Handoffs, kill: str, final: str
 ) -> None:
     store = _StagedStore()
-    runtime = _StagedRuntime(backend=cast(Any, backend), spawn_hold=asyncio.Event())
+    runtime = _StagedRuntime(backend="native", spawn_hold=asyncio.Event())
     reaped: list[dict[str, object]] = []
-    if kill == "session-present":
-        runtime.ineffective_kills = 99
-    elif kill == "terminate-raises":
-        runtime.terminate_error = RuntimeError("tmux kill-session failed")
+    if kill == "terminate-raises":
+        runtime.terminate_error = RuntimeError("host kill failed")
     elif kill.startswith("stale"):
         runtime.epoch_after_prepare = "epoch-restarted"
         runtime.kill_via = NativeTerminalRuntime(_DownHost())
@@ -986,7 +943,7 @@ async def test_placed_timeout_holds_pending_then_late_settlement(
     row = store.get(result.terminal_id or "")
     assert row is not None
 
-    assert result.error == ("spawn_timeout" if backend == "native" else "spawn timed out")
+    assert result.error == "spawn_timeout"
     assert result.retryable_infrastructure is True
     assert handoffs.stages == ["prepare"]
     assert row.state == "pending"
@@ -1011,21 +968,20 @@ async def test_placed_timeout_holds_pending_then_late_settlement(
     assert row.locator == dict(identity.locator)
     assert row.locator_key == identity.locator_key is not None
     assert row.host_epoch == identity.host_epoch
-    if backend == "native":
-        assert row.host_epoch == "epoch"
-        assert row.process == {"host_terminal_id": "ht-1"}
+    assert row.host_epoch == "epoch"
+    assert row.process == {"host_terminal_id": "ht-1"}
     assert compensation.runs == 0
 
 
 async def test_unplaced_timeout_unchanged(handoffs: _Handoffs) -> None:
     store = MemoryTerminalStore()
-    runtime = FakeRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    runtime = FakeRuntime(backend="native", spawn_hold=asyncio.Event())
 
     result = await execute_spawn(_request(store, runtime, timeout_seconds=0.01))
     row = next(iter(store.rows.values()))
 
     assert result.success is False
-    assert result.error == "spawn timed out"
+    assert result.error == "spawn_timeout"
     assert row.state == "pending"
     assert not in_doubt_spawns.holds(row.id)
     assert handoffs.stages == []
@@ -1033,27 +989,21 @@ async def test_unplaced_timeout_unchanged(handoffs: _Handoffs) -> None:
     assert runtime.spawn_hold is not None
     runtime.spawn_hold.set()
     # The late cleanup is scheduled only once the prepare completes.
-    await runtime.terminate_started.wait()
+    await asyncio.wait_for(runtime.terminate_host_started.wait(), timeout=2)
     await _drain_owners()
 
-    assert runtime.killed == [row.spawn_key]
+    assert runtime.killed_host_ids == ["ht-1"]
     assert row.state == "exited"
 
 
-CANCEL_MOMENTS = [
-    ("native", "while-unresolved"),
-    ("tmux", "as-success-completes"),
-    ("tmux", "as-failure-completes"),
-]
+CANCEL_MOMENTS = ["while-unresolved", "as-success-completes", "as-failure-completes"]
 
 
-@pytest.mark.parametrize(("backend", "moment"), CANCEL_MOMENTS)
-async def test_placed_cancellation_has_one_owner(
-    handoffs: _Handoffs, backend: str, moment: str
-) -> None:
+@pytest.mark.parametrize("moment", CANCEL_MOMENTS)
+async def test_placed_cancellation_has_one_owner(handoffs: _Handoffs, moment: str) -> None:
     store = _StagedStore()
     runtime = _StagedRuntime(
-        backend=cast(Any, backend),
+        backend="native",
         spawn_hold=asyncio.Event(),
         fail_spawn=moment == "as-failure-completes",
     )
@@ -1079,10 +1029,10 @@ async def test_placed_cancellation_has_one_owner(
     assert row.state == "exited"
     assert not in_doubt_spawns.holds(row.id)
     if moment == "as-success-completes":
-        assert runtime.killed == [row.spawn_key]
+        assert runtime.killed_host_ids == ["ht-1"]
 
 
-LATE_FAILURES = ["tmux-dimension-query", "native-response-lost", "native-host-unreachable"]
+LATE_FAILURES = ["native-response-lost", "native-host-unreachable"]
 
 
 @pytest.mark.parametrize("name", LATE_FAILURES)
@@ -1091,9 +1041,8 @@ async def test_late_prepare_failure_requires_proven_absence(
 ) -> None:
     backoff = _Backoff(monkeypatch)
     store = _StagedStore()
-    backend = "tmux" if name.startswith("tmux") else "native"
     runtime = _StagedRuntime(
-        backend=cast(Any, backend), fail_after_create=RuntimeError("late prepare failure")
+        backend="native", fail_after_create=RuntimeError("late prepare failure")
     )
     if name == "native-host-unreachable":
         runtime.find_host_failures = [HostUnavailableError("gterm host unavailable")] * 9
@@ -1111,10 +1060,7 @@ async def test_late_prepare_failure_requires_proven_absence(
     await _drain_owners()
 
     assert result.success is False
-    if backend == "tmux":
-        assert runtime.killed == [row.spawn_key]
-    else:
-        assert runtime.killed_host_ids == ["ht-1"]
+    assert runtime.killed_host_ids == ["ht-1"]
     assert row.state == "exited"
     assert [write for write, _ in store.writes] == ["fail_pending_attempt"]
     assert not in_doubt_spawns.holds(row.id)
@@ -1184,13 +1130,13 @@ async def test_owner_contains_storage_failures(monkeypatch: pytest.MonkeyPatch, 
     backoff = _Backoff(monkeypatch)
     store = _StagedStore()
     if name == "mark-kill-failed-raises":
-        runtime = _StagedRuntime(backend="tmux")
+        runtime = _StagedRuntime(backend="native")
         row, prepared = await _prepared_row(store, runtime, live=True)
         store.down.add("mark_kill_failed")
         _own(store, runtime, row, "promote", prepared=prepared)
         await _drain_owners()
         # The failed orphan step still lets the owner make its kill decision.
-        assert runtime.killed == [row.spawn_key]
+        assert runtime.killed_host_ids == ["ht-1"]
         attempts = spawn_in_doubt_owner.IMMEDIATE_RETRIES + 1
         assert [write for write, _ in store.writes] == [
             *["mark_kill_failed"] * attempts,
@@ -1200,8 +1146,8 @@ async def test_owner_contains_storage_failures(monkeypatch: pytest.MonkeyPatch, 
         assert not in_doubt_spawns.holds(row.id)
         return
     if name == "already-exited":
-        runtime = _StagedRuntime(backend="tmux")
-        row = store.create_pending(mint_terminal_id(), "proj", "tmux", "gobby", "gobby-done")
+        runtime = _StagedRuntime(backend="native")
+        row = store.create_pending(mint_terminal_id(), "proj", "native", "gobby", "gobby-done")
         row.state = "exited"
         _own(store, runtime, row, "bind")
         await _drain_owners()
@@ -1217,8 +1163,8 @@ async def test_owner_contains_storage_failures(monkeypatch: pytest.MonkeyPatch, 
         _own(store, runtime, row, "promote", prepared=prepared)
         held_state, final = "live", "orphaned"
     else:
-        runtime = _StagedRuntime(backend="tmux")
-        row = store.create_pending(mint_terminal_id(), "proj", "tmux", "gobby", "gobby-late")
+        runtime = _StagedRuntime(backend="native")
+        row = store.create_pending(mint_terminal_id(), "proj", "native", "gobby", "gobby-late")
         if name == "final-write-fails":
             store.down.add("fail_pending_attempt")
         else:
@@ -1314,7 +1260,8 @@ async def test_owner_retries_settlement_until_storage_recovers(
         identity_source = prepared
     elif stage == "prepare":
         runtime = _StagedRuntime(
-            backend="tmux", ineffective_kills=0 if settlement == "exited" else 99
+            backend="native",
+            terminate_error=None if settlement == "exited" else RuntimeError("kill failed"),
         )
         row, identity_source = await _prepared_row(store, runtime, live=False)
         task = _done(identity_source)
@@ -1388,11 +1335,11 @@ async def test_owner_retries_settlement_until_storage_recovers(
 
 
 def test_read_back_with_another_pair_is_not_confirmation() -> None:
-    row = MemoryTerminalStore().create_pending("t", "proj", "tmux", "gobby", "gobby-t")
+    row = MemoryTerminalStore().create_pending("t", "proj", "native", "gobby", "gobby-t")
     attempt = spawn_in_doubt_owner.InDoubtAttempt(
         manager=cast(TerminalManager, MemoryTerminalStore()),
-        runtime=cast(TerminalRuntime, FakeRuntime()),
-        backend="tmux",
+        runtime=cast(TerminalRuntime, FakeRuntime(backend="native")),
+        backend="native",
         terminal_id=row.id,
         spawn_key="gobby-t",
         pair=(row.attempt_generation, row.attempt_started_at),
@@ -1408,7 +1355,7 @@ def test_orphan_read_back_needs_the_complete_prepared_identity() -> None:
     row = MemoryTerminalStore().create_pending("t", "proj", "native", "gobby", "gobby-t")
     attempt = spawn_in_doubt_owner.InDoubtAttempt(
         manager=cast(TerminalManager, MemoryTerminalStore()),
-        runtime=cast(TerminalRuntime, FakeRuntime()),
+        runtime=cast(TerminalRuntime, FakeRuntime(backend="native")),
         backend="native",
         terminal_id=row.id,
         spawn_key="gobby-t",
@@ -1449,14 +1396,18 @@ async def test_owner_retry_survives_cancellation_until_shutdown(
     backoff = _Backoff(monkeypatch)
     releases: list[str] = []
     release = in_doubt_spawns.release
+    drain = in_doubt_spawns.drain
 
-    def counting_release(terminal_id: str) -> list[Any]:
-        releases.append(terminal_id)
-        return release(terminal_id)
+    def counting_drain(terminal_id: str, *, proven: bool) -> list[Any]:
+        held = in_doubt_spawns.holds(terminal_id)
+        steps = drain(terminal_id, proven=proven)
+        if held and not in_doubt_spawns.holds(terminal_id):
+            releases.append(terminal_id)
+        return steps
 
-    monkeypatch.setattr(in_doubt_spawns, "release", counting_release)
+    monkeypatch.setattr(in_doubt_spawns, "drain", counting_drain)
     store = _StagedStore()
-    runtime = _StagedRuntime(backend="tmux", spawn_hold=asyncio.Event())
+    runtime = _StagedRuntime(backend="native", spawn_hold=asyncio.Event())
     if point == "first-settlement":
         store.write_gate = threading.Event()
     elif point in {"backoff", "retry-write"}:
@@ -1536,9 +1487,7 @@ async def test_cancelled_release_still_runs_every_deferred_step_once() -> None:
     assert in_doubt_spawns.claim(terminal_id)
     assert in_doubt_spawns.defer(terminal_id, blocking_step)
     assert in_doubt_spawns.defer(terminal_id, second)
-    releasing = asyncio.create_task(
-        spawn_in_doubt_owner.release_claim(terminal_id, run_deferred=True)
-    )
+    releasing = asyncio.create_task(spawn_in_doubt_owner.release_claim(terminal_id, proven=True))
     await entered.wait()
     releasing.cancel()
     with pytest.raises(asyncio.CancelledError):
@@ -1568,12 +1517,12 @@ async def test_indeterminate_create_is_recovered_by_read_back(
 ) -> None:
     backoff = _Backoff(monkeypatch)
     store = _StagedStore()
-    runtime = _StagedRuntime(backend="tmux")
+    runtime = _StagedRuntime(backend="native")
     isolation = _Isolation()
     overrides: dict[str, Any] = {}
     earlier: Terminal | None = None
     if name.startswith("bump"):
-        earlier = store.create_pending(mint_terminal_id(), "proj", "tmux", "gobby", "gobby-old")
+        earlier = store.create_pending(mint_terminal_id(), "proj", "native", "gobby", "gobby-old")
         overrides["retry_terminal_id"] = earlier.id
     prior = None if earlier is None else (earlier.attempt_generation, earlier.attempt_started_at)
     if name.endswith("rolls-back"):

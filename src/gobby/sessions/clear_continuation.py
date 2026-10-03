@@ -10,12 +10,12 @@ from datetime import UTC, datetime
 from typing import Any, TypeGuard
 from uuid import uuid4
 
-from gobby.sessions.compact_continuation import (
+from gobby.sessions.compact_continuation import schedule_handoff_compact_continuation
+from gobby.sessions.compact_continuation_store import (
     _format_timestamp,
     _load_variables,
     _parse_timestamp,
     _row_variables,
-    schedule_handoff_compact_continuation,
 )
 from gobby.sessions.handoff import (
     FOUND_WORK_VARIABLE,

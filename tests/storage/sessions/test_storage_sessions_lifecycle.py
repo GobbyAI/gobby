@@ -394,9 +394,11 @@ class TestSessionManagerLifecycle:
             project_id=sample_project["id"],
         )
         if live_status != "active":
-            session_manager.update_status(session.id, live_status)
+            session = session_manager.update_status(session.id, live_status) or session
 
-        expired = session_manager.expire_if_active(session.id)
+        expired = session_manager.expire_if_active(
+            session.id, machine_id=session.machine_id, observed_updated_at=session.updated_at
+        )
 
         assert expired is not None
         assert expired.status == "expired"
@@ -413,10 +415,41 @@ class TestSessionManagerLifecycle:
             project_id=sample_project["id"],
         )
 
-        expired = session_manager.expire_if_active(session.id)
+        expired = session_manager.expire_if_active(
+            session.id, machine_id=session.machine_id, observed_updated_at=session.updated_at
+        )
 
         assert expired is not None
         assert expired.status == "expired"
+
+    @pytest.mark.parametrize("moved_on", ["rebound", "other-machine"])
+    def test_expire_if_active_spares_a_session_that_moved_on(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+        moved_on: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"moved-on-expiry-{moved_on}",
+            machine_id="20000000-0000-4000-8000-000000000001",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        observed_machine, observed_at = session.machine_id, session.updated_at
+        if moved_on == "rebound":
+            # SessionStart rebinding the session after the liveness probe's snapshot.
+            session_manager.update(session.id, terminal_context={"tmux_pane": "%9"})
+        else:
+            observed_machine = "20000000-0000-4000-8000-000000000002"
+
+        expired = session_manager.expire_if_active(
+            session.id, machine_id=observed_machine, observed_updated_at=observed_at
+        )
+
+        assert expired is None
+        current = session_manager.get(session.id)
+        assert current is not None
+        assert current.status == "active"
 
     @pytest.mark.parametrize("bulk", [False, True])
     def test_status_updates_reject_unknown_values(

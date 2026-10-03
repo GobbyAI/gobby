@@ -16,6 +16,7 @@ provider: codex
 model: gpt-5.6-sol
 reasoning_effort: xhigh
 isolation: none
+spawnable_agents: [merge-worker]
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 

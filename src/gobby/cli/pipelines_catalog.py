@@ -37,6 +37,7 @@ def _parse_daemon_pipeline(row: dict[str, Any]) -> PipelineDefinition:
     data = dict(data)
     data["name"] = row["name"]
     data["enabled"] = row.get("enabled", True)
+    data["tags"] = row.get("tags") or []
     if row.get("version"):
         data["version"] = row["version"]
     return PipelineDefinition.model_validate(data)
@@ -48,6 +49,8 @@ def _discover_daemon_pipelines(rows: list[dict[str, Any]]) -> list[DiscoveredWor
     for row in rows:
         try:
             definition = _parse_daemon_pipeline(row)
+            if not definition.enabled:
+                continue
             is_project = row.get("project_id") is not None
             existing = discovered.get(definition.name)
             if existing is not None and existing.is_project and not is_project:
@@ -82,8 +85,9 @@ def _load_daemon_pipeline(
 
 @click.command("list")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
+@click.option("--tag", default=None, help="Filter pipelines by tag")
 @click.pass_context
-def list_pipelines(ctx: click.Context, json_format: bool) -> None:
+def list_pipelines(ctx: click.Context, json_format: bool, tag: str | None = None) -> None:
     """List available pipeline definitions."""
     facade = _facade()
     project_id = facade._get_project_id()
@@ -93,6 +97,9 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
         discovered = loader.discover_pipelines_sync(project_id or None)
     else:
         discovered = _discover_daemon_pipelines(daemon_rows)
+
+    if tag is not None:
+        discovered = [wf for wf in discovered if tag in wf.definition.tags]
 
     if json_format:
         pipeline_list = []

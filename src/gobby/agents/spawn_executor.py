@@ -40,7 +40,7 @@ from gobby.agents.spawn_timing import (
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
+from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.host_reap import reap_recorded_group_proven_dead
 from gobby.terminals.in_doubt import in_doubt_spawns
@@ -55,7 +55,6 @@ from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.agents.spawn_in_doubt_owner import OwnerStage
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
 _TIMEOUT_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
@@ -89,13 +88,6 @@ def wrap_provider_command(launch: SandboxLaunch, command: list[str]) -> list[str
     return launch.wrap(command)
 
 
-def derive_spawn_key(backend: str, terminal_id: str) -> str:
-    """Caller-owned backend identity. Native uses the UUID; tmux prefixes it."""
-    if backend == "native":
-        return terminal_id
-    return f"gobby-{terminal_id}"
-
-
 def resolve_terminal_services(
     request: SpawnRequest,
 ) -> tuple[TerminalManager, TerminalRuntimeRegistry, TerminalRuntime, str]:
@@ -112,13 +104,6 @@ def resolve_terminal_services(
         raise RuntimeError("terminal_runtime_registry is required for spawn")
     runtime = registry.resolve(backend)
     return manager, registry, runtime, backend
-
-
-def _default_backend(request: SpawnRequest) -> str:
-    config = getattr(request.daemon_config, "terminals", None)
-    if isinstance(config, TerminalConfig):
-        return config.default_backend
-    return TerminalConfig().default_backend
 
 
 async def _settle_native_spawn_failure(
@@ -259,18 +244,6 @@ async def _spawn_agy_terminal(request: SpawnRequest) -> SpawnResult:
     return await _runtime_spawn(request, plan)
 
 
-def _tmux_sessions_from_request(request: SpawnRequest) -> TmuxSessionManager | None:
-    registry = request.terminal_runtime_registry
-    if registry is None:
-        return None
-    try:
-        runtime = registry.resolve("tmux")
-    except UnregisteredBackendError:
-        return None
-    sessions = getattr(runtime, "_sessions", None)
-    return sessions
-
-
 def _persist_spawn_workspace(request: SpawnRequest, session_id: str) -> None:
     """Record the spawn cwd as the child session's canonical workspace identity."""
     storage = getattr(request.session_manager, "_storage", None)
@@ -315,17 +288,11 @@ async def settle_promotion(
         )
 
 
-def _tmux_duplicate_session_error(exc: BaseException) -> bool:
-    message = str(exc).casefold()
-    return "duplicate" in message or "already exists" in message
-
-
 async def _cleanup_timed_out_prepare(
     prepare_task: asyncio.Future[Any],
     *,
     manager: TerminalManager,
     runtime: TerminalRuntime,
-    backend: str,
     terminal_id: str,
     spawn_key: str,
     attempt_generation: int,
@@ -335,10 +302,7 @@ async def _cleanup_timed_out_prepare(
         prepared = prepare_task.result()
     except asyncio.CancelledError:
         return
-    except Exception as exc:
-        if backend == "tmux" and _tmux_duplicate_session_error(exc):
-            pending = await asyncio.to_thread(manager.get, terminal_id)
-            await kill_spawn_key(runtime, spawn_key, pending=pending)
+    except Exception:
         await asyncio.to_thread(
             manager.fail_pending_attempt,
             terminal_id,
@@ -347,22 +311,18 @@ async def _cleanup_timed_out_prepare(
         )
         return
 
-    if backend == "native":
-        host_terminal_id = prepared.host_terminal_id
-        if host_terminal_id is not None:
-            try:
-                await kill_spawn_key(
-                    runtime,
-                    spawn_key,
-                    pending=None,
-                    host_terminal_id=host_terminal_id,
-                    host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
-                )
-            except HostUnavailableError:
-                return
-    else:
-        pending = await asyncio.to_thread(manager.get, terminal_id)
-        await kill_spawn_key(runtime, spawn_key, pending=pending)
+    host_terminal_id = prepared.host_terminal_id
+    if host_terminal_id is not None:
+        try:
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=None,
+                host_terminal_id=host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+            )
+        except HostUnavailableError:
+            return
     await asyncio.to_thread(
         manager.fail_pending_attempt,
         terminal_id,
@@ -424,7 +384,6 @@ def _schedule_timeout_cleanup(
                 completed,
                 manager=manager,
                 runtime=runtime,
-                backend=backend,
                 terminal_id=terminal_id,
                 spawn_key=spawn_key,
                 attempt_generation=generation,
@@ -478,7 +437,6 @@ def _terminal_for_spawn_key(
         attempt_started_at=now,
         unresolved_writes={},
         spawn_key=spawn_key,
-        session_name=spawn_key if backend == "tmux" else None,
     )
 
 
@@ -509,14 +467,16 @@ async def kill_spawn_key(
     return None
 
 
-async def _stale_pending_absent(runtime: TerminalRuntime, row: Terminal) -> bool:
-    """Kill a stale pending row's session, then prove it gone; raises when unanswerable."""
+async def _stale_pending_absent(
+    runtime: TerminalRuntime, row: Terminal, *, terminate: bool = True
+) -> bool:
+    """Prove the retained attempt absent, optionally killing its still-pending session."""
     from gobby.agents.capture import backend_session_present
 
     spawn_key = row.spawn_key or row.id
     if row.backend == "native":
         host_terminal_id = (row.process or {}).get("host_terminal_id")
-        if isinstance(host_terminal_id, str) and host_terminal_id:
+        if terminate and isinstance(host_terminal_id, str) and host_terminal_id:
             await kill_spawn_key(
                 runtime,
                 spawn_key,
@@ -531,7 +491,8 @@ async def _stale_pending_absent(runtime: TerminalRuntime, row: Terminal) -> bool
         return await asyncio.to_thread(
             reap_recorded_group_proven_dead, row.process, grace_seconds=0.05
         )
-    await kill_spawn_key(runtime, spawn_key, pending=row)
+    if terminate:
+        await kill_spawn_key(runtime, spawn_key, pending=row)
     return not await backend_session_present(runtime, replace(row, session_name=spawn_key))
 
 
@@ -555,7 +516,14 @@ async def reap_stale_pending_terminals(
     """
     del now
     reaped: list[str] = []
+    suspended = in_doubt_spawns.suspended()
+    for listed in suspended:
+        if await _reap_stale_row(manager, runtime_registry, listed):
+            reaped.append(listed.id)
+    suspended_ids = {row.id for row in suspended}
     for listed in manager.list_stale_pending(in_doubt_seconds):
+        if listed.id in suspended_ids:
+            continue
         if await _reap_stale_row(manager, runtime_registry, listed):
             reaped.append(listed.id)
     return reaped
@@ -564,7 +532,10 @@ async def reap_stale_pending_terminals(
 async def _reap_stale_row(
     manager: TerminalManager, runtime_registry: TerminalRuntimeRegistry, listed: Terminal
 ) -> bool:
-    if not in_doubt_spawns.claim(listed.id):
+    # Naming the listed attempt resumes a claim an earlier reap of it suspended.
+    if not in_doubt_spawns.claim(
+        listed.id, attempt=(listed.attempt_generation, listed.attempt_started_at)
+    ):
         return False
     # The claim moves to a retained settlement task that releases it only after
     # its kill, proof and settlement finish: cancelling the caller (monitor stop)
@@ -581,32 +552,53 @@ async def _reap_claimed_row(
     from gobby.agents.spawn_in_doubt_owner import release_claim
 
     settled = False
+    pair = (listed.attempt_generation, listed.attempt_started_at)
+    retained = replace(listed, process=dict(listed.process) if listed.process is not None else None)
     try:
         row = manager.get(listed.id)
-        pair = (listed.attempt_generation, listed.attempt_started_at)
-        if row is None or row.state != "pending":
-            return False
-        if (row.attempt_generation, row.attempt_started_at) != pair:
-            return False
+        same_pending = (
+            row is not None
+            and row.state == "pending"
+            and (row.attempt_generation, row.attempt_started_at) == pair
+        )
+        if same_pending and row is not None:
+            retained = replace(row, process=dict(row.process) if row.process is not None else None)
         try:
-            absent = await _stale_pending_absent(runtime_registry.resolve(row.backend), row)
+            runtime = runtime_registry.resolve(retained.backend)
+            if same_pending:
+                absent = await _stale_pending_absent(runtime, retained)
+            else:
+                # The key may now name a different attempt. Probe the retained
+                # identity, but never kill a moved-on row's session by that key.
+                absent = await _stale_pending_absent(runtime, retained, terminate=False)
         except Exception as exc:
             logger.warning(
                 "Stale pending terminal %s kept: absence unproven (%s)",
-                row.id,
+                listed.id,
                 type(exc).__name__,
             )
             return False
         if not absent:
             return False
+        if not same_pending:
+            settled = True
+            return False
         result = manager.fail_pending_attempt(
-            row.id,
-            attempt_generation=row.attempt_generation,
-            attempt_started_at=row.attempt_started_at,
+            listed.id,
+            attempt_generation=pair[0],
+            attempt_started_at=pair[1],
         )
-        settled = result is not None
-        return settled
+        # A CAS miss does not erase the old attempt's death proof. Its run
+        # compensation stays protected by the held claim while it executes.
+        settled = True
+        return result is not None
     finally:
-        # Deferred compensation (isolation removal) runs only after a proven settle;
-        # an unproven exit keeps the row pending, so its process may still use it.
-        await release_claim(listed.id, run_deferred=settled)
+        # Deferred compensation runs only after a proven settle. An unproven or
+        # failed settle keeps the row pending, so its process may still use it:
+        # the claim stays suspended with its steps until a later reap of this
+        # attempt settles it. Suspended snapshots stay reachable from the sweep
+        # after a database transition, deletion or attempt change.
+        if settled:
+            await release_claim(listed.id, proven=True)
+        else:
+            in_doubt_spawns.suspend(retained)

@@ -525,20 +525,13 @@ async def run_gobby(
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
     """Quick check whether a healthy Gobby daemon is already listening."""
-    import ipaddress
     import urllib.parse
     import urllib.request
 
-    # Normalize wildcard addresses to localhost for health check
-    # These wildcard strings are compared and normalized, never used as bind targets.
-    wildcard_hosts = {str(ipaddress.IPv4Address(0)), str(ipaddress.IPv6Address(0)), ""}
-    if host in wildcard_hosts:
-        host = "localhost"
-    elif ":" in host and not host.startswith("["):
-        host = f"[{host}]"
+    from gobby.utils.daemon_url import normalize_dial_host
 
     try:
-        url = f"http://{host}:{port}/api/health"
+        url = f"http://{normalize_dial_host(host)}:{port}/api/health"
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False

@@ -301,6 +301,7 @@ describe("providerModels", () => {
         source: "live",
         models: [
           { value: "gpt-5.6-terra", label: "gpt-5.6-terra" },
+          { value: "gpt-6-luna", label: "gpt-6-luna" },
           { value: "gpt-5.6-mini", label: "gpt-5.6-mini" },
           { value: "gpt-5.6-luna", label: "gpt-5.6-luna" },
           { value: "gpt-5.6-codex-spark", label: "gpt-5.6-codex-spark" },
@@ -314,6 +315,7 @@ describe("providerModels", () => {
     expect(
       getModelsForProvider(flavorCatalog, "codex").map((model) => model.label),
     ).toEqual([
+      "GPT 6 Luna",
       "GPT 5.6",
       "GPT 5.6 Luna",
       "GPT 5.6 Sol",

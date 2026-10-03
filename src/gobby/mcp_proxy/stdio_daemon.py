@@ -107,7 +107,9 @@ async def ensure_daemon_running(
         )
         return
 
-    if effective_deps.is_daemon_running():
+    # The process scans read every process's cmdline (seconds under load), so they run
+    # off the event loop that answers initialize.
+    if await asyncio.to_thread(effective_deps.is_daemon_running):
         # Serve stdio immediately: MCP clients budget startup (Codex kills
         # registration at 120s), and a health wait here cannot change the
         # outcome — the daemon is already running, so proxied calls simply
@@ -121,7 +123,7 @@ async def ensure_daemon_running(
             effective_deps.logger.warning(
                 "Running daemon did not answer health probe; serving stdio anyway",
                 extra={
-                    "pid": effective_deps.get_daemon_pid(),
+                    "pid": await asyncio.to_thread(effective_deps.get_daemon_pid),
                     "port": port,
                     "ws_port": ws_port,
                 },
@@ -156,7 +158,7 @@ async def ensure_daemon_running(
             return
         await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
 
-    pid = effective_deps.get_daemon_pid()
+    pid = await asyncio.to_thread(effective_deps.get_daemon_pid)
     effective_deps.logger.error(
         "Started daemon did not become healthy",
         extra={

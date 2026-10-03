@@ -20,7 +20,7 @@ from gobby.runner_init.wake_activity import probe_terminal_activity
 from gobby.storage.terminals import Terminal
 from gobby.terminals.composer import composer_clear_sequence
 from gobby.terminals.leases import TerminalLeaseRegistry
-from gobby.terminals.runtime import Delivered, IndeterminateWrite
+from gobby.terminals.runtime import Delivered, IndeterminateWrite, UnregisteredBackendError
 from gobby.terminals.write_coordinator import UnresolvedWriteStore, WriteCoordinator
 from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.events.wake_test_support import PendingWakeLedger
@@ -140,6 +140,41 @@ async def test_native_backed_interactive_session_wakes_through_its_terminal_row(
     # FakeRuntime ignores Terminal.backend, so the tmux runtime staying untouched
     # is the only thing separating a routed write from a bound one.
     assert managed_chain.tmux.write_log == []
+
+
+@pytest.mark.parametrize("backend", ["native", "tmux"])
+async def test_wake_requires_backend_registered_by_native_only_runner(
+    managed_chain: ManagedChain,
+    monkeypatch: pytest.MonkeyPatch,
+    backend: str,
+) -> None:
+    row = replace(managed_chain.row, backend=backend)
+    managed_chain.store.rows[row.id] = row
+    coordinator = WriteCoordinator(
+        cast(UnresolvedWriteStore, managed_chain.store),
+        runtime_registry(managed_chain.native),
+        lease_registry=TerminalLeaseRegistry(daemon_epoch="native-only-test"),
+    )
+    monkeypatch.setattr(
+        "gobby.runner_init.orchestration.wake_write_services",
+        lambda: (managed_chain.store, coordinator),
+    )
+    dispatcher = WakeDispatcher(
+        session_manager=_session_manager(NATIVE_TERMINAL_CONTEXT),
+        ism_manager=MagicMock(),
+        tmux_sender=_send_tmux_session_wake,
+        terminal_manager=managed_chain.store,
+    )
+    result = await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+    if backend == "native":
+        assert result["delivered"] is True
+        assert managed_chain.native.write_log == WAKE_SEQUENCE
+    else:
+        assert result["delivered"] is False
+        assert result["error_code"] == "terminal_wake_failed"
+        with pytest.raises(UnregisteredBackendError):
+            coordinator.runtime_for(row)
+        assert managed_chain.native.write_log == []
 
 
 @pytest.mark.asyncio

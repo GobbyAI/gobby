@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from typing import cast
 
 from gobby.config.validation_detection import ValidationDetectionConfig
 from gobby.sessions.machine_scope import require_local_session_ownership
@@ -18,6 +19,13 @@ from gobby.tasks.transcript_evidence_snapshots import (
     EvidenceSnapshot,
     load_snapshot,
     store_snapshot,
+)
+from gobby.tasks.transcript_evidence_transfer import (
+    ChunkedPayload,
+    decode,
+    decode_cooperatively,
+    encode,
+    encode_cooperatively,
 )
 
 
@@ -41,19 +49,47 @@ async def derive_prelink_runs(
     if start is None:
         return ()
     snapshot_key = f"{session.id}:prelink"
-    runs, snapshot = await run_in_transcript_evidence_pool(
-        _derive_prelink_runs_sync,
+    resume = load_snapshot(snapshot_key)
+    payload = await run_in_transcript_evidence_pool(
+        _derive_chunked_prelink_runs,
         start,
         session,
         detection,
         repo_path,
         archive_dir,
         require_local_session_ownership(session),
-        load_snapshot(snapshot_key),
+        None if resume is None else await encode_cooperatively(resume),
+    )
+    runs, snapshot = cast(
+        tuple[tuple[TranscriptValidationRun, ...], EvidenceSnapshot | None],
+        await decode_cooperatively(payload),
     )
     if snapshot is not None:
         store_snapshot(snapshot_key, snapshot)
     return runs
+
+
+def _derive_chunked_prelink_runs(
+    start: datetime,
+    session: Session,
+    detection: ValidationDetectionConfig,
+    repo_path: str,
+    archive_dir: str | None,
+    local_machine_id: str,
+    resume: ChunkedPayload | None,
+) -> ChunkedPayload:
+    """Pool entry: records cross the boundary in chunks the event loop decodes."""
+    return encode(
+        _derive_prelink_runs_sync(
+            start,
+            session,
+            detection,
+            repo_path,
+            archive_dir,
+            local_machine_id,
+            None if resume is None else cast(EvidenceSnapshot, decode(resume)),
+        )
+    )
 
 
 def _derive_prelink_runs_sync(

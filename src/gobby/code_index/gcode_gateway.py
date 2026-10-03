@@ -27,7 +27,7 @@ from gobby.utils import spawn
 from gobby.utils.native_bin import resolve_native_bin
 
 MIN_GCODE_GRAPH_VERSION = MANAGED_BIN_VERSION_PINS["gcode"]
-MIN_GCODE_PRUNE_BUDGET_VERSION = "1.9.4"
+MIN_GCODE_PRUNE_BUDGET_VERSION = "1.9.5"
 GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION = "0.9.5"
 _VERSION_PATTERN = re.compile(r"\b(\d+\.\d+\.\d+(?:\.\d+)?)\b")
 _PROJECT_NOT_FOUND_PATTERN = re.compile(r"Project '([^']+)' not found")

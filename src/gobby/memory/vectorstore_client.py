@@ -246,7 +246,10 @@ class VectorStoreClient:
     def raise_if_recoverable(self, error: Exception) -> None:
         if not is_recoverable_vector_store_error(error):
             return
-        self._store._mark_unavailable(error)
+        # A serving-lease fence is checked on every call and says nothing about
+        # Qdrant, so it keeps the client and starts no retry backoff.
+        if not isinstance(error, EmbeddingGenerationLeaseLost):
+            self._store._mark_unavailable(error)
         raise VectorStoreUnavailableError() from error
 
     def mark_unavailable(self, error: BaseException) -> None:

@@ -144,7 +144,7 @@ async def test_supplied_model_without_provider_is_rejected_before_allocation() -
             prompt="work",
             runner=runner,
             model="grok-4.6",
-            terminal_backend="tmux",
+            terminal_backend="native",
             parent_session_id="parent",
             isolation="worktree",
         )
@@ -177,7 +177,7 @@ async def test_supplied_model_does_not_use_agent_or_session_provider() -> None:
             runner=runner,
             agent_body=agent_body,
             model="grok-4.6",
-            terminal_backend="tmux",
+            terminal_backend="native",
             parent_session_id="parent",
             caller_session_id="caller",
             session_manager=session_manager,
@@ -213,7 +213,7 @@ async def test_incompatible_pair_does_not_create_worktree(
             isolation="worktree",
             worktree_storage=worktree_storage,
             project_path=str(repo),
-            terminal_backend="tmux",
+            terminal_backend="native",
             parent_session_id="parent",
         )
 
@@ -292,3 +292,34 @@ async def test_evaluate_spawn_tool_forwards_model() -> None:
     assert evaluate.await_args is not None
     assert evaluate.await_args.kwargs["model"] == "grok-4.6"
     assert evaluate.await_args.kwargs["provider"] == "codex"
+
+
+def test_spawn_registry_resolves_one_daemon_reserver() -> None:
+    """The spawn registry reads the server's one reserver per call, never a cached value."""
+    from gobby.mcp_proxy.tools import spawn_agent
+    from gobby.mcp_proxy.tools.agents import create_agents_registry
+    from gobby.terminals.workspace_agent_panes import AgentPaneReserver
+
+    server = MagicMock(spec=["agent_pane_reserver"])
+    server.agent_pane_reserver = None
+
+    def resolver() -> AgentPaneReserver | None:
+        reserver: AgentPaneReserver | None = server.agent_pane_reserver
+        return reserver
+
+    with patch.object(
+        spawn_agent,
+        "create_spawn_agent_registry",
+        wraps=spawn_agent.create_spawn_agent_registry,
+    ) as factory:
+        create_agents_registry(MagicMock(), db=MagicMock(), agent_pane_reserver_resolver=resolver)
+
+    assert factory.call_count == 1
+    handed = factory.call_args.kwargs["agent_pane_reserver_resolver"]
+    assert handed is resolver
+    # The registry is built before configure_terminals runs, so the first read sees nothing.
+    assert handed() is None
+    reserver = MagicMock(spec=AgentPaneReserver)
+    server.agent_pane_reserver = reserver
+    assert handed() is reserver
+    assert handed() is reserver

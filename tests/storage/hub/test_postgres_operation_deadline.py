@@ -31,6 +31,10 @@ def database() -> Iterator[PostgresHubDatabase]:
         pool_config=PostgresPoolConfig(min_size=1, max_size=1),
     )
     try:
+        # Open the pooled connection before any deadline starts, so the tight
+        # per-statement budgets below measure statements rather than connect cost.
+        with database.transaction() as txn:
+            txn.execute("SELECT 1")
         yield database
     finally:
         database.close()

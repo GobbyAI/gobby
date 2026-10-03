@@ -300,6 +300,164 @@ def test_issue_maintenance_rejects_unregistered_overlay_claim(
         manager.close()
 
 
+def _register_worktree(
+    fixture: AuthorizationFixture, worktree_path: str, *, project_id: UUID, machine_id: UUID
+) -> UUID:
+    worktree_id = uuid4()
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            """INSERT INTO public.worktrees (
+                   id, project_id, machine_id, branch_name, worktree_path
+               ) VALUES (%s, %s, %s, %s, %s)""",
+            (worktree_id, project_id, machine_id, f"wt-{worktree_id.hex}", worktree_path),
+        )
+    return worktree_id
+
+
+def _bound_overlay(fixture: AuthorizationFixture, execution_id: UUID) -> UUID | None:
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        bound = admin.execute(
+            """SELECT code_overlay_project_id FROM gobby_agent_auth.principal_bindings
+               WHERE managed_execution_id = %s""",
+            (execution_id,),
+        ).fetchone()
+    assert bound is not None
+    return cast(UUID | None, bound[0])
+
+
+def test_agent_run_binds_requested_registered_worktree_overlay(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    """A run in a registered worktree it does not own writes that overlay (#23195)."""
+    from uuid import uuid5
+
+    from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
+
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    worktree_path = os.path.realpath(tmp_path / "reviewed-worktree")
+    overlay_id = uuid5(CODE_INDEX_UUID_NAMESPACE, worktree_path)
+    worktree_id = _register_worktree(
+        fixture, worktree_path, project_id=fixture.project_id, machine_id=fixture.machine_id
+    )
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        credential = manager.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            requested_project_path=f"{worktree_path}/src/..",
+        )
+        assert _bound_overlay(fixture, execution_id) == overlay_id
+        scoped_dsn = cast(str, json.loads(credential.bootstrap_path.read_text())["database_url"])
+        with psycopg.connect(scoped_dsn, autocommit=True) as scoped:
+            scoped.execute("INSERT INTO code_indexed_projects (id) VALUES (%s)", (overlay_id,))
+            visible = scoped.execute(
+                "SELECT id FROM code_indexed_projects WHERE id = ANY(%s) ORDER BY id",
+                ([overlay_id, fixture.project_id],),
+            ).fetchall()
+        assert sorted(visible) == sorted([(overlay_id,), (fixture.project_id,)])
+        manager.revoke(execution_id, reason="test-requested-overlay")
+    finally:
+        manager.close()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute("DELETE FROM public.code_indexed_projects WHERE id = %s", (overlay_id,))
+            admin.execute("DELETE FROM public.worktrees WHERE id = %s", (worktree_id,))
+
+
+@pytest.mark.parametrize("registration", ["other_project", "other_machine", "unregistered"])
+def test_agent_run_ignores_requested_path_outside_its_project_and_machine(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+    registration: str,
+) -> None:
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    worktree_path = os.path.realpath(tmp_path / "foreign-worktree")
+    worktree_id: UUID | None = None
+    if registration == "other_project":
+        worktree_id = _register_worktree(
+            fixture,
+            worktree_path,
+            project_id=fixture.other_project_id,
+            machine_id=fixture.machine_id,
+        )
+    elif registration == "other_machine":
+        worktree_id = _register_worktree(
+            fixture,
+            worktree_path,
+            project_id=fixture.project_id,
+            machine_id=fixture.other_machine_id,
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        manager.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            requested_project_path=worktree_path,
+        )
+        assert _bound_overlay(fixture, execution_id) is None
+        manager.revoke(execution_id, reason="test-foreign-overlay")
+    finally:
+        manager.close()
+        if worktree_id is not None:
+            with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+                admin.execute("DELETE FROM public.worktrees WHERE id = %s", (worktree_id,))
+
+
+def test_agent_run_isolation_worktree_outranks_requested_path(
+    authorization_fixture: AuthorizationFixture,
+    tmp_path: Path,
+) -> None:
+    from uuid import uuid5
+
+    from gobby.code_index.models import CODE_INDEX_UUID_NAMESPACE
+
+    fixture = authorization_fixture
+    execution_id = uuid4()
+    own_path = os.path.realpath(tmp_path / "own-worktree")
+    requested_path = os.path.realpath(tmp_path / "requested-worktree")
+    own_id = _register_worktree(
+        fixture, own_path, project_id=fixture.project_id, machine_id=fixture.machine_id
+    )
+    requested_id = _register_worktree(
+        fixture, requested_path, project_id=fixture.project_id, machine_id=fixture.machine_id
+    )
+    with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+        admin.execute(
+            "UPDATE public.agent_runs SET worktree_id = %s WHERE id = %s",
+            (own_id, fixture.agent_run_id),
+        )
+    manager = _manager(fixture, tmp_path / "managed")
+    try:
+        manager.issue(
+            managed_execution_id=execution_id,
+            owner_kind="agent_run",
+            session_id=fixture.session_id,
+            agent_run_id=fixture.agent_run_id,
+            expires_at=datetime.now(UTC) + timedelta(minutes=30),
+            requested_project_path=requested_path,
+        )
+        assert _bound_overlay(fixture, execution_id) == uuid5(CODE_INDEX_UUID_NAMESPACE, own_path)
+        manager.revoke(execution_id, reason="test-own-overlay")
+    finally:
+        manager.close()
+        with psycopg.connect(fixture.database_url, autocommit=True) as admin:
+            admin.execute(
+                "UPDATE public.agent_runs SET worktree_id = NULL WHERE id = %s",
+                (fixture.agent_run_id,),
+            )
+            admin.execute(
+                "DELETE FROM public.worktrees WHERE id = ANY(%s)", ([own_id, requested_id],)
+            )
+
+
 def test_bootstrap_failure_rolls_back_the_partially_created_role(
     authorization_fixture: AuthorizationFixture,
     tmp_path: Path,

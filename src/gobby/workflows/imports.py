@@ -138,7 +138,9 @@ def _upsert_variable(db: Any, data: dict[str, Any], project_id: str | None) -> A
 
 
 def _upsert_pipeline(db: Any, data: dict[str, Any], project_id: str | None) -> Any:
-    PipelineDefinition.model_validate(data)
+    definition = PipelineDefinition.model_validate(data)
+    if "gobby" in definition.tags:
+        raise ValueError("The 'gobby' pipeline tag is reserved for bundled definitions")
     manager = PipelineDefinitionManager(db)
     name = str(data["name"])
     existing = manager.get_by_name(name, project_id=project_id)
@@ -147,6 +149,7 @@ def _upsert_pipeline(db: Any, data: dict[str, Any], project_id: str | None) -> A
         "description": data.get("description", ""),
         "version": str(data.get("version", "1.0")),
         "enabled": normalize_workflow_definition_enabled(data),
+        "tags": definition.tags,
     }
     if existing is not None and existing.project_id == project_id:
         return manager.update(existing.id, **fields)

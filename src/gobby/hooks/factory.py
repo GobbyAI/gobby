@@ -633,6 +633,7 @@ class HookManagerFactory:
                 if tool_proxy_getter is not None
                 else None
             ),
+            session_manager=storage.session,
         )
 
         pipeline_executor = None
