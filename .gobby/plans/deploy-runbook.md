@@ -512,25 +512,34 @@ lock still serializes inserts (1.4.10). `seat_live` leaves the placement
 error codes. Every placed-launch item whose test asserts `seat_live`
 changes with this leaf:
 
-- Superseded: the behavior is gone, and the test is rewritten to assert
-  that same-title placements succeed. These are D2 1.1.3 and 1.1.6, and
-  D12 3.1.2.
+- Superseded: the behavior is gone, and #23329 (`78d750847e`) replaces
+  each test with one that asserts same-title placements succeed. The
+  deferral tables keep the original artifacts of record.
+  - D2 1.1.3 becomes 6.2.7's test. Its truncation case is dropped, because
+    no seat key remains.
+  - D2 1.1.6 becomes
+    `test_workspace_agent_panes.py::test_concurrent_same_title_reserves_both_one_insert_at_a_time`.
+  - D12 3.1.2 becomes
+    `test_placed_pipeline_fixture.py::test_rerun_launches_a_second_pod_beside_live_titles`.
 - Superseded in part: the item drops only its `seat_live` case, and the
   rest stays proved unchanged.
   - D5 1.4.1 drops the occupied-seat refusal (`test_placement.py:524`).
   - D5 1.4.13 drops the held-seat rung of its precedence (`:1065`).
-  - D8 1.7.3 drops the `seat_live` case of its parametrized refusals
+  - D8 1.7.3 drops the `seat_live` case and the `orphaned` case of its
+    parametrized refusals, since both expected `seat_live`
     (`test_resume_placement.py:283`, `:319-323`).
 - Re-proved: the behavior stays. These tests used a `seat_live` refusal
   only as a probe that a pane is still held, and they assert the held pane
-  directly instead (its row, its `terminal_id` and its in-flight mark). The
-  items are D2 1.1.11 (`test_workspace_agent_panes.py:660`, `:673`), D5
-  1.4.5, 1.4.6, 1.4.7 and 1.4.14 (`_assert_seat_live`,
-  `test_placement.py:448`), and D8 1.7.2 and 1.7.6
-  (`test_resume_placement.py:275`, `:488`).
+  directly instead with `_assert_pane_held` (`test_placement.py`), which
+  asserts the pane row and its terminal state. The items are D2 1.1.11
+  (`test_workspace_agent_panes.py:660`, `:673`), D5 1.4.5, 1.4.6 and 1.4.14
+  (`_assert_seat_live`, `test_placement.py:448`), and D8 1.7.2 and 1.7.6
+  (`test_resume_placement.py:275`, `:488`). D5 1.4.7's `seat_race` case
+  becomes `reserve_busy`, a reserve-time `busy` refusal.
 - Re-proved, D5 1.4.10: two concurrent placed spawns through one shared
   reserver both succeed, with distinct pane and tab refs and two
-  `tab.created` broadcasts. Together with the rewritten 1.1.6, this is the
+  `tab.created` broadcasts. Together with rewritten 1.1.6, whose inserts
+  never overlap and which fails against a lockless reserver, this is the
   proof of the per-workspace lock (Decision 6).
 
 `test_seat_adoption.py::_seat_live` (`:208`) seats a live pane and asserts
@@ -1472,6 +1481,7 @@ deferral:
     D8 and D12). The per-workspace lock is proved by re-proved 1.4.10 and
     rewritten 1.1.6. Decision 5 cites its quote sources and records that
     no role is a singleton (PD relay `941ec370`).
+  - The 6.2 disposition names L4b's final #23329 tests (`78d750847e`).
 - 2026-10-03: M1 withdrawn (LM gobby#14930 decision (a), same flow as
   `6612cf3e13`); it predates the #23379 amendment. R6 gobby#14945 or MM
   derives a fresh M1 after review.
