@@ -40,7 +40,7 @@ from gobby.agents.spawn_timing import (
 from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.terminals import TerminalConfig
 from gobby.storage.terminals import Terminal, TerminalManager
-from gobby.terminals import TerminalRuntimeRegistry, UnregisteredBackendError
+from gobby.terminals import TerminalRuntimeRegistry
 from gobby.terminals.host_client import HostUnavailableError
 from gobby.terminals.host_reap import reap_recorded_group_proven_dead
 from gobby.terminals.in_doubt import in_doubt_spawns
@@ -55,7 +55,6 @@ from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from gobby.agents.spawn_in_doubt_owner import OwnerStage
-    from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
 _TIMEOUT_CLEANUP_TASKS: set[asyncio.Task[None]] = set()
@@ -89,13 +88,6 @@ def wrap_provider_command(launch: SandboxLaunch, command: list[str]) -> list[str
     return launch.wrap(command)
 
 
-def derive_spawn_key(backend: str, terminal_id: str) -> str:
-    """Caller-owned backend identity. Native uses the UUID; tmux prefixes it."""
-    if backend == "native":
-        return terminal_id
-    return f"gobby-{terminal_id}"
-
-
 def resolve_terminal_services(
     request: SpawnRequest,
 ) -> tuple[TerminalManager, TerminalRuntimeRegistry, TerminalRuntime, str]:
@@ -112,13 +104,6 @@ def resolve_terminal_services(
         raise RuntimeError("terminal_runtime_registry is required for spawn")
     runtime = registry.resolve(backend)
     return manager, registry, runtime, backend
-
-
-def _default_backend(request: SpawnRequest) -> str:
-    config = getattr(request.daemon_config, "terminals", None)
-    if isinstance(config, TerminalConfig):
-        return config.default_backend
-    return TerminalConfig().default_backend
 
 
 async def _settle_native_spawn_failure(
@@ -259,18 +244,6 @@ async def _spawn_agy_terminal(request: SpawnRequest) -> SpawnResult:
     return await _runtime_spawn(request, plan)
 
 
-def _tmux_sessions_from_request(request: SpawnRequest) -> TmuxSessionManager | None:
-    registry = request.terminal_runtime_registry
-    if registry is None:
-        return None
-    try:
-        runtime = registry.resolve("tmux")
-    except UnregisteredBackendError:
-        return None
-    sessions = getattr(runtime, "_sessions", None)
-    return sessions
-
-
 def _persist_spawn_workspace(request: SpawnRequest, session_id: str) -> None:
     """Record the spawn cwd as the child session's canonical workspace identity."""
     storage = getattr(request.session_manager, "_storage", None)
@@ -315,17 +288,11 @@ async def settle_promotion(
         )
 
 
-def _tmux_duplicate_session_error(exc: BaseException) -> bool:
-    message = str(exc).casefold()
-    return "duplicate" in message or "already exists" in message
-
-
 async def _cleanup_timed_out_prepare(
     prepare_task: asyncio.Future[Any],
     *,
     manager: TerminalManager,
     runtime: TerminalRuntime,
-    backend: str,
     terminal_id: str,
     spawn_key: str,
     attempt_generation: int,
@@ -335,10 +302,7 @@ async def _cleanup_timed_out_prepare(
         prepared = prepare_task.result()
     except asyncio.CancelledError:
         return
-    except Exception as exc:
-        if backend == "tmux" and _tmux_duplicate_session_error(exc):
-            pending = await asyncio.to_thread(manager.get, terminal_id)
-            await kill_spawn_key(runtime, spawn_key, pending=pending)
+    except Exception:
         await asyncio.to_thread(
             manager.fail_pending_attempt,
             terminal_id,
@@ -347,22 +311,18 @@ async def _cleanup_timed_out_prepare(
         )
         return
 
-    if backend == "native":
-        host_terminal_id = prepared.host_terminal_id
-        if host_terminal_id is not None:
-            try:
-                await kill_spawn_key(
-                    runtime,
-                    spawn_key,
-                    pending=None,
-                    host_terminal_id=host_terminal_id,
-                    host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
-                )
-            except HostUnavailableError:
-                return
-    else:
-        pending = await asyncio.to_thread(manager.get, terminal_id)
-        await kill_spawn_key(runtime, spawn_key, pending=pending)
+    host_terminal_id = prepared.host_terminal_id
+    if host_terminal_id is not None:
+        try:
+            await kill_spawn_key(
+                runtime,
+                spawn_key,
+                pending=None,
+                host_terminal_id=host_terminal_id,
+                host_epoch=prepared.locator.frame_host_epoch if prepared.locator else None,
+            )
+        except HostUnavailableError:
+            return
     await asyncio.to_thread(
         manager.fail_pending_attempt,
         terminal_id,
@@ -424,7 +384,6 @@ def _schedule_timeout_cleanup(
                 completed,
                 manager=manager,
                 runtime=runtime,
-                backend=backend,
                 terminal_id=terminal_id,
                 spawn_key=spawn_key,
                 attempt_generation=generation,
@@ -478,7 +437,6 @@ def _terminal_for_spawn_key(
         attempt_started_at=now,
         unresolved_writes={},
         spawn_key=spawn_key,
-        session_name=spawn_key if backend == "tmux" else None,
     )
 
 

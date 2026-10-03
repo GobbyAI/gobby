@@ -10,7 +10,6 @@ from uuid import UUID
 
 from gobby.agents.spawn_executor import (
     _schedule_timeout_cleanup,
-    derive_spawn_key,
     kill_spawn_key,
     settle_promotion,
 )
@@ -90,7 +89,7 @@ async def spawn_web_terminal(
     """
     validated = validate_dimensions(rows, cols)
     terminal_id = mint_terminal_id()
-    spawn_key = derive_spawn_key(runtime.backend, terminal_id)
+    spawn_key = terminal_id
     attempt = manager.create_pending(
         terminal_id,
         project_id,
@@ -253,10 +252,7 @@ async def spawn_web_terminal(
         terminal_id,
         locator=stored,
         locator_key=locator_key,
-        session_name=spawn_key if runtime.backend == "tmux" else None,
-        host_epoch=None
-        if runtime.backend == "tmux"
-        else getattr(handle.locator, "frame_host_epoch", None),
+        host_epoch=getattr(handle.locator, "frame_host_epoch", None),
     )
     if promoted is None:
         current = manager.get(terminal_id)

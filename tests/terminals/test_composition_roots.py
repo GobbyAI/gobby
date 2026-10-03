@@ -161,6 +161,42 @@ def test_composition_roots_give_the_coordinator_the_registry() -> None:
     assert "build_terminal_services(" in monitor_source
 
 
+def test_wiring_registers_the_external_tmux_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
+    """External tmux rows resolve a runtime, so send_keys and wake reach them."""
+    from gobby.config.terminals import TerminalConfig
+    from gobby.config.tmux import TmuxConfig
+    from gobby.runner_init import terminal_wiring
+    from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
+
+    for target in (
+        "gobby.storage.terminals.TerminalManager",
+        "gobby.terminals.host_manager.TerminalHostManager",
+        "gobby.storage.agents.LocalAgentRunManager",
+        "gobby.storage.workspaces.WorkspaceManager",
+        "gobby.terminals.composer_lock.bind_composer_coordinator",
+        "gobby.runner_init.terminal_wiring.bind_wake_write_services",
+    ):
+        monkeypatch.setattr(target, MagicMock())
+    monkeypatch.setattr("gobby.utils.machine_id.require_machine_id", lambda: "machine-1")
+    native = FakeRuntime(backend="native")
+    monkeypatch.setattr(
+        "gobby.terminals.native_runtime.NativeTerminalRuntime",
+        lambda *args, **kwargs: native,
+    )
+    runner = MagicMock()
+    runner.agent_runner = None
+    config = MagicMock()
+    config.tmux = TmuxConfig()
+    config.terminals = TerminalConfig()
+    config.terminal_host = None
+
+    terminal_wiring.init_terminal_wiring(cast(Any, runner), cast(Any, config))
+
+    registry = runner.terminal_runtime_registry
+    assert registry.resolve("native") is native
+    assert isinstance(registry.resolve("tmux"), TmuxTerminalRuntime)
+
+
 def test_wiring_sweeps_orphans_before_accepting_writes() -> None:
     from gobby.runner_init import terminal_wiring
 

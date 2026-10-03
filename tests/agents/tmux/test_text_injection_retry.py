@@ -34,7 +34,7 @@ async def test_enter_timeout_retries_once_without_repasting(
     )
     monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
 
-    manager = TmuxSessionManager()
+    manager = TmuxSessionManager("/tmp/tmux-501/gobby")
     assert await manager.send_keys("%12", "/compact\n") is True
 
     paste.assert_awaited_once()
@@ -61,7 +61,9 @@ async def test_double_enter_timeout_returns_false_with_caller_diagnostics(
     monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
 
     with caplog.at_level(logging.WARNING):
-        ok, reason = await TmuxPaneIO(TmuxSessionManager(), "%12").type_text("/compact\n")
+        ok, reason = await TmuxPaneIO(TmuxSessionManager("/tmp/tmux-501/gobby"), "%12").type_text(
+            "/compact\n"
+        )
 
     assert ok is False
     assert reason == "tmux send-keys returned false while typing text to %12"

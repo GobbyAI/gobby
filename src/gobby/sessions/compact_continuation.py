@@ -337,10 +337,10 @@ def _continuation_pane(
             exc_info=True,
         )
         pane = None
-    if pane is not None and pane.backend == "native":
+    if pane is not None:
         return pane
     logger.warning(
-        "Cannot schedule set_handoff compact continuation for session %s; no live native terminal",
+        "Cannot schedule set_handoff compact continuation for session %s; no live terminal",
         session_id,
     )
     return None

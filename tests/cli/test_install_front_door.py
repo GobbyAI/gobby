@@ -84,7 +84,7 @@ def test_docker_daemon_available_handles_subprocess_errors(
     assert daemon_module._docker_daemon_available() is False
 
 
-def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
+def test_full_preflight_requires_docker_cli_and_source_uv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(daemon_module, "_docker_daemon_available", lambda: False)
@@ -97,7 +97,6 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
         lambda **_kwargs: DependencyReport(
             runtime={},
             required={
-                "tmux": _dependency("missing", name="tmux", minimum="3.2"),
                 "git": _dependency("missing", name="Git", minimum="2.38.0"),
                 "node": _dependency("missing", name="Node.js", minimum="20.11.0"),
                 "docker_compose": _dependency("missing", name="Docker Compose", minimum="2.7.0"),
@@ -116,7 +115,6 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
     )
 
     assert any("Docker daemon" in error for error in errors)
-    assert any("tmux" in error for error in errors)
     assert any("Git" in error for error in errors)
     assert any("Node.js" in error for error in errors)
     assert any("Docker Compose" in error for error in errors)

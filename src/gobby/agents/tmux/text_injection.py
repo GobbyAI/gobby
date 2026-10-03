@@ -10,8 +10,6 @@ from shlex import join as shell_join
 from typing import Literal
 from uuid import uuid4
 
-from gobby.terminals.composer import composer_clear_sequence
-from gobby.terminals.key_bytes import tmux_key_name
 from gobby.utils import spawn
 
 TMUX_TEXT_INJECTION_TIMEOUT_SECONDS = 10.0
@@ -34,13 +32,6 @@ _MISSING_OR_DEAD_TARGET_FRAGMENTS = (
     "pane_dead",
 )
 _PANE_MODE_UNAVAILABLE_FRAGMENTS = ("not in a mode",)
-_ATTENTION_KEYS = {
-    "enter": "Enter",
-    "escape": "Escape",
-    "tab": "Tab",
-    "up": "Up",
-    "down": "Down",
-}
 
 AttentionInjectionStage = Literal["none", "partial"]
 
@@ -221,115 +212,6 @@ async def paste_literal_text_to_tmux_target(
             raise
         except Exception:
             pass
-
-
-async def inject_attention_answer_to_tmux_target(
-    target: str,
-    *,
-    option: int | None = None,
-    text: str | None = None,
-    key: str | None = None,
-    tmux_cmd: Sequence[str] = ("tmux",),
-    timeout: float = TMUX_TEXT_INJECTION_TIMEOUT_SECONDS,
-    enter_delay_seconds: float = TMUX_TEXT_ENTER_DELAY_SECONDS,
-) -> None:
-    """Inject one validated attention answer and retain partial-send evidence."""
-    variants = sum(value is not None for value in (option, text, key))
-    if variants != 1:
-        raise ValueError("exactly one attention answer variant is required")
-
-    base_cmd = tuple(tmux_cmd)
-    if key is not None:
-        named_key = _ATTENTION_KEYS.get(key)
-        if named_key is None:
-            raise ValueError(f"unsupported attention key: {key}")
-        try:
-            await send_named_key_to_tmux_target(
-                target,
-                named_key,
-                tmux_cmd=base_cmd,
-                timeout=timeout,
-            )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            raise AttentionInjectionError(stage="none") from exc
-        return
-
-    payload = str(option) if option is not None else text or ""
-    payload_landed = False
-    try:
-        if payload:
-            await paste_literal_text_to_tmux_target(
-                target,
-                payload,
-                tmux_cmd=base_cmd,
-                timeout=timeout,
-            )
-            payload_landed = True
-            if enter_delay_seconds > 0:
-                await asyncio.sleep(enter_delay_seconds)
-        await send_enter_key_to_tmux_target(
-            target,
-            tmux_cmd=base_cmd,
-            timeout=timeout,
-        )
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        stage: AttentionInjectionStage = "partial" if payload_landed else "none"
-        raise AttentionInjectionError(stage=stage) from exc
-
-
-async def submit_literal_text_to_tmux_target(
-    target: str,
-    text: str,
-    *,
-    tmux_cmd: Sequence[str] = ("tmux",),
-    timeout: float = TMUX_TEXT_INJECTION_TIMEOUT_SECONDS,
-    enter_delay_seconds: float = TMUX_TEXT_ENTER_DELAY_SECONDS,
-    clear_before_submit: bool = False,
-    cli_source: str | None = None,
-) -> None:
-    """Submit non-empty literal text through buffer paste; empty text sends raw Enter.
-
-    ``clear_before_submit`` empties the composer first with the clear sequence for
-    ``cli_source`` so an operator draft is not submitted together with ``text``.
-    """
-    literal_text = text.rstrip("\n")
-    base_cmd = tuple(tmux_cmd)
-
-    if clear_before_submit:
-        for key in composer_clear_sequence(cli_source):
-            key_name = tmux_key_name(key)
-            if key_name is None:
-                raise TmuxTextInjectionError(
-                    f"tmux has no key name for {key}",
-                    command=(*base_cmd, "send-keys", "-t", target, key),
-                )
-            await send_named_key_to_tmux_target(
-                target,
-                key_name,
-                tmux_cmd=base_cmd,
-                timeout=timeout,
-            )
-        if literal_text and enter_delay_seconds > 0:
-            await asyncio.sleep(enter_delay_seconds)
-
-    if literal_text:
-        await send_literal_text_to_tmux_target(
-            target,
-            f"{literal_text}\n",
-            tmux_cmd=base_cmd,
-            timeout=timeout,
-            enter_delay_seconds=enter_delay_seconds,
-        )
-    else:
-        await send_enter_key_to_tmux_target(
-            target,
-            tmux_cmd=base_cmd,
-            timeout=timeout,
-        )
 
 
 async def send_named_key_to_tmux_target(

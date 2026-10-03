@@ -286,7 +286,6 @@ async def compute_sandbox_paths(
         provider_write_exceptions,
         sensitive_roots,
         sensitive_write_roots,
-        tmux_socket_roots,
         toolchain_credential_paths,
         toolchain_read_roots,
     )
@@ -359,9 +358,7 @@ async def compute_sandbox_paths(
             dict.fromkeys(domain.lower() for domain in config.denied_domains if domain)
         ),
         loopback_ports=list(dict.fromkeys((gobby_daemon_port, gobby_websocket_port))),
-        allow_unix_sockets=canonical_paths(
-            [*config.allow_unix_sockets, *tmux_socket_roots()], base=workspace
-        ),
+        allow_unix_sockets=canonical_paths(config.allow_unix_sockets, base=workspace),
         credential_env_vars=(
             [item for item in credential_env_vars(provider, api_base) if item.name in policy_env]
             if provider

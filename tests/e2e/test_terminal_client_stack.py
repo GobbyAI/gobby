@@ -131,16 +131,10 @@ _FRAME_TYPES = {
 
 
 @pytest.fixture
-def terminal_backend(request: pytest.FixtureRequest) -> str:
-    return str(getattr(request, "param", "native"))
-
-
-@pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
     e2e_config: tuple[Path, int, int],
     monkeypatch: pytest.MonkeyPatch,
-    terminal_backend: str,
 ) -> Iterator[None]:
     monkeypatch.setenv("GOBBY_NATIVE_BIN_DIR", str(_gterm_bin_dir()))
     socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
@@ -167,16 +161,12 @@ def e2e_pre_daemon_setup(
         expected_revision=mutations.repository.current_revision(),
         patch=ConfigPatch(
             values={
-                # The registered runtime is native; the stack test exercises its
-                # web-create path, so the daemon opts in here.
-                "terminals.default_backend": terminal_backend,
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 64,
                 "terminal_host.max_attachments_per_terminal": 8,
                 "agent_sandbox.enabled": False,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
-                "tmux.registration_timeout_seconds": 300.0,
             }
         ),
         source="e2e-terminal-stack",
@@ -380,7 +370,9 @@ def _attach_locator(item: dict[str, Any]) -> AttachLocator:
     )
 
 
-def _spawn_agent(client: httpx.Client, backend: Literal["tmux", "native"]) -> dict[str, Any]:
+def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
+    """Spawn one agent run; agent spawn is native-only."""
+    backend = "native"
     created = client.post(
         "/api/tasks",
         json={
@@ -517,8 +509,8 @@ async def test_terminal_client_stack_end_to_end(
     client = _http(daemon_instance)
     # Two distinct native panes: the managed tmux runtime was retired
     # (#22932), so both seats exercise the one registered runtime.
-    direct_spawn = _spawn_agent(client, "native")
-    native_spawn = _spawn_agent(client, "native")
+    direct_spawn = _spawn_agent(client)
+    native_spawn = _spawn_agent(client)
 
     def both_live() -> tuple[dict[str, Any], dict[str, Any]] | None:
         try:
@@ -1592,7 +1584,6 @@ async def test_gclient_survives_daemon_stop_during_startup_response(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("terminal_backend", ["native"], indirect=True)
 async def test_gclient_remote_session_uses_proxy(daemon_instance: DaemonInstance) -> None:
     with _http(daemon_instance) as http:
         await asyncio.to_thread(_wait_for_host, http, daemon_instance)

@@ -811,8 +811,9 @@ async def test_viewport_independent_of_resize_and_only_paste_is_leased(
     assert not any(kind == "paste" for kind, _ in harness.native_rt.write_log)
 
     ext_ws = MockWebSocket()
-    refused = await _attach_result(harness, ext_ws, harness.external_row, request_id="ext")
-    assert refused["code"] == "unsupported_terminal_backend"
+    external = await _attach_result(harness, ext_ws, harness.external_row, request_id="ext")
+    assert external["success"] is True
+    # An external pane keeps its owner's geometry; attaching never resizes it.
     assert harness.tmux_rt.resize_calls == []
 
 
@@ -1289,8 +1290,18 @@ async def test_direct_attach_result_carries_locator(
 
     tmux_ws = MockWebSocket()
     tmux = await _attach_result(harness, tmux_ws, harness.tmux_row, request_id="direct-tmux")
-    assert tmux["success"] is False
-    assert tmux["code"] == "unsupported_terminal_backend"
+    assert tmux["success"] is True
+    assert tmux["direct"] == {
+        "host_epoch": "epoch-1",
+        "frame_socket_path": _FRAME_SOCKET,
+        "host_terminal_id": "%9",
+        "pane": {
+            "socket_path": _SOCKET,
+            "pane_id": "%9",
+            "server_pid": 9,
+            "server_start_time": 9,
+        },
+    }
 
     proxy_ws = MockWebSocket()
     proxy = await _attach_result(
@@ -1369,7 +1380,7 @@ async def test_direct_attach_result_carries_locator(
 
 
 @pytest.mark.asyncio
-async def test_legacy_tmux_attach_is_refused_without_opening_a_frame(
+async def test_proxied_tmux_attach_opens_a_relayed_frame(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     harness = _harness(temp_db, sample_project)
@@ -1383,9 +1394,9 @@ async def test_legacy_tmux_attach_is_refused_without_opening_a_frame(
             frame_delivery="proxy",
             encoding=encoding,
         )
-        assert result["success"] is False
-        assert result["code"] == "unsupported_terminal_backend"
-    assert harness.frame_list == []
+        assert result["success"] is True
+        assert result["direct"] is None
+    assert len(harness.frame_list) == 2
 
 
 @pytest.mark.asyncio

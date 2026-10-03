@@ -123,7 +123,7 @@ async def spawn_agent_impl(
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
-    terminal_backend: Literal["tmux", "native"] | None = None,
+    terminal_backend: Literal["native"] | None = None,
     droid_mode: Literal["exec", "interactive"] = "exec",
     extra_write_paths: list[str] | None = None,
     write_paths_reason: str | None = None,

@@ -10,17 +10,14 @@ from pydantic import BaseModel, Field
 class TerminalConfig(BaseModel):
     """Shared terminal settings for spawn, reaping, and REST/WS surfaces."""
 
-    default_backend: Literal["tmux", "native"] = Field(
+    default_backend: Literal["native"] = Field(
         default="native",
-        description="Default TerminalRuntime backend for new Gobby-owned terminals.",
+        description="TerminalRuntime backend for new Gobby-owned terminals; only native spawns.",
     )
     spawn_in_doubt_seconds: float = Field(
         default=150.0,
         gt=0,
-        description=(
-            "Age below which a pending spawn is in doubt, not dead. "
-            "Defaults to the tmux init timeout (120s) plus a 30s margin."
-        ),
+        description="Age below which a pending spawn is in doubt, not dead.",
     )
     hook_write_timeout_seconds: float = Field(
         default=5.0,

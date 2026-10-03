@@ -18,10 +18,10 @@ class SpawnAgentAction:
     additional_skills: tuple[str, ...] = ()
     model_override: str | None = None
     reasoning_effort: str | None = None
-    terminal_backend: Literal["tmux", "native"] = "tmux"
+    terminal_backend: Literal["native"] = "native"
 
     def __post_init__(self) -> None:
-        if self.terminal_backend not in ("tmux", "native"):
+        if self.terminal_backend != "native":
             raise ValueError(f"invalid terminal_backend: {self.terminal_backend}")
 
 

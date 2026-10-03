@@ -108,8 +108,6 @@ def _spawn_result(*, success: bool = True) -> SimpleNamespace:
         success=success,
         pid=123,
         terminal_id="gobby-resume-successor",
-        tmux_socket_name="gobby",
-        tmux_socket_path="/tmp/gobby.sock",
         error=None if success else "spawn failed",
         message=None,
     )

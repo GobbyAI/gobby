@@ -15,10 +15,28 @@ from typing import Any
 
 import psutil
 
-from gobby.sessions.tmux_context import get_tmux_prefix_for_context
+from gobby.sessions.tmux_context import get_tmux_socket_path, query_tmux_generation
 from gobby.utils import spawn
 
 logger = logging.getLogger(__name__)
+
+
+async def _same_tmux_generation(
+    terminal_ctx: dict[str, Any], socket_path: str, tmux_pane: str
+) -> bool:
+    """False when a recorded server generation no longer answers for the pane.
+
+    A restarted server reuses pane ids. Contexts that recorded no generation
+    are addressed by socket and pane alone.
+    """
+    recorded = (terminal_ctx.get("tmux_server_pid"), terminal_ctx.get("tmux_server_start_time"))
+    if not all(isinstance(part, int) and not isinstance(part, bool) for part in recorded):
+        return True
+    generation = await asyncio.to_thread(query_tmux_generation, socket_path, tmux_pane)
+    return (
+        generation is not None
+        and (generation["server_pid"], generation["server_start_time"]) == recorded
+    )
 
 
 async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -> bool:
@@ -37,9 +55,18 @@ async def kill_terminal_session(terminal_ctx: dict[str, Any], session_id: str) -
     # 1. Try tmux pane kill (sends SIGHUP to process in pane)
     tmux_pane = terminal_ctx.get("tmux_pane")
     if tmux_pane:
+        # Gobby runs no tmux server: a pane is reachable only on the socket its
+        # $TMUX recorded, and %N on any other server is an unrelated pane.
+        socket_path = get_tmux_socket_path(terminal_ctx)
+        if not socket_path or not await _same_tmux_generation(
+            terminal_ctx, socket_path, str(tmux_pane)
+        ):
+            return False
         try:
             proc = await spawn.create_subprocess_exec(
-                *get_tmux_prefix_for_context(terminal_ctx),
+                "tmux",
+                "-S",
+                socket_path,
                 "kill-pane",
                 "-t",
                 str(tmux_pane),

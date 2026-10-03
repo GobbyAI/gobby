@@ -1,7 +1,6 @@
 """Shared helpers for terminal spawn execution."""
 
 import asyncio
-import inspect
 import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
@@ -29,13 +28,10 @@ from gobby.agents.spawn_cache_policy import (
     merge_spawn_path_env,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
-from gobby.agents.spawners.base import SpawnResult as TerminalSpawnResult
 from gobby.agents.srt_runtime import SandboxLaunch
-from gobby.config.tmux import TmuxConfig
 from gobby.utils.terminal_output import redact_terminal_output
 
 if TYPE_CHECKING:
-    from gobby.agents.tmux.spawner import TmuxSpawner
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.terminals import Terminal
     from gobby.terminals.runtime import TerminalRuntime
@@ -92,30 +88,6 @@ def _validate_codex_gobby_tool_allowlist() -> None:
         )
 
 
-async def _spawn_terminal(
-    spawner: "TmuxSpawner",
-    *,
-    command: list[str],
-    cwd: str,
-    env: dict[str, str],
-    auth_cli: str,
-) -> TerminalSpawnResult:
-    if inspect.iscoroutinefunction(getattr(spawner, "spawn_async", None)):
-        return await spawner.spawn_async(
-            command=command,
-            cwd=cwd,
-            env=env,
-            auth_cli=auth_cli,
-        )
-    return await asyncio.to_thread(
-        spawner.spawn,
-        command=command,
-        cwd=cwd,
-        env=env,
-        auth_cli=auth_cli,
-    )
-
-
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
     if request.extra_env:
         for key, value in request.extra_env.items():
@@ -163,9 +135,6 @@ def _record_resume_launch_details(
         metadata["mcp_path"] = mcp_path
     if strict_mcp is not None:
         metadata["strict_mcp"] = strict_mcp
-    tmux_config = getattr(request.daemon_config, "tmux", None)
-    if isinstance(tmux_config, TmuxConfig):
-        metadata["tmux_config"] = tmux_config.model_dump()
     try:
         from gobby.storage.agents import LocalAgentRunManager
 

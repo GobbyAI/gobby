@@ -6,6 +6,8 @@
 | `test_exec_failure_is_typed` | 1.2.13 an exec failure from the gate is `exec_failed:<code>` with errno detail, settled `fail_pending` |
 | `test_host_crash_respawns_and_fences_the_old_epoch` | 1.2.3 one respawn after an unexpected host death, and 3.2.5 a row from the earlier epoch refused `host_epoch_changed` |
 | `test_drain_ends_the_host_and_refuses_respawn` | 3.1.2 `host_shutdown` really drains the host, and 1.2.3 a drained manager never respawns |
+| `test_attach_locator_names_the_host_terminal` | 7.2.1 attach: a committed terminal hands back its host terminal id on its own epoch |
+| `test_resize_reaches_the_childs_pty` | 7.2.1 resize: the child's own PTY reports 120x40 at spawn and the new geometry after a resize |
 """
 
 from __future__ import annotations
@@ -35,6 +37,26 @@ from tests.terminals.acceptance.conftest import (
     wait_until_dead,
     write_line,
 )
+
+
+async def test_attach_locator_names_the_host_terminal(native_host: AcceptanceHost) -> None:
+    live = await spawn_native(native_host)
+
+    locator = await live.runtime.attach_locator(live.terminal)
+
+    assert locator.backend == "native"
+    assert locator.host_terminal_id
+    assert locator.frame_host_epoch == live.terminal.host_epoch
+    assert await live.runtime.is_live(live.terminal) is True
+
+
+async def test_resize_reaches_the_childs_pty(native_host: AcceptanceHost) -> None:
+    live = await spawn_native(native_host)
+    assert await observed_size(live) == (ACCEPTANCE_ROWS, ACCEPTANCE_COLS)
+
+    await live.runtime.resize(live.terminal, 30, 100)
+
+    assert await observed_size(live) == (30, 100)
 
 
 async def test_spawn_commit_and_exit_settle(native_host: AcceptanceHost) -> None:

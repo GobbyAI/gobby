@@ -11,21 +11,6 @@ class ReasoningPayload(Protocol):
     def to_dict(self) -> dict[str, Any]: ...
 
 
-def _tmux_runtime_metadata(terminal: Any | None) -> tuple[str | None, str | None]:
-    """Return optional tmux socket diagnostics from a terminal row."""
-    if terminal is None or getattr(terminal, "backend", None) != "tmux":
-        return None, None
-    locator = getattr(terminal, "locator", None)
-    if not isinstance(locator, dict):
-        return None, None
-    socket_name = locator.get("socket_name")
-    socket_path = locator.get("socket_path")
-    return (
-        socket_name if isinstance(socket_name, str) else None,
-        socket_path if isinstance(socket_path, str) else None,
-    )
-
-
 def build_spawn_response(
     *,
     run_id: str,

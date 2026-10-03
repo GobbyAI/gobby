@@ -74,7 +74,7 @@ class AgentSpawnRequest(ReasoningEffortMixin):
     branch_name: str | None = None
     base_branch: str | None = None
     timeout: float | None = None
-    terminal_backend: Literal["tmux", "native"] | None = None
+    terminal_backend: Literal["native"] | None = None
     extra_write_paths: list[str] | None = None
     write_paths_reason: str | None = None
 

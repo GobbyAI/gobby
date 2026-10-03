@@ -35,7 +35,7 @@ def _droid_request(**overrides: Any) -> SpawnRequest:
         "run_id": "run",
         "parent_session_id": "parent",
         "project_id": "proj",
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
     }
     values.update(overrides)
     values.setdefault("prepared_spawn", prepared_spawn())
@@ -131,8 +131,6 @@ class TestExecuteSpawnDroid:
             pid=12345,
             terminal_type="tmux",
             terminal_id="agent-run-droid",
-            tmux_socket_name="sock",
-            tmux_socket_path="/tmp/sock",
         )
 
         with (

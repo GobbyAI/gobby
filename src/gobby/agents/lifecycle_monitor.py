@@ -105,11 +105,7 @@ class AgentLifecycleMonitor:
         self._check_interval = check_interval_seconds
         self._completion_registry = completion_registry
         self._task_manager = task_manager
-        if tmux_config is None:
-            from gobby.agents.tmux import get_configured_tmux_config
-
-            tmux_config = get_configured_tmux_config()
-        self._tmux_config = tmux_config
+        self._tmux_config = tmux_config or TmuxConfig()
         if terminal_services is None:
             from gobby.terminals.leases import TerminalLeaseRegistry
 

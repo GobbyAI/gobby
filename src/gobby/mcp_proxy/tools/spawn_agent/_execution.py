@@ -16,10 +16,7 @@ from gobby.mcp_proxy.tools.spawn_agent._health import (
     _terminal_is_live,
     schedule_tmux_health_check,
 )
-from gobby.mcp_proxy.tools.spawn_agent._response import (
-    _tmux_runtime_metadata,
-    build_spawn_response,
-)
+from gobby.mcp_proxy.tools.spawn_agent._response import build_spawn_response
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _persist_spawn_runtime
 from gobby.mcp_proxy.tools.spawn_agent._step_state import apply_claimed_step_update
 from gobby.sessions.title_lifecycle import update_title_for_claim
@@ -127,7 +124,6 @@ async def finalize_executed_spawn(
         candidate = await asyncio.to_thread(manager.get, terminal_id)
         if isinstance(getattr(candidate, "backend", None), str):
             terminal = candidate
-    tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(terminal)
     await asyncio.to_thread(
         _persist_spawn_runtime,
         runner,
@@ -200,8 +196,6 @@ async def finalize_executed_spawn(
                     "parent_session_id": parent_session_id,
                     "provider": effective_provider,
                     "pid": spawn_result.pid,
-                    "tmux_socket_name": tmux_socket_name,
-                    "tmux_socket_path": tmux_socket_path,
                     "terminal_id": terminal_id,
                     "backend": getattr(terminal, "backend", None),
                 },

@@ -88,7 +88,7 @@ class TestSpawnAgentCmd:
                 "--task",
                 "#42",
                 "--terminal-backend",
-                "tmux",
+                "native",
                 "--provider",
                 "codex",
             ]
@@ -103,7 +103,7 @@ class TestSpawnAgentCmd:
                 "prompt": "Run checks",
                 "parent_session_id": "parent-resolved",
                 "task_id": "#42",
-                "terminal_backend": "tmux",
+                "terminal_backend": "native",
                 "provider": "codex",
                 "timeout": 120.0,
             },

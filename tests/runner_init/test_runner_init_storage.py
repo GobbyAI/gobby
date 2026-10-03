@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -14,7 +13,6 @@ from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import BootstrapConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.storage import (
-    _warn_missing_terminal_dependency,
     bootstrap_overlaid_config,
     init_storage_and_config,
     run_startup_content_sync,
@@ -22,37 +20,6 @@ from gobby.runner_init.storage import (
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.integration
-
-
-def test_disabled_tmux_skips_availability_warning(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    config = cast(DaemonConfig, SimpleNamespace(tmux=SimpleNamespace(enabled=False)))
-
-    def unexpected_which(_command: str) -> str | None:
-        raise AssertionError("disabled tmux must not probe the host")
-
-    monkeypatch.setattr("gobby.runner_init.storage.shutil.which", unexpected_which)
-
-    with caplog.at_level(logging.WARNING, logger="gobby.runner_init.storage"):
-        _warn_missing_terminal_dependency(config)
-
-    assert caplog.records == []
-
-
-def test_enabled_tmux_warns_when_unavailable(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    config = cast(DaemonConfig, SimpleNamespace(tmux=SimpleNamespace(enabled=True)))
-    monkeypatch.setattr("gobby.agents.tmux.wsl_compat.needs_wsl", lambda: False)
-    monkeypatch.setattr("gobby.runner_init.storage.shutil.which", lambda _command: None)
-
-    with caplog.at_level(logging.WARNING, logger="gobby.runner_init.storage"):
-        _warn_missing_terminal_dependency(config)
-
-    assert "tmux is not installed. Agent spawning in terminal mode will not work." in caplog.text
 
 
 def test_bootstrap_overlay_wins_for_bootstrap_owned_fields() -> None:
