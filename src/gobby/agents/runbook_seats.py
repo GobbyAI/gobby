@@ -26,7 +26,7 @@ LIVE_EXECUTION_STATUSES = (
     ExecutionStatus.WAITING_APPROVAL,
 )
 READ_BOUND = 1000
-"""Rows read per status. A full page refuses as truncated, so the bound never caps silently."""
+"""Rows accepted per status. Each read fetches one extra row, and only that row refuses as truncated."""
 
 _SeatKey = tuple[str, str]
 
@@ -172,7 +172,7 @@ def _workspace_id(workspaces: WorkspaceManager, workspace: str) -> str:
 
 
 def _refuse_truncated(rows: Sequence[object], what: str) -> None:
-    if len(rows) >= READ_BOUND:
+    if len(rows) > READ_BOUND:
         raise RunbookSeatRefusal(f"the {what} read is truncated at {READ_BOUND} rows")
 
 
@@ -182,7 +182,7 @@ def _refuse_live_siblings(
     name = execution.pipeline_name
     siblings: list[str] = []
     for status in LIVE_EXECUTION_STATUSES:
-        rows = executions.list_executions(status=status, pipeline_name=name, limit=READ_BOUND)
+        rows = executions.list_executions(status=status, pipeline_name=name, limit=READ_BOUND + 1)
         _refuse_truncated(rows, f"{status.value} '{name}' execution")
         siblings.extend(row.id for row in rows if row.id != execution.id)
     if siblings:
@@ -194,7 +194,7 @@ def _refuse_held_seats(
 ) -> None:
     held: list[str] = []
     for status in ACTIVE_AGENT_RUN_STATUSES:
-        rows = runs.list_by_status(status, limit=READ_BOUND, project_id=project_id)
+        rows = runs.list_by_status(status, limit=READ_BOUND + 1, project_id=project_id)
         _refuse_truncated(rows, f"{status} agent run")
         for run in rows:
             key = _run_seat(run)

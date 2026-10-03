@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.agents.runbook_seats import (
+    READ_BOUND,
     CatalogueSeat,
     RunbookSeatRefusal,
     RunbookSeatStores,
@@ -221,6 +222,37 @@ def test_uncertain_lookup_fails_closed(
     caller = arrange(env, monkeypatch)
 
     with pytest.raises(RunbookSeatRefusal, match=cause):
+        _check(env, caller)
+
+
+@pytest.mark.parametrize("read", ["executions", "runs"])
+def test_read_bound_refuses_only_past_a_full_page(
+    env: _Env, monkeypatch: pytest.MonkeyPatch, read: str
+) -> None:
+    caller = _pipeline_child(env)
+    filler = _run(env, "completed")
+    count = READ_BOUND
+    real_list_executions = LocalPipelineExecutionManager.list_executions
+
+    def repeated_executions(
+        self: LocalPipelineExecutionManager, *, limit: int, **kwargs: Any
+    ) -> list[object]:
+        rows: list[object] = list(real_list_executions(self, limit=limit, **kwargs))
+        return (rows * count)[: min(limit, count)]
+
+    def repeated_runs(*args: Any, limit: int, **kwargs: Any) -> list[AgentRun]:
+        return [filler] * min(limit, count)
+
+    if read == "executions":
+        monkeypatch.setattr(LocalPipelineExecutionManager, "list_executions", repeated_executions)
+    else:
+        monkeypatch.setattr(env.stores.runs, "list_by_status", repeated_runs)
+
+    seats, _ = _check(env, caller)
+    assert [seat.name for seat in seats] == ["lead", "dev"]
+
+    count = READ_BOUND + 1
+    with pytest.raises(RunbookSeatRefusal, match=f"truncated at {READ_BOUND} rows"):
         _check(env, caller)
 
 
