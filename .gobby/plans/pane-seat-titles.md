@@ -94,6 +94,17 @@ Outcomes:
     project name is `project_label`: the user's card label, else the
     daemon's name. A project the sidebar does not list yields the bare
     `#<seq>`.
+13. **3.1, 3.2 and 3.3 go live only through 3.4's cutover** (PD ruling
+    19:48, close review `cfd753e3`). Migration 458 keeps only titles stamped
+    `manual`. 3.1's clear-successor copy and 3.2's title writes set no
+    `title_source`, so a name a person sets after either goes live and
+    before the cutover would be nulled. The four leaves land on 0.5.0
+    together, right before that cutover, because any restart activates
+    whatever has landed. The old code stamps `manual` on every title write
+    up to the stop, and 458 runs before the new code starts, so no title
+    writer has a window. Rejected: stamping `manual` on each writer in 3.1
+    and 3.2 and removing the stamps in 3.4, which is churn on seven write
+    paths where one missed writer silently loses a name.
 
 ## As-Is Facts
 `kind: framing`
@@ -175,6 +186,10 @@ Outcomes:
 - Rollout: Python leaves go live after a PD-owned daemon restart from the main
   checkout, announced with a `global` message before and after, outside quiet
   hours 04:45-06:45 CT. 3.4 ships in a package whose cutover Josh approves.
+  3.1, 3.2 and 3.3 go live only through that cutover (Decision 13).
+- Packaging: 3.1, 3.2, 3.3 and 3.4 land on 0.5.0 together, right before 3.4's
+  cutover. The MM holds 3.1-3.3 until 3.4 lands with them, because any
+  restart activates whatever has landed.
   1.1 ships through a gclient version bump and a Release Manager install:
   gclient is promoted separately from the coherent `gcode`/`gdaemon`/`ghook` set.
 - Routing: 1.1 goes to the gclient lane L1 (gobby#14909). 2.1 through 5.1 go to
@@ -476,7 +491,8 @@ because each is independently testable once the writes stop.
 - Clear successor (PD ruling 15:47): `_commit_web_chat_clear_successor_rows`
   inserts the successor with `title` copied from the predecessor row and
   writes no `title_source`. `clear_successor_title` goes with
-  `title_lifecycle.py`.
+  `title_lifecycle.py`. Migration 458 would null that copy, so this leaf goes
+  live only through 3.4's cutover (Decision 13).
 - Tests that import the retired helpers: `tests/sessions/test_handoff.py`
   drops `test_title_lifecycle_is_provisional_task_manual_and_clear_sticky`
   (~1888) and its `provider_title_label` import (~60).
@@ -594,7 +610,8 @@ the precedence have nothing left to rank. Edits:
 - `servers/routes/sessions/core.py` (~317) stops serving `title_source`.
   `servers/routes/sessions/lifecycle.py` (~441) keeps `POST /api/sessions/{id}/rename`
   and writes the title alone (Q3).
-- The column itself stays until 3.4. No code reads or writes it after this leaf.
+- The column itself stays until 3.4. No code reads or writes it after this leaf,
+  so this leaf goes live only through 3.4's cutover (Decision 13).
 
 Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_handoff.py tests/storage/sessions tests/storage/test_sessions_import.py tests/storage/test_local_model_flags.py tests/servers/routes/test_agent_spawn_routes.py tests/servers/routes/test_servers_routes_sessions_routes.py tests/servers/routes/test_sessions_acp_routes.py tests/servers/test_http_models.py tests/servers/test_session_control.py tests/servers/websocket/chat/test_stream_persistence.py tests/sessions/test_acp_lifecycle_service.py tests/hooks/test_hooks_manager.py tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py -q`,
 then `gcode grep -w -E 'title_source|set_title|apply_title_mutation' src`, which
@@ -713,7 +730,8 @@ Migration body:
 ```sql
 -- Session titles are optional names a person sets (#23337). Automatic titles
 -- go first, then the column that ranked them. Communications sessions keep
--- their "Comms: <user>" names.
+-- their "Comms: <user>" names. The title-write removals go live only through
+-- this migration's cutover, so every name a person set before it is 'manual'.
 UPDATE sessions SET title = NULL
 WHERE title_source IS DISTINCT FROM 'manual'
   AND source IS DISTINCT FROM 'comms';
@@ -724,8 +742,9 @@ The UPDATE is irreversible on the live hub: it destroys every automatic title,
 and no copy is kept. That is intended (Q4). This leaf ships in a package whose
 cutover Josh approves. The PD runs it from the main checkout outside quiet
 hours with `global` notices before and after. `gobby cutover` refuses
-uncommitted schema inputs. 3.2 is live before the cutover, so no running code
-reads the column when it drops.
+uncommitted schema inputs. 3.1, 3.2 and 3.3 are not live before the cutover
+(Decision 13): the old daemon stops, 458 runs, and the new daemon starts with
+code that never reads the column.
 
 Verification planned: `cargo nextest run -p gobby-core`,
 `cargo nextest run -p gobby-daemon --test cli_contract`,
@@ -743,6 +762,11 @@ Verification planned: `cargo nextest run -p gobby-core`,
   `crates/gcore/src/schema/verify_tests.rs::title_source_is_not_a_live_mutable_seed_field`.
 - 3.4.3 - The schema identity carriers match the migrated schema. file:
   `src/gobby/storage/schema_expected_identity.json`.
+- 3.4.4 - 3.1, 3.2 and 3.3 reach 0.5.0 in the same landing as this leaf,
+  right before its cutover, so none of them activates ahead of migration 458
+  and a name set before the cutover keeps its `manual` stamp. behavior:
+  "go live only through" in
+  `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`.
 
 ## P4: Read-time display name
 `kind: framing`
@@ -977,6 +1001,12 @@ which must return nothing.
 - 2026-10-02: Adversary round 2 (gobby#14550): consensus on `86db544`. The
   PD accepted Decision 12 and the name-ladder call at 16:59. The 1.1
   granularity nit is non-blocking and left as-is.
+- 2026-10-02: Close review `cfd753e3` (run `0c2c56ba`) was invalid: migration
+  458 nulled a name written between 3.2 going live and the cutover. PD ruling
+  19:48: sequencing. Decision 13, the Constraints, 3.1, 3.2 and 3.4 (3.4.4)
+  hold 3.1-3.3 until 3.4's cutover. The Writer extended the hold to 3.1,
+  whose clear-successor copy writes no `title_source`. M1 withdrawn (memory
+  `f5577ae0`); the Adversary (gobby#14550) derives a fresh M1.
 
 ## V2: Verification
 `kind: verification`
@@ -999,236 +1029,3 @@ claiming and closing a task leaves the session title unset; the web session
 list and Telegram agent menu show the pane label for a bound session. After
 the 3.4 cutover, `sessions.title_source` no longer exists. Do not run the full
 pytest suite.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: gclient renders the project ref and pane label
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '1.1.1: A pane labelled "L3 hooks" running session `#15011`
-    in project `gobby` renders `gobby#15011: L3 hooks` in its header. test: `crates/gclient/src/ui/pane_chrome/tests.rs::header_names_project_ref_and_pane_label`.
-
-    1.1.2: An unlabelled pane renders `gobby#15011: Claude` for a Claude session.
-    test: `crates/gclient/src/ui/pane_chrome/tests.rs::header_falls_back_to_provider`.
-
-    1.1.3: Agents line 1 renders the same `<project>#<seq>: <seat label>` text as
-    the header in every sort and grouping (Decision 12), and line 2 keeps the task
-    ticker. test: `crates/gclient/src/ui/sidebar_rows/tests.rs::agent_line_one_names_seat`.
-
-    1.1.4: After a `pane.renamed` event, the next frame''s header and Agents line
-    1 carry the new label. test: `crates/gclient/tests/sidebar_model.rs::pane_rename_moves_seat_label`.
-
-    1.1.5: A session''s title and its run''s agent name no longer name the seat: an
-    unlabelled pane running a titled session from a named definition gets the seat
-    label `Claude`, and the 1.1 grep for `manual_title`, `title_source` and `definition_label`
-    returns nothing. test: `crates/gclient/tests/sidebar_model.rs::session_title_does_not_name_seat`.
-
-    1.1.6: The gclient version is bumped in its manifest, the lockfile and the install
-    pin. file: `src/gobby/install/version_pins.py`.
-
-    1.1.7: Attention chrome names a labelled seat `#<seq>: <pane label>`. test: `crates/gclient/tests/attention_flow.rs::attention_names_seat_by_pane_label`.'
-  labels:
-  - covers:pane-seat-titles:1.1:1.1.1
-  - covers:pane-seat-titles:1.1:1.1.2
-  - covers:pane-seat-titles:1.1:1.1.3
-  - covers:pane-seat-titles:1.1:1.1.4
-  - covers:pane-seat-titles:1.1:1.1.5
-  - covers:pane-seat-titles:1.1:1.1.6
-  - covers:pane-seat-titles:1.1:1.1.7
-  tdd: true
-  source_section: '1.1'
-  implementation_domain: frontend
-- title: Spawn writes the placement title as the pane label
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '2.1.1: A tab placement''s new pane carries the placement title
-    as its label, as a split placement''s pane already does. test: `tests/terminals/test_workspace_agent_panes.py::test_tab_placement_labels_pane`.
-
-    2.1.2: A placement without `title` is filled with the agent definition name, and
-    a blank `title` is still refused. test: `tests/mcp_proxy/tools/spawn_agent/test_placement.py::test_missing_title_defaults_to_agent_name`.
-
-    2.1.3: A second placement with the same title into one workspace is refused as
-    a held seat. test: `tests/terminals/test_workspace_agent_panes.py::test_same_title_seat_is_refused`.'
-  labels:
-  - covers:pane-seat-titles:2.1:2.1.1
-  - covers:pane-seat-titles:2.1:2.1.2
-  - covers:pane-seat-titles:2.1:2.1.3
-  tdd: true
-  source_section: '2.1'
-  implementation_domain: backend
-- title: No automatic title writes
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '3.1.1: Creating a task with `claim=true`, claiming it and
-    closing it leave the session title unchanged. test: `tests/mcp_proxy/tools/tasks/test_close_task_flow.py::test_claim_and_close_leave_session_title`.
-
-    3.1.2: Registering a session without a title stores no title, and a registration
-    with an explicit title stores it. test: `tests/storage/sessions/test_storage_sessions_registration.py::test_register_writes_only_explicit_titles`.
-
-    3.1.3: A spawned child and a materialized session start untitled. test: `tests/hooks/test_session_materialize.py::test_session_start_leaves_title_unset`.
-
-    3.1.4: A web-chat `/clear` successor carries its predecessor''s title verbatim,
-    and an untitled predecessor yields an untitled successor. test: `tests/sessions/test_clear_continuation.py::test_clear_successor_copies_title_verbatim`.
-
-    3.1.5: `SessionManager` no longer exposes `normalize_automatic_title_refs`, and
-    the 3.1 grep for the retired names returns nothing. test: `tests/storage/test_sessions_import.py::test_session_manager_public_method_signatures_are_stable`.
-
-    3.1.6: `build_task_tree` lives in `_crud_tree.py` and the web-chat clear successor
-    commit lives in `clear_web_chat_successor.py`. file: `src/gobby/sessions/clear_web_chat_successor.py`.'
-  labels:
-  - covers:pane-seat-titles:3.1:3.1.1
-  - covers:pane-seat-titles:3.1:3.1.2
-  - covers:pane-seat-titles:3.1:3.1.3
-  - covers:pane-seat-titles:3.1:3.1.4
-  - covers:pane-seat-titles:3.1:3.1.5
-  - covers:pane-seat-titles:3.1:3.1.6
-  tdd: true
-  source_section: '3.1'
-  implementation_domain: backend
-- title: Title source, precedence and set_title removed
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.1'
-  validation_criteria: '3.2.1: `gobby-sessions` registers no `set_title` tool. test:
-    `tests/sessions/test_handoff.py::test_set_title_tool_is_not_registered`.
-
-    3.2.2: `POST /api/sessions/{id}/rename` stores the stripped title, a blank value
-    clears it, and the response carries no `title_source`. test: `tests/servers/routes/test_servers_routes_sessions_routes.py::test_rename_session_writes_title_only`.
-
-    3.2.3: `Session` has no `title_source` field. test: `tests/storage/sessions/test_storage_sessions_models.py::test_session_has_no_title_source`.
-
-    3.2.4: `register_session` takes no `title_source` argument. test: `tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py::test_register_session_has_no_title_source`.'
-  labels:
-  - covers:pane-seat-titles:3.2:3.2.1
-  - covers:pane-seat-titles:3.2:3.2.2
-  - covers:pane-seat-titles:3.2:3.2.3
-  - covers:pane-seat-titles:3.2:3.2.4
-  tdd: true
-  source_section: '3.2'
-  implementation_domain: backend
-- title: tmux window naming deleted
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.2'
-  validation_criteria: '3.3.1: The repair loop expires sessions on a missing tmux
-    server or pane and renames no window. test: `tests/test_runner_maintenance_tmux_repair.py::test_missing_pane_expires_sessions_without_rename`.
-
-    3.3.2: `update_title` runs no tmux rename and no title listener. test: `tests/storage/sessions/test_title_fields.py::test_update_title_has_no_side_effects`.
-
-    3.3.3: `probe_tmux_pane` lives in `runner_tmux_repair.py`, and `tmux_window_naming.py`
-    no longer exists. file: `src/gobby/runner_tmux_repair.py`.'
-  labels:
-  - covers:pane-seat-titles:3.3:3.3.1
-  - covers:pane-seat-titles:3.3:3.3.2
-  - covers:pane-seat-titles:3.3:3.3.3
-  tdd: true
-  source_section: '3.3'
-  implementation_domain: backend
-- title: Migration 458 drops automatic titles and the title source
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.3'
-  validation_criteria: '3.4.1: Migration 458 nulls every title not marked `manual`
-    outside communications sessions and drops `sessions.title_source`. behavior: "IS
-    DISTINCT FROM ''manual''" in `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`.
-
-    3.4.2: `title_source` is no longer a live mutable seed field and migration 458
-    is embedded. test: `crates/gcore/src/schema/verify_tests.rs::title_source_is_not_a_live_mutable_seed_field`.
-
-    3.4.3: The schema identity carriers match the migrated schema. file: `src/gobby/storage/schema_expected_identity.json`.'
-  labels:
-  - covers:pane-seat-titles:3.4:3.4.1
-  - covers:pane-seat-titles:3.4:3.4.2
-  - covers:pane-seat-titles:3.4:3.4.3
-  tdd: true
-  source_section: '3.4'
-  implementation_domain: backend
-- title: One display_name helper for the API, Telegram and the CLI
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.4'
-  validation_criteria: "4.1.1: `display_name` returns the pane label, else the title,\
-    \ else `<Provider> \xB7 #<newest claimed seq>`, else `<Provider>`. test: `tests/sessions/test_display_name.py::test_display_name_ladder`.\n\
-    4.1.2: `fetch_pane_labels_by_session` returns, in one query, the label of the\
-    \ pane bound to each session's newest pending or live terminal. It returns `None`\
-    \ when that terminal has no pane, even if an older terminal has one, and when\
-    \ the session has no such terminal. test: `tests/storage/sessions/test_task_refs.py::test_fetch_pane_labels_by_session`.\n\
-    4.1.3: Every session in the `/api/sessions` list carries `display_name`. test:\
-    \ `tests/servers/routes/test_servers_routes_sessions_routes.py::test_list_sessions_serves_display_name`.\n\
-    4.1.4: Telegram agent buttons and labels use display names. test: `tests/communications/test_agent_labels.py::test_menu_labels_use_display_names`.\n\
-    4.1.5: `gobby sessions list` and `show` print the display name. test: `tests/cli/test_cli_sessions.py::test_list_and_show_print_display_name`.\n\
-    4.1.6: `gobby sessions summarize` is registered from `cli/sessions_summary.py`.\
-    \ test: `tests/cli/test_cli_sessions_coverage.py::test_summarize_command_registered`."
-  labels:
-  - covers:pane-seat-titles:4.1:4.1.1
-  - covers:pane-seat-titles:4.1:4.1.2
-  - covers:pane-seat-titles:4.1:4.1.3
-  - covers:pane-seat-titles:4.1:4.1.4
-  - covers:pane-seat-titles:4.1:4.1.5
-  - covers:pane-seat-titles:4.1:4.1.6
-  tdd: true
-  source_section: '4.1'
-  implementation_domain: backend
-- title: Web session lists read display_name
-  category: code
-  task_type: feature
-  depends_on:
-  - '3.4'
-  - '4.1'
-  validation_criteria: '4.2.1: Activity rows render `<ref>: <display_name>`, and a
-    row without `display_name` renders the ref alone. test: `web/src/lib/__tests__/sessionTitle.test.ts::renders
-    ref then display_name`.
-
-    4.2.2: The web `Session` type carries `display_name` and no `title_source`. file:
-    `web/src/types/sessions.ts`.
-
-    4.2.3: The web tests cover a labelled session, a titled session and the provider
-    fallback. file: `web/src/lib/__tests__/sessionTitle.test.ts`.'
-  labels:
-  - covers:pane-seat-titles:4.2:4.2.1
-  - covers:pane-seat-titles:4.2:4.2.2
-  - covers:pane-seat-titles:4.2:4.2.3
-  tdd: true
-  source_section: '4.2'
-  implementation_domain: frontend
-- title: Session naming docs
-  category: docs
-  task_type: feature
-  depends_on:
-  - '1.1'
-  - '2.1'
-  - '3.4'
-  - '4.2'
-  validation_criteria: '5.1.1: The sessions guide describes the pane label as the
-    seat name and the read-time display name. behavior: "pane label" in `docs/guides/sessions.md`.
-
-    5.1.2: The session boundary contract states that a `/clear` successor copies the
-    title verbatim. behavior: "verbatim" in `docs/contracts/session-boundary.md`.
-
-    5.1.3: The discovery reference names `rename_workspace_item` for seat names. behavior:
-    "rename_workspace_item" in `src/gobby/install/shared/skills/gobby/references/sessions/discovery.md`.
-
-    5.1.4: The shared role text names the pane label as the seat name. behavior: "pane
-    label" in `.gobby/roles/_common.md`.
-
-    5.1.5: The HTTP guide documents `display_name` on the session list. behavior:
-    "display_name" in `docs/guides/http-endpoints.md`.'
-  labels:
-  - covers:pane-seat-titles:5.1:5.1.1
-  - covers:pane-seat-titles:5.1:5.1.2
-  - covers:pane-seat-titles:5.1:5.1.3
-  - covers:pane-seat-titles:5.1:5.1.4
-  - covers:pane-seat-titles:5.1:5.1.5
-  tdd: false
-  source_section: '5.1'
-  assigned_agent: tech-writer
-```
