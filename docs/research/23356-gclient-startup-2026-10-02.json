@@ -110,5 +110,6 @@
       "roster_share_percent": 97.34,
       "raw_summary": "2026-10-02T23:57:47.947460Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.07s attach=0.28s roster=16.25s first_frame=0.09s total=16.69s"
     }
-  ]
+  ],
+  "isolated_follow_up_artifact": "23356-gclient-isolated-2026-10-02.json"
 }
