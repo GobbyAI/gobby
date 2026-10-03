@@ -508,7 +508,9 @@ async def _legacy_task_checkout_proof(
     start = _evidence_epoch(window_start)
     if start is None:
         return denied
-    worktrees = await asyncio.to_thread(ctx.worktree_manager.list_worktrees, task_id=task_id)
+    worktrees = await asyncio.to_thread(
+        ctx.worktree_manager.list_worktrees, task_id=task_id, limit=None
+    )
     if not isinstance(worktrees, list):
         return denied
     roots: dict[str, float] = {}
@@ -540,8 +542,7 @@ async def _legacy_task_checkout_proof(
         return denied
     try:
         paths = await collect_commit_paths_async(commits, root)
-    except RuntimeError as exc:
-        logger.warning("Legacy task commit paths are unavailable: %s", exc)
+    except RuntimeError:
         return denied
     paths = await committable_task_paths_async(paths, root)
     return frozenset((root, path) for path in paths), datetime.fromtimestamp(created, UTC)
