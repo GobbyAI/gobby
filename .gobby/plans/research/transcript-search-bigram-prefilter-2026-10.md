@@ -99,6 +99,15 @@ are contended by design and are not evidence; the verdict above rests on the
 single-process draft measurements. Full-message identity across both arms is
 shown at 3k groups; at 200k only the snippet sequences were compared.
 
+**Common-hit full pagination with the prefilter: lower bound, not executed.**
+The PD waived this arm for a retire disposition on 2026-10-03 at 11:19 CDT
+(the amendment is recorded on criterion 1). Running it single-process would take
+about 3.7 CPU-hours of the serial heavy slot. Every prefilter call re-runs
+the signature scan, measured at 2.634 s for this query. The baseline needs 5000
+calls to exhaust it, so the prefilter arm would take at least 5000 × 2.634 s,
+about 13,200 s. That is about 94x the 140.38 s baseline before any rendering.
+This is arithmetic from measured inputs; the arm was not executed.
+
 ## Why it fails
 
 - **The scan is a linear Python loop.** `candidate_group_indices` checks the query
