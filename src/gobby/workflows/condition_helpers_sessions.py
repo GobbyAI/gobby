@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
+from gobby.workflows.agent_resolver import resolve_agent
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -46,6 +48,40 @@ def send_keys_target_in_scope(
     return scope.admits(project_id=target.project_id, session_id=target_id)
 
 
+# The ``agent`` defaults of the gobby-agents spawn tools, for calls that omit it.
+_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "backend-developer"}
+
+
+def spawn_target_allowed(
+    session_manager: SessionManager | None, caller_ref: Any, tool_name: Any, agent: Any
+) -> bool:
+    """Whether the caller may spawn ``agent`` through the gobby-agents ``tool_name``.
+
+    A root session (no agent run, depth 0) spawns anything. A spawned caller's
+    definition comes from its agent run record, and its ``spawnable_agents``
+    decides: any agent, the listed agents, or none. Anything unresolvable raises,
+    and a raising block condition fails closed.
+    """
+    if session_manager is None:
+        raise RuntimeError("spawn target scope needs a session manager")
+    if not isinstance(caller_ref, str) or not caller_ref:
+        raise ValueError("spawn target scope needs the caller session")
+    caller = session_manager.get(session_manager.resolve_session_reference(caller_ref))
+    if caller is None:
+        raise ValueError(f"Caller session {caller_ref} not found")
+    if caller.agent_run_id is None and caller.agent_depth == 0:
+        return True
+    if caller.agent_run_id is None:
+        raise ValueError(f"Spawned session {caller.id} has no agent run")
+    run = LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
+    if run is None or not run.agent_name:
+        raise ValueError(f"Agent run {caller.agent_run_id} names no agent definition")
+    body = resolve_agent(run.agent_name, session_manager.db, project_id=caller.project_id)
+    if body is None:
+        raise ValueError(f"Agent definition {run.agent_name!r} not found")
+    return body.may_spawn(agent or _SPAWN_TOOL_DEFAULT_AGENT[tool_name])
+
+
 def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
@@ -53,5 +89,8 @@ def session_condition_helpers(
     return {
         "send_keys_target_in_scope": lambda caller_ref, target_ref: send_keys_target_in_scope(
             session_manager, caller_ref, target_ref
+        ),
+        "spawn_target_allowed": lambda caller_ref, tool_name, agent: spawn_target_allowed(
+            session_manager, caller_ref, tool_name, agent
         ),
     }
