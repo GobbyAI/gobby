@@ -26,7 +26,7 @@ def _list_run_payload(run: Any) -> dict[str, Any]:
 
 
 def _seat(placement: object) -> dict[str, Any] | None:
-    """The workspace and canonical title a placed run launched into, else None."""
+    """The workspace and raw placement title a placed run launched into, else None."""
     if not isinstance(placement, Mapping):
         return None
     workspace = placement.get("workspace_id")

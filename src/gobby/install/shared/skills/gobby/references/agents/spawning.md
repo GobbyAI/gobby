@@ -20,6 +20,12 @@ every item for partial failures instead of retrying the whole batch blindly.
 Use `wait_for_agent` once for a live run and yield; read final evidence on wake.
 The lifecycle reference covers output and cancellation.
 
+A runbook's first step is `check_runbook_seats(workspace, requested, catalogue)`,
+called from its pipeline `mcp` step. It is read-only. It refuses a live sibling
+execution, a requested seat held by an active run, a missing or disabled agent
+definition, or too few free slots, and it names each holder. Placement's seat
+check and each launch's slot reservation stay authoritative.
+
 Runtime isolation accepts `none`, `worktree`, or `clone`; `inherit` belongs to
 agent definitions. Existing isolation IDs request reuse. Boot-failure cleanup is
 opt-in for freshly created isolation; preserve work when inspecting a failed run.
