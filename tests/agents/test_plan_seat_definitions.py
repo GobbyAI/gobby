@@ -19,6 +19,8 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.definitions import AgentDefinitionManager
 from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
 from gobby.workflows.definitions import AgentDefinitionBody
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -27,7 +29,6 @@ from tests.agents._yaml_helpers import _field, flat
 pytestmark = pytest.mark.unit
 
 SEATS = ("plan-writer", "plan-enhancer", "plan-adversary")
-SESSION_ID = "33333333-3333-4333-8333-333333333333"
 
 
 def _load(name: str) -> AgentDefinitionBody:
@@ -98,10 +99,10 @@ def test_writer_spawns_no_enhancer_enhancer_stays_live() -> None:
     assert "stay live" in _instructions(enhancer)
 
 
-def _spawn_event(agent: str) -> HookEvent:
+def _spawn_event(caller_id: str, agent: str) -> HookEvent:
     return HookEvent(
         event_type=HookEventType.BEFORE_TOOL,
-        session_id=SESSION_ID,
+        session_id=caller_id,
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={
@@ -112,18 +113,39 @@ def _spawn_event(agent: str) -> HookEvent:
                 "arguments": {"agent": agent, "isolation": "none"},
             },
         },
+        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
     )
 
 
 @pytest.mark.asyncio
-async def test_seat_spawns_admitted_from_pipeline_child(temp_db: HubDatabase) -> None:
+async def test_seat_spawns_admitted_from_pipeline_child(
+    temp_db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+) -> None:
     sync_bundled_rules(temp_db, get_bundled_rules_path())
-    engine = RuleEngine(temp_db)
-    pipeline_child: dict[str, Any] = {"_agent_type": "pipeline"}
+    engine = RuleEngine(temp_db, session_manager=session_manager)
+    project_id = str(sample_project["id"])
+    caller = session_manager.register(
+        external_id="plan-seat-runbook-caller",
+        machine_id=require_machine_id(),
+        source="claude",
+        project_id=project_id,
+    )
+    # The session PipelineExecutor registers for a top-level pipeline run.
+    pipeline_child = session_manager.register(
+        external_id="pipeline-plan-seat-runbook",
+        machine_id=None,
+        source="pipeline",
+        project_id=project_id,
+        parent_session_id=caller.id,
+        agent_depth=0,
+    )
+    pipeline_variables: dict[str, Any] = {"_agent_type": "pipeline"}
 
     for name in SEATS:
         assert Path(get_bundled_agents_path() / f"{name}.yaml").is_file(), name
         response = await engine.evaluate(
-            _spawn_event(name), session_id=SESSION_ID, variables=dict(pipeline_child)
+            _spawn_event(pipeline_child.id, name),
+            session_id=pipeline_child.id,
+            variables=dict(pipeline_variables),
         )
         assert response.decision == "allow", (name, response.reason)
