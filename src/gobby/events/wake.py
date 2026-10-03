@@ -682,12 +682,12 @@ class WakeDispatcher:
         Returns the withheld outcome (``None`` to deliver) and whether the composer
         was confirmed empty; only an unconfirmed delivery keeps the blind drain.
 
-        Only an ``empty`` read authorizes typing. A ``draft`` blocks, and an
-        ``unknown`` read blocks too when the provider can classify its composer
-        at all, because the frame may hold a draft the probe could not read. A
-        provider whose manifest has no composer rules answers ``unknown`` to
-        every probe, so withholding there would starve it forever; that case
-        keeps the pre-existing behavior. A missing probe has no safer read to
+        Only an ``empty`` read authorizes typing. A ``draft`` blocks, and so does
+        every ``unknown`` read, because the frame may hold a draft the probe could
+        not read. That includes a provider whose manifest has no composer rules
+        (Grok): it answers ``unknown`` to every probe, so it gets no live wake
+        typing, and its durable messages arrive through hook context on its next
+        tool call instead. A missing probe has no safer read to
         offer, so it stays on its existing path; a probe *error* is different:
         the composer is unreadable, which is exactly the unconfirmed state, so
         it withholds and retries rather than blinding typing into a composer it
@@ -713,17 +713,13 @@ class WakeDispatcher:
         if state == "empty":
             return None, True
         if state == "draft":
-            excerpt = " ".join((activity.composer.line or "").split())
-            if len(excerpt) > 160:
-                excerpt = f"{excerpt[:157]}..."
+            # The draft is operator content and may hold secrets: log its length only.
             logger.warning(
-                "wake for session %s deferred: composer holds an operator draft: %s",
+                "wake for session %s deferred: composer holds an operator draft (%d chars)",
                 session_id,
-                excerpt,
+                len(activity.composer.line or ""),
             )
             return composer_occupied_result(session_id, method=method), False
-        if not activity.composer_probeable:
-            return None, False
         return composer_unconfirmed_result(session_id, method=method), False
 
     async def _send_managed_terminal_wake(
