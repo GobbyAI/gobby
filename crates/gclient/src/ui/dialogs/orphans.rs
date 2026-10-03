@@ -16,7 +16,7 @@ use crate::ui::widgets::{
 
 use super::{primary_button_style, secondary_button_style, OrphanRow};
 
-pub const DESTROY_ORPHANS_TITLE: &str = "destroy orphaned terminals";
+pub const DESTROY_ORPHANS_TITLE: &str = "Destroy orphaned terminals";
 const POPUP_WIDTH: u16 = 72;
 /// Rows besides the candidates: header, gap, gap, key hints, buttons, and
 /// the two border rows.
@@ -96,7 +96,7 @@ pub fn render_destroy_orphans(
         },
         ActionButtonSpec {
             hint: Some("esc"),
-            label: "cancel",
+            label: "Cancel",
         },
     ];
     let rects = action_button_row_rects(inner, &specs, 2, inner.height.saturating_sub(1));
@@ -112,7 +112,7 @@ pub fn render_destroy_orphans(
             frame,
             cancel_rect,
             Some("esc"),
-            "cancel",
+            "Cancel",
             secondary_button_style(chrome),
         );
     }

@@ -46,10 +46,10 @@ pub enum RenameKind {
 impl RenameKind {
     fn title(&self) -> &'static str {
         match self {
-            RenameKind::Tab => "rename tab",
-            RenameKind::Pane => "rename pane",
-            RenameKind::Terminal => "rename terminal",
-            RenameKind::Project(_) => "rename project",
+            RenameKind::Tab => "Rename tab",
+            RenameKind::Pane => "Rename pane",
+            RenameKind::Terminal => "Rename terminal",
+            RenameKind::Project(_) => "Rename project",
         }
     }
 }
@@ -312,7 +312,7 @@ fn render_new_grid(
     render_modal_header(
         frame,
         Rect::new(inner.x + 1, inner.y, inner.width - 2, 1),
-        "new grid",
+        "New grid",
         p,
     );
 
@@ -418,11 +418,11 @@ pub fn render_confirm_close(
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "close",
+                label: "Close",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
-                label: "cancel",
+                label: "Cancel",
             },
         ],
         2,
@@ -435,14 +435,14 @@ pub fn render_confirm_close(
         frame,
         close_rect,
         Some("↵"),
-        "close",
+        "Close",
         primary_button_style(chrome, p.red),
     );
     render_action_button(
         frame,
         cancel_rect,
         Some("esc"),
-        "cancel",
+        "Cancel",
         secondary_button_style(chrome),
     );
     vec![close_rect, cancel_rect]
@@ -488,15 +488,15 @@ pub fn render_rename(
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "save",
+                label: "Save",
             },
             ActionButtonSpec {
                 hint: Some("^c"),
-                label: "clear",
+                label: "Clear",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
-                label: "cancel",
+                label: "Cancel",
             },
         ],
         2,
@@ -507,21 +507,21 @@ pub fn render_rename(
             frame,
             save_rect,
             Some("↵"),
-            "save",
+            "Save",
             primary_button_style(chrome, p.accent),
         );
         render_action_button(
             frame,
             clear_rect,
             Some("^c"),
-            "clear",
+            "Clear",
             secondary_button_style(chrome),
         );
         render_action_button(
             frame,
             cancel_rect,
             Some("esc"),
-            "cancel",
+            "Cancel",
             secondary_button_style(chrome),
         );
     }
@@ -612,7 +612,7 @@ pub fn render_respond(
     ])
     .areas::<7>(inner);
 
-    render_modal_header(frame, rows[0], "respond", p);
+    render_modal_header(frame, rows[0], "Respond", p);
     render_modal_description(frame, rows[2], prompt, Style::default().fg(p.text));
 
     for (idx, (option, rect)) in options
@@ -655,11 +655,11 @@ pub fn render_respond(
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "send",
+                label: "Send",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
-                label: "cancel",
+                label: "Cancel",
             },
         ],
         2,
@@ -670,14 +670,14 @@ pub fn render_respond(
             frame,
             send_rect,
             Some("↵"),
-            "send",
+            "Send",
             primary_button_style(chrome, p.accent),
         );
         render_action_button(
             frame,
             cancel_rect,
             Some("esc"),
-            "cancel",
+            "Cancel",
             secondary_button_style(chrome),
         );
     }

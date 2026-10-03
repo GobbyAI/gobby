@@ -441,7 +441,7 @@ parity_tests! {
                 .collect::<Vec<_>>()
                 .join("\n");
 
-            assert!(screen.contains("new workspace"), "{screen}");
+            assert!(screen.contains("New workspace"), "{screen}");
             assert!(screen.contains("project"), "{screen}");
         }
 
@@ -1681,19 +1681,19 @@ fn rendered_settings_hits_match_drawn_rows() {
     assert_eq!(view.settings_dialog_area, popup);
     assert_eq!(view.settings_row_hit_areas.len(), SettingsRow::ALL.len());
     let labels = [
-        "theme",
-        "monochrome",
-        "mouse capture",
-        "pane scrollbars",
-        "pane gaps",
-        "confirm close",
-        "hide tab bar with one tab",
-        "sidebar width",
-        "sidebar side",
-        "sidebar pinned",
-        "right-click passthrough",
-        "agent sort",
-        "title scrolling",
+        "Theme",
+        "Monochrome",
+        "Mouse capture",
+        "Pane scrollbars",
+        "Pane gaps",
+        "Confirm close",
+        "Hide tab bar with one tab",
+        "Sidebar width",
+        "Sidebar side",
+        "Sidebar pinned",
+        "Right-click passthrough",
+        "Agent sort",
+        "Title scrolling",
     ];
     for (index, rect) in &view.settings_row_hit_areas {
         let text = hit_text(&terminal, *rect);

@@ -277,19 +277,19 @@ pub struct SettingsState {
 
 fn row_label(row: SettingsRow) -> &'static str {
     match row {
-        SettingsRow::Theme => "theme",
-        SettingsRow::Monochrome => "monochrome",
-        SettingsRow::MouseCapture => "mouse capture",
-        SettingsRow::PaneScrollbars => "pane scrollbars",
-        SettingsRow::PaneGaps => "pane gaps",
-        SettingsRow::ConfirmClose => "confirm close",
-        SettingsRow::HideTabBarWhenSingleTab => "hide tab bar with one tab",
-        SettingsRow::SidebarWidth => "sidebar width",
-        SettingsRow::SidebarSide => "sidebar side",
-        SettingsRow::SidebarPinned => "sidebar pinned",
-        SettingsRow::RightClickPassthrough => "right-click passthrough",
-        SettingsRow::AgentSort => "agent sort",
-        SettingsRow::TitleScrolling => "title scrolling",
+        SettingsRow::Theme => "Theme",
+        SettingsRow::Monochrome => "Monochrome",
+        SettingsRow::MouseCapture => "Mouse capture",
+        SettingsRow::PaneScrollbars => "Pane scrollbars",
+        SettingsRow::PaneGaps => "Pane gaps",
+        SettingsRow::ConfirmClose => "Confirm close",
+        SettingsRow::HideTabBarWhenSingleTab => "Hide tab bar with one tab",
+        SettingsRow::SidebarWidth => "Sidebar width",
+        SettingsRow::SidebarSide => "Sidebar side",
+        SettingsRow::SidebarPinned => "Sidebar pinned",
+        SettingsRow::RightClickPassthrough => "Right-click passthrough",
+        SettingsRow::AgentSort => "Agent sort",
+        SettingsRow::TitleScrolling => "Title scrolling",
     }
 }
 
@@ -358,7 +358,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
     .areas::<3>(stack.header);
 
     let mut title = vec![Span::styled(
-        " settings",
+        " Settings",
         Style::default().fg(p.text).add_modifier(Modifier::BOLD),
     )];
     if chrome.settings.dirty {
@@ -424,11 +424,11 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "done",
+                label: "Done",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
-                label: "close",
+                label: "Close",
             },
         ],
         2,
@@ -440,7 +440,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
             frame,
             done_rect,
             Some("↵"),
-            "done",
+            "Done",
             Style::default()
                 .fg(panel_contrast_fg(p))
                 .bg(p.accent)
@@ -450,7 +450,7 @@ pub fn render_settings(frame: &mut Frame, area: Rect, chrome: &Chrome) -> Option
             frame,
             close_rect,
             Some("esc"),
-            "close",
+            "Close",
             Style::default()
                 .fg(p.text)
                 .bg(p.surface0)
@@ -471,19 +471,19 @@ mod tests {
         assert_eq!(
             labels,
             [
-                "theme",
-                "monochrome",
-                "mouse capture",
-                "pane scrollbars",
-                "pane gaps",
-                "confirm close",
-                "hide tab bar with one tab",
-                "sidebar width",
-                "sidebar side",
-                "sidebar pinned",
-                "right-click passthrough",
-                "agent sort",
-                "title scrolling",
+                "Theme",
+                "Monochrome",
+                "Mouse capture",
+                "Pane scrollbars",
+                "Pane gaps",
+                "Confirm close",
+                "Hide tab bar with one tab",
+                "Sidebar width",
+                "Sidebar side",
+                "Sidebar pinned",
+                "Right-click passthrough",
+                "Agent sort",
+                "Title scrolling",
             ]
         );
         assert_eq!(row_value(SettingsRow::SidebarSide, &prefs), "left");

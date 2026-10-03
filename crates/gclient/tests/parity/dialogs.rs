@@ -192,11 +192,11 @@ fn confirm_close_button_rects(area: Rect) -> Vec<Rect> {
         &[
             ActionButtonSpec {
                 hint: Some("↵"),
-                label: "close",
+                label: "Close",
             },
             ActionButtonSpec {
                 hint: Some("esc"),
-                label: "cancel",
+                label: "Cancel",
             },
         ],
         2,
@@ -291,7 +291,7 @@ fn respond_dialog_fits_its_prompt() {
         (96, 15),
         "100 columns leave 96"
     );
-    assert!(rows[1].contains("respond"), "header: {:?}", rows[1]);
+    assert!(rows[1].contains("Respond"), "header: {:?}", rows[1]);
     for (index, row) in rows[3..9].iter().enumerate() {
         let line = format!("line {} of the question", index + 1);
         assert!(row.contains(&line), "prompt row {index}: {row:?}");
@@ -306,7 +306,7 @@ fn respond_dialog_fits_its_prompt() {
         rows.iter().all(|row| !row.contains(" > ")),
         "no dead input row with options: {rows:?}"
     );
-    assert!(rows[popup.height as usize - 2].contains("send"));
+    assert!(rows[popup.height as usize - 2].contains("Send"));
 
     let (narrow, _) = respond_popup_rows(&ws, &mut chrome, Rect::new(0, 0, 70, 30));
     assert_eq!(
