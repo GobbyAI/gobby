@@ -136,6 +136,35 @@ def test_exception_base_shadowed_outside_added_fragment() -> None:
     assert not result.red_runs
 
 
+@pytest.mark.parametrize(
+    "behavior",
+    [
+        "raise CronSessionError",
+        "raise CronSessionError('active')",
+        "error = CronSessionError('active')\n    raise error",
+        "raise feature.CronSessionError('active')",
+        None,
+    ],
+)
+def test_exception_already_raised_in_confirmed_module_is_not_stub(behavior: str | None) -> None:
+    test, evidence = _exception_cycle("class CronSessionError(RuntimeError):\n    pass\n")
+    stub = replace(
+        evidence.edits[1],
+        source_after=(
+            f"class CronSessionError(RuntimeError):\n    pass\n\ndef run():\n    {behavior}\n"
+        )
+        if behavior is not None
+        else None,
+    )
+
+    result = evaluate_tdd_evidence(
+        (test,), replace(evidence, edits=(evidence.edits[0], stub, evidence.edits[2]))
+    )
+
+    assert not result.passed
+    assert not result.red_runs
+
+
 def _move_cycle() -> tuple[AcceptanceTest, TranscriptEvidence]:
     source = "from feature import payload\n\ndef test_feature():\n    assert payload()['seat']\n"
     test = AcceptanceTest(

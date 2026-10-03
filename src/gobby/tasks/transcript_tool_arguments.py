@@ -216,6 +216,15 @@ def _exception_declaration(statement: ast.ClassDef, module: ast.Module) -> bool:
     if not isinstance(exception, type) or not issubclass(exception, BaseException):
         return False
     for item in ast.walk(module):
+        # Adding the binding activates existing uses, including assigned aliases.
+        # A declaration-only proof must not exempt that behavioral change.
+        if (
+            isinstance(item, ast.Name)
+            and item.id == statement.name
+            or isinstance(item, ast.Attribute)
+            and item.attr == statement.name
+        ):
+            return False
         if (
             isinstance(item, ast.Name)
             and isinstance(item.ctx, ast.Store)
