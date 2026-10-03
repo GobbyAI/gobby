@@ -141,7 +141,10 @@ prompts:
     proportionality, repository conventions, test quality, and code quality.
     A code finding blocks only when its severity is at or above the
     close_review_min_severity in the launch prompt; retain every lower-severity
-    finding in the verdict. Submit this verdict object to submit_close_review:
+    finding in the verdict. A finding about what specific code does takes its
+    `path` and line bounds from a `gcode evidence` read and quotes the
+    `excerpt_hash` in its description, as gobby:references/code-index/evidence.md
+    describes, fallbacks included. Submit this verdict object to submit_close_review:
     {
       "status": "valid|invalid",
       "criteria": [

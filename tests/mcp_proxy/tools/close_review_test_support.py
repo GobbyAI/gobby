@@ -12,13 +12,20 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import CloseEvaluation
 from gobby.mcp_proxy.tools.tasks._lifecycle_review_gate import SubmittedCloseReview
 from gobby.utils.daemon_git import GitOk
 
+# Seq number the fake close candidate is tagged for; tasks closing at a fake SHA use it.
+CLOSE_COMMIT_SEQ_NUM = 42
+
 
 async def _rev_parse_echo(argv: tuple[str, ...], **_kwargs: object) -> GitOk:
-    return GitOk(status="ok", argv=argv, stdout=argv[-1], stderr="")
+    stdout = argv[-1]
+    if argv[:2] == ("log", "-1"):
+        stdout = f"[gobby-#{CLOSE_COMMIT_SEQ_NUM}] fix: close candidate"
+    return GitOk(status="ok", argv=argv, stdout=stdout, stderr="")
 
 
-# Replaces only the close candidate's rev-parse: fake SHAs name no object, so each
-# normalized SHA stands as its own full identity. Patch it over
+# Replaces only the close candidate's git reads: fake SHAs name no object, so each
+# normalized SHA stands as its own full identity, and its subject carries the
+# [gobby-#CLOSE_COMMIT_SEQ_NUM] tag #23251's close guard requires. Patch it over
 # _lifecycle_close_preview.daemon_git; normalization still runs for real.
 ECHOING_DAEMON_GIT = SimpleNamespace(run=_rev_parse_echo)
 

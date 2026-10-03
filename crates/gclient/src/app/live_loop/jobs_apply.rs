@@ -31,11 +31,16 @@ pub(super) fn apply_job_outcome(
                 jobs.focus.acked(focus)
             }
             Err(DaemonError::Workspace(error)) => {
-                jobs.focus.refused();
+                // A coalesced successor already owns the offered memo.
+                if follow_up.is_none() {
+                    jobs.focus.refused();
+                }
                 chrome.notify(Toast::warning(error.reason));
             }
             Err(error) => {
-                jobs.focus.refused();
+                if follow_up.is_none() {
+                    jobs.focus.refused();
+                }
                 chrome.notify(Toast::error(FrameError::from(error).to_string()));
             }
         },

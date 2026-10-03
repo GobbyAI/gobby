@@ -79,7 +79,13 @@ def init_terminal_wiring(runner: GobbyRunner, config: DaemonConfig) -> None:
     )
 
     async def follow_lease_holder(change: HolderChange) -> bool | None:
-        return await sync_host_input_grant(native_runtime, change.terminal, change.holder)
+        return await sync_host_input_grant(
+            native_runtime,
+            change.terminal,
+            change.holder,
+            manager=runner.terminal_manager,
+            reason=change.reason,
+        )
 
     # The gterm input grant mirrors the writer lease; this is the one place it
     # is wired, so every take, release, and socket loss re-syncs the host.

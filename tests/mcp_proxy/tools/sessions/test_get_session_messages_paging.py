@@ -110,3 +110,28 @@ async def test_total_count_pages_to_the_last_rendered_group(registry: Any) -> No
     assert total == len(reachable)
     assert tail["messages"] == reachable[-limit:]
     assert f"answer {TURNS - 1}" in json.dumps(tail["messages"][-1])
+
+
+async def test_limit_above_cap_returns_the_effective_limit(
+    registry: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    every = await registry.call(
+        "get_session_messages", {"session_id": SESSION_ID, "limit": 50, "offset": 0}
+    )
+    cap = 2
+    monkeypatch.setattr("gobby.mcp_proxy.tools.sessions._messages.RENDERED_LIMIT_MAX", cap)
+    first = await registry.call(
+        "get_session_messages", {"session_id": SESSION_ID, "limit": cap + 1, "offset": 0}
+    )
+    assert first["success"] is True, first
+    assert first["returned_count"] == cap
+    assert first["limit"] == cap
+
+    total = first["total_count"]
+    assert total == len(every["messages"])
+
+    tail = await registry.call(
+        "get_session_messages",
+        {"session_id": SESSION_ID, "limit": cap + 1, "offset": total - first["limit"]},
+    )
+    assert tail["messages"] == every["messages"][-cap:]

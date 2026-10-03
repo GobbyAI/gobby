@@ -692,16 +692,30 @@ class EvaluationMixin:
                     evaluation.mcp_calls,
                     evaluation.staged_variable_updates,
                 )
-                if effect.type == "mcp_call":
-                    inline_block_reason = await bridge.call(
-                        partial(self._apply_effect, *effect_args)
+                try:
+                    if effect.type == "mcp_call":
+                        inline_block_reason = await bridge.call(
+                            partial(self._apply_effect, *effect_args)
+                        )
+                    elif effect.type == "run_command":
+                        inline_block_reason = await bridge.call(
+                            partial(self._apply_effect, *effect_args)
+                        )
+                    else:
+                        inline_block_reason = await self._apply_effect(*effect_args)
+                except asyncio.CancelledError:
+                    task = asyncio.current_task()
+                    if bridge.cancelled.is_set() or (task is not None and task.cancelling()):
+                        raise
+                    # The awaited effect's child was cancelled; this rule pass is
+                    # still live. Keep its completed outputs and continue here.
+                    # Re-entering the event would repeat external mutations and
+                    # discard context and receipt updates from earlier effects.
+                    inline_block_reason = (
+                        f"Rule effect {row.name} was cancelled before its outcome was known."
+                        if effect.block_on_success or effect.block_on_failure
+                        else None
                     )
-                elif effect.type == "run_command":
-                    inline_block_reason = await bridge.call(
-                        partial(self._apply_effect, *effect_args)
-                    )
-                else:
-                    inline_block_reason = await self._apply_effect(*effect_args)
                 if inline_block_reason:
                     rule_blocked = True
                     block_gates.append(

@@ -52,7 +52,7 @@ from gobby.terminals.write_coordinator import WriteCoordinator
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
 SEAT = "developer-lane"
@@ -311,7 +311,6 @@ def _build(
         lambda *a, **k: None,
     )
     monkeypatch.setattr("gobby.runner_broadcasting.fire_agent_event", lambda *a, **k: None)
-    monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", lambda **k: None)
     return h
 
 
@@ -534,7 +533,7 @@ async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
 
 
 async def test_placed_launch_requires_managed_srt(
-    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+    placed: _Harness, stub_srt_verifier: MagicMock
 ) -> None:
     h = placed
     panes, terminals = _panes(h), _terminal_states(h)
@@ -547,19 +546,18 @@ async def test_placed_launch_requires_managed_srt(
         assert result["placement_error"] == "sandbox_required"
         _assert_untouched(h, panes, terminals)
 
-    def missing_srt(**kwargs: Any) -> None:
-        raise SrtRuntimeError("managed SRT is not installed")
-
-    monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", missing_srt)
+    # Configure the module's verifier stub; patching over it would outlive the stub's teardown.
+    stub_srt_verifier.side_effect = SrtRuntimeError("managed SRT is not installed")
     result = await _spawn(h, _tab(h))
     assert result["placement_error"] == "sandbox_required"
     _assert_untouched(h, panes, terminals)
 
-    # Leaf-local: an unplaced spawn with the same sandbox config still starts (1.8 extends it).
+    # An unplaced spawn with the same sandbox config is refused by the same gate (1.8).
     unplaced = await _spawn(h, None, daemon_config=disabled)
-    assert unplaced["success"] is True
-    assert unplaced["status"] == "starting"
-    await asyncio.gather(*impl._spawn_background_tasks.values())
+    assert unplaced["success"] is False
+    assert unplaced["error_code"] == "sandbox_required"
+    assert "placement_error" not in unplaced
+    _assert_untouched(h, panes, terminals)
 
 
 async def test_wrap_failure_refuses_and_releases_pane(placed: _Harness) -> None:

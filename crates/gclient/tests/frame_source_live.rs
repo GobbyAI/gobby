@@ -208,9 +208,9 @@ fn build_test_gterm() -> PathBuf {
         .and_then(Path::parent)
         .expect("target profile directory")
         .join("gterm");
-    // Every worktree shares this target directory, so an existing binary may come from another
-    // checkout. Always let Cargo validate it against this tree; incremental no-op builds keep the
-    // common path cheap, and Cargo's shared build lock safely serializes required rebuilds.
+    // The profile directory belongs to this checkout. Let Cargo validate an
+    // existing binary against the current source before copying it to the host's
+    // private inode; incremental no-op builds keep that provenance check cheap.
     let status = Command::new(env!("CARGO"))
         .current_dir(&workspace)
         .args([
@@ -519,11 +519,8 @@ async fn direct_frames_verify_epoch_and_render() {
     .await
     .expect("connect real direct source");
     assert_eq!(source.transport(), Transport::Direct);
-    assert!(matches!(
-        timeout(IO_TIMEOUT, source.recv()).await.expect("attach timeout"),
-        Ok(ServerMessage::Attached { host_terminal_id: attached, .. })
-            if attached == host_terminal_id
-    ));
+    // `connect` consumes the `Attached` handshake reply (#23076); the frames
+    // that race it are delivered to the reader, which the collect proves.
     let messages = collect_direct_until(&mut source, |message| {
         frame_text(message).is_some_and(|text| text.contains("GCLIENT-NATIVE-READY"))
     })
@@ -576,13 +573,7 @@ async fn granted_direct_input_echoes_and_revoke_refuses() {
     )
     .await
     .expect("connect real direct source");
-    assert!(matches!(
-        timeout(IO_TIMEOUT, source.recv())
-            .await
-            .expect("attach timeout"),
-        Ok(ServerMessage::Attached { host_terminal_id: attached, .. })
-            if attached == host_terminal_id
-    ));
+    // The attach handshake is complete when `connect` returns (#23076).
     collect_direct_until(&mut source, |message| {
         frame_text(message).is_some_and(|text| text.contains("GCLIENT-NATIVE-READY"))
     })
@@ -704,17 +695,7 @@ async fn tmux_pane_attaches_through_host_observer() {
     let mut source = UnixSocketFrameSource::connect(&locator, LOCAL_TOKEN, 80, 24)
         .await
         .expect("real tmux direct source");
-    let first = timeout(HOST_TIMEOUT, source.recv())
-        .await
-        .unwrap_or_else(|_| {
-            let log =
-                std::fs::read_to_string(host.socket_dir().join("gterm.log")).unwrap_or_default();
-            panic!("tmux attach timeout; locator={locator:?}; gterm.log:\n{log}");
-        });
-    assert!(
-        matches!(first, Ok(ServerMessage::Attached { created: true, .. })),
-        "tmux attach reply: {first:?}"
-    );
+    // `connect` consumes the `Attached` reply; the pane history follows.
     let initial = collect_direct_until(&mut source, |message| {
         matches!(message, ServerMessage::AttachHistory { .. })
     })
@@ -838,6 +819,15 @@ async fn cancelled_direct_read_retires_and_closes_both_halves() {
             let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
                 .await
                 .expect("attach");
+            write_message_async(
+                &mut host,
+                &ServerMessage::Attached {
+                    created: false,
+                    host_terminal_id: "host-terminal-1".into(),
+                },
+            )
+            .await
+            .expect("attached");
             host.write_all(&partial).await.expect("partial frame");
             partial_written.send(()).expect("partial signal");
             let mut byte = [0_u8; 1];
@@ -890,6 +880,15 @@ async fn cancelled_direct_read_retires_and_closes_both_halves() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("writer attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "host-terminal-1".into(),
+            },
+        )
+        .await
+        .expect("writer attached");
         attached.send(()).expect("writer attached signal");
         let mut byte = [0_u8; 1];
         timeout(IO_TIMEOUT, host.read(&mut byte))
@@ -969,6 +968,15 @@ async fn direct_frame_overflow_fails_typed_without_dropping() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "host-terminal-1".into(),
+            },
+        )
+        .await
+        .expect("attached");
         for index in 0..257 {
             write_message_async(
                 &mut host,
@@ -1487,6 +1495,15 @@ async fn all_three_sources_share_one_surface() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "host-terminal-1".into(),
+            },
+        )
+        .await
+        .expect("attached");
         write_message_async(&mut host, &direct_history)
             .await
             .expect("history");

@@ -4,6 +4,7 @@ Tests MCPStepConfig model, PipelineStep with mcp field,
 execute_mcp_step handler, and template rendering with type coercion.
 """
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,6 +12,7 @@ import pytest
 from mcp.types import CallToolResult, TextContent
 from pydantic import ValidationError
 
+from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.workflows.definitions import MCPStepConfig, PipelineStep
 from gobby.workflows.pipeline.handlers import execute_mcp_step
 
@@ -419,6 +421,31 @@ class TestExecuteMCPStep:
             await execute_mcp_step(step, context, lambda: mock_proxy)
 
     @pytest.mark.asyncio
+    async def test_mcp_step_passes_success_reply_with_null_error(self) -> None:
+        """A success reply whose error field is null passes once the proxy strips success."""
+        reply = normalize_internal_success_result(
+            {"success": True, "run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+        )
+        assert reply == {"run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(return_value=reply)
+        step = PipelineStep(id="seat_a", mcp=MCPStepConfig(server="s", tool="spawn_agent"))
+
+        result = await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: mock_proxy)
+
+        assert result == {"run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+
+    @pytest.mark.asyncio
+    async def test_mcp_step_failure_with_null_error_names_no_none(self) -> None:
+        """A failure reply with a null error reports the fallback message."""
+        mock_proxy = AsyncMock()
+        mock_proxy.call_tool = AsyncMock(return_value={"success": False, "error": None})
+        step = PipelineStep(id="seat_a", mcp=MCPStepConfig(server="s", tool="spawn_agent"))
+
+        with pytest.raises(RuntimeError, match=r"returned error: Unknown MCP tool error$"):
+            await execute_mcp_step(step, {"inputs": {}, "steps": {}}, lambda: mock_proxy)
+
+    @pytest.mark.asyncio
     async def test_mcp_step_fails_closed_on_sdk_error_result(self) -> None:
         """A downstream CallToolResult with is_error=True never becomes a step value."""
         mock_proxy = AsyncMock()
@@ -494,6 +521,46 @@ class TestMCPStepInPipelineExecute:
         mock_execution_manager.create_step_execution.assert_called_once()
         assert mock_execution_manager.create_step_execution.call_count == 1
         assert mock_execution_manager.create_step_execution.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_step_output_with_null_error_completes(
+        self,
+        mock_db: MagicMock,
+        mock_execution_manager: MagicMock,
+        mock_llm_service: AsyncMock,
+        mock_tool_proxy: AsyncMock,
+    ) -> None:
+        """A step whose output carries a null error completes with that output."""
+        from gobby.workflows.definitions import PipelineDefinition
+        from gobby.workflows.pipeline_executor import PipelineExecutor
+        from gobby.workflows.pipeline_state import StepStatus
+
+        mock_tool_proxy.call_tool = AsyncMock(
+            return_value=normalize_internal_success_result(
+                {"success": True, "run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+            )
+        )
+        pipeline = PipelineDefinition(
+            name="seat-pipeline",
+            steps=[PipelineStep(id="seat_a", mcp=MCPStepConfig(server="s", tool="spawn_agent"))],
+        )
+        executor = PipelineExecutor(
+            db=mock_db,
+            execution_manager=mock_execution_manager,
+            llm_service=mock_llm_service,
+            tool_proxy_getter=lambda: mock_tool_proxy,
+        )
+
+        await executor.execute(pipeline=pipeline, inputs={}, project_id="proj-123")
+
+        completed = [
+            call.kwargs
+            for call in mock_execution_manager.update_step_execution.call_args_list
+            if call.kwargs.get("status") == StepStatus.COMPLETED
+        ]
+        assert [json.loads(kwargs["output_json"]) for kwargs in completed] == [
+            {"run_id": "run-1", "error": None, "pane_ref": "0:0:1:1"}
+        ]
 
 
 # =============================================================================

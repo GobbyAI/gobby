@@ -38,6 +38,21 @@ coverage: a truncated or empty result does not prove absence. Pass an opaque
 `continuation` back with the same request to page. Errors exit 2 with one JSON
 object carrying `error` and `recovery`; follow the recovery text.
 
+## When to cite
+
+Cite through `gcode evidence` by default whenever a review finding, plan
+finding, close verdict, or task description claims what specific code does:
+give the `path`, the quoted `N| ` lines the claim rests on, and the item's
+`excerpt_hash`. A claim that rests on no particular source needs no citation:
+design judgment, a missing requirement, scope, proportionality, or style.
+
+When evidence cannot serve the claim, say why in the claim and fall back:
+
+- Unindexed or non-code source, or a request failing with `stale_range`,
+  `fact_mismatch`, or an outage error: read the file directly and cite
+  `path:start-end`.
+- Behavior shown by a test or a run: cite the exact command and its output.
+
 Contract: [gcode evidence](../../../../../../../../docs/contracts/gcode-cli.md#deterministic-evidence).
 
-_Last verified: 2026-09-24_
+_Last verified: 2026-10-02_

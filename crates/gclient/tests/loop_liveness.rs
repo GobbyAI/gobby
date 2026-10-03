@@ -339,6 +339,15 @@ impl<'a> LivenessProbe<'a> {
         self.key_reaches(keys_to, key).await;
     }
 
+    /// A notification can cover frame text; observe the render loop itself.
+    async fn draws_continue(&self) {
+        let before = self.draws.load(Ordering::SeqCst);
+        wait_until("render ticks after the focus reply", || {
+            self.draws.load(Ordering::SeqCst) >= before + PROBE_FRAMES
+        })
+        .await;
+    }
+
     /// The latest drawn status line, the frame's bottom row, comes to show
     /// `text` (`shown`) or to drop it.
     async fn status_line(&self, text: &str, shown: bool) {
@@ -402,9 +411,25 @@ impl StallingHost {
             )
             .await
             .expect("direct welcome");
-            let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
+            let ClientMessage::AttachTerminal {
+                host_terminal_id, ..
+            } = read_message_async(&mut stream, MAX_FRAME_SIZE)
                 .await
-                .expect("direct attach");
+                .expect("direct attach")
+            else {
+                panic!("the direct client attaches a terminal after the welcome");
+            };
+            // A host completes the attach with `Attached`; the client waits
+            // for it before the pane goes live (#23076).
+            write_message_async(
+                &mut stream,
+                &ServerMessage::Attached {
+                    created: false,
+                    host_terminal_id,
+                },
+            )
+            .await
+            .expect("direct attached");
             loop {
                 tokio::select! {
                     biased;
@@ -688,6 +713,95 @@ async fn a_held_focus_hint_op_never_stalls_frames_or_ticks() {
     assert_eq!(written(&mock, "terminal-a"), ["y"]);
     assert_eq!(written(&mock, "terminal-b"), ["x", "z", "w"]);
     mock.shutdown().await;
+}
+
+async fn exercise_failed_focus_hint(coalesced_successor: bool) -> usize {
+    let mock = MockDaemon::start("local-token").await;
+    let (mut workspace, _home) = two_pane_workspace(&mock, None).await;
+    let (backend, draws, frames) = DrawRecorder::new(96, 30);
+    let mut terminal = Terminal::new(backend).expect("test terminal");
+    let mut chrome = Chrome::dark();
+    let (input_tx, input_rx) = mpsc::channel(1);
+    let op = "workspace_op";
+
+    let driver = async {
+        let mut probe = LivenessProbe::new(&mock, &input_tx, draws, frames);
+        wait_for_websocket_requests(&mock, "terminal_set_viewport", 2).await;
+        wait_for_replies(&mock, "terminal_take_control", 1).await;
+        probe.key_reaches("terminal-b", 'x').await;
+        assert!(
+            focus_hints(&mock).is_empty(),
+            "initial focus is already stored"
+        );
+
+        let replies = mock.replies(op);
+        mock.enqueue_workspace_refusal("busy", "focus hint temporarily refused");
+        let failed_hint = mock.hold_ws(op, is_focus_hint);
+        probe.next_pane().await;
+        wait_until("the failing focus hint", || focus_hints(&mock).len() == 1).await;
+        probe.assert_live("terminal-b", "terminal-a", 'y').await;
+
+        if coalesced_successor {
+            // End on A again, so the pending hint differs from the stored B
+            // and matches the failed A. Comparing hint values cannot tell
+            // the failed job from the already offered successor.
+            probe.next_pane().await;
+            probe.assert_live("terminal-a", "terminal-b", 'z').await;
+            probe.next_pane().await;
+            probe.assert_live("terminal-b", "terminal-a", 'v').await;
+            assert_eq!(focus_hints(&mock).len(), 1, "the successor is coalesced");
+        }
+
+        // Keep the retry/successor in flight while more loop iterations run.
+        let recovered_hint = mock.hold_ws(op, is_focus_hint);
+        failed_hint.notify_one();
+        wait_until("the recovery focus hint", || focus_hints(&mock).len() == 2).await;
+        let hints = focus_hints(&mock);
+        assert_eq!(hints[1]["pane"], hints[0]["pane"], "focus still ends on A");
+        probe.key_reaches("terminal-a", 'u').await;
+        probe.draws_continue().await;
+        assert_eq!(focus_hints(&mock).len(), 2, "one recovery hint in flight");
+
+        recovered_hint.notify_one();
+        wait_for_replies(&mock, op, replies + 2).await;
+        probe.key_reaches("terminal-a", 'w').await;
+        probe.draws_continue().await;
+        drop(input_tx);
+    };
+
+    let mut switch = TerminalGuard::recording().0;
+    let (result, ()) = tokio::join!(
+        run_live_loop(
+            &mut workspace,
+            &mut terminal,
+            &mut chrome,
+            input_rx,
+            &mut switch
+        ),
+        driver
+    );
+    result.expect("live loop exits cleanly");
+    let sent = focus_hints(&mock).len();
+    mock.shutdown().await;
+    sent
+}
+
+#[tokio::test]
+async fn failed_focus_hint_sends_its_coalesced_successor_once() {
+    assert_eq!(
+        exercise_failed_focus_hint(true).await,
+        2,
+        "a failed hint must not offer its coalesced successor again"
+    );
+}
+
+#[tokio::test]
+async fn failed_focus_hint_without_a_successor_is_retried() {
+    assert_eq!(
+        exercise_failed_focus_hint(false).await,
+        2,
+        "a failed hint without a successor must be retried once"
+    );
 }
 
 /// The `(rows, cols)` each size claim for `terminal_id` carried, in order.

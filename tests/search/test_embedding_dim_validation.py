@@ -4,16 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import gobby.ai.embeddings as embeddings_mod
+from gobby.ai.embedding_cache import clear_cache
 from gobby.ai.embeddings import (
     EmbeddingGenerationError,
-)
-from gobby.ai.embeddings import (
-    _clear_embedding_cache as clear_cache,
 )
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
@@ -37,14 +36,14 @@ def _make_mock_client(dim: int) -> AsyncMock:
     """Create a mock AsyncOpenAI client returning vectors of the requested size."""
     mock_client = AsyncMock()
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         items = []
@@ -66,7 +65,7 @@ def _make_evicting_client(dim: int) -> AsyncMock:
     mock_client = AsyncMock()
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
@@ -77,12 +76,12 @@ def _make_evicting_client(dim: int) -> AsyncMock:
             )
 
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         response = FakeResponse([FakeItem([0.1] * dim, index) for index, _ in enumerate(input)])
@@ -162,10 +161,10 @@ async def test_stale_cache_entry_is_refetched_for_new_expected_dim() -> None:
     replacement_calls = 0
     original_create = replacement_client.embeddings.with_raw_response.create
 
-    async def tracking_create(model: str, input: list[str]):
+    async def tracking_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal replacement_calls
         replacement_calls += 1
-        return await original_create(model=model, input=input)
+        return cast(SimpleNamespace, await original_create(model=model, input=input))
 
     replacement_client.embeddings.with_raw_response.create = tracking_create
 

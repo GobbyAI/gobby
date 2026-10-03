@@ -98,6 +98,11 @@ pub enum FrameError {
     Cancelled,
     #[error("attachment was finalized ({code}): {reason}")]
     Finalized { code: String, reason: String },
+    /// The host answered `AttachTerminal` with a definitive refusal. The
+    /// stream stays open, so the caller must not treat the reconnect as
+    /// restored; it falls back to the daemon path (#23076).
+    #[error("frame attach refused: {code}")]
+    AttachRefused { code: String },
     #[error("frame I/O failed: {0}")]
     Io(String),
     #[error("frame protocol failed: {0}")]
@@ -415,6 +420,10 @@ impl AsyncWrite for SourceWriteHalf {
 pub struct UnixSocketFrameSource {
     outbound: mpsc::Sender<WriteRequest>,
     inbound: mpsc::Receiver<ServerMessage>,
+    /// Messages read during the attach handshake, before the reader task owns
+    /// the stream. They are delivered before any reader-task message so an
+    /// early frame that raced the `Attached` reply is never dropped (#23076).
+    pending: VecDeque<ServerMessage>,
     retired: Retired,
     shutdown: watch::Sender<bool>,
     _cleanup: JoinHandle<()>,
@@ -493,7 +502,52 @@ impl UnixSocketFrameSource {
         timeout(CONNECT_TIMEOUT, write_message_async(&mut stream, &attach))
             .await
             .map_err(|_| FrameError::Io("frame attach timed out".into()))??;
-        Ok(Self::from_stream(stream))
+        // `AttachTerminal` is not complete when it is written. The host answers
+        // `Attached` on success and `Error` on a refusal, and a live pane may
+        // send its first frames right after. Read until `Attached` so a
+        // refusal is never mistaken for a restored stream, and hand any frame
+        // that raced the reply to the reader through `pending` (#23076).
+        let mut pending = VecDeque::new();
+        loop {
+            let message: ServerMessage = timeout(
+                CONNECT_TIMEOUT,
+                read_message_async(&mut stream, MAX_FRAME_SIZE),
+            )
+            .await
+            .map_err(|_| FrameError::Io("frame attach reply timed out".into()))??;
+            match message {
+                // A native attach names the terminal it attached, so an
+                // `Attached` naming a different terminal is not the same
+                // terminal and is not a restore (#23076, §2.3 keeps the same
+                // terminal and epoch). A pane locator names the pane and only
+                // carries a label beside it, so there is nothing to compare.
+                ServerMessage::Attached {
+                    ref host_terminal_id,
+                    ..
+                } if locator.pane.is_none()
+                    && !host_terminal_id.is_empty()
+                    && !locator.host_terminal_id.is_empty()
+                    && host_terminal_id != &locator.host_terminal_id =>
+                {
+                    return Err(FrameError::AttachRefused {
+                        code: "host_terminal_changed".into(),
+                    })
+                }
+                // The acknowledgement completes the handshake and is consumed
+                // here; frames that raced it are already in `pending`.
+                ServerMessage::Attached { .. } => break,
+                ServerMessage::Error { code, .. } => {
+                    return Err(FrameError::AttachRefused { code })
+                }
+                other => {
+                    if pending.len() >= DIRECT_FRAME_CAPACITY {
+                        return Err(FrameError::Protocol("attach reply never arrived".into()));
+                    }
+                    pending.push_back(other);
+                }
+            }
+        }
+        Ok(Self::from_stream(stream, pending))
     }
 
     pub async fn from_gobby_home(
@@ -530,7 +584,7 @@ impl UnixSocketFrameSource {
         Self::connect(locator, token.trim(), cols, rows).await
     }
 
-    fn from_stream(stream: UnixStream) -> Self {
+    fn from_stream(stream: UnixStream, pending: VecDeque<ServerMessage>) -> Self {
         let (read_half, write_half) = stream.into_split();
         #[cfg(test)]
         let read_progress = Arc::new(AtomicUsize::new(0));
@@ -575,6 +629,7 @@ impl UnixSocketFrameSource {
         Self {
             outbound: write_tx,
             inbound,
+            pending,
             retired,
             shutdown,
             _cleanup: cleanup,
@@ -692,6 +747,9 @@ impl FrameSource for UnixSocketFrameSource {
     }
 
     async fn recv(&mut self) -> Result<ServerMessage, FrameError> {
+        if let Some(message) = self.pending.pop_front() {
+            return Ok(message);
+        }
         if let Ok(message) = self.inbound.try_recv() {
             return Ok(message);
         }
@@ -852,101 +910,4 @@ fn set_retired(retired: &Retired, reason: RetireReason) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::atomic::Ordering;
-
-    use gobby_terminal::protocol::write_message;
-    use tokio::io::AsyncReadExt;
-
-    async fn wait_for_progress(progress: &std::sync::atomic::AtomicUsize, expected: usize) {
-        timeout(Duration::from_secs(1), async {
-            loop {
-                if progress.load(Ordering::SeqCst) >= expected {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("frame task made partial progress");
-    }
-
-    async fn assert_peer_eof(mut peer: UnixStream, expected: &[u8]) {
-        let mut received = Vec::new();
-        timeout(Duration::from_secs(1), peer.read_to_end(&mut received))
-            .await
-            .expect("frame source closed its socket")
-            .expect("peer read succeeds");
-        assert_eq!(received, expected);
-    }
-
-    #[tokio::test]
-    async fn reader_cancellation_after_partial_frame_retires_whole_source() {
-        for read_limit in [2, 6] {
-            let (stream, mut peer) = UnixStream::pair().expect("socket pair");
-            let mut source = UnixSocketFrameSource::from_stream(stream);
-            let progress = Arc::clone(&source.read_progress);
-            let message = ServerMessage::Welcome {
-                host_epoch: "epoch-cancel".into(),
-            };
-            let mut encoded = Vec::new();
-            write_message(&mut encoded, &message).expect("encode server message");
-
-            peer.write_all(&encoded[..read_limit])
-                .await
-                .expect("write partial server frame");
-            wait_for_progress(&progress, read_limit).await;
-            source.cancel_reader_task();
-
-            assert!(matches!(source.recv().await, Err(FrameError::Cancelled)));
-            assert!(matches!(
-                source
-                    .send(&ClientMessage::SetScrollOffset {
-                        rows_from_live_edge: 1,
-                    })
-                    .await,
-                Err(FrameError::Cancelled)
-            ));
-            assert_peer_eof(peer, &[]).await;
-        }
-    }
-
-    #[tokio::test]
-    async fn writer_cancellation_after_partial_frame_retires_whole_source() {
-        for write_limit in [2, 6] {
-            let (stream, peer) = UnixStream::pair().expect("socket pair");
-            let mut source = UnixSocketFrameSource::from_stream(stream);
-            source
-                .write_pause_after
-                .store(write_limit, Ordering::SeqCst);
-            let progress = Arc::clone(&source.write_progress);
-            let retired = Arc::clone(&source.retired);
-            let shutdown = source.shutdown.clone();
-            let message = ClientMessage::SetScrollOffset {
-                rows_from_live_edge: u32::MAX,
-            };
-            let mut encoded = Vec::new();
-            write_message(&mut encoded, &message).expect("encode client message");
-            assert!(encoded.len() > write_limit);
-
-            let cancel = tokio::spawn(async move {
-                wait_for_progress(&progress, write_limit).await;
-                set_retired(&retired, RetireReason::Cancelled);
-                let _ = shutdown.send(true);
-            });
-
-            assert!(matches!(
-                source.send(&message).await,
-                Err(FrameError::Cancelled)
-            ));
-            cancel.await.expect("cancellation task completed");
-            assert!(matches!(
-                source.send(&message).await,
-                Err(FrameError::Cancelled)
-            ));
-            assert!(matches!(source.recv().await, Err(FrameError::Cancelled)));
-            assert_peer_eof(peer, &encoded[..write_limit]).await;
-        }
-    }
-}
+mod tests;

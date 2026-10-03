@@ -892,7 +892,7 @@ def test_init_local_storage(tmp_path: Path) -> None:
     ensure_personal.assert_called_once_with(mock_db)
 
 
-def test_init_local_storage_remote_skips_maintenance_claim() -> None:
+def test_init_local_storage_remote_migrates_under_maintenance_claim() -> None:
     from gobby.cli.utils import init_local_storage
 
     mock_db = MagicMock()
@@ -913,7 +913,8 @@ def test_init_local_storage_remote_skips_maintenance_claim() -> None:
     assert config.datastore_mode == "remote"
     assert ensure_personal.call_count == 1
     assert ensure_personal.call_args.args == (mock_db,)
-    assert claim.call_count == 0
+    assert claim.call_args.kwargs == {"role": "maintenance"}
+    claim.return_value.release.assert_called_once_with()
 
 
 # ---------------------------------------------------------------------------

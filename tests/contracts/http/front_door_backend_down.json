@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "front_door_backend_down",
   "family": "front_door",
+  "backend": "down",
   "credential": "none",
   "request": {
     "method": "GET",

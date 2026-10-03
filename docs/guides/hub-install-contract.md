@@ -52,11 +52,16 @@ Every migration applies through the same `schema apply` chain, including one
 that drops or rewrites data; there is no separate destructive-migration path.
 
 The live hub's schema advances only when the daemon that will serve it starts
-(`gobby start`, `gobby restart`, or `gobby cutover`). A `gobby` CLI command never
-applies migrations while a daemon holds `$GOBBY_HOME/gobby.pid`. It opens the
-hub at the running daemon's schema, so a promoted but not yet restarted
-`gdaemon` cannot move the hub ahead of that daemon. With no daemon running,
-first install and other CLI commands still apply pending migrations.
+(`gobby start`, `gobby restart`, or `gobby cutover`). A `gobby` CLI command
+migrates only while it holds the daemon singleton (`$GOBBY_HOME/gobby.pid.lock`)
+as a maintenance claim, which also keeps a daemon from starting until the
+migration finishes. When a daemon or a starting service holds the singleton, or
+the lock is unwritable, the command opens the hub at the current schema without
+migrating, so a promoted but not yet restarted `gdaemon` cannot move the hub
+ahead of the running daemon. With no daemon running, first install and other CLI
+commands still apply pending migrations. A maintenance claim is recorded in the
+lock only; `gobby.pid` names the daemon, so a finished or crashed CLI never
+blocks a daemon start.
 
 ## Files and client credentials
 

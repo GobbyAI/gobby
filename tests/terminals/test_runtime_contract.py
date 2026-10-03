@@ -571,12 +571,14 @@ def _start_isolated_daemon(
         )
         (home / "bootstrap.yaml").chmod(0o600)
         (home / "files").mkdir(exist_ok=True)
-        env = prepare_daemon_env(home_dir=home)
+        # Pin the gterm dir before prepare_daemon_env, so GOBBY_TEST_GDAEMON=checkout
+        # still puts the checkout gdaemon beside that gterm.
+        base_env = os.environ.copy()
+        if binary is not None:
+            base_env["GOBBY_NATIVE_BIN_DIR"] = str(binary.parent)
+        env = prepare_daemon_env(base_env, home_dir=home)
         env["GOBBY_CONFIG"] = str(config_path)
         env["GOBBY_HOME"] = str(home)
-        native_dir = gterm_binary()
-        if native_dir is not None:
-            env["GOBBY_NATIVE_BIN_DIR"] = str(native_dir.parent)
         command = [sys.executable, "-m", "gobby.runner", "--config", str(config_path)]
         log_file = log_dir / "daemon.log"
         error_log_file = log_dir / "daemon_error.log"

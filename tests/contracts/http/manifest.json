@@ -2,6 +2,7 @@
   "schema_version": 1,
   "cases": [
     "health_ok.json",
+    "health_backend_down.json",
     "config_schema.json",
     "config_values.json",
     "tasks_list.json",

@@ -5,13 +5,91 @@ Tests pipeline tool error paths, helper functions, and dynamic tool registration
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.hub.protocol import HubDatabase
+from tests.fixtures.isolated_checkout import IsolatedCheckoutFactory
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_list_pipelines_filters_by_tag(
+    temp_db: HubDatabase, isolated_checkout_factory: IsolatedCheckoutFactory
+) -> None:
+    from gobby.mcp_proxy.tools.workflows._pipelines import (
+        register_pipeline_tools,
+        update_pipeline_definition,
+    )
+    from gobby.storage.definitions.pipelines import PipelineDefinitionManager
+    from gobby.workflows.imports import sync_imported_definition
+    from gobby.workflows.pipeline_loader import PipelineLoader
+
+    project = isolated_checkout_factory(temp_db, "tag-list").project
+    foreign = isolated_checkout_factory(temp_db, "tag-foreign").project
+    manager = PipelineDefinitionManager(temp_db)
+
+    def payload(name: str) -> dict[str, Any]:
+        return {"name": name, "type": "pipeline", "steps": [{"id": "work", "exec": "true"}]}
+
+    updated = manager.create("updated", payload("updated"), project_id=project.id)
+    manager.create("global-tagged", payload("global-tagged"), tags=["runbook"])
+    manager.create("shadowed", payload("shadowed"), tags=["runbook"])
+    manager.create("shadowed", payload("shadowed"), project_id=project.id)
+    manager.create("foreign", payload("foreign"), project_id=foreign.id, tags=["runbook"])
+    manager.create("disabled", payload("disabled"), tags=["runbook"], enabled=False)
+    manager.create("ordinary", payload("ordinary"))
+    loader = PipelineLoader(temp_db)
+    registry = InternalToolRegistry("tag-test")
+    with patch("gobby.mcp_proxy.tools.workflows._pipelines.register_exposed_pipeline_tools"):
+        register_pipeline_tools(registry, loader=loader, db=temp_db)
+
+    with patch(
+        "gobby.mcp_proxy.tools.workflows._pipelines.get_project_context",
+        return_value={"id": project.id},
+    ):
+        before = await registry.call("list_pipelines", {})
+        assert before["success"] is True
+        with patch("gobby.mcp_proxy.tools.workflows._auto_export.auto_export_definition"):
+            result = update_pipeline_definition(
+                manager, loader, definition_id=updated.id, tags=["runbook"]
+            )
+        assert result["success"] is True
+        filtered = await registry.call("list_pipelines", {"tag": "runbook"})
+        assert filtered["success"] is True
+        assert {item["name"] for item in filtered["pipelines"]} == {"updated", "global-tagged"}
+        assert filtered["count"] == 2
+        loaded = await loader.load_pipeline("updated", project.id)
+        assert loaded is not None
+        assert loaded.tags == ["runbook"]
+        missing = await registry.call("list_pipelines", {"tag": "missing"})
+        assert missing["pipelines"] == []
+
+    assert {row.name for row in manager.list_all(project_id=project.id, tag="runbook")} == {
+        "updated",
+        "global-tagged",
+        "shadowed",
+        "disabled",
+    }
+    injection = "runbook' OR TRUE --"
+    assert manager.list_all(project_id=project.id, tag=injection) == []
+    with pytest.raises(ValueError, match="gobby"):
+        sync_imported_definition(temp_db, {**payload("reserved"), "tags": ["gobby"]}, project.id)
+    assert manager.get_by_name("reserved", project_id=project.id) is None
+
+    sync_imported_definition(temp_db, payload("ordinary-project"), project.id)
+    with pytest.raises(ValueError, match="gobby"):
+        sync_imported_definition(
+            temp_db, {**payload("ordinary-project"), "tags": ["gobby"]}, project.id
+        )
+    ordinary = manager.get_by_name("ordinary-project", project_id=project.id)
+    assert ordinary is not None
+    assert ordinary.tags == []
 
 
 # ═══════════════════════════════════════════════════════════════════════

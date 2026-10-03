@@ -13,9 +13,9 @@ rules:
         or variables.get('_agent_type') in [
           'planner',
           'plan-adversary',
-          'plan-adversary-taskless',
-          'plan-enhancer',
-          'plan-enhancer-taskless'
+          'plan-adversary-taskless-old',
+          'plan-enhancer-old',
+          'plan-enhancer-taskless-old'
         ]
       )
     effects:

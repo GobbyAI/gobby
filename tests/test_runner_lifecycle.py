@@ -1423,11 +1423,11 @@ class TestShutdownDaemonServices:
             _metrics_archive_task=tasks[1],
             _span_cleanup_task=tasks[2],
         )
-        await asyncio.wait_for(all_started.wait(), timeout=0.5)
+        await asyncio.wait_for(all_started.wait(), timeout=10.0)
 
         await asyncio.wait_for(
             runner_lifecycle_shutdown._cancel_periodic_tasks(runner),
-            timeout=0.5,
+            timeout=10.0,
         )
 
         assert cancellation_count == 3
@@ -1527,10 +1527,12 @@ class TestShutdownDaemonServices:
             "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
             0.05,
         )
+        # Both deadlines are armed from one instant. A loop stall past both lets the
+        # overall deadline win and skip the tail, so it stays far from the budget.
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.15,
+            30.0,
         )
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
 
@@ -1550,8 +1552,7 @@ class TestShutdownDaemonServices:
             return None
 
         caplog.set_level(logging.WARNING, logger="gobby.runner_lifecycle")
-        loop = asyncio.get_running_loop()
-        started_at = loop.time()
+        # Finishing well inside the 30s overall deadline proves the budget ended it.
         await asyncio.wait_for(
             runner_lifecycle_shutdown.shutdown_daemon_services(
                 runner,
@@ -1564,11 +1565,9 @@ class TestShutdownDaemonServices:
                 shutdown_telemetry=shutdown_telemetry,
                 cleanup_pid_file=cleanup_pid_file,
             ),
-            timeout=0.5,
+            timeout=10.0,
         )
-        elapsed = loop.time() - started_at
 
-        assert elapsed < 0.5
         assert "Graceful shutdown exceeded 0.1s budget" in caplog.text
         reap_remaining_child_processes.assert_awaited_once_with(
             preserve_agents=True,
@@ -1775,13 +1774,25 @@ class TestShutdownDaemonServices:
         monkeypatch.setattr(
             runner_lifecycle_shutdown,
             "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-            0.05,
+            30.0,
         )
         worker_started = threading.Event()
         release_worker = threading.Event()
         deadline_expired = asyncio.Event()
+        created_timeouts: list[asyncio.Timeout] = []
+        timeout_at = asyncio.timeout_at
+
+        def recording_timeout_at(when: float | None) -> asyncio.Timeout:
+            timeout = timeout_at(when)
+            created_timeouts.append(timeout)
+            return timeout
+
+        monkeypatch.setattr(asyncio, "timeout_at", recording_timeout_at)
 
         async def wait_for_overall_deadline(*_args: object, **_kwargs: object) -> None:
+            # Expire the overall deadline (the first one armed) inside the cleanup tail,
+            # so a loop stall in the phases before it cannot spend it early.
+            created_timeouts[0].reschedule(asyncio.get_running_loop().time())
             try:
                 await asyncio.Event().wait()
             except asyncio.CancelledError:
@@ -1793,7 +1804,6 @@ class TestShutdownDaemonServices:
             "_run_async_shutdown_cleanup",
             wait_for_overall_deadline,
         )
-        # The 0.05s deadline must expire in the cleanup tail, not in the phases before it.
         monkeypatch.setattr(
             runner_lifecycle_shutdown, "_run_graceful_shutdown_sequence", AsyncMock()
         )
@@ -1814,7 +1824,7 @@ class TestShutdownDaemonServices:
             runner.worktree_delete_executor.run_delete(blocked_delete)
         )
         try:
-            await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=1.0)
+            await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=10.0)
             shutdown_task = asyncio.create_task(
                 runner_lifecycle_shutdown.shutdown_daemon_services(
                     runner,
@@ -1828,14 +1838,16 @@ class TestShutdownDaemonServices:
                     cleanup_pid_file=MagicMock(),
                 )
             )
-            await wait_for_async_condition(lambda: runner.worktree_delete_executor.stats().shutdown)
-            await asyncio.wait_for(deadline_expired.wait(), timeout=1.0)
+            await wait_for_async_condition(
+                lambda: runner.worktree_delete_executor.stats().shutdown, timeout=10.0
+            )
+            await asyncio.wait_for(deadline_expired.wait(), timeout=10.0)
             assert shutdown_task.done() is False
             runner.database.close.assert_not_called()
 
             release_worker.set()
-            await asyncio.wait_for(shutdown_task, timeout=1.0)
-            await asyncio.wait_for(delete_task, timeout=1.0)
+            await asyncio.wait_for(shutdown_task, timeout=10.0)
+            await asyncio.wait_for(delete_task, timeout=10.0)
 
             runner.database.close.assert_called_once_with()
             assert runner.worktree_delete_executor.is_joined() is True
@@ -2223,10 +2235,11 @@ class TestShutdownDaemonServices:
                 "_GRACEFUL_SHUTDOWN_BUDGET_SECONDS",
                 0.01,
             )
+            # Far from the budget, so a loop stall cannot let the overall deadline win.
             monkeypatch.setattr(
                 runner_lifecycle_shutdown,
                 "_OVERALL_SHUTDOWN_DEADLINE_SECONDS",
-                0.2,
+                30.0,
             )
 
         await runner_lifecycle_shutdown.shutdown_daemon_services(

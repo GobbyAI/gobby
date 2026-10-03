@@ -135,6 +135,19 @@ def python_keyword_stub(old: str, new: str) -> tuple[str, tuple[str, ...]] | Non
     return ("" if partial_header else before.name), added
 
 
+def python_added_source(old: str, new: str) -> str | None:
+    """Return inert module declarations an edit added before or after its intact anchor."""
+    if not old.strip():
+        return None
+    if new.startswith(old):
+        added = new[len(old) :]
+    elif new.endswith(old):
+        added = new[: -len(old)]
+    else:
+        return None
+    return added if python_noop_module(added) is not None else None
+
+
 def python_noop_module(source: str) -> dict[str, frozenset[str] | None] | None:
     """Recognize a new API module containing declarations and inert class bodies only."""
     try:

@@ -114,7 +114,11 @@ impl<D: Daemon> Workspace<D> {
             .filter(|id| self.panes[id].terminal_id == terminal_id)
             .collect();
         for id in ids {
+            // A host-local reconnect for a replaced or closed pane never
+            // attaches; the loop cancels its in-flight connect (#23076).
+            self.host_recovering.remove(&id);
             self.panes.remove(&id);
+            self.host_recovered.remove(&id);
             self.order.retain(|existing| *existing != id);
             if self.focus == Some(id) {
                 self.focus = None;

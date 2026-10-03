@@ -584,7 +584,12 @@ class TerminalWsMixin(TerminalWriteMixin):
         return hub
 
     async def _cleanup_terminal_client(self, websocket: Any) -> None:
-        events = await self._leases().finalize_websocket(websocket, "ws_close")
+        reason = (
+            "daemon_shutdown"
+            if getattr(self, "_terminal_shutdown_in_progress", False)
+            else "ws_close"
+        )
+        events = await self._leases().finalize_websocket(websocket, reason)
         for event in events:
             await self._apply_terminal_sizing(event.terminal_id, event.sizing)
         hub = getattr(self, "_proxy_hub", None)

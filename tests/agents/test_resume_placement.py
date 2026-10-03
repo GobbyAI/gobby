@@ -43,7 +43,7 @@ from tests.mcp_proxy.tools.spawn_agent.test_placement import (
 )
 from tests.terminals.fakes import FakeRuntime
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 @pytest.fixture(autouse=True)
@@ -339,8 +339,9 @@ async def test_placed_resume_refusals_park_successor(
             get=lambda session_id: None if session_id == h.parent_id else sessions.get(session_id)
         )
     elif case == "sandbox_required":
+        # The managed-SRT resume gate refuses before placement is resolved.
         backend = "provider-native"
-        monkeypatch.setattr(resume_executor, "get_sandbox_resolver", lambda provider: None)
+        expected = "sandbox_required"
     elif case == "no_reserver":
         reserver = None
         expected = "placement_error:placement_unavailable"

@@ -1,4 +1,4 @@
-name: plan-adversary-taskless
+name: plan-adversary-taskless-old
 description: |
   Taskless adversarial plan reviewer for /gobby plan. Reviews a plan artifact,
   returns structured findings to the parent session, and never claims or mutates
@@ -71,6 +71,9 @@ prompts:
     `source_citations`, and `candidate_issues`. Every candidate has `candidate_id`,
     `section_ids`, `violated_invariant`, repository `path`/`sha256` citations,
     `suggested_fix`, `adjacent_sites_checked`, and confidence from 0 through 1.
+    Verify a finding's claim about what specific code does with `gcode evidence`
+    (gobby:references/code-index/evidence.md) and quote its numbered lines in
+    the finding text; structured citations stay `path`/`sha256`.
 
     You are the sole verdict and evidence owner. Verify and deduplicate every
     candidate, record one `emitted_finding` or `dismissed` disposition with a

@@ -11,22 +11,39 @@ from gobby.config.bootstrap import (
     load_bootstrap,
 )
 from gobby.paths import get_gobby_home
-from gobby.runner_pid_file import held_singleton_claim, probe_daemon_lock
+from gobby.runner_pid_file import SingletonError, held_singleton_claim
+from gobby.runner_pid_record import SingletonRecordError
 from gobby.storage.hub.managed import managed_grant_path, managed_hub_database
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.maintenance_epoch import admitted_database_url
 
 
-def live_daemon_serves_hub(gobby_home: Path) -> bool:
-    """Return whether another process's running daemon owns this home's hub.
+@contextmanager
+def hub_migration_claim(gobby_home: Path) -> Iterator[bool]:
+    """Hold this home's daemon singleton for a CLI migration; yield whether it is held.
 
-    That daemon owns the hub schema, which advances only when the daemon that
-    will serve it starts. A process holding the singleton claim itself is the
-    start path, which migrates before it launches the runner.
+    A running daemon owns the hub schema, which advances only when the daemon
+    that will serve it starts. Holding the singleton for the whole migration
+    keeps a daemon from starting mid-migration; a live or contending owner, or
+    an unwritable lock, yields False. A process that already holds the claim
+    (``gobby start``, ``init_local_storage``) migrates under that claim.
     """
     if held_singleton_claim() is not None:
-        return False
-    return probe_daemon_lock(gobby_home / "gobby.pid").is_live_daemon()
+        yield True
+        return
+    from gobby.runner_pid_file import claim_pid_file
+
+    try:
+        claim = claim_pid_file(gobby_home / "gobby.pid", role="maintenance")
+    except (SingletonError, SingletonRecordError):
+        claim = None
+    if claim is None:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        claim.release()
 
 
 @contextmanager
@@ -62,12 +79,14 @@ def runtime_hub_database(
     database_url = admitted_database_url(config.database_url)
     db = PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
     try:
-        gobby_home = Path(config_file).expanduser().parent if config_file else get_gobby_home()
-        if apply_migrations and not live_daemon_serves_hub(gobby_home):
-            db.apply_migrations()
-            from gobby.storage.projects import ensure_personal_project
+        if apply_migrations:
+            # The daemon singleton lives in GOBBY_HOME whatever bootstrap path was given.
+            with hub_migration_claim(get_gobby_home()) as owns_hub:
+                if owns_hub:
+                    db.apply_migrations()
+                    from gobby.storage.projects import ensure_personal_project
 
-            ensure_personal_project(db)
+                    ensure_personal_project(db)
         yield db
     finally:
         db.close()

@@ -5,6 +5,11 @@ or diagnosing index freshness. Use the native `gcode` CLI through the shell.
 Ordinary index navigation and direct evidence retrieval use native `gcode`
 commands. The daemon's index routes serve UI and integration clients.
 
+Before writing a factual claim about specific code (a review or plan finding,
+a close verdict, or a task description that rests on source behavior), load
+[evidence](evidence.md) and cite through `gcode evidence`. It also gives the
+fallback when a citation is unavailable.
+
 Start with the query shape, then retrieve the smallest useful source body.
 Direct `gcode` navigation does not require loading this reference. Reference
 loads still use the normal skill-file schema gate and complete pagination.
@@ -48,4 +53,4 @@ operator maintenance. Test mutations against isolated fixtures.
 
 Guide: [Code index](../../../../../../../../docs/guides/code-index.md).
 
-_Last verified: 2026-09-19_
+_Last verified: 2026-10-02_

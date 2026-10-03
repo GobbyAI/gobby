@@ -67,7 +67,7 @@ def test_taskless_plan_adversary_forces_none_isolation() -> None:
     action = SpawnAgentAction(
         task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
-        agent_slug="plan-adversary-taskless",
+        agent_slug="plan-adversary-taskless-old",
         prompt="go",
         initial_variables={"stage_name": "planning"},
     )
@@ -81,7 +81,7 @@ def test_taskless_plan_enhancer_forces_none_isolation() -> None:
     action = SpawnAgentAction(
         task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
-        agent_slug="plan-enhancer-taskless",
+        agent_slug="plan-enhancer-taskless-old",
         prompt="go",
         initial_variables={"stage_name": "planning"},
     )
@@ -100,7 +100,7 @@ def test_main_context_isolation_bypasses_stage_lookup() -> None:
     action = SpawnAgentAction(
         task_id="7d34e462-6ba3-5a6c-b1c6-1584b855cb83",
         task_ref="#1",
-        agent_slug="plan-adversary-taskless",
+        agent_slug="plan-adversary-taskless-old",
         prompt="go",
         initial_variables=RaisingInitialVariables({"stage_name": "development"}),
     )

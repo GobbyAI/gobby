@@ -181,7 +181,8 @@ async def test_prewarmed_pool_runs_four_first_stops_concurrently(tmp_path: Path)
         assert len(set(pids)) == 4
         assert all(pid > 0 for pid in pids)
     finally:
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        # A drain that outlives its test can stop the tracker under later tests' pools.
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
 
 async def test_process_pool_oserror_falls_back_and_warns_once(
@@ -367,7 +368,7 @@ def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
 
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
         assert _resource_tracker_pid() is None
         assert transcript_evidence_pool._pool is None
@@ -927,6 +928,115 @@ async def test_python_created_noop_module_red_requires_native_creation_and_origi
         BASE_TIME,
         default_validation_detection_config(),
         {test_path, product_path, wiring_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is expected, result
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("added-ni", True),
+        ("added-noop-assertion", True),
+        ("added-real-body", False),
+        ("replaced-anchor", False),
+        ("behavior-before-red", False),
+        ("unrelated-import", False),
+    ],
+)
+async def test_python_stub_added_to_existing_module_credits_top_level_import_red(
+    tmp_path: Path, case: str, expected: bool
+) -> None:
+    test_path = "tests/test_feature.py"
+    product_path = "src/gobby/terminals/feature.py"
+    module = "other.module" if case == "unrelated-import" else "gobby.terminals.feature"
+    body = (
+        f"from {module} import feature_ready\n\ndef test_original():\n    assert feature_ready(3)\n"
+    )
+    stub_body = {
+        "added-noop-assertion": "    return False\n",
+        "added-real-body": "    return value > 2\n",
+    }.get(case, "    raise NotImplementedError\n")
+    anchor = "EXISTING = 1\n"
+    stub = f"\n\ndef feature_ready(value: int) -> bool:\n{stub_body}"
+    records = _claude_edit_pair(
+        "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 0
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": anchor,
+                "new_string": ("EXISTING = 2\n" if case == "replaced-anchor" else anchor) + stub,
+            },
+            "api-shape",
+            2,
+        )
+    )
+    if case == "behavior-before-red":
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": stub_body,
+                    "new_string": "    return value > 2\n",
+                },
+                "behavior-before-red",
+                4,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    failure = (
+        "E   assert False\n" if case == "added-noop-assertion" else "E   NotImplementedError\n"
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": (
+                    f"____ test_original ____\n{test_path}:4: in test_original\n{failure}1 failed"
+                ),
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": stub_body,
+                "new_string": "    return value > 2\n",
+            },
+            "behavior",
+            10,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    transcript = tmp_path / "added-stub-proof.jsonl"
+    records.sort(key=lambda record: record["timestamp"])
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path},
         str(tmp_path),
     )
     test = AcceptanceTest(

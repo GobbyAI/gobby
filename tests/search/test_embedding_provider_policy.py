@@ -12,9 +12,7 @@ import pytest
 from gobby.ai.embeddings import (
     EmbeddingGenerationError,
 )
-from gobby.ai.embeddings import (
-    _clear_embedding_cache as clear_cache,
-)
+from gobby.ai.embedding_cache import clear_cache
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
 )

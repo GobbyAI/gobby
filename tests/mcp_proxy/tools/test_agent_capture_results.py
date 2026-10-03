@@ -147,7 +147,7 @@ async def test_agent_end_handoff_is_authoritative_over_terminal_capture() -> Non
     registry = create_agents_registry(runner, db=MagicMock())
 
     with patch(
-        "gobby.mcp_proxy.tools.agents_query_tools.get_agent_end_handoff",
+        "gobby.mcp_proxy.tools.agents_result_payload.get_agent_end_handoff",
         return_value=handoff,
     ):
         result = await registry.call("get_agent_result", {"run_id": run.id})
@@ -220,7 +220,7 @@ async def test_result_entrypoints_preserve_handoff_across_terminal_capture_cases
     registry = create_agents_registry(runner, db=MagicMock())
 
     with patch(
-        "gobby.mcp_proxy.tools.agents_query_tools.get_agent_end_handoff",
+        "gobby.mcp_proxy.tools.agents_result_payload.get_agent_end_handoff",
         side_effect=lambda _db, run_id: handoff if run_id == terminal_run.id else None,
     ):
         get_result = await registry.call("get_agent_result", {"run_id": requested_run.id})

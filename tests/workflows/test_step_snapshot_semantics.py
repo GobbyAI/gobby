@@ -27,7 +27,7 @@ from gobby.workflows.definitions import WorkflowStep
 from gobby.workflows.step_instances import AgentStepInstanceManager, build_step_instance
 from tests.fixtures.agent_definitions import make_agent_definition
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.usefixtures("stub_srt_verifier")]
 
 S1 = "11111111-1111-4111-8111-111111111111"
 S2 = "22222222-2222-4222-8222-222222222222"

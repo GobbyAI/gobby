@@ -12,6 +12,7 @@ from typing import Any
 
 from gobby.config.shell_lexing import parse_shell_command
 from gobby.hooks._path_scope import (
+    checkout_root,
     code_navigation_may_touch_project,
     current_project_root,
     current_tool_cwd,
@@ -324,6 +325,19 @@ def annotate_navigation(data: dict[str, Any], metadata: dict[str, Any]) -> None:
                 segment["canonical_narrow_source_context"] = True
                 segment["canonical_source_line_count"] = line_count
     metadata["canonical_code_navigation_segments"] = segments
+    # gcode refuses another linked checkout's file unless --project names it,
+    # so the read redirect must name the one sibling checkout every read targets.
+    read_roots = {
+        checkout_root(path)
+        for segment, resolved in zip(segments, segment_paths, strict=True)
+        if segment.get("canonical_code_navigation_action") == "read"
+        for path in resolved
+        if path in in_project
+    }
+    own_base = cwd or root
+    own_root = checkout_root(own_base) if own_base is not None else None
+    if len(read_roots) == 1 and None not in read_roots and own_root not in read_roots:
+        metadata["canonical_gcode_project_hint"] = str(next(iter(read_roots)))
 
 
 def annotate_navigation_outcome(data: dict[str, Any]) -> None:

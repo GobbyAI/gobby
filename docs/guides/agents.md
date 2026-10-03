@@ -95,6 +95,8 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `workflows` | Rule, skill, variable, and pipeline selectors |
 | `skills` | Metadata for baseline and allow-listed skill families |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
+| `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
+| `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
 
@@ -320,10 +322,12 @@ resolves, times out, or is cancelled.
 The tool returns a durable `wait_id` and an `outcome` of `waiting`, `released`,
 `replied`, `status_matched`, `owner_ended`, `cancelled`, or `timeout`. Yield after
 `waiting`; completion uses the existing durable mailbox and protected wake handling.
-Expiry defaults to 900 seconds and accepts at most 3600 seconds. Repeating an
-identical owner/condition registration returns the original wait without extending
-its deadline, including its terminal outcome. Use a fresh unique release key for a
-new hold. Only the waiting session can call `cancel_coordination_wait(wait_id=...)`.
+Expiry defaults to 900 seconds and accepts at most 3600 seconds. While waiting,
+repeating the same owner and condition returns the original wait and expiry.
+After completion, repeating the same owner and condition creates a new wait.
+Preserve `wait_id` and inspect its terminal outcome before registering again.
+Use a fresh key for a separate keyed hold. Only the waiting session can call
+`cancel_coordination_wait(wait_id=...)`.
 
 `send_message` uses explicit targets: `global`, `project`, `parent`, `session`,
 `agent`, and `build`. Spawned agents may omit `target`; it defaults to `parent`.
@@ -369,8 +373,11 @@ send_message(
 
 A `task_blocker` message must identify the assigned task in `metadata.task_id`
 and use `target="parent"` (or omit `target`, which defaults to `parent` for
-spawned agents). Spawned agents may send only to this target and
-cannot override `from_session`. In configured worker step workflows, successful
+spawned agents). Spawned agents cannot override `from_session`, and the bundled
+rule `scope-spawned-agent-send-message` limits each one to the target modes its
+agent definition lists in `send_message_targets`. The default is `["parent"]`,
+so this target is the only one an undeclared agent can use. Disabling the rule
+lifts the limit. In configured worker step workflows, successful
 delivery sets `blocker_handed_off` and advances to the termination step. The worker
 still calls `end_agent_run` with a structured blocker handoff; sending a message
 alone is not a universal process-exit operation. Inspect the installed definition
@@ -381,6 +388,36 @@ question that keeps the child alive, use `message_type="message"`.
 Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
 overrides, reasoning fields, runtime limits, parent session, and project path.
 `dispatch_batch` uses the same spawn machinery for multiple task suggestions.
+
+## Spawn Scope
+
+The bundled `limit-spawnable-agents` rule (tool-hygiene, tagged `default`)
+limits what a spawned agent may spawn. A root session (no agent run, depth 0)
+spawns any agent. A spawned agent's `spawn_agent` and `dispatch_batch` calls
+follow the `spawnable_agents` of the installed definition its agent run names.
+Each definition declares one of three things:
+
+| Value | The spawned agent may spawn |
+| --- | --- |
+| `["*"]` | Any agent |
+| `[merge-worker]` | Only the named agents |
+| `[]` or omitted | No agent |
+
+`"*"` stands alone; mixing it with names fails validation. Every agent the call
+can start must be allowed, or the whole call is refused:
+
+- An omitted `agent` counts as the tool's default (`default` for `spawn_agent`,
+  `backend-developer` for `dispatch_batch`).
+- A `dispatch_batch` suggestion's own non-blank `agent` replaces the top-level
+  one for that suggestion. `suggestions` must be a list of objects.
+- Every agent in a target's `fallback_agent` chain counts, as `spawn_agent`
+  walks it: up to five hops, stopping at a cycle or a missing definition.
+
+A caller, run or definition the rule cannot resolve refuses the spawn. Disabling
+the installed rule row lifts the limit; there is no hardcoded allowlist. The
+agent depth limit applies independently. Pipeline `mcp` steps and daemon-driven
+spawns (build dispatch, close validation) do not pass through `before_tool`, so
+the rule does not govern them.
 
 ## Recovery Checkpoints
 

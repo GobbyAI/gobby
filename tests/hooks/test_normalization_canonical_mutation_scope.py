@@ -566,3 +566,220 @@ def test_unproven_assignment_keeps_write_scope_unknown(tmp_path: Path, template:
 
     assert data["canonical_repo_mutation"] is True
     assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "untrusted_execution",
+    [
+        "def redirect(value):\n    pass\nredirect(Path)",
+        "import pathlib\ndef redirect(value):\n    pass\nredirect(pathlib)",
+        "def redirect(value):\n    pass\nconstructor = Path\nredirect(constructor)",
+        "import pathlib\ndef redirect(value):\n    pass\nmodule = pathlib\nredirect(module)",
+        "def redirect():\n    pass\nredirect()",
+        "redirect()",
+        "from redirector import redirect\nredirect()",
+        "import redirector",
+    ],
+    ids=[
+        "constructor-argument",
+        "module-argument",
+        "constructor-alias",
+        "module-alias",
+        "local-no-argument-call",
+        "opaque-no-argument-call",
+        "imported-no-argument-call",
+        "untrusted-import",
+    ],
+)
+def test_python_heredoc_untrusted_execution_keeps_write_scope_unknown(
+    tmp_path: Path, untrusted_execution: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\nfrom pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n{untrusted_execution}\np.write_text('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize("untrusted_execution", ["redirect()", "import redirector"])
+def test_python_heredoc_untrusted_execution_invalidates_direct_constructor_scope(
+    tmp_path: Path, untrusted_execution: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\nfrom pathlib import Path\n"
+        f"{untrusted_execution}\nPath('{scratch}/safe.txt').write_text('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_python_heredoc_trusted_stdlib_keeps_literal_scratch_scope(tmp_path: Path) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\nimport json\nimport math\nfrom pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        "print(json.dumps({'n': math.ceil(1.5)}), p.name, p.as_posix())\np.write_text('x')\nEOF\n"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is False
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
+def test_python_heredoc_loop_rebinding_a_scratch_path_name_keeps_scope_unknown(
+    tmp_path: Path,
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        "for p in [Path('src/a.py')]:\n"
+        "    p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+def test_python_heredoc_class_rebinding_a_scratch_path_name_keeps_scope_unknown(
+    tmp_path: Path,
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        "class p:\n"
+        "    write_text = Path('src/a.py').write_text\n"
+        "p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("first_import", "second_import", "constructor"),
+    [
+        ("from redirector import Path", "from pathlib import Path", "Path"),
+        ("from pathlib import Path", "from redirector import Path", "Path"),
+        ("from redirector import Path as P", "from pathlib import Path as P", "P"),
+        ("from pathlib import Path as P", "from redirector import Path as P", "P"),
+        ("import redirector as lib", "import pathlib as lib", "lib.Path"),
+        ("import pathlib as lib", "import redirector as lib", "lib.Path"),
+    ],
+)
+def test_python_heredoc_conflicting_path_imports_keep_scope_unknown(
+    tmp_path: Path, first_import: str, second_import: str, constructor: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        f"uv run python - <<'EOF'\n{first_import}\n"
+        f"p = {constructor}('{scratch}/safe.txt')\n{second_import}\np.write_text('x')\nEOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "constructor"),
+    [("from pathlib import Path", "Path"), ("import pathlib as lib", "lib.Path")],
+)
+def test_python_heredoc_identical_path_imports_keep_scratch_scope(
+    tmp_path: Path, import_statement: str, constructor: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        f"uv run python - <<'EOF'\n{import_statement}\n"
+        f"p = {constructor}('{scratch}/safe.txt')\n{import_statement}\np.write_text('x')\nEOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is False
+    assert data.get("canonical_repo_mutation_scope_unknown", False) is False
+
+
+@pytest.mark.parametrize(
+    "state_change",
+    [
+        "p._raw_paths = ['src/a.py']",
+        "q = p\nq._raw_paths = ['src/a.py']",
+        "parts = p._raw_paths\nparts.clear()\nparts.append('src/a.py')",
+    ],
+)
+def test_python_heredoc_mutable_path_receiver_keeps_scope_unknown(
+    tmp_path: Path, state_change: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        f"{state_change}\n"
+        "p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "redirect(p.write_text)",
+        "method = p.write_text\nredirect(method)",
+        "redirect(p.as_posix)",
+        "method = p.as_posix\nredirect(method)",
+        "redirect(p.absolute())",
+        "redirect(p.expanduser())",
+        "redirect(p.glob('*'))",
+    ],
+)
+def test_python_heredoc_bound_path_receiver_escape_keeps_scope_unknown(
+    tmp_path: Path, escape: str
+) -> None:
+    scratch, project = tmp_path / "scratch", tmp_path / "project"
+    command = (
+        "uv run python - <<'EOF'\n"
+        "from pathlib import Path\n"
+        "from redirector import redirect\n"
+        f"p = Path('{scratch}/safe.txt')\n"
+        f"{escape}\n"
+        "p.write_text('x')\n"
+        "EOF"
+    )
+
+    data = _shell_write_metadata(command, project)
+
+    assert data["canonical_tool_kind"] == "write"
+    assert data["canonical_repo_mutation"] is True
+    assert data["canonical_repo_mutation_scope_unknown"] is True
