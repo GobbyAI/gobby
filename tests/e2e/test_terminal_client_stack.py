@@ -182,7 +182,9 @@ def e2e_pre_daemon_setup(
                 "terminal_host.max_attachments_per_terminal": 8,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
-                "tmux.registration_timeout_seconds": 300.0,
+                # The stub never registers its child session; keep the
+                # never-initialized kill beyond both daemon restarts.
+                "tmux.init_timeout_seconds": 600,
             }
         ),
         source="e2e-terminal-stack",
@@ -407,7 +409,9 @@ def _spawn_agent(client: httpx.Client, backend: Literal["tmux", "native"]) -> di
             "isolation": "none",
             "terminal_backend": backend,
             "prompt": f"stack {backend}",
-            "timeout": 60,
+            # No run timeout: the agents must outlive both daemon restarts
+            # until the test cancels them.
+            "timeout": 0,
         },
     )
     assert spawned.status_code == 200, spawned.text
