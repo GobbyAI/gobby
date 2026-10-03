@@ -37,6 +37,8 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
+from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
@@ -466,6 +468,27 @@ def prepare_daemon_env(
     return env
 
 
+def link_operator_srt(home: Path) -> None:
+    """Link the operator's managed SRT into an isolated home, or skip.
+
+    Spawns fail closed without managed SRT. The isolated home borrows the
+    operator install through a symlink and never installs, downloads, or
+    writes under ~/.gobby; the install lock lands beside the link.
+    """
+    operator = Path.home() / ".gobby" / "tools" / "srt" / SRT_RELEASE.version
+    if not operator.is_dir():
+        pytest.skip(f"managed SRT {SRT_RELEASE.version} is not installed at {operator}")
+    link = home / "tools" / "srt" / SRT_RELEASE.version
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(operator, target_is_directory=True)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GOBBY_HOME", str(home))
+        try:
+            verify_srt_installation()
+        except (OSError, SrtRuntimeError) as exc:
+            pytest.skip(f"managed SRT {SRT_RELEASE.version} failed verification: {exc}")
+
+
 def find_free_port(max_retries: int = 20) -> int:
     """Find an available port that won't collide with any running daemon.
 
@@ -834,8 +857,35 @@ def e2e_project_dir() -> Generator[Path]:
 
 
 @pytest.fixture(scope="function")
+def e2e_home_dir(e2e_project_dir: Path) -> Path:
+    """Isolated daemon home, nested in the project by default.
+
+    A module that spawns agents under managed SRT overrides this with
+    ``e2e_srt_spawn_home``: a home inside the agent workspace is refused.
+    """
+    return e2e_project_dir / ".gobby-home"
+
+
+@pytest.fixture(scope="function")
+def e2e_srt_spawn_home() -> Generator[Path]:
+    """Private daemon home outside the agent workspace, for managed SRT spawns.
+
+    The sensitive-path contract (``assert_sensitive_path_contract``) refuses a
+    sandbox allow path containing ``GOBBY_HOME`` credentials such as
+    ``bootstrap.yaml`` or ``local_cli_token``. A spawn whose workspace is the
+    project directory must therefore run against a home outside that directory.
+    """
+    home = Path(tempfile.mkdtemp(prefix="gobby_e2e_home_")).resolve()
+    try:
+        yield home
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@pytest.fixture(scope="function")
 def e2e_config(
     e2e_project_dir: Path,
+    e2e_home_dir: Path,
     postgres_database_url: str,
     postgres_schema: str,
     postgres_db: Any,
@@ -858,7 +908,7 @@ def e2e_config(
         ports.append(port)
     http_port, ws_port = ports
 
-    gobby_home = e2e_project_dir / ".gobby-home"
+    gobby_home = e2e_home_dir
     gobby_home.mkdir(parents=True, exist_ok=True)
 
     # Pin the daemon's machine identity to the synthetic id the e2e suite

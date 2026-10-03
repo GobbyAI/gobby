@@ -40,6 +40,7 @@ from tests.fixtures.postgres import TEST_USER_ID
 
 daemon_instance = e2e_fixtures.daemon_instance
 e2e_config = e2e_fixtures.e2e_config
+e2e_home_dir = e2e_fixtures.e2e_home_dir
 e2e_project_dir = e2e_fixtures.e2e_project_dir
 
 pytestmark = [pytest.mark.e2e, pytest.mark.slow]
@@ -204,7 +205,7 @@ def e2e_pre_daemon_setup(
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
         # A stub provider never registers a session; keep its seat held for the test.
-        patch=ConfigPatch(values={"tmux.registration_timeout_seconds": 300.0}),
+        patch=ConfigPatch(values={"tmux.init_timeout_seconds": 600}),
         source="two-seat-placement-fixture",
     )
     try:

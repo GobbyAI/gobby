@@ -43,6 +43,7 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     daemon_token,
+    link_operator_srt,
 )
 from tests.e2e.gclient_driver import GclientDriver, Screen, in_prefix_mode
 from tests.e2e.test_external_terminal_attach import (
@@ -131,6 +132,11 @@ _FRAME_TYPES = {
 
 
 @pytest.fixture
+def e2e_home_dir(e2e_srt_spawn_home: Path) -> Path:
+    return e2e_srt_spawn_home
+
+
+@pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
     e2e_config: tuple[Path, int, int],
@@ -150,6 +156,7 @@ def e2e_pre_daemon_setup(
         token_path = directory / "local_cli_token"
         token_path.write_text(token)
         token_path.chmod(0o600)
+    link_operator_srt(daemon_home)
     claude = stub_dir / "claude"
     claude.write_text(_STUB)
     claude.chmod(0o755)
@@ -164,9 +171,11 @@ def e2e_pre_daemon_setup(
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 64,
                 "terminal_host.max_attachments_per_terminal": 8,
-                "agent_sandbox.enabled": False,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
+                # The stub never registers its child session; keep the
+                # never-initialized kill beyond both daemon restarts.
+                "tmux.init_timeout_seconds": 600,
             }
         ),
         source="e2e-terminal-stack",
@@ -393,7 +402,9 @@ def _spawn_agent(client: httpx.Client) -> dict[str, Any]:
             "isolation": "none",
             "terminal_backend": backend,
             "prompt": f"stack {backend}",
-            "timeout": 60,
+            # No run timeout: the agents must outlive both daemon restarts
+            # until the test cancels them.
+            "timeout": 0,
         },
     )
     assert spawned.status_code == 200, spawned.text
@@ -419,17 +430,34 @@ def _roster_entry(client: httpx.Client, session_id: str) -> dict[str, Any]:
     return {}
 
 
-def _respond(client: httpx.Client, entry: dict[str, Any]) -> None:
-    attention = entry.get("attention")
-    assert isinstance(attention, dict)
-    response = client.post(
-        f"/api/attention/{entry['entry_id']}/respond",
-        json={
-            "attention_id": attention["attention_id"],
-            "fingerprint": attention["fingerprint"],
-            "answer": {"option": 1},
-        },
+def _respond(client: httpx.Client, session_id: str) -> None:
+    # The stub repaints every 0.4s, so the pane can move past the fingerprint
+    # read from the roster before the answer lands. Respond refuses that with a
+    # 409 naming the moved identity; re-read the current episode and answer it.
+    def answered() -> httpx.Response | None:
+        entry = _roster_entry(client, session_id)
+        if not entry:
+            return None
+        attention = entry["attention"]
+        response = client.post(
+            f"/api/attention/{entry['entry_id']}/respond",
+            json={
+                "attention_id": attention["attention_id"],
+                "fingerprint": attention["fingerprint"],
+                "answer": {"option": 1},
+            },
+        )
+        if response.status_code == 409 and response.json()["detail"]["code"] in {
+            "prompt_changed",
+            "stale_episode",
+        }:
+            return None
+        return response
+
+    response = wait_for_condition(
+        answered, timeout=15.0, interval=0.5, description=f"answer for {session_id}"
     )
+    assert response is not None
     assert response.status_code == 200, response.text
 
 
@@ -608,13 +636,8 @@ async def test_terminal_client_stack_end_to_end(
             f"running={running.text[:1500]}; roster={roster.text[:2000]}"
         ) from exc
     assert _is_item_pair(attention)
-    native_entry, direct_entry = attention
-    _respond(client, native_entry)
-    # The first response can advance the other CLI's prompt. Read its current
-    # fingerprint immediately before answering the second entry.
-    current_direct_entry = _roster_entry(client, direct_session)
-    assert current_direct_entry, direct_entry
-    _respond(client, current_direct_entry)
+    _respond(client, native_session)
+    _respond(client, direct_session)
     await _assert_input_reaches(native_frames, "ANSWERED:", description="native attention answer")
     await _assert_input_reaches(direct_frames, "ANSWERED:", description="direct attention answer")
 
@@ -886,6 +909,8 @@ async def test_terminal_client_stack_end_to_end(
     inflight_row = next(row for row in listed if row.terminal_id == inflight_id)
     assert inflight_row.commit_state == "committed"
     assert inflight_row.host_terminal_id == inflight_host
+    # Its short-lived child would otherwise free an entitlement mid-fill below.
+    await control.kill(inflight_host, grace_ms=50)
 
     write_seq = control.next_seq
     payload = encode_control_line(
@@ -912,25 +937,21 @@ async def test_terminal_client_stack_end_to_end(
     # Native capacity is enforced at reserve time against the configured
     # attachment ceiling less the four reserved lifecycle slots
     # (gterminal host/native_ops.rs::reserve_observer ->
-    # native_entitlement_ceiling() = max_attachments_total - 4), so drive the
-    # host to that ceiling and prove the next create is refused. The live
-    # native seats already count toward the entitlement.
+    # native_entitlement_ceiling() = max_attachments_total - 4), so fill the
+    # host until a create is refused and prove the refusal is that gate. Every
+    # child outlives the fill: an exit frees its entitlement, so the host's own
+    # bound rows, not the daemon listing, prove the ceiling.
     entitlement_ceiling = 60  # terminal_host.max_attachments_total 64 - 4 reserved
-    live_native = [
-        item
-        for item in _list_items(client)
-        if item.get("backend") == "native" and item.get("state") == "live"
-    ]
     extras: list[str] = []
-    while len(live_native) + len(extras) < entitlement_ceiling:
-        created = await _ws_create(daemon_instance, ["/bin/sleep", "30"])
-        if created.get("success") is True:
-            extras.append(str(created["terminal_id"]))
-        else:
+    overflow: dict[str, Any] = {}
+    for _ in range(entitlement_ceiling + 1):
+        overflow = await _ws_create(daemon_instance, ["/bin/sleep", "300"])
+        if overflow.get("success") is not True:
             break
-    overflow = await _ws_create(daemon_instance, ["/bin/sleep", "5"])
-    assert overflow.get("success") is False
+        extras.append(str(overflow["terminal_id"]))
+    assert overflow.get("code") == "host_refused:capacity", overflow
     listed = await control.list_terminals()
+    assert sum(row.observer_bind != "none" for row in listed) == entitlement_ceiling
     overflow_id = overflow.get("terminal_id")
     assert overflow_id not in {row.terminal_id for row in listed}
     for extra_id in extras:

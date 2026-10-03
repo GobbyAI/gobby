@@ -19,6 +19,7 @@ from tests.e2e.test_runtime_boundary import E2E_MACHINE_ID, BoundaryHarness, _se
 
 daemon_instance = e2e_fixtures.daemon_instance
 e2e_config = e2e_fixtures.e2e_config
+e2e_home_dir = e2e_fixtures.e2e_home_dir
 e2e_project_dir = e2e_fixtures.e2e_project_dir
 boundary = boundary_fixtures.boundary
 
