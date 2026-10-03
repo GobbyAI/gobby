@@ -94,6 +94,17 @@ Outcomes:
     project name is `project_label`: the user's card label, else the
     daemon's name. A project the sidebar does not list yields the bare
     `#<seq>`.
+13. **3.1, 3.2 and 3.3 go live only through 3.4's cutover** (PD ruling
+    19:48, close review `cfd753e3`). Migration 458 keeps only titles stamped
+    `manual`. 3.1's clear-successor copy and 3.2's title writes set no
+    `title_source`, so a name a person sets after either goes live and
+    before the cutover would be nulled. The four leaves land on 0.5.0
+    together, right before that cutover, because any restart activates
+    whatever has landed. The old code stamps `manual` on every person-set
+    title write up to the stop, and 458 runs before the new code starts, so
+    no title writer has a window. Rejected: stamping `manual` on each writer in 3.1
+    and 3.2 and removing the stamps in 3.4, which is churn on seven write
+    paths where one missed writer silently loses a name.
 
 ## As-Is Facts
 `kind: framing`
@@ -175,6 +186,10 @@ Outcomes:
 - Rollout: Python leaves go live after a PD-owned daemon restart from the main
   checkout, announced with a `global` message before and after, outside quiet
   hours 04:45-06:45 CT. 3.4 ships in a package whose cutover Josh approves.
+  3.1, 3.2 and 3.3 go live only through that cutover (Decision 13).
+- Packaging: 3.1, 3.2, 3.3 and 3.4 land on 0.5.0 together, right before 3.4's
+  cutover. The MM holds 3.1-3.3 until 3.4 lands with them, because any
+  restart activates whatever has landed.
   1.1 ships through a gclient version bump and a Release Manager install:
   gclient is promoted separately from the coherent `gcode`/`gdaemon`/`ghook` set.
 - Routing: 1.1 goes to the gclient lane L1 (gobby#14909). 2.1 through 5.1 go to
@@ -476,7 +491,8 @@ because each is independently testable once the writes stop.
 - Clear successor (PD ruling 15:47): `_commit_web_chat_clear_successor_rows`
   inserts the successor with `title` copied from the predecessor row and
   writes no `title_source`. `clear_successor_title` goes with
-  `title_lifecycle.py`.
+  `title_lifecycle.py`. Migration 458 would null that copy, so this leaf goes
+  live only through 3.4's cutover (Decision 13).
 - Tests that import the retired helpers: `tests/sessions/test_handoff.py`
   drops `test_title_lifecycle_is_provisional_task_manual_and_clear_sticky`
   (~1888) and its `provider_title_label` import (~60).
@@ -594,7 +610,8 @@ the precedence have nothing left to rank. Edits:
 - `servers/routes/sessions/core.py` (~317) stops serving `title_source`.
   `servers/routes/sessions/lifecycle.py` (~441) keeps `POST /api/sessions/{id}/rename`
   and writes the title alone (Q3).
-- The column itself stays until 3.4. No code reads or writes it after this leaf.
+- The column itself stays until 3.4. No code reads or writes it after this leaf,
+  so this leaf goes live only through 3.4's cutover (Decision 13).
 
 Verification planned: `DATABASE_URL=postgresql://gobby_test:gobby_test@127.0.0.1:60892/gobby_test GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_handoff.py tests/storage/sessions tests/storage/test_sessions_import.py tests/storage/test_local_model_flags.py tests/servers/routes/test_agent_spawn_routes.py tests/servers/routes/test_servers_routes_sessions_routes.py tests/servers/routes/test_sessions_acp_routes.py tests/servers/test_http_models.py tests/servers/test_session_control.py tests/servers/websocket/chat/test_stream_persistence.py tests/sessions/test_acp_lifecycle_service.py tests/hooks/test_hooks_manager.py tests/mcp_proxy/tools/sessions/test_mcp_proxy_tools_sessions_registration.py -q`,
 then `gcode grep -w -E 'title_source|set_title|apply_title_mutation' src`, which
@@ -713,7 +730,8 @@ Migration body:
 ```sql
 -- Session titles are optional names a person sets (#23337). Automatic titles
 -- go first, then the column that ranked them. Communications sessions keep
--- their "Comms: <user>" names.
+-- their "Comms: <user>" names. The title-write removals go live only through
+-- this migration's cutover, so every name a person set before it is 'manual'.
 UPDATE sessions SET title = NULL
 WHERE title_source IS DISTINCT FROM 'manual'
   AND source IS DISTINCT FROM 'comms';
@@ -724,8 +742,9 @@ The UPDATE is irreversible on the live hub: it destroys every automatic title,
 and no copy is kept. That is intended (Q4). This leaf ships in a package whose
 cutover Josh approves. The PD runs it from the main checkout outside quiet
 hours with `global` notices before and after. `gobby cutover` refuses
-uncommitted schema inputs. 3.2 is live before the cutover, so no running code
-reads the column when it drops.
+uncommitted schema inputs. 3.1, 3.2 and 3.3 are not live before the cutover
+(Decision 13): the old daemon stops, 458 runs, and the new daemon starts with
+code that never reads the column.
 
 Verification planned: `cargo nextest run -p gobby-core`,
 `cargo nextest run -p gobby-daemon --test cli_contract`,
@@ -743,6 +762,11 @@ Verification planned: `cargo nextest run -p gobby-core`,
   `crates/gcore/src/schema/verify_tests.rs::title_source_is_not_a_live_mutable_seed_field`.
 - 3.4.3 - The schema identity carriers match the migrated schema. file:
   `src/gobby/storage/schema_expected_identity.json`.
+- 3.4.4 - 3.1, 3.2 and 3.3 reach 0.5.0 in the same landing as this leaf,
+  right before its cutover, so none of them activates ahead of migration 458
+  and a name set before the cutover keeps its `manual` stamp. behavior:
+  "go live only through" in
+  `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`.
 
 ## P4: Read-time display name
 `kind: framing`
@@ -977,6 +1001,12 @@ which must return nothing.
 - 2026-10-02: Adversary round 2 (gobby#14550): consensus on `86db544`. The
   PD accepted Decision 12 and the name-ladder call at 16:59. The 1.1
   granularity nit is non-blocking and left as-is.
+- 2026-10-02: Close review `cfd753e3` (run `0c2c56ba`) was invalid: migration
+  458 nulled a name written between 3.2 going live and the cutover. PD ruling
+  19:48: sequencing. Decision 13, the Constraints, 3.1, 3.2 and 3.4 (3.4.4)
+  hold 3.1-3.3 until 3.4's cutover. The Writer extended the hold to 3.1,
+  whose clear-successor copy writes no `title_source`. M1 withdrawn (memory
+  `f5577ae0`); the Adversary (gobby#14550) derives a fresh M1.
 
 ## V2: Verification
 `kind: verification`
@@ -1143,11 +1173,16 @@ pytest suite.
     3.4.2: `title_source` is no longer a live mutable seed field and migration 458
     is embedded. test: `crates/gcore/src/schema/verify_tests.rs::title_source_is_not_a_live_mutable_seed_field`.
 
-    3.4.3: The schema identity carriers match the migrated schema. file: `src/gobby/storage/schema_expected_identity.json`.'
+    3.4.3: The schema identity carriers match the migrated schema. file: `src/gobby/storage/schema_expected_identity.json`.
+
+    3.4.4: 3.1, 3.2 and 3.3 reach 0.5.0 in the same landing as this leaf, right before
+    its cutover, so none of them activates ahead of migration 458 and a name set before
+    the cutover keeps its `manual` stamp. behavior: "go live only through" in `crates/gcore/assets/schema/migrations/458_drop_session_title_source.sql`.'
   labels:
   - covers:pane-seat-titles:3.4:3.4.1
   - covers:pane-seat-titles:3.4:3.4.2
   - covers:pane-seat-titles:3.4:3.4.3
+  - covers:pane-seat-titles:3.4:3.4.4
   tdd: true
   source_section: '3.4'
   implementation_domain: backend
