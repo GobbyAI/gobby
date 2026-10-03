@@ -34,7 +34,6 @@ def test_generators_regenerate_grids_byte_identically() -> None:
     assert (MARKS / "mask2.py").is_file()
     assert (MARKS / "wordmark.py").is_file()
     cases = [
-        ("mask2.py", (str(LOGO), "56", "16", "grid"), "goblin-33x16.grid"),
         ("mask2.py", (str(LOGO), "48", "14", "grid"), "goblin-29x14.grid"),
         ("wordmark.py", ("braille", "grid", "lower"), "wordmark-braille-54x8.txt"),
         ("wordmark.py", ("shadow", "grid", "lower"), "wordmark-shadow-49x9.grid"),
@@ -43,12 +42,21 @@ def test_generators_regenerate_grids_byte_identically() -> None:
         assert generate(script, *args) == (MARKS / name).read_bytes()
 
 
-def test_goblin_grids_have_the_committed_dimensions_and_roles() -> None:
-    for name, cols, rows in (("goblin-33x16.grid", 33, 16), ("goblin-29x14.grid", 29, 14)):
-        data = data_lines(MARKS / name, "halfblock", cols, rows)
-        assert all(len(line) == 2 * cols for line in data)
-        assert set("".join(data)) <= set("aoig.")
-        assert "a" in "".join(data)
+def test_generated_goblin_grid_has_the_committed_dimensions_and_roles() -> None:
+    data = data_lines(MARKS / "goblin-29x14.grid", "halfblock", 29, 14)
+    assert all(len(line) == 58 for line in data)
+    assert set("".join(data)) <= set("aoig.")
+    assert "a" in "".join(data)
+
+
+def test_hand_authored_goblin_grid_wears_its_node_halo() -> None:
+    # goblin-41x18.grid is Josh's hand-corrected goblin inside its node halo
+    # (#23280); no generator produces it, so it is checked, never regenerated.
+    data = data_lines(MARKS / "goblin-41x18.grid", "halfblock", 41, 18)
+    assert all(len(line) == 82 for line in data)
+    halves = "".join(data)
+    assert set(halves) == set("aoigne.")
+    assert halves.count("g") == 2
 
 
 def test_wordmark_assets_have_the_committed_dimensions_and_roles() -> None:
@@ -82,9 +90,10 @@ def test_readme_documents_roles_homes_and_regeneration() -> None:
     for role in ("accent", "overlay1", "ink", "glint", "dim", "overlay0", "surface1"):
         assert role in readme
     for name in (
-        "goblin-33x16.grid",
+        "goblin-41x18.grid",
         "goblin-29x14.grid",
         "wordmark-braille-54x8.txt",
         "wordmark-shadow-49x9.grid",
     ):
         assert name in readme
+    assert "hand-authored and is never regenerated" in readme
