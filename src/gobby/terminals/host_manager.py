@@ -18,10 +18,12 @@ from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.host_client import (
+    HelloResult,
     HostClient,
     HostCommandError,
     HostManagerStopped,
     HostUnavailableError,
+    PingResult,
 )
 from gobby.terminals.host_control import HostControlError
 from gobby.terminals.host_event_reader import InputActivitySink, arm_events
@@ -876,6 +878,14 @@ class TerminalHostManager:
             self.backoff_seconds = 0.0
             self._restart_failures = 0
 
+    def _adopt_client(self, client: Any, hello: HelloResult, ping: PingResult) -> None:
+        """Make a freshly probed connection current; its hello and ping count as healthy."""
+        self._client = client
+        self.host_epoch = ping.host_epoch or hello.host_epoch
+        self.host_pid = ping.host_pid
+        self.capabilities = tuple(hello.capabilities)
+        self._record_healthy_ping()
+
     async def _health_loop(self) -> None:
         interval = self.config.health_interval_seconds
         while not self._stop_requested:
@@ -901,8 +911,7 @@ class TerminalHostManager:
                         continue
                     return
                 await self._close_client(client)
-                self._client, hello, _ = fresh
-                self.capabilities = tuple(hello.capabilities)
+                self._adopt_client(*fresh)
                 continue
             try:
                 ping = await client.ping()
@@ -920,12 +929,8 @@ class TerminalHostManager:
                     try:
                         await self._close_client(client)
                         replacement, hello, ping = await self._fresh_probe()
-                        self._client = replacement
-                        self.host_epoch = ping.host_epoch or hello.host_epoch
-                        self.host_pid = ping.host_pid
-                        self.capabilities = tuple(hello.capabilities)
+                        self._adopt_client(replacement, hello, ping)
                         await self.upgrade.observe(replacement, ping, self.capabilities)
-                        self._record_healthy_ping()
                     except Exception as reconnect_exc:
                         self.last_error = str(reconnect_exc)
                         # Mid-upgrade the host restores and refuses connects for a while.
