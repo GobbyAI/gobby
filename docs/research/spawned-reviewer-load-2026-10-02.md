@@ -11,11 +11,21 @@ were no live storage reads, no full pytest and no daemon restart.
 
 ## 1. Answer
 
-A spawned reviewer differs from a pane seat before its model ever runs. It also
-differs again when its close is evaluated. The reviewer's own process tree is
-cheap in both arms.
+Limits of this evidence:
+- The controlled arms A1 and B were not run (§2.2).
+- The natural spawned runs are confounded by builds and parallel closes (§2.3).
+- The kernel-CPU and run-queue effect of the pre-commit clone rests on one manual
+  clone (n=1, 7 top samples).
 
-1. **Spawn setup is the dominant per-spawn host cost (candidate 2, RULED IN).**
+The findings below are therefore observed associations and leading explanations,
+not proven causes.
+
+What the evidence shows: a spawned reviewer does work that a pane seat does not,
+both before its model runs and when its close is evaluated. The reviewer's own
+process tree was cheap in pane arm A2 and in the natural spawned runs.
+
+1. **Spawn setup is the leading explanation for the extra host cost of a spawn
+   (candidate 2, ruled in as the largest measured per-spawn cost).**
    Every sandboxed spawn runs `prepare_sandbox_run_paths`, which runs
    `_prewarm_pre_commit_store` and `_schedule_pre_commit_store_spare` (#21730).
    - It consumes a pre-commit store spare and then APFS-clones a new one with
@@ -27,8 +37,8 @@ cheap in both arms.
      this.
    - `_preflight_srt` adds a p50 of 3.9 s per spawn, with p90 8.9 s.
 2. **Close evaluation decodes transcript evidence on the daemon event loop.**
-   This explains the close and preview timeouts and the stalls in daemon health
-   and hooks.
+   This is associated with the daemon health and hook stalls in the same minutes.
+   It explains only part of the 300 s close and preview timeouts (§2.8).
    - `decode_cooperatively` yields once per 256-record chunk.
    - On long transcripts the loop held the GIL in `_decode_steps` for up to
      12.4 s of one minute.
@@ -36,8 +46,10 @@ cheap in both arms.
 3. **Daemon worker threads hold the GIL 36-76% of every minute.**
    - The holders are the postgres pool's pure-Python paths, transcript
      decode/persist, embeddings parsing, and the codex installer TOML load.
-   - The loop-only `/api/health` therefore waits: p50 0.41 s, max 4.7 s, and
-     2 s timeouts for several seats.
+   - The loop-only `/api/health` measured p50 0.41 s and max 4.7 s, and several
+     seats hit 2 s timeouts.
+   - The leading explanation is that the loop thread waits for the GIL.
+     Client-side slowness under host load is not excluded.
    - This is ambient. A spawned reviewer adds to it through (2) and through
      transcript ingestion.
 
