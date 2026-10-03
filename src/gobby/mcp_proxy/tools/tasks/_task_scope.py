@@ -309,41 +309,50 @@ async def _partition_delivered_commits(
 async def _last_touch_name_status(commit_shas: list[str], repo_path: str) -> str | None:
     """List each path once, with the status of the last linked commit that touches it.
 
-    A merge-free set whose replay fails builds on foreign commits interleaved
-    between its links, and each link's own patch is exactly what the task
-    authored. A merge's first-parent diff can carry unlinked content, so a set
-    holding one stays un-nettable (#23314).
+    Replay can fail when foreign commits are interleaved between links. Keep
+    every path a link touches, even if another link reverts it. A merge's
+    first-parent diff can carry unlinked content (#23314), so only its remerge
+    diff contributes paths. Unsupported merges and unavailable evidence fail closed.
     """
     ordered = await ancestry_order(commit_shas, cwd=repo_path)
     if ordered is None:
         return None
-    merges = await daemon_git.run(
-        ["rev-list", "--no-walk", "--min-parents=2", *ordered], cwd=repo_path, timeout=10
+    parents = await daemon_git.run(
+        ["rev-list", "--no-walk", "--parents", *ordered], cwd=repo_path, timeout=10
     )
-    if not isinstance(merges, GitOk) or merges.stdout.strip():
+    if not isinstance(parents, GitOk) or parents.stderr:
+        return None
+    parent_counts: dict[str, int] = {}
+    for line in parents.stdout.splitlines():
+        fields = line.split()
+        if not fields or fields[0] not in ordered or fields[0] in parent_counts or len(fields) > 3:
+            return None
+        parent_counts[fields[0]] = len(fields) - 1
+    if set(parent_counts) != set(ordered):
         return None
     last: dict[str, str] = {}
     for sha in ordered:
+        command = (
+            ["show", "--remerge-diff", "--format="]
+            if parent_counts[sha] == 2
+            else ["diff-tree", "--root", "--no-commit-id", "-r"]
+        )
         result = await daemon_git.run(
-            [
-                "diff-tree",
-                "--root",
-                "--no-commit-id",
-                "--name-status",
-                "--no-renames",
-                "-z",
-                "-r",
-                sha,
-            ],
+            [*command, "--name-status", "--no-renames", "-z", sha],
             cwd=repo_path,
             timeout=10,
         )
-        if not isinstance(result, GitOk):
+        if not isinstance(result, GitOk) or result.stderr:
             return None
-        fields = iter(result.stdout.split("\0"))
-        for status in fields:
-            if status:
-                last[next(fields, "")] = status
+        if not result.stdout:
+            continue
+        fields = result.stdout.split("\0")
+        if fields.pop() != "" or len(fields) % 2:
+            return None
+        for status, path in zip(fields[::2], fields[1::2], strict=True):
+            if status not in {"A", "D", "M", "T"} or _normalize_git_repo_path(path) is None:
+                return None
+            last[path] = status
     return "".join(f"{status}\0{path}\0" for path, status in last.items())
 
 
