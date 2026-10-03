@@ -95,6 +95,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `workflows` | Rule, skill, variable, and pipeline selectors |
 | `skills` | Metadata for baseline and allow-listed skill families |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
+| `spawnable_agents` | What a spawned run of this definition may spawn: `["*"]` any agent, named agents, or empty (the default) none. See [Spawn Scope](#spawn-scope) |
 | `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
@@ -387,6 +388,36 @@ question that keeps the child alive, use `message_type="message"`.
 Spawn requests can pass `agent`, `task_id`, isolation fields, provider/model
 overrides, reasoning fields, runtime limits, parent session, and project path.
 `dispatch_batch` uses the same spawn machinery for multiple task suggestions.
+
+## Spawn Scope
+
+The bundled `limit-spawnable-agents` rule (tool-hygiene, tagged `default`)
+limits what a spawned agent may spawn. A root session (no agent run, depth 0)
+spawns any agent. A spawned agent's `spawn_agent` and `dispatch_batch` calls
+follow the `spawnable_agents` of the installed definition its agent run names.
+Each definition declares one of three things:
+
+| Value | The spawned agent may spawn |
+| --- | --- |
+| `["*"]` | Any agent |
+| `[merge-worker]` | Only the named agents |
+| `[]` or omitted | No agent |
+
+`"*"` stands alone; mixing it with names fails validation. Every agent the call
+can start must be allowed, or the whole call is refused:
+
+- An omitted `agent` counts as the tool's default (`default` for `spawn_agent`,
+  `backend-developer` for `dispatch_batch`).
+- A `dispatch_batch` suggestion's own non-blank `agent` replaces the top-level
+  one for that suggestion. `suggestions` must be a list of objects.
+- Every agent in a target's `fallback_agent` chain counts, as `spawn_agent`
+  walks it: up to five hops, stopping at a cycle or a missing definition.
+
+A caller, run or definition the rule cannot resolve refuses the spawn. Disabling
+the installed rule row lifts the limit; there is no hardcoded allowlist. The
+agent depth limit applies independently. Pipeline `mcp` steps and daemon-driven
+spawns (build dispatch, close validation) do not pass through `before_tool`, so
+the rule does not govern them.
 
 ## Recovery Checkpoints
 

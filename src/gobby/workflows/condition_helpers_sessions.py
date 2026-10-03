@@ -5,9 +5,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
 from gobby.workflows.agent_models import AgentDefinitionBody
+from gobby.workflows.agent_resolver import resolve_agent
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -76,6 +78,85 @@ def send_message_target_allowed(
     return (target or "parent") in body.send_message_targets
 
 
+# The ``agent`` defaults of the gobby-agents spawn tools, for calls that omit it.
+_SPAWN_TOOL_DEFAULT_AGENT = {"spawn_agent": "default", "dispatch_batch": "backend-developer"}
+# spawn_agent walks at most this many fallback_agent hops (spawn_agent/_factory.py).
+_FALLBACK_CHAIN_MAX_HOPS = 5
+
+
+def _spawn_targets(tool_name: str, agent: Any, suggestions: Any) -> list[str]:
+    """The agent each spawn of the call starts, before any fallback.
+
+    A dispatch_batch suggestion's own non-blank ``agent`` overrides the
+    top-level one, as dispatch_batch resolves it.
+    """
+    requested = agent or _SPAWN_TOOL_DEFAULT_AGENT[tool_name]
+    if tool_name != "dispatch_batch":
+        return [requested]
+    if not isinstance(suggestions, list) or not all(isinstance(s, dict) for s in suggestions):
+        raise ValueError("dispatch_batch suggestions must be a list of objects")
+    targets: list[str] = []
+    for suggestion in suggestions:
+        own = suggestion.get("agent")
+        targets.append(own.strip() if isinstance(own, str) and own.strip() else requested)
+    return targets
+
+
+def _fallback_chain(target: str, db: Any, project_id: str | None) -> list[str]:
+    """``target`` and every fallback agent spawn_agent may start in its place."""
+    chain = [target]
+    body = resolve_agent(target, db, project_id=project_id)
+    for _ in range(_FALLBACK_CHAIN_MAX_HOPS):
+        candidate = None if body is None else body.fallback_agent
+        if not candidate or candidate in chain:
+            break
+        body = resolve_agent(candidate, db, project_id=project_id)
+        if body is None:
+            break
+        chain.append(candidate)
+    return chain
+
+
+def spawn_target_allowed(
+    session_manager: SessionManager | None,
+    caller_ref: Any,
+    tool_name: Any,
+    agent: Any,
+    suggestions: Any = None,
+) -> bool:
+    """Whether the caller may start every agent the gobby-agents ``tool_name`` call can.
+
+    A root session (no agent run, depth 0) spawns anything. A spawned caller's
+    definition comes from its agent run record, and its ``spawnable_agents``
+    decides: any agent, the listed agents, or none. Every effective target must
+    be allowed: each dispatch_batch suggestion's agent and every agent in a
+    target's fallback_agent chain. Anything unresolvable raises, and a raising
+    block condition fails closed.
+    """
+    if session_manager is None:
+        raise RuntimeError("spawn target scope needs a session manager")
+    if not isinstance(caller_ref, str) or not caller_ref:
+        raise ValueError("spawn target scope needs the caller session")
+    caller = session_manager.get(session_manager.resolve_session_reference(caller_ref))
+    if caller is None:
+        raise ValueError(f"Caller session {caller_ref} not found")
+    if caller.agent_run_id is None and caller.agent_depth == 0:
+        return True
+    if caller.agent_run_id is None:
+        raise ValueError(f"Spawned session {caller.id} has no agent run")
+    run = LocalAgentRunManager(session_manager.db).get(caller.agent_run_id)
+    if run is None or not run.agent_name:
+        raise ValueError(f"Agent run {caller.agent_run_id} names no agent definition")
+    body = resolve_agent(run.agent_name, session_manager.db, project_id=caller.project_id)
+    if body is None:
+        raise ValueError(f"Agent definition {run.agent_name!r} not found")
+    return all(
+        body.may_spawn(name)
+        for target in _spawn_targets(tool_name, agent, suggestions)
+        for name in _fallback_chain(target, session_manager.db, caller.project_id)
+    )
+
+
 def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
@@ -86,5 +167,8 @@ def session_condition_helpers(
         ),
         "send_message_target_allowed": lambda caller_ref, agent_type, target: (
             send_message_target_allowed(session_manager, caller_ref, agent_type, target)
+        ),
+        "spawn_target_allowed": lambda caller_ref, tool_name, agent, suggestions=None: (
+            spawn_target_allowed(session_manager, caller_ref, tool_name, agent, suggestions)
         ),
     }
