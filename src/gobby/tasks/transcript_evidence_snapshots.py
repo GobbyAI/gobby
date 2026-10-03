@@ -26,6 +26,7 @@ class PendingTool:
     arguments: dict[str, Any]
     timestamp: datetime
     order: int
+    call_id: str | None = None
 
 
 # --- Incremental derivation -------------------------------------------------
