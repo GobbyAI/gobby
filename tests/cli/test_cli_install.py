@@ -1161,8 +1161,10 @@ def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> Non
             await checkpoint()
             return config
 
-        monkeypatch.setattr(remote_preflight, "CONNECT_TIMEOUT_SECONDS", 0.05)
-        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.05)
+        # Slow-but-successful cases get a budget a loaded host cannot exhaust in one
+        # checkpoint; only the stall cases above and below depend on a tiny deadline.
+        monkeypatch.setattr(remote_preflight, "CONNECT_TIMEOUT_SECONDS", 1)
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 1)
         monkeypatch.setattr(remote_preflight, "_connect_postgres", slow_connect)
         monkeypatch.setattr(remote_preflight, "_read_remote_config", slow_config_read)
         assert await remote_preflight._probe_postgres("postgresql://slow", Path("/tmp")) == config
@@ -1207,7 +1209,7 @@ def test_remote_mode_preflight_deadlines(monkeypatch: pytest.MonkeyPatch) -> Non
 
         slow_qdrant = FakeQdrant()
         slow_falkor = FakeFalkor()
-        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 0.05)
+        monkeypatch.setattr(remote_preflight, "OPERATION_TIMEOUT_SECONDS", 1)
         monkeypatch.setattr(remote_preflight, "_create_qdrant_client", lambda _url: slow_qdrant)
         monkeypatch.setattr(
             remote_preflight,
