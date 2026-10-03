@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -45,10 +46,12 @@ from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.termination import kill_terminal
+from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver, AgentPlacementError
 from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
+from gobby.utils import spawn as spawn_utils
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
@@ -1175,3 +1178,92 @@ async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
     # The late cleanup kills what the prepare created.
     assert _terminal_states(h) == {terminal_id: "exited"}
     assert runtime.killed_host_ids == ["ht-1"]
+
+
+@dataclass
+class _TmuxCommandRecorder:
+    """Records every tmux command line started through ``gobby.utils.spawn``."""
+
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def refuse(self, argv: Sequence[str | os.PathLike[str]]) -> None:
+        command = tuple(os.fspath(part) for part in argv)
+        if command and Path(command[0]).name == "tmux":
+            self.calls.append(command)
+            raise FileNotFoundError(command[0])
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run, popen = spawn_utils.run, spawn_utils.popen
+        subprocess_exec = spawn_utils.create_subprocess_exec
+        session_exec = spawn_utils.create_session_exec
+
+        def guarded_run(argv: Sequence[str | os.PathLike[str]], **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return run(argv, **kwargs)
+
+        def guarded_popen(argv: Sequence[str | os.PathLike[str]], **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return popen(argv, **kwargs)
+
+        async def guarded_subprocess_exec(*argv: str | os.PathLike[str], **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return await subprocess_exec(*argv, **kwargs)
+
+        async def guarded_session_exec(*argv: str, **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return await session_exec(*argv, **kwargs)
+
+        monkeypatch.setattr(spawn_utils, "run", guarded_run)
+        monkeypatch.setattr(spawn_utils, "popen", guarded_popen)
+        monkeypatch.setattr(spawn_utils, "create_subprocess_exec", guarded_subprocess_exec)
+        monkeypatch.setattr(spawn_utils, "create_session_exec", guarded_session_exec)
+
+
+@pytest.mark.parametrize("kind", ["unplaced", "tab", "split"])
+@pytest.mark.parametrize("terminal_backend", [None, "native"])
+async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_backend: Literal["native"] | None,
+    kind: str,
+) -> None:
+    native = FakeRuntime(backend="native")
+    h = _build(
+        db=temp_db,
+        project=sample_project,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        runtimes=(native,),
+    )
+    # The real tmux runtime is registered, so only resolution keeps a spawn off it.
+    h.registry.register(TmuxTerminalRuntime())
+    tmux = _TmuxCommandRecorder()
+    tmux.install(monkeypatch)
+    # Only the provider plan is faked; execute_spawn runs for real down to the runtime.
+    h.executor = spawn_executor.execute_spawn
+    monkeypatch.setattr(spawn_executor, "prepare_claude_spawn", AsyncMock(side_effect=_plan))
+    placement: dict[str, Any] | None = None
+    if kind == "tab":
+        placement = _tab(h)
+    elif kind == "split":
+        placement = _split(_held_seat(h, "beside", state="exited").id)
+
+    result = await _spawn(h, placement, terminal_backend=terminal_backend)
+    background = [
+        task
+        for key, task in impl._spawn_background_tasks.items()
+        if key.startswith(f"{result['run_id']}:")
+    ]
+    await asyncio.gather(*background)
+
+    assert result["success"] is True, result
+    [launch] = h.launches
+    assert launch.terminal_backend == "native"
+    assert native.create_calls == 1
+    assert native.last_request is not None
+    terminal = h.terminals.get(str(native.last_request.terminal_id))
+    assert terminal is not None
+    assert (terminal.backend, terminal.state) == ("native", "live")
+    assert tmux.calls == []
