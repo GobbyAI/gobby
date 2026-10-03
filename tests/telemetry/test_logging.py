@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
+import psycopg
 import pytest
 from opentelemetry.sdk.trace import TracerProvider
 
@@ -379,6 +380,65 @@ def test_setup_file_logging_suppresses_websockets_info(logging_config: LoggingSe
 
     assert logging.getLogger("websockets").level == logging.WARNING
     assert logging.getLogger("websockets.server").level == logging.WARNING
+
+
+def test_psycopg_pool_warnings_reach_the_daemon_log(logging_config: LoggingSettings) -> None:
+    secret = "pool-sentinel-secret"
+    dsn = f"postgresql://gobby:{secret}@pool-sentinel.invalid:5432/gobby"
+    error = psycopg.errors.TooManyConnections(f"connection to {dsn} failed: too many clients")
+    setup_file_logging(logging_config)
+
+    pool_logger = logging.getLogger("psycopg.pool")
+    pool_logger.info("growing pool %r to %s", "pool-1", 4)
+    pool_logger.warning("error connecting in %r: %s", "pool-1", error)
+    pool_logger.warning("error resetting connection: %s", error, exc_info=error)
+
+    daemon = resolved_log_path(logging_config, DAEMON_LOG_FILENAME).read_text()
+    errors = resolved_log_path(logging_config, ERRORS_LOG_FILENAME).read_text()
+    daemon_lines = [line for line in daemon.splitlines() if "psycopg" in line]
+    assert len(daemon_lines) == 2
+    assert "pool=pool-1" in daemon_lines[0]
+    for line in daemon_lines:
+        assert "error=TooManyConnections" in line
+        assert "sqlstate=53300" in line
+    assert "growing pool" not in daemon
+    for text in (daemon, errors):
+        assert secret not in text
+        assert "pool-sentinel.invalid" not in text
+        assert "Traceback" not in text
+
+
+def test_psycopg_pool_scheduler_warnings_are_sanitized_and_kept_off_stderr(
+    logging_config: LoggingSettings,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    secret = "sched-sentinel-secret"
+    dsn = f"postgresql://gobby:{secret}@sched-sentinel.invalid:5432/gobby"
+    error = psycopg.errors.AdminShutdown(f"server closed {dsn}")
+    setup_file_logging(logging_config)
+    # The daemon's root logger has no handlers, so unrouted records reach logging.lastResort.
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+
+    for logger_name in ("psycopg_pool.sched", "psycopg_pool.sched_async"):
+        logging.getLogger(logger_name).warning(
+            "scheduled task run %s failed: %s: %s",
+            f"<task {dsn}>",
+            type(error).__name__,
+            error,
+        )
+
+    daemon = resolved_log_path(logging_config, DAEMON_LOG_FILENAME).read_text()
+    errors = resolved_log_path(logging_config, ERRORS_LOG_FILENAME).read_text()
+    stderr = capsys.readouterr().err
+    daemon_lines = [line for line in daemon.splitlines() if "psycopg pool warning" in line]
+    assert len(daemon_lines) == 2
+    for line in daemon_lines:
+        assert "error=AdminShutdown" in line
+        assert "sqlstate=57P01" in line
+    for text in (daemon, errors, stderr):
+        assert secret not in text
+        assert "sched-sentinel.invalid" not in text
 
 
 def test_setup_file_logging_has_no_otel_log_handler(logging_config: LoggingSettings) -> None:
