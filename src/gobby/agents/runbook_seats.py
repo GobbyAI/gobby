@@ -1,10 +1,11 @@
 """Runbook seat guard: the read-only admission check a runbook runs before it launches seats.
 
 Runbooks are fire and forget: once the panes exist and the agents start, the pipeline
-completes. The guard refuses only an accidental double-fire, the same runbook still
-launching for the same project in the same workspace on the same machine. Seats are
-told apart by ``project#session_ref``, never by pane title, so seats may share a title;
-runbooks enforce no agent slots.
+completes. Besides refusing a seat whose agent definition is missing or disabled, the
+guard refuses only an accidental double-fire: the same runbook still launching for the
+same project in the same workspace on the same machine. Seats are told apart by
+``project#session_ref``, never by pane title, so seats may share a title; runbooks
+enforce no agent slots.
 """
 
 from __future__ import annotations
