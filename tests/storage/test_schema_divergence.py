@@ -223,7 +223,7 @@ def test_read_only_operational_config_opens_the_database_without_migrations(
         opened.append(apply_migrations)
         yield MagicMock()
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(config_file=None, config_repository_factory=lambda _db: repository)
 
     config = runtime.read_only_operational_config()
@@ -249,7 +249,7 @@ def test_read_only_operational_config_tolerates_residual_keys_and_names_them(
     def open_database(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
         yield MagicMock()
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(config_file=None, config_repository_factory=lambda _db: repository)
 
     with caplog.at_level(logging.WARNING, logger="gobby.cli.runtime"):
@@ -275,7 +275,7 @@ def test_operational_config_still_applies_migrations(monkeypatch: pytest.MonkeyP
         opened.append(apply_migrations)
         yield MagicMock()
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", open_database)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", open_database)
     runtime = CliRuntime(config_file=None, config_repository_factory=lambda _db: repository)
 
     config = runtime.operational_config
@@ -393,7 +393,7 @@ def gated(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> _G
             raise SchemaContractError(gate.message)
         yield _database_returning(gate.live_head)
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", gated_hub)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", gated_hub)
     _stub_config_projection(monkeypatch)
     return gate
 
@@ -480,7 +480,7 @@ def test_health_stays_a_one_liner_when_every_head_agrees(monkeypatch: pytest.Mon
     def hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
         yield _database_returning(pin)
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", hub)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
     _live_daemon(monkeypatch)
     monkeypatch.setattr(
@@ -551,7 +551,7 @@ def _restart_preflight(
     def hub(_config_file: object, *, apply_migrations: bool) -> Iterator[MagicMock]:
         yield _database_returning(live_head)
 
-    monkeypatch.setattr("gobby.cli.runtime.runtime_hub_database", hub)
+    monkeypatch.setattr("gobby.storage.hub.runtime.runtime_hub_database", hub)
     _stub_config_projection(monkeypatch)
     monkeypatch.setattr("gobby.cli.daemon_preflight.worktree_daemon_refusal", lambda: None)
 

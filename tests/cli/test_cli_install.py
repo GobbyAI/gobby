@@ -123,7 +123,7 @@ def _mock_ext_services_and_prompts() -> Iterator[None]:
         patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
         patch("gobby.cli.install._maybe_start_daemon_after_install"),
         patch(
-            "gobby.cli.runtime.runtime_hub_database",
+            "gobby.storage.hub.runtime.runtime_hub_database",
             return_value=nullcontext(MagicMock()),
         ),
         patch("gobby.cli.runtime.CliRuntime.require_config", return_value=MagicMock()),

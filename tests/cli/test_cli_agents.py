@@ -42,7 +42,7 @@ def _runtime_database() -> Iterator[None]:
     config = MagicMock()
     with (
         patch(
-            "gobby.cli.runtime.runtime_hub_database",
+            "gobby.storage.hub.runtime.runtime_hub_database",
             return_value=nullcontext(database),
         ),
         patch("gobby.cli.runtime.CliRuntime.require_config", return_value=config),

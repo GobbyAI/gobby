@@ -8,10 +8,10 @@ from collections.abc import Iterator, MutableMapping
 import click
 
 from gobby.config.bootstrap import load_bootstrap
+from gobby.paths import get_gobby_home
 from gobby.utils.version import get_version
 
 from .runtime import CliRuntime
-from .utils import get_gobby_home
 
 # Command name -> (module under gobby.cli, attribute). Each module is imported only
 # when its command runs or is listed, so `gobby mcp-server` (every agent's stdio
