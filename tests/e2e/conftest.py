@@ -344,8 +344,10 @@ def _checkout_gdaemon_bin_dir(
     stays out: it describes the gdaemon this dir replaces.
 
     Pinned binaries are hard links, never copies: gterm pins its own executable
-    and refuses to host when that executable is a symlink. The checkout gdaemon
-    stays a symlink so a rebuild that replaces its inode is still followed.
+    and refuses to host when that executable is a symlink. Non-executable
+    metadata (version and runtime JSON) is copied, since a sandbox may refuse a
+    link to it. The checkout gdaemon stays a symlink so a rebuild that replaces
+    its inode is still followed.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
@@ -353,6 +355,9 @@ def _checkout_gdaemon_bin_dir(
     skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
     for entry in pinned_bin_dir.iterdir():
         if entry.is_file() and entry.name not in skipped:
+            if not os.access(entry, os.X_OK):
+                shutil.copy2(entry, composite / entry.name)
+                continue
             try:
                 os.link(entry.resolve(), composite / entry.name)
             except OSError as exc:

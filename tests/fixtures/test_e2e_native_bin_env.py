@@ -66,6 +66,35 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
     assert dict(os.environ) == environ_before
 
 
+def test_pinned_metadata_is_copied_where_links_are_refused(
+    checkout_gdaemon: Path,
+    installed_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Non-executable metadata is copied, so a sandbox refusing links to it cannot fail setup."""
+    runtime = installed_dir / ".ghook-runtime.json"
+    runtime.write_text('{"runtime": "installed"}')
+    runtime.chmod(0o644)
+    real_link = os.link
+
+    def sandboxed_link(src: Path, dst: Path) -> None:
+        if not os.access(src, os.X_OK):
+            raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), str(src))
+        real_link(src, dst)
+
+    monkeypatch.setattr(os, "link", sandboxed_link)
+    home = tmp_path / "home"
+    home.mkdir()
+    base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
+
+    bin_dir = Path(e2e_fixtures.prepare_daemon_env(base, home_dir=home)[NATIVE_BIN_DIR_ENV])
+
+    assert (bin_dir / runtime.name).read_text() == '{"runtime": "installed"}'
+    assert not os.path.samefile(bin_dir / runtime.name, runtime)
+    assert os.path.samefile(bin_dir / GTERM, installed_dir / GTERM)
+
+
 def test_cross_filesystem_pin_fails_naming_the_cause(
     checkout_gdaemon: Path,
     installed_dir: Path,
