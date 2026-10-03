@@ -19,7 +19,7 @@ Superseded text is kept and marked.
 - section 5a K1, which is retracted;
 - section 10 choices 3, 7 and 10.
 
-Sections 1-3 (hub-to-Postgres, H6), 6 (reset), 9 and 11 still stand except where noted. **Nothing is decided.**
+Sections 1-3 (hub-to-Postgres, H6), 6 (reset), 9 and 11 still stand except where noted. Josh decided R0-R7 on 2026-10-02 (section 10, Josh's decisions).
 
 ### 0.1 Josh's plan and the topologies it must serve
 
@@ -170,7 +170,7 @@ Revision 2 wanted P4 4.5 `hub_cert` pinning for every node. That is now fallback
 
 ### 0.8 Choices for Josh (revision 3)
 
-Nothing is decided. These choices replace section 10's 3, 7 and 10. Choice 7 is reversed by Josh's direction: the credential route stays as the primary path. Choices 1, 4, 5, 6, 8 and 9 carry over unchanged.
+Josh accepted every recommended option on 2026-10-02 (section 10, Josh's decisions). These choices replace section 10's 3, 7 and 10. Choice 7 is reversed by Josh's direction: the credential route stays as the primary path. Choices 1, 4, 5, 6, 8 and 9 carry over unchanged.
 
 - **R0. Node registration methods:** password prompt plus device code (recommended; the device code covers SSO/MFA and cloud), password only, or device code only?
 - **R1. Binding:** keys bound at registration, plus bind on first use for pasted keys, with signed requests after binding (recommended); or plain bearer keys with no machine binding (simplest, and drops "valid only for the machine")?
@@ -543,7 +543,18 @@ PD review of this revision is required before the Assistant presents the choices
 
 ### Josh's decisions
 
-**Choice 9 is decided:** Josh answered "Yes" on 2026-10-01. An agent removes the stray `falkordb_password` key from the live `~/.gobby/bootstrap.yaml`, with the PD routing the execution. **Choice 5 is decided:** Josh said "All three are required then." D3 (`gobby-mcp`), D4 (hub HTTP routes for node `gcode index`) and D5 (hook envelope carries edited-file content) must all land before nodes count as supported. Every other choice, and R0-R7, is still **pending**. Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01.
+**Choice 9 is decided:** Josh answered "Yes" on 2026-10-01. An agent removes the stray `falkordb_password` key from the live `~/.gobby/bootstrap.yaml`, with the PD routing the execution. **Choice 5 is decided:** Josh said "All three are required then." D3 (`gobby-mcp`), D4 (hub HTTP routes for node `gcode index`) and D5 (hook envelope carries edited-file content) must all land before nodes count as supported. **R0-R7 are decided:** Josh pressed button "23128-A" on 2026-10-02 (relayed by the PD at 20:37 CT), accepting every recommended option in section 0.8:
+
+- R0: password prompt plus device code.
+- R1: keys bound at registration, plus bind on first use for pasted keys, with signed requests after binding.
+- R2: one key per machine.
+- R3: unbound keys expire after 24 hours.
+- R4: self-signed hubs use a URL carrying the fingerprint fragment.
+- R5: a second-machine bind attempt gets 409 plus a web UI alert.
+- R6: a password change keeps machine keys valid and offers an opt-in "revoke all machines".
+- R7: the pasted-key path stays for headless or automated nodes.
+
+Choices 1, 4, 6 and 8 are still **pending**. Revision 2 (`b3023b3`) was presented on Telegram at 14:35 CT on 2026-10-01.
 
 A decision table recorded in `4d8bc01` was **retracted**. The Assistant misread Josh's "Agreed", and Josh said: "I didn't accept yet."
 
