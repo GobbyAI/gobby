@@ -43,6 +43,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.terminals import TerminalManager
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from gobby.utils.machine_id import require_machine_id
 from tests.agents.terminal_fixtures import make_live_terminal
 
@@ -554,6 +555,39 @@ class TestAgentRestartReconciliation:
             run.id, terminal_reason="daemon_stop"
         )
         resume.assert_awaited_once()
+        assert row.state == "exited"
+
+    @pytest.mark.asyncio
+    async def test_missing_terminal_close_reviewer_is_parked_not_resumed(self) -> None:
+        # The review stays bound to this run, so a resumed successor could never
+        # submit; close-review reconciliation retries the parked reviewer instead.
+        run = SimpleNamespace(
+            id="0f1c2d3e-4b5a-4c6d-8e7f-901a2b3c4d5e",
+            terminal_id="6d1b5c7f-8a2e-4d3f-9e1b-4f5a6b7c8d9e",
+            agent_name=TASK_CLOSE_REVIEWER_AGENT,
+            task_id=None,
+            resume_metadata_json={},
+        )
+        row = SimpleNamespace(id=run.terminal_id, backend="tmux", state="exited")
+        storage = SimpleNamespace(list_active_for_machine=MagicMock(return_value=[run]))
+        runner = self._runner(storage, parked_run=run)
+        runner.terminal_manager = SimpleNamespace(get=MagicMock(return_value=row))
+        resolved_run_ids: set[str] = set()
+
+        with patch(
+            "gobby.agents.resume_executor.resume_agent_run",
+            new=AsyncMock(return_value=SimpleNamespace(success=True, error=None)),
+        ) as resume:
+            count = await runner_lifecycle._reconcile_agent_runs_after_restart(
+                runner, resolved_run_ids=resolved_run_ids
+            )
+
+        assert count == 2
+        assert resolved_run_ids == {run.id}
+        runner.agent_lifecycle_monitor.terminalize_cancelled_run.assert_awaited_once_with(
+            run.id, terminal_reason="daemon_stop"
+        )
+        resume.assert_not_awaited()
         assert row.state == "exited"
 
     @pytest.mark.asyncio
