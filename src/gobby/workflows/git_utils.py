@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import subprocess  # nosec B404 - synchronous compatibility helpers are offline-only
+import subprocess  # nosec B404 # synchronous compatibility helpers are offline-only
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -60,7 +60,7 @@ async def get_git_status_async(project_path: str | None = None) -> str:
 def get_git_status(project_path: str | None = None) -> str:
     """Get status synchronously for offline CLI callers only."""
     try:
-        result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             ["git", "status", "--short"],
             capture_output=True,
             text=True,
@@ -106,7 +106,7 @@ def get_recent_git_commits(
 ) -> list[dict[str, str]]:
     """Get recent commits synchronously for offline CLI callers only."""
     try:
-        result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             ["git", "log", f"-{max_commits}", "--format=%H|%s"],
             capture_output=True,
             text=True,
@@ -174,14 +174,14 @@ def get_file_changes(project_path: str | None = None, paths: Sequence[str] | Non
     """Get file changes synchronously for offline CLI callers only."""
     try:
         path_args = ["--", *paths] if paths else []
-        diff_result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        diff_result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             ["git", "diff", "HEAD", "--name-status", *path_args],
             capture_output=True,
             text=True,
             timeout=5,
             cwd=project_path,
         )
-        untracked_result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        untracked_result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             ["git", "ls-files", "--others", "--exclude-standard", *path_args],
             capture_output=True,
             text=True,
@@ -273,14 +273,14 @@ def get_git_diff_summary(
     """Get a diff summary synchronously for offline CLI callers only."""
     path_args = ["--", *paths] if paths else []
     try:
-        stat_result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        stat_result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             ["git", "diff", "HEAD", "--stat", *path_args],
             capture_output=True,
             text=True,
             timeout=10,
             cwd=project_path,
         )
-        diff_result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        diff_result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             ["git", "diff", "HEAD", *path_args],
             capture_output=True,
             text=True,
@@ -290,7 +290,7 @@ def get_git_diff_summary(
         stat_output = stat_result.stdout.strip()
         diff_output = diff_result.stdout.strip()
         if not diff_output:
-            diff_result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+            diff_result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
                 ["git", "diff", "--cached", *path_args],
                 capture_output=True,
                 text=True,
@@ -299,7 +299,7 @@ def get_git_diff_summary(
             )
             diff_output = diff_result.stdout.strip()
             if not stat_output:
-                stat_result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+                stat_result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
                     ["git", "diff", "--cached", "--stat", *path_args],
                     capture_output=True,
                     text=True,
@@ -350,7 +350,7 @@ def resolve_git_worktree_root(*candidate_paths: str | Path | None) -> str | None
         if not path_text or not Path(path_text).is_dir():
             continue
         try:
-            result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+            result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
                 ["git", "rev-parse", "--show-toplevel"],
                 cwd=path_text,
                 capture_output=True,
@@ -460,7 +460,7 @@ def get_dirty_files_categorized(
     if worktree_root is None:
         return DirtyFiles(set(), set())
     try:
-        result = spawn.run(  # nosec B603 B607 - fixed offline Git argv
+        result = spawn.run(  # nosec B603 B607 # fixed offline Git argv
             [
                 "git",
                 "--literal-pathspecs",

@@ -6,7 +6,7 @@ import hashlib
 import logging
 import os
 import shutil
-import subprocess  # nosec B404 - reads git commit times for staleness reporting
+import subprocess  # nosec B404 # reads git commit times for staleness reporting
 import tarfile
 import tempfile
 import zipfile

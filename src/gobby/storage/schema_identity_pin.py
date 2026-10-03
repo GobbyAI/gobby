@@ -52,7 +52,7 @@ def validate_identity(parsed: object) -> dict[str, int | str]:
 def probe_identity(gdaemon: Path, *, cwd: Path | None = None) -> dict[str, int | str]:
     """Run ``gdaemon schema version --json`` and return its validated identity."""
     try:
-        result = spawn.run(  # nosec B603 - operator-supplied executable, fixed arguments
+        result = spawn.run(  # nosec B603 # operator-supplied executable, fixed arguments
             [str(gdaemon), "schema", "version", "--json"],
             cwd=cwd,
             check=False,

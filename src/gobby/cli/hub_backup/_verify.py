@@ -682,7 +682,7 @@ def _extract_archive(volume: str, archive_path: Path, scratch_dir: Path) -> int:
     try:
         with open_regular_binary(archive_path, label=f"Volume archive for {volume}") as source:
             with tarfile.open(fileobj=source, mode="r:gz") as tar:
-                tar.extractall(  # nosec B202 # data filter applied
+                tar.extractall(
                     path=scratch_dir,
                     filter="data",
                 )

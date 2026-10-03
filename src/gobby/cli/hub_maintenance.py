@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import subprocess  # nosec B404 - fixed Python module invocation, never shell=True
+import subprocess  # nosec B404 # fixed Python module invocation, never shell=True
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -319,7 +319,7 @@ def _run_epoch_backup(ctx: click.Context, epoch_id: object) -> BackupEvidence:
     if isinstance(config_file, str):
         argv.extend(["--config", config_file])
     argv.extend(["hub-backup", "--epoch", str(epoch_id), "--json"])
-    result = subprocess.run(  # nosec B603 - fixed interpreter/module and arguments
+    result = subprocess.run(  # nosec B603 # fixed interpreter/module and arguments
         argv,
         capture_output=True,
         text=True,

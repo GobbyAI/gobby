@@ -170,7 +170,7 @@ class TaskCloseReviewStore:
                 SELECT {_COLUMNS} FROM task_close_reviews
                 WHERE task_id = %s
                 ORDER BY created_at DESC, id DESC LIMIT 1
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (task_id,),
             ).fetchone()
         if row is None:
@@ -275,7 +275,7 @@ class TaskCloseReviewStore:
                 )
                 DO NOTHING
                 RETURNING {_COLUMNS}
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (
                     task_id,
                     expected_task_updated_at,
@@ -346,7 +346,7 @@ class TaskCloseReviewStore:
                     WHERE task_id = %s AND status = ANY(%s)
                     ORDER BY created_at DESC
                     LIMIT 1
-                    """,  # nosec B608 - static column fragment
+                    """,  # nosec B608 # static column fragment
                     (task_id, active),
                 ).fetchone()
         if row is None:
@@ -418,7 +418,7 @@ class TaskCloseReviewStore:
                 ORDER BY r.created_at, r.id
                 LIMIT %s
                 FOR UPDATE OF r SKIP LOCKED
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (project_id, slots),
             ).fetchall()
             for row in rows:
@@ -437,7 +437,7 @@ class TaskCloseReviewStore:
                         launched_at = %s, updated_at = %s
                     WHERE id = %s AND status = 'queued'
                     RETURNING {_COLUMNS}
-                    """,  # nosec B608 - static column fragment
+                    """,  # nosec B608 # static column fragment
                     (_json(close_arguments), now, now, review.id),
                 ).fetchone()
                 if promoted is not None:
@@ -517,7 +517,7 @@ class TaskCloseReviewStore:
                   )
                 ORDER BY r.completed_at DESC NULLS LAST, r.created_at DESC
                 LIMIT 1
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (
                     task_id,
                     review_fingerprint,
@@ -549,7 +549,7 @@ class TaskCloseReviewStore:
                   AND agent_run_id IS NOT NULL
                 ORDER BY created_at DESC, id DESC
                 LIMIT 1
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (task_id, caller_session_id),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
@@ -592,7 +592,7 @@ class TaskCloseReviewStore:
                     launched_at = COALESCE(launched_at, %s), updated_at = %s
                 WHERE id = %s AND agent_run_id = %s AND status = 'launching'
                 RETURNING {_COLUMNS}
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (run_id, now, now, review_id, run_id),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
@@ -639,7 +639,7 @@ class TaskCloseReviewStore:
                           OR (status = 'error' AND error = %s)
                       )
                     RETURNING {_COLUMNS}
-                    """,  # nosec B608 - static column fragment
+                    """,  # nosec B608 # static column fragment
                     (captured, now, review_id, run_id, REVIEWER_RUN_ENDED_SUCCESS_ERROR),
                 ).fetchone()
             except UniqueViolation as exc:
@@ -733,7 +733,7 @@ class TaskCloseReviewStore:
                     completed_at = %s, updated_at = %s
                 WHERE id = %s AND status = 'finalizing' AND updated_at = %s
                 RETURNING {_COLUMNS}
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (
                     _json(result_payload),
                     error,
@@ -763,7 +763,7 @@ class TaskCloseReviewStore:
                     completed_at = %s, updated_at = %s
                 WHERE id = %s AND status = ANY(%s)
                 RETURNING {_COLUMNS}
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (
                     status,
                     _json(result_payload),
@@ -800,7 +800,7 @@ class TaskCloseReviewStore:
                 WHERE status = ANY(%s)
                    OR (status = ANY(%s) AND delivered_at IS NULL)
                 ORDER BY created_at, id
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (
                     list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),
                     list(TERMINAL_TASK_CLOSE_REVIEW_STATUSES),
@@ -824,7 +824,7 @@ class TaskCloseReviewStore:
                 SET status = %s, error = NULL, updated_at = %s
                 WHERE id = %s AND agent_run_id = %s AND status = %s
                 RETURNING {_COLUMNS}
-                """,  # nosec B608 - static column fragment
+                """,  # nosec B608 # static column fragment
                 (to_status, now, review_id, run_id, from_status),
             ).fetchone()
         return _review_from_row(row) if row is not None else None
@@ -858,7 +858,7 @@ def _admission_blocker(
               OR (r.status = ANY(%s) AND a.status <> ALL(%s))
           )
         ORDER BY (r.task_id = %s) DESC, r.created_at, r.id
-        """,  # nosec B608 - static column fragment
+        """,  # nosec B608 # static column fragment
         (
             project_id,
             list(ACTIVE_TASK_CLOSE_REVIEW_STATUSES),

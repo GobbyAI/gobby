@@ -18,7 +18,7 @@ import errno
 import os
 import shutil
 import signal
-import subprocess  # nosec B404 - the helper owns daemon spawns
+import subprocess  # nosec B404 # the helper owns daemon spawns
 import tempfile
 import threading
 import time
@@ -153,7 +153,7 @@ def run(
         timeout = options.get("timeout")
         options["timeout"] = remaining if timeout is None else min(timeout, remaining)
     command, executable, directory = _spawn_plan(argv, cwd, env)
-    return subprocess.run(  # nosec B603 - argv form, resolved executable
+    return subprocess.run(  # nosec B603 # argv form, resolved executable
         command,
         executable=executable,
         cwd=directory,
@@ -197,7 +197,7 @@ def popen(
     """``subprocess.Popen`` without forking the daemon; ``text`` picks str or bytes pipes."""
     _reject(options)
     command, executable, directory = _spawn_plan(argv, cwd, env)
-    return subprocess.Popen(  # nosec B603 - argv form, resolved executable
+    return subprocess.Popen(  # nosec B603 # argv form, resolved executable
         command,
         executable=executable,
         cwd=directory,
