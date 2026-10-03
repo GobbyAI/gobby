@@ -40,8 +40,12 @@ was 9.00/9.20/10.49 at start and 8.83/10.50/10.82 at end.
 - **Provenance.** The 200k numbers come from the harness's draft revision. The
   committed file keeps the same measurement logic. It changes only lint fixes,
   how the match digest is computed, and how the prior module is loaded (now a
-  `--prior-module` argument). Its 3k-group smoke run reproduces identical match
-  sets across both arms.
+  `--prior-module` argument).
+- **Match identity.** The draft compared snippets only. The committed harness
+  identifies each match by the canonical JSON of its full rendered message (id
+  included). It compares count and sha256 per query across arms, and exits 1 on
+  any mismatch. Its 3k-group run (2026-10-03) printed `match sets identical for
+  all 5 queries`.
 
 ## Results
 
@@ -53,9 +57,10 @@ was 9.00/9.20/10.49 at start and 8.83/10.50/10.82 at end.
 | rare hit, distinct needle | 0.187 s | 100 calls, 25.81 s | 0.380 s, 1 group | 1 | 0.392 s |
 | common hit (`lorem ipsum`) | 0.072 s, 200 groups | first page only | 2.913 s, 20 groups | 100,000 | 2.634 s |
 
-Every prefilter query finished in a single call. The match sets were identical
-across both arms for all five queries, which confirms the superset guarantee on
-this fixture.
+Every prefilter query finished in a single call. At 200k, the snippet sequences
+were identical across both arms for all five queries. The full-message identity
+check above reproduces that equality at 3k, which supports the superset
+guarantee on this fixture.
 
 Index-side cost:
 

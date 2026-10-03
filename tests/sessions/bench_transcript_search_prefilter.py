@@ -129,6 +129,22 @@ def _load_prior_module(path: str) -> ModuleType:
     return module
 
 
+def _match_identities(results: list[dict[str, Any]]) -> list[str]:
+    """Canonical identity of each matched message: its full rendered dict, id included."""
+    return [json.dumps(match["message"], sort_keys=True) for match in results]
+
+
+def _match_set_mismatches(reports: dict[str, dict[str, Any]]) -> list[str]:
+    """Queries whose ordered match identities differ between the two arms."""
+    baseline, prefilter = reports["baseline"]["queries"], reports["prefilter"]["queries"]
+    return [
+        name
+        for name in QUERIES
+        if (baseline[name]["matches"], baseline[name]["matches_sha256"])
+        != (prefilter[name]["matches"], prefilter[name]["matches_sha256"])
+    ]
+
+
 def _summarize(calls: list[dict[str, Any]], found: list[str]) -> dict[str, Any]:
     return {
         "first_call_s": calls[0]["s"],
@@ -224,7 +240,7 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
                 calls.append(
                     {"s": elapsed, "groups": rendered_groups, "resolutions": resolved_count}
                 )
-                found.extend(str(match.get("snippet")) for match in result.get("results", []))
+                found.extend(_match_identities(result.get("results", [])))
                 cursor = result.get("next_cursor")
                 if not cursor or name == "common_hit":
                     break
@@ -299,7 +315,7 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
             elapsed = time.perf_counter() - started
             rendered_groups, resolved_count = take()
             calls.append({"s": elapsed, "groups": rendered_groups, "resolutions": resolved_count})
-            found.extend(str(match.get("snippet")) for match in collected)
+            found.extend(_match_identities(collected))
             if name == "common_hit":
                 break
         summary = _summarize(calls, found)
@@ -327,6 +343,7 @@ def main() -> int:
     if not fixture.exists():
         build_fixture(fixture, args.groups)
     print(f"groups={args.groups} fixture={fixture} bytes={fixture.stat().st_size}", flush=True)
+    reports: dict[str, dict[str, Any]] = {}
     for arm in ("baseline", "prefilter"):
         env = dict(os.environ, GOBBY_HOME=str(root / f"home-{arm}"))
         proc = subprocess.run(
@@ -350,7 +367,13 @@ def main() -> int:
             print(f"{arm} failed rc={proc.returncode}\n{proc.stderr[-4000:]}", flush=True)
             return 1
         line = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")][-1]
-        print(json.dumps(json.loads(line[len("RESULT ") :]), indent=1), flush=True)
+        reports[arm] = json.loads(line[len("RESULT ") :])
+        print(json.dumps(reports[arm], indent=1), flush=True)
+    mismatches = _match_set_mismatches(reports)
+    if mismatches:
+        print(f"match sets differ for: {', '.join(mismatches)}", flush=True)
+        return 1
+    print(f"match sets identical for all {len(QUERIES)} queries", flush=True)
     return 0
 
 
