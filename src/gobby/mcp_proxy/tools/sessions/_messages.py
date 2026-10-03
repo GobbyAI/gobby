@@ -56,7 +56,8 @@ def register_message_tools(
 
         Args:
             session_id: Session reference - supports <project>#N, local #N/N, UUID, or prefix
-            limit: Max rendered groups to return
+            limit: Max rendered groups to return, capped at RENDERED_LIMIT_MAX; the
+                response's limit is the effective, capped value.
             offset: Rendered-group offset; advance by the response's returned_count.
                 total_count is the rendered-group total, so offset=total_count-limit
                 returns the last page.
@@ -87,7 +88,7 @@ def register_message_tools(
                 "messages": messages,
                 "total_count": result.total_groups,
                 "returned_count": result.returned_count,
-                "limit": limit,
+                "limit": clamped,
                 "offset": offset,
                 "truncated": False,
             }
