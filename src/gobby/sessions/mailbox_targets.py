@@ -92,7 +92,7 @@ def resolve_broadcast_selection(
            AND id != %s
            {project_clause}
          ORDER BY created_at ASC, id ASC
-        """,  # nosec B608 -- placeholders and fixed clause are generated locally.
+        """,  # nosec B608 # placeholders and fixed clause are generated locally.
         params,
     )
     recipient_states = [

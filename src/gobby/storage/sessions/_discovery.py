@@ -153,7 +153,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
               AND status IN ({status_placeholders})
             ORDER BY updated_at DESC
             LIMIT 1
-            """,  # nosec B608 -- placeholders come from a fixed local constant.
+            """,  # nosec B608 # placeholders come from a fixed local constant.
             (external_id, source, session_type, *LIVE_SESSION_STATUS_ORDER),
         )
         return Session.from_row(row) if row else None
@@ -278,7 +278,7 @@ class _DiscoveryMixin(_LineageDiscoveryMixin):
               AND terminal_context IS NOT NULL
             ORDER BY updated_at DESC
             LIMIT %s
-            """,  # nosec B608 -- placeholders come from a fixed local constant.
+            """,  # nosec B608 # placeholders come from a fixed local constant.
             (
                 normalized_project_id,
                 "terminal",

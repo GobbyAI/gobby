@@ -243,7 +243,7 @@ def restore_postgres_globals(database_url: str, globals_path: Path) -> None:
     with open_regular_binary(globals_path, label="PostgreSQL globals") as globals_file:
         replay = _idempotent_global_role_creates(_without_role_passwords(globals_file.read()))
         ensure_docker_allowed("hub backup PostgreSQL globals restore", runner=subprocess.run)
-        result = subprocess.run(  # nosec B603 - fixed docker/psql argv and verified file input
+        result = subprocess.run(  # nosec B603 # fixed docker/psql argv and verified file input
             _postgres_client_command(
                 "psql",
                 "-U",

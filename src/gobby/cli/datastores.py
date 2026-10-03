@@ -8,7 +8,7 @@ import os
 import re
 import secrets
 import shutil
-import subprocess  # nosec B404 - fixed tailscale and Docker commands
+import subprocess  # nosec B404 # fixed tailscale and Docker commands
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
