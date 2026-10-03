@@ -338,7 +338,12 @@ def main() -> int:
         print("RESULT " + json.dumps(report), flush=True)
         return 0
 
-    root = Path(tempfile.mkdtemp(prefix="gobby-23267-prefilter-"))
+    # Removes the generated fixture and arm homes; a caller-supplied --fixture is kept.
+    with tempfile.TemporaryDirectory(prefix="gobby-23267-prefilter-") as tmp:
+        return _compare_arms(args, Path(tmp))
+
+
+def _compare_arms(args: argparse.Namespace, root: Path) -> int:
     fixture = Path(args.fixture) if args.fixture else root / "mix.jsonl"
     if not fixture.exists():
         build_fixture(fixture, args.groups)
