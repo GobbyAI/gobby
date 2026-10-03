@@ -68,6 +68,8 @@ def _context(links: list[dict[str, Any]], sessions: dict[str, Any]) -> MagicMock
         "after-window",
         "wrong-task",
         "no-terminal",
+        "late-valid",
+        "late-ambiguous-root",
     ],
 )
 async def test_legacy_linked_edits_require_registered_task_checkout_proof(
@@ -151,7 +153,18 @@ async def test_legacy_linked_edits_require_registered_task_checkout_proof(
         worktrees.append(
             SimpleNamespace(**{**vars(worktree), "worktree_path": str(tmp_path / "other")})
         )
-    ctx.worktree_manager.list_worktrees.return_value = worktrees
+    if case == "late-valid":
+        outside = SimpleNamespace(**{**vars(worktree), "created_at": start + timedelta(seconds=61)})
+        worktrees = [outside] * 50 + [worktree]
+    elif case == "late-ambiguous-root":
+        other = SimpleNamespace(**{**vars(worktree), "worktree_path": str(tmp_path / "other")})
+        worktrees = [worktree] * 50 + [other]
+
+    def list_task_worktrees(*, task_id: str, limit: int | None = 50) -> list[SimpleNamespace]:
+        assert task_id == "task"
+        return worktrees[:limit]
+
+    ctx.worktree_manager.list_worktrees.side_effect = list_task_worktrees
     with (
         patch(f"{_SUPPORT}.transcript_sync_point", return_value=None),
         patch(f"{_SUPPORT}.derive_prelink_runs", new=AsyncMock(return_value=())),
@@ -176,8 +189,8 @@ async def test_legacy_linked_edits_require_registered_task_checkout_proof(
         ),
     )
     result = evaluate_tdd_evidence(tests, evidence)
-    assert result.passed is (case in {"valid", "partial-owner"}), result.findings
-    if case in {"valid", "partial-owner", "no-terminal"}:
+    assert result.passed is (case in {"valid", "partial-owner", "late-valid"}), result.findings
+    if case in {"valid", "partial-owner", "no-terminal", "late-valid"}:
         assert [(edit.path, edit.timestamp) for edit in evidence.edits] == [
             (test_path, start + timedelta(seconds=10)),
             (production_path, start + timedelta(seconds=30)),

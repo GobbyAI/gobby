@@ -508,7 +508,9 @@ async def _legacy_task_checkout_proof(
     start = _evidence_epoch(window_start)
     if start is None:
         return denied
-    worktrees = await asyncio.to_thread(ctx.worktree_manager.list_worktrees, task_id=task_id)
+    worktrees = await asyncio.to_thread(
+        ctx.worktree_manager.list_worktrees, task_id=task_id, limit=None
+    )
     if not isinstance(worktrees, list):
         return denied
     roots: dict[str, float] = {}
