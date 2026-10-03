@@ -8,11 +8,19 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::time::Duration;
 
+use std::collections::BTreeMap;
+use std::net::{IpAddr, SocketAddr};
+use std::time::Instant;
+
 use bytes::Bytes;
 use common::{
-    TIMEOUT, frame, head_has, read_exact_into, refused_addr, start_front_door, ws_backend,
-    ws_client,
+    TIMEOUT, frame, head_has, local_non_loopback_ipv4, read_exact_into, refused_addr, self_signed,
+    self_signed_settings, start_front_door, start_front_door_on, start_tls_front_door, tls_connect,
+    ws_backend, ws_client, ws_upgrade,
 };
+use gobby_core::bootstrap::{RouteBackend, TlsBootstrap, TlsMode, parse_hub_database_bootstrap};
+use gobby_daemon::front_door::tls;
+use gobby_daemon::serve::{bind, companion_addr, plaintext_allowed};
 use http_body_util::{BodyExt, Full};
 use hyper::body::{Frame, Incoming};
 use hyper::server::conn::http1 as server_http1;
@@ -535,4 +543,736 @@ fn parent_fd_eof_stops_serve() {
             "public port {port} still held after serve exited"
         );
     }
+}
+
+// ---- Front-door TLS (plan 4.1) ----
+
+fn get(path: &str) -> Request<Full<Bytes>> {
+    Request::get(path)
+        .header("host", "localhost")
+        .body(Full::new(Bytes::new()))
+        .expect("request")
+}
+
+/// Send one request on an already-open stream (plaintext or TLS).
+async fn send_on<S>(stream: S, request: Request<Full<Bytes>>) -> Response<Incoming>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+{
+    let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(stream))
+        .await
+        .expect("client handshake");
+    tokio::spawn(connection);
+    sender.send_request(request).await.expect("send request")
+}
+
+/// A backend answering every request `200 ok` and reporting each request's
+/// path and headers.
+async fn header_backend() -> (
+    SocketAddr,
+    mpsc::UnboundedReceiver<(String, hyper::HeaderMap)>,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind backend");
+    let addr = listener.local_addr().expect("backend addr");
+    let (seen_tx, seen_rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let seen_tx = seen_tx.clone();
+            tokio::spawn(async move {
+                let service = service_fn(move |request: Request<Incoming>| {
+                    let _ =
+                        seen_tx.send((request.uri().path().to_owned(), request.headers().clone()));
+                    async {
+                        Ok::<_, Infallible>(Response::new(Full::new(Bytes::from_static(b"ok"))))
+                    }
+                });
+                let _ = server_http1::Builder::new()
+                    .serve_connection(TokioIo::new(stream), service)
+                    .await;
+            });
+        }
+    });
+    (addr, seen_rx)
+}
+
+async fn body_text(response: Response<Incoming>) -> String {
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    String::from_utf8(body.to_vec()).expect("utf8 body")
+}
+
+#[tokio::test]
+async fn ws_splice_over_self_signed_tls() {
+    let cert = self_signed("127.0.0.1", &[]);
+
+    let refused = refused_addr().await;
+    let front_door =
+        start_tls_front_door(refused, cert.loaded.config.clone(), BTreeMap::new()).await;
+    let stream = tls_connect(front_door, &cert.cert_pem)
+        .await
+        .expect("pinned handshake");
+    let response = tokio::time::timeout(TIMEOUT, send_on(stream, get("/api/sessions")))
+        .await
+        .expect("typed 503 timed out");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value =
+        serde_json::from_str(&body_text(response).await).expect("json body");
+    assert_eq!(body["backend"]["target"], refused.to_string());
+
+    let (backend, mut seen) = header_backend().await;
+    let front_door =
+        start_tls_front_door(backend, cert.loaded.config.clone(), BTreeMap::new()).await;
+    let stream = tls_connect(front_door, &cert.cert_pem)
+        .await
+        .expect("pinned handshake");
+    let response = tokio::time::timeout(TIMEOUT, send_on(stream, get("/api/sessions?limit=1")))
+        .await
+        .expect("passthrough timed out");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(body_text(response).await, "ok");
+    let (path, _) = seen.recv().await.expect("backend saw the request");
+    assert_eq!(path, "/api/sessions");
+
+    let close_payload = [&1000_u16.to_be_bytes()[..], b"done"].concat();
+    let client_frames = [frame(0x81, b"hi", true), frame(0x88, &close_payload, true)].concat();
+    let backend_frames = [
+        frame(0x81, b"hi", false),
+        frame(0x88, &close_payload, false),
+    ]
+    .concat();
+    let (ws_backend_addr, captured) = ws_backend(client_frames.len(), backend_frames.clone()).await;
+    let front_door =
+        start_tls_front_door(ws_backend_addr, cert.loaded.config.clone(), BTreeMap::new()).await;
+    let mut stream = tls_connect(front_door, &cert.cert_pem)
+        .await
+        .expect("pinned handshake");
+    let (head, mut received) = ws_upgrade(&mut stream, front_door, "/ws", "").await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    stream.write_all(&client_frames).await.expect("send frames");
+    tokio::time::timeout(
+        TIMEOUT,
+        read_exact_into(&mut stream, &mut received, backend_frames.len()),
+    )
+    .await
+    .expect("backend frames timed out");
+    let capture = tokio::time::timeout(TIMEOUT, captured)
+        .await
+        .expect("capture timed out")
+        .expect("capture");
+    assert_eq!(capture.received, client_frames);
+    assert_eq!(received, backend_frames);
+}
+
+#[tokio::test]
+async fn pinned_client_rejects_unpinned_cert() {
+    let served = self_signed("127.0.0.1", &[]);
+    let other = self_signed("127.0.0.1", &[]);
+    let front_door = start_tls_front_door(
+        refused_addr().await,
+        served.loaded.config.clone(),
+        BTreeMap::new(),
+    )
+    .await;
+
+    // The pinned root store holds only `other`, so no system root can vouch
+    // for the served certificate.
+    let error = tls_connect(front_door, &other.cert_pem)
+        .await
+        .expect_err("a certificate other than the pinned one must be rejected");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{error}");
+    assert!(tls_connect(front_door, &served.cert_pem).await.is_ok());
+
+    for fingerprint in [&served.loaded.fingerprint, &other.loaded.fingerprint] {
+        let hex = fingerprint.strip_prefix("sha256:").expect("sha256: prefix");
+        assert_eq!(hex.len(), 64, "{fingerprint}");
+        assert!(
+            hex.bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "{fingerprint}"
+        );
+    }
+    assert_ne!(served.loaded.fingerprint, other.loaded.fingerprint);
+    assert_eq!(
+        tls::fingerprint(&served.cert_pem).expect("fingerprint"),
+        served.loaded.fingerprint
+    );
+}
+
+#[tokio::test]
+async fn plaintext_only_from_loopback_peers() {
+    for (peer, allowed) in [
+        ("127.0.0.1", true),
+        ("127.8.9.10", true),
+        ("::1", true),
+        ("::ffff:127.0.0.1", true),
+        ("100.64.0.10", false),
+        ("2001:db8::1", false),
+        ("::ffff:100.64.0.10", false),
+    ] {
+        let ip: IpAddr = peer.parse().expect("ip");
+        assert_eq!(plaintext_allowed(ip), allowed, "{peer}");
+    }
+
+    let cert = self_signed("127.0.0.1", &[]);
+    let refused = refused_addr().await;
+    // IPv4 and IPv6 loopback peers, then an IPv4 loopback peer reaching a
+    // dual-stack `[::]` listener as `::ffff:127.0.0.1`.
+    for (bind, dial) in [
+        ("127.0.0.1:0", "127.0.0.1"),
+        ("[::1]:0", "::1"),
+        ("[::]:0", "127.0.0.1"),
+    ] {
+        let bind: SocketAddr = bind.parse().expect("bind addr");
+        if TcpListener::bind(bind).await.is_err() {
+            eprintln!("{bind} is unavailable here; skipping that family");
+            continue;
+        }
+        let front_door = start_front_door_on(
+            bind,
+            refused,
+            Some(cert.loaded.config.clone()),
+            BTreeMap::new(),
+        )
+        .await;
+        let target = SocketAddr::new(dial.parse().expect("dial ip"), front_door.port());
+        let Ok(stream) = TcpStream::connect(target).await else {
+            eprintln!("{target} is unreachable from {bind}; skipping");
+            continue;
+        };
+        let response = tokio::time::timeout(TIMEOUT, send_on(stream, get("/api/sessions")))
+            .await
+            .expect("loopback plaintext timed out");
+        assert_eq!(
+            response.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{target}"
+        );
+        if dial == "::1" || bind.ip().is_unspecified() {
+            continue; // The certificate's 127.0.0.1 SAN covers the IPv4 TLS case below.
+        }
+        let stream = tls_connect(target, &cert.cert_pem)
+            .await
+            .expect("TLS on the same port");
+        let response = tokio::time::timeout(TIMEOUT, send_on(stream, get("/api/sessions")))
+            .await
+            .expect("loopback TLS timed out");
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    let Some(ip) = local_non_loopback_ipv4() else {
+        eprintln!("no non-loopback IPv4 address; the live non-loopback refusal is skipped");
+        return;
+    };
+    let public_cert = self_signed(&ip.to_string(), &[]);
+    let front_door = start_front_door_on(
+        SocketAddr::new(ip, 0),
+        refused,
+        Some(public_cert.loaded.config.clone()),
+        BTreeMap::new(),
+    )
+    .await;
+    let mut stream = TcpStream::connect(front_door)
+        .await
+        .expect("connect from a non-loopback address");
+    stream
+        .write_all(b"GET /api/sessions HTTP/1.1\r\nhost: localhost\r\n\r\n")
+        .await
+        .expect("write plaintext request");
+    let mut buffer = [0_u8; 64];
+    let read = tokio::time::timeout(TIMEOUT, stream.read(&mut buffer))
+        .await
+        .expect("non-loopback plaintext connection was left open");
+    assert!(
+        matches!(read, Ok(0) | Err(_)),
+        "a non-loopback plaintext peer was served"
+    );
+    let stream = tls_connect(front_door, &public_cert.cert_pem)
+        .await
+        .expect("TLS from a non-loopback peer");
+    let response = tokio::time::timeout(TIMEOUT, send_on(stream, get("/api/sessions")))
+        .await
+        .expect("non-loopback TLS timed out");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn concrete_bind_adds_loopback_listener() {
+    for (bound, expected) in [
+        ("0.0.0.0:60887", None),
+        ("[::]:60887", None),
+        ("127.0.0.1:60887", None),
+        ("[::1]:60887", None),
+        ("100.64.0.10:60887", Some("127.0.0.1:60887")),
+        ("[2001:db8::1]:60887", Some("[::1]:60887")),
+    ] {
+        let expected: Option<SocketAddr> = expected.map(|addr| addr.parse().expect("addr"));
+        assert_eq!(
+            companion_addr(bound.parse().expect("addr")),
+            expected,
+            "{bound}"
+        );
+    }
+
+    let wildcard = bind("0.0.0.0", 0, 1).await.expect("wildcard bind");
+    assert_eq!(wildcard.len(), 1, "a wildcard bind gets no companion");
+    let port = wildcard[0].listener.local_addr().expect("addr").port();
+    TcpStream::connect(("127.0.0.1", port))
+        .await
+        .expect("a wildcard listener accepts loopback");
+    let loopback = bind("127.0.0.1", 0, 1).await.expect("loopback bind");
+    assert_eq!(loopback.len(), 1, "a loopback bind gets no companion");
+
+    let Some(ip) = local_non_loopback_ipv4() else {
+        eprintln!("no non-loopback IPv4 address; the live companion check is skipped");
+        return;
+    };
+    let listeners = bind(&ip.to_string(), 0, 1).await.expect("concrete bind");
+    assert_eq!(listeners.len(), 2, "a concrete bind adds a companion");
+    let primary = listeners[0].listener.local_addr().expect("primary addr");
+    let companion = listeners[1].listener.local_addr().expect("companion addr");
+    assert_eq!(primary.ip(), ip);
+    assert_eq!(
+        companion,
+        SocketAddr::from(([127, 0, 0, 1], primary.port()))
+    );
+    TcpStream::connect(companion)
+        .await
+        .expect("the companion accepts loopback");
+}
+
+fn forged(path: &str) -> Request<Full<Bytes>> {
+    Request::get(path)
+        .header("host", "localhost")
+        .header("forwarded", "for=6.6.6.6;proto=https")
+        .header("x-forwarded-for", "6.6.6.6")
+        .header("x-real-ip", "6.6.6.6")
+        .header("x-forwarded-proto", "https")
+        .header("x-forwarded-host", "evil.example")
+        // Nominating the observed fields as hop-by-hop, across duplicate
+        // fields and mixed case, must not let them be stripped downstream.
+        .header("connection", "X-Forwarded-For, keep-alive")
+        .header("connection", "x-FORWARDED-proto")
+        .body(Full::new(Bytes::new()))
+        .expect("request")
+}
+
+fn assert_observed(headers: &hyper::HeaderMap, proto: &str) {
+    assert_eq!(
+        headers
+            .get_all("x-forwarded-for")
+            .iter()
+            .collect::<Vec<_>>(),
+        ["127.0.0.1"]
+    );
+    assert_eq!(headers["x-forwarded-proto"], proto);
+    for name in ["forwarded", "x-real-ip", "x-forwarded-host"] {
+        assert!(!headers.contains_key(name), "{name} reached the backend");
+    }
+}
+
+#[tokio::test]
+async fn forwarding_headers_carry_only_observed_peer() {
+    let loopback: SocketAddr = "127.0.0.1:0".parse().expect("addr");
+
+    // Proxy path, plaintext.
+    let (backend, mut seen) = header_backend().await;
+    let front_door = start_front_door_on(loopback, backend, None, BTreeMap::new()).await;
+    let stream = TcpStream::connect(front_door).await.expect("connect");
+    tokio::time::timeout(TIMEOUT, send_on(stream, forged("/api/sessions")))
+        .await
+        .expect("proxy timed out");
+    let (_, headers) = seen.recv().await.expect("backend saw the request");
+    assert_observed(&headers, "http");
+
+    // Proxy path over TLS.
+    let cert = self_signed("127.0.0.1", &[]);
+    let front_door =
+        start_tls_front_door(backend, cert.loaded.config.clone(), BTreeMap::new()).await;
+    let stream = tls_connect(front_door, &cert.cert_pem)
+        .await
+        .expect("pinned handshake");
+    tokio::time::timeout(TIMEOUT, send_on(stream, forged("/api/sessions")))
+        .await
+        .expect("TLS proxy timed out");
+    let (_, headers) = seen.recv().await.expect("backend saw the TLS request");
+    assert_observed(&headers, "https");
+
+    // Native health path.
+    let routes = BTreeMap::from([("health".to_owned(), RouteBackend::Native)]);
+    let front_door = start_front_door_on(loopback, backend, None, routes).await;
+    let stream = TcpStream::connect(front_door).await.expect("connect");
+    let response = tokio::time::timeout(TIMEOUT, send_on(stream, forged("/api/health")))
+        .await
+        .expect("native health timed out");
+    assert_eq!(response.headers()["x-gobby-served-by"], "gdaemon");
+    let (path, headers) = seen
+        .recv()
+        .await
+        .expect("native health reached the backend");
+    assert_eq!(path, "/api/health");
+    assert_observed(&headers, "http");
+
+    // WS splice path.
+    let (ws_backend_addr, captured) = ws_backend(0, Vec::new()).await;
+    let front_door = start_front_door_on(loopback, ws_backend_addr, None, BTreeMap::new()).await;
+    let mut stream = TcpStream::connect(front_door).await.expect("connect");
+    let (head, _) = ws_upgrade(
+        &mut stream,
+        front_door,
+        "/ws",
+        "forwarded: for=6.6.6.6\r\nx-forwarded-for: 6.6.6.6\r\nx-real-ip: 6.6.6.6\r\n\
+         x-forwarded-proto: https\r\nx-forwarded-host: evil.example\r\n\
+         connection: X-Forwarded-For, x-FORWARDED-proto\r\n",
+    )
+    .await;
+    assert!(head.starts_with("HTTP/1.1 101"), "{head}");
+    let capture = tokio::time::timeout(TIMEOUT, captured)
+        .await
+        .expect("capture timed out")
+        .expect("capture");
+    let request_head = capture.request_head.to_ascii_lowercase();
+    assert!(
+        head_has(&request_head, "x-forwarded-for: 127.0.0.1"),
+        "{request_head}"
+    );
+    assert!(
+        head_has(&request_head, "x-forwarded-proto: http"),
+        "{request_head}"
+    );
+    assert!(!request_head.contains("6.6.6.6"), "{request_head}");
+    assert!(!request_head.contains("evil.example"), "{request_head}");
+}
+
+#[tokio::test]
+async fn stalled_preauth_connections_expire_without_blocking() {
+    let cert = self_signed("127.0.0.1", &[]);
+    let front_door = start_tls_front_door(
+        refused_addr().await,
+        cert.loaded.config.clone(),
+        BTreeMap::new(),
+    )
+    .await;
+    let started = Instant::now();
+    let mut silent = TcpStream::connect(front_door)
+        .await
+        .expect("connect silent");
+    let mut partial = TcpStream::connect(front_door)
+        .await
+        .expect("connect partial");
+    partial
+        .write_all(&[0x16, 0x03, 0x01])
+        .await
+        .expect("partial ClientHello");
+
+    let stream = TcpStream::connect(front_door)
+        .await
+        .expect("connect health");
+    let response =
+        tokio::time::timeout(Duration::from_secs(2), send_on(stream, get("/api/health")))
+            .await
+            .expect("a stalled peer blocked the listener");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+    for (name, stream) in [
+        ("zero-byte", &mut silent),
+        ("partial ClientHello", &mut partial),
+    ] {
+        let mut buffer = [0_u8; 16];
+        let read = tokio::time::timeout(Duration::from_secs(20), stream.read(&mut buffer))
+            .await
+            .unwrap_or_else(|_| panic!("the {name} connection was never closed"));
+        assert!(
+            matches!(read, Ok(0) | Err(_)),
+            "the {name} connection received data"
+        );
+        assert!(
+            started.elapsed() >= Duration::from_secs(9),
+            "the {name} connection closed before PREAUTH_DEADLINE"
+        );
+    }
+}
+
+#[test]
+fn tls_pair_load_or_refuse() {
+    let a = self_signed("127.0.0.1", &[]);
+    let b = self_signed("127.0.0.1", &[]);
+    let a_key = std::fs::read(a.dir.path().join("front_door.key")).expect("key a");
+    let b_key = std::fs::read(b.dir.path().join("front_door.key")).expect("key b");
+    let files = |dir: &std::path::Path| TlsBootstrap {
+        mode: TlsMode::Files,
+        ..self_signed_settings(dir, &[])
+    };
+    let refusal = |settings: &TlsBootstrap| {
+        let error = tls::load(settings, "127.0.0.1")
+            .err()
+            .expect("the pair must be refused");
+        format!("{error:#}")
+    };
+
+    /// Certificate bytes, key bytes, and the file name the error must name.
+    type PairCase<'a> = (Option<&'a [u8]>, Option<&'a [u8]>, &'a str);
+    let cases: [PairCase<'_>; 4] = [
+        (Some(a.cert_pem.as_slice()), None, "front_door.key"),
+        (None, Some(a_key.as_slice()), "front_door.crt"),
+        (
+            Some(b"not a certificate".as_slice()),
+            Some(a_key.as_slice()),
+            "front_door.crt",
+        ),
+        (
+            Some(a.cert_pem.as_slice()),
+            Some(b_key.as_slice()),
+            "front_door.crt",
+        ),
+    ];
+    for (cert, key, named) in cases {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cert_path = dir.path().join("front_door.crt");
+        let key_path = dir.path().join("front_door.key");
+        if let Some(cert) = cert {
+            std::fs::write(&cert_path, cert).expect("write cert");
+        }
+        if let Some(key) = key {
+            std::fs::write(&key_path, key).expect("write key");
+        }
+        let error = refusal(&self_signed_settings(dir.path(), &[]));
+        assert!(
+            error.contains(&dir.path().join(named).display().to_string()),
+            "{error}"
+        );
+        assert_eq!(std::fs::read(&cert_path).ok().as_deref(), cert, "{error}");
+        assert_eq!(std::fs::read(&key_path).ok().as_deref(), key, "{error}");
+    }
+
+    let loaded = tls::load(&files(a.dir.path()), "127.0.0.1")
+        .expect("operator pair")
+        .expect("files mode loads a pair");
+    assert_eq!(loaded.fingerprint, a.loaded.fingerprint);
+
+    let mismatched = tempfile::tempdir().expect("tempdir");
+    std::fs::write(mismatched.path().join("front_door.crt"), &a.cert_pem).expect("cert");
+    std::fs::write(mismatched.path().join("front_door.key"), &b_key).expect("key");
+    assert!(refusal(&files(mismatched.path())).contains("does not match"));
+
+    let missing = tempfile::tempdir().expect("tempdir");
+    let error = refusal(&files(missing.path()));
+    assert!(
+        error.contains(&missing.path().join("front_door.crt").display().to_string()),
+        "{error}"
+    );
+    assert!(!missing.path().join("front_door.crt").exists());
+
+    assert!(
+        tls::load(&TlsBootstrap::default(), "127.0.0.1")
+            .expect("off")
+            .is_none()
+    );
+}
+
+#[test]
+fn self_signed_san_policy() {
+    let sans = ["hub.example.test".to_owned()];
+    assert_eq!(
+        tls::self_signed_sans("0.0.0.0", Some("hub-host"), &sans),
+        [
+            "localhost",
+            "hub-host",
+            "127.0.0.1",
+            "::1",
+            "hub.example.test"
+        ]
+    );
+    assert_eq!(
+        tls::self_signed_sans("::", None, &[]),
+        ["localhost", "127.0.0.1", "::1"]
+    );
+    assert_eq!(
+        tls::self_signed_sans("100.64.0.10", Some("hub-host"), &sans),
+        [
+            "localhost",
+            "hub-host",
+            "127.0.0.1",
+            "::1",
+            "100.64.0.10",
+            "hub.example.test"
+        ]
+    );
+    assert_eq!(
+        tls::self_signed_sans("[2001:db8::1]", None, &[]),
+        ["localhost", "127.0.0.1", "::1", "2001:db8::1"]
+    );
+
+    let generated = self_signed("100.64.0.10", &["hub.example.test", "100.64.0.11"]);
+    let expected = tls::self_signed_sans(
+        "100.64.0.10",
+        tls::machine_hostname().as_deref(),
+        &["hub.example.test".to_owned(), "100.64.0.11".to_owned()],
+    );
+    assert!(
+        tls::uncovered_names(&generated.cert_pem, &expected)
+            .expect("parse")
+            .is_empty()
+    );
+    let extra = ["10.9.8.7".to_owned(), "other.example.test".to_owned()];
+    assert_eq!(
+        tls::uncovered_names(&generated.cert_pem, &extra).expect("parse"),
+        extra
+    );
+    let wildcard = self_signed("0.0.0.0", &[]);
+    assert_eq!(
+        tls::uncovered_names(
+            &wildcard.cert_pem,
+            &["0.0.0.0".to_owned(), "100.64.0.10".to_owned()]
+        )
+        .expect("parse"),
+        ["0.0.0.0", "100.64.0.10"]
+    );
+
+    let reloaded = tls::load(
+        &self_signed_settings(
+            generated.dir.path(),
+            &["hub.example.test", "100.64.0.11", "new.example.test"],
+        ),
+        "100.64.0.10",
+    )
+    .expect("reuse")
+    .expect("pair");
+    assert_eq!(reloaded.missing_sans, ["new.example.test"]);
+    assert_eq!(reloaded.fingerprint, generated.loaded.fingerprint);
+
+    for san in ["0.0.0.0", "::"] {
+        let error = parse_hub_database_bootstrap(&format!(
+            "front_door:\n  tls:\n    mode: self-signed\n    sans: ['{san}']\n"
+        ))
+        .unwrap_err();
+        assert!(error.to_string().contains("unspecified address"), "{error}");
+    }
+}
+
+/// A spawned `gdaemon serve`, killed on drop.
+#[cfg(unix)]
+struct TlsServe(std::process::Child);
+
+#[cfg(unix)]
+impl Drop for TlsServe {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// Spawn `gdaemon serve` with `home` as `GOBBY_HOME`, stderr captured in
+/// `log`, and wait until both public ports accept; returns the captured stderr.
+#[cfg(unix)]
+fn spawn_tls_serve(home: &std::path::Path, ports: [u16; 2], log: &str) -> (TlsServe, String) {
+    use std::process::{Command, Stdio};
+
+    let log = home.join(log);
+    let mut child = TlsServe(
+        Command::new(env!("CARGO_BIN_EXE_gdaemon"))
+            .arg("serve")
+            .env("GOBBY_HOME", home)
+            .env_remove("GOBBY_PARENT_FD")
+            .stdin(Stdio::null())
+            .stderr(Stdio::from(std::fs::File::create(&log).expect("log file")))
+            .spawn()
+            .expect("spawn gdaemon serve"),
+    );
+    let deadline = Instant::now() + TIMEOUT;
+    while !ports
+        .iter()
+        .all(|port| std::net::TcpStream::connect(("127.0.0.1", *port)).is_ok())
+    {
+        if child.0.try_wait().expect("poll serve").is_some() {
+            panic!(
+                "serve exited before binding: {}",
+                std::fs::read_to_string(&log).unwrap_or_default()
+            );
+        }
+        assert!(Instant::now() < deadline, "serve did not bind {ports:?}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    (child, std::fs::read_to_string(&log).expect("read log"))
+}
+
+#[cfg(unix)]
+fn printed_fingerprint(stderr: &str) -> String {
+    stderr
+        .lines()
+        .find_map(|line| line.strip_prefix("front door certificate "))
+        .unwrap_or_else(|| panic!("no fingerprint line in {stderr:?}"))
+        .to_owned()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn self_signed_generated_once_and_reused() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut ports = Vec::new();
+    while ports.len() < 2 {
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let port = probe.local_addr().expect("probe addr").port();
+        if port <= 65435 && !ports.contains(&port) {
+            ports.push(port);
+        }
+    }
+    let ports = [ports[0], ports[1]];
+    let home = tempfile::tempdir().expect("tempdir");
+    let cert = home.path().join("tls").join("front_door.crt");
+    let key = home.path().join("tls").join("front_door.key");
+    let write_bootstrap = |sans: &str| {
+        std::fs::write(
+            home.path().join("bootstrap.yaml"),
+            format!(
+                "bind_host: 127.0.0.1\ndaemon_port: {}\nwebsocket_port: {}\nfront_door:\n  tls:\n    \
+                 mode: self-signed\n    cert: {}\n    key: {}\n    sans: [{sans}]\n",
+                ports[0],
+                ports[1],
+                cert.display(),
+                key.display()
+            ),
+        )
+        .expect("write bootstrap");
+    };
+
+    write_bootstrap("hub.example.test");
+    let (first, stderr) = spawn_tls_serve(home.path(), ports, "first.log");
+    let fingerprint = printed_fingerprint(&stderr);
+    for path in [&cert, &key] {
+        let mode = std::fs::metadata(path)
+            .expect("generated file")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "{}", path.display());
+    }
+    let cert_pem = std::fs::read(&cert).expect("read cert");
+    assert_eq!(
+        fingerprint,
+        tls::fingerprint(&cert_pem).expect("fingerprint")
+    );
+    drop(first);
+
+    write_bootstrap("hub.example.test, new.example.test");
+    let (_second, stderr) = spawn_tls_serve(home.path(), ports, "second.log");
+    assert_eq!(printed_fingerprint(&stderr), fingerprint);
+    assert_eq!(std::fs::read(&cert).expect("reread cert"), cert_pem);
+    assert!(
+        stderr.contains("front_door.tls.sans entry new.example.test is missing"),
+        "{stderr}"
+    );
+
+    let stream = tls_connect(SocketAddr::from(([127, 0, 0, 1], ports[0])), &cert_pem)
+        .await
+        .expect("pinned handshake with the reused pair");
+    let response = tokio::time::timeout(TIMEOUT, send_on(stream, get("/api/health")))
+        .await
+        .expect("pinned request timed out");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 }

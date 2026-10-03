@@ -42,6 +42,7 @@ class RecordingSender:
         *,
         submit: bool = False,
         clear_before_submit: bool = False,
+        composer_confirmed_empty: bool = False,
         cli_source: str | None = None,
     ) -> None:
         await asyncio.sleep(0)

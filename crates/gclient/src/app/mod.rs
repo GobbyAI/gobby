@@ -22,6 +22,9 @@ mod workspace_panes;
 pub use attach::AttachState;
 pub use live::{ControlOutcome, SidebarFetch, SidebarFetchFuture};
 pub use live_loop::arrange::plan_arrange;
+pub use live_loop::jobs::{
+    spawn_job, Coalescer, JobKey, JobLedger, JobOutcome, JobResult, JobTag, OpIntent,
+};
 pub use live_loop::menu::{
     apply_local_menu_action, build_menu, item_rects, menu_rect, ArrangeLayout, ArrangeTarget,
     ContextMenuKind, ContextMenuState, MenuAction, MenuItem, Submenu,
@@ -124,6 +127,12 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     daemon_error: Option<DaemonError>,
     event_rx: Option<EventReceiver>,
     attached_generation: HashMap<PaneId, Generation>,
+    /// Panes whose direct stream is restored by a host-local reconnect: the
+    /// daemon's reconcile pass leaves their attachment alone (#23076).
+    host_recovered: std::collections::HashSet<PaneId>,
+    /// Panes with a host-local reconnect in flight, cancelled only by a pane
+    /// replace/close or a foreign host epoch (#23076).
+    host_recovering: std::collections::HashSet<PaneId>,
     pending_spawns: HashSet<String>,
     status_message: Option<String>,
     exit_reason: Option<String>,
@@ -136,6 +145,9 @@ pub struct Workspace<D: Daemon = ScriptedDaemon> {
     /// `(tab, pane)` of the panes pending placements landed in, drained by
     /// the chrome sync that focuses them.
     placed_panes: Vec<(String, String)>,
+    /// `(project, tab)` the last `workspace.select` asked every window to
+    /// show, drained by the chrome sync that shows it on the tab row's pane.
+    requested_focus: Option<(String, String)>,
     /// The control request a focus change or a queued key asked for. The loop
     /// starts it beside the select, which is what keeps every daemon round
     /// trip out of the click and the keystroke (#22573).
@@ -230,6 +242,8 @@ impl Workspace {
             daemon_error: None,
             event_rx: None,
             attached_generation: HashMap::new(),
+            host_recovered: HashSet::new(),
+            host_recovering: HashSet::new(),
             pending_spawns: HashSet::new(),
             status_message: None,
             exit_reason: None,
@@ -239,6 +253,7 @@ impl Workspace {
             pending_control: None,
             next_control_seq: 0,
             placed_panes: Vec::new(),
+            requested_focus: None,
         }
     }
 
@@ -749,6 +764,13 @@ impl<D: Daemon> Workspace<D> {
         pane_id: PaneId,
         now: tokio::time::Instant,
     ) -> Option<(String, String, Generation)> {
+        // A pane reconnecting or restored straight onto its host does not
+        // depend on the daemon control plane: a control request that failed
+        // while the daemon was away must not tear down the host stream, the
+        // reconnect still in flight, or the grant it carries (#23076).
+        if self.host_recovering.contains(&pane_id) || self.host_recovered.contains(&pane_id) {
+            return None;
+        }
         let outcome = {
             let pane = self.panes.get_mut(&pane_id)?;
             let terminal_id = pane.terminal_id.clone();
@@ -782,7 +804,11 @@ impl<D: Daemon> Workspace<D> {
     pub fn observe_daemon_disconnect(&mut self, _generation: Generation, error: DaemonError) {
         self.daemon_ready = false;
         for pane in self.panes.values_mut() {
-            pane.clear_control(error.to_string());
+            // The host owns an existing direct input grant. Losing the daemon
+            // does not revoke it; a host refusal still clears it on that stream.
+            if !(pane.writable() && pane.direct_input()) {
+                pane.clear_control(error.to_string());
+            }
         }
         self.daemon_error = Some(error);
     }

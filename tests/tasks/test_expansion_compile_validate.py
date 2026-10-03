@@ -482,10 +482,14 @@ def test_preflight_rejects_prose_test_marker_before_manifest_synthesis(
         "acceptance item '1.1.1' test artifact 'a run entry records completion' "
         "must use path::test_symbol"
     ]
-    cli_result = _validate_plan_for_cli(plan_path, None, mode="expansion")
-    assert cli_result["valid"] is False
-    assert cli_result["errors"] == result["errors"]
+    draft_cli_result = _validate_plan_for_cli(plan_path, None, mode="draft")
+    assert draft_cli_result["valid"] is False
+    assert draft_cli_result["errors"] == result["errors"]
+    # Expansion mode requires the manifest, so its preflight runs after synthesis.
     assert emit_stub_manifest(plan_path, plan_id="test-artifact") == "fresh"
+    expansion_cli_result = _validate_plan_for_cli(plan_path, None, mode="expansion")
+    assert expansion_cli_result["valid"] is False
+    assert expansion_cli_result["errors"] == result["errors"]
     parent = service.task_manager.create_task(
         project_id=sample_project["id"], title="Expansion epic", task_type="epic"
     )

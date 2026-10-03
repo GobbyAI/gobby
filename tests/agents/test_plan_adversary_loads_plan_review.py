@@ -1,7 +1,7 @@
-"""Wiring tests for plan-adversary.yaml — it must load the plan-review
+"""Wiring tests for plan-adversary-old.yaml — it must load the plan-review
 methodology skill before reviewing.
 
-Before this wiring was added, plan-adversary.yaml carried its own inline review
+Before this wiring was added, plan-adversary-old.yaml carried its own inline review
 heuristics. Those heuristics were not available to the interactive planner's
 adversarial loop, producing two different review policies for the same artifact
 shape. Now both consumers load plan-review via get_skill, and this agent YAML
@@ -29,7 +29,7 @@ from tests.agents._yaml_helpers import _field, find_step, flat
 
 pytestmark = pytest.mark.unit
 
-ADVERSARY_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary.yaml")
+ADVERSARY_PATH = Path("src/gobby/install/shared/workflows/agents/plan-adversary-old.yaml")
 
 
 @pytest.fixture(scope="module")

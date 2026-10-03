@@ -49,11 +49,16 @@ from gobby.sessions.transcript_index_sidecar import (
 )
 from gobby.sessions.transcript_index_sidecar import (
     INDEX_CACHE_MAX_ENTRIES,
+    IndexPersistenceOwner,
+    adjustment_positions,
     clear_index_cache,
+    clone_persistence_state,
     discard_index_sidecar,
     get_or_build_index,
     load_index_sidecar,
     persist_index_sidecar,
+    record_adjustments,
+    record_tool_open,
 )
 from gobby.sessions.transcript_index_sidecar import (
     INDEX_SCHEMA_VERSION as INDEX_SCHEMA_VERSION,
@@ -153,7 +158,7 @@ class ParsedBoundary:
 
 
 @dataclass(slots=True)
-class TranscriptIndex:
+class TranscriptIndex(IndexPersistenceOwner):
     """Compact, cacheable boundary map for one transcript snapshot."""
 
     boundaries: list[GroupBoundary]
@@ -178,8 +183,12 @@ class TranscriptIndex:
 
     def group_index_for_parsed_index(self, parsed_index: int) -> int | None:
         """Return the group_index whose span contains ``parsed_index`` (or None)."""
-        starts = [b.parsed_index_start for b in self.boundaries]
-        pos = bisect.bisect_right(starts, parsed_index) - 1
+        pos = (
+            bisect.bisect_right(
+                self.boundaries, parsed_index, key=lambda boundary: boundary.parsed_index_start
+            )
+            - 1
+        )
         if pos < 0:
             return None
         return self.boundaries[pos].group_index
@@ -314,9 +323,12 @@ def _should_record_parsed_boundary(boundaries: list[ParsedBoundary], message_cou
 
 def _next_index_after_records(records: list[Any], fallback: int, parsed_index: int) -> int:
     next_index = fallback
-    for record in records:
+    for offset, record in enumerate(records):
         if isinstance(record, ParsedMessage):
             next_index = max(next_index, record.index + 1)
+        elif isinstance(record, ParsedToolEvent):
+            # Tool events carry no index but still occupy a parser position.
+            next_index = max(next_index, parsed_index + offset + 1)
     if not records:
         next_index = max(next_index, parsed_index + 1)
     return next_index
@@ -347,8 +359,7 @@ class TranscriptIndexAppender:
         self._next_start_index = 0
         self._next_raw_line_no = 0
         self._safe_to_start_event = True
-        # Whether this appender's grow-only index containers (boundaries,
-        # parsed_boundaries, tool_first_open) are aliased by a clone()
+        # Whether this appender's index containers are aliased by a clone()
         # counterpart. While True, append_raw_lines spine-copies them before
         # mutating so the other appender never sees this one's entries.
         self._shares_index_containers = False
@@ -378,19 +389,18 @@ class TranscriptIndexAppender:
         (``boundaries``, ``parsed_boundaries``, ``tool_first_open``) stay shared
         between both appenders until whichever of them appends next spine-copies
         them first -- see ``_unshare_index_containers``, which runs inside
-        ``append_raw_lines``, off the loop. Entries are never mutated after
-        being appended, so sharing them is safe; the rebind-only fields
-        (``session_stats``, ``role_message_counts``, ``post_pass_adjustments``,
-        ``parser_state``) are replaced wholesale on update and never mutated in
-        place, so the shallow copy covers them too. The parser and render state
-        hold no per-session growth -- ``RenderState.__deepcopy__`` shares its
-        one grow-only record.
+        ``append_raw_lines``, off the loop. EOF adjustments and their position
+        lookup are also detached there, since snapshots replace adjustment
+        entries in place. The rebind-only fields (``session_stats``,
+        ``role_message_counts``, ``parser_state``) are replaced wholesale.
+        ``RenderState.__deepcopy__`` shares historical suppression lookups.
         """
         cloned = copy(self)
         cloned._parser = deepcopy(self._parser)
         cloned._state = deepcopy(self._state)
         cloned._role_counts = dict(self._role_counts)
         cloned.index = copy(self.index)
+        clone_persistence_state(cloned.index)
         self._shares_index_containers = True
         cloned._shares_index_containers = True
         return cloned
@@ -412,6 +422,8 @@ class TranscriptIndexAppender:
         index.boundaries = list(index.boundaries)
         index.parsed_boundaries = list(index.parsed_boundaries)
         index.tool_first_open = dict(index.tool_first_open)
+        index.post_pass_adjustments = list(index.post_pass_adjustments)
+        index._set_adjustment_positions(dict(adjustment_positions(index)))
         self._shares_index_containers = False
 
     def append_raw_lines(
@@ -448,9 +460,8 @@ class TranscriptIndexAppender:
                     if self.index.source == "agy":
                         stats_records.append(record)
                         if record.phase == "begin" and record.call_id:
-                            self.index.tool_first_open.setdefault(
-                                record.call_id,
-                                event.parsed_index + offset_in_event,
+                            record_tool_open(
+                                self.index, record.call_id, event.parsed_index + offset_in_event
                             )
                     continue
                 if not isinstance(record, ParsedMessage):
@@ -472,7 +483,7 @@ class TranscriptIndexAppender:
                     self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1
 
                     if record.content_type in ("tool_use", "mcp_tool_use") and record.tool_use_id:
-                        self.index.tool_first_open.setdefault(record.tool_use_id, record.index)
+                        record_tool_open(self.index, record.tool_use_id, record.index)
 
                 _completed, self._state = render_incremental(
                     [record],
@@ -568,8 +579,11 @@ class TranscriptIndexAppender:
         new_adjustments = _resolve_adjustments(self._parser, self.index)
         self.index.parser_state = self._parser.snapshot_state()
         self.index.post_pass_adjustments = _merge_adjustments(
-            self.index.post_pass_adjustments, new_adjustments
+            self.index.post_pass_adjustments,
+            new_adjustments,
+            positions=adjustment_positions(self.index),
         )
+        record_adjustments(self.index, new_adjustments)
         return self.index
 
 
@@ -633,13 +647,24 @@ def _resolve_adjustments(
 
 
 def _merge_adjustments(
-    existing: list[RenderedAdjustment], new: list[RenderedAdjustment]
+    existing: list[RenderedAdjustment],
+    new: list[RenderedAdjustment],
+    *,
+    positions: dict[tuple[int, str], int] | None = None,
 ) -> list[RenderedAdjustment]:
-    merged = list(existing)
+    if not new:
+        return existing
+    merged = existing if positions is not None else list(existing)
+    positions = (
+        positions
+        if positions is not None
+        else {(item.group_index, item.field): pos for pos, item in enumerate(merged)}
+    )
     for adjustment in new:
-        for index, previous in enumerate(merged):
-            if previous.group_index != adjustment.group_index or previous.field != adjustment.field:
-                continue
+        key = (adjustment.group_index, adjustment.field)
+        index = positions.get(key)
+        if index is not None:
+            previous = merged[index]
             if isinstance(previous.value, TokenUsage) and isinstance(adjustment.value, TokenUsage):
                 merged[index] = RenderedAdjustment(
                     group_index=adjustment.group_index,
@@ -655,8 +680,8 @@ def _merge_adjustments(
                 )
             else:
                 merged[index] = adjustment
-            break
         else:
+            positions[key] = len(merged)
             merged.append(adjustment)
     return merged
 

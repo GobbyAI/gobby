@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "tasks_list",
   "family": "tasks",
+  "backend": "up",
   "credential": "operator",
   "request": {
     "method": "GET",

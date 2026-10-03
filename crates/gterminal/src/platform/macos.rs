@@ -365,13 +365,14 @@ fn run_notification_command(mut command: Command) -> std::io::Result<bool> {
 }
 
 fn run_clipboard_command(command: &ClipboardCommand, bytes: &[u8]) -> bool {
-    let mut child = match Command::new(command.program)
+    let mut process = Command::new(command.program);
+    process
         .args(command.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-    {
+        .stderr(Stdio::null());
+    super::unmask_sigterm(&mut process);
+    let mut child = match process.spawn() {
         Ok(child) => child,
         Err(_) => return false,
     };

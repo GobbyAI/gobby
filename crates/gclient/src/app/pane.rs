@@ -10,7 +10,7 @@ use tokio::time::Instant;
 use super::attach::{AttachState, ATTACH_RETRY_BASE};
 use crate::daemon::Generation;
 use crate::frame_source::{
-    FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
+    AttachLocator, FrameError, FrameSource, PaneFrameSource, ScriptedFrameSource, Transport,
 };
 use gobby_terminal::input::KeyboardProtocol;
 use gobby_terminal::protocol::{ClientMessage, FrameData};
@@ -201,6 +201,9 @@ pub struct Pane {
     /// menu (herdr's per-pane passthrough, toggled from that menu).
     pub right_click_passthrough: bool,
     pub(super) frame_source: Option<PaneFrameSource>,
+    /// The direct locator the installed stream attached on, remembered for a
+    /// daemon-free reconnect across a host exec (#23076).
+    pub(super) host_locator: Option<AttachLocator>,
     pub(super) fallback_in_flight: bool,
     pub(super) direct_available: bool,
     /// The daemon lists this terminal with `ownership: external`: a tmux
@@ -219,6 +222,10 @@ pub struct Pane {
     pub(super) attach_retry_delay: Duration,
     pub(super) tombstones: HashSet<String>,
     pub(super) status_message: Option<String>,
+    /// The direct writer refused the latest `SetViewport`; the resize
+    /// waits for it to drain and clears once a retry is queued or the
+    /// source is removed or replaced.
+    pub(super) viewport_deferred: bool,
     pub(super) terminating: bool,
     pub(super) viewport: (u16, u16),
     /// The viewer the daemon says sizes this terminal, from a refused
@@ -274,6 +281,7 @@ impl Pane {
             copy_search: false,
             right_click_passthrough: false,
             frame_source: Some(PaneFrameSource::Scripted(frame_source)),
+            host_locator: None,
             fallback_in_flight: false,
             direct_available: false,
             external: false,
@@ -288,6 +296,7 @@ impl Pane {
             attach_retry_delay: ATTACH_RETRY_BASE,
             tombstones: HashSet::new(),
             status_message: None,
+            viewport_deferred: false,
             terminating: false,
             viewport: (24, 80),
             sized_by: None,
@@ -479,6 +488,17 @@ impl Pane {
         self.direct_native() && self.host_input_granted
     }
 
+    /// Put back the control the daemon outage took away. The host keeps its
+    /// `input_grant` across the exec, so a pane whose direct stream is back
+    /// carries the same lease and grant it had: nothing is re-asked of a
+    /// daemon that was never involved in the reconnect. The first key the
+    /// host refuses re-clears this (#23076).
+    pub(super) fn restore_host_control(&mut self) {
+        self.control = ControlState::Held;
+        self.take_back = false;
+        self.host_input_granted = true;
+    }
+
     /// Type `data` into the host on the frame stream, binding this attachment
     /// the first time. Never awaits: a full write channel drops the key and
     /// names the backlog on the pane instead of stalling the render loop.
@@ -611,6 +631,10 @@ impl Pane {
         self.status_message.as_deref()
     }
 
+    pub fn viewport_deferred(&self) -> bool {
+        self.viewport_deferred
+    }
+
     pub fn is_terminating(&self) -> bool {
         self.terminating
     }
@@ -643,10 +667,24 @@ impl Pane {
     }
 
     pub(super) fn take_frame_source(&mut self) -> Option<PaneFrameSource> {
+        self.viewport_deferred = false;
         self.frame_source.take()
     }
 
+    /// The direct locator this pane was last attached on. Kept so a frame
+    /// source that dies can reconnect straight to the host across an exec
+    /// without the daemon, which is the only party that could hand back a
+    /// locator (#23076).
+    pub(super) fn host_locator(&self) -> Option<AttachLocator> {
+        self.host_locator.clone()
+    }
+
+    pub(super) fn remember_host_locator(&mut self, locator: &AttachLocator) {
+        self.host_locator = Some(locator.clone());
+    }
+
     pub(super) fn install_frame_source(&mut self, source: PaneFrameSource) {
+        self.viewport_deferred = false;
         if let AttachState::Attached { transport, .. } = &mut self.attach {
             *transport = source.transport();
         }

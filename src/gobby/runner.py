@@ -169,6 +169,7 @@ class GobbyRunner:
     _model_metadata_refresh_task: asyncio.Task[None] | None
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
+    code_index_bm25_verification: dict[str, Any] | None
     daemon_lease: ActiveDaemonLease
 
     _memory_reconcile_task: asyncio.Task[None] | None
@@ -311,6 +312,7 @@ class GobbyRunner:
 
     def _prepare_base_state(self) -> None:
         self.degraded_services = set()
+        self.code_index_bm25_verification = None
         # Captured by run_daemon once the daemon's long-lived loop is running;
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
@@ -523,20 +525,13 @@ async def run_gobby(
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
     """Quick check whether a healthy Gobby daemon is already listening."""
-    import ipaddress
     import urllib.parse
     import urllib.request
 
-    # Normalize wildcard addresses to localhost for health check
-    # These wildcard strings are compared and normalized, never used as bind targets.
-    wildcard_hosts = {str(ipaddress.IPv4Address(0)), str(ipaddress.IPv6Address(0)), ""}
-    if host in wildcard_hosts:
-        host = "localhost"
-    elif ":" in host and not host.startswith("["):
-        host = f"[{host}]"
+    from gobby.utils.daemon_url import normalize_dial_host
 
     try:
-        url = f"http://{host}:{port}/api/health"
+        url = f"http://{normalize_dial_host(host)}:{port}/api/health"
         parsed = urllib.parse.urlparse(url)
         if parsed.scheme not in ("http", "https"):
             return False

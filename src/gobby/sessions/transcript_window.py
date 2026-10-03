@@ -15,10 +15,12 @@ Correctness rests on three index-provided facts:
   so ``RenderedMessage.id`` / ``source_line`` match a full render exactly. A group
   that begins mid-event is reconstructed by rendering forward from the preceding
   ``resume_safe`` boundary, never seeked to directly.
-* ``tool_first_open`` lets the window seed stub ``pending_tool_calls`` for every
-  tool opened before the window start, so a duplicate / cross-window
-  ``tool_result`` is suppressed (paired into a throwaway stub) instead of emitting
-  an orphan group — matching ``render_transcript``.
+* ``tool_first_open`` lets the window suppress a duplicate / cross-window
+  ``tool_result`` whose call began before the window start — matching
+  ``render_transcript`` — instead of emitting an orphan group. The suppression
+  is an O(1) test against the window's start index, not a scan of every tool in
+  the session, so a long tool-heavy transcript stays linear in pages rather than
+  quadratic in ``tools x pages``.
 * ``post_pass_adjustments`` (e.g. Droid sidecar token usage) are resolved to
   rendered groups at index build (which sees the true EOF) and replayed here onto
   any group that falls inside the window.
@@ -218,23 +220,18 @@ def _track_budget(
 
 
 def _seed_stubs(state: RenderState, index: TranscriptIndex, window_start_parsed_index: int) -> None:
-    """Seed throwaway pending entries for tools opened before the window start.
+    """Suppress results of tool calls opened before the window start.
 
-    A ``tool_result`` for one of these ids then hits the ``knows_tool_call``
-    bypass and is absorbed into the stub (suppressed) instead of emitting an
-    orphan group — exactly as a full render suppresses it. Resolving the stub
-    moves its id from ``pending_tool_calls`` to ``resolved_tool_call_ids``, which
-    the same bypass reads, so a repeated result stays suppressed too.
+    A ``tool_result`` for such a call would pair in a full render; in this
+    windowed render it must be suppressed rather than emitted as an orphan
+    group. Recording the transcript's ``tool_first_open`` and the window's start
+    parsed index on the state lets ``knows_tool_call`` test that membership rule
+    in O(1) per result instead of materializing one throwaway stub object per
+    tool opened before the window — the per-page scan that made a long
+    tool-heavy transcript quadratic in ``tools x pages``.
     """
-    for tool_id, first_idx in index.tool_first_open.items():
-        if first_idx < window_start_parsed_index:
-            state.pending_tool_calls[tool_id] = RenderedToolCall(
-                id=tool_id,
-                tool_name="",
-                server_name="",
-                tool_type="",
-                arguments={},
-            )
+    state.pre_window_tool_first_open = index.tool_first_open
+    state.pre_window_boundary_index = window_start_parsed_index
 
 
 def _window_tool_calls(

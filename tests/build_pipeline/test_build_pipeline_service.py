@@ -884,7 +884,27 @@ async def test_build_plan_file_plan_adversary_spawn_forces_main_context(
 
     project_id, repo_path = _project(temp_db, tmp_path)
     plan_file = repo_path / "plan.md"
-    plan_file.write_text("# Plan\n")
+    # Review evidence requires a plan that passes deterministic validation.
+    plan_file.write_text(
+        textwrap.dedent(
+            """
+            > **Plan ID:** adversary-spawn
+
+            ## P1 Phase
+            `kind: framing`
+
+            ### 1.1 Work [category: docs]
+            `kind: deliverable`
+
+            Target: `docs/demo.md`
+
+            Body.
+
+            **Acceptance:**
+            - 1.1.1 - Docs exist. file: `docs/demo.md`
+            """
+        ).lstrip()
+    )
     sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)

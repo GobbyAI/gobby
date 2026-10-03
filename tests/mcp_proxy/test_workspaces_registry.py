@@ -224,7 +224,9 @@ async def test_registry_executes_every_tool_by_ref_through_shared_ops(stack: _St
         assert {row["tab_id"] for row in moved["panes"]} == {other_tab["id"]}
 
         written = await _ok(registry, "send_text", pane=first_ref, text="make", submit=True)
-        assert written["indeterminate"] is False
+        # This pane has no composer reader, so the submit remains unverified.
+        assert written["indeterminate"] is True
+        assert "no composer reader" in written["detail"]
         keyed = await _ok(
             registry, "send_pane_keys", pane=first_ref, keys="ls\n", idempotency_key="k1"
         )

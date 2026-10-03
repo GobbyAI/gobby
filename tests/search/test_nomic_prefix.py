@@ -2,20 +2,21 @@
 
 from __future__ import annotations
 
+import time
+from collections.abc import Iterator
 from types import SimpleNamespace
+from typing import Never
 from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 
 import gobby.ai.embeddings as embeddings_mod
+from gobby.ai.embedding_cache import clear_cache
 from gobby.ai.embeddings import (
     EmbeddingService,
     _apply_prefix,
     _needs_nomic_prefix,
-)
-from gobby.ai.embeddings import (
-    _clear_embedding_cache as clear_cache,
 )
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
@@ -27,7 +28,7 @@ LOCAL_API_BASE = "http://localhost:1234/v1"
 
 
 @pytest.fixture(autouse=True)
-def _clean_cache():
+def _clean_cache() -> Iterator[None]:
     clear_cache()
     yield
     clear_cache()
@@ -88,16 +89,16 @@ def _make_mock_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
     mock_client = AsyncMock()
     captured: list[list[str]] = []
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         captured.append(input)
 
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
@@ -172,7 +173,7 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
     captured: list[list[str]] = []
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
         captured.append(input)
@@ -185,12 +186,12 @@ def _make_evicting_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]]:
             )
 
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
@@ -209,7 +210,7 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
     captured: list[list[str]] = []
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
         captured.append(input)
@@ -227,12 +228,12 @@ def _make_missing_model_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
             )
 
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
@@ -249,7 +250,7 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
     captured: list[list[str]] = []
     call_count = 0
 
-    async def fake_create(model: str, input: list[str]):
+    async def fake_create(model: str, input: list[str]) -> SimpleNamespace:
         nonlocal call_count
         call_count += 1
         captured.append(input)
@@ -258,12 +259,12 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
             raise httpx.ConnectError("refused")
 
         class FakeItem:
-            def __init__(self, embedding: list[float], index: int):
+            def __init__(self, embedding: list[float], index: int) -> None:
                 self.embedding = embedding
                 self.index = index
 
         class FakeResponse:
-            def __init__(self, items: list[FakeItem]):
+            def __init__(self, items: list[FakeItem]) -> None:
                 self.data = items
 
         items = [FakeItem([0.1] * dim, index) for index, _ in enumerate(input)]
@@ -275,7 +276,7 @@ def _make_connect_error_client(dim: int = 4) -> tuple[AsyncMock, list[list[str]]
 
 
 @pytest.fixture(autouse=True)
-def _reset_reload_cooldown():
+def _reset_reload_cooldown() -> Iterator[None]:
     """Reset the reload cooldown between tests."""
     embeddings_mod._last_reload_attempt = 0.0
     embeddings_mod._last_local_lm_studio_recovery_attempt = 0.0
@@ -327,7 +328,7 @@ async def test_reload_skipped_during_cooldown() -> None:
 
     mock_client = AsyncMock()
 
-    async def always_fail(model: str, input: list[str]):
+    async def always_fail(model: str, input: list[str]) -> Never:
         raise BadRequestError(
             message="No models loaded.",
             response=AsyncMock(status_code=400, headers={}),
@@ -337,7 +338,7 @@ async def test_reload_skipped_during_cooldown() -> None:
     mock_client.embeddings.with_raw_response.create = always_fail
 
     # Simulate a recent reload attempt
-    embeddings_mod._last_reload_attempt = embeddings_mod.time.monotonic()
+    embeddings_mod._last_reload_attempt = time.monotonic()
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
@@ -360,7 +361,7 @@ async def test_reload_failure_raises() -> None:
 
     mock_client = AsyncMock()
 
-    async def always_fail(model: str, input: list[str]):
+    async def always_fail(model: str, input: list[str]) -> Never:
         raise BadRequestError(
             message="No models loaded.",
             response=AsyncMock(status_code=400, headers={}),

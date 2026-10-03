@@ -346,7 +346,7 @@ async def resolve_close_commit_shas(
                     "Fix commit resolution and retry."
                 ),
             }
-        resolved.extend(sha for sha in tagged if sha not in resolved)
+        resolved.extend(sha for sha in tagged if not _same_commit_linked(sha, resolved))
     if commit_sha:
         if cwd is None:
             return resolved, _repo_path_error()
@@ -356,9 +356,57 @@ async def resolve_close_commit_shas(
                 "error": "invalid_commit_sha",
                 "message": f"Commit {commit_sha!r} could not be resolved in the task repository.",
             }
-        if not any(normalized.startswith(sha) for sha in resolved):
+        if not _same_commit_linked(normalized, task.commits or []):
+            refusal = await _foreign_close_commit(
+                task, normalized, cwd=cwd, project_name=project_name
+            )
+            if refusal is not None:
+                return resolved, refusal
+        if not _same_commit_linked(normalized, resolved):
             resolved.append(normalized)
     return resolved, None
+
+
+def _same_commit_linked(sha: str, linked: list[str]) -> bool:
+    # Linked SHAs mix abbreviation lengths and full SHAs (#23251); the same rule as
+    # storage's _SAME_COMMIT_SQL, so below seven characters only an exact match counts.
+    sha = sha.lower()
+    for known in (value.lower() for value in linked):
+        if known == sha:
+            return True
+        if len(known) >= 7 and len(sha) >= 7 and (known.startswith(sha) or sha.startswith(known)):
+            return True
+    return False
+
+
+async def _foreign_close_commit(
+    task: Task, sha: str, *, cwd: str, project_name: str | None
+) -> dict[str, Any] | None:
+    """Refuse a close commit not tagged for this task and not explicitly linked to it.
+
+    A package landing commit carries other tasks' work; closing at one linked it to
+    a member task and widened that task's reviewed patch (#23251).
+    """
+    from gobby.tasks.commits import extract_task_ids_from_message
+
+    subject = await daemon_git.run(("log", "-1", "--format=%s", sha), cwd=cwd, timeout=5.0)
+    found = (
+        extract_task_ids_from_message(subject.stdout, project_name)
+        if isinstance(subject, GitOk)
+        else []
+    )
+    own = f"#{task.seq_num}" if task.seq_num else None
+    if own is not None and own in found:
+        return None
+    found_text = ", ".join(sorted(found)) if found else "no task tag"
+    return {
+        "error": "close_commit_not_task_tagged",
+        "message": (
+            f"Commit {sha} is tagged {found_text}, not {own or 'this task'}. Close at a commit "
+            "tagged for this task, or link this one explicitly with "
+            "link_commit(task_id, commit_sha) first."
+        ),
+    }
 
 
 async def _canonical_commit_sha(sha: str, *, cwd: str) -> str | None:
@@ -431,17 +479,26 @@ def link_close_commit_shas(
     cwd: str | None,
 ) -> tuple[Task, dict[str, Any] | None]:
     """Link the evaluated commit set and return the refreshed task lock."""
-    existing = set(task.commits or [])
+    from gobby.utils.git import normalize_commit_sha as short_commit_sha
+
+    existing = list(task.commits or [])
     for commit_sha in commit_shas:
-        if commit_sha in existing:
+        if _same_commit_linked(commit_sha, existing):
             continue
         if cwd is None:
             return task, _repo_path_error()
+        # Close provenance keeps the full SHA; the link stores Git's short form (#23251).
+        short = short_commit_sha(commit_sha, cwd=cwd)
+        if short is None:
+            return task, {
+                "error": "commit_link_failed",
+                "message": f"Invalid or unresolved commit SHA: {commit_sha}",
+            }
         try:
-            task_manager.link_commit(task.id, commit_sha)
+            task_manager.link_commit(task.id, short)
         except ValueError as exc:
             return task, {"error": "commit_link_failed", "message": str(exc)}
-        existing.add(commit_sha)
+        existing.append(short)
     refreshed = task_manager.get_task(task.id)
     if refreshed is None:
         return task, {

@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from gobby.communications.adapters import register_adapter
-from gobby.communications.adapters.base import BaseChannelAdapter
+from gobby.communications.adapters.base import BaseChannelAdapter, MessageEditNotApplied
 from gobby.communications.adapters.telegram_formatting import (
     TELEGRAM_MAX_MESSAGE_LENGTH,
     markdown_to_telegram_html_chunks,
@@ -48,8 +48,17 @@ _MAX_TRACKED_EDIT_STATE = 1_024
 _RECOVERY_CALLBACK_DATA = "gobby:recover"
 
 
-class TelegramEditNotApplied(RuntimeError):
+class TelegramEditNotApplied(MessageEditNotApplied):
     """An edit failed definitely before any existing chunk of the message changed."""
+
+
+def _error_description(response: httpx.Response) -> str:
+    """The ``description`` Telegram puts in the JSON body of a rejected call, or ''."""
+    try:
+        body = response.json()
+    except ValueError:
+        return ""
+    return str(body.get("description", "")) if isinstance(body, dict) else ""
 
 
 def _recovery_markup(metadata: dict[str, Any]) -> dict[str, list[list[dict[str, str]]]] | None:
@@ -147,9 +156,17 @@ class TelegramAdapter(BaseChannelAdapter):
             self._redact_bot_token(str(request.url)),
             headers=request.headers,
         )
+        # The body keeps Telegram's ``description``, so callers can tell rejections apart.
+        # It is already decoded, so the encoding and length headers no longer describe it.
+        headers = [
+            (name, value)
+            for name, value in exc.response.headers.multi_items()
+            if name.lower() not in ("content-encoding", "content-length")
+        ]
         redacted_response = httpx.Response(
             exc.response.status_code,
-            headers=exc.response.headers,
+            headers=headers,
+            content=self._redact_bot_token(exc.response.text).encode(),
             request=redacted_request,
         )
         return httpx.HTTPStatusError(
@@ -551,11 +568,16 @@ class TelegramAdapter(BaseChannelAdapter):
             payload["link_preview_options"] = link_preview_options
         if markup is not None:
             payload["reply_markup"] = markup
-        result = await self._post_json("editMessageText", payload)
-        if result.get("ok"):
-            return
-        description = str(result.get("description", "unknown Telegram API error"))
-        if markup is not None or "message is not modified" not in description.casefold():
+        try:
+            result = await self._post_json("editMessageText", payload)
+        except httpx.HTTPStatusError as exc:
+            # Telegram rejects an edit that changes nothing with HTTP 400 (#23292).
+            not_modified = "message is not modified" in _error_description(exc.response).casefold()
+            if markup is None and not_modified:
+                return
+            raise
+        if not result.get("ok"):
+            description = str(result.get("description", "unknown Telegram API error"))
             raise RuntimeError(f"Telegram editMessageText failed: {description}")
 
     async def _set_chunk_markup(

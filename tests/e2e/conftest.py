@@ -10,12 +10,14 @@ Provides fixtures for:
 - MCP client connections
 """
 
+import errno
 import json
 import math
 import os
 import shutil
 import signal
 import socket
+import ssl
 import subprocess
 import sys
 import tempfile
@@ -246,16 +248,20 @@ class DaemonInstance:
     config_path: Path
     command: list[str]
     env: dict[str, str]
+    # The front door's self-signed certificate when the fixture serves TLS.
+    cert_path: Path | None = None
 
     @property
     def http_url(self) -> str:
-        """HTTP base URL."""
-        return f"http://localhost:{self.http_port}"
+        """HTTP base URL (`https` when the front door serves TLS)."""
+        scheme = "https" if self.cert_path else "http"
+        return f"{scheme}://localhost:{self.http_port}"
 
     @property
     def ws_url(self) -> str:
-        """WebSocket URL."""
-        return f"ws://localhost:{self.ws_port}"
+        """WebSocket URL (`wss` when the front door serves TLS)."""
+        scheme = "wss" if self.cert_path else "ws"
+        return f"{scheme}://localhost:{self.ws_port}"
 
     @property
     def gobby_home(self) -> Path:
@@ -328,6 +334,45 @@ class DaemonInstance:
             )
 
 
+def _checkout_gdaemon_bin_dir(
+    checkout_gdaemon: Path, pinned_bin_dir: Path, home_dir: str | Path | None
+) -> Path:
+    """Link the pinned dir's binaries beside the checkout gdaemon in a fresh dir.
+
+    The runner resolves every native binary from one dir, so a test pinning its
+    gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
+    stays out: it describes the gdaemon this dir replaces.
+
+    Pinned files are hard links, never symlinks: gterm pins its own executable
+    and refuses to host when that executable is a symlink. A sandbox that cannot
+    write the pinned dir refuses the link with EPERM, so those files are copied
+    into this temp dir; the installed set itself is never touched. The checkout
+    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
+    """
+    from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
+
+    composite = Path(tempfile.mkdtemp(prefix="native-bin-", dir=home_dir))
+    skipped = {native_bin_name("gdaemon"), IDENTITY_STAMP_NAME}
+    for entry in pinned_bin_dir.iterdir():
+        if entry.is_file() and entry.name not in skipped:
+            try:
+                os.link(entry.resolve(), composite / entry.name)
+            except OSError as exc:
+                if exc.errno == errno.EPERM:
+                    # A sandbox without write access to the pinned dir refuses every link.
+                    shutil.copy2(entry, composite / entry.name)
+                    continue
+                if exc.errno != errno.EXDEV:
+                    raise
+                # No symlink fallback: a symlinked gterm refuses to host.
+                raise RuntimeError(
+                    f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
+                    "bin dir and the e2e home must share a filesystem."
+                ) from exc
+    (composite / checkout_gdaemon.name).symlink_to(checkout_gdaemon.resolve())
+    return composite
+
+
 def prepare_daemon_env(
     base_env: dict[str, str] | None = None,
     *,
@@ -392,11 +437,20 @@ def prepare_daemon_env(
     # Pin native binaries before HOME moves, or ~/.gobby/bin would resolve inside
     # the temp home and the runner could not find the gdaemon front door it
     # spawns. GOBBY_TEST_GDAEMON=checkout selects this checkout's debug build; a
-    # GOBBY_NATIVE_BIN_DIR the test already set wins.
+    # GOBBY_NATIVE_BIN_DIR the test already set supplies every other binary.
     from gobby.utils.native_bin import NATIVE_BIN_DIR_ENV, native_bin_dir, native_bin_name
     from tests.fixtures.gdaemon_binary import select_test_gdaemon
 
     checkout_gdaemon = select_test_gdaemon(root_dir, env, native_bin_name("gdaemon"))
+    pinned_bin_dir = env.get(NATIVE_BIN_DIR_ENV)
+    if (
+        checkout_gdaemon is not None
+        and pinned_bin_dir is not None
+        and Path(pinned_bin_dir).resolve() != checkout_gdaemon.parent.resolve()
+    ):
+        env[NATIVE_BIN_DIR_ENV] = str(
+            _checkout_gdaemon_bin_dir(checkout_gdaemon, Path(pinned_bin_dir), home_dir)
+        )
     env.setdefault(
         NATIVE_BIN_DIR_ENV,
         str(checkout_gdaemon.parent if checkout_gdaemon is not None else native_bin_dir()),
@@ -931,6 +985,7 @@ def e2e_pre_daemon_setup() -> None:
 
 @pytest.fixture(scope="function")
 def daemon_instance(
+    request: pytest.FixtureRequest,
     e2e_project_dir: Path,
     e2e_config: tuple[Path, int, int],
     e2e_pre_daemon_setup: None,
@@ -938,12 +993,42 @@ def daemon_instance(
     """
     Spawn an isolated daemon instance for E2E testing.
 
-    Yields a DaemonInstance with running daemon, then cleans up on teardown.
+    An indirect parameter of `"self-signed"` serves the public ports over TLS;
+    the default (or `None`) keeps plaintext. Yields a DaemonInstance with running
+    daemon, then cleans up on teardown.
     """
     _ = e2e_pre_daemon_setup
+    yield from spawn_daemon_instance(
+        e2e_project_dir, e2e_config, tls=getattr(request, "param", None)
+    )
+
+
+def spawn_daemon_instance(
+    e2e_project_dir: Path,
+    e2e_config: tuple[Path, int, int],
+    *,
+    tls: str | None = None,
+) -> Generator[DaemonInstance]:
+    """Spawn the isolated daemon; `tls="self-signed"` puts the front door on TLS.
+
+    The certificate pair lives under the fixture's isolated home, and readiness
+    probes stay plaintext: the front door serves loopback plaintext on its TLS port.
+    """
     config_path, http_port, ws_port = e2e_config
     gobby_home = config_path.parent
     log_dir = gobby_home / "logs"
+
+    cert_path: Path | None = None
+    if tls is not None:
+        cert_path = gobby_home / "tls" / "front_door.crt"
+        bootstrap_path = gobby_home / "bootstrap.yaml"
+        bootstrap = yaml.safe_load(bootstrap_path.read_text())
+        bootstrap["front_door"]["tls"] = {
+            "mode": tls,
+            "cert": str(cert_path),
+            "key": str(gobby_home / "tls" / "front_door.key"),
+        }
+        bootstrap_path.write_text(yaml.safe_dump(bootstrap))
 
     log_file = log_dir / "daemon.log"
     error_log_file = log_dir / "daemon_error.log"
@@ -991,6 +1076,7 @@ def daemon_instance(
         config_path=config_path,
         command=command,
         env=env,
+        cert_path=cert_path,
     )
 
     try:
@@ -1066,7 +1152,15 @@ def authenticated_daemon_client(
         base_url=daemon_instance.http_url,
         headers=daemon_auth_headers(daemon_instance.gobby_home),
         timeout=timeout,
+        verify=daemon_verify(daemon_instance),
     )
+
+
+def daemon_verify(daemon_instance: DaemonInstance) -> ssl.SSLContext | bool:
+    """Trust only the instance's own certificate when it serves TLS; else httpx's default."""
+    if daemon_instance.cert_path is None:
+        return True
+    return ssl.create_default_context(cafile=str(daemon_instance.cert_path))
 
 
 def authenticated_daemon_client_for_home(
@@ -1105,6 +1199,7 @@ def authenticated_async_daemon_client(
         base_url=daemon_instance.http_url,
         headers=daemon_auth_headers(daemon_instance.gobby_home),
         timeout=timeout,
+        verify=daemon_verify(daemon_instance),
     )
 
 

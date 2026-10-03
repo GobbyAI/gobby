@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from dataclasses import replace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -14,6 +15,7 @@ from gobby.servers.websocket.proxy_relay import ProxyAttachment
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
+from gobby.storage.terminals import Terminal
 from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
@@ -220,4 +222,55 @@ async def test_typed_resize_refusal_answers_instead_of_killing_the_handler() -> 
     # Dims stay stale so the next resize retries rather than short-circuiting
     # on geometry the pane never accepted.
     assert (stored.rows, stored.cols) != (40, 120)
+    await server.lease_registry.shutdown_lifecycle_publication()
+
+
+class _ThreadRecordingStore(MemoryTerminalStore):
+    """Records the thread each sizing storage call runs on."""
+
+    def __init__(self, row: Terminal) -> None:
+        super().__init__(row)
+        self.calls: list[tuple[str, int]] = []
+
+    def get(self, terminal_id: str) -> Terminal | None:
+        self.calls.append(("get", threading.get_ident()))
+        return super().get(terminal_id)
+
+    def set_dims(self, terminal_id: str, rows: int, cols: int) -> Terminal | None:
+        self.calls.append(("set_dims", threading.get_ident()))
+        return super().set_dims(terminal_id, rows, cols)
+
+
+class _AcceptingRuntime:
+    """Host runtime that takes every resize."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def resize(self, _row: Any, _rows: int, _cols: int) -> None:
+        self.calls += 1
+
+
+@pytest.mark.asyncio
+async def test_sizing_runs_get_and_set_dims_on_the_executor() -> None:
+    """D1a.2: sizing storage runs on worker threads; the resize stays between them."""
+    row = make_memory_terminal(terminal_id="term-1", backend="native")
+    runtime = _AcceptingRuntime()
+    server = _NativeSizingServer(row, runtime)
+    store = _ThreadRecordingStore(row)
+    server.terminal_manager = store
+    attachment = await server.lease_registry.attach("term-1", viewer="gclient")
+    loop_thread = threading.get_ident()
+
+    await server._handle_terminal_resize(
+        object(),
+        {"attachment_id": attachment.attachment_id, "rows": 40, "cols": 120},
+    )
+
+    assert runtime.calls == 1
+    assert [name for name, _ in store.calls] == ["get", "set_dims"]
+    assert all(thread != loop_thread for _, thread in store.calls)
+    stored = MemoryTerminalStore.get(store, "term-1")
+    assert stored is not None
+    assert (stored.rows, stored.cols) == (40, 120)
     await server.lease_registry.shutdown_lifecycle_publication()

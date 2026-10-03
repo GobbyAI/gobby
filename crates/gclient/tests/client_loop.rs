@@ -54,7 +54,7 @@ use gobby_terminal::protocol::{
     PaneModes, ServerMessage, MAX_FRAME_SIZE,
 };
 use gobby_terminal::raw_input::{parse_raw_input_bytes, RawInputEvent};
-use mock_daemon::MockDaemon;
+use mock_daemon::{live_workspace_on_direct_host, DirectHost, MockDaemon};
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
@@ -2470,7 +2470,20 @@ async fn a_late_detach_reply_retries_direct_without_reconnecting() {
         wait_for_websocket_requests(&mock, "terminal_take_control", 1).await;
         let reply_gate = mock.pause_websocket_reads().await;
         tokio::time::pause();
+        // The host image changed under the dead stream: the host-local
+        // reconnect refuses the new epoch and falls through to the daemon
+        // path, which still detaches the old attachment before re-attaching
+        // (#23076, plan 2.3.2).
+        host.set_host_epoch("direct-recovery-epoch-moved");
         host.disconnect();
+        // Let the reconnect run and refuse the changed epoch, then let the
+        // detach it falls back to reach its deadline so the supervisor submits
+        // it while the reply is held.
+        tokio::time::advance(Duration::from_secs(3)).await;
+        for _ in 0..1_024 {
+            tokio::task::yield_now().await;
+        }
+        tokio::time::advance(Duration::from_secs(3)).await;
         for _ in 0..1_024 {
             if observed_daemon.pending_counts().0 > 0 {
                 break;
@@ -2590,6 +2603,15 @@ async fn live_resize_propagates_geometry_by_policy() {
             let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
                 .await
                 .expect("direct attach");
+            write_message_async(
+                &mut host,
+                &ServerMessage::Attached {
+                    created: false,
+                    host_terminal_id: "term-controlled".into(),
+                },
+            )
+            .await
+            .expect("direct attached");
             while let Ok(message) = read_message_async(&mut host, MAX_FRAME_SIZE).await {
                 if direct_tx.send(message).is_err() {
                     break;
@@ -2810,212 +2832,12 @@ async fn live_resize_propagates_geometry_by_policy() {
     }
 }
 
-/// A terminal host that speaks the frame protocol over a real Unix socket, the
-/// way gterm does. `received` is every client message after the handshake, and
-/// `to_client` injects server messages such as `InputRefused`.
-struct DirectHost {
-    socket_dir: tempfile::TempDir,
-    socket_path: std::path::PathBuf,
-    host_epoch: String,
-    received: mpsc::UnboundedReceiver<ClientMessage>,
-    to_client: mpsc::UnboundedSender<ServerMessage>,
-    disconnect: mpsc::UnboundedSender<()>,
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl DirectHost {
-    /// Listen on a fresh socket and answer attaches with `host_epoch`.
-    async fn start(host_epoch: &str) -> Self {
-        let socket_dir = tempfile::tempdir().expect("direct socket dir");
-        let socket_path = socket_dir.path().join("frames.sock");
-        let listener =
-            tokio::net::UnixListener::bind(&socket_path).expect("bind direct frame socket");
-        let (received_tx, received) = mpsc::unbounded_channel();
-        let (to_client, mut outbound) = mpsc::unbounded_channel::<ServerMessage>();
-        let (disconnect, mut disconnect_rx) = mpsc::unbounded_channel();
-        let epoch = host_epoch.to_string();
-        let task = tokio::spawn(async move {
-            loop {
-                let (mut stream, _) = listener.accept().await.expect("direct client");
-                let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
-                    .await
-                    .expect("direct hello");
-                write_message_async(
-                    &mut stream,
-                    &ServerMessage::Welcome {
-                        host_epoch: epoch.clone(),
-                    },
-                )
-                .await
-                .expect("direct welcome");
-                let _: ClientMessage = read_message_async(&mut stream, MAX_FRAME_SIZE)
-                    .await
-                    .expect("direct attach");
-                loop {
-                    tokio::select! {
-                        message = read_message_async(&mut stream, MAX_FRAME_SIZE) => {
-                            match message {
-                                Ok(message) => {
-                                    if received_tx.send(message).is_err() {
-                                        return;
-                                    }
-                                }
-                                Err(_) => break,
-                            }
-                        }
-                        outgoing = outbound.recv() => {
-                            let Some(outgoing) = outgoing else { return };
-                            if write_message_async(&mut stream, &outgoing).await.is_err() {
-                                break;
-                            }
-                        }
-                        disconnect = disconnect_rx.recv() => {
-                            if disconnect.is_none() {
-                                return;
-                            }
-                            break;
-                        }
-                    }
-                }
-            }
-        });
-        Self {
-            socket_dir,
-            socket_path,
-            host_epoch: host_epoch.to_string(),
-            received,
-            to_client,
-            disconnect,
-            task,
-        }
-    }
-
-    /// The roster `attach` block that tells gclient this terminal has a host
-    /// socket, so the attach asks for direct frames before proxy frames.
-    fn roster_attach(&self, terminal_id: &str) -> Value {
-        json!({
-            "backend": "native",
-            "frame_host_epoch": self.host_epoch,
-            "host_socket": self.socket_path.to_string_lossy(),
-            "host_terminal_id": terminal_id,
-        })
-    }
-
-    /// The `direct` locator the daemon returns with a direct attach result.
-    fn attach_locator(&self, terminal_id: &str) -> Value {
-        json!({
-            "host_epoch": self.host_epoch,
-            "host_terminal_id": terminal_id,
-            "frame_socket_path": self.socket_path.to_string_lossy(),
-            "pane": null,
-        })
-    }
-
-    /// Every client message the host has received so far, without waiting.
-    fn drain(&mut self) -> Vec<ClientMessage> {
-        let mut messages = Vec::new();
-        while let Ok(message) = self.received.try_recv() {
-            messages.push(message);
-        }
-        messages
-    }
-
-    /// Collect client messages until `predicate` accepts the batch.
-    async fn wait_for(
-        &mut self,
-        what: &str,
-        mut predicate: impl FnMut(&[ClientMessage]) -> bool,
-    ) -> Vec<ClientMessage> {
-        let mut seen = Vec::new();
-        timeout(Duration::from_secs(5), async {
-            loop {
-                if predicate(&seen) {
-                    return;
-                }
-                let Some(message) = self.received.recv().await else {
-                    panic!("direct host closed before {what}");
-                };
-                seen.push(message);
-            }
-        })
-        .await
-        .unwrap_or_else(|_| panic!("direct host never received {what}: {seen:?}"));
-        seen
-    }
-
-    fn disconnect(&self) {
-        self.disconnect.send(()).expect("direct host task");
-    }
-
-    async fn shutdown(self) {
-        drop(self.to_client);
-        drop(self.disconnect);
-        self.task.abort();
-        let _ = self.task.await;
-        drop(self.socket_dir);
-    }
-}
-
-/// A live workspace whose single native pane is attached over `host`'s real
-/// frame socket, so `Pane::transport()` is `Direct` and the pane types on that
-/// socket instead of the daemon (#22573). Keep the returned home alive.
-async fn live_workspace_on_direct_host(
-    mock: &MockDaemon,
-    host: &DirectHost,
-    terminal_id: &str,
-) -> (Workspace<LiveDaemon>, tempfile::TempDir) {
-    let home = tempfile::tempdir().expect("gobby home");
-    std::fs::write(
-        home.path()
-            .join(gobby_core::local_token::LOCAL_CLI_TOKEN_FILENAME),
-        "local-token\n",
-    )
-    .expect("write local cli token");
-    mock.serve_direct_attach(host.attach_locator(terminal_id));
-    for _ in 0..2 {
-        mock.enqueue(
-            "GET",
-            "/api/terminals?",
-            200,
-            json!({
-                "items": [{
-                    "terminal_id": terminal_id,
-                    "backend": "native",
-                    "state": "live",
-                    "attach": host.roster_attach(terminal_id),
-                }],
-                "next_cursor": null,
-                "snapshot": {"daemon_epoch": "epoch-1", "seq": 1}
-            }),
-        );
-    }
-    let daemon = LiveDaemon::connect(mock.url(), "local-token")
-        .await
-        .expect("connect live daemon");
-    let mut workspace = Workspace::live(daemon);
-    workspace.set_gobby_home(home.path().to_path_buf());
-    workspace.select_project("project-1");
-    workspace
-        .reconcile_subscribe_first()
-        .await
-        .expect("install the direct attachment");
-    let pane_id = workspace
-        .pane_for_terminal(terminal_id)
-        .expect("direct pane");
-    assert_eq!(
-        workspace.pane(pane_id).transport(),
-        Some(Transport::Direct),
-        "the roster advertised a host socket, so the attach must be direct"
-    );
-    (workspace, home)
-}
-
 #[tokio::test(flavor = "current_thread")]
 async fn direct_pane_keys_reach_the_host_not_the_daemon() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-direct";
-    let mut host = DirectHost::start("epoch-direct").await;
+    let host = DirectHost::start("epoch-direct").await;
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
     let pane_id = workspace
         .pane_for_terminal(terminal_id)
@@ -3102,7 +2924,7 @@ async fn a_granted_lease_without_a_host_grant_offers_take_back() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-ungranted";
-    let mut host = DirectHost::start("epoch-ungranted").await;
+    let host = DirectHost::start("epoch-ungranted").await;
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
     let pane_id = workspace
         .pane_for_terminal(terminal_id)
@@ -3172,7 +2994,7 @@ async fn an_input_refusal_returns_the_pane_to_observing_and_keeps_the_stream() {
     let mock = MockDaemon::start("local-token").await;
     mock.use_unique_attachment_ids();
     let terminal_id = "terminal-refused-input";
-    let mut host = DirectHost::start("epoch-refused-input").await;
+    let host = DirectHost::start("epoch-refused-input").await;
     let (mut workspace, _home) = live_workspace_on_direct_host(&mock, &host, terminal_id).await;
     let pane_id = workspace
         .pane_for_terminal(terminal_id)
@@ -4312,6 +4134,15 @@ async fn daemon_loss_renders_read_only_until_recovery() {
         let _: ClientMessage = read_message_async(&mut host, MAX_FRAME_SIZE)
             .await
             .expect("direct attach");
+        write_message_async(
+            &mut host,
+            &ServerMessage::Attached {
+                created: false,
+                host_terminal_id: "terminal-loss".into(),
+            },
+        )
+        .await
+        .expect("direct attached");
         while let Some(frame) = frame_rx.recv().await {
             write_message_async(&mut host, &frame)
                 .await
@@ -4827,9 +4658,17 @@ async fn daemon_restart_keeps_panes_and_reattaches() {
 fn daemon_loss_reducer_clears_control_without_frames() {
     let mut ws = Workspace::scripted();
     let pane = ws
-        .open_terminal("term-loss", "native", "epoch-loss")
+        .open_terminal("term-loss", "tmux", "epoch-loss")
         .expect("pane");
     ws.force_held(pane);
+    assert!(
+        ws.pane(pane).writable(),
+        "the pane held control before loss"
+    );
+    assert!(
+        !ws.pane(pane).direct_input(),
+        "tmux control remains daemon-bound even on a direct frame stream"
+    );
     let rendered_before = ws.pane(pane).frames_rendered();
     let sent_before = ws.daemon().ws_sent().len();
 

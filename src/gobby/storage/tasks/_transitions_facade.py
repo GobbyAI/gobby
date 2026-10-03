@@ -45,6 +45,9 @@ from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
+    release_escalated_task_claim as _release_escalated_task_claim,
+)
+from gobby.storage.tasks._transitions import (
     release_task_claim as _release_task_claim,
 )
 
@@ -176,6 +179,13 @@ class TaskTransitionsMixin:
         self._notify_listeners()
         return task
 
+    def release_escalated_task_claim(self, task_id: str, *, expected_owner: str) -> Task | None:
+        """Clear the owner's claim on an escalated task, keeping its escalation metadata."""
+        task = _release_escalated_task_claim(self.db, task_id, expected_owner=expected_owner)
+        if task is not None:
+            self._notify_listeners()
+        return task
+
     def close_task(
         self,
         task_id: str,
@@ -219,9 +229,17 @@ class TaskTransitionsMixin:
         validation_override_reason: str | None = None,
         cwd: str | Path | None = None,
     ) -> Task:
-        """Link a commit and close the task in one transaction."""
+        """Link a commit and close the task in one transaction.
+
+        The link stores Git's canonical short SHA, like every other commit writer (#23251).
+        """
+        from gobby.utils.git import normalize_commit_sha
+
+        short_sha = normalize_commit_sha(commit_sha, cwd=cwd)
+        if short_sha is None:
+            raise ValueError(f"Invalid or unresolved commit SHA: {commit_sha}")
         with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
-            _link_commit(self.db, task_id, commit_sha)
+            _link_commit(self.db, task_id, short_sha)
             _close_task(
                 self.db,
                 task_id=task_id,

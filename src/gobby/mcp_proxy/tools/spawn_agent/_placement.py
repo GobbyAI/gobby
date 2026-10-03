@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import functools
-import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,8 +19,6 @@ from gobby.terminals.workspace_agent_panes import (
     ResolvedPlacement,
 )
 from gobby.utils.git import run_to_completion
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -100,7 +97,6 @@ async def run_placed_spawn(
     except AgentPlacementError as exc:
         return {**await phase.fail(str(exc)), "placement_error": exc.code}
     except Exception as exc:
-        logger.warning("Pane reserve failed for run %s: %s", phase.run_id, type(exc).__name__)
         return await phase.fail(str(exc))
 
     # Recorded before bind awaits: a publish failure raises after the pane holds it.

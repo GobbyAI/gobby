@@ -24,7 +24,6 @@ from gobby.config.values import ConfigRuntimeReader
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
-from gobby.hooks.phase_timing import measure_hook_phase
 from gobby.skills.materialization import (
     SkillScriptMaterializer,
     get_skill_script_materializer,
@@ -38,6 +37,7 @@ from gobby.storage.pipeline_subscribers import (
     CompletionSubscriberManager,
     PipelineSubscriberStorageError,
 )
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_close_reviews import TaskCloseReviewStore
 from gobby.storage.workflow_audit import WorkflowAuditManager
 from gobby.telemetry.tracing import create_span
@@ -48,7 +48,7 @@ from gobby.workflows.definitions import (
     RuleTriggerEvent,
 )
 from gobby.workflows.enforcement.blocking import is_unblockable_discovery_tool
-from gobby.workflows.engine._offload import offload, timed_offload
+from gobby.workflows.engine._offload import offload
 from gobby.workflows.engine.block_batching import (
     clear_block_scopes,
     close_response_batch,
@@ -146,6 +146,7 @@ class RuleEngine(
         config_runtime: ConfigRuntimeReader | None = None,
         skill_script_materializer: SkillScriptMaterializer | None = None,
         internal_manager: "InternalRegistryManager | None" = None,
+        session_manager: SessionManager | None = None,
     ):
         self.db = db
         self.rule_manager = RuleDefinitionManager(db)
@@ -158,6 +159,7 @@ class RuleEngine(
         self._runner = runner
         self._completion_registry = completion_registry
         self._task_manager = task_manager
+        self._session_manager = session_manager or SessionManager(db)
         self._internal_manager = internal_manager
         self._pending_terminal_denials: dict[str, tuple[Any, Any, str]] = {}
         self._config_runtime = config_runtime
@@ -291,13 +293,11 @@ class RuleEngine(
 
                 project_from_vars = variables.get("project")
                 if not (isinstance(project_from_vars, dict) and project_from_vars.get("path")):
-                    with measure_hook_phase("rule_engine_db_reads"):
-                        variables["project"] = await timed_offload(
-                            "rule_db_project_info",
-                            self._resolve_project_info,
-                            event,
-                            project_from_vars,
-                        )
+                    variables["project"] = await offload(
+                        self._resolve_project_info,
+                        event,
+                        project_from_vars,
+                    )
 
                 is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
                 is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
@@ -336,12 +336,10 @@ class RuleEngine(
                 durable_task_wait = False
                 if is_turn_end:
                     try:
-                        with measure_hook_phase("rule_engine_db_reads"):
-                            active_coordination_wait = await timed_offload(
-                                "rule_db_coordination_wait",
-                                CoordinationWaitManager(self.db).has_active_wait,
-                                session_id,
-                            )
+                        active_coordination_wait = await offload(
+                            CoordinationWaitManager(self.db).has_active_wait,
+                            session_id,
+                        )
                     except Exception as exc:
                         logger.warning(
                             "Failed to determine active coordination wait for session %s: %s",
@@ -349,12 +347,10 @@ class RuleEngine(
                             exc,
                         )
                     try:
-                        with measure_hook_phase("rule_engine_db_reads"):
-                            active_agent_wait = await timed_offload(
-                                "rule_db_agent_wait",
-                                CompletionSubscriberManager(self.db).has_active_agent_wait,
-                                session_id,
-                            )
+                        active_agent_wait = await offload(
+                            CompletionSubscriberManager(self.db).has_active_agent_wait,
+                            session_id,
+                        )
                     except PipelineSubscriberStorageError as exc:
                         logger.warning(
                             "Failed to determine active agent wait for session %s: %s",
@@ -367,17 +363,15 @@ class RuleEngine(
                     )
                     if variables.get("task_claimed") and claimed_task_ids:
                         try:
-                            with measure_hook_phase("rule_engine_db_reads"):
-                                durable_task_wait = await timed_offload(
-                                    "rule_db_durable_task_wait",
-                                    all_tasks_have_durable_stop_wait,
-                                    self._task_manager,
-                                    claimed_task_ids,
-                                    partial(
-                                        TaskCloseReviewStore(self.db).has_retry_wait,
-                                        caller_session_id=session_id,
-                                    ),
-                                )
+                            durable_task_wait = await offload(
+                                all_tasks_have_durable_stop_wait,
+                                self._task_manager,
+                                claimed_task_ids,
+                                partial(
+                                    TaskCloseReviewStore(self.db).has_retry_wait,
+                                    caller_session_id=session_id,
+                                ),
+                            )
                         except Exception as exc:
                             logger.warning(
                                 "Failed to determine durable task wait for session %s: %s",
@@ -513,10 +507,7 @@ class RuleEngine(
                 rule_cache_key = (tuple(resolved_rule_events), _project_id_from_event(event))
                 rules = self._cached_rules(rule_cache_key)
                 if rules is None:
-                    with measure_hook_phase("rule_engine_db_reads"):
-                        rules = await timed_offload(
-                            "rule_db_load_rules", self._load_rules_into_cache, rule_cache_key
-                        )
+                    rules = await offload(self._load_rules_into_cache, rule_cache_key)
 
                 # 2-3. Filter by agent_scope, then audience (pure, so inline)
                 agent_type = variables.get("_agent_type")
@@ -524,14 +515,12 @@ class RuleEngine(
                 rules = self._filter_by_audience(rules, variables)
 
                 # 4. Filter by active rules (selector-based)
-                with measure_hook_phase("rule_engine_db_reads"):
-                    rules = await timed_offload(
-                        "rule_db_active_rules",
-                        self._filter_by_active_rules,
-                        rules,
-                        variables,
-                        project_id=_project_id_from_event(event),
-                    )
+                rules = await offload(
+                    self._filter_by_active_rules,
+                    rules,
+                    variables,
+                    project_id=_project_id_from_event(event),
+                )
 
                 if span.is_recording():
                     span.set_attribute("rule_count", len(rules))
@@ -596,12 +585,14 @@ class RuleEngine(
                 # 4c. Step workflow transition processing (after successful MCP tool calls)
                 _step_transition_msg: str | None = None
                 if is_after_tool:
-                    with measure_hook_phase("rule_step_after_tool"):
-                        _step_transition_msg = await self._process_step_after_tool(
-                            event, session_id, variables
-                        )
-                    if _step_transition_msg:
-                        evaluation.context_parts.append(("step_transition", _step_transition_msg))
+                    _step_transition_msg = await self._process_step_after_tool(
+                        event, session_id, variables
+                    )
+                _step_transition_msg = self._route_step_transition_notice(
+                    event, variables, _step_transition_msg
+                )
+                if _step_transition_msg:
+                    evaluation.context_parts.append(("step_transition", _step_transition_msg))
 
                 # Deferred overrides — these used to early-return, but that skipped rule
                 # evaluation entirely, preventing background mcp_call effects
@@ -654,13 +645,12 @@ class RuleEngine(
                     if is_after_tool:
                         self._manage_after_tool_recovery_state(event, variables)
                     if override_decision != "block":
-                        with measure_hook_phase("rule_late_mcp_injections"):
-                            await self._deliver_late_mcp_injections(
-                                event,
-                                evaluation.variables,
-                                evaluation.context_parts,
-                                evaluation.staged_variable_updates,
-                            )
+                        await self._deliver_late_mcp_injections(
+                            event,
+                            evaluation.variables,
+                            evaluation.context_parts,
+                            evaluation.staged_variable_updates,
+                        )
                     # Honour hardcoded override decisions (e.g. tool_block_pending stop gate)
                     # even when no declarative rules are installed for this event.
                     resp = self._assemble_response(
@@ -670,8 +660,7 @@ class RuleEngine(
                         block_gates=[],
                         include_rule_outputs=False,
                     )
-                    with measure_hook_phase("rule_finalize_response"):
-                        return await self._finalize_block_response(resp, evaluation, span)
+                    return await self._finalize_block_response(resp, evaluation, span)
 
                 # Auto-manage tool_block_pending on after_tool before rule eval.
                 if is_after_tool:
@@ -697,12 +686,11 @@ class RuleEngine(
                             tool_input.update(updates)
                             input_was_rewritten = bool(updates)
 
-                    with measure_hook_phase("rule_proxy_hooks"):
-                        proxy_changed = await self._run_proxy_hooks(
-                            evaluation.proxy_hooks,
-                            event,
-                            blocking_deadline=blocking_deadline,
-                        )
+                    proxy_changed = await self._run_proxy_hooks(
+                        evaluation.proxy_hooks,
+                        event,
+                        blocking_deadline=blocking_deadline,
+                    )
                     if proxy_changed:
                         tool_input = event.data.get("tool_input")
                         command = (
@@ -766,13 +754,12 @@ class RuleEngine(
                 # but the rule loop always runs so mcp_calls are always collected.
                 # Late recall rides allow responses only; a block keeps it queued.
                 if not block_gates and override_decision != "block":
-                    with measure_hook_phase("rule_late_mcp_injections"):
-                        await self._deliver_late_mcp_injections(
-                            event,
-                            evaluation.variables,
-                            evaluation.context_parts,
-                            evaluation.staged_variable_updates,
-                        )
+                    await self._deliver_late_mcp_injections(
+                        event,
+                        evaluation.variables,
+                        evaluation.context_parts,
+                        evaluation.staged_variable_updates,
+                    )
                 resp = self._assemble_response(
                     evaluation,
                     override_decision=override_decision,
@@ -790,13 +777,12 @@ class RuleEngine(
                             "rules.mcp_calls",
                             [f"{c.get('server')}/{c.get('tool')}" for c in mcp_calls],
                         )
-                with measure_hook_phase("rule_finalize_response"):
-                    return await self._finalize_block_response(
-                        resp,
-                        evaluation,
-                        span,
-                        block_gates=block_gates,
-                    )
+                return await self._finalize_block_response(
+                    resp,
+                    evaluation,
+                    span,
+                    block_gates=block_gates,
+                )
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)

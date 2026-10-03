@@ -82,16 +82,24 @@ def coordinate_task_escalation(
     except Exception:
         logger.debug("Best-effort escalation notification failed", exc_info=True)
 
-    if session_id:
-        resolved_session_id = session_id
-        try:
-            resolved_session_id = ctx.resolve_session_id(session_id)
-        except ValueError:
-            pass
-        try:
-            # SessionTaskManager.link_task is an ON CONFLICT upsert.
-            ctx.session_task_manager.link_task(resolved_session_id, task.id, "escalated")
-        except Exception:
-            logger.debug("Best-effort escalation linking failed", exc_info=True)
-
+    link_escalating_session(ctx, task.id, session_id)
     return event_id
+
+
+def link_escalating_session(ctx: RegistryContext, task_id: str, session_id: str | None) -> None:
+    """Best-effort record that the session escalated the task.
+
+    Handoff summaries read a claimed link with no terminal action as the active task.
+    """
+    if not session_id:
+        return
+    resolved_session_id = session_id
+    try:
+        resolved_session_id = ctx.resolve_session_id(session_id)
+    except ValueError:
+        pass
+    try:
+        # SessionTaskManager.link_task is an ON CONFLICT upsert.
+        ctx.session_task_manager.link_task(resolved_session_id, task_id, "escalated")
+    except Exception:
+        logger.debug("Best-effort escalation linking failed", exc_info=True)

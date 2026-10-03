@@ -195,6 +195,15 @@ def _process_message_block(
             # for the life of the session is the growth #20859 removed. The
             # first result wins (#20875).
             return
+        if state.is_pre_window_tool_call(msg.tool_use_id):
+            # A windowed render resumed past this call's start: the call is not
+            # in pending/resolved here, but a full render would have paired it.
+            # Suppress the result as that render does rather than emit an orphan
+            # group, and remember the id so a repeat stays suppressed too. This
+            # is O(1) per result, replacing the stub seeded for every pre-window
+            # tool on every page.
+            state.remember_resolved_tool_call(msg.tool_use_id)
+            return
 
     if not state.current_message:
         return

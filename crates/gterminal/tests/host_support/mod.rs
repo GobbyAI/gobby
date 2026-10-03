@@ -147,6 +147,17 @@ pub fn spawn_host_with_env_removed(
     extra: &[&str],
     removed: &[&str],
 ) -> HostProc {
+    spawn_host_with_env(socket_dir, extra, &[], removed)
+}
+
+/// Spawns the host with `env` added and `removed` taken from the test's
+/// environment.
+pub fn spawn_host_with_env(
+    socket_dir: &Path,
+    extra: &[&str],
+    env: &[(&str, &str)],
+    removed: &[&str],
+) -> HostProc {
     let log_path = socket_dir.join("gterm.log");
     let token_path = socket_dir.join("local_cli_token");
     if !token_path.exists() {
@@ -168,6 +179,7 @@ pub fn spawn_host_with_env_removed(
             Some(file) => Stdio::from(file),
             None => Stdio::piped(),
         });
+    cmd.envs(env.iter().copied());
     for name in removed {
         cmd.env_remove(name);
     }
@@ -261,8 +273,13 @@ pub fn send_json_without_id(stream: &mut UnixStream, value: &Value) {
 }
 
 pub fn recv_json(stream: &mut UnixStream) -> Value {
+    recv_json_within(stream, Duration::from_secs(5))
+}
+
+/// `recv_json` for a reply that can take longer, such as an upgrade probe.
+pub fn recv_json_within(stream: &mut UnixStream, timeout: Duration) -> Value {
     stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
+        .set_read_timeout(Some(timeout))
         .expect("read timeout");
     // This helper does not retain a BufReader between calls. A one-byte buffer
     // prevents it from reading and then discarding the next correlated reply.
@@ -296,4 +313,260 @@ pub fn wait_exit(host: &mut HostProc, timeout: Duration) -> Option<std::process:
             _ => return None,
         }
     }
+}
+
+/// A native pane made through `reserve_observer`, `spawn`, and `spawn_commit`.
+pub struct CommittedPane {
+    pub terminal_id: String,
+    pub spawn_key: String,
+    pub host_terminal_id: String,
+    pub reservation_id: String,
+    /// The child leads its own session, so this is also its pid.
+    pub pgid: i32,
+}
+
+/// Reserves, spawns `sh -c <script>` in the socket dir, and commits it. `seq`
+/// is the next `operation_seq` on `stream`.
+pub fn committed_pane(
+    host: &mut HostProc,
+    stream: &mut UnixStream,
+    seq: u64,
+    terminal_id: &str,
+    script: &str,
+) -> CommittedPane {
+    let reserved = rpc(
+        stream,
+        "reserve_observer",
+        serde_json::json!({"terminal_id": terminal_id, "reserve_key": terminal_id}),
+    );
+    assert_eq!(reserved["ok"], true, "reserve {terminal_id}: {reserved}");
+    let reservation_id = reserved["reservation_id"]
+        .as_str()
+        .expect("reservation id")
+        .to_string();
+    let spawn_key = format!("{terminal_id}-spawn");
+    let prepared = rpc(
+        stream,
+        "spawn",
+        serde_json::json!({
+            "operation_seq": seq,
+            "terminal_id": terminal_id,
+            "spawn_key": spawn_key,
+            "reservation_id": reservation_id,
+            "reserve_key": terminal_id,
+            "argv": ["/bin/sh", "-c", script],
+            "cwd": host.socket_dir().to_string_lossy(),
+            "rows": 24,
+            "cols": 80,
+            "commit_deadline_ms": 5000,
+        }),
+    );
+    assert_eq!(prepared["ok"], true, "spawn {terminal_id}: {prepared}");
+    let pgid = prepared["pgid"].as_i64().expect("pgid") as i32;
+    host.track_pgid(pgid);
+    let committed = rpc(
+        stream,
+        "spawn_commit",
+        serde_json::json!({"terminal_id": terminal_id, "spawn_key": spawn_key}),
+    );
+    assert_eq!(committed["ok"], true, "commit {terminal_id}: {committed}");
+    CommittedPane {
+        terminal_id: terminal_id.to_string(),
+        spawn_key,
+        host_terminal_id: prepared["host_terminal_id"]
+            .as_str()
+            .expect("host terminal id")
+            .to_string(),
+        reservation_id,
+        pgid,
+    }
+}
+
+/// An authenticated control connection.
+pub fn control(socket_dir: &Path, token: &str) -> UnixStream {
+    let mut stream = connect(&socket_dir.join(CONTROL_SOCKET));
+    let hello = hello_control(&mut stream, token);
+    assert_eq!(hello["ok"], true, "{hello}");
+    stream
+}
+
+/// Sends `host_upgrade` without waiting for its reply.
+pub fn send_upgrade(stream: &mut UnixStream, exe: &Path, attempt_id: &str, test_fault: Value) {
+    let mut request = serde_json::json!({
+        "method": "host_upgrade",
+        "exe": exe,
+        "attempt_id": attempt_id,
+    });
+    if !test_fault.is_null() {
+        request["test_fault"] = test_fault;
+    }
+    send_json(stream, &request);
+}
+
+/// Sends `host_upgrade` and returns its reply, which waits for the probe.
+pub fn host_upgrade(
+    stream: &mut UnixStream,
+    exe: &Path,
+    attempt_id: &str,
+    test_fault: Value,
+) -> Value {
+    send_upgrade(stream, exe, attempt_id, test_fault);
+    recv_json_within(stream, Duration::from_secs(20))
+}
+
+/// Pings through a fresh connection; `None` while no host answers, as across
+/// an exec or after the host ended.
+pub fn try_ping(socket_dir: &Path, token: &str) -> Option<Value> {
+    let mut stream = UnixStream::connect(socket_dir.join(CONTROL_SOCKET)).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).ok()?;
+    let mut reader = BufReader::new(stream.try_clone().ok()?);
+    let mut exchange = |request: Value| -> Option<Value> {
+        let mut line = serde_json::to_vec(&request).ok()?;
+        line.push(b'\n');
+        stream.write_all(&line).ok()?;
+        let mut reply = String::new();
+        if reader.read_line(&mut reply).ok()? == 0 {
+            return None;
+        }
+        serde_json::from_str(reply.trim_end()).ok()
+    };
+    let hello = exchange(serde_json::json!({
+        "method": "hello",
+        "id": "try-ping-hello",
+        "protocol_version": 1,
+        "control_token": token,
+    }))?;
+    if hello["ok"] != true {
+        return None;
+    }
+    exchange(serde_json::json!({"method": "ping", "id": "try-ping"}))
+}
+
+/// Waits for an idle host whose `last_outcome` names `attempt_id`, and returns
+/// that ping.
+pub fn wait_outcome(socket_dir: &Path, token: &str, attempt_id: &str, timeout: Duration) -> Value {
+    let deadline = Instant::now() + timeout;
+    let mut last = None;
+    loop {
+        if let Some(ping) = try_ping(socket_dir, token) {
+            let upgrade = &ping["upgrade"];
+            if upgrade["phase"] == "idle" && upgrade["last_outcome"]["attempt_id"] == attempt_id {
+                return ping;
+            }
+            last = Some(ping);
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no outcome for {attempt_id}; last ping {last:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+/// Writes an executable `sh` script that stands in for a candidate image, so
+/// its probe exits and times out as the script says.
+pub fn candidate_script(dir: &Path, name: &str, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write candidate script");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))
+        .expect("candidate script mode");
+    path
+}
+
+/// A candidate whose probe blocks reading a FIFO until the test closes the
+/// write end `send_held_upgrade` returns; returns the candidate and its FIFO.
+pub fn held_probe(dir: &Path, name: &str) -> (PathBuf, PathBuf) {
+    let fifo = dir.join(format!("{name}.fifo"));
+    let made = Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .expect("run mkfifo");
+    assert!(made.success(), "mkfifo: {made}");
+    let body = format!("read line < '{}'\nexit 0", fifo.display());
+    (candidate_script(dir, &format!("{name}.sh"), &body), fifo)
+}
+
+/// Sends `host_upgrade` for a `held_probe` candidate and returns once its
+/// probe holds the FIFO; dropping the returned write end lets the probe
+/// accept. An attempt replies before it releases the upgrade lock, so one
+/// sent right after it can be refused `upgrade_in_progress`; it is sent again.
+pub fn send_held_upgrade(
+    stream: &mut UnixStream,
+    exe: &Path,
+    fifo: &Path,
+    attempt_id: &str,
+) -> std::fs::File {
+    use std::os::unix::fs::OpenOptionsExt;
+    send_upgrade(stream, exe, attempt_id, Value::Null);
+    let mut release = None;
+    wait_until(&format!("{attempt_id}'s probe holds its FIFO"), || {
+        // A non-blocking open for writing succeeds only once the probe has
+        // the FIFO open for reading.
+        release = std::fs::OpenOptions::new()
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(fifo)
+            .ok();
+        if release.is_none() && replied(stream) {
+            let reply = recv_json(stream);
+            assert_eq!(reply["error"], "upgrade_in_progress", "{reply}");
+            send_upgrade(stream, exe, attempt_id, Value::Null);
+        }
+        release.is_some()
+    });
+    release.expect("the probe holds its FIFO")
+}
+
+/// Whether a reply waits on `stream`, without reading it.
+fn replied(stream: &UnixStream) -> bool {
+    use std::os::fd::AsRawFd;
+    let mut byte = [0u8; 1];
+    let peeked = unsafe {
+        libc::recv(
+            stream.as_raw_fd(),
+            byte.as_mut_ptr().cast(),
+            1,
+            libc::MSG_PEEK | libc::MSG_DONTWAIT,
+        )
+    };
+    peeked > 0
+}
+
+/// The pane's text through the control `snapshot` verb.
+pub fn pane_text(stream: &mut UnixStream, host_terminal_id: &str) -> String {
+    let snap = rpc(
+        stream,
+        "snapshot",
+        serde_json::json!({
+            "host_terminal_id": host_terminal_id,
+            "mode": "text",
+            "max_bytes": 65536,
+            "max_lines": 200,
+        }),
+    );
+    assert_eq!(snap["ok"], true, "{snap}");
+    snap["text"].as_str().unwrap_or_default().to_string()
+}
+
+/// Writes `text` to a pane through the control `write` verb.
+pub fn write_text(stream: &mut UnixStream, seq: u64, host_terminal_id: &str, text: &str) -> Value {
+    use base64::Engine as _;
+    rpc(
+        stream,
+        "write",
+        serde_json::json!({
+            "operation_seq": seq,
+            "host_terminal_id": host_terminal_id,
+            "kind": "text",
+            "encoding": "utf8-b64",
+            "data": base64::engine::general_purpose::STANDARD.encode(text),
+        }),
+    )
+}
+
+/// Whether `pid` still names a process (a zombie included).
+pub fn process_exists(pid: i32) -> bool {
+    // SAFETY: signal 0 only checks that the process exists.
+    unsafe { libc::kill(pid, 0) == 0 }
 }

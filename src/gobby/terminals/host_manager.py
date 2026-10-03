@@ -39,6 +39,8 @@ from gobby.terminals.host_protocol import (
 )
 from gobby.terminals.host_reap import reap_recorded_process
 from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
+from gobby.terminals.host_upgrade import HostUpgradeCoordinator
+from gobby.terminals.input_grants import HandoffKey, expire_native_input_handoffs
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -98,6 +100,12 @@ class TerminalHostManager:
         self._healthy_since: float | None = None
         self._sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
         self._monotonic: Callable[[], float] = time.monotonic
+        self.upgrade = HostUpgradeCoordinator(
+            installed=self._installed_binary,
+            health_interval=config.health_interval_seconds,
+            monotonic=lambda: self._monotonic(),
+        )
+        self._input_handoff_deadlines: dict[HandoffKey, float] = {}
         self.enabled = config.enabled
         self.running = False
         self.adopted = False
@@ -189,7 +197,8 @@ class TerminalHostManager:
             await asyncio.wait_for(self._startup_settled.wait(), timeout)
         except TimeoutError:
             return False
-        return True
+        # An in-place upgrade holds attaches the way a start does.
+        return not self.upgrade.is_open
 
     async def _start_host(self) -> None:
         if not self.enabled:
@@ -278,6 +287,8 @@ class TerminalHostManager:
 
     async def ensure_restart(self) -> str:
         """Return one shared restart epoch, fenced against teardown and drain."""
+        # Never restart over a host that is exec'ing itself in place.
+        await self.upgrade.wait_closed()
         async with self._restart_lock:
             if self._stop_requested or self.host_drained or not self.enabled:
                 raise HostManagerStopped("gterm host manager stopped")
@@ -475,9 +486,15 @@ class TerminalHostManager:
         settle_indeterminate: bool = False,
     ) -> None:
         manager = self.terminal_manager
-        if manager is None:
+        if manager is None or self.upgrade.is_open:
             return
         client = self._client
+        epoch = host_epoch if host_epoch is not None else (self.host_epoch or "")
+        machine_id = require_machine_id()
+        if client is not None and epoch:
+            await expire_native_input_handoffs(
+                manager, client, machine_id, epoch, self._input_handoff_deadlines, self._monotonic()
+            )
         rows: list[Any] = [] if host_rows is None else host_rows
         if host_rows is None and client is not None:
             try:
@@ -485,7 +502,6 @@ class TerminalHostManager:
             except Exception as exc:
                 self.last_error = str(exc)
                 return
-        epoch = host_epoch if host_epoch is not None else (self.host_epoch or "")
 
         async def kill(host_terminal_id: str) -> None:
             if client is None:
@@ -495,7 +511,7 @@ class TerminalHostManager:
         try:
             error = await reconcile_host_inventory(
                 terminal_manager=manager,
-                machine_id=require_machine_id(),
+                machine_id=machine_id,
                 host_epoch=epoch,
                 host_rows=rows,
                 spawn_in_doubt_seconds=self.terminal_config.spawn_in_doubt_seconds,
@@ -593,6 +609,7 @@ class TerminalHostManager:
         self.capabilities = tuple(hello.capabilities)
         self.adopted = True
         self.spawned_this_construction = False
+        await self.upgrade.observe(client, ping, self.capabilities)
         return _Adopt.ADOPTED
 
     async def _spawn_and_connect(self) -> None:
@@ -627,13 +644,17 @@ class TerminalHostManager:
         self.restart_count += 1
         self._healthy_since = self._monotonic()
 
+    def _installed_binary(self) -> str | None:
+        """The gterm a spawn launches and an upgrade execs into."""
+        return self.config.binary_path or resolve_native_bin("gterm")
+
     def _spawn_host_process(self) -> Any:
         if self._spawner is not None:
             spawned = self._spawner()
             if spawned is None:
                 raise FileNotFoundError("gterm")
             return spawned
-        binary = self.config.binary_path or resolve_native_bin("gterm")
+        binary = self._installed_binary()
         if not binary:
             raise FileNotFoundError("gterm")
         log_dir = self.socket_dir / "logs"
@@ -853,7 +874,11 @@ class TerminalHostManager:
     async def _health_loop(self) -> None:
         interval = self.config.health_interval_seconds
         while not self._stop_requested:
-            await self._sleep(interval)
+            delay = interval
+            if self._input_handoff_deadlines:
+                until_expiry = min(self._input_handoff_deadlines.values()) - self._monotonic()
+                delay = min(delay, max(1.0, until_expiry))
+            await self._sleep(delay)
             client = self._client
             if client is None:
                 if self.host_mismatch is not None:
@@ -864,10 +889,21 @@ class TerminalHostManager:
                     # not need a daemon restart (#22425).
                     await self._start_host()
                 continue
+            if self.upgrade.expired():
+                fresh = await self.upgrade.settle_expired(self._fresh_probe)
+                if fresh is None:
+                    if await self._host_death_continues():
+                        continue
+                    return
+                await self._close_client(client)
+                self._client, hello, _ = fresh
+                self.capabilities = tuple(hello.capabilities)
+                continue
             try:
                 ping = await client.ping()
                 self.host_pid = ping.host_pid
                 self.host_epoch = ping.host_epoch
+                await self.upgrade.observe(client, ping, self.capabilities)
                 await self.reconcile()
                 self._record_healthy_ping()
             except Exception as exc:
@@ -876,37 +912,41 @@ class TerminalHostManager:
                 if isinstance(pid, int) and pid > 0 and self._pid_identity(pid):
                     logger.warning("gterm control probe failed; reconnecting live host: %s", exc)
                     try:
-                        stale = self._client
-                        if stale is not None:
-                            close = getattr(stale, "close", None)
-                            if callable(close):
-                                result = close()
-                                if asyncio.iscoroutine(result):
-                                    await result
-                        replacement = await self._connect()
-                        token = self.ensure_control_token()
-                        hello = await replacement.hello(CONTROL_PROTOCOL_VERSION, token)
-                        ping = await replacement.ping()
+                        await self._close_client(client)
+                        replacement, hello, ping = await self._fresh_probe()
                         self._client = replacement
                         self.host_epoch = ping.host_epoch or hello.host_epoch
                         self.host_pid = ping.host_pid
+                        self.capabilities = tuple(hello.capabilities)
+                        await self.upgrade.observe(replacement, ping, self.capabilities)
                     except Exception as reconnect_exc:
                         self.last_error = str(reconnect_exc)
-                        try:
-                            await self.handle_host_death()
-                        except HostManagerStopped:
-                            return
-                        if self.running:
+                        # Mid-upgrade the host restores and refuses connects for a while.
+                        if self.upgrade.is_open or await self._host_death_continues():
                             continue
                         return
                     continue
-                try:
-                    await self.handle_host_death()
-                except HostManagerStopped:
-                    return
-                if self.running:
+                if self.upgrade.is_open or await self._host_death_continues():
                     continue
                 return
+
+    async def _host_death_continues(self) -> bool:
+        """Run host death; True while the health loop should keep probing."""
+        try:
+            await self.handle_host_death()
+        except HostManagerStopped:
+            return False
+        return self.running
+
+    async def _fresh_probe(self) -> tuple[Any, Any, Any]:
+        """A new authenticated connection and its hello and ping."""
+        client = await self._connect()
+        try:
+            hello, ping = await self._handshake(client)
+        except BaseException:
+            await self._close_client(client)
+            raise
+        return client, hello, ping
 
 
 # Re-export for tests that import the filename from host_protocol via manager.

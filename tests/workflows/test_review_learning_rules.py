@@ -361,13 +361,13 @@ async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
     manager = RuleDefinitionManager(temp_db)
     expected_rules = {
         "inject-plan-reviewer-lessons": (
-            ["plan-adversary", "plan-adversary-taskless"],
+            ["plan-adversary", "plan-adversary-taskless-old"],
             "plan",
             ["reviewer-miss"],
         ),
         "inject-planner-lessons": (["planner"], "plan", ["fixer-induced-defect"]),
         "inject-plan-enhancer-lessons": (
-            ["plan-enhancer", "plan-enhancer-taskless"],
+            ["plan-enhancer-old", "plan-enhancer-taskless-old"],
             "plan",
             ["fixer-induced-defect"],
         ),

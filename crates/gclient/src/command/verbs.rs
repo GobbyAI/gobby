@@ -222,10 +222,10 @@ impl Action {
                 let (workspace, tab, pane) = if let Some(short) =
                     target.as_ref().filter(|_| refs::is_short_id(&reference))
                 {
-                    (short.workspace.clone(), None, None)
+                    (short.workspace.clone(), reference.clone(), None)
                 } else if parts.len() == 3 || parts.len() == 4 {
                     let workspace = parts[..2].join(":");
-                    let tab = Some(parts[..3].join(":"));
+                    let tab = parts[..3].join(":");
                     let pane = (parts.len() == 4).then_some(reference);
                     (workspace, tab, pane)
                 } else {
@@ -234,15 +234,14 @@ impl Action {
                         "--workspace",
                     )?;
                     if let Some(tab) = tab_hint {
-                        (workspace, Some(tab), Some(reference))
+                        (workspace, tab, Some(reference))
                     } else {
-                        (workspace, Some(reference), None)
+                        (workspace, reference, None)
                     }
                 };
                 Self::Op {
-                    op: WorkspaceOp::WorkspaceSetFocusHints {
+                    op: WorkspaceOp::WorkspaceSelect {
                         workspace,
-                        project_id: None,
                         tab,
                         pane,
                         node: None,

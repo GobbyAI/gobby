@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 from psycopg.errors import RaiseException
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import (
@@ -28,6 +29,7 @@ PROJECT_B = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
 NEW_UNIQUE_TASK_ID = "44444444-4444-4444-4444-444444444444"
 UNKNOWN_TASK_ID = "99999999-9999-9999-9999-999999999999"
 VALIDATION_CRITERIA = "Test task completion is observable."
+FULL_SHA = "b1dc981f1fbc440398c603788236af4a362dc2ad"
 
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 
@@ -1161,8 +1163,64 @@ class TestLocalTaskManager:
 
         assert updated.commits == ["def4567"]
 
-    def test_unlink_commit_handles_nonexistent(self, task_manager, project_id) -> None:
-        """Test unlinking non-existent commit is a no-op."""
+    @pytest.mark.parametrize(
+        ("stored", "given"),
+        [
+            (FULL_SHA, FULL_SHA),
+            (FULL_SHA, FULL_SHA[:10]),
+            (FULL_SHA[:10], FULL_SHA),
+        ],
+        ids=["full-by-full", "full-by-short", "short-by-full"],
+    )
+    def test_unlink_commit_matches_either_sha_form(
+        self, task_manager, project_id, stored: str, given: str
+    ) -> None:
+        """A link stored in one SHA form is removed when named by the other (#23251)."""
+        task = task_manager.create_task(
+            project_id,
+            "Task with commits",
+            validation_criteria=VALIDATION_CRITERIA,
+        )
+        task_manager.link_commit(task.id, stored)
+        task_manager.link_commit(task.id, "def4567")
+
+        updated = task_manager.unlink_commit(task.id, given)
+
+        assert updated.commits == ["def4567"]
+
+    def test_link_commit_does_not_duplicate_across_sha_forms(
+        self, task_manager, project_id
+    ) -> None:
+        """Linking the full SHA of an already linked short SHA adds nothing (#23251)."""
+        task = task_manager.create_task(
+            project_id,
+            "Task with commits",
+            validation_criteria=VALIDATION_CRITERIA,
+        )
+        task_manager.link_commit(task.id, FULL_SHA[:10])
+
+        updated = task_manager.link_commit(task.id, FULL_SHA)
+
+        assert updated.commits == [FULL_SHA[:10]]
+
+    def test_unlink_commit_short_prefix_never_matches_by_prefix(
+        self, task_manager, project_id
+    ) -> None:
+        """Below seven characters a SHA names only an exact link, never a prefix."""
+        task = task_manager.create_task(
+            project_id,
+            "Task with commits",
+            validation_criteria=VALIDATION_CRITERIA,
+        )
+        task_manager.link_commit(task.id, FULL_SHA)
+
+        with pytest.raises(ValueError, match=f"Commit {FULL_SHA[:6]} is not linked"):
+            task_manager.unlink_commit(task.id, FULL_SHA[:6])
+
+        assert task_manager.get_task(task.id).commits == [FULL_SHA]
+
+    def test_unlink_commit_refuses_an_unlinked_sha(self, task_manager, project_id) -> None:
+        """Unlinking a SHA that is not linked fails and names it (#23251)."""
         task = task_manager.create_task(
             project_id,
             "Task with commits",
@@ -1170,13 +1228,14 @@ class TestLocalTaskManager:
         )
 
         task_manager.link_commit(task.id, "abc123d")
-        # A well-formed SHA that was never linked matches nothing.
-        updated = task_manager.unlink_commit(task.id, "ffff9999")
 
-        assert updated.commits == ["abc123d"]
+        with pytest.raises(ValueError, match="Commit ffff9999 is not linked"):
+            task_manager.unlink_commit(task.id, "ffff9999")
 
-    def test_unlink_commit_ignores_noncanonical_sha(self, task_manager, project_id) -> None:
-        """Test unlinking never matches a value that cannot be a stored SHA."""
+        assert task_manager.get_task(task.id).commits == ["abc123d"]
+
+    def test_unlink_commit_rejects_noncanonical_sha(self, task_manager, project_id) -> None:
+        """A value that cannot be a stored SHA is refused, never treated as unlinked."""
         task = task_manager.create_task(
             project_id,
             "Task with commits",
@@ -1185,23 +1244,21 @@ class TestLocalTaskManager:
 
         task_manager.link_commit(task.id, "abc123d")
 
-        # Link validation stores only canonical hex SHAs, so a non-SHA value
-        # matches nothing and removes nothing.
-        updated = task_manager.unlink_commit(task.id, "not-a-canonical-sha")
+        with pytest.raises(ValueError, match="Invalid or unresolved commit SHA"):
+            task_manager.unlink_commit(task.id, "not-a-canonical-sha")
 
-        assert updated.commits == ["abc123d"]
+        assert task_manager.get_task(task.id).commits == ["abc123d"]
 
-    def test_unlink_commit_from_empty_task(self, task_manager, project_id) -> None:
-        """Test unlinking from task with no commits is a no-op."""
+    def test_unlink_commit_from_empty_task_fails(self, task_manager, project_id) -> None:
+        """Unlinking from a task with no commits fails and names the SHA."""
         task = task_manager.create_task(
             project_id, "Empty task", validation_criteria=VALIDATION_CRITERIA
         )
 
-        with patch("gobby.utils.git.normalize_commit_sha") as mock_normalize:
-            mock_normalize.return_value = "abc1234"
-            updated = task_manager.unlink_commit(task.id, "abc123")
+        with pytest.raises(ValueError, match="Commit abc1234 is not linked"):
+            task_manager.unlink_commit(task.id, "abc1234")
 
-        assert updated.commits is None or updated.commits == []
+        assert not task_manager.get_task(task.id).commits
 
     def test_unlink_commit_invalid_task(self, task_manager) -> None:
         """Test unlinking from non-existent task raises error."""
@@ -3208,7 +3265,7 @@ class TestPathCacheComputation:
         assert grandchild_row["path_cache"] == "1.2.4"
 
     def test_update_descendant_paths_with_null_seq_num(
-        self, task_manager, project_id, temp_db
+        self, task_manager: LocalTaskManager, project_id: str, temp_db: HubDatabase
     ) -> None:
         """Test update_descendant_paths skips tasks with NULL seq_num."""
         root = task_manager.create_task(
@@ -3232,12 +3289,16 @@ class TestPathCacheComputation:
         assert count == 1
 
         root_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (root.id,))
+        assert root_row is not None
         assert root_row["path_cache"] == "1"
 
         child_row = temp_db.fetchone("SELECT path_cache FROM tasks WHERE id = %s", (child.id,))
+        assert child_row is not None
         assert child_row["path_cache"] is None
 
-    def test_to_dict_includes_seq_num_and_path_cache(self, task_manager, project_id) -> None:
+    def test_to_dict_includes_seq_num_and_path_cache(
+        self, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
         """Test that to_dict() includes seq_num and path_cache fields."""
         task = task_manager.create_task(
             project_id=project_id,
@@ -3252,7 +3313,9 @@ class TestPathCacheComputation:
         assert "path_cache" in data
         assert data["path_cache"] == "1"
 
-    def test_to_brief_includes_seq_num_and_path_cache(self, task_manager, project_id) -> None:
+    def test_to_brief_includes_seq_num_and_path_cache(
+        self, task_manager: LocalTaskManager, project_id: str
+    ) -> None:
         """Test that to_brief() includes seq_num and path_cache fields."""
         task = task_manager.create_task(
             project_id=project_id,

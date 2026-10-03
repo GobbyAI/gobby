@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -25,8 +25,6 @@ from gobby.sessions.compact_continuation import (
     _continuation_pane,
     _continue_after_codex_compaction_ready,
     _count_codex_compact_ready_status_lines,
-    _merge_session_variable,
-    _pop_session_variable,
     _send_handoff_compact_continuation,
     clear_handoff_compact_continuation_pending,
     consume_and_schedule_handoff_compact_continuation,
@@ -36,9 +34,11 @@ from gobby.sessions.compact_continuation import (
     schedule_codex_handoff_compact_continuation_readiness,
     schedule_handoff_compact_continuation,
 )
+from gobby.sessions.compact_continuation_store import _merge_session_variable, _pop_session_variable
 from gobby.sessions.handoff import (
     HANDOFF_DISPATCH_GATE_VARIABLE,
     build_handoff_continue_prompt,
+    consume_pending_handoff,
     stage_handoff_attempt,
 )
 from gobby.sessions.handoff_records import build_handoff_payload, record_handoff_delivery
@@ -322,6 +322,10 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
             "gobby.sessions.compact_continuation._composer_reader",
             return_value=_CODEX_READ,
         ),
+        patch(
+            "gobby.sessions.continuation_retry.await_before_agent",
+            AsyncMock(return_value=True),
+        ),
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
@@ -337,6 +341,115 @@ async def test_codex_waits_for_fresh_compaction_marker_before_continuing(
     assert tmux.sent_keys == [("%12", f"{prompt}\n", True), _ENTER]
     variables = SessionVariableManager(session_db).get_variables(SESSION_ID)
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in variables
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("conflict", ["no_receipt", "new_gate", "new_marker"])
+async def test_readiness_timeout_preserves_undelivered_or_replaced_attempt(
+    session_db: HubDatabase,
+    conflict: str,
+) -> None:
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    if conflict != "no_receipt":
+        record_handoff_delivery(
+            session_db,
+            handoff_id=staged.handoff_record_id,
+            attempt_id=attempt_id,
+            boundary_kind="compact",
+            continuation_session_id=SESSION_ID,
+        )
+    mark_handoff_compact_continuation_pending(
+        session_db,
+        SESSION_ID,
+        prompt="Call get_handoff",
+        attempt_id="b" * 32 if conflict == "new_marker" else attempt_id,
+    )
+    variables = SessionVariableManager(session_db)
+    variables.set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {
+            "attempt_id": "b" * 32 if conflict == "new_gate" else attempt_id,
+            "delivery_pending": True,
+        },
+    )
+    before = variables.get_variables(SESSION_ID)
+    tmux = _FakeTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+        fresh_seconds=-1,
+    )
+    assert variables.get_variables(SESSION_ID) == before
+    assert tmux.sent_keys == []
+
+
+@pytest.mark.asyncio
+async def test_delivered_codex_readiness_timeout_releases_tools_for_recovery(
+    session_db: HubDatabase,
+) -> None:
+    attempt_id = "a" * 32
+    staged = stage_handoff_attempt(
+        session_db,
+        SESSION_ID,
+        attempt_id=attempt_id,
+        handoff=build_handoff_payload(current_state="Compacted", next_steps=["Continue"]),
+        clear_session=False,
+    )
+    record_handoff_delivery(
+        session_db,
+        handoff_id=staged.handoff_record_id,
+        attempt_id=attempt_id,
+        boundary_kind="compact",
+        continuation_session_id=SESSION_ID,
+    )
+    mark_handoff_compact_continuation_pending(
+        session_db, SESSION_ID, prompt="Call get_handoff", attempt_id=attempt_id
+    )
+    variables = SessionVariableManager(session_db)
+    variables.set_variable(
+        SESSION_ID,
+        HANDOFF_DISPATCH_GATE_VARIABLE,
+        {"attempt_id": attempt_id, "delivery_pending": True},
+    )
+    tmux = _FakeTmux()
+    await _continue_after_codex_compaction_ready(
+        session_db,
+        pane=TmuxPaneIO(tmux, "%12"),
+        pending_session_id=SESSION_ID,
+        before_command="Before /compact\n›",
+        poll_seconds=0,
+        attempt_id=attempt_id,
+        fresh_seconds=-1,
+    )
+
+    result = variables.get_variables(SESSION_ID)
+    gate = result[HANDOFF_DISPATCH_GATE_VARIABLE]
+    assert gate["delivery_failed"] is True
+    assert gate["delivery_pending"] is False
+    assert gate["attempt_pending"] is False
+    assert gate["error_code"] == "compact_unconfirmed"
+    assert gate["readiness_unconfirmed"] is True
+    assert result[HANDOFF_COMPACT_CONTINUE_VARIABLE]["attempt_id"] == attempt_id
+    assert tmux.sent_keys == []
+    recovered = consume_pending_handoff(session_db, SESSION_ID)
+    assert recovered is not None
+    assert recovered.attempt_id == attempt_id
+    assert "Compacted" in recovered.markdown
+    remaining = variables.get_variables(SESSION_ID)
+    assert HANDOFF_DISPATCH_GATE_VARIABLE not in remaining
+    assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in remaining
 
 
 @pytest.mark.asyncio
@@ -385,14 +498,18 @@ async def test_codex_readiness_keeps_prompt_until_compact_receipt(session_db: Hu
         boundary_kind="compact",
         continuation_session_id=SESSION_ID,
     )
-    await _continue_after_codex_compaction_ready(
-        session_db,
-        pane=TmuxPaneIO(tmux, "%12"),
-        pending_session_id=SESSION_ID,
-        before_command="Before /compact\n›",
-        poll_seconds=0,
-        attempt_id=attempt_id,
-    )
+    with patch(
+        "gobby.sessions.continuation_retry.await_before_agent",
+        AsyncMock(return_value=True),
+    ):
+        await _continue_after_codex_compaction_ready(
+            session_db,
+            pane=TmuxPaneIO(tmux, "%12"),
+            pending_session_id=SESSION_ID,
+            before_command="Before /compact\n›",
+            poll_seconds=0,
+            attempt_id=attempt_id,
+        )
 
     assert sum(text == "Call get_handoff\n" for _, text, literal in tmux.sent_keys if literal) == 1
     assert HANDOFF_COMPACT_CONTINUE_VARIABLE not in SessionVariableManager(
@@ -554,6 +671,10 @@ async def test_codex_detects_fresh_marker_when_old_marker_scrolls_out(
             "gobby.sessions.compact_continuation._composer_reader",
             return_value=_CODEX_READ,
         ),
+        patch(
+            "gobby.sessions.continuation_retry.await_before_agent",
+            AsyncMock(return_value=True),
+        ),
     ):
         await _continue_after_codex_compaction_ready(
             session_db,
@@ -595,6 +716,10 @@ async def test_codex_ignores_compaction_marker_text_in_prose(
         patch(
             "gobby.sessions.compact_continuation._composer_reader",
             return_value=_CODEX_READ,
+        ),
+        patch(
+            "gobby.sessions.continuation_retry.await_before_agent",
+            AsyncMock(return_value=True),
         ),
     ):
         await _continue_after_codex_compaction_ready(
@@ -1166,6 +1291,82 @@ class TestPullPromptFallback:
         assert failures == [0]
         assert [text for _p, text, literal in tmux.sent_keys if literal] == [f"{_PULL_PROMPT}\n"]
         assert sum(1 for _p, key, literal in tmux.sent_keys if key == "Enter" and not literal) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_lifecycle_is_not_composer_only_success(
+        self, session_db: HubDatabase
+    ) -> None:
+        """An unreadable turn lifecycle cannot confirm BEFORE_AGENT.
+
+        With a hub database the continuation is confirmed by the session's own
+        BEFORE_AGENT, not by the composer. When the lifecycle read fails the
+        screen-verified type must not be reported as delivered, because it can
+        neither confirm nor refute the hook; the durable fallback takes over
+        (#22706 MEDIUM).
+        """
+        tmux = _StickyComposerTmux(releases_after_enters=0)
+        failures: list[int] = []
+
+        with (
+            patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+            patch("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0),
+            patch(
+                "gobby.sessions.compact_continuation.turn_lifecycle_generation",
+                side_effect=RuntimeError("attention state unavailable"),
+            ),
+        ):
+            sent = await _send_handoff_compact_continuation(
+                TmuxPaneIO(tmux, "%12"),
+                _PULL_PROMPT,
+                SESSION_ID,
+                delay_seconds=0,
+                cli_source="claude",
+                on_send_failure=lambda: failures.append(0),
+                composer_read=_CLAUDE_READ,
+                db=session_db,
+            )
+
+        assert sent is False
+        assert failures == [0]
+
+    @pytest.mark.asyncio
+    async def test_a_readable_lifecycle_still_confirms_by_before_agent(
+        self, session_db: HubDatabase
+    ) -> None:
+        """The readable path keeps confirming by BEFORE_AGENT, not the composer."""
+        from gobby.sessions import continuation_retry
+
+        tmux = _StickyComposerTmux(releases_after_enters=0)
+        checks: list[int | None] = []
+
+        async def fake_await_before_agent(
+            _db: HubDatabase,
+            _session_id: str,
+            *,
+            baseline_generation: int | None,
+            **_kwargs: Any,
+        ) -> bool:
+            checks.append(baseline_generation)
+            return True
+
+        with (
+            patch("gobby.sessions.compact_continuation.SUBMIT_VERIFY_SECONDS", 0.0),
+            patch("gobby.terminals.pane_io.SUBMIT_ENTER_GAP_SECONDS", 0.0),
+            patch.object(continuation_retry, "await_before_agent", fake_await_before_agent),
+        ):
+            sent = await _send_handoff_compact_continuation(
+                TmuxPaneIO(tmux, "%12"),
+                _PULL_PROMPT,
+                SESSION_ID,
+                delay_seconds=0,
+                cli_source="claude",
+                composer_read=_CLAUDE_READ,
+                db=session_db,
+            )
+
+        assert sent is True
+        # The readable lifecycle produced a real baseline for the hook check.
+        assert checks == [0]
 
     @pytest.mark.asyncio
     async def test_a_prompt_that_never_leaves_is_drained_then_reported(

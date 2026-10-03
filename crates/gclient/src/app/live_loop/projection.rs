@@ -68,6 +68,17 @@ pub fn sync_live_chrome(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chro
 /// moved since the last projection, copy the rows' pane labels onto the
 /// resolved panes, and focus the pane a pending placement landed in.
 fn project_live_workspace(workspace: &mut Workspace<LiveDaemon>, chrome: &mut Chrome) {
+    // A `workspace.select` shows its tab, on the pane its row now names: the
+    // window's own focus memo for that tab gives way to the stored one.
+    if let Some((project, tab_id)) = workspace.take_requested_focus() {
+        if workspace.project_id() != Some(project.as_str()) {
+            workspace.select_project(project.clone());
+        }
+        chrome.viewer.focus.remove(&tab_id);
+        chrome.viewer.active_tab.insert(project, tab_id);
+        chrome.viewer.applied = None;
+        chrome.tab_scroll_follow_active = true;
+    }
     let Some(project) = workspace.project_id().map(str::to_owned) else {
         return;
     };

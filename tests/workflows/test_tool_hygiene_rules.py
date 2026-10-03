@@ -3,16 +3,23 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.definitions.rules import RuleDefinitionManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
+from gobby.storage.sessions import SessionManager
+from gobby.utils.machine_id import require_machine_id
+from gobby.workflows.definitions import AgentSelector, RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
+from tests.fixtures.agent_definitions import make_agent_definition, make_agent_workflows
 
 pytestmark = pytest.mark.unit
 
@@ -497,3 +504,377 @@ class TestBlockWebChatSendKeys:
         if expected_decision == "block":
             assert response.reason is not None
             assert "block-web-chat-send-keys" in response.reason
+
+
+CROSS_PROJECT_SEND_KEYS = "block-cross-project-send-keys"
+
+
+class _UnreachableSessions(SessionManager):
+    """A session store whose lookups fail the way an unavailable hub does."""
+
+    def resolve_session_reference(self, ref: str, project_id: str | None = None) -> str:
+        raise RuntimeError("session store unavailable")
+
+
+def _send_keys_event(caller_id: str, target_ref: str) -> HookEvent:
+    """The before_tool event the MCP proxy builds for one send_keys dispatch."""
+    data: dict[str, Any] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-sessions",
+            "tool_name": "send_keys",
+            "arguments": {"session_id": target_ref, "keys": "ls"},
+        },
+    }
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=caller_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+    )
+
+
+class TestBlockCrossProjectSendKeys:
+    @pytest.fixture
+    def tree(
+        self,
+        session_manager: SessionManager,
+        project_manager: LocalProjectManager,
+        sample_project: dict[str, Any],
+    ) -> dict[str, Session]:
+        """A caller with a cross-project parent and child, a project peer and an outsider."""
+        home = str(sample_project["id"])
+        away = project_manager.create(name="send-keys-elsewhere").id
+
+        def register(name: str, project_id: str, parent: Session | None = None) -> Session:
+            return session_manager.register(
+                external_id=f"send-keys-{name}",
+                machine_id=require_machine_id(),
+                source="claude",
+                project_id=project_id,
+                parent_session_id=None if parent is None else parent.id,
+            )
+
+        ancestor = register("ancestor", away)
+        caller = register("caller", home, ancestor)
+        return {
+            "caller": caller,
+            "own": caller,
+            "same_project": register("peer", home),
+            "ancestor": ancestor,
+            "descendant": register("descendant", away, caller),
+            "cross_project": register("outsider", away),
+        }
+
+    def test_rule_syncs_enabled_with_send_message_redirect(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name(CROSS_PROJECT_SEND_KEYS)
+        assert row is not None
+        assert row.enabled is True
+        effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
+        assert effect.type == "block"
+        assert effect.mcp_tools == ["gobby-sessions:send_keys"]
+        assert effect.reason is not None
+        assert "gobby-agents:send_message" in effect.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("target", "expected_decision"),
+        [
+            ("own", "allow"),
+            ("same_project", "allow"),
+            ("ancestor", "allow"),
+            ("descendant", "allow"),
+            ("cross_project", "block"),
+        ],
+    )
+    async def test_rule_admits_only_the_callers_project_and_agent_tree(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        tree: dict[str, Session],
+        target: str,
+        expected_decision: str,
+    ) -> None:
+        _sync_bundled(db)
+        caller_id = tree["caller"].id
+        engine = RuleEngine(db, session_manager=session_manager)
+
+        response = await engine.evaluate(
+            _send_keys_event(caller_id, tree[target].id), session_id=caller_id, variables={}
+        )
+
+        assert response.decision == expected_decision
+        if expected_decision == "block":
+            assert response.reason is not None
+            assert CROSS_PROJECT_SEND_KEYS in response.reason
+            assert "gobby-agents:send_message" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_disabling_the_rule_lifts_the_cross_project_block(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        session_manager: SessionManager,
+        tree: dict[str, Session],
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name(CROSS_PROJECT_SEND_KEYS)
+        assert row is not None
+        manager.update(row.id, enabled=False)
+        caller_id = tree["caller"].id
+
+        response = await RuleEngine(db, session_manager=session_manager).evaluate(
+            _send_keys_event(caller_id, tree["cross_project"].id),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_evaluation_error_still_refuses_the_cross_project_target(
+        self, db: HubDatabase, tree: dict[str, Session]
+    ) -> None:
+        _sync_bundled(db)
+        caller_id = tree["caller"].id
+        engine = RuleEngine(db, session_manager=_UnreachableSessions(db))
+
+        response = await engine.evaluate(
+            _send_keys_event(caller_id, tree["cross_project"].id),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert CROSS_PROJECT_SEND_KEYS in response.reason
+
+
+SEND_MESSAGE_MODES = "scope-spawned-agent-send-message"
+ALL_MODES = ("parent", "session", "agent", "project", "global", "build")
+
+
+def _send_message_event(caller_id: str, target: str | None) -> HookEvent:
+    """The before_tool event the MCP proxy builds for one send_message dispatch."""
+    arguments: dict[str, Any] = {"content": "status"}
+    if target is not None:
+        arguments["target"] = target
+    data: dict[str, Any] = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_input": {
+            "server_name": "gobby-agents",
+            "tool_name": "send_message",
+            "arguments": arguments,
+        },
+    }
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id=caller_id,
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+        metadata={"_platform_session_id": caller_id, "_mcp_proxy_dispatch": True},
+    )
+
+
+class TestScopeSpawnedAgentSendMessage:
+    @pytest.fixture
+    def sessions(
+        self, db: HubDatabase, session_manager: SessionManager, sample_project: dict[str, Any]
+    ) -> dict[str, Session]:
+        """A root session with one spawned child, plus the child's two candidate definitions."""
+        project_id = str(sample_project["id"])
+        for name, extra in (
+            ("quiet-worker", {}),
+            ("announcer", {"send_message_targets": ["parent", "project"]}),
+        ):
+            body = make_agent_definition(
+                name=name,
+                prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
+                workflows=make_agent_workflows(
+                    rule_selectors=AgentSelector(include=["tag:default"])
+                ),
+                **extra,
+            )
+            AgentDefinitionManager(db).create(
+                name=name, definition_json=body.model_dump(), source="custom"
+            )
+        root = session_manager.register(
+            external_id="send-message-root",
+            machine_id=require_machine_id(),
+            source="claude",
+            project_id=project_id,
+        )
+        child = session_manager.register(
+            external_id="send-message-child",
+            machine_id=require_machine_id(),
+            source="claude",
+            project_id=project_id,
+            parent_session_id=root.id,
+            agent_depth=1,
+        )
+        return {"root": root, "child": child}
+
+    async def _decide(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        caller: Session,
+        agent_type: str | None,
+        target: str | None,
+    ) -> tuple[str, str | None]:
+        variables = {} if agent_type is None else {"_agent_type": agent_type}
+        response = await RuleEngine(db, session_manager=session_manager).evaluate(
+            _send_message_event(caller.id, target), session_id=caller.id, variables=variables
+        )
+        return response.decision, response.reason
+
+    def test_rule_syncs_enabled_for_send_message(
+        self, db: HubDatabase, manager: RuleDefinitionManager
+    ) -> None:
+        _sync_bundled(db)
+
+        row = manager.get_by_name(SEND_MESSAGE_MODES)
+        assert row is not None
+        assert row.enabled is True
+        assert "default" in (row.tags or [])
+        effect = RuleDefinitionBody.model_validate(row.definition_json).resolved_effects[0]
+        assert effect.type == "block"
+        assert effect.mcp_tools == ["gobby-agents:send_message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", [None, "parent"])
+    async def test_undeclared_agent_reaches_its_parent(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        target: str | None,
+    ) -> None:
+        _sync_bundled(db)
+
+        decision, _ = await self._decide(
+            db, session_manager, sessions["child"], "quiet-worker", target
+        )
+
+        assert decision == "allow"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ["session", "agent", "project", "global", "build"])
+    async def test_undeclared_agent_is_refused_every_other_mode(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        target: str,
+    ) -> None:
+        _sync_bundled(db)
+
+        decision, reason = await self._decide(
+            db, session_manager, sessions["child"], "quiet-worker", target
+        )
+
+        assert decision == "block"
+        assert reason is not None
+        assert SEND_MESSAGE_MODES in reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("target", "expected_decision"),
+        [("parent", "allow"), ("project", "allow"), ("global", "block"), ("session", "block")],
+    )
+    async def test_declared_modes_widen_the_agent(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        target: str,
+        expected_decision: str,
+    ) -> None:
+        _sync_bundled(db)
+
+        decision, _ = await self._decide(
+            db, session_manager, sessions["child"], "announcer", target
+        )
+
+        assert decision == expected_decision
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ALL_MODES)
+    async def test_root_session_is_unrestricted(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        target: str,
+    ) -> None:
+        _sync_bundled(db)
+
+        decision, _ = await self._decide(db, session_manager, sessions["root"], None, target)
+
+        assert decision == "allow"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("agent_type", [None, "unregistered-agent"])
+    async def test_unresolvable_definition_refuses_even_parent(
+        self,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        agent_type: str | None,
+    ) -> None:
+        _sync_bundled(db)
+
+        decision, reason = await self._decide(
+            db, session_manager, sessions["child"], agent_type, "parent"
+        )
+
+        assert decision == "block"
+        assert reason is not None
+        assert SEND_MESSAGE_MODES in reason
+
+    @pytest.mark.asyncio
+    async def test_unresolvable_lineage_refuses_even_parent(
+        self, db: HubDatabase, sessions: dict[str, Session]
+    ) -> None:
+        _sync_bundled(db)
+        caller_id = sessions["child"].id
+
+        response = await RuleEngine(db, session_manager=_UnreachableSessions(db)).evaluate(
+            _send_message_event(caller_id, "parent"),
+            session_id=caller_id,
+            variables={"_agent_type": "quiet-worker"},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert SEND_MESSAGE_MODES in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("target", ALL_MODES)
+    async def test_disabling_the_rule_lifts_every_mode(
+        self,
+        db: HubDatabase,
+        manager: RuleDefinitionManager,
+        session_manager: SessionManager,
+        sessions: dict[str, Session],
+        target: str,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name(SEND_MESSAGE_MODES)
+        assert row is not None
+        manager.update(row.id, enabled=False)
+
+        decision, _ = await self._decide(
+            db, session_manager, sessions["child"], "quiet-worker", target
+        )
+
+        assert decision == "allow"

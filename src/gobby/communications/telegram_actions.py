@@ -18,10 +18,13 @@ from gobby.storage.sessions import LIVE_SESSION_STATUSES, system_session_id
 if TYPE_CHECKING:
     from gobby.communications.manager import CommunicationsManager
     from gobby.sessions.mailbox import MailboxService
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
 _AGENT_PAGE_SIZE = 14
 _AGENT_TARGET_ACTION = "agent_target"
+# Inbound routes that address one session; see InboundCommunications.handle_messages.
+_EXPLICIT_SESSION_ROUTES = frozenset({"reply", "attached", "callback"})
 
 logger = logging.getLogger(__name__)
 
@@ -91,30 +94,42 @@ class TelegramActionController:
             await asyncio.to_thread(self._session_manager.get, session_id) if session_id else None
         )
         if (
-            session is not None
-            and session.status in LIVE_SESSION_STATUSES
-            and getattr(session, "source", "comms") not in {"comms", "web-chat", "web_chat"}
-            and message.content_type != "reaction"
+            session is None
+            or getattr(session, "source", "comms") in {"comms", "web-chat", "web_chat"}
+            or message.content_type == "reaction"
         ):
-            try:
-                safe_source = (
-                    source if source is not None and _same_telegram_chat(source, message) else None
-                )
-                await self._deliver_inbound(channel, message, session.id, safe_source)
-            except Exception:
-                logger.exception(
-                    "Failed to deliver Telegram message %s to %s", message.id, session.id
-                )
-                try:
-                    await self._feedback(
-                        channel, message, "Delivery failed. Please send your message again."
-                    )
-                except Exception:
-                    logger.exception(
-                        "Failed to report Telegram delivery failure for %s", message.id
-                    )
+            return False
+        if session.status not in LIVE_SESSION_STATUSES:
+            # A reply, attached chat or button names this session, so the responder must
+            # not answer in its place; an identity-only DM still falls through to it (#23292).
+            explicit = message.metadata_json.get("session_route") in _EXPLICIT_SESSION_ROUTES
+            if not explicit and self._manager.responder.will_respond(message):
+                return False
+            await self._consume_safely(
+                channel,
+                message,
+                self._feedback(
+                    channel,
+                    message,
+                    f"Session {_session_label(session)} is no longer active; "
+                    "this message was not delivered to it.",
+                ),
+            )
             return True
-        return False
+        try:
+            safe_source = (
+                source if source is not None and _same_telegram_chat(source, message) else None
+            )
+            await self._deliver_inbound(channel, message, session.id, safe_source)
+        except Exception:
+            logger.exception("Failed to deliver Telegram message %s to %s", message.id, session.id)
+            try:
+                await self._feedback(
+                    channel, message, "Delivery failed. Please send your message again."
+                )
+            except Exception:
+                logger.exception("Failed to report Telegram delivery failure for %s", message.id)
+        return True
 
     async def _deliver_inbound(
         self,
@@ -439,6 +454,11 @@ def _agent_conversation_key(message: CommsMessage) -> str | None:
         return None
     thread_id = _string_value(message.metadata_json.get("message_thread_id"))
     return f"topic:{chat_id}:{thread_id}" if thread_id else f"dm:{chat_id}"
+
+
+def _session_label(session: Session) -> str:
+    seq_num = getattr(session, "seq_num", None)
+    return f"#{seq_num}" if isinstance(seq_num, int) else f"#{session.id[:8]}"
 
 
 def _same_telegram_chat(source: CommsMessage, inbound: CommsMessage) -> bool:

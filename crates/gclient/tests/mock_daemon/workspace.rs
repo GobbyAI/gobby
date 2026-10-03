@@ -24,6 +24,27 @@ pub struct WorkspaceSim {
     seq: u64,
     next_id: u64,
     owned_terminal_ids: VecDeque<String>,
+    /// Every event an op published, in order, whichever connection sent it.
+    published: Vec<Value>,
+}
+
+impl super::MockDaemon {
+    /// The workspace events ops have published so far. The mock answers each
+    /// op's events on the sender's connection only, so a test relays another
+    /// client's event to an attached window the way the daemon's broadcast does.
+    pub fn published_workspace_events(&self) -> Vec<Value> {
+        self.state
+            .lock()
+            .expect("mock state")
+            .workspace
+            .published
+            .clone()
+    }
+
+    /// Apply `op` as another client would and return the events it publishes.
+    pub fn apply_workspace_op(&self, op: Value) -> Vec<Value> {
+        self.state.lock().expect("mock state").workspace.apply(&op)
+    }
 }
 
 impl WorkspaceSim {
@@ -43,6 +64,7 @@ impl WorkspaceSim {
             seq: fixture["snapshot"]["seq"].as_u64().unwrap_or(0),
             next_id: 1,
             owned_terminal_ids: VecDeque::new(),
+            published: Vec::new(),
         }
     }
 
@@ -279,6 +301,12 @@ impl WorkspaceSim {
     /// attached workspace stays current. A `tab.move` with no workspace
     /// follows the tab into the parked workspace that owns it.
     pub fn apply(&mut self, op: &Value) -> Vec<Value> {
+        let events = self.apply_routed(op);
+        self.published.extend(events.iter().cloned());
+        events
+    }
+
+    fn apply_routed(&mut self, op: &Value) -> Vec<Value> {
         let named = op.get("workspace").and_then(Value::as_str);
         let target = if let Some(named) = named {
             (named != self.workspace_id()).then(|| named.to_string())
@@ -609,6 +637,25 @@ impl WorkspaceSim {
                 event["workspace"] = workspace;
                 vec![event]
             }
+            "workspace.select" => {
+                let Some(tab) = field("tab")
+                    .and_then(|tab_id| self.tabs.iter_mut().find(|tab| tab["id"] == tab_id))
+                else {
+                    return Vec::new();
+                };
+                if let Some(pane) = op.get("pane").filter(|pane| !pane.is_null()) {
+                    tab["focused_pane_id"] = pane.clone();
+                }
+                let tab = tab.clone();
+                let project = tab["project_id"].as_str().map(str::to_string);
+                self.workspace["focused_project_id"] = json!(project);
+                self.workspace["focused_tab_id"] = tab["id"].clone();
+                let workspace = self.workspace.clone();
+                let mut event =
+                    self.event("focus_requested", project.as_deref(), vec![tab], Vec::new());
+                event["workspace"] = workspace;
+                vec![event]
+            }
             _ => Vec::new(),
         }
     }
@@ -654,7 +701,7 @@ impl WorkspaceSim {
         match op.get("op").and_then(Value::as_str) {
             Some("pane.close") => op.get("pane").is_none_or(has_pane),
             Some("tab.close") => op.get("tab").is_none_or(has_tab),
-            Some("workspace.set_focus_hints") => {
+            Some("workspace.set_focus_hints" | "workspace.select") => {
                 op.get("tab").is_none_or(has_tab) && op.get("pane").is_none_or(has_pane)
             }
             _ => true,

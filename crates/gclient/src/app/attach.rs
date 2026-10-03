@@ -74,7 +74,8 @@ impl Pane {
         self.live = true;
         self.control = ControlState::Observe;
         self.take_back = false;
-        self.clear_pending_input();
+        // Input typed after begin_attaching belongs to the grant this new
+        // attachment is waiting for. A refusal or focus loss still clears it.
         self.status_message = None;
         self.attach_retry_at = None;
         self.attach_retry_delay = ATTACH_RETRY_BASE;
@@ -142,6 +143,7 @@ impl Pane {
         self.clear_pending_input();
         self.in_flight_write = None;
         self.status_message = reason;
+        self.viewport_deferred = false;
         let _ = self.take_frame_source();
         true
     }

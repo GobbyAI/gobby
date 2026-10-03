@@ -306,7 +306,7 @@ def _plan_enhancer(task: object, context: Mapping[str, object]) -> str:
         task,
         context,
         role="Enhance the plan",
-        contract="plan-enhancer.yaml agent",
+        contract="plan-enhancer-old.yaml agent",
     )
     round_number = _context_value(context, "round_number")
     if round_number:
@@ -353,9 +353,9 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "merge-orchestrator": _merge_runner,
     "merge-worker": _merge_runner,
     "plan-adversary": _plan_adversary,
-    "plan-adversary-taskless": _plan_adversary,
-    "plan-enhancer": _plan_enhancer,
-    "plan-enhancer-taskless": _plan_enhancer,
+    "plan-adversary-taskless-old": _plan_adversary,
+    "plan-enhancer-old": _plan_enhancer,
+    "plan-enhancer-taskless-old": _plan_enhancer,
     "plan-reviewer": _plan_adversary,
     "planner": _planner,
     "product-manager": _product_manager,

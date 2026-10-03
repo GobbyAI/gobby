@@ -13,8 +13,9 @@ or closes. Prefer `capture-pane` for read-only pane inspection.
 - `gclient resize [REF] RATIO` sets a split ratio greater than 0 and less
   than 1.
 - `gclient title [REF] TEXT [--kind tab|pane]` renames a tab or pane.
-- `gclient select [REF] [--workspace REF] [--tab-ref TAB]` sets workspace
-  focus hints.
+- `gclient select [REF] [--workspace REF] [--tab-ref TAB]` stores the focus and
+  switches every running gclient window on the workspace to that tab and pane;
+  a tab REF keeps the tab's own focused pane.
 - `gclient send-keys [REF] TEXT [--enter]` sends pane text, optionally
   submitting Enter.
 - `gclient capture-pane [REF] [--lines N]` reads pane text; `N` must be

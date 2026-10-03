@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
 from collections import defaultdict
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+
+import psycopg
 
 from gobby.plans.parser import Kind, ParseMode, PlanDocument, PlanParseError, parse_plan
 from gobby.plans.semantic_lint import (
@@ -18,6 +22,7 @@ from gobby.plans.symbol_targets import (
     skipped_symbol_validation,
     validate_symbol_targets,
 )
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES, IMPLEMENTATION_DOMAINS
 from gobby.tasks.expansion._common import (
     _CONTRACT_PHASE_ID_RE,
@@ -29,6 +34,106 @@ from gobby.tasks.expansion._common import (
 from gobby.tasks.task_types import VALID_TASK_TYPES
 
 
+def _task_has_landed_commit(task: Task, project_root: Path) -> bool:
+    """Require Git evidence in both the shared checkout and the validated checkout."""
+    try:
+        common_dir = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project_root),
+                "rev-parse",
+                "--path-format=absolute",
+                "--git-common-dir",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        if not Path(common_dir).is_dir():
+            return False
+        commits = list(task.commits or [])
+        if task.seq_num is not None:
+            history = subprocess.run(
+                [
+                    "git",
+                    "--git-dir",
+                    common_dir,
+                    "log",
+                    "HEAD",
+                    "--format=%H%x00%s",
+                    "--fixed-strings",
+                    f"--grep=-#{task.seq_num}]",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            ).stdout
+            marker = re.compile(rf"^\[[^\]]+-#{task.seq_num}\]\s")
+            for line in history.splitlines():
+                sha, _, subject = line.partition("\0")
+                if marker.match(subject):
+                    commits.append(sha)
+        for sha in commits:
+            if all(
+                subprocess.run(
+                    ["git", *scope, "merge-base", "--is-ancestor", sha, "HEAD"],
+                    capture_output=True,
+                    timeout=5,
+                ).returncode
+                == 0
+                for scope in (["--git-dir", common_dir], ["-C", str(project_root)])
+            ):
+                return True
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return False
+
+
+def _completed_plan_sections(
+    plan_doc: PlanDocument,
+    task_manager: LocalTaskManager | None,
+    project_context: Mapping[str, Any] | None,
+    project_root: Path | None,
+) -> frozenset[str]:
+    """Resolve completion from unique, complete project-scoped coverage identity."""
+    project_id = project_context.get("id") if project_context is not None else None
+    if task_manager is None or not isinstance(project_id, str) or not plan_doc.plan_id:
+        return frozenset()
+    completed: set[str] = set()
+    for section in plan_doc.sections:
+        if section.kind is not Kind.deliverable or not section.acceptance_items:
+            continue
+        labels = [
+            f"covers:{plan_doc.plan_id}:{section.section_id}:{item.item_id}"
+            for item in section.acceptance_items
+        ]
+        try:
+            owners = [
+                task_manager.list_tasks(
+                    project_id=project_id, label=label, limit=2, sort_by="updated_at"
+                )
+                for label in labels
+            ]
+        except psycopg.Error:
+            continue
+        if any(len(tasks) != 1 for tasks in owners):
+            continue
+        task = owners[0][0]
+        if any(tasks[0].id != task.id for tasks in owners):
+            continue
+        if task.project_id != project_id or not set(labels).issubset(task.labels or []):
+            continue
+        if task.closed_reason in {"duplicate", "wont_fix", "obsolete", "out_of_repo"}:
+            continue
+        delivered = task.closed_at and task.closed_reason in {"completed", "already_implemented"}
+        if delivered or (project_root and _task_has_landed_commit(task, project_root)):
+            completed.add(section.section_id)
+    return frozenset(completed)
+
+
 def validate_plan_file(
     self: Any,
     plan_path: Path,
@@ -36,6 +141,7 @@ def validate_plan_file(
     project_context: Mapping[str, Any] | None = None,
     expected_project_id: str | None = None,
     code_index: Any | None = None,
+    task_manager: LocalTaskManager | None = None,
     require_symbol_validation: bool = False,
     consumer_coverage_blocking: bool = False,
     plan_document: PlanDocument | None = None,
@@ -109,7 +215,15 @@ def validate_plan_file(
             "warnings": warnings,
             "symbol_validation": skipped_symbols,
         }
-    semantic_lint = lint_plan_document(plan_doc, project_root=project_root)
+    completed_section_ids = _completed_plan_sections(
+        plan_doc,
+        task_manager if task_manager is not None else getattr(self, "task_manager", None),
+        project_context,
+        project_root,
+    )
+    semantic_lint = lint_plan_document(
+        plan_doc, project_root=project_root, completed_section_ids=completed_section_ids
+    )
     warnings.extend(semantic_lint.warnings)
     if not semantic_lint.valid:
         return {
@@ -126,6 +240,7 @@ def validate_plan_file(
         code_index=code_index,
         required=require_symbol_validation,
         consumer_coverage_blocking=consumer_coverage_blocking or bool(plan_doc.manifest_entries),
+        completed_section_ids=completed_section_ids,
     )
     consumer_warnings = [
         issue.message

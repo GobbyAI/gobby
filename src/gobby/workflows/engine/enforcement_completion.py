@@ -7,7 +7,8 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.events import HookEvent
+from gobby.adapters.capabilities import hook_supports_model_context
+from gobby.hooks.events import HookEvent, HookEventType
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.storage.agents import LocalAgentRunManager
@@ -27,6 +28,13 @@ if TYPE_CHECKING:
     from gobby.workflows.step_instances import AgentStepInstance
 
 logger = logging.getLogger("gobby.workflows.engine.enforcement")
+
+PENDING_STEP_TRANSITION_NOTICE = "_pending_step_transition_notice"
+# Hook types that may deliver a pending notice; the native hook must also carry
+# model context. Turn-end and lifecycle hooks would consume it undelivered.
+_STEP_NOTICE_DELIVERY_EVENTS = frozenset(
+    {HookEventType.BEFORE_AGENT, HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL}
+)
 
 
 def _facade_attr(name: str) -> Any:
@@ -264,6 +272,32 @@ class EnforcementCompletionMixin:
             child_session_id=cleanup_session_id,
             terminal_reason=terminal_reason,
         )
+
+    @staticmethod
+    def _route_step_transition_notice(
+        event: HookEvent, variables: dict[str, Any], notice: str | None
+    ) -> str | None:
+        """Return the transition notice this hook's response must carry.
+
+        The MCP proxy's direct after_tool takes a spawned agent's transitions but
+        has no provider response channel, so its notice waits in a session
+        variable for the next hook whose context reaches the model.
+        """
+        pending = variables.get(PENDING_STEP_TRANSITION_NOTICE) or ""
+        if event.metadata.get("_mcp_proxy_direct_after_tool"):
+            if notice:
+                variables[PENDING_STEP_TRANSITION_NOTICE] = "\n\n".join(
+                    part for part in (pending, notice) if part
+                )
+            return None
+        if (
+            not pending
+            or event.event_type not in _STEP_NOTICE_DELIVERY_EVENTS
+            or not hook_supports_model_context(event)
+        ):
+            return notice
+        variables[PENDING_STEP_TRANSITION_NOTICE] = ""
+        return "\n\n".join(part for part in (pending, notice) if part)
 
     async def _process_step_after_tool(
         self, event: HookEvent, session_id: str, variables: dict[str, Any]

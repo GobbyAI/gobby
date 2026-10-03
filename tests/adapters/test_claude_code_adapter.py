@@ -1055,7 +1055,7 @@ class TestTranslateFromHookResponse:
         )
 
     def test_spawned_agent_first_prompt_12169_drops_only_agent_prompt(self) -> None:
-        # Measured composition of the dropped plan-adversary-taskless first prompt:
+        # Measured composition of the dropped plan-adversary-taskless-old first prompt:
         # agent prompt 10580 + five rule-emitted parts 1579 + 5 separators = 12169.
         adapter = ClaudeCodeAdapter()
         rule_parts = [

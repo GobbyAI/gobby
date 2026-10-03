@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -128,7 +129,7 @@ class TerminalCreateMixin:
             payload["code"] = _bounded_code(result.error, "spawn_failed")
         await self._send_json(websocket, payload)
         if result.success:
-            row = manager.get(result.terminal_id)
+            row = await asyncio.to_thread(manager.get, result.terminal_id)
             if row is not None:
                 await self.broadcast_tmux_session_event(
                     "created",
@@ -156,7 +157,7 @@ class TerminalCreateMixin:
         row = (
             None
             if manager is None or not isinstance(terminal_id, str)
-            else manager.get(terminal_id)
+            else await asyncio.to_thread(manager.get, terminal_id)
         )
         transitioned = None
         failure: str | None = None

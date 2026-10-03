@@ -11,7 +11,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from gobby.config.validation_detection import (
     ValidationCommandMatch,
@@ -55,6 +55,13 @@ from gobby.tasks.transcript_evidence_snapshots import (
     store_durable_snapshot,
     store_snapshot,
 )
+from gobby.tasks.transcript_evidence_transfer import (
+    ChunkedPayload,
+    decode,
+    decode_cooperatively,
+    encode,
+    encode_cooperatively,
+)
 from gobby.tasks.transcript_outcomes import (
     classify_validation_command_equivalence,
 )
@@ -67,8 +74,14 @@ from gobby.tasks.transcript_outcomes import (
 from gobby.tasks.transcript_outcomes import (
     is_unexecuted_tool_result as _is_unexecuted_tool_result,
 )
+from gobby.tasks.transcript_output_retention import (
+    _RTK_RECALL_RE,
+    _drop_settled_command_output,
+    _retained_output,
+)
 from gobby.tasks.transcript_tool_arguments import (
     edited_source,
+    python_added_source,
     python_edit_tokens,
     python_keyword_stub,
 )
@@ -187,8 +200,9 @@ async def derive_transcript_evidence(
 ) -> TranscriptEvidence:
     """Parse a complete provider transcript and derive close-checklist evidence."""
     local_machine_id = require_local_session_ownership(session)
-    evidence, snapshot = await run_in_transcript_evidence_pool(
-        _derive_transcript_evidence_sync,
+    resume = load_snapshot(session.id)
+    payload = await run_in_transcript_evidence_pool(
+        _derive_chunked_transcript_evidence,
         session,
         _coerce_datetime(window_start),
         detection_config,
@@ -197,7 +211,11 @@ async def derive_transcript_evidence(
         task_checkout_paths,
         archive_dir,
         local_machine_id,
-        load_snapshot(session.id),
+        None if resume is None else await encode_cooperatively(resume),
+    )
+    evidence, snapshot = cast(
+        tuple[TranscriptEvidence, EvidenceSnapshot | None],
+        await decode_cooperatively(payload),
     )
     if snapshot is not None:
         store_snapshot(session.id, snapshot)
@@ -294,6 +312,33 @@ def merge_transcript_evidence(*evidence_sets: TranscriptEvidence) -> TranscriptE
             ),
             default=None,
         ),
+    )
+
+
+def _derive_chunked_transcript_evidence(
+    session: Session,
+    window_start: datetime | None,
+    detection_config: ValidationDetectionConfig,
+    task_edited_files: set[str],
+    repo_path: str,
+    task_checkout_paths: frozenset[tuple[str, str]] | None,
+    archive_dir: str | None,
+    local_machine_id: str,
+    resume: ChunkedPayload | None,
+) -> ChunkedPayload:
+    """Pool entry: records cross the boundary in chunks the event loop decodes."""
+    return encode(
+        _derive_transcript_evidence_sync(
+            session,
+            window_start,
+            detection_config,
+            task_edited_files,
+            repo_path,
+            task_checkout_paths,
+            archive_dir,
+            local_machine_id,
+            None if resume is None else cast(EvidenceSnapshot, decode(resume)),
+        )
     )
 
 
@@ -435,6 +480,7 @@ def _derive_transcript_path_evidence(
             elif isinstance(record, ParsedToolEvent):
                 _observe_record_time(state, record.timestamp)
                 _consume_tool_event(state, record)
+    state.runs = _drop_settled_command_output(state.runs)
 
     snapshot = None
     if read is not None and not read.has_partial_tail:
@@ -603,6 +649,7 @@ def _consume_codex_outcome(state: _DerivationState, outcome: Any) -> None:
             else not classify_validation_command_equivalence(outcome.command).wrapped
         ),
     )
+    output, output_truncated = _retained_output(outcome.command, segments, output, output_truncated)
     provenance = outcome.result.get("outcome_provenance")
     if provenance == "codex.functions_exec.wrapper" and state.runs:
         prior = state.runs[-1]
@@ -736,7 +783,7 @@ def _record_validation_run(
     segments = _validation_segments(matches)
     # A literal recall carries the original failure sections, often larger than
     # the ordinary command summary. Keep that native receipt bounded separately.
-    recall = re.fullmatch(r"(?:uv run )?rtk recall [0-9a-f]{12,64}", command.strip())
+    recall = _RTK_RECALL_RE.fullmatch(command.strip())
     output, output_truncated = (
         _extract_output(result, max_chars=64_000) if recall else _extract_output(result)
     )
@@ -754,6 +801,7 @@ def _record_validation_run(
             f"{source_label} lacks a definitive exit outcome for {match.label if match else 'command'}; "
             "re-run the command in a supported shell tool"
         )
+    output, output_truncated = _retained_output(command, segments, output, output_truncated)
     state.runs.append(
         TranscriptValidationRun(
             session_id=state.session.id,
@@ -779,8 +827,7 @@ def _record_validation_run(
 def _recover_rtk_output(state: _DerivationState, result: Any) -> None:
     """Attach a native recall receipt to its unique original failed test run."""
     receipt = state.runs[-1]
-    # The general exit-preserving normalizer strips the `rtk` executable itself.
-    match = re.fullmatch(r"(?:uv run )?rtk recall ([0-9a-f]{12,64})", receipt.command.strip())
+    match = _RTK_RECALL_RE.fullmatch(receipt.command.strip())
     if match is None or receipt.wrapped:
         return
     # Retrieval output contains the old pytest failure. Its transport outcome,
@@ -875,10 +922,12 @@ def _record_edit(
         python_edit = basename == "edit" and task_file.endswith(".py")
         fragment: str | None = None
         stub: tuple[str, tuple[str, ...]] | None = None
+        added: str | None = None
         unchanged = False
         if python_edit and isinstance(old, str) and isinstance(new, str):
             fragment = new
             stub = python_keyword_stub(old, new)
+            added = python_added_source(old, new)
             old_tokens = python_edit_tokens(old)
             unchanged = bool(old_tokens and old_tokens == python_edit_tokens(new))
         state.edits.append(
@@ -892,6 +941,7 @@ def _record_edit(
                 source_after=source_after,
                 source_fragment=fragment,
                 python_stub=stub,
+                python_added_source=added,
                 source_unchanged=unchanged,
             )
         )

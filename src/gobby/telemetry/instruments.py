@@ -17,6 +17,24 @@ from opentelemetry import metrics
 
 logger = logging.getLogger(__name__)
 
+# Every histogram records seconds; the SDK default boundaries are millisecond-scale.
+SECONDS_HISTOGRAM_BOUNDARIES = (
+    0.005,
+    0.01,
+    0.025,
+    0.05,
+    0.1,
+    0.25,
+    0.5,
+    1.0,
+    2.5,
+    5.0,
+    10.0,
+    30.0,
+    60.0,
+    300.0,
+)
+
 
 class TelemetryMetrics:
     """
@@ -284,10 +302,6 @@ class TelemetryMetrics:
             "hooks_failed_total",
             "Total number of failed hook executions",
         )
-        self._register_histogram(
-            "hook_phase_duration_seconds",
-            "Hook execution duration in seconds by phase, source, and hook type",
-        )
         self._register_counter(
             "adapter_degradations_total",
             "Lossy adapter response translations by provider and hook",
@@ -325,7 +339,10 @@ class TelemetryMetrics:
 
     def _register_histogram(self, name: str, description: str) -> None:
         self._histograms[name] = self._meter.create_histogram(
-            name, unit="s", description=description
+            name,
+            unit="s",
+            description=description,
+            explicit_bucket_boundaries_advisory=SECONDS_HISTOGRAM_BOUNDARIES,
         )
         self._values["histograms"][name] = {"count": 0, "sum": 0.0, "buckets": {}, "labels": {}}
 

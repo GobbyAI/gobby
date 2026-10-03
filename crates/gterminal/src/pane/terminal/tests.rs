@@ -2367,6 +2367,71 @@ fn full_frame_preserves_curly_underline_style() {
 }
 
 #[test]
+fn full_frames_follow_first_visible_row_through_scroll_and_resize() {
+    let (tx, _rx) = mpsc::channel(4);
+    let mut terminal = crate::ghostty::Terminal::new(8, 4, 100).unwrap();
+    terminal.write(b"row0\r\nrow1\r\nrow2\r\nrow3");
+    let pane = GhosttyPaneTerminal::new(terminal, tx).unwrap();
+
+    let frame = |rows| {
+        let area = Rect::new(0, 0, 8, rows);
+        let mut buffer = ratatui::buffer::Buffer::filled(area, ratatui::buffer::Cell::new(" "));
+        pane.render_to_buffer(&mut buffer, area);
+        crate::protocol::FrameData::from_ratatui_buffer(&buffer, None)
+    };
+    let visible_first = |rows: usize| {
+        let core = pane.core.lock().unwrap();
+        let end = core.terminal.total_rows().unwrap();
+        core.terminal
+            .screen_text_rows_range(end.saturating_sub(rows), end)
+            .unwrap()[0]
+            .cells[3]
+            .graphemes
+            .clone()
+    };
+
+    let mut previous = frame(4);
+    for step in 0..3 {
+        {
+            let mut core = pane.core.lock().unwrap();
+            core.terminal
+                .write(format!("\x1b[1;4r\x1b[4;1H\nnew{step}").as_bytes());
+        }
+        let expected = visible_first(4);
+        let current = frame(4);
+        assert_ne!(previous.cells[3].symbol, current.cells[3].symbol);
+        assert_eq!(
+            current.cells[3]
+                .symbol
+                .chars()
+                .map(u32::from)
+                .collect::<Vec<_>>(),
+            expected,
+            "scroll {step}"
+        );
+        previous = current;
+    }
+
+    {
+        let mut core = pane.core.lock().unwrap();
+        core.terminal.resize(8, 5, 0, 0).unwrap();
+        core.terminal.write(b"\x1b[1;5r\x1b[5;1H\nnewR");
+    }
+    let expected = visible_first(5);
+    let resized = frame(5);
+    assert_eq!(resized.height, 5);
+    assert_eq!(
+        resized.cells[3]
+            .symbol
+            .chars()
+            .map(u32::from)
+            .collect::<Vec<_>>(),
+        expected,
+        "resize and scroll"
+    );
+}
+
+#[test]
 fn process_pty_bytes_orders_default_color_reply_before_following_device_attribute_reply() {
     let (tx, mut rx) = mpsc::channel(4);
     let terminal = crate::ghostty::Terminal::new(20, 5, 0).unwrap();

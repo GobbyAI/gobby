@@ -140,6 +140,7 @@ class _Attachment:
     # The terminal row as it stood when the attachment was granted. Operator
     # writes dispatch against it, so a keystroke never re-reads the row.
     terminal: Terminal | None = None
+    host_input_granted: bool = False
 
 
 @dataclass
@@ -156,6 +157,7 @@ class HolderChange:
     terminal_id: str
     terminal: Terminal | None
     holder: _Attachment | None
+    reason: str = "lease_change"
 
 
 HolderObserver = Callable[[HolderChange], Awaitable[bool | None]]
@@ -425,11 +427,15 @@ class TerminalLeaseRegistry:
         self._holder_observer = observer
 
     async def _notify_holder(
-        self, terminal_id: str, terminal: Terminal | None, holder: _Attachment | None
+        self,
+        terminal_id: str,
+        terminal: Terminal | None,
+        holder: _Attachment | None,
+        reason: str = "lease_change",
     ) -> bool | None:
         if self._holder_observer is None:
             return None
-        return await self._holder_observer(HolderChange(terminal_id, terminal, holder))
+        return await self._holder_observer(HolderChange(terminal_id, terminal, holder, reason))
 
     async def take_control(
         self,
@@ -448,6 +454,7 @@ class TerminalLeaseRegistry:
             if lease.holder == attachment_id:
                 # A repeated take is the holder's retry after a failed grant.
                 granted = await self._notify_holder(terminal_id, record.terminal, record)
+                record.host_input_granted = granted is True
                 return ControlResult(
                     attachment_id, True, None, lease.generation, host_input_granted=granted
                 )
@@ -457,6 +464,7 @@ class TerminalLeaseRegistry:
             self._bump(lease)
             lease.holder = attachment_id
             granted = await self._notify_holder(terminal_id, record.terminal, record)
+            record.host_input_granted = granted is True
             return ControlResult(
                 attachment_id,
                 True,
@@ -503,12 +511,40 @@ class TerminalLeaseRegistry:
             if lease.holder == attachment_id:
                 self._bump(lease)
                 lease.holder = None
-                try:
-                    await self._notify_holder(terminal_id, record.terminal, None)
-                except Exception:
-                    # Finalize is cleanup after socket loss; the lease is already
-                    # released and the next take re-syncs the host grant.
-                    logger.exception("holder observer failed while finalizing %s", attachment_id)
+                preserve_native_grant = (
+                    reason == "daemon_shutdown"
+                    and record.frame_delivery == "direct"
+                    and record.viewer == "gclient"
+                    and record.backend == "native"
+                    and record.terminal is not None
+                    and record.terminal.backend == "native"
+                    and record.host_input_granted
+                )
+                if preserve_native_grant:
+                    try:
+                        preserve_native_grant = (
+                            await self._notify_holder(
+                                terminal_id, record.terminal, record, "daemon_shutdown"
+                            )
+                        ) is True
+                    except asyncio.CancelledError:
+                        # Recording did not confirm durable authority. Attempt the
+                        # ordinary revoke before propagating shutdown cancellation.
+                        try:
+                            await self._notify_holder(terminal_id, record.terminal, None)
+                        finally:
+                            raise
+                    except Exception:
+                        preserve_native_grant = False
+                if not preserve_native_grant:
+                    try:
+                        await self._notify_holder(terminal_id, record.terminal, None)
+                    except Exception:
+                        # Finalize is cleanup after socket loss; the lease is already
+                        # released and the next take re-syncs the host grant.
+                        logger.exception(
+                            "holder observer failed while finalizing %s", attachment_id
+                        )
             record.finalized = True
             record.writes.clear()
             sizing = self._reelect_sizing(terminal_id, lease)

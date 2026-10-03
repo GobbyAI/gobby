@@ -2,13 +2,41 @@
 
 from __future__ import annotations
 
+import os
+from collections.abc import Callable
+from inspect import unwrap
 from pathlib import Path
+from typing import cast
 
 import pytest
 
-from tests.conftest import _ensure_isolated_bootstrap
+from tests.conftest import _clear_invoking_agent_identity, _ensure_isolated_bootstrap
 
 pytestmark = pytest.mark.unit
+
+
+def test_inherited_managed_grant_is_cleared_before_database_operations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
+    from gobby.storage.hub.managed import managed_grant_path
+    from gobby.storage.managed_credentials import MANAGED_EXECUTION_BOOTSTRAP_ENV
+    from gobby.utils.local_token import GOBBY_MANAGED_EXECUTION_ID_ENV
+
+    identity_names = {
+        name
+        for name in ALL_TERMINAL_ENV_VARS
+        if name.startswith("GOBBY_") and name != "GOBBY_DAEMON_URL"
+    } | {MANAGED_EXECUTION_BOOTSTRAP_ENV, GOBBY_MANAGED_EXECUTION_ID_ENV}
+    for name in identity_names:
+        monkeypatch.setenv(name, str(tmp_path / "inherited-identity"))
+    clear_identity = cast(
+        Callable[[pytest.MonkeyPatch], None], unwrap(_clear_invoking_agent_identity)
+    )
+    clear_identity(monkeypatch)
+
+    assert managed_grant_path() is None
+    assert identity_names.isdisjoint(os.environ)
 
 
 def test_operator_home_is_never_provisioned(

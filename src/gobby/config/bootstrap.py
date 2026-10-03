@@ -44,7 +44,12 @@ RunMode = Literal["standalone", "hub", "node"]
 UiExposureMode = Literal["tailscale"]
 FrontDoorRouteBackend = Literal["proxy", "native", "compare"]
 FRONT_DOOR_ROUTE_BACKENDS: tuple[FrontDoorRouteBackend, ...] = ("proxy", "native", "compare")
-_FRONT_DOOR_KEYS = frozenset({"enabled", "routes"})
+_FRONT_DOOR_KEYS = frozenset({"enabled", "routes", "tls"})
+FrontDoorTlsMode = Literal["off", "self-signed", "files"]
+FRONT_DOOR_TLS_MODES: tuple[FrontDoorTlsMode, ...] = ("off", "self-signed", "files")
+_FRONT_DOOR_TLS_KEYS = frozenset({"mode", "cert", "key", "sans"})
+DEFAULT_FRONT_DOOR_CERT = "~/.gobby/tls/front_door.crt"
+DEFAULT_FRONT_DOOR_KEY = "~/.gobby/tls/front_door.key"
 _YAML_TRUE_WORDS = frozenset({"true", "yes", "on"})
 _YAML_FALSE_WORDS = frozenset({"false", "no", "off"})
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
@@ -59,6 +64,22 @@ class BootstrapConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class FrontDoorTlsConfig:
+    """The `front_door.tls` block: how gdaemon terminates TLS for remote peers.
+
+    `off` is the default on a loopback `bind_host` and refused on any other.
+    `self-signed` generates the pair at `cert`/`key` on first serve; `files`
+    loads an operator pair. `sans` adds DNS names or IP literals to a
+    generated certificate.
+    """
+
+    mode: FrontDoorTlsMode = "off"
+    cert: str = DEFAULT_FRONT_DOOR_CERT
+    key: str = DEFAULT_FRONT_DOOR_KEY
+    sans: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class FrontDoorConfig:
     """The `front_door` bootstrap block read by `gdaemon serve` and `gobby start`.
 
@@ -69,6 +90,7 @@ class FrontDoorConfig:
 
     enabled: bool = True
     routes: Mapping[str, FrontDoorRouteBackend] = field(default_factory=dict, hash=False)
+    tls: FrontDoorTlsConfig = FrontDoorTlsConfig()
 
 
 @dataclass(frozen=True)
@@ -219,7 +241,7 @@ def bootstrap_from_mapping(
         ui_expose=ui_expose,
         files_home=files_home,
         hub_daemon_url=hub_daemon_url,
-        front_door=_parse_front_door(data.get("front_door")),
+        front_door=_parse_front_door(data.get("front_door"), bind_host),
     )
 
 
@@ -252,7 +274,37 @@ def _parse_yaml_bool(value: object, field_name: str) -> bool:
     raise BootstrapConfigError(f"{field_name} must be a boolean")
 
 
-def _parse_front_door(value: object) -> FrontDoorConfig:
+def is_loopback_host(host: str) -> bool:
+    """True for `localhost` or a loopback IP literal, bracketed or not."""
+    stripped = host.strip()
+    if stripped.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(stripped.removeprefix("[").removesuffix("]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _parse_front_door(value: object, bind_host: str) -> FrontDoorConfig:
+    front_door = _parse_front_door_block(value)
+    if is_loopback_host(bind_host):
+        return front_door
+    # A disabled front door binds the Python daemon directly, so a TLS block
+    # would secure nothing; an enabled one serves plaintext only to loopback.
+    if not front_door.enabled:
+        raise BootstrapConfigError(
+            f"front_door.enabled: false requires a loopback bind_host (got {bind_host!r}); "
+            "set bind_host to a loopback address, or enable the front door"
+        )
+    if front_door.tls.mode == "off":
+        raise BootstrapConfigError(
+            f"front_door.tls.mode must be self-signed or files when bind_host {bind_host!r} "
+            "is not loopback"
+        )
+    return front_door
+
+
+def _parse_front_door_block(value: object) -> FrontDoorConfig:
     if value is None:
         return FrontDoorConfig()
     if not isinstance(value, dict):
@@ -260,7 +312,7 @@ def _parse_front_door(value: object) -> FrontDoorConfig:
     unknown = sorted(str(key) for key in value if key not in _FRONT_DOOR_KEYS)
     if unknown:
         raise BootstrapConfigError(
-            f"front_door has unknown keys: {', '.join(unknown)} (allowed: enabled, routes)"
+            f"front_door has unknown keys: {', '.join(unknown)} (allowed: enabled, routes, tls)"
         )
     enabled = _parse_yaml_bool(value.get("enabled", True), "front_door.enabled")
     raw_routes = value.get("routes")
@@ -277,7 +329,58 @@ def _parse_front_door(value: object) -> FrontDoorConfig:
                 f"front_door.routes.{family} must be one of: {', '.join(FRONT_DOOR_ROUTE_BACKENDS)}"
             )
         routes[family] = cast(FrontDoorRouteBackend, backend)
-    return FrontDoorConfig(enabled=enabled, routes=routes)
+    return FrontDoorConfig(
+        enabled=enabled, routes=routes, tls=_parse_front_door_tls(value.get("tls"))
+    )
+
+
+def _parse_front_door_tls(value: object) -> FrontDoorTlsConfig:
+    if value is None:
+        return FrontDoorTlsConfig()
+    if not isinstance(value, dict):
+        raise BootstrapConfigError("front_door.tls must be a mapping")
+    unknown = sorted(str(key) for key in value if key not in _FRONT_DOOR_TLS_KEYS)
+    if unknown:
+        raise BootstrapConfigError(
+            f"front_door.tls has unknown keys: {', '.join(unknown)} "
+            "(allowed: mode, cert, key, sans)"
+        )
+    # An unquoted YAML `off` loads as boolean false.
+    mode = value.get("mode", "off")
+    if mode is False:
+        mode = "off"
+    if mode not in FRONT_DOOR_TLS_MODES:
+        raise BootstrapConfigError(
+            f"front_door.tls.mode must be one of: {', '.join(FRONT_DOOR_TLS_MODES)}"
+        )
+    return FrontDoorTlsConfig(
+        mode=cast(FrontDoorTlsMode, mode),
+        cert=_parse_str(value.get("cert", DEFAULT_FRONT_DOOR_CERT), "front_door.tls.cert"),
+        key=_parse_str(value.get("key", DEFAULT_FRONT_DOOR_KEY), "front_door.tls.key"),
+        sans=_parse_tls_sans(value.get("sans")),
+    )
+
+
+def _parse_tls_sans(value: object) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise BootstrapConfigError("front_door.tls.sans must be a list of DNS names or IP literals")
+    sans: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry.strip():
+            raise BootstrapConfigError("front_door.tls.sans entries must be non-empty strings")
+        name = entry.strip()
+        try:
+            unspecified = ipaddress.ip_address(name).is_unspecified
+        except ValueError:
+            unspecified = False
+        if unspecified:
+            raise BootstrapConfigError(
+                f"front_door.tls.sans cannot name the unspecified address {name}"
+            )
+        sans.append(name)
+    return tuple(sans)
 
 
 def validate_existing_files_home(files_home: str | Path) -> Path:

@@ -307,7 +307,7 @@ class TestProviderResolution:
             prompts={"persona": "Interactive guidance.", "agent": "Run the assigned task."},
             name="expansion-qa",
             provider="inherit",
-            model="gpt-5.6-terra",
+            model="gpt-6-luna",
         )
         runner = _make_runner()
 

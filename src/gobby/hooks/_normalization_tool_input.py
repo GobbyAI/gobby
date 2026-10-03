@@ -52,7 +52,7 @@ def decode_string_tool_input(data: dict[str, Any], source: str) -> bool:
     """Decode a string ``tool_input`` as JSON, marking it when it does not decode.
 
     Returns whether ``tool_input`` was a string; the caller marks a decoded
-    value that is still not an object once tool-specific coercion has run.
+    value that is still not an object before any tool-specific coercion runs.
     """
     raw = data.get("tool_input")
     if not isinstance(raw, str):

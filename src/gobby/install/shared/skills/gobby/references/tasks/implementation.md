@@ -33,7 +33,10 @@ Every encountered defect, warning, or failed check becomes work in this session:
    found-work gate stops counting it while that session is live, and counts it
    again if the session ends before anyone claims it. The filer can delegate;
    after the filer ends, only the current live receiver can transfer it to another
-   live session. Neither can delegate to itself.
+   live session. Neither can delegate to itself. When the creator and the
+   delegator have both ended, `transfer_task_authority(task_id, reason)` takes over
+   activation-receipt authority; it refuses while either is live, and refuses the
+   task's claimant and task-close reviewers.
 3. Only a genuine decision, necessary planning pass, or broad clean window permits
    filing `needs-decision`, `needs-planning`, or `clean-window`, with the reason
    in the description. Filing alone does not finish found work.

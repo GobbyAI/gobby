@@ -2,6 +2,10 @@
 
 mod workspace;
 
+pub mod host;
+
+#[allow(unused_imports)]
+pub use host::{live_workspace_on_direct_host, DirectHost};
 pub use workspace::WorkspaceSim;
 
 use base64::engine::general_purpose::STANDARD;
@@ -9,7 +13,7 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use sha1::{Digest, Sha1};
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -49,6 +53,23 @@ struct MockEvent {
     delivered: Option<Arc<Notify>>,
 }
 
+/// A websocket request the mock answers only once `release` is notified.
+/// The connection keeps serving everything else meanwhile, so the request
+/// stays pending while events and frames flow.
+struct WsHold {
+    kind: String,
+    filter: Box<dyn Fn(&Value) -> bool + Send>,
+    release: Arc<Notify>,
+}
+
+impl std::fmt::Debug for WsHold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WsHold")
+            .field("kind", &self.kind)
+            .finish_non_exhaustive()
+    }
+}
+
 #[derive(Debug)]
 struct MockState {
     token: String,
@@ -61,7 +82,9 @@ struct MockState {
     websocket_failures: usize,
     websocket_gate: Option<Arc<Notify>>,
     websocket_read_gate: Option<Arc<Notify>>,
-    attach_hold: Option<Arc<Notify>>,
+    ws_holds: Vec<WsHold>,
+    /// Replies actually written, per request `type`.
+    ws_replies: HashMap<String, usize>,
     active_websockets: usize,
     websocket_closes: usize,
     unique_attachment_ids: bool,
@@ -126,7 +149,8 @@ impl MockDaemon {
             websocket_failures: 0,
             websocket_gate: None,
             websocket_read_gate: None,
-            attach_hold: None,
+            ws_holds: Vec::new(),
+            ws_replies: HashMap::new(),
             active_websockets: 0,
             websocket_closes: 0,
             unique_attachment_ids: false,
@@ -520,10 +544,41 @@ impl MockDaemon {
         gate
     }
 
+    /// Hold the reply to the `workspace_attach` request until released.
     pub fn hold_attach(&self) -> Arc<Notify> {
-        let hold = Arc::new(Notify::new());
-        self.state.lock().expect("mock state").attach_hold = Some(Arc::clone(&hold));
-        hold
+        self.hold_ws("workspace_attach", |_| true)
+    }
+
+    /// Hold the reply (and the events sent before it) to the next websocket
+    /// request of `kind` that `filter` accepts, until the returned notify is
+    /// released. The hold is one-shot: the first matching request takes it.
+    pub fn hold_ws(
+        &self,
+        kind: &str,
+        filter: impl Fn(&Value) -> bool + Send + 'static,
+    ) -> Arc<Notify> {
+        let release = Arc::new(Notify::new());
+        self.state
+            .lock()
+            .expect("mock state")
+            .ws_holds
+            .push(WsHold {
+                kind: kind.to_string(),
+                filter: Box::new(filter),
+                release: Arc::clone(&release),
+            });
+        release
+    }
+
+    /// How many replies to websocket requests of `kind` were written.
+    pub fn replies(&self, kind: &str) -> usize {
+        self.state
+            .lock()
+            .expect("mock state")
+            .ws_replies
+            .get(kind)
+            .copied()
+            .unwrap_or_default()
     }
 
     pub fn suppress_ws(&self, kind: &str) {
@@ -786,8 +841,13 @@ async fn serve_websocket(
         state.activity.push("WS connected".into());
     }
     let mut event_rx = events.subscribe();
+    let (released_tx, mut released_rx) =
+        tokio::sync::mpsc::unbounded_channel::<(String, Vec<Value>, Option<Value>)>();
     loop {
         tokio::select! {
+            Some((kind, events, reply)) = released_rx.recv() => {
+                write_reply(&mut websocket, &state, &kind, events, reply).await?;
+            }
             incoming = websocket.next() => {
                 let Some(Ok(message)) = incoming else { break };
                 if message.is_close() {
@@ -814,21 +874,17 @@ async fn serve_websocket(
                     }
                 }
                 let reply = websocket_reply(&state, &value);
-                for event in websocket_events_before_reply(&state, &value, reply.as_ref()) {
-                    websocket.send(Message::Text(event.to_string().into())).await
-                        .map_err(std::io::Error::other)?;
-                }
-                if let Some(reply) = reply {
-                    let hold = if value.get("type").and_then(Value::as_str) == Some("workspace_attach") {
-                        state.lock().expect("mock state").attach_hold.take()
-                    } else {
-                        None
-                    };
-                    if let Some(hold) = hold {
-                        hold.notified().await;
-                    }
-                    websocket.send(Message::Text(reply.to_string().into())).await
-                        .map_err(std::io::Error::other)?;
+                let before = websocket_events_before_reply(&state, &value, reply.as_ref());
+                let kind = value.get("type").and_then(Value::as_str).unwrap_or_default().to_string();
+                let hold = reply.as_ref().and_then(|_| take_ws_hold(&state, &kind, &value));
+                if let Some(release) = hold {
+                    let released = released_tx.clone();
+                    tokio::spawn(async move {
+                        release.notified().await;
+                        let _ = released.send((kind, before, reply));
+                    });
+                } else {
+                    write_reply(&mut websocket, &state, &kind, before, reply).await?;
                 }
             }
             event = event_rx.recv() => {
@@ -865,6 +921,45 @@ async fn serve_websocket(
         }
     }
     state.lock().expect("mock state").active_websockets -= 1;
+    Ok(())
+}
+
+/// Take the first hold that matches `request`, if any.
+fn take_ws_hold(state: &Mutex<MockState>, kind: &str, request: &Value) -> Option<Arc<Notify>> {
+    let mut state = state.lock().expect("mock state");
+    let index = state
+        .ws_holds
+        .iter()
+        .position(|hold| hold.kind == kind && (hold.filter)(request))?;
+    Some(state.ws_holds.remove(index).release)
+}
+
+/// Write the events a request publishes, then its reply, counting the reply.
+async fn write_reply(
+    websocket: &mut WebSocketStream<TcpStream>,
+    state: &Mutex<MockState>,
+    kind: &str,
+    events: Vec<Value>,
+    reply: Option<Value>,
+) -> std::io::Result<()> {
+    for event in events {
+        websocket
+            .send(Message::Text(event.to_string().into()))
+            .await
+            .map_err(std::io::Error::other)?;
+    }
+    if let Some(reply) = reply {
+        websocket
+            .send(Message::Text(reply.to_string().into()))
+            .await
+            .map_err(std::io::Error::other)?;
+        *state
+            .lock()
+            .expect("mock state")
+            .ws_replies
+            .entry(kind.to_string())
+            .or_default() += 1;
+    }
     Ok(())
 }
 

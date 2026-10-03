@@ -21,7 +21,7 @@
 | lane-9-memory.md | gobby#14948 |
 | lane-10-openrouter.md | gobby#14979 |
 | lane-manager.md | gobby#14930 |
-| code-reviewer.md | gobby#14641 |
+| researcher.md | gobby#14641 |
 | code-reviewer.md | gobby#14680 |
 | code-reviewer.md | gobby#14681 |
 | code-reviewer.md | gobby#14944 |

@@ -122,7 +122,9 @@ def add_messaging_tools(
             "when omitted. Spawned agents may omit target (defaults to parent). "
             "target='parent' reaches the session that spawned the sender, "
             "forbids target_id, and is available only to spawned agent sessions, which "
-            "may use only target='parent' and cannot override from_session. "
+            "cannot override from_session. The bundled rule scope-spawned-agent-send-message "
+            "limits a spawned agent to the target modes its agent definition lists in "
+            "send_message_targets (default: parent only). "
             "Message content never causes wake behavior. Omitting wake requests immediate "
             "processing for direct session, parent, or agent targets; global, project, and "
             "build fanout remains queued without live wakes. wake=true requests immediate "
@@ -239,7 +241,8 @@ def add_messaging_tools(
                     "error_code": "project_scope_required",
                 }
 
-            # Spawned agents report only to their parent, and only as themselves.
+            # Spawned agents send only as themselves. The bundled rule
+            # scope-spawned-agent-send-message limits which target modes they use.
             caller_id = (
                 _resolve(ctx_session_id)
                 if ctx_session_id and ctx_session_id != from_session
@@ -252,12 +255,6 @@ def add_messaging_tools(
                         "success": False,
                         "error": "Spawned agents can send messages only as their own session.",
                         "error_code": "send_message_sender_mismatch",
-                    }
-                if normalized_target != "parent":
-                    return {
-                        "success": False,
-                        "error": "Spawned agents can message only their parent: use target='parent'.",
-                        "error_code": "send_message_parent_only",
                     }
 
             resolved_target_id = target_id
@@ -381,6 +378,10 @@ def add_messaging_tools(
                 brief_response["wake_declines"] = wake_declines
             return brief_response
 
+        except ValueError as e:
+            # Session resolution and MailboxService raise ValueError only for
+            # caller input (unknown or out-of-scope targets), which is not a fault.
+            return {"success": False, "error": str(e), "error_code": "invalid_message_target"}
         except Exception as e:
             logger.error("send_message failed: %s", e)
             return {"success": False, "error": str(e)}

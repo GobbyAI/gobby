@@ -548,6 +548,52 @@ async def test_send_message_out_of_range_callback_ttl_rejects_before_send(
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
+@pytest.mark.parametrize("send", ["message", "attachment"])
+async def test_send_rejects_a_session_id_without_an_exact_session_row(
+    send: str,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    """A sender can attach only an existing session: no prefix match, no send, no row (#23292)."""
+    sessions = SessionManager(temp_db)
+    session = sessions.register(
+        external_id="outbound-session-guard",
+        machine_id=None,
+        source="codex",
+        project_id=sample_project["id"],
+        title="Lane 8",
+    )
+    store = LocalCommunicationsStore(temp_db, project_id=sample_project["id"])
+    channel = make_channel(channel_id="44444444-4444-4444-8444-444444444444")
+    store.create_channel(channel)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), sessions)
+    mock_adapter = make_adapter()
+    mock_adapter.send_attachment = AsyncMock()
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+    attachment = tmp_path / "note.txt"
+    attachment.write_text("note")
+
+    async def send_with(session_id: str) -> None:
+        if send == "message":
+            await manager.send_message("test-channel", "Hello", session_id=session_id)
+        else:
+            await manager.send_attachment("test-channel", attachment, session_id=session_id)
+
+    for unknown in ("55555555-5555-4555-8555-555555555555", session.id[:8], ""):
+        with pytest.raises(ValueError, match="Unknown session"):
+            await send_with(unknown)
+
+    mock_adapter.send_message.assert_not_awaited()
+    mock_adapter.send_attachment.assert_not_awaited()
+    assert store.list_messages(channel_id=channel.id) == []
+    assert store.session_exists(session.id)
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_send_message_max_callback_ttl_sends_buttons() -> None:
@@ -2443,6 +2489,7 @@ async def test_telegram_reply_targets_originating_session_with_shared_chat() -> 
     assert stored[0].metadata_json["reply_to_message_id"] == "1001"
     assert stored[0].identity_id == identity.id
     assert stored[0].session_id == "session-a"
+    assert stored[0].metadata_json["session_route"] == "reply"
     store.get_message_by_platform_id.assert_any_call(
         channel.name,
         "1001",
@@ -2503,6 +2550,7 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
     manager.attach_conversation(channel.name, "dm:99", holder.id)
     first = await manager.handle_inbound_messages(channel.name, [inbound()])
     assert first[0].session_id == holder.id
+    assert first[0].metadata_json["session_route"] == "attached"
     manager.event_callback.assert_not_awaited()
     mailbox.send.assert_awaited_once()
     assert mailbox.send.await_args.kwargs["wake"] is True
@@ -2521,6 +2569,7 @@ async def test_attached_telegram_plain_message_routes_to_live_holder_then_falls_
     manager.detach_conversation(channel.name, "dm:99", lane.id)
     second = await manager.handle_inbound_messages(channel.name, [inbound()])
     assert second[0].session_id == "comms-session"
+    assert "session_route" not in second[0].metadata_json
     manager.event_callback.assert_awaited_once()
 
     manager.attach_conversation(channel.name, "dm:99", holder.id)

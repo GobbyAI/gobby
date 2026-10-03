@@ -1,5 +1,9 @@
 # Hook response-phase stalls — no-fanout evidence pass (2026-09-28)
 
+> History only: `gobby#23289` removed `HookPhaseTimings` and the
+> `hook_phase_duration_seconds` metric. The code references below describe the system
+> before that removal.
+
 Task: `gobby#23065` (research spike, Lane 10 / DeepSeek trial). Read-only; no daemon
 instrumentation, no fanout, no restart, no agent spawn. Companion to `gobby#23063`
 (rule_engine latency, Lane 3-owned).

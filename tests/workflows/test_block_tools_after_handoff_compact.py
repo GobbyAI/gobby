@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import concurrent.futures
+from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NoReturn
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.adapters.grok import GrokAdapter
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
@@ -24,6 +27,7 @@ SESSION_ID = "11111111-1111-4111-8111-111111111111"
 RULE_NAME = "block-tools-after-handoff-compact"
 LIMIT_RULE_NAME = "require-handoff-at-context-limit"
 RETRY_RULE_NAME = "retry-terminal-handoff-after-delivery-failure"
+CLEAR_GATE_RULE_NAME = "clear-handoff-gate-on-context-loss"
 NUDGE_RULE_NAMES = (
     "nudge-compact-on-context-pressure",
     "nudge-compact-on-context-pressure-mid-turn",
@@ -88,18 +92,26 @@ def _make_handler(
     session_manager: Any,
     *,
     context_handoff: SimpleNamespace | None = None,
+    evaluation_runtime: Any | None = None,
 ) -> WorkflowHookHandler:
     """Load the bundled pending-compaction and context-nudge rules."""
     sync_bundled_rules(temp_db, get_bundled_rules_path())
     with temp_db.transaction() as conn:
         conn.execute("UPDATE rule_definitions SET source = 'installed', enabled = FALSE")
         conn.execute(
-            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s, %s, %s, %s)",
-            (RULE_NAME, LIMIT_RULE_NAME, RETRY_RULE_NAME, *NUDGE_RULE_NAMES),
+            "UPDATE rule_definitions SET enabled = TRUE WHERE name IN (%s, %s, %s, %s, %s, %s)",
+            (
+                RULE_NAME,
+                LIMIT_RULE_NAME,
+                RETRY_RULE_NAME,
+                CLEAR_GATE_RULE_NAME,
+                *NUDGE_RULE_NAMES,
+            ),
         )
     return WorkflowHookHandler(
         rule_engine=RuleEngine(temp_db),
         session_manager=session_manager,
+        evaluation_runtime=evaluation_runtime,
         config=SimpleNamespace(
             workflow=SimpleNamespace(enabled=True, timeout=5.0),
             context_handoff=context_handoff or _context_handoff_config(),
@@ -186,6 +198,14 @@ def _arbitrary_after_tool_event(
         session_type=session_type,
         source=source,
         data={"tool_name": "Read", "tool_input": {"file_path": "/repo/a.py"}},
+    )
+
+
+def _get_handoff_event() -> HookEvent:
+    return _arbitrary_tool_event(
+        tool_name="mcp__gobby__call_tool",
+        mcp_server="gobby-sessions",
+        mcp_tool="get_handoff",
     )
 
 
@@ -427,6 +447,44 @@ async def test_background_delivery_failure_blocks_until_set_handoff_retry(
     assert blocked.decision == "block"
     assert "Retry gobby-sessions:set_handoff" in (blocked.reason or "")
     assert retry.decision == "allow"
+
+
+@pytest.mark.asyncio
+async def test_delivered_readiness_timeout_allows_work_but_blocks_another_compact(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(
+        SESSION_ID,
+        "context_compact_handoff_result",
+        {
+            "delivery_failed": True,
+            "delivery_pending": False,
+            "attempt_pending": False,
+            "error_code": "compact_unconfirmed",
+            "readiness_unconfirmed": True,
+            "attempt_id": "a" * 32,
+        },
+    )
+    ordinary = await handler._evaluate_rules(_arbitrary_tool_event(tool_name="Read"))
+    recover = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="get_handoff",
+        )
+    )
+    resubmit = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="set_handoff",
+        )
+    )
+    assert ordinary.decision == "allow"
+    assert recover.decision == "allow"
+    assert resubmit.decision == "block"
+    assert "get_handoff" in (resubmit.reason or "")
 
 
 @pytest.mark.asyncio
@@ -903,3 +961,134 @@ async def test_non_retryable_handoff_failure_downgrades_block_to_warning(
     assert allowed.decision == "allow"
     assert stored["context_compact_mid_turn_pressure_band"] == "warn"
     assert stored["context_compact_handoff_unavailable"] is True
+
+
+async def test_compact_session_start_clears_gate_when_turn_start_evaluation_is_cancelled(
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    """A lost BEFORE_AGENT evaluation must not leave the compact gate armed (#22706)."""
+    runtime = MagicMock()
+    runtime.is_closing = False
+    handler = _make_handler(temp_db, session_manager, evaluation_runtime=runtime)
+
+    await handler._evaluate_rules(_set_handoff_event({"success": True, "result": STAGED_RESULT}))
+    staged = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    assert staged["context_compact_handoff_result"]["delivery_pending"] is True
+    # Before the boundary the gate holds, so get_handoff cannot consume early.
+    blocked = await handler._evaluate_rules(_get_handoff_event())
+    assert blocked.decision == "block"
+
+    await handler._evaluate_rules(_event(HookEventType.SESSION_START, data={"source": "compact"}))
+
+    # The turn-start evaluation for the continuation prompt is cancelled, so the
+    # gate can only have been released by the compact hydration boundary above.
+    def _raise_cancelled(
+        coroutine: Coroutine[object, object, HookResponse],
+        *,
+        timeout: float | None = None,
+    ) -> NoReturn:
+        del timeout
+        coroutine.close()
+        raise concurrent.futures.CancelledError
+
+    runtime.run.side_effect = _raise_cancelled
+    with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+        cancelled = handler.evaluate(_event(HookEventType.BEFORE_AGENT))
+
+    allowed = await handler._evaluate_rules(_get_handoff_event())
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    assert cancelled.decision == "allow"
+    assert allowed.decision == "allow"
+    assert stored["context_compact_handoff_result"] is None
+
+
+async def test_shutdown_cancellation_fails_open_then_resumed_evaluation_completes(
+    temp_db: HubDatabase,
+    session_manager: Any,
+) -> None:
+    """A cancelled BEFORE_AGENT cannot complete; the resumed one completes (#22706).
+
+    The cancelled evaluation is reproduced deterministically on the surface a
+    runtime teardown produces: the isolated runtime reports CancelledError, so
+    ``evaluate`` fails open with allow through ``_handle_cancelled`` and never
+    finishes the observer/rule work. That is the point -- a cancelled coroutine
+    cannot complete. The resumed evaluation runs to completion on the real
+    bundled rules and clears the handoff gate, so ``get_handoff`` is allowed.
+    """
+    runtime = MagicMock()
+    runtime.is_closing = False
+    handler = _make_handler(temp_db, session_manager, evaluation_runtime=runtime)
+
+    await handler._evaluate_rules(_set_handoff_event({"success": True, "result": STAGED_RESULT}))
+    assert (
+        SessionVariableManager(temp_db).get_variables(SESSION_ID)["context_compact_handoff_result"][
+            "delivery_pending"
+        ]
+        is True
+    )
+    blocked = await handler._evaluate_rules(_get_handoff_event())
+    assert blocked.decision == "block"
+
+    # The turn-start evaluation is cancelled by its runtime, exactly as the
+    # teardown cancellation surfaces to the adapter thread. The gate stays
+    # armed: the cancelled evaluation never ran its turn-start observer branch.
+    def _raise_cancelled(
+        coroutine: Coroutine[object, object, HookResponse],
+        *,
+        timeout: float | None = None,
+    ) -> NoReturn:
+        del timeout
+        coroutine.close()
+        raise concurrent.futures.CancelledError
+
+    runtime.run.side_effect = _raise_cancelled
+    with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+        cancelled = handler.evaluate(_event(HookEventType.BEFORE_AGENT))
+
+    stored_after_cancel = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+
+    # The resumed BEFORE_AGENT is not cancelled and runs to completion on the
+    # real bundled rules; it clears the gate the cancelled one could not.
+    resumed = await handler._evaluate_rules(_event(HookEventType.BEFORE_AGENT))
+    stored_after_resumed = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    allowed = await handler._evaluate_rules(_get_handoff_event())
+
+    assert cancelled.decision == "allow"
+    assert stored_after_cancel["context_compact_handoff_result"]["delivery_pending"] is True
+    assert resumed.decision == "allow"
+    assert stored_after_resumed["context_compact_handoff_result"] is None
+    assert allowed.decision == "allow"
+
+
+async def test_context_loss_gate_clear_preserves_failed_delivery_retry_gate(
+    handler: WorkflowHookHandler,
+    temp_db: HubDatabase,
+) -> None:
+    """A failed delivery keeps its reconciliation signals across a compact start."""
+    SessionVariableManager(temp_db).merge_variables(
+        SESSION_ID,
+        {
+            "context_compact_handoff_result": {
+                "delivery_failed": True,
+                "error_code": "compact_unconfirmed",
+                "attempt_id": "a" * 32,
+            },
+            "failed_handoff_attempt": {"attempt_id": "a" * 32},
+        },
+    )
+
+    await handler._evaluate_rules(_event(HookEventType.SESSION_START, data={"source": "compact"}))
+    stored = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    resubmit = await handler._evaluate_rules(
+        _arbitrary_tool_event(
+            tool_name="mcp__gobby__call_tool",
+            mcp_server="gobby-sessions",
+            mcp_tool="set_handoff",
+        )
+    )
+
+    assert stored["context_compact_handoff_result"]["delivery_failed"] is True
+    assert resubmit.decision == "block"
+    assert "get_handoff" in (resubmit.reason or "")

@@ -212,19 +212,68 @@ class TranscriptReader:
         snapshot, builds-or-reuses its cached boundary index, and delegates to
         :func:`render_window`.
         """
+        resolved = await self._open_windowable(session_id)
+        return await self._render(
+            resolved, session_id, limit, offset, order=order, max_span=max_span
+        )
+
+    async def iter_rendered_windows(
+        self,
+        session_id: str,
+        *,
+        page: int = RENDERED_LIMIT_MAX,
+        order: str = "head",
+        start: int = 0,
+        max_groups: int | None = None,
+    ) -> AsyncIterator[WindowResult]:
+        """Yield successive rendered windows from one resolved snapshot.
+
+        Used by full-transcript scanners (e.g. MCP search). The session row,
+        source, ownership check and boundary index are resolved once, so a scan
+        never re-stats, re-authorizes or re-indexes a growing transcript per
+        page. ``order="head"`` preserves chronological scan order from group
+        ``start``; each page advances by the prior page's ``returned_count`` so
+        degraded short pages still compose without gaps. ``max_groups`` caps
+        the groups rendered across the whole scan.
+        """
+        resolved = await self._open_windowable(session_id)
+        offset = start
+        rendered = 0
+        while max_groups is None or rendered < max_groups:
+            size = page if max_groups is None else min(page, max_groups - rendered)
+            result = await self._render(resolved, session_id, size, offset, order=order)
+            if not result.groups:
+                break
+            yield result
+            offset += result.returned_count
+            rendered += result.returned_count
+            if offset >= result.total_groups:
+                break
+
+    async def _open_windowable(self, session_id: str) -> _Windowable | None:
+        """Resolve one session's windowable snapshot, or None when unreadable."""
         session = self._session_manager.get(session_id)
         if not session:
-            return WindowResult(groups=[], returned_count=0, total_groups=0)
-
+            return None
         try:
-            resolved = await self._resolve_windowable(session, session_id)
+            return await self._resolve_windowable(session, session_id)
         except DecompressionError as e:
             logger.warning("Failed to read archive for session %s: %s", session_id, e)
-            return WindowResult(groups=[], returned_count=0, total_groups=0)
+            return None
 
-        if resolved.index is None or resolved.path is None:
+    async def _render(
+        self,
+        resolved: _Windowable | None,
+        session_id: str,
+        limit: int,
+        offset: int,
+        *,
+        order: str,
+        max_span: int = MAX_WINDOW_SPAN_BYTES,
+    ) -> WindowResult:
+        """Render one window of an already-resolved snapshot off the event loop."""
+        if resolved is None or resolved.index is None or resolved.path is None:
             return WindowResult(groups=[], returned_count=0, total_groups=0)
-
         return await asyncio.to_thread(
             render_window,
             resolved.path,
@@ -239,30 +288,6 @@ class TranscriptReader:
             max_span=max_span,
             observation_tracker=ObservationTracker(self._observation_store),
         )
-
-    async def iter_rendered_windows(
-        self,
-        session_id: str,
-        *,
-        page: int = RENDERED_LIMIT_MAX,
-        order: str = "head",
-    ) -> AsyncIterator[list[RenderedMessage]]:
-        """Yield successive rendered-group pages without holding a full render.
-
-        Used by full-transcript scanners (e.g. MCP search). ``order="head"``
-        preserves chronological scan order; each page advances by the prior
-        page's ``returned_count`` so degraded short pages still compose without
-        gaps.
-        """
-        offset = 0
-        while True:
-            result = await self.get_rendered_window(session_id, page, offset, order=order)
-            if not result.groups:
-                break
-            yield result.groups
-            offset += result.returned_count
-            if offset >= result.total_groups:
-                break
 
     async def get_rendered_messages(
         self,

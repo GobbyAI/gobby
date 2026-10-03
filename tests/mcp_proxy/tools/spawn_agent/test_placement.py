@@ -547,8 +547,7 @@ async def test_placed_launch_requires_managed_srt(
         assert result["placement_error"] == "sandbox_required"
         _assert_untouched(h, panes, terminals)
 
-    # Drive the module's stub: a monkeypatch layered over it would restore the stub after
-    # its own teardown, leaking a passing verifier into later modules.
+    # Configure the module's verifier stub; patching over it would outlive the stub's teardown.
     stub_srt_verifier.side_effect = SrtRuntimeError("managed SRT is not installed")
     result = await _spawn(h, _tab(h))
     assert result["placement_error"] == "sandbox_required"

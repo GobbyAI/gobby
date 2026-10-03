@@ -1,0 +1,4058 @@
+{
+  "task": "#23356",
+  "key": "research2-23356-resume-v1",
+  "clock": "monotonic nanoseconds from immediately before hidden PTY fork",
+  "method": "real installed gclient, gdaemon front door, Python runner and gterm on synthetic isolated state; transparent HTTP/WS and UNIX observation",
+  "environment": "GOBBY_TEST_PROTECT=1; PostgreSQL test hub 60892; private HOME, GOBBY_HOME, ports, gterm host and project; no production access",
+  "harness": {
+    "path": "/tmp/gclient23356_launches.py",
+    "sha256": "5956f49944a524310b85150c6962da67e0abfcefacd5b67328a299408c68905b"
+  },
+  "schema_version": 1,
+  "binary_identity": {
+    "gclient": {
+      "path": "/Users/josh/.gobby/bin/gclient",
+      "sha256": "7e50983975eacb6b3b2c463cedf63c17a8de2f110862756b76f1ec5906f579ac",
+      "device": 16777231,
+      "inode": 546538317,
+      "version": "gclient 0.1.18"
+    },
+    "gterm": {
+      "path": "/Users/josh/.gobby/bin/gterm",
+      "sha256": "103c791a9afb60a4a1de2ba2731ce6ddc786582ca9ebc99da66f714710b7f69c",
+      "device": 16777231,
+      "inode": 538613089
+    },
+    "gdaemon": {
+      "path": "/Users/josh/.gobby/bin/gdaemon",
+      "sha256": "d8a482c7679a6a8707975e9b0303ac0f5fef3d224e6fcd6b39d6d1ef4a9e079f",
+      "device": 16777231,
+      "inode": 542870390
+    },
+    "gcode": {
+      "path": "/Users/josh/.gobby/bin/gcode",
+      "sha256": "751517cbe6ef0937f6b3f43587c5873483c406e45a96011450934b17a42be5bc",
+      "device": 16777231,
+      "inode": 542870385
+    },
+    "ghook": {
+      "path": "/Users/josh/.gobby/bin/ghook",
+      "sha256": "3b0b7d8bac570b5073fcabd917aa56e5b02c931590066aee83f8514558bccc21",
+      "device": 16777231,
+      "inode": 542870395
+    }
+  },
+  "source_combined_sha256": "a48ed3ffa70b01c35e5af6baa4e0c5fddd82efa9834d359819c846e482455d84",
+  "projection": "Preserves measured HTTP request/reply pairs, daemon connection/workspace/terminal-attach timestamps, every host lifecycle, tab membership and paint observations. Omits response payloads, credentials, repeated workspace snapshots and unrelated resize/detach chatter.",
+  "limits": [
+    "Private synthetic idle workspace is not production service latency.",
+    "Observer timing includes proxy, parser and PTY scheduling; overhead is not calibrated.",
+    "Samples 2 and 3 reuse the second fixture; cache state is not controlled.",
+    "Sample 1 completed measurements before a postmeasurement observer teardown EOF assertion; teardown ordering was fixed before samples 2/3.",
+    "Later explicit private-tab selections are retained; no causal attribution of late frames to selection.",
+    "Sidebar HTTP pairs observed only in sample 3; null in samples 1 and 2 means not observed, not zero.",
+    "External paint minus native stage sum is a residual, without causal attribution."
+  ],
+  "samples": [
+    {
+      "number": 1,
+      "began_utc": "2026-10-03T02:43:42.154062+00:00",
+      "source_artifact": "/tmp/gclient23356-isolated-run1.json",
+      "private_root": "/tmp/g23356-f0llsmdy",
+      "schema": "gobby_test_1790995373_14856_r2gclient_32f0d5",
+      "ports": {
+        "http": 36577,
+        "ws": 34684,
+        "backend_http": 36677,
+        "backend_ws": 34784
+      },
+      "pane_count": 29,
+      "tab_counts": [
+        8,
+        7,
+        7,
+        7
+      ],
+      "native_stage_log": {
+        "stages": [
+          {
+            "stage": "daemon health",
+            "milliseconds": 60,
+            "raw": "2026-10-03T02:43:44.443263Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"daemon health\" took_ms=60"
+          },
+          {
+            "stage": "workspace attach",
+            "milliseconds": 59,
+            "raw": "2026-10-03T02:43:44.503158Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"workspace attach\" took_ms=59"
+          },
+          {
+            "stage": "roster",
+            "milliseconds": 7564,
+            "raw": "2026-10-03T02:43:52.067868Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"roster\" took_ms=7564"
+          },
+          {
+            "stage": "first frame",
+            "milliseconds": 497,
+            "raw": "2026-10-03T02:43:52.565126Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"first frame\" took_ms=497"
+          }
+        ],
+        "raw_summary": "2026-10-03T02:43:52.566198Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.06s attach=0.06s roster=7.56s first_frame=0.50s total=8.18s",
+        "summed_stage_ms": 8180,
+        "roster_share_percent": 92.46943765281173
+      },
+      "native_log_path": "/tmp/g23356-f0llsmdy/home/logs/gclient.log",
+      "native_log_sha256": "3b3f143ed214fd6e34a6101a35017dd132238f10a83e8a8ab97082f6a570fd9f",
+      "cleanup": {
+        "remaining_owned_pids": [],
+        "schema_removed": true
+      },
+      "source_artifact_sha256": "a031036850bf3761a862b17beccc9c5ccb364e244e029f0249b750fbf23896d0",
+      "metrics": {
+        "first_restored_paint_ms": 10475.252875,
+        "first_output_ms": 230.778917,
+        "first_health_request_ms": 111.944292,
+        "configuration_fetch_ms": 11.47675,
+        "daemon_ws_connect_ms": 14.184833,
+        "workspace_attach_ms": 58.872291,
+        "initial_inventory_fetch_ms": 968.481834,
+        "initial_attention_fetch_ms": 161.687167,
+        "inventory_attention_window_ms": 968.481834,
+        "serial_metadata_calls": 29,
+        "metadata_peak_concurrency": 1,
+        "serial_metadata_window_ms": 6578.62925,
+        "serial_metadata_service_sum_ms": 6481.881458,
+        "host_handshakes": 29,
+        "host_handshake_median_ms": 0.457292,
+        "host_handshake_min_ms": 0.091083,
+        "host_handshake_max_ms": 8.248833,
+        "host_connection_to_first_frame_median_ms": 77.079375,
+        "host_connection_to_first_frame_min_ms": 9.520667,
+        "host_connection_to_first_frame_max_ms": 106.944708,
+        "all_29_first_frames_ms": 11787.678667,
+        "first_paint_to_all_29_first_frames_ms": 1312.425792,
+        "per_tab": [
+          {
+            "title": "R2 Tab 1",
+            "tab_id": "a6a2f8ad-c781-4815-87cc-5ffdf97fbb31",
+            "pane_count": 8,
+            "first_connection_ms": 10382.462459,
+            "last_first_frame_ms": 10492.485125,
+            "attachment_window_ms": 110.022666,
+            "last_frame_after_first_paint_ms": 17.23225
+          },
+          {
+            "title": "R2 Tab 2",
+            "tab_id": "a5e79bb9-04b7-42a8-9771-040b84328bed",
+            "pane_count": 7,
+            "first_connection_ms": 10386.085917,
+            "last_first_frame_ms": 10483.136792,
+            "attachment_window_ms": 97.050875,
+            "last_frame_after_first_paint_ms": 7.883917
+          },
+          {
+            "title": "R2 Tab 3",
+            "tab_id": "fce4242a-86c8-4cb1-8f61-3095ba407a5e",
+            "pane_count": 7,
+            "first_connection_ms": 10390.493709,
+            "last_first_frame_ms": 11765.754084,
+            "attachment_window_ms": 1375.260375,
+            "last_frame_after_first_paint_ms": 1290.501209
+          },
+          {
+            "title": "R2 Tab 4",
+            "tab_id": "6f0e79eb-0cd8-4442-9e8a-2ac92419e72e",
+            "pane_count": 7,
+            "first_connection_ms": 10405.106709,
+            "last_first_frame_ms": 11787.678667,
+            "attachment_window_ms": 1382.571958,
+            "last_frame_after_first_paint_ms": 1312.425792
+          }
+        ],
+        "preflight_http_health_ms": 108.766792,
+        "native_stage_to_external_paint_residual_ms": 2295.252875,
+        "sidebar_requests": null
+      },
+      "observations": {
+        "ended_utc": "2026-10-03T02:43:53.942477+00:00",
+        "complete": true,
+        "first_output_ns": 230778917,
+        "splash_seen_ns": null,
+        "first_restored_paint_ns": 10475252875,
+        "screen_observation": "R2VISIBLE marker in restored terminal screen",
+        "natural_startup_connections": 23,
+        "natural_startup_first_frames": 23,
+        "tab_visits": [
+          {
+            "tab_id": "a6a2f8ad-c781-4815-87cc-5ffdf97fbb31",
+            "pane_count": 8,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 10492485125
+          },
+          {
+            "tab_id": "a5e79bb9-04b7-42a8-9771-040b84328bed",
+            "pane_count": 7,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 10483136792
+          },
+          {
+            "tab_id": "fce4242a-86c8-4cb1-8f61-3095ba407a5e",
+            "pane_count": 7,
+            "already_framed": false,
+            "selection_requested_ns": 11500403334,
+            "selection_completed_ns": 11674816709,
+            "all_panes_framed_ns": 11765754084
+          },
+          {
+            "tab_id": "6f0e79eb-0cd8-4442-9e8a-2ac92419e72e",
+            "pane_count": 7,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 11787678667
+          }
+        ],
+        "frame_connections": [
+          {
+            "index": 0,
+            "accepted_ns": 10382462459,
+            "upstream_connected_ns": 10383011209,
+            "hello_ns": 10383265417,
+            "welcome_ns": 10383662292,
+            "attached_ns": 10384551042,
+            "host_terminal_id": "ht-2",
+            "first_frame_ns": 10462531542
+          },
+          {
+            "index": 1,
+            "accepted_ns": 10383807042,
+            "upstream_connected_ns": 10384013750,
+            "hello_ns": 10384173917,
+            "welcome_ns": 10384559084,
+            "attached_ns": 10385381209,
+            "host_terminal_id": "ht-4",
+            "first_frame_ns": 10483626042
+          },
+          {
+            "index": 2,
+            "accepted_ns": 10383914334,
+            "upstream_connected_ns": 10384050542,
+            "hello_ns": 10384204042,
+            "welcome_ns": 10384535167,
+            "attached_ns": 10385374292,
+            "host_terminal_id": "ht-1",
+            "first_frame_ns": 10410043709
+          },
+          {
+            "index": 3,
+            "accepted_ns": 10383937000,
+            "upstream_connected_ns": 10384060084,
+            "hello_ns": 10384254250,
+            "welcome_ns": 10384565000,
+            "attached_ns": 10385388667,
+            "host_terminal_id": "ht-5",
+            "first_frame_ns": 10465431667
+          },
+          {
+            "index": 4,
+            "accepted_ns": 10384590459,
+            "upstream_connected_ns": 10384755875,
+            "hello_ns": 10384853875,
+            "welcome_ns": 10385311167,
+            "attached_ns": 10386017917,
+            "host_terminal_id": "ht-7",
+            "first_frame_ns": 10406543167
+          },
+          {
+            "index": 5,
+            "accepted_ns": 10385270709,
+            "upstream_connected_ns": 10385434500,
+            "hello_ns": 10385497250,
+            "welcome_ns": 10386027500,
+            "attached_ns": 10387729834,
+            "host_terminal_id": "ht-6",
+            "first_frame_ns": 10484470250
+          },
+          {
+            "index": 6,
+            "accepted_ns": 10385445459,
+            "upstream_connected_ns": 10385533584,
+            "hello_ns": 10385663542,
+            "welcome_ns": 10386682375,
+            "attached_ns": 10388195000,
+            "host_terminal_id": "ht-3",
+            "first_frame_ns": 10485377167
+          },
+          {
+            "index": 7,
+            "accepted_ns": 10385540417,
+            "upstream_connected_ns": 10385777250,
+            "hello_ns": 10386055167,
+            "welcome_ns": 10386991584,
+            "attached_ns": 10389251667,
+            "host_terminal_id": "ht-8",
+            "first_frame_ns": 10492485125
+          },
+          {
+            "index": 8,
+            "accepted_ns": 10386085917,
+            "upstream_connected_ns": 10386940917,
+            "hello_ns": 10387226375,
+            "welcome_ns": 10387741167,
+            "attach_requested_ns": 10389206542,
+            "host_terminal_id": "ht-10",
+            "attached_ns": 10389704834,
+            "first_frame_ns": 10480751792
+          },
+          {
+            "index": 9,
+            "accepted_ns": 10386572000,
+            "upstream_connected_ns": 10386972125,
+            "hello_ns": 10387236292,
+            "welcome_ns": 10387716959,
+            "attached_ns": 10389694584,
+            "host_terminal_id": "ht-9",
+            "first_frame_ns": 10473025875
+          },
+          {
+            "index": 10,
+            "accepted_ns": 10389470167,
+            "upstream_connected_ns": 10389958292,
+            "hello_ns": 10390054042,
+            "welcome_ns": 10390424000,
+            "attach_requested_ns": 10390616125,
+            "host_terminal_id": "ht-11",
+            "attached_ns": 10390921209,
+            "first_frame_ns": 10483136792
+          },
+          {
+            "index": 11,
+            "accepted_ns": 10390083125,
+            "upstream_connected_ns": 10390238167,
+            "hello_ns": 10390367625,
+            "welcome_ns": 10390575084,
+            "attach_requested_ns": 10390762375,
+            "host_terminal_id": "ht-14",
+            "attached_ns": 10391009417,
+            "first_frame_ns": 10457655250
+          },
+          {
+            "index": 12,
+            "accepted_ns": 10390118375,
+            "upstream_connected_ns": 10390252292,
+            "hello_ns": 10390377750,
+            "welcome_ns": 10390582959,
+            "attach_requested_ns": 10390909500,
+            "host_terminal_id": "ht-13",
+            "attached_ns": 10391237334,
+            "first_frame_ns": 10424497875
+          },
+          {
+            "index": 13,
+            "accepted_ns": 10390493709,
+            "upstream_connected_ns": 10390592167,
+            "hello_ns": 10390714334,
+            "welcome_ns": 10391017042,
+            "attach_requested_ns": 10391403334,
+            "host_terminal_id": "ht-16",
+            "attached_ns": 10394057292,
+            "first_frame_ns": 10468287167
+          },
+          {
+            "index": 14,
+            "accepted_ns": 10399357334,
+            "upstream_connected_ns": 10400037042,
+            "hello_ns": 10400115125,
+            "welcome_ns": 10400883792,
+            "attach_requested_ns": 10401370167,
+            "host_terminal_id": "ht-17",
+            "attached_ns": 10401581500,
+            "first_frame_ns": 10428846709
+          },
+          {
+            "index": 15,
+            "accepted_ns": 10399425417,
+            "upstream_connected_ns": 10400057584,
+            "hello_ns": 10400124667,
+            "welcome_ns": 10400891959,
+            "attach_requested_ns": 10401377709,
+            "host_terminal_id": "ht-12",
+            "attached_ns": 10401587625,
+            "first_frame_ns": 10465097292
+          },
+          {
+            "index": 16,
+            "accepted_ns": 10400127125,
+            "upstream_connected_ns": 10400479584,
+            "hello_ns": 10400828959,
+            "welcome_ns": 10401350667,
+            "attach_requested_ns": 10401594417,
+            "host_terminal_id": "ht-15",
+            "attached_ns": 10401916417,
+            "first_frame_ns": 10409647792
+          },
+          {
+            "index": 17,
+            "accepted_ns": 10400493917,
+            "upstream_connected_ns": 10400901750,
+            "hello_ns": 10401061292,
+            "welcome_ns": 10401360084,
+            "attach_requested_ns": 10401600167,
+            "host_terminal_id": "ht-19",
+            "attached_ns": 10401935959,
+            "first_frame_ns": 10474997584
+          },
+          {
+            "index": 18,
+            "accepted_ns": 10401066667,
+            "upstream_connected_ns": 10401291209,
+            "hello_ns": 10401392500,
+            "welcome_ns": 10401572292,
+            "attach_requested_ns": 10401795042,
+            "host_terminal_id": "ht-21",
+            "attached_ns": 10402074250,
+            "first_frame_ns": 10470727125
+          },
+          {
+            "index": 19,
+            "accepted_ns": 10401425250,
+            "upstream_connected_ns": 10401529084,
+            "hello_ns": 10401611750,
+            "welcome_ns": 10401906625,
+            "attach_requested_ns": 10402513167,
+            "host_terminal_id": "ht-18",
+            "attached_ns": 10402571542,
+            "first_frame_ns": 10478504625
+          },
+          {
+            "index": 20,
+            "accepted_ns": 10401538084,
+            "upstream_connected_ns": 10401768459,
+            "hello_ns": 10401877667,
+            "welcome_ns": 10402081709,
+            "attach_requested_ns": 10402549500,
+            "host_terminal_id": "ht-22",
+            "attached_ns": 10402618334,
+            "first_frame_ns": 10434931584
+          },
+          {
+            "index": 21,
+            "accepted_ns": 10405106709,
+            "upstream_connected_ns": 10405314667,
+            "hello_ns": 10405445167,
+            "welcome_ns": 10405538709,
+            "attach_requested_ns": 10405688625,
+            "host_terminal_id": "ht-24",
+            "attached_ns": 10488603500,
+            "first_frame_ns": 10492082959
+          },
+          {
+            "index": 22,
+            "accepted_ns": 10405155500,
+            "upstream_connected_ns": 10405331875,
+            "hello_ns": 10405455459,
+            "welcome_ns": 10405546542,
+            "attach_requested_ns": 10405698084,
+            "host_terminal_id": "ht-23",
+            "attached_ns": 10485856209,
+            "first_frame_ns": 10488502750
+          },
+          {
+            "index": 23,
+            "accepted_ns": 11701829834,
+            "upstream_connected_ns": 11705147709,
+            "hello_ns": 11705461250,
+            "welcome_ns": 11710451500,
+            "attach_requested_ns": 11717764667,
+            "host_terminal_id": "ht-20",
+            "attached_ns": 11720545459,
+            "first_frame_ns": 11765754084
+          },
+          {
+            "index": 24,
+            "accepted_ns": 11702138375,
+            "upstream_connected_ns": 11705185500,
+            "hello_ns": 11707356792,
+            "welcome_ns": 11715579959,
+            "attach_requested_ns": 11718813834,
+            "host_terminal_id": "ht-26",
+            "attached_ns": 11720595875,
+            "first_frame_ns": 11781177667
+          },
+          {
+            "index": 25,
+            "accepted_ns": 11702425125,
+            "upstream_connected_ns": 11705198334,
+            "hello_ns": 11707368625,
+            "welcome_ns": 11715597709,
+            "attach_requested_ns": 11718863375,
+            "host_terminal_id": "ht-25",
+            "attached_ns": 11720568334,
+            "first_frame_ns": 11735401000
+          },
+          {
+            "index": 26,
+            "accepted_ns": 11702492500,
+            "upstream_connected_ns": 11705227542,
+            "hello_ns": 11707377375,
+            "welcome_ns": 11715618209,
+            "attach_requested_ns": 11718880875,
+            "host_terminal_id": "ht-29",
+            "attached_ns": 11720618417,
+            "first_frame_ns": 11773220459
+          },
+          {
+            "index": 27,
+            "accepted_ns": 11702556209,
+            "upstream_connected_ns": 11705353625,
+            "hello_ns": 11707384959,
+            "welcome_ns": 11715633792,
+            "attach_requested_ns": 11718893417,
+            "host_terminal_id": "ht-27",
+            "attached_ns": 11720607667,
+            "first_frame_ns": 11787678667
+          },
+          {
+            "index": 28,
+            "accepted_ns": 11702606459,
+            "upstream_connected_ns": 11705376875,
+            "hello_ns": 11707422667,
+            "welcome_ns": 11715554334,
+            "attach_requested_ns": 11718726709,
+            "host_terminal_id": "ht-28",
+            "attached_ns": 11720583875,
+            "first_frame_ns": 11764177209
+          }
+        ],
+        "http_pairs": [
+          {
+            "path": "/api/health",
+            "start_ns": 111944292,
+            "end_ns": 220711084,
+            "status": 200
+          },
+          {
+            "path": "/api/admin/config",
+            "start_ns": 2277365292,
+            "end_ns": 2288842042,
+            "status": 200
+          },
+          {
+            "path": "/api/attention/roster",
+            "start_ns": 2350884917,
+            "end_ns": 2512572084,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals?project_id=00000000-0000-0000-0000-000000000e2e&states=pending%2Clive",
+            "start_ns": 2350412000,
+            "end_ns": 3318893834,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/ff694624-482e-4db0-ac21-ecdc57630786",
+            "start_ns": 3334799292,
+            "end_ns": 3745329042,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/ef84fd1d-21bf-4b3e-b3a7-6ffb97393cb0",
+            "start_ns": 3746219125,
+            "end_ns": 4135810500,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/da9e2ffe-b997-406b-94da-e78cb26145fd",
+            "start_ns": 4137658792,
+            "end_ns": 4704653834,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/89560302-74d6-4830-aa02-d3b852ff48fa",
+            "start_ns": 4722932167,
+            "end_ns": 5137435542,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/62e92013-63a7-4f05-840f-4f2590cba2bf",
+            "start_ns": 5138687250,
+            "end_ns": 5509205042,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/3c05d774-637d-456c-b4b4-d4ad7418025f",
+            "start_ns": 5515797625,
+            "end_ns": 5797481667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/47aa23dc-d14f-4f9e-a69c-fe6ae91a3b22",
+            "start_ns": 5800389750,
+            "end_ns": 6000846959,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/a76ced6c-c33b-42af-b4af-affe8a56650a",
+            "start_ns": 6004839750,
+            "end_ns": 6250010834,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/cf179151-5d39-49fc-801d-fc90ae189ef5",
+            "start_ns": 6253962125,
+            "end_ns": 6436407750,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/cdb9f156-f5ab-463e-9768-90043a2215e6",
+            "start_ns": 6439922917,
+            "end_ns": 6743510125,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/9636589d-47f6-4639-a23a-afcec5844b80",
+            "start_ns": 6750711375,
+            "end_ns": 7226567250,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/38eb8465-1712-4900-a824-af9cf8349a13",
+            "start_ns": 7228618417,
+            "end_ns": 7424010625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/16c5f898-b407-4e6e-a253-6e5acbf2ea36",
+            "start_ns": 7428158959,
+            "end_ns": 7566899750,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/8a17095e-e385-48a0-b5c1-d58a41fe965c",
+            "start_ns": 7570896459,
+            "end_ns": 7721417959,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/6793bb20-1cef-4175-a373-28b3e501331e",
+            "start_ns": 7722395209,
+            "end_ns": 7844359375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/19022697-bd33-4864-a6ea-ede40c080e7a",
+            "start_ns": 7844899709,
+            "end_ns": 7949987167,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/3189b8a5-ccb5-4fa2-8ea9-c423261cd975",
+            "start_ns": 7951159750,
+            "end_ns": 8089543125,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/43424216-09b3-418b-91fa-7921b0d22736",
+            "start_ns": 8090297917,
+            "end_ns": 8260746625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/83ba69c7-c7e0-4920-be84-0577bd664347",
+            "start_ns": 8261655375,
+            "end_ns": 8383465375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/8f2c6b13-e346-4fcf-9534-77d542b32f9d",
+            "start_ns": 8384296209,
+            "end_ns": 8485374667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/78ebfd8a-edb2-4d14-9052-9db5998e79a8",
+            "start_ns": 8486868000,
+            "end_ns": 8581131709,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/e13447f4-154c-4105-a977-7671ec9e05a4",
+            "start_ns": 8581858084,
+            "end_ns": 8722089292,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/89911562-6e11-4d62-a5de-d5c3e749e246",
+            "start_ns": 8727701917,
+            "end_ns": 8913563292,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/25c7ee2a-44c4-47f8-b2ff-cc308edb86dc",
+            "start_ns": 8915095334,
+            "end_ns": 9060441417,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/9f95ce2c-c53c-467d-897e-d51c23298ee5",
+            "start_ns": 9061846875,
+            "end_ns": 9204719292,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/fec7e7fe-862c-407b-9833-03b789f64274",
+            "start_ns": 9218299375,
+            "end_ns": 9401323625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/b0377eeb-eb28-4fa2-93b2-76096748a89e",
+            "start_ns": 9406434750,
+            "end_ns": 9590411375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/acd228b5-ccdd-4626-9045-196e4d64a803",
+            "start_ns": 9591157792,
+            "end_ns": 9726128375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/a0836910-fa86-4e42-9e59-87e828515eb3",
+            "start_ns": 9726858375,
+            "end_ns": 9913428542,
+            "status": 200
+          },
+          {
+            "path": "/api/attention/roster",
+            "start_ns": 11709690334,
+            "end_ns": 11823845000,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals?project_id=00000000-0000-0000-0000-000000000e2e&states=pending%2Clive",
+            "start_ns": 11707468000,
+            "end_ns": 12229672542,
+            "status": 200
+          }
+        ],
+        "daemon_events": [
+          {
+            "t_ns": 2261940209,
+            "kind": "ws_accepted"
+          },
+          {
+            "t_ns": 2275409292,
+            "kind": "ws_upstream_connected"
+          },
+          {
+            "t_ns": 2276125042,
+            "kind": "ws_reply",
+            "type": "connection_established",
+            "request_id": null,
+            "terminal_id": null,
+            "terminal_count": null
+          },
+          {
+            "t_ns": 2289582709,
+            "kind": "ws_request",
+            "type": "workspace_attach",
+            "request_id": "afabc377-945e-4f12-a137-e2a0157caf74",
+            "terminal_id": null,
+            "op": null
+          },
+          {
+            "t_ns": 2348455000,
+            "kind": "ws_reply",
+            "type": "workspace_snapshot",
+            "request_id": "afabc377-945e-4f12-a137-e2a0157caf74",
+            "terminal_id": null,
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9914346417,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "fa7d6f16-62d1-4c25-bc46-2d5c54aaba19",
+            "terminal_id": "cdb9f156-f5ab-463e-9768-90043a2215e6",
+            "op": null
+          },
+          {
+            "t_ns": 9914403334,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d4265a70-d63e-4824-8fb6-6185a4a9bfbd",
+            "terminal_id": "e13447f4-154c-4105-a977-7671ec9e05a4",
+            "op": null
+          },
+          {
+            "t_ns": 9914428250,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "e226ccb1-944f-4b08-addf-e9bc8f984d7b",
+            "terminal_id": "b0377eeb-eb28-4fa2-93b2-76096748a89e",
+            "op": null
+          },
+          {
+            "t_ns": 9914478875,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "8034502e-5789-4e34-8a89-cc2a336e5fe4",
+            "terminal_id": "ef84fd1d-21bf-4b3e-b3a7-6ffb97393cb0",
+            "op": null
+          },
+          {
+            "t_ns": 9914497167,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "bc37ccd7-3eb1-452d-90fb-bbde2b215eff",
+            "terminal_id": "38eb8465-1712-4900-a824-af9cf8349a13",
+            "op": null
+          },
+          {
+            "t_ns": 9914514042,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "6ff5d1c7-c047-4474-9c11-207b84083c5c",
+            "terminal_id": "6793bb20-1cef-4175-a373-28b3e501331e",
+            "op": null
+          },
+          {
+            "t_ns": 9914564584,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "09bae085-0443-4d90-be2f-1dd80f7a82de",
+            "terminal_id": "83ba69c7-c7e0-4920-be84-0577bd664347",
+            "op": null
+          },
+          {
+            "t_ns": 9914594125,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "7e9a5650-6ee1-48c7-bdd0-6251c2570dad",
+            "terminal_id": "62e92013-63a7-4f05-840f-4f2590cba2bf",
+            "op": null
+          },
+          {
+            "t_ns": 9914615167,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "66e0b274-ee28-4f1b-92ce-edb5d3dc8e0d",
+            "terminal_id": "9f95ce2c-c53c-467d-897e-d51c23298ee5",
+            "op": null
+          },
+          {
+            "t_ns": 9914635459,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "b0d15c8d-8a5d-41cb-a68f-090f9dfd2d73",
+            "terminal_id": "acd228b5-ccdd-4626-9045-196e4d64a803",
+            "op": null
+          },
+          {
+            "t_ns": 9914654000,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "811727d7-ccc5-4473-abbc-99583c7651f7",
+            "terminal_id": "19022697-bd33-4864-a6ea-ede40c080e7a",
+            "op": null
+          },
+          {
+            "t_ns": 9914672917,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "7bfeba5f-fc50-443d-b821-706d6b61a0dd",
+            "terminal_id": "8f2c6b13-e346-4fcf-9534-77d542b32f9d",
+            "op": null
+          },
+          {
+            "t_ns": 9914691667,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d8647c66-6a83-459c-9e6f-a938d2f444e2",
+            "terminal_id": "ff694624-482e-4db0-ac21-ecdc57630786",
+            "op": null
+          },
+          {
+            "t_ns": 9914715209,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "88d4a939-c6e5-44ee-a1d6-221f66c06f5d",
+            "terminal_id": "47aa23dc-d14f-4f9e-a69c-fe6ae91a3b22",
+            "op": null
+          },
+          {
+            "t_ns": 9914733500,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "5ff2b354-67f7-40a3-8765-1ed8521f000e",
+            "terminal_id": "fec7e7fe-862c-407b-9833-03b789f64274",
+            "op": null
+          },
+          {
+            "t_ns": 9914750959,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "e22ce1e2-f532-4712-a967-cd9a4abee7a1",
+            "terminal_id": "89911562-6e11-4d62-a5de-d5c3e749e246",
+            "op": null
+          },
+          {
+            "t_ns": 9914768209,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "84c1ae0e-dfce-4c22-815c-9908e655c1bc",
+            "terminal_id": "8a17095e-e385-48a0-b5c1-d58a41fe965c",
+            "op": null
+          },
+          {
+            "t_ns": 9914783875,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "45b02508-d23a-4f7e-a0bb-c15de94becf5",
+            "terminal_id": "3c05d774-637d-456c-b4b4-d4ad7418025f",
+            "op": null
+          },
+          {
+            "t_ns": 9914801667,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "762a1d3c-174f-433c-82d6-eaca1dc2dab1",
+            "terminal_id": "cf179151-5d39-49fc-801d-fc90ae189ef5",
+            "op": null
+          },
+          {
+            "t_ns": 9914819125,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "5b8ad980-5a7f-40b4-89eb-719b940c8247",
+            "terminal_id": "89560302-74d6-4830-aa02-d3b852ff48fa",
+            "op": null
+          },
+          {
+            "t_ns": 9914836542,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "5e549c60-efef-40d3-87ce-6ea3bd7c4789",
+            "terminal_id": "25c7ee2a-44c4-47f8-b2ff-cc308edb86dc",
+            "op": null
+          },
+          {
+            "t_ns": 9914852500,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "47171b89-6c76-4fba-b15d-dae6def050de",
+            "terminal_id": "9636589d-47f6-4639-a23a-afcec5844b80",
+            "op": null
+          },
+          {
+            "t_ns": 9914869209,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "9ebee0a8-6753-41cc-8b1c-45a1be886081",
+            "terminal_id": "3189b8a5-ccb5-4fa2-8ea9-c423261cd975",
+            "op": null
+          },
+          {
+            "t_ns": 9914884875,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "9b110669-8ba3-438f-8efe-433d7cf21afc",
+            "terminal_id": "a76ced6c-c33b-42af-b4af-affe8a56650a",
+            "op": null
+          },
+          {
+            "t_ns": 9914926875,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d0fb7a2f-e65a-41cd-ba12-df17b2f9bcb1",
+            "terminal_id": "da9e2ffe-b997-406b-94da-e78cb26145fd",
+            "op": null
+          },
+          {
+            "t_ns": 9914966667,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "be5487ea-2e19-4813-ab85-122a7662ae22",
+            "terminal_id": "78ebfd8a-edb2-4d14-9052-9db5998e79a8",
+            "op": null
+          },
+          {
+            "t_ns": 9914999000,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "b2d1c5ee-8cae-4d9f-be77-82677ad7be04",
+            "terminal_id": "a0836910-fa86-4e42-9e59-87e828515eb3",
+            "op": null
+          },
+          {
+            "t_ns": 9915019542,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "1b90b620-92da-48bb-b332-e9878a17f74d",
+            "terminal_id": "16c5f898-b407-4e6e-a253-6e5acbf2ea36",
+            "op": null
+          },
+          {
+            "t_ns": 9915037750,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "664c0930-c366-4005-803d-522a47b3abf1",
+            "terminal_id": "43424216-09b3-418b-91fa-7921b0d22736",
+            "op": null
+          },
+          {
+            "t_ns": 10380065625,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d4265a70-d63e-4824-8fb6-6185a4a9bfbd",
+            "terminal_id": "e13447f4-154c-4105-a977-7671ec9e05a4",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10382583750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "8034502e-5789-4e34-8a89-cc2a336e5fe4",
+            "terminal_id": "ef84fd1d-21bf-4b3e-b3a7-6ffb97393cb0",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10382661167,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "fa7d6f16-62d1-4c25-bc46-2d5c54aaba19",
+            "terminal_id": "cdb9f156-f5ab-463e-9768-90043a2215e6",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10382701167,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "bc37ccd7-3eb1-452d-90fb-bbde2b215eff",
+            "terminal_id": "38eb8465-1712-4900-a824-af9cf8349a13",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10383687667,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "09bae085-0443-4d90-be2f-1dd80f7a82de",
+            "terminal_id": "83ba69c7-c7e0-4920-be84-0577bd664347",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10384273417,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "6ff5d1c7-c047-4474-9c11-207b84083c5c",
+            "terminal_id": "6793bb20-1cef-4175-a373-28b3e501331e",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10384784625,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "e226ccb1-944f-4b08-addf-e9bc8f984d7b",
+            "terminal_id": "b0377eeb-eb28-4fa2-93b2-76096748a89e",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10385077959,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "7e9a5650-6ee1-48c7-bdd0-6251c2570dad",
+            "terminal_id": "62e92013-63a7-4f05-840f-4f2590cba2bf",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10385321459,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "b0d15c8d-8a5d-41cb-a68f-090f9dfd2d73",
+            "terminal_id": "acd228b5-ccdd-4626-9045-196e4d64a803",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10385350625,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "66e0b274-ee28-4f1b-92ce-edb5d3dc8e0d",
+            "terminal_id": "9f95ce2c-c53c-467d-897e-d51c23298ee5",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10387320375,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "811727d7-ccc5-4473-abbc-99583c7651f7",
+            "terminal_id": "19022697-bd33-4864-a6ea-ede40c080e7a",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10389542417,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "88d4a939-c6e5-44ee-a1d6-221f66c06f5d",
+            "terminal_id": "47aa23dc-d14f-4f9e-a69c-fe6ae91a3b22",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10389584000,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d8647c66-6a83-459c-9e6f-a938d2f444e2",
+            "terminal_id": "ff694624-482e-4db0-ac21-ecdc57630786",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10389831917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "e22ce1e2-f532-4712-a967-cd9a4abee7a1",
+            "terminal_id": "89911562-6e11-4d62-a5de-d5c3e749e246",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10395510292,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "7bfeba5f-fc50-443d-b821-706d6b61a0dd",
+            "terminal_id": "8f2c6b13-e346-4fcf-9534-77d542b32f9d",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10395613084,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "84c1ae0e-dfce-4c22-815c-9908e655c1bc",
+            "terminal_id": "8a17095e-e385-48a0-b5c1-d58a41fe965c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10396668959,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "5ff2b354-67f7-40a3-8765-1ed8521f000e",
+            "terminal_id": "fec7e7fe-862c-407b-9833-03b789f64274",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10397462334,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "762a1d3c-174f-433c-82d6-eaca1dc2dab1",
+            "terminal_id": "cf179151-5d39-49fc-801d-fc90ae189ef5",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10398150000,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "5e549c60-efef-40d3-87ce-6ea3bd7c4789",
+            "terminal_id": "25c7ee2a-44c4-47f8-b2ff-cc308edb86dc",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10399982250,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "45b02508-d23a-4f7e-a0bb-c15de94becf5",
+            "terminal_id": "3c05d774-637d-456c-b4b4-d4ad7418025f",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10401134250,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "47171b89-6c76-4fba-b15d-dae6def050de",
+            "terminal_id": "9636589d-47f6-4639-a23a-afcec5844b80",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10404619125,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "9b110669-8ba3-438f-8efe-433d7cf21afc",
+            "terminal_id": "a76ced6c-c33b-42af-b4af-affe8a56650a",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10404774917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "9ebee0a8-6753-41cc-8b1c-45a1be886081",
+            "terminal_id": "3189b8a5-ccb5-4fa2-8ea9-c423261cd975",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10424566917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "5b8ad980-5a7f-40b4-89eb-719b940c8247",
+            "terminal_id": "89560302-74d6-4830-aa02-d3b852ff48fa",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10425412209,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "be5487ea-2e19-4813-ab85-122a7662ae22",
+            "terminal_id": "78ebfd8a-edb2-4d14-9052-9db5998e79a8",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10425545084,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d0fb7a2f-e65a-41cd-ba12-df17b2f9bcb1",
+            "terminal_id": "da9e2ffe-b997-406b-94da-e78cb26145fd",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10425697667,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "b2d1c5ee-8cae-4d9f-be77-82677ad7be04",
+            "terminal_id": "a0836910-fa86-4e42-9e59-87e828515eb3",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10425739334,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "664c0930-c366-4005-803d-522a47b3abf1",
+            "terminal_id": "43424216-09b3-418b-91fa-7921b0d22736",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 10425989417,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "1b90b620-92da-48bb-b332-e9878a17f74d",
+            "terminal_id": "16c5f898-b407-4e6e-a253-6e5acbf2ea36",
+            "terminal_count": null
+          }
+        ]
+      },
+      "tabs": [
+        {
+          "tab_id": "a6a2f8ad-c781-4815-87cc-5ffdf97fbb31",
+          "title": "R2 Tab 1",
+          "members": [
+            {
+              "terminal_id": "cdb9f156-f5ab-463e-9768-90043a2215e6",
+              "host_terminal_id": "ht-1"
+            },
+            {
+              "terminal_id": "e13447f4-154c-4105-a977-7671ec9e05a4",
+              "host_terminal_id": "ht-2"
+            },
+            {
+              "terminal_id": "b0377eeb-eb28-4fa2-93b2-76096748a89e",
+              "host_terminal_id": "ht-3"
+            },
+            {
+              "terminal_id": "ef84fd1d-21bf-4b3e-b3a7-6ffb97393cb0",
+              "host_terminal_id": "ht-4"
+            },
+            {
+              "terminal_id": "38eb8465-1712-4900-a824-af9cf8349a13",
+              "host_terminal_id": "ht-5"
+            },
+            {
+              "terminal_id": "6793bb20-1cef-4175-a373-28b3e501331e",
+              "host_terminal_id": "ht-6"
+            },
+            {
+              "terminal_id": "83ba69c7-c7e0-4920-be84-0577bd664347",
+              "host_terminal_id": "ht-7"
+            },
+            {
+              "terminal_id": "62e92013-63a7-4f05-840f-4f2590cba2bf",
+              "host_terminal_id": "ht-8"
+            }
+          ]
+        },
+        {
+          "tab_id": "a5e79bb9-04b7-42a8-9771-040b84328bed",
+          "title": "R2 Tab 2",
+          "members": [
+            {
+              "terminal_id": "9f95ce2c-c53c-467d-897e-d51c23298ee5",
+              "host_terminal_id": "ht-9"
+            },
+            {
+              "terminal_id": "acd228b5-ccdd-4626-9045-196e4d64a803",
+              "host_terminal_id": "ht-10"
+            },
+            {
+              "terminal_id": "19022697-bd33-4864-a6ea-ede40c080e7a",
+              "host_terminal_id": "ht-11"
+            },
+            {
+              "terminal_id": "8f2c6b13-e346-4fcf-9534-77d542b32f9d",
+              "host_terminal_id": "ht-12"
+            },
+            {
+              "terminal_id": "ff694624-482e-4db0-ac21-ecdc57630786",
+              "host_terminal_id": "ht-13"
+            },
+            {
+              "terminal_id": "47aa23dc-d14f-4f9e-a69c-fe6ae91a3b22",
+              "host_terminal_id": "ht-14"
+            },
+            {
+              "terminal_id": "fec7e7fe-862c-407b-9833-03b789f64274",
+              "host_terminal_id": "ht-15"
+            }
+          ]
+        },
+        {
+          "tab_id": "fce4242a-86c8-4cb1-8f61-3095ba407a5e",
+          "title": "R2 Tab 3",
+          "members": [
+            {
+              "terminal_id": "89911562-6e11-4d62-a5de-d5c3e749e246",
+              "host_terminal_id": "ht-16"
+            },
+            {
+              "terminal_id": "8a17095e-e385-48a0-b5c1-d58a41fe965c",
+              "host_terminal_id": "ht-17"
+            },
+            {
+              "terminal_id": "3c05d774-637d-456c-b4b4-d4ad7418025f",
+              "host_terminal_id": "ht-18"
+            },
+            {
+              "terminal_id": "cf179151-5d39-49fc-801d-fc90ae189ef5",
+              "host_terminal_id": "ht-19"
+            },
+            {
+              "terminal_id": "89560302-74d6-4830-aa02-d3b852ff48fa",
+              "host_terminal_id": "ht-20"
+            },
+            {
+              "terminal_id": "25c7ee2a-44c4-47f8-b2ff-cc308edb86dc",
+              "host_terminal_id": "ht-21"
+            },
+            {
+              "terminal_id": "9636589d-47f6-4639-a23a-afcec5844b80",
+              "host_terminal_id": "ht-22"
+            }
+          ]
+        },
+        {
+          "tab_id": "6f0e79eb-0cd8-4442-9e8a-2ac92419e72e",
+          "title": "R2 Tab 4",
+          "members": [
+            {
+              "terminal_id": "3189b8a5-ccb5-4fa2-8ea9-c423261cd975",
+              "host_terminal_id": "ht-23"
+            },
+            {
+              "terminal_id": "a76ced6c-c33b-42af-b4af-affe8a56650a",
+              "host_terminal_id": "ht-24"
+            },
+            {
+              "terminal_id": "da9e2ffe-b997-406b-94da-e78cb26145fd",
+              "host_terminal_id": "ht-25"
+            },
+            {
+              "terminal_id": "78ebfd8a-edb2-4d14-9052-9db5998e79a8",
+              "host_terminal_id": "ht-26"
+            },
+            {
+              "terminal_id": "a0836910-fa86-4e42-9e59-87e828515eb3",
+              "host_terminal_id": "ht-27"
+            },
+            {
+              "terminal_id": "16c5f898-b407-4e6e-a253-6e5acbf2ea36",
+              "host_terminal_id": "ht-28"
+            },
+            {
+              "terminal_id": "43424216-09b3-418b-91fa-7921b0d22736",
+              "host_terminal_id": "ht-29"
+            }
+          ]
+        }
+      ],
+      "screen_artifact_sha256": "863d11b35756a626eacca94a00767258d3991098ea65a31f0c94bb045cef7335",
+      "ansi_artifact_sha256": "6120563c245cda2de2f2673a14d0140f6ac2e05e0207b8863ddbceea9ff40be4"
+    },
+    {
+      "number": 2,
+      "began_utc": "2026-10-03T02:52:07.329215+00:00",
+      "source_artifact": "/tmp/gclient23356-isolated-results.json",
+      "private_root": "/tmp/g23356-nx5nhif_",
+      "schema": "gobby_test_1790995824_28883_r2gclient_57a132",
+      "ports": {
+        "http": 30674,
+        "ws": 30927,
+        "backend_http": 30774,
+        "backend_ws": 31027
+      },
+      "pane_count": 29,
+      "tab_counts": [
+        8,
+        7,
+        7,
+        7
+      ],
+      "native_stage_log": {
+        "stages": [
+          {
+            "stage": "daemon health",
+            "milliseconds": 42,
+            "raw": "2026-10-03T02:52:09.528580Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"daemon health\" took_ms=42"
+          },
+          {
+            "stage": "workspace attach",
+            "milliseconds": 38,
+            "raw": "2026-10-03T02:52:09.566895Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"workspace attach\" took_ms=38"
+          },
+          {
+            "stage": "roster",
+            "milliseconds": 7232,
+            "raw": "2026-10-03T02:52:16.799663Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"roster\" took_ms=7232"
+          },
+          {
+            "stage": "first frame",
+            "milliseconds": 100,
+            "raw": "2026-10-03T02:52:16.900235Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"first frame\" took_ms=100"
+          }
+        ],
+        "raw_summary": "2026-10-03T02:52:16.900323Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.04s attach=0.04s roster=7.23s first_frame=0.10s total=7.41s",
+        "summed_stage_ms": 7412,
+        "roster_share_percent": 97.57150566648677
+      },
+      "native_log_path": "/tmp/g23356-nx5nhif_/home/logs/gclient.log",
+      "native_log_sha256": "7cce82f71a8588c942ebdc3c5972db2c0d20d8be818be2e8e6b9a2a4764725ce",
+      "cleanup": {
+        "remaining_owned_pids": [],
+        "schema_removed": true
+      },
+      "source_artifact_sha256": "79d0745731a056f11ca614d7ef96acc9a9235ae183adda22113c7b94b7bd7633",
+      "metrics": {
+        "first_restored_paint_ms": 9589.181917,
+        "first_output_ms": 156.344667,
+        "first_health_request_ms": 142.6905,
+        "configuration_fetch_ms": 8.25325,
+        "daemon_ws_connect_ms": 8.743334,
+        "workspace_attach_ms": 36.558583,
+        "initial_inventory_fetch_ms": 576.125958,
+        "initial_attention_fetch_ms": 106.949833,
+        "inventory_attention_window_ms": 576.715458,
+        "serial_metadata_calls": 29,
+        "metadata_peak_concurrency": 1,
+        "serial_metadata_window_ms": 6632.168792,
+        "serial_metadata_service_sum_ms": 6495.408082,
+        "host_handshakes": 29,
+        "host_handshake_median_ms": 0.148375,
+        "host_handshake_min_ms": 0.039208,
+        "host_handshake_max_ms": 0.593625,
+        "host_connection_to_first_frame_median_ms": 67.2605,
+        "host_connection_to_first_frame_min_ms": 10.031708,
+        "host_connection_to_first_frame_max_ms": 124.2705,
+        "all_29_first_frames_ms": 9615.490125,
+        "first_paint_to_all_29_first_frames_ms": 26.308208,
+        "per_tab": [
+          {
+            "title": "R2 Tab 1",
+            "tab_id": "da088af5-9946-4bd6-b838-187a796d622f",
+            "pane_count": 8,
+            "first_connection_ms": 9484.63025,
+            "last_first_frame_ms": 9615.490125,
+            "attachment_window_ms": 130.859875,
+            "last_frame_after_first_paint_ms": 26.308208
+          },
+          {
+            "title": "R2 Tab 2",
+            "tab_id": "dd5ac2ff-9080-4b9d-9c4d-2e34bb15c4ca",
+            "pane_count": 7,
+            "first_connection_ms": 9494.508834,
+            "last_first_frame_ms": 9608.518125,
+            "attachment_window_ms": 114.009291,
+            "last_frame_after_first_paint_ms": 19.336208
+          },
+          {
+            "title": "R2 Tab 3",
+            "tab_id": "77fcd594-133c-4e4e-89f4-8b6cd0e0391a",
+            "pane_count": 7,
+            "first_connection_ms": 9499.019625,
+            "last_first_frame_ms": 9602.626667,
+            "attachment_window_ms": 103.607042,
+            "last_frame_after_first_paint_ms": 13.44475
+          },
+          {
+            "title": "R2 Tab 4",
+            "tab_id": "2ea426fc-1e30-4d73-83ad-821e039fbfe6",
+            "pane_count": 7,
+            "first_connection_ms": 9502.006292,
+            "last_first_frame_ms": 9615.069417,
+            "attachment_window_ms": 113.063125,
+            "last_frame_after_first_paint_ms": 25.8875
+          }
+        ],
+        "preflight_http_health_ms": 11.488584,
+        "native_stage_to_external_paint_residual_ms": 2177.181917,
+        "sidebar_requests": null
+      },
+      "observations": {
+        "ended_utc": "2026-10-03T02:52:17.950390+00:00",
+        "complete": true,
+        "first_output_ns": 156344667,
+        "splash_seen_ns": null,
+        "first_restored_paint_ns": 9589181917,
+        "screen_observation": "R2VISIBLE marker in restored terminal screen",
+        "natural_startup_connections": 29,
+        "natural_startup_first_frames": 29,
+        "tab_visits": [
+          {
+            "tab_id": "da088af5-9946-4bd6-b838-187a796d622f",
+            "pane_count": 8,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 9615490125
+          },
+          {
+            "tab_id": "dd5ac2ff-9080-4b9d-9c4d-2e34bb15c4ca",
+            "pane_count": 7,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 9608518125
+          },
+          {
+            "tab_id": "77fcd594-133c-4e4e-89f4-8b6cd0e0391a",
+            "pane_count": 7,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 9602626667
+          },
+          {
+            "tab_id": "2ea426fc-1e30-4d73-83ad-821e039fbfe6",
+            "pane_count": 7,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 9615069417
+          }
+        ],
+        "frame_connections": [
+          {
+            "index": 0,
+            "accepted_ns": 9484630250,
+            "upstream_connected_ns": 9484943042,
+            "hello_ns": 9485110167,
+            "welcome_ns": 9485241500,
+            "attached_ns": 9485841167,
+            "host_terminal_id": "ht-1",
+            "first_frame_ns": 9571375417
+          },
+          {
+            "index": 1,
+            "accepted_ns": 9490001792,
+            "upstream_connected_ns": 9490110417,
+            "hello_ns": 9490231292,
+            "welcome_ns": 9490407625,
+            "attached_ns": 9491088500,
+            "host_terminal_id": "ht-2",
+            "first_frame_ns": 9539053500
+          },
+          {
+            "index": 2,
+            "accepted_ns": 9490827084,
+            "upstream_connected_ns": 9491101709,
+            "hello_ns": 9491696750,
+            "welcome_ns": 9492169584,
+            "attached_ns": 9493132917,
+            "host_terminal_id": "ht-3",
+            "first_frame_ns": 9605106625
+          },
+          {
+            "index": 3,
+            "accepted_ns": 9490883834,
+            "upstream_connected_ns": 9491130417,
+            "hello_ns": 9491714167,
+            "welcome_ns": 9492154334,
+            "attached_ns": 9493144834,
+            "host_terminal_id": "ht-5",
+            "first_frame_ns": 9511001292
+          },
+          {
+            "index": 4,
+            "accepted_ns": 9491136959,
+            "upstream_connected_ns": 9491868125,
+            "hello_ns": 9491921375,
+            "welcome_ns": 9492515000,
+            "attached_ns": 9493234000,
+            "host_terminal_id": "ht-6",
+            "first_frame_ns": 9510367000
+          },
+          {
+            "index": 5,
+            "accepted_ns": 9491219625,
+            "upstream_connected_ns": 9491890000,
+            "hello_ns": 9491932334,
+            "welcome_ns": 9492500959,
+            "attached_ns": 9493361000,
+            "host_terminal_id": "ht-8",
+            "first_frame_ns": 9615490125
+          },
+          {
+            "index": 6,
+            "accepted_ns": 9494234667,
+            "upstream_connected_ns": 9494630334,
+            "hello_ns": 9495306250,
+            "welcome_ns": 9495511459,
+            "attached_ns": 9495968959,
+            "host_terminal_id": "ht-7",
+            "first_frame_ns": 9514043459
+          },
+          {
+            "index": 7,
+            "accepted_ns": 9494316792,
+            "upstream_connected_ns": 9495191959,
+            "hello_ns": 9495323750,
+            "welcome_ns": 9495522042,
+            "attached_ns": 9495960625,
+            "host_terminal_id": "ht-4",
+            "first_frame_ns": 9555772542
+          },
+          {
+            "index": 8,
+            "accepted_ns": 9494508834,
+            "upstream_connected_ns": 9495330000,
+            "hello_ns": 9495412417,
+            "welcome_ns": 9495650209,
+            "attached_ns": 9496025459,
+            "host_terminal_id": "ht-9",
+            "first_frame_ns": 9523677000
+          },
+          {
+            "index": 9,
+            "accepted_ns": 9494547125,
+            "upstream_connected_ns": 9495349334,
+            "hello_ns": 9495426209,
+            "welcome_ns": 9495661334,
+            "attach_requested_ns": 9495903167,
+            "host_terminal_id": "ht-10",
+            "attached_ns": 9496034417,
+            "first_frame_ns": 9608518125
+          },
+          {
+            "index": 10,
+            "accepted_ns": 9495579625,
+            "upstream_connected_ns": 9495868750,
+            "hello_ns": 9495948417,
+            "welcome_ns": 9496106834,
+            "attach_requested_ns": 9496641334,
+            "host_terminal_id": "ht-14",
+            "attached_ns": 9496685417,
+            "first_frame_ns": 9599256750
+          },
+          {
+            "index": 11,
+            "accepted_ns": 9496045459,
+            "upstream_connected_ns": 9496134792,
+            "hello_ns": 9496203250,
+            "welcome_ns": 9496619875,
+            "attach_requested_ns": 9496717667,
+            "host_terminal_id": "ht-12",
+            "attached_ns": 9496757042,
+            "first_frame_ns": 9576050209
+          },
+          {
+            "index": 12,
+            "accepted_ns": 9496880959,
+            "upstream_connected_ns": 9496968584,
+            "hello_ns": 9497017750,
+            "welcome_ns": 9497076292,
+            "attach_requested_ns": 9497123542,
+            "host_terminal_id": "ht-15",
+            "attached_ns": 9497159625,
+            "first_frame_ns": 9552019959
+          },
+          {
+            "index": 13,
+            "accepted_ns": 9497749750,
+            "upstream_connected_ns": 9497848542,
+            "hello_ns": 9497895375,
+            "welcome_ns": 9497959125,
+            "attach_requested_ns": 9498010000,
+            "host_terminal_id": "ht-13",
+            "attached_ns": 9498053917,
+            "first_frame_ns": 9570772334
+          },
+          {
+            "index": 14,
+            "accepted_ns": 9498408875,
+            "upstream_connected_ns": 9498493459,
+            "hello_ns": 9498539625,
+            "welcome_ns": 9498607584,
+            "attach_requested_ns": 9498659292,
+            "host_terminal_id": "ht-11",
+            "attached_ns": 9498701917,
+            "first_frame_ns": 9593519375
+          },
+          {
+            "index": 15,
+            "accepted_ns": 9499019625,
+            "upstream_connected_ns": 9499110250,
+            "hello_ns": 9499176834,
+            "welcome_ns": 9499283709,
+            "attach_requested_ns": 9499377792,
+            "host_terminal_id": "ht-20",
+            "attached_ns": 9499429375,
+            "first_frame_ns": 9560707084
+          },
+          {
+            "index": 16,
+            "accepted_ns": 9499649875,
+            "upstream_connected_ns": 9499907250,
+            "hello_ns": 9500032834,
+            "welcome_ns": 9500208917,
+            "attach_requested_ns": 9500311542,
+            "host_terminal_id": "ht-17",
+            "attached_ns": 9500450084,
+            "first_frame_ns": 9582841792
+          },
+          {
+            "index": 17,
+            "accepted_ns": 9500036042,
+            "upstream_connected_ns": 9500179959,
+            "hello_ns": 9500249834,
+            "welcome_ns": 9500396375,
+            "attach_requested_ns": 9500504834,
+            "host_terminal_id": "ht-18",
+            "attached_ns": 9500555417,
+            "first_frame_ns": 9555175500
+          },
+          {
+            "index": 18,
+            "accepted_ns": 9500272042,
+            "upstream_connected_ns": 9500377875,
+            "hello_ns": 9500462292,
+            "welcome_ns": 9500523292,
+            "attach_requested_ns": 9500637625,
+            "host_terminal_id": "ht-16",
+            "attached_ns": 9500727125,
+            "first_frame_ns": 9567532542
+          },
+          {
+            "index": 19,
+            "accepted_ns": 9500734667,
+            "upstream_connected_ns": 9500822542,
+            "hello_ns": 9500868917,
+            "welcome_ns": 9501108417,
+            "attach_requested_ns": 9501141584,
+            "host_terminal_id": "ht-22",
+            "attached_ns": 9501187125,
+            "first_frame_ns": 9564314042
+          },
+          {
+            "index": 20,
+            "accepted_ns": 9500871709,
+            "upstream_connected_ns": 9501092584,
+            "hello_ns": 9501128542,
+            "welcome_ns": 9501169292,
+            "attach_requested_ns": 9501236750,
+            "host_terminal_id": "ht-21",
+            "attached_ns": 9501307250,
+            "first_frame_ns": 9588229417
+          },
+          {
+            "index": 21,
+            "accepted_ns": 9501721625,
+            "upstream_connected_ns": 9501944625,
+            "hello_ns": 9502001459,
+            "welcome_ns": 9502262417,
+            "attach_requested_ns": 9502446750,
+            "host_terminal_id": "ht-19",
+            "attached_ns": 9502879584,
+            "first_frame_ns": 9602626667
+          },
+          {
+            "index": 22,
+            "accepted_ns": 9502006292,
+            "upstream_connected_ns": 9502121375,
+            "hello_ns": 9502254375,
+            "welcome_ns": 9502348500,
+            "attach_requested_ns": 9502784250,
+            "host_terminal_id": "ht-24",
+            "attached_ns": 9503024125,
+            "first_frame_ns": 9538433417
+          },
+          {
+            "index": 23,
+            "accepted_ns": 9502833084,
+            "upstream_connected_ns": 9502971584,
+            "hello_ns": 9503112000,
+            "welcome_ns": 9503259250,
+            "attach_requested_ns": 9503377125,
+            "host_terminal_id": "ht-27",
+            "attached_ns": 9503486334,
+            "first_frame_ns": 9604592417
+          },
+          {
+            "index": 24,
+            "accepted_ns": 9502983542,
+            "upstream_connected_ns": 9503142834,
+            "hello_ns": 9503162125,
+            "welcome_ns": 9503310500,
+            "attach_requested_ns": 9503447209,
+            "host_terminal_id": "ht-23",
+            "attached_ns": 9503545292,
+            "first_frame_ns": 9513015250
+          },
+          {
+            "index": 25,
+            "accepted_ns": 9504743000,
+            "upstream_connected_ns": 9504835042,
+            "hello_ns": 9504880334,
+            "welcome_ns": 9504919542,
+            "attach_requested_ns": 9504969917,
+            "host_terminal_id": "ht-25",
+            "attached_ns": 9505008250,
+            "first_frame_ns": 9611957209
+          },
+          {
+            "index": 26,
+            "accepted_ns": 9505803792,
+            "upstream_connected_ns": 9505891959,
+            "hello_ns": 9505936375,
+            "welcome_ns": 9505980667,
+            "attach_requested_ns": 9506043167,
+            "host_terminal_id": "ht-29",
+            "attached_ns": 9506210042,
+            "first_frame_ns": 9529586959
+          },
+          {
+            "index": 27,
+            "accepted_ns": 9506401375,
+            "upstream_connected_ns": 9506535792,
+            "hello_ns": 9506582709,
+            "welcome_ns": 9506678959,
+            "attach_requested_ns": 9506758667,
+            "host_terminal_id": "ht-26",
+            "attached_ns": 9506854084,
+            "first_frame_ns": 9615069417
+          },
+          {
+            "index": 28,
+            "accepted_ns": 9506715417,
+            "upstream_connected_ns": 9506815375,
+            "hello_ns": 9506839709,
+            "welcome_ns": 9506885167,
+            "attach_requested_ns": 9506968625,
+            "host_terminal_id": "ht-28",
+            "attached_ns": 9507018417,
+            "first_frame_ns": 9545166042
+          }
+        ],
+        "http_pairs": [
+          {
+            "path": "/api/health",
+            "start_ns": 142690500,
+            "end_ns": 154179084,
+            "status": 200
+          },
+          {
+            "path": "/api/admin/config",
+            "start_ns": 2190924084,
+            "end_ns": 2199177334,
+            "status": 200
+          },
+          {
+            "path": "/api/attention/roster",
+            "start_ns": 2244408709,
+            "end_ns": 2351358542,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals?project_id=00000000-0000-0000-0000-000000000e2e&states=pending%2Clive",
+            "start_ns": 2244998209,
+            "end_ns": 2821124167,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/644815aa-1b05-49bd-8250-42be43ea0c75",
+            "start_ns": 2837544500,
+            "end_ns": 3078320584,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/3b514619-f979-40b7-b3f3-23169278c663",
+            "start_ns": 3106746500,
+            "end_ns": 3434382209,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+            "start_ns": 3439274542,
+            "end_ns": 3740949000,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/78efb1f1-f06e-46aa-a319-46e485ce7eec",
+            "start_ns": 3742360834,
+            "end_ns": 4043529375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+            "start_ns": 4064967000,
+            "end_ns": 4268289667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+            "start_ns": 4269104917,
+            "end_ns": 4380355375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+            "start_ns": 4384436542,
+            "end_ns": 4514058459,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+            "start_ns": 4515473000,
+            "end_ns": 4686912875,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+            "start_ns": 4690076792,
+            "end_ns": 5233228625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+            "start_ns": 5233984792,
+            "end_ns": 5345174000,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+            "start_ns": 5345844584,
+            "end_ns": 5481169417,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+            "start_ns": 5483108292,
+            "end_ns": 5646884625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+            "start_ns": 5650856125,
+            "end_ns": 5835960625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+            "start_ns": 5837104125,
+            "end_ns": 6086935500,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/d3bc2800-a43c-45f8-b93b-c299e15df929",
+            "start_ns": 6097312792,
+            "end_ns": 6372049667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/2504ad42-b729-431e-89ca-971b03f0132c",
+            "start_ns": 6378219834,
+            "end_ns": 6547672500,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/3769679a-21c2-4f9f-80f4-a11326b97718",
+            "start_ns": 6550716709,
+            "end_ns": 6693433709,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/17c22e2e-1ff7-4996-8606-dec3aaed3253",
+            "start_ns": 6700255959,
+            "end_ns": 6874318667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/10be39dd-d0c1-4e91-ae1e-164673a674f2",
+            "start_ns": 6875420000,
+            "end_ns": 7001650250,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/52228c9d-33cf-4c36-9d42-37de29028289",
+            "start_ns": 7002541625,
+            "end_ns": 7116024542,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/720c3edb-c706-48a5-bd65-a7d7660c1b78",
+            "start_ns": 7116992875,
+            "end_ns": 7279258459,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/678e7794-d398-426e-9fb1-1cd251a27d5a",
+            "start_ns": 7281359167,
+            "end_ns": 7479775917,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/6af2a300-b456-4b24-94be-a581fb98b0c6",
+            "start_ns": 7483514375,
+            "end_ns": 7703116792,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/f836f86f-4324-43e8-8941-bafe18ba73ec",
+            "start_ns": 7704301209,
+            "end_ns": 8097898750,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/adae086b-8ac6-4d66-9438-63bf564e0b18",
+            "start_ns": 8109606167,
+            "end_ns": 8456812667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/d955ed47-a042-4363-b7bd-62a09a66d40f",
+            "start_ns": 8463145584,
+            "end_ns": 8745866750,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/8011957c-3091-47f0-8e2d-8ab79fe3947c",
+            "start_ns": 8748478625,
+            "end_ns": 9094653792,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/a80a8828-0a78-4f73-9406-0e229614ee2b",
+            "start_ns": 9099107500,
+            "end_ns": 9336680250,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+            "start_ns": 9337813292,
+            "end_ns": 9469713292,
+            "status": 200
+          }
+        ],
+        "daemon_events": [
+          {
+            "t_ns": 2179867625,
+            "kind": "ws_accepted"
+          },
+          {
+            "t_ns": 2188040459,
+            "kind": "ws_upstream_connected"
+          },
+          {
+            "t_ns": 2188610959,
+            "kind": "ws_reply",
+            "type": "connection_established",
+            "request_id": null,
+            "terminal_id": null,
+            "terminal_count": null
+          },
+          {
+            "t_ns": 2200315459,
+            "kind": "ws_request",
+            "type": "workspace_attach",
+            "request_id": "9b332bf5-1ee7-449a-a787-f8e573c44a15",
+            "terminal_id": null,
+            "op": null
+          },
+          {
+            "t_ns": 2236874042,
+            "kind": "ws_reply",
+            "type": "workspace_snapshot",
+            "request_id": "9b332bf5-1ee7-449a-a787-f8e573c44a15",
+            "terminal_id": null,
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9470851500,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "0a061d32-afb7-455b-be03-bcb102384a6e",
+            "terminal_id": "d3bc2800-a43c-45f8-b93b-c299e15df929",
+            "op": null
+          },
+          {
+            "t_ns": 9470908667,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "2aea23d3-20f0-49e7-8798-af7f2ecbb276",
+            "terminal_id": "34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+            "op": null
+          },
+          {
+            "t_ns": 9470965792,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "f1e2eb66-c258-468d-b974-06a6715d04da",
+            "terminal_id": "a80a8828-0a78-4f73-9406-0e229614ee2b",
+            "op": null
+          },
+          {
+            "t_ns": 9470991250,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "05ed22f9-c84f-4988-8f75-e29758c7eca4",
+            "terminal_id": "f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+            "op": null
+          },
+          {
+            "t_ns": 9471010125,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "a85ffb4c-86f8-4556-830b-520d4b065124",
+            "terminal_id": "6af2a300-b456-4b24-94be-a581fb98b0c6",
+            "op": null
+          },
+          {
+            "t_ns": 9471031209,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d67cff44-b743-4d9b-9f3a-2b5ab916f174",
+            "terminal_id": "644815aa-1b05-49bd-8250-42be43ea0c75",
+            "op": null
+          },
+          {
+            "t_ns": 9471048667,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "fb9c10b4-3c6c-42c8-a101-254df7b5dfab",
+            "terminal_id": "2504ad42-b729-431e-89ca-971b03f0132c",
+            "op": null
+          },
+          {
+            "t_ns": 9471064750,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "ce0942e6-a02d-452a-8cf2-012459151706",
+            "terminal_id": "3b514619-f979-40b7-b3f3-23169278c663",
+            "op": null
+          },
+          {
+            "t_ns": 9471442334,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "ad9c388a-86f3-4ca6-81db-7bb28d350044",
+            "terminal_id": "10be39dd-d0c1-4e91-ae1e-164673a674f2",
+            "op": null
+          },
+          {
+            "t_ns": 9471515000,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d808677d-4799-42c7-8365-fceeba5c7470",
+            "terminal_id": "1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+            "op": null
+          },
+          {
+            "t_ns": 9471544792,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "a53a639a-c694-4c3d-b306-4fb514238114",
+            "terminal_id": "adae086b-8ac6-4d66-9438-63bf564e0b18",
+            "op": null
+          },
+          {
+            "t_ns": 9471565875,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "a510475e-567f-4f74-8a9f-07671f52aef8",
+            "terminal_id": "1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+            "op": null
+          },
+          {
+            "t_ns": 9471587084,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "b4127341-8f24-41f8-a3b2-0778ab897939",
+            "terminal_id": "85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+            "op": null
+          },
+          {
+            "t_ns": 9471607750,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "5ef423f8-f9e9-4349-b9d5-9c67709557dd",
+            "terminal_id": "f836f86f-4324-43e8-8941-bafe18ba73ec",
+            "op": null
+          },
+          {
+            "t_ns": 9471628209,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "0951d013-7b53-457f-9318-cbf30083709c",
+            "terminal_id": "678e7794-d398-426e-9fb1-1cd251a27d5a",
+            "op": null
+          },
+          {
+            "t_ns": 9471650084,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "86fa6330-8b81-483d-97d5-0e69b84e2104",
+            "terminal_id": "3769679a-21c2-4f9f-80f4-a11326b97718",
+            "op": null
+          },
+          {
+            "t_ns": 9471679584,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "91d93c66-63a5-4312-9efb-b598ef4789f8",
+            "terminal_id": "52228c9d-33cf-4c36-9d42-37de29028289",
+            "op": null
+          },
+          {
+            "t_ns": 9471707334,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "e1392fa3-dfc3-4440-848d-037a1417d029",
+            "terminal_id": "142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+            "op": null
+          },
+          {
+            "t_ns": 9471737042,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "80c81b45-78de-446e-aa3f-95dc026135df",
+            "terminal_id": "78efb1f1-f06e-46aa-a319-46e485ce7eec",
+            "op": null
+          },
+          {
+            "t_ns": 9471768000,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "647a221c-860f-47a0-b63d-c2eb13d2ecb9",
+            "terminal_id": "5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+            "op": null
+          },
+          {
+            "t_ns": 9471797750,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "f3495737-675d-4fdc-b988-3526307c92bb",
+            "terminal_id": "d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+            "op": null
+          },
+          {
+            "t_ns": 9471823834,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "726cff96-19ed-4775-af3a-b48f698c56a3",
+            "terminal_id": "d955ed47-a042-4363-b7bd-62a09a66d40f",
+            "op": null
+          },
+          {
+            "t_ns": 9471850334,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "1de2c91d-b2dc-483a-95f2-1cba59a0edd4",
+            "terminal_id": "aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+            "op": null
+          },
+          {
+            "t_ns": 9471894500,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "b7402d3f-1fac-45ca-a7e0-012c21efb914",
+            "terminal_id": "8011957c-3091-47f0-8e2d-8ab79fe3947c",
+            "op": null
+          },
+          {
+            "t_ns": 9471953292,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d8c30402-a5ce-4cfa-a84b-b83f2ad04ab1",
+            "terminal_id": "17c22e2e-1ff7-4996-8606-dec3aaed3253",
+            "op": null
+          },
+          {
+            "t_ns": 9472041334,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "119e090e-f735-451d-ab80-54bc63a3c877",
+            "terminal_id": "20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+            "op": null
+          },
+          {
+            "t_ns": 9472081167,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "94469323-ece4-4946-9e95-3bbf4d8611c6",
+            "terminal_id": "f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+            "op": null
+          },
+          {
+            "t_ns": 9472114375,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "8758fb9e-5d85-46eb-b4a3-42a63bcc40ff",
+            "terminal_id": "57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+            "op": null
+          },
+          {
+            "t_ns": 9472145209,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "94638bb3-ceee-45c5-9df7-35a574dd7e18",
+            "terminal_id": "720c3edb-c706-48a5-bd65-a7d7660c1b78",
+            "op": null
+          },
+          {
+            "t_ns": 9483806875,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "0a061d32-afb7-455b-be03-bcb102384a6e",
+            "terminal_id": "d3bc2800-a43c-45f8-b93b-c299e15df929",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9489682750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "2aea23d3-20f0-49e7-8798-af7f2ecbb276",
+            "terminal_id": "34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9490250917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "f1e2eb66-c258-468d-b974-06a6715d04da",
+            "terminal_id": "a80a8828-0a78-4f73-9406-0e229614ee2b",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9490430750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "a85ffb4c-86f8-4556-830b-520d4b065124",
+            "terminal_id": "6af2a300-b456-4b24-94be-a581fb98b0c6",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9490565959,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d67cff44-b743-4d9b-9f3a-2b5ab916f174",
+            "terminal_id": "644815aa-1b05-49bd-8250-42be43ea0c75",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9490622917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "ce0942e6-a02d-452a-8cf2-012459151706",
+            "terminal_id": "3b514619-f979-40b7-b3f3-23169278c663",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9492831250,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "fb9c10b4-3c6c-42c8-a101-254df7b5dfab",
+            "terminal_id": "2504ad42-b729-431e-89ca-971b03f0132c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9493036625,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "05ed22f9-c84f-4988-8f75-e29758c7eca4",
+            "terminal_id": "f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9493073917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d808677d-4799-42c7-8365-fceeba5c7470",
+            "terminal_id": "1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9493201750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "ad9c388a-86f3-4ca6-81db-7bb28d350044",
+            "terminal_id": "10be39dd-d0c1-4e91-ae1e-164673a674f2",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9494411292,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "5ef423f8-f9e9-4349-b9d5-9c67709557dd",
+            "terminal_id": "f836f86f-4324-43e8-8941-bafe18ba73ec",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9495683459,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "a510475e-567f-4f74-8a9f-07671f52aef8",
+            "terminal_id": "1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9496494292,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "0951d013-7b53-457f-9318-cbf30083709c",
+            "terminal_id": "678e7794-d398-426e-9fb1-1cd251a27d5a",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9497442375,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "b4127341-8f24-41f8-a3b2-0778ab897939",
+            "terminal_id": "85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9498203125,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "a53a639a-c694-4c3d-b306-4fb514238114",
+            "terminal_id": "adae086b-8ac6-4d66-9438-63bf564e0b18",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9498786584,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "647a221c-860f-47a0-b63d-c2eb13d2ecb9",
+            "terminal_id": "5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9499301209,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "91d93c66-63a5-4312-9efb-b598ef4789f8",
+            "terminal_id": "52228c9d-33cf-4c36-9d42-37de29028289",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9499473917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "e1392fa3-dfc3-4440-848d-037a1417d029",
+            "terminal_id": "142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9499690500,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "86fa6330-8b81-483d-97d5-0e69b84e2104",
+            "terminal_id": "3769679a-21c2-4f9f-80f4-a11326b97718",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9500409834,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "726cff96-19ed-4775-af3a-b48f698c56a3",
+            "terminal_id": "d955ed47-a042-4363-b7bd-62a09a66d40f",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9500605584,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "f3495737-675d-4fdc-b988-3526307c92bb",
+            "terminal_id": "d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9501250167,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "80c81b45-78de-446e-aa3f-95dc026135df",
+            "terminal_id": "78efb1f1-f06e-46aa-a319-46e485ce7eec",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9501377292,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "b7402d3f-1fac-45ca-a7e0-012c21efb914",
+            "terminal_id": "8011957c-3091-47f0-8e2d-8ab79fe3947c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9502189750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "94469323-ece4-4946-9e95-3bbf4d8611c6",
+            "terminal_id": "f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9502298375,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "1de2c91d-b2dc-483a-95f2-1cba59a0edd4",
+            "terminal_id": "aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9504342792,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d8c30402-a5ce-4cfa-a84b-b83f2ad04ab1",
+            "terminal_id": "17c22e2e-1ff7-4996-8606-dec3aaed3253",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9505483292,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "94638bb3-ceee-45c5-9df7-35a574dd7e18",
+            "terminal_id": "720c3edb-c706-48a5-bd65-a7d7660c1b78",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9506093167,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "119e090e-f735-451d-ab80-54bc63a3c877",
+            "terminal_id": "20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 9506449750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "8758fb9e-5d85-46eb-b4a3-42a63bcc40ff",
+            "terminal_id": "57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+            "terminal_count": null
+          }
+        ]
+      },
+      "tabs": [
+        {
+          "tab_id": "da088af5-9946-4bd6-b838-187a796d622f",
+          "title": "R2 Tab 1",
+          "members": [
+            {
+              "terminal_id": "d3bc2800-a43c-45f8-b93b-c299e15df929",
+              "host_terminal_id": "ht-1"
+            },
+            {
+              "terminal_id": "34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+              "host_terminal_id": "ht-2"
+            },
+            {
+              "terminal_id": "a80a8828-0a78-4f73-9406-0e229614ee2b",
+              "host_terminal_id": "ht-3"
+            },
+            {
+              "terminal_id": "f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+              "host_terminal_id": "ht-4"
+            },
+            {
+              "terminal_id": "6af2a300-b456-4b24-94be-a581fb98b0c6",
+              "host_terminal_id": "ht-5"
+            },
+            {
+              "terminal_id": "644815aa-1b05-49bd-8250-42be43ea0c75",
+              "host_terminal_id": "ht-6"
+            },
+            {
+              "terminal_id": "2504ad42-b729-431e-89ca-971b03f0132c",
+              "host_terminal_id": "ht-7"
+            },
+            {
+              "terminal_id": "3b514619-f979-40b7-b3f3-23169278c663",
+              "host_terminal_id": "ht-8"
+            }
+          ]
+        },
+        {
+          "tab_id": "dd5ac2ff-9080-4b9d-9c4d-2e34bb15c4ca",
+          "title": "R2 Tab 2",
+          "members": [
+            {
+              "terminal_id": "10be39dd-d0c1-4e91-ae1e-164673a674f2",
+              "host_terminal_id": "ht-9"
+            },
+            {
+              "terminal_id": "1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+              "host_terminal_id": "ht-10"
+            },
+            {
+              "terminal_id": "adae086b-8ac6-4d66-9438-63bf564e0b18",
+              "host_terminal_id": "ht-11"
+            },
+            {
+              "terminal_id": "1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+              "host_terminal_id": "ht-12"
+            },
+            {
+              "terminal_id": "85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+              "host_terminal_id": "ht-13"
+            },
+            {
+              "terminal_id": "f836f86f-4324-43e8-8941-bafe18ba73ec",
+              "host_terminal_id": "ht-14"
+            },
+            {
+              "terminal_id": "678e7794-d398-426e-9fb1-1cd251a27d5a",
+              "host_terminal_id": "ht-15"
+            }
+          ]
+        },
+        {
+          "tab_id": "77fcd594-133c-4e4e-89f4-8b6cd0e0391a",
+          "title": "R2 Tab 3",
+          "members": [
+            {
+              "terminal_id": "3769679a-21c2-4f9f-80f4-a11326b97718",
+              "host_terminal_id": "ht-16"
+            },
+            {
+              "terminal_id": "52228c9d-33cf-4c36-9d42-37de29028289",
+              "host_terminal_id": "ht-17"
+            },
+            {
+              "terminal_id": "142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+              "host_terminal_id": "ht-18"
+            },
+            {
+              "terminal_id": "78efb1f1-f06e-46aa-a319-46e485ce7eec",
+              "host_terminal_id": "ht-19"
+            },
+            {
+              "terminal_id": "5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+              "host_terminal_id": "ht-20"
+            },
+            {
+              "terminal_id": "d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+              "host_terminal_id": "ht-21"
+            },
+            {
+              "terminal_id": "d955ed47-a042-4363-b7bd-62a09a66d40f",
+              "host_terminal_id": "ht-22"
+            }
+          ]
+        },
+        {
+          "tab_id": "2ea426fc-1e30-4d73-83ad-821e039fbfe6",
+          "title": "R2 Tab 4",
+          "members": [
+            {
+              "terminal_id": "aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+              "host_terminal_id": "ht-23"
+            },
+            {
+              "terminal_id": "8011957c-3091-47f0-8e2d-8ab79fe3947c",
+              "host_terminal_id": "ht-24"
+            },
+            {
+              "terminal_id": "17c22e2e-1ff7-4996-8606-dec3aaed3253",
+              "host_terminal_id": "ht-25"
+            },
+            {
+              "terminal_id": "20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+              "host_terminal_id": "ht-26"
+            },
+            {
+              "terminal_id": "f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+              "host_terminal_id": "ht-27"
+            },
+            {
+              "terminal_id": "57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+              "host_terminal_id": "ht-28"
+            },
+            {
+              "terminal_id": "720c3edb-c706-48a5-bd65-a7d7660c1b78",
+              "host_terminal_id": "ht-29"
+            }
+          ]
+        }
+      ],
+      "screen_artifact_sha256": "a13e5593d1fc9a0cf340cad610485339674d3c832e294239a8d813bb3c207fc0",
+      "ansi_artifact_sha256": "f087b60cd25ef2bd79d83c09a77eb412190d1d64e58da802325e2a98af956ee9"
+    },
+    {
+      "number": 3,
+      "began_utc": "2026-10-03T02:53:54.844946+00:00",
+      "source_artifact": "/tmp/gclient23356-isolated-results.json",
+      "private_root": "/tmp/g23356-nx5nhif_",
+      "schema": "gobby_test_1790995824_28883_r2gclient_57a132",
+      "ports": {
+        "http": 30674,
+        "ws": 30927,
+        "backend_http": 30774,
+        "backend_ws": 31027
+      },
+      "pane_count": 29,
+      "tab_counts": [
+        8,
+        7,
+        7,
+        7
+      ],
+      "native_stage_log": {
+        "stages": [
+          {
+            "stage": "daemon health",
+            "milliseconds": 35,
+            "raw": "2026-10-03T02:53:56.934106Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"daemon health\" took_ms=35"
+          },
+          {
+            "stage": "workspace attach",
+            "milliseconds": 16,
+            "raw": "2026-10-03T02:53:56.950772Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"workspace attach\" took_ms=16"
+          },
+          {
+            "stage": "roster",
+            "milliseconds": 4162,
+            "raw": "2026-10-03T02:54:01.113663Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"roster\" took_ms=4162"
+          },
+          {
+            "stage": "first frame",
+            "milliseconds": 55,
+            "raw": "2026-10-03T02:54:01.169582Z  INFO gobby_client::app::live_loop::startup: gclient startup stage complete stage=\"first frame\" took_ms=55"
+          }
+        ],
+        "raw_summary": "2026-10-03T02:54:01.169629Z  INFO gobby_client::app::live_loop::startup: gclient startup complete summary=health=0.04s attach=0.02s roster=4.16s first_frame=0.06s total=4.27s",
+        "summed_stage_ms": 4268,
+        "roster_share_percent": 97.51640112464855
+      },
+      "native_log_path": "/tmp/g23356-nx5nhif_/home/logs/gclient.log",
+      "native_log_sha256": "7cce82f71a8588c942ebdc3c5972db2c0d20d8be818be2e8e6b9a2a4764725ce",
+      "cleanup": {
+        "remaining_owned_pids": [],
+        "schema_removed": true
+      },
+      "source_artifact_sha256": "79d0745731a056f11ca614d7ef96acc9a9235ae183adda22113c7b94b7bd7633",
+      "metrics": {
+        "first_restored_paint_ms": 6329.838875,
+        "first_output_ms": 49.646833,
+        "first_health_request_ms": 29.6165,
+        "configuration_fetch_ms": 4.572917,
+        "daemon_ws_connect_ms": 7.623833,
+        "workspace_attach_ms": 15.82675,
+        "initial_inventory_fetch_ms": 247.285334,
+        "initial_attention_fetch_ms": 44.50025,
+        "inventory_attention_window_ms": 247.285334,
+        "serial_metadata_calls": 29,
+        "metadata_peak_concurrency": 1,
+        "serial_metadata_window_ms": 3911.622541,
+        "serial_metadata_service_sum_ms": 3868.572542,
+        "host_handshakes": 29,
+        "host_handshake_median_ms": 0.504208,
+        "host_handshake_min_ms": 0.050375,
+        "host_handshake_max_ms": 32.113833,
+        "host_connection_to_first_frame_median_ms": 52.703875,
+        "host_connection_to_first_frame_min_ms": 18.337917,
+        "host_connection_to_first_frame_max_ms": 1191.03525,
+        "all_29_first_frames_ms": 7500.397625,
+        "first_paint_to_all_29_first_frames_ms": 1170.55875,
+        "per_tab": [
+          {
+            "title": "R2 Tab 1",
+            "tab_id": "da088af5-9946-4bd6-b838-187a796d622f",
+            "pane_count": 8,
+            "first_connection_ms": 6283.687042,
+            "last_first_frame_ms": 6365.098625,
+            "attachment_window_ms": 81.411583,
+            "last_frame_after_first_paint_ms": 35.25975
+          },
+          {
+            "title": "R2 Tab 2",
+            "tab_id": "dd5ac2ff-9080-4b9d-9c4d-2e34bb15c4ca",
+            "pane_count": 7,
+            "first_connection_ms": 6288.592042,
+            "last_first_frame_ms": 6370.42675,
+            "attachment_window_ms": 81.834708,
+            "last_frame_after_first_paint_ms": 40.587875
+          },
+          {
+            "title": "R2 Tab 3",
+            "tab_id": "77fcd594-133c-4e4e-89f4-8b6cd0e0391a",
+            "pane_count": 7,
+            "first_connection_ms": 6285.014833,
+            "last_first_frame_ms": 7459.516667,
+            "attachment_window_ms": 1174.501834,
+            "last_frame_after_first_paint_ms": 1129.677792
+          },
+          {
+            "title": "R2 Tab 4",
+            "tab_id": "2ea426fc-1e30-4d73-83ad-821e039fbfe6",
+            "pane_count": 7,
+            "first_connection_ms": 6300.998083,
+            "last_first_frame_ms": 7500.397625,
+            "attachment_window_ms": 1199.399542,
+            "last_frame_after_first_paint_ms": 1170.55875
+          }
+        ],
+        "preflight_http_health_ms": 17.255542,
+        "native_stage_to_external_paint_residual_ms": 2061.8388750000004,
+        "sidebar_requests": [
+          {
+            "path": "/api/projects",
+            "start_ms": 7503.257208,
+            "end_ms": 7511.929333,
+            "duration_ms": 8.672125
+          },
+          {
+            "path": "/api/source-control/status?project_id=00000000-0000-0000-0000-000000000e2e",
+            "start_ms": 7512.59525,
+            "end_ms": 7577.739708,
+            "duration_ms": 65.144458
+          }
+        ]
+      },
+      "observations": {
+        "ended_utc": "2026-10-03T02:54:02.365033+00:00",
+        "complete": true,
+        "first_output_ns": 49646833,
+        "splash_seen_ns": null,
+        "first_restored_paint_ns": 6329838875,
+        "screen_observation": "R2VISIBLE marker in restored terminal screen",
+        "natural_startup_connections": 26,
+        "natural_startup_first_frames": 23,
+        "tab_visits": [
+          {
+            "tab_id": "da088af5-9946-4bd6-b838-187a796d622f",
+            "pane_count": 8,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 6365098625
+          },
+          {
+            "tab_id": "dd5ac2ff-9080-4b9d-9c4d-2e34bb15c4ca",
+            "pane_count": 7,
+            "already_framed": true,
+            "selection_requested_ns": null,
+            "selection_completed_ns": null,
+            "all_panes_framed_ns": 6370426750
+          },
+          {
+            "tab_id": "77fcd594-133c-4e4e-89f4-8b6cd0e0391a",
+            "pane_count": 7,
+            "already_framed": false,
+            "selection_requested_ns": 7371959042,
+            "selection_completed_ns": 7423609625,
+            "all_panes_framed_ns": 7459516667
+          },
+          {
+            "tab_id": "2ea426fc-1e30-4d73-83ad-821e039fbfe6",
+            "pane_count": 7,
+            "already_framed": false,
+            "selection_requested_ns": 7464529958,
+            "selection_completed_ns": 7519625542,
+            "all_panes_framed_ns": 7500397625
+          }
+        ],
+        "frame_connections": [
+          {
+            "index": 0,
+            "accepted_ns": 6283687042,
+            "upstream_connected_ns": 6284354833,
+            "hello_ns": 6284637958,
+            "welcome_ns": 6285203583,
+            "attached_ns": 6285624500,
+            "host_terminal_id": "ht-5",
+            "first_frame_ns": 6324395000
+          },
+          {
+            "index": 1,
+            "accepted_ns": 6285014833,
+            "upstream_connected_ns": 6285223000,
+            "hello_ns": 6285309583,
+            "welcome_ns": 6285500875,
+            "attach_requested_ns": 6285636500,
+            "host_terminal_id": "ht-18",
+            "attached_ns": 6285709708,
+            "first_frame_ns": 6346661250
+          },
+          {
+            "index": 2,
+            "accepted_ns": 6285064542,
+            "upstream_connected_ns": 6285236333,
+            "hello_ns": 6285318583,
+            "welcome_ns": 6285506000,
+            "attached_ns": 6285838917,
+            "host_terminal_id": "ht-1",
+            "first_frame_ns": 6325216667
+          },
+          {
+            "index": 3,
+            "accepted_ns": 6285085292,
+            "upstream_connected_ns": 6285242000,
+            "hello_ns": 6285325792,
+            "welcome_ns": 6285494958,
+            "attach_requested_ns": 6285631083,
+            "host_terminal_id": "ht-17",
+            "attached_ns": 6285724792,
+            "first_frame_ns": 6308523042
+          },
+          {
+            "index": 4,
+            "accepted_ns": 6285413500,
+            "upstream_connected_ns": 6285552958,
+            "hello_ns": 6285601042,
+            "welcome_ns": 6285703833,
+            "attached_ns": 6286347042,
+            "host_terminal_id": "ht-3",
+            "first_frame_ns": 6312481167
+          },
+          {
+            "index": 5,
+            "accepted_ns": 6285449083,
+            "upstream_connected_ns": 6285562917,
+            "hello_ns": 6285607833,
+            "welcome_ns": 6285696708,
+            "attach_requested_ns": 6285982417,
+            "host_terminal_id": "ht-16",
+            "attached_ns": 6286353542,
+            "first_frame_ns": 6324007250
+          },
+          {
+            "index": 6,
+            "accepted_ns": 6285523292,
+            "upstream_connected_ns": 6285610792,
+            "hello_ns": 6285650333,
+            "welcome_ns": 6285864375,
+            "attached_ns": 6286556292,
+            "host_terminal_id": "ht-2",
+            "first_frame_ns": 6311401500
+          },
+          {
+            "index": 7,
+            "accepted_ns": 6287363708,
+            "upstream_connected_ns": 6287683833,
+            "hello_ns": 6288162583,
+            "welcome_ns": 6288444500,
+            "attach_requested_ns": 6288697667,
+            "host_terminal_id": "ht-19",
+            "attached_ns": 6288865833,
+            "first_frame_ns": 6351521458
+          },
+          {
+            "index": 8,
+            "accepted_ns": 6288563042,
+            "upstream_connected_ns": 6288741875,
+            "hello_ns": 6288964125,
+            "welcome_ns": 6289312542,
+            "attach_requested_ns": 6289746167,
+            "host_terminal_id": "ht-21",
+            "attached_ns": 6291296792,
+            "first_frame_ns": 6348640375
+          },
+          {
+            "index": 9,
+            "accepted_ns": 6288592042,
+            "upstream_connected_ns": 6288783208,
+            "hello_ns": 6289001875,
+            "welcome_ns": 6289303958,
+            "attached_ns": 6291289125,
+            "host_terminal_id": "ht-9",
+            "first_frame_ns": 6314898750
+          },
+          {
+            "index": 10,
+            "accepted_ns": 6288822333,
+            "upstream_connected_ns": 6289133625,
+            "hello_ns": 6289172042,
+            "welcome_ns": 6289415125,
+            "attach_requested_ns": 6291279000,
+            "host_terminal_id": "ht-10",
+            "attached_ns": 6291560958,
+            "first_frame_ns": 6320381042
+          },
+          {
+            "index": 11,
+            "accepted_ns": 6289179625,
+            "upstream_connected_ns": 6289320458,
+            "hello_ns": 6289405625,
+            "welcome_ns": 6290942833,
+            "attach_requested_ns": 6291537750,
+            "host_terminal_id": "ht-15",
+            "attached_ns": 6291717083,
+            "first_frame_ns": 6340087292
+          },
+          {
+            "index": 12,
+            "accepted_ns": 6291873750,
+            "upstream_connected_ns": 6291982333,
+            "hello_ns": 6292074167,
+            "welcome_ns": 6292213375,
+            "attach_requested_ns": 6292370292,
+            "host_terminal_id": "ht-14",
+            "attached_ns": 6292532292,
+            "first_frame_ns": 6329410833
+          },
+          {
+            "index": 13,
+            "accepted_ns": 6292657583,
+            "upstream_connected_ns": 6292887333,
+            "hello_ns": 6293097583,
+            "welcome_ns": 6293308250,
+            "attach_requested_ns": 6293379125,
+            "host_terminal_id": "ht-13",
+            "attached_ns": 6293498667,
+            "first_frame_ns": 6310995500
+          },
+          {
+            "index": 14,
+            "accepted_ns": 6296366167,
+            "upstream_connected_ns": 6297047708,
+            "hello_ns": 6297851125,
+            "welcome_ns": 6300342125,
+            "attached_ns": 6302137750,
+            "host_terminal_id": "ht-7",
+            "first_frame_ns": 6349070042
+          },
+          {
+            "index": 15,
+            "accepted_ns": 6296407625,
+            "upstream_connected_ns": 6297064917,
+            "hello_ns": 6297878792,
+            "welcome_ns": 6300282208,
+            "attached_ns": 6302143875,
+            "host_terminal_id": "ht-4",
+            "first_frame_ns": 6352144042
+          },
+          {
+            "index": 16,
+            "accepted_ns": 6300783083,
+            "upstream_connected_ns": 6301221708,
+            "hello_ns": 6302080875,
+            "welcome_ns": 6304343083,
+            "attached_ns": 6351582250,
+            "host_terminal_id": "ht-8",
+            "first_frame_ns": 6360283583
+          },
+          {
+            "index": 17,
+            "accepted_ns": 6300844625,
+            "upstream_connected_ns": 6301241083,
+            "hello_ns": 6302090583,
+            "welcome_ns": 6304350875,
+            "attach_requested_ns": 6304616000,
+            "host_terminal_id": "ht-11",
+            "attached_ns": 6348750458,
+            "first_frame_ns": 6356036708
+          },
+          {
+            "index": 18,
+            "accepted_ns": 6300902833,
+            "upstream_connected_ns": 6301257125,
+            "hello_ns": 6302098500,
+            "welcome_ns": 6304358042,
+            "attached_ns": 6352197000,
+            "host_terminal_id": "ht-6",
+            "first_frame_ns": 6365098625
+          },
+          {
+            "index": 19,
+            "accepted_ns": 6300931708,
+            "upstream_connected_ns": 6301896375,
+            "hello_ns": 6302105083,
+            "welcome_ns": 6304365167,
+            "attach_requested_ns": 6304785417,
+            "host_terminal_id": "ht-12",
+            "attached_ns": 6352225333,
+            "first_frame_ns": 6370426750
+          },
+          {
+            "index": 20,
+            "accepted_ns": 6300951250,
+            "upstream_connected_ns": 6301906208,
+            "hello_ns": 6302111375,
+            "welcome_ns": 6304371417,
+            "attach_requested_ns": 6304792042,
+            "host_terminal_id": "ht-20",
+            "attached_ns": 6352163375,
+            "first_frame_ns": 6367757208
+          },
+          {
+            "index": 21,
+            "accepted_ns": 6300998083,
+            "upstream_connected_ns": 6301911292,
+            "hello_ns": 6302117500,
+            "welcome_ns": 6304332958,
+            "attach_requested_ns": 6304596000,
+            "host_terminal_id": "ht-24",
+            "attached_ns": 6348766375,
+            "first_frame_ns": 6359724083
+          },
+          {
+            "index": 22,
+            "accepted_ns": 6301916292,
+            "upstream_connected_ns": 6302159458,
+            "hello_ns": 6302248208,
+            "welcome_ns": 6304584958,
+            "attach_requested_ns": 6305071583,
+            "host_terminal_id": "ht-23",
+            "attached_ns": 6352242625,
+            "first_frame_ns": 6364556083
+          },
+          {
+            "index": 23,
+            "accepted_ns": 6305081208,
+            "upstream_connected_ns": 6308568042,
+            "hello_ns": 6308842958,
+            "welcome_ns": 6330381250,
+            "attach_requested_ns": 7453065958,
+            "host_terminal_id": "ht-22",
+            "attached_ns": 7453697667,
+            "first_frame_ns": 7459516667
+          },
+          {
+            "index": 24,
+            "accepted_ns": 6305132083,
+            "upstream_connected_ns": 6308601875,
+            "hello_ns": 6308892542,
+            "welcome_ns": 6341006375,
+            "attach_requested_ns": 7453391833,
+            "host_terminal_id": "ht-28",
+            "attached_ns": 7463508833,
+            "first_frame_ns": 7496167333
+          },
+          {
+            "index": 25,
+            "accepted_ns": 6352608417,
+            "upstream_connected_ns": 6370614208,
+            "hello_ns": 6370691250,
+            "welcome_ns": 6370741625,
+            "attach_requested_ns": 7454163167,
+            "host_terminal_id": "ht-26",
+            "attached_ns": 7463520000,
+            "first_frame_ns": 7490788292
+          },
+          {
+            "index": 26,
+            "accepted_ns": 7454490583,
+            "upstream_connected_ns": 7455768875,
+            "hello_ns": 7457155125,
+            "welcome_ns": 7457659333,
+            "attach_requested_ns": 7463466500,
+            "host_terminal_id": "ht-29",
+            "attached_ns": 7475103500,
+            "first_frame_ns": 7493296250
+          },
+          {
+            "index": 27,
+            "accepted_ns": 7454553125,
+            "upstream_connected_ns": 7455787167,
+            "hello_ns": 7457164875,
+            "welcome_ns": 7457667250,
+            "attach_requested_ns": 7463482750,
+            "host_terminal_id": "ht-25",
+            "attached_ns": 7475114500,
+            "first_frame_ns": 7500397625
+          },
+          {
+            "index": 28,
+            "accepted_ns": 7454575667,
+            "upstream_connected_ns": 7455793583,
+            "hello_ns": 7457172333,
+            "welcome_ns": 7457678167,
+            "attach_requested_ns": 7463494625,
+            "host_terminal_id": "ht-27",
+            "attached_ns": 7475085542,
+            "first_frame_ns": 7485810458
+          }
+        ],
+        "http_pairs": [
+          {
+            "path": "/api/health",
+            "start_ns": 29616500,
+            "end_ns": 46872042,
+            "status": 200
+          },
+          {
+            "path": "/api/admin/config",
+            "start_ns": 2084375958,
+            "end_ns": 2088948875,
+            "status": 200
+          },
+          {
+            "path": "/api/attention/roster",
+            "start_ns": 2108559875,
+            "end_ns": 2153060125,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals?project_id=00000000-0000-0000-0000-000000000e2e&states=pending%2Clive",
+            "start_ns": 2108014208,
+            "end_ns": 2355299542,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/644815aa-1b05-49bd-8250-42be43ea0c75",
+            "start_ns": 2356284167,
+            "end_ns": 2446591375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/3b514619-f979-40b7-b3f3-23169278c663",
+            "start_ns": 2447370917,
+            "end_ns": 2593741167,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+            "start_ns": 2594363125,
+            "end_ns": 2700120333,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/78efb1f1-f06e-46aa-a319-46e485ce7eec",
+            "start_ns": 2700956542,
+            "end_ns": 2886725542,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+            "start_ns": 2887555333,
+            "end_ns": 2989960083,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+            "start_ns": 2990536792,
+            "end_ns": 3091718292,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+            "start_ns": 3092747083,
+            "end_ns": 3232974625,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+            "start_ns": 3235125792,
+            "end_ns": 3492544500,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+            "start_ns": 3494097625,
+            "end_ns": 3652347708,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+            "start_ns": 3653669208,
+            "end_ns": 3842456292,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+            "start_ns": 3843191583,
+            "end_ns": 3974073583,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+            "start_ns": 3975731667,
+            "end_ns": 4104949667,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+            "start_ns": 4105638000,
+            "end_ns": 4263327875,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+            "start_ns": 4263964500,
+            "end_ns": 4386191000,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/d3bc2800-a43c-45f8-b93b-c299e15df929",
+            "start_ns": 4387703292,
+            "end_ns": 4565433833,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/2504ad42-b729-431e-89ca-971b03f0132c",
+            "start_ns": 4570544000,
+            "end_ns": 4708000250,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/3769679a-21c2-4f9f-80f4-a11326b97718",
+            "start_ns": 4708838833,
+            "end_ns": 4933906583,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/17c22e2e-1ff7-4996-8606-dec3aaed3253",
+            "start_ns": 4942781667,
+            "end_ns": 5044583458,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/10be39dd-d0c1-4e91-ae1e-164673a674f2",
+            "start_ns": 5045502708,
+            "end_ns": 5160933833,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/52228c9d-33cf-4c36-9d42-37de29028289",
+            "start_ns": 5164758875,
+            "end_ns": 5278459375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/720c3edb-c706-48a5-bd65-a7d7660c1b78",
+            "start_ns": 5279383708,
+            "end_ns": 5376111042,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/678e7794-d398-426e-9fb1-1cd251a27d5a",
+            "start_ns": 5377294708,
+            "end_ns": 5478491042,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/6af2a300-b456-4b24-94be-a581fb98b0c6",
+            "start_ns": 5479140792,
+            "end_ns": 5579116375,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/f836f86f-4324-43e8-8941-bafe18ba73ec",
+            "start_ns": 5580331125,
+            "end_ns": 5684095833,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/adae086b-8ac6-4d66-9438-63bf564e0b18",
+            "start_ns": 5684820500,
+            "end_ns": 5802512708,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/d955ed47-a042-4363-b7bd-62a09a66d40f",
+            "start_ns": 5803165083,
+            "end_ns": 5894927292,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/8011957c-3091-47f0-8e2d-8ab79fe3947c",
+            "start_ns": 5895866458,
+            "end_ns": 6012267500,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/a80a8828-0a78-4f73-9406-0e229614ee2b",
+            "start_ns": 6012906958,
+            "end_ns": 6147740917,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals/1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+            "start_ns": 6149365208,
+            "end_ns": 6267906708,
+            "status": 200
+          },
+          {
+            "path": "/api/attention/roster",
+            "start_ns": 7455822917,
+            "end_ns": 7502702375,
+            "status": 200
+          },
+          {
+            "path": "/api/projects",
+            "start_ns": 7503257208,
+            "end_ns": 7511929333,
+            "status": 200
+          },
+          {
+            "path": "/api/source-control/status?project_id=00000000-0000-0000-0000-000000000e2e",
+            "start_ns": 7512595250,
+            "end_ns": 7577739708,
+            "status": 200
+          },
+          {
+            "path": "/api/terminals?project_id=00000000-0000-0000-0000-000000000e2e&states=pending%2Clive",
+            "start_ns": 7454791875,
+            "end_ns": 7617049958,
+            "status": 200
+          }
+        ],
+        "daemon_events": [
+          {
+            "t_ns": 2076016292,
+            "kind": "ws_accepted"
+          },
+          {
+            "t_ns": 2083518708,
+            "kind": "ws_upstream_connected"
+          },
+          {
+            "t_ns": 2083640125,
+            "kind": "ws_reply",
+            "type": "connection_established",
+            "request_id": null,
+            "terminal_id": null,
+            "terminal_count": null
+          },
+          {
+            "t_ns": 2089463250,
+            "kind": "ws_request",
+            "type": "workspace_attach",
+            "request_id": "d93a3c7f-f95d-40fe-a923-466c81a3b121",
+            "terminal_id": null,
+            "op": null
+          },
+          {
+            "t_ns": 2105290000,
+            "kind": "ws_reply",
+            "type": "workspace_snapshot",
+            "request_id": "d93a3c7f-f95d-40fe-a923-466c81a3b121",
+            "terminal_id": null,
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6269945542,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "8ffbc835-29ba-478d-8775-bc2237784283",
+            "terminal_id": "d3bc2800-a43c-45f8-b93b-c299e15df929",
+            "op": null
+          },
+          {
+            "t_ns": 6270154292,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "627ee147-0acc-4f35-b60d-cc50b6b1474d",
+            "terminal_id": "34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+            "op": null
+          },
+          {
+            "t_ns": 6270244375,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "15c84fe9-14d3-44cf-9240-d2efa834d260",
+            "terminal_id": "a80a8828-0a78-4f73-9406-0e229614ee2b",
+            "op": null
+          },
+          {
+            "t_ns": 6270377208,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "4cae8d28-2574-4323-87b6-d8cd623b3bbf",
+            "terminal_id": "f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+            "op": null
+          },
+          {
+            "t_ns": 6270417125,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "e0679e8e-d689-4918-a1e8-93ba65f60939",
+            "terminal_id": "6af2a300-b456-4b24-94be-a581fb98b0c6",
+            "op": null
+          },
+          {
+            "t_ns": 6270448792,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "0f2f3126-44fe-43c6-a848-c3ab5240fbf5",
+            "terminal_id": "644815aa-1b05-49bd-8250-42be43ea0c75",
+            "op": null
+          },
+          {
+            "t_ns": 6270483708,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "29bc6b5b-3032-41b1-bf49-9b88cc74f2f6",
+            "terminal_id": "2504ad42-b729-431e-89ca-971b03f0132c",
+            "op": null
+          },
+          {
+            "t_ns": 6270521583,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "31fa7bd4-23f3-49e0-bd74-995393a84abd",
+            "terminal_id": "3b514619-f979-40b7-b3f3-23169278c663",
+            "op": null
+          },
+          {
+            "t_ns": 6270543583,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "52363cfd-c1f8-4041-8682-27fd928e24bd",
+            "terminal_id": "10be39dd-d0c1-4e91-ae1e-164673a674f2",
+            "op": null
+          },
+          {
+            "t_ns": 6270564417,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "503eeeb5-d6f5-456c-bd19-a59823b34792",
+            "terminal_id": "1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+            "op": null
+          },
+          {
+            "t_ns": 6270583250,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "4da65c21-2450-4061-8258-5b99d88763f6",
+            "terminal_id": "adae086b-8ac6-4d66-9438-63bf564e0b18",
+            "op": null
+          },
+          {
+            "t_ns": 6270653333,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "2f633550-862c-4a74-9133-9be589121c72",
+            "terminal_id": "1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+            "op": null
+          },
+          {
+            "t_ns": 6270697958,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "ebc9bed7-e0e3-4925-82ec-7b431558c00a",
+            "terminal_id": "85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+            "op": null
+          },
+          {
+            "t_ns": 6270717458,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "ec0f9f6d-0cef-4964-9876-bba930c874e1",
+            "terminal_id": "f836f86f-4324-43e8-8941-bafe18ba73ec",
+            "op": null
+          },
+          {
+            "t_ns": 6270741000,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "7a491c15-cf7d-4004-8123-7dd9cac7db70",
+            "terminal_id": "678e7794-d398-426e-9fb1-1cd251a27d5a",
+            "op": null
+          },
+          {
+            "t_ns": 6270759833,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "5e49fd1a-5dac-41b5-afb8-79808e17ce0c",
+            "terminal_id": "3769679a-21c2-4f9f-80f4-a11326b97718",
+            "op": null
+          },
+          {
+            "t_ns": 6270785458,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "30f27b77-a64b-41bb-8eb6-e429ef206f62",
+            "terminal_id": "52228c9d-33cf-4c36-9d42-37de29028289",
+            "op": null
+          },
+          {
+            "t_ns": 6270947917,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "ca4cc8c5-3005-4105-9cc3-9dfcac3922cd",
+            "terminal_id": "142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+            "op": null
+          },
+          {
+            "t_ns": 6271067625,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "702fd3a1-d156-4ccd-956d-72b3c5e5e54c",
+            "terminal_id": "78efb1f1-f06e-46aa-a319-46e485ce7eec",
+            "op": null
+          },
+          {
+            "t_ns": 6271109583,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "48341409-5247-44fb-ad2d-97ad1b237205",
+            "terminal_id": "5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+            "op": null
+          },
+          {
+            "t_ns": 6271134167,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d8adf8ea-72f3-4b4d-a8ea-37bdd13334e4",
+            "terminal_id": "d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+            "op": null
+          },
+          {
+            "t_ns": 6271197583,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "d789aa16-40fa-47bc-8769-84885eaa6370",
+            "terminal_id": "d955ed47-a042-4363-b7bd-62a09a66d40f",
+            "op": null
+          },
+          {
+            "t_ns": 6271232583,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "e37e8578-52b7-4212-aa48-dc2069cda797",
+            "terminal_id": "aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+            "op": null
+          },
+          {
+            "t_ns": 6271277375,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "22c13049-a9c2-4611-bf6f-810293fb5f10",
+            "terminal_id": "8011957c-3091-47f0-8e2d-8ab79fe3947c",
+            "op": null
+          },
+          {
+            "t_ns": 6271301083,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "c583b516-252a-4c5d-80d6-2fec0cdeb531",
+            "terminal_id": "17c22e2e-1ff7-4996-8606-dec3aaed3253",
+            "op": null
+          },
+          {
+            "t_ns": 6271323000,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "e862a914-93c0-482d-82cb-339569895eea",
+            "terminal_id": "20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+            "op": null
+          },
+          {
+            "t_ns": 6271342167,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "07226dc2-e597-4259-ad26-394171fbf356",
+            "terminal_id": "f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+            "op": null
+          },
+          {
+            "t_ns": 6271360917,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "26e75eed-9b0a-4a75-a355-4dae36d15e56",
+            "terminal_id": "57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+            "op": null
+          },
+          {
+            "t_ns": 6271381875,
+            "kind": "ws_request",
+            "type": "terminal_attach",
+            "request_id": "ed7b7017-0494-47a0-8203-d9c81f046ddd",
+            "terminal_id": "720c3edb-c706-48a5-bd65-a7d7660c1b78",
+            "op": null
+          },
+          {
+            "t_ns": 6281182917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "e0679e8e-d689-4918-a1e8-93ba65f60939",
+            "terminal_id": "6af2a300-b456-4b24-94be-a581fb98b0c6",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6283038000,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "ca4cc8c5-3005-4105-9cc3-9dfcac3922cd",
+            "terminal_id": "142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6283138042,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "8ffbc835-29ba-478d-8775-bc2237784283",
+            "terminal_id": "d3bc2800-a43c-45f8-b93b-c299e15df929",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6283171833,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "30f27b77-a64b-41bb-8eb6-e429ef206f62",
+            "terminal_id": "52228c9d-33cf-4c36-9d42-37de29028289",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6284230500,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "15c84fe9-14d3-44cf-9240-d2efa834d260",
+            "terminal_id": "a80a8828-0a78-4f73-9406-0e229614ee2b",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6284322750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "5e49fd1a-5dac-41b5-afb8-79808e17ce0c",
+            "terminal_id": "3769679a-21c2-4f9f-80f4-a11326b97718",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6284758958,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "627ee147-0acc-4f35-b60d-cc50b6b1474d",
+            "terminal_id": "34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6286077125,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "702fd3a1-d156-4ccd-956d-72b3c5e5e54c",
+            "terminal_id": "78efb1f1-f06e-46aa-a319-46e485ce7eec",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6287712708,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "52363cfd-c1f8-4041-8682-27fd928e24bd",
+            "terminal_id": "10be39dd-d0c1-4e91-ae1e-164673a674f2",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6287746708,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d8adf8ea-72f3-4b4d-a8ea-37bdd13334e4",
+            "terminal_id": "d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6288316792,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "503eeeb5-d6f5-456c-bd19-a59823b34792",
+            "terminal_id": "1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6288459333,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "7a491c15-cf7d-4004-8123-7dd9cac7db70",
+            "terminal_id": "678e7794-d398-426e-9fb1-1cd251a27d5a",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6291218792,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "ec0f9f6d-0cef-4964-9876-bba930c874e1",
+            "terminal_id": "f836f86f-4324-43e8-8941-bafe18ba73ec",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6292091958,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "ebc9bed7-e0e3-4925-82ec-7b431558c00a",
+            "terminal_id": "85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6295346000,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "4cae8d28-2574-4323-87b6-d8cd623b3bbf",
+            "terminal_id": "f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6295390500,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "29bc6b5b-3032-41b1-bf49-9b88cc74f2f6",
+            "terminal_id": "2504ad42-b729-431e-89ca-971b03f0132c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6296632917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "31fa7bd4-23f3-49e0-bd74-995393a84abd",
+            "terminal_id": "3b514619-f979-40b7-b3f3-23169278c663",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6296704083,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "4da65c21-2450-4061-8258-5b99d88763f6",
+            "terminal_id": "adae086b-8ac6-4d66-9438-63bf564e0b18",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6296734958,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "0f2f3126-44fe-43c6-a848-c3ab5240fbf5",
+            "terminal_id": "644815aa-1b05-49bd-8250-42be43ea0c75",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6296919750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "2f633550-862c-4a74-9133-9be589121c72",
+            "terminal_id": "1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6296958708,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "48341409-5247-44fb-ad2d-97ad1b237205",
+            "terminal_id": "5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6297022750,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "22c13049-a9c2-4611-bf6f-810293fb5f10",
+            "terminal_id": "8011957c-3091-47f0-8e2d-8ab79fe3947c",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6297949458,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "e37e8578-52b7-4212-aa48-dc2069cda797",
+            "terminal_id": "aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6302732917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "d789aa16-40fa-47bc-8769-84885eaa6370",
+            "terminal_id": "d955ed47-a042-4363-b7bd-62a09a66d40f",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6304462250,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "26e75eed-9b0a-4a75-a355-4dae36d15e56",
+            "terminal_id": "57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6311454250,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "e862a914-93c0-482d-82cb-339569895eea",
+            "terminal_id": "20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6330019708,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "c583b516-252a-4c5d-80d6-2fec0cdeb531",
+            "terminal_id": "17c22e2e-1ff7-4996-8606-dec3aaed3253",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6330077917,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "ed7b7017-0494-47a0-8203-d9c81f046ddd",
+            "terminal_id": "720c3edb-c706-48a5-bd65-a7d7660c1b78",
+            "terminal_count": null
+          },
+          {
+            "t_ns": 6330343000,
+            "kind": "ws_reply",
+            "type": "terminal_attach_result",
+            "request_id": "07226dc2-e597-4259-ad26-394171fbf356",
+            "terminal_id": "f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+            "terminal_count": null
+          }
+        ]
+      },
+      "tabs": [
+        {
+          "tab_id": "da088af5-9946-4bd6-b838-187a796d622f",
+          "title": "R2 Tab 1",
+          "members": [
+            {
+              "terminal_id": "d3bc2800-a43c-45f8-b93b-c299e15df929",
+              "host_terminal_id": "ht-1"
+            },
+            {
+              "terminal_id": "34de8cfb-98e3-4e0b-ab52-07580e9d3d69",
+              "host_terminal_id": "ht-2"
+            },
+            {
+              "terminal_id": "a80a8828-0a78-4f73-9406-0e229614ee2b",
+              "host_terminal_id": "ht-3"
+            },
+            {
+              "terminal_id": "f5d76ca7-0521-4547-b4d8-ede0938ce1c3",
+              "host_terminal_id": "ht-4"
+            },
+            {
+              "terminal_id": "6af2a300-b456-4b24-94be-a581fb98b0c6",
+              "host_terminal_id": "ht-5"
+            },
+            {
+              "terminal_id": "644815aa-1b05-49bd-8250-42be43ea0c75",
+              "host_terminal_id": "ht-6"
+            },
+            {
+              "terminal_id": "2504ad42-b729-431e-89ca-971b03f0132c",
+              "host_terminal_id": "ht-7"
+            },
+            {
+              "terminal_id": "3b514619-f979-40b7-b3f3-23169278c663",
+              "host_terminal_id": "ht-8"
+            }
+          ]
+        },
+        {
+          "tab_id": "dd5ac2ff-9080-4b9d-9c4d-2e34bb15c4ca",
+          "title": "R2 Tab 2",
+          "members": [
+            {
+              "terminal_id": "10be39dd-d0c1-4e91-ae1e-164673a674f2",
+              "host_terminal_id": "ht-9"
+            },
+            {
+              "terminal_id": "1f0bb7a5-408e-4028-a2b0-798bbf213f72",
+              "host_terminal_id": "ht-10"
+            },
+            {
+              "terminal_id": "adae086b-8ac6-4d66-9438-63bf564e0b18",
+              "host_terminal_id": "ht-11"
+            },
+            {
+              "terminal_id": "1c69845b-fe5e-4c0e-9ecc-6987e8bbf7a8",
+              "host_terminal_id": "ht-12"
+            },
+            {
+              "terminal_id": "85fb518b-7abf-4aa0-a6e5-c1e6634b4b17",
+              "host_terminal_id": "ht-13"
+            },
+            {
+              "terminal_id": "f836f86f-4324-43e8-8941-bafe18ba73ec",
+              "host_terminal_id": "ht-14"
+            },
+            {
+              "terminal_id": "678e7794-d398-426e-9fb1-1cd251a27d5a",
+              "host_terminal_id": "ht-15"
+            }
+          ]
+        },
+        {
+          "tab_id": "77fcd594-133c-4e4e-89f4-8b6cd0e0391a",
+          "title": "R2 Tab 3",
+          "members": [
+            {
+              "terminal_id": "3769679a-21c2-4f9f-80f4-a11326b97718",
+              "host_terminal_id": "ht-16"
+            },
+            {
+              "terminal_id": "52228c9d-33cf-4c36-9d42-37de29028289",
+              "host_terminal_id": "ht-17"
+            },
+            {
+              "terminal_id": "142af4fe-ada9-46ba-b1d8-88672eef0e7c",
+              "host_terminal_id": "ht-18"
+            },
+            {
+              "terminal_id": "78efb1f1-f06e-46aa-a319-46e485ce7eec",
+              "host_terminal_id": "ht-19"
+            },
+            {
+              "terminal_id": "5a7292ea-5a46-40c0-b9bd-b11b3f1128bf",
+              "host_terminal_id": "ht-20"
+            },
+            {
+              "terminal_id": "d71b925a-2dbb-421b-94c4-a27f1cd26d12",
+              "host_terminal_id": "ht-21"
+            },
+            {
+              "terminal_id": "d955ed47-a042-4363-b7bd-62a09a66d40f",
+              "host_terminal_id": "ht-22"
+            }
+          ]
+        },
+        {
+          "tab_id": "2ea426fc-1e30-4d73-83ad-821e039fbfe6",
+          "title": "R2 Tab 4",
+          "members": [
+            {
+              "terminal_id": "aba4c36e-8a8d-46ed-a6ea-b6dec4d16dcb",
+              "host_terminal_id": "ht-23"
+            },
+            {
+              "terminal_id": "8011957c-3091-47f0-8e2d-8ab79fe3947c",
+              "host_terminal_id": "ht-24"
+            },
+            {
+              "terminal_id": "17c22e2e-1ff7-4996-8606-dec3aaed3253",
+              "host_terminal_id": "ht-25"
+            },
+            {
+              "terminal_id": "20b43bed-6f2f-4d28-b1a2-c4b8ffb6338a",
+              "host_terminal_id": "ht-26"
+            },
+            {
+              "terminal_id": "f4bd0502-7b1a-4e38-a6c6-dbdb4da59e5d",
+              "host_terminal_id": "ht-27"
+            },
+            {
+              "terminal_id": "57cb33c9-62d7-486f-b2ed-54f694dd1cbd",
+              "host_terminal_id": "ht-28"
+            },
+            {
+              "terminal_id": "720c3edb-c706-48a5-bd65-a7d7660c1b78",
+              "host_terminal_id": "ht-29"
+            }
+          ]
+        }
+      ],
+      "screen_artifact_sha256": "97418dd8731ab0e0522a0d5034a489c0b913feb0eedde14362c6d1078f4dfe48",
+      "ansi_artifact_sha256": "ee02051b4f1ac66ddcf0cfd70660f27539d6ff66f8a201af335ce171a2056cc0"
+    }
+  ]
+}

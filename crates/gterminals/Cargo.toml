@@ -1,0 +1,24 @@
+[package]
+name = "gobby-terminals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Workspace-private gterm host-wire clients for the gdaemon terminal family"
+
+[lints]
+workspace = true
+
+[dependencies]
+base64 = "0.22.1"
+bincode = { version = "2", features = ["serde"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["io-util"] }
+
+[dev-dependencies]
+anyhow = "1"
+tokio = { version = "1", features = ["io-util", "macros", "rt"] }

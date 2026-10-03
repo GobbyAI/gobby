@@ -814,14 +814,17 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     async def get_agent_run_detail(run_id: str) -> dict[str, Any]:
         """Get detailed agent run info with session enrichment."""
         try:
-            from gobby.storage.agents import LocalAgentRunManager
+            from gobby.storage.agents import AgentRun, LocalAgentRunManager
 
-            manager = LocalAgentRunManager(server.services.database)
-            run = manager.get(run_id)
-            if not run:
+            def load_run() -> tuple[AgentRun, dict[str, Any]] | None:
+                # The projection reads the run's violation log, so keep it off the loop.
+                run = LocalAgentRunManager(server.services.database).get(run_id)
+                return (run, run.to_dict()) if run else None
+
+            loaded = await asyncio.to_thread(load_run)
+            if loaded is None:
                 raise HTTPException(status_code=404, detail=f"Agent run '{run_id}' not found")
-
-            d = run.to_dict()
+            run, d = loaded
 
             # Session enrichment
             if run.child_session_id:

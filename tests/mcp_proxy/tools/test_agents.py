@@ -22,10 +22,12 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -314,6 +316,47 @@ class TestGetAgentResult:
         assert result["dirty_paths"] == ["a.py"]
         assert result["terminal_reason"] == "provider_error"
 
+    @pytest.mark.asyncio
+    async def test_result_payload_runs_off_the_event_loop(self) -> None:
+        """The handoff read and violation count block, so polling must not stall the loop."""
+        mock_run = _make_mock_agent_run(status="running", started_at=_RUN_STARTED_AT)
+        runner = MagicMock()
+        runner.get_run.return_value = mock_run
+        get_result = create_agents_registry(runner, db=MagicMock())._tools["get_agent_result"].func
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents_query_tools.agent_run_task_dirty_paths",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            _record_result_payload_threads() as threads,
+        ):
+            result = await get_result(run_id=mock_run.id)
+
+        assert result["success"] is True
+        assert set(threads) == {"handoff", "payload"}
+        assert threading.get_ident() not in threads.values()
+
+
+@contextmanager
+def _record_result_payload_threads() -> Iterator[dict[str, int]]:
+    """Record the threads that read the end handoff and build the sandbox-bearing payload."""
+    threads: dict[str, int] = {}
+
+    def handoff(*_args: Any) -> None:
+        threads["handoff"] = threading.get_ident()
+
+    def payload(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        threads["payload"] = threading.get_ident()
+        return {}
+
+    with (
+        patch("gobby.mcp_proxy.tools.agents_result_payload.get_agent_end_handoff", handoff),
+        patch("gobby.mcp_proxy.tools.agents_result_payload._agent_result_payload", payload),
+    ):
+        yield threads
+
 
 class TestWaitForAgent:
     """Tests for the subscribe-and-return wait_for_agent contract."""
@@ -387,6 +430,21 @@ class TestWaitForAgent:
         assert result["notification_registered"] is False
         assert result["result"] == "done"
         assert not completion_registry.is_registered(_WAIT_RUN_ID)
+
+    @pytest.mark.asyncio
+    async def test_completed_run_payload_runs_off_the_event_loop(self) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run("success", result="done")
+        registry = create_agents_registry(
+            runner, db=MagicMock(), completion_registry=CompletionEventRegistry()
+        )
+
+        with _record_result_payload_threads() as threads:
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert result["completed"] is True
+        assert set(threads) == {"handoff", "payload"}
+        assert threading.get_ident() not in threads.values()
 
     @pytest.mark.asyncio
     async def test_unknown_run_returns_error(self) -> None:
@@ -745,6 +803,7 @@ class TestListAgentRuns:
             "branch_name": "fix/18213-agents-list-get",
             "tool_calls_count": 4,
             "turns_used": 2,
+            "seat": None,
         }
 
     @pytest.mark.asyncio
@@ -1126,6 +1185,7 @@ class TestListRunningAgents:
             "branch_name": "fix/18213-agents-list-get",
             "tool_calls_count": 7,
             "turns_used": 3,
+            "seat": None,
         }
 
     @pytest.mark.asyncio
@@ -1277,6 +1337,28 @@ class TestGetRunningAgent:
         assert result["agent"]["pid"] == 12345
         assert result["agent"]["session_id"] == "sess-456"
         assert "resume_metadata_json" not in result["agent"]
+
+    @pytest.mark.asyncio
+    async def test_agent_projection_runs_off_the_event_loop(self) -> None:
+        """The projection reads violation logs, so it must not block the loop."""
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(run_id=self.RUN_ID, status="running")
+        projected = dict(mock_run.to_dict.return_value)
+        projection_threads: list[int] = []
+
+        def project() -> dict[str, Any]:
+            projection_threads.append(threading.get_ident())
+            return projected
+
+        mock_run.to_dict.side_effect = project
+        runner.run_storage.get.return_value = mock_run
+        get_running = create_agents_registry(runner)._tools["get_running_agent"].func
+
+        result = await get_running(run_id=self.RUN_ID)
+
+        assert result["success"] is True
+        assert projection_threads
+        assert threading.get_ident() not in projection_threads
 
     @pytest.mark.asyncio
     async def test_agent_not_found(self) -> None:
@@ -2458,7 +2540,9 @@ class TestKillAgentCapturePreemptedDelivery:
             id="run-123", status="cancelled", error=None
         )
         registry = DeliveryRegistry(delivery or {"waiter-sess": True})
-        tool_registry = create_agents_registry(runner, completion_registry=registry)
+        tool_registry = create_agents_registry(
+            runner, completion_registry=cast(CompletionEventRegistry, registry)
+        )
         return tool_registry._tools["kill_agent"].func, registry
 
     @pytest.mark.asyncio

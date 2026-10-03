@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from collections import deque
-from functools import lru_cache
+import os
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +18,12 @@ from gobby.agents.sandbox_policy import (
 from gobby.paths import get_gobby_home
 
 _MAX_EXPOSED_VIOLATIONS = 100
+# A prefix this long identifies a denied command; 100 events stay near 200 KB.
+_MAX_EXPOSED_COMMAND_CHARS = 2048
 _MAX_COUNTED_VIOLATIONS = 10_000
+_MAX_TRACKED_LOGS = 512
+_MAX_TAIL_BYTES = 16 * 1024 * 1024
+_TAIL_BLOCK_BYTES = 64 * 1024
 
 
 def sandbox_list_record(raw: object, *, active: bool) -> dict[str, Any] | None:
@@ -150,54 +156,117 @@ def _read_violations(
 ) -> tuple[int, list[Any], bool]:
     if path is None:
         return 0, [], False
-    if not include_events:
-        count, truncated = _count_violation_lines(path)
-        return count, [], truncated
-    recent: deque[Any] = deque(maxlen=_MAX_EXPOSED_VIOLATIONS)
-    count = 0
-    truncated = False
+    count, truncated = _count_violation_lines(path)
+    return count, _recent_violations(path) if include_events else [], truncated
+
+
+def _recent_violations(path: Path) -> list[Any]:
+    """Decode only the newest events; a log can reach gigabytes, so never parse it whole."""
+    recent: list[Any] = []
+    pending = b""
     try:
-        with path.open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                try:
-                    value = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                count += 1
-                if include_events:
-                    recent.append(value)
-                elif count >= _MAX_COUNTED_VIOLATIONS:
-                    truncated = next(handle, None) is not None
-                    break
+        with path.open("rb") as handle:
+            position = handle.seek(0, os.SEEK_END)
+            floor = max(0, position - _MAX_TAIL_BYTES)
+            while position > floor and len(recent) < _MAX_EXPOSED_VIOLATIONS:
+                size = min(_TAIL_BLOCK_BYTES, position - floor)
+                position -= size
+                handle.seek(position)
+                lines = (handle.read(size) + pending).split(b"\n")
+                # Above the file start the first piece may continue in the block before it;
+                # at the byte ceiling that partial line is dropped.
+                pending = lines.pop(0) if position > 0 else b""
+                for line in reversed(lines):
+                    if len(recent) == _MAX_EXPOSED_VIOLATIONS:
+                        break
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line.decode("utf-8", errors="replace"))
+                        recent.append(_bounded_command(event))
+                    except json.JSONDecodeError:
+                        continue
     except OSError:
-        return 0, [], False
-    return count, list(recent), truncated
+        return []
+    recent.reverse()
+    return recent
+
+
+def _bounded_command(event: Any) -> Any:
+    """Keep a command prefix; logs already written carry commands of ~59 KB each."""
+    if not isinstance(event, dict):
+        return event
+    command = event.get("command")
+    if not isinstance(command, str) or len(command) <= _MAX_EXPOSED_COMMAND_CHARS:
+        return event
+    return {
+        **event,
+        "command": command[:_MAX_EXPOSED_COMMAND_CHARS],
+        "command_length": len(command),
+        "command_truncated": True,
+    }
+
+
+@dataclass
+class _ViolationCount:
+    """Progress through one append-only log: complete lines before ``offset`` are counted."""
+
+    identity: tuple[int, int]
+    offset: int = 0
+    lines: int = 0
+    capped: bool = False
+    size: int = -1
+    mtime_ns: int = -1
+    result: tuple[int, bool] = (0, False)
+
+
+_violation_counts: dict[str, _ViolationCount] = {}
+_violation_counts_lock = threading.Lock()
 
 
 def _count_violation_lines(path: Path) -> tuple[int, bool]:
-    """Count log lines without decoding event bodies."""
-    try:
-        stat = path.stat()
-    except OSError:
-        return 0, False
-    return _cached_violation_count(str(path), stat.st_size, stat.st_mtime_ns)
+    """Count nonblank log lines, resuming where the last count of this log stopped.
+
+    A live log grows while its run is polled, so each poll reads only the bytes appended
+    since the last one; an unterminated last line is re-read until it ends (#23279).
+    Bytes skip decoding, which halved the cold count on a 1 GB log.
+    """
+    key = str(path)
+    with _violation_counts_lock:
+        # Stat under the lock: a size taken before another poll advanced the offset
+        # would read as truncation and rescan the whole log.
+        try:
+            stat = path.stat()
+        except OSError:
+            return 0, False
+        identity = (stat.st_dev, stat.st_ino)
+        progress = _violation_counts.pop(key, None)
+        if progress is None or progress.identity != identity or stat.st_size < progress.offset:
+            progress = _ViolationCount(identity)
+        if (progress.size, progress.mtime_ns) != (stat.st_size, stat.st_mtime_ns):
+            try:
+                progress.result = _advance_violation_count(path, progress)
+            except OSError:
+                return 0, False
+            progress.size, progress.mtime_ns = stat.st_size, stat.st_mtime_ns
+        _violation_counts[key] = progress
+        if len(_violation_counts) > _MAX_TRACKED_LOGS:
+            del _violation_counts[next(iter(_violation_counts))]
+        return progress.result
 
 
-@lru_cache(maxsize=512)
-def _cached_violation_count(path: str, size: int, mtime_ns: int) -> tuple[int, bool]:
-    """Reuse a live count until the external runtime changes the log."""
-    del size, mtime_ns
-    count = 0
-    truncated = False
-    try:
-        with Path(path).open(encoding="utf-8", errors="replace") as handle:
-            for line in handle:
-                if not line.strip():
-                    continue
-                count += 1
-                if count >= _MAX_COUNTED_VIOLATIONS:
-                    truncated = next(handle, None) is not None
-                    break
-    except OSError:
-        return 0, False
-    return count, truncated
+def _advance_violation_count(path: Path, progress: _ViolationCount) -> tuple[int, bool]:
+    with path.open("rb") as handle:
+        handle.seek(progress.offset)
+        if progress.capped:
+            return progress.lines, bool(handle.read(1))
+        for line in handle:
+            if not line.endswith(b"\n"):
+                return progress.lines + bool(line.strip()), False
+            progress.offset += len(line)
+            if line.strip():
+                progress.lines += 1
+                if progress.lines >= _MAX_COUNTED_VIOLATIONS:
+                    progress.capped = True
+                    return progress.lines, bool(handle.read(1))
+    return progress.lines, False

@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "health_ok",
   "family": "health",
+  "backend": "up",
   "credential": "none",
   "request": {
     "method": "GET",

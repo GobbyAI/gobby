@@ -223,6 +223,30 @@ async def test_transient_operation_error_resets_client(monkeypatch) -> None:
     assert store._next_retry_at == 1005.0
 
 
+@pytest.mark.asyncio
+async def test_fenced_serving_lease_keeps_client_and_resumes_without_backoff() -> None:
+    """A lease fence is not a Qdrant outage: fail the call, keep the client, no backoff."""
+    fenced = True
+
+    def serving_guard() -> None:
+        if fenced:
+            raise EmbeddingGenerationLeaseLost("Embedding generation serving is fenced")
+
+    store = VectorStore(collection_name="fence_test", embedding_dim=4, serving_guard=serving_guard)
+    client = MagicMock()
+    client.scroll.return_value = ([SimpleNamespace(id=MEM_1)], None)
+    store._client = client
+
+    with pytest.raises(VectorStoreUnavailableError):
+        await store.scroll_ids()
+
+    assert store._client is client
+    assert store._next_retry_at == 0.0
+
+    fenced = False
+    assert await store.scroll_ids() == [MEM_1]
+
+
 def test_count_sync_surface_removed() -> None:
     store = VectorStore(collection_name="sync_test")
     assert not hasattr(store, "count_sync")

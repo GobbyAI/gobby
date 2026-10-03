@@ -990,6 +990,12 @@
           "description": "Use gclient command-mode verbs and pane refs",
           "path": "references/admin/gclient-commands.md",
           "when": "Inspecting or operating gclient workspaces from shell command mode"
+        },
+        {
+          "name": "gclient-visual-capture",
+          "description": "Capture the live gclient window as an image for visual QA",
+          "path": "references/admin/gclient-visual-capture.md",
+          "when": "Checking live gclient layout, colors, or chrome, or reproducing a user layout report"
         }
       ]
     },

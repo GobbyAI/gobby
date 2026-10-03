@@ -1,6 +1,6 @@
 [package]
 name = "gobby-daemon"
-version = "0.4.3"
+version = "0.4.5"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -25,14 +25,22 @@ axum = { version = "0.8", default-features = false }
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
 gobby-core = { path = "../gcore", version = "0.10.0", features = ["postgres"] }
+gobby-terminals = { path = "../gterminals" }
 http-body-util = "0.1"
 hyper = { version = "1", features = ["client", "http1", "server"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "server", "tokio"] }
+# ring only, matching the workspace's rustls; aws-lc-rs stays out of the build.
+rcgen = { version = "0.13", default-features = false, features = ["crypto", "pem", "ring"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 time = "0.3"
-tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync"] }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "ring", "tls12"] }
 tower-service = "0.3"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 assert_cmd = "2"

@@ -17,7 +17,7 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
 
-ADVERSARY_PATH = files("gobby").joinpath("install/shared/workflows/agents/plan-adversary.yaml")
+ADVERSARY_PATH = files("gobby").joinpath("install/shared/workflows/agents/plan-adversary-old.yaml")
 
 
 @pytest.fixture(scope="module")

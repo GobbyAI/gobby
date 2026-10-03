@@ -23,7 +23,7 @@ from gobby.servers.websocket.terminal_ws import TerminalWsMixin
 from gobby.servers.websocket.terminal_ws_control import TerminalControlMixin
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.machines import Machine
-from gobby.storage.terminals import AttachLocator
+from gobby.storage.terminals import AttachLocator, Terminal
 from gobby.storage.workspaces import Workspace, WorkspacePane, WorkspaceTab
 from gobby.terminals import web_spawn
 from gobby.terminals.actor_scope import OPERATOR_ACTOR
@@ -643,3 +643,37 @@ async def test_control_result_carries_the_holder_observer_answer() -> None:
     sent = _sent(websocket)
     assert sent["host_input_granted"] is True
     assert sent | {"host_input_granted": None} == _message("control_result.json")
+
+
+class _ScrollFrame:
+    def __init__(self) -> None:
+        self.offsets: list[int] = []
+
+    async def set_scroll_offset(self, rows: int) -> None:
+        self.offsets.append(rows)
+
+
+@pytest.mark.asyncio
+async def test_scroll_offset_makes_no_storage_call() -> None:
+    """D1a.3: scroll reads the backend from the attach snapshot, not the terminals row."""
+    server, manager, _ = _server()
+    await server.lease_registry.attach(
+        TERMINAL_ID,
+        attachment_id=ATTACHMENT_ID,
+        backend="native",
+        terminal=cast(Terminal, manager.row),
+    )
+    storage = MagicMock(side_effect=AssertionError("scroll offset read the terminals row"))
+    cast(Any, manager).get = storage
+    frame = _ScrollFrame()
+    cast(Any, server)._proxy = lambda: SimpleNamespace(frame_for=lambda _attachment_id: frame)
+    websocket = MockWebSocket()
+
+    await TerminalWsMixin._handle_terminal_set_scroll_offset(
+        server, websocket, _message("set_scroll_offset.json")
+    )
+
+    storage.assert_not_called()
+    assert frame.offsets == [_sent(websocket)["applied_rows"]]
+    _assert_golden("scroll_offset_applied.json", _sent(websocket))
+    await server.lease_registry.shutdown_lifecycle_publication()

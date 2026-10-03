@@ -566,7 +566,7 @@ async def test_execute_pipeline_missing_target_still_fails(
 
 @pytest.mark.asyncio
 async def test_execute_pipeline_resolves_executor_for_job_project(
-    cron_storage: CronJobStorage,
+    cron_storage: CronJobStorage, temp_db: HubDatabase
 ) -> None:
     pipeline = SimpleNamespace(
         name="cron-test-pipeline",
@@ -580,7 +580,7 @@ async def test_execute_pipeline_resolves_executor_for_job_project(
     execute_pipeline = AsyncMock(return_value=None)
     pipeline_executor = SimpleNamespace(
         loader=SimpleNamespace(load_pipeline=load_pipeline),
-        session_manager=None,
+        session_manager=SessionManager(temp_db),
         execution_manager=SimpleNamespace(create_execution=create_execution),
         execute=execute_pipeline,
     )
@@ -666,7 +666,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
 
 @pytest.mark.asyncio
 async def test_execute_pipeline_background_success_completes_cron_run(
-    cron_storage: CronJobStorage,
+    cron_storage: CronJobStorage, temp_db: HubDatabase
 ) -> None:
     pipeline = MagicMock()
     pipeline.name = "cron-success"
@@ -675,7 +675,7 @@ async def test_execute_pipeline_background_success_completes_cron_run(
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
     pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
-    pipeline_executor.session_manager = None
+    pipeline_executor.session_manager = SessionManager(temp_db)
     execution = MagicMock()
     execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0205"
     pipeline_executor.execution_manager = MagicMock()
@@ -705,7 +705,7 @@ async def test_execute_pipeline_background_success_completes_cron_run(
 
 @pytest.mark.asyncio
 async def test_execute_pipeline_background_failure_fails_cron_run(
-    cron_storage: CronJobStorage,
+    cron_storage: CronJobStorage, temp_db: HubDatabase
 ) -> None:
     error = "pipeline exploded:" + "p" * 7_000
     pipeline = MagicMock()
@@ -715,7 +715,7 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
     pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
-    pipeline_executor.session_manager = None
+    pipeline_executor.session_manager = SessionManager(temp_db)
     execution = MagicMock()
     execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0206"
     pipeline_executor.execution_manager = MagicMock()
@@ -747,6 +747,7 @@ async def test_execute_pipeline_background_failure_fails_cron_run(
 @pytest.mark.asyncio
 async def test_execute_pipeline_background_timeout_fails_cron_run(
     cron_storage: CronJobStorage,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A hung background pipeline is cancelled and terminalizes its cron run."""
@@ -757,7 +758,7 @@ async def test_execute_pipeline_background_timeout_fails_cron_run(
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
     pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
-    pipeline_executor.session_manager = None
+    pipeline_executor.session_manager = SessionManager(temp_db)
     execution = MagicMock()
     execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0207"
     pipeline_executor.execution_manager = MagicMock()
@@ -774,11 +775,12 @@ async def test_execute_pipeline_background_timeout_fails_cron_run(
 
     pipeline_executor.execute = AsyncMock(side_effect=hang)
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
-    monkeypatch.setattr(executor.config, "running_timeout_seconds", 0.01)
     job = _make_job(cron_storage, "pipeline", {"pipeline_name": "cron-timeout"})
     run = cron_storage.create_run(job.id)
 
     dispatched = await executor.execute(job, run)
+    # Bound only the background pipeline; the launch writes a real cron session.
+    monkeypatch.setattr(executor.config, "running_timeout_seconds", 0.01)
     await asyncio.gather(*list(executor._background_tasks))
 
     persisted = cron_storage.get_run(run.id)
@@ -826,7 +828,7 @@ async def test_execute_pipeline_default_overlap_skips_active_child(
 
 @pytest.mark.asyncio
 async def test_execute_pipeline_overlap_allow_launches_another_child(
-    cron_storage: CronJobStorage,
+    cron_storage: CronJobStorage, temp_db: HubDatabase
 ) -> None:
     """overlap_policy=allow bypasses active child overlap checks."""
     pipeline = MagicMock()
@@ -835,7 +837,7 @@ async def test_execute_pipeline_overlap_allow_launches_another_child(
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
     pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
-    pipeline_executor.session_manager = None
+    pipeline_executor.session_manager = SessionManager(temp_db)
     execution = MagicMock()
     execution.id = "eeeeeeee-eeee-4eee-8eee-eeeeeeee0203"
     pipeline_executor.execution_manager = MagicMock()

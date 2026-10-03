@@ -32,7 +32,7 @@ mandatory; enhancement and taskless adversarial review are recommended but
 optional.
 
 Planning has three roles: the **planner** drafts and folds in changes, the
-optional **plan-enhancer** proposes constructive Better/Bigger improvements,
+optional **plan-enhancer-old** proposes constructive Better/Bigger improvements,
 and the optional **plan-adversary** reviews correctness and contract
 compliance. Neither reviewer edits the plan. Base validation and human approval
 remain the mandatory gates.
@@ -103,7 +103,7 @@ source of truth after daemon startup and sync.
 
 After materialization and base validation, `/gobby plan` offers an optional
 enhancement loop. When selected, the parent session spawns
-`plan-enhancer-taskless` (no `task_id`, `isolation="none"`) with the plan path,
+`plan-enhancer-taskless-old` (no `task_id`, `isolation="none"`) with the plan path,
 round number, max rounds, and parent session id. The enhancer loads
 `gobby:references/plan/enhancement.md` and standalone `proportionality`, then returns ranked Better/Bigger
 suggestions to the parent via `send_message` and calls `end_agent_run`. It never
@@ -118,7 +118,7 @@ the user also selects adversarial review, accepted changes pass that review.
 
 ## Optional Adversarial Review
 
-Taskless review uses `plan-adversary-taskless`. After project-aware validation, the parent calls `prepare_plan_review_round`,
+Taskless review uses `plan-adversary-taskless-old`. After project-aware validation, the parent calls `prepare_plan_review_round`,
 passes the returned evidence ID, canonical path, clean deterministic sweep report,
 round number, review cap, and parent session ID, then binds the spawned run with
 `bind_evidence_run`. Spawn/bind failure expires the evidence; successful binding
@@ -178,7 +178,7 @@ Josh's standing seats (Plan Writer, Program Director, Plan Adversary) run one
 interactive flow per plan, set on 2026-09-26, with no numbered review rounds:
 
 1. The Plan Writer drafts the plan and passes base validation.
-2. The Writer spawns `plan-enhancer-taskless` once and sends its edits to the
+2. The Writer spawns `plan-enhancer-taskless-old` once and sends its edits to the
    Program Director.
 3. The Program Director disposes each enhancer edit, or puts the product
    decision to Josh through the Assistant.

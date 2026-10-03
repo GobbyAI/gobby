@@ -46,6 +46,8 @@ impl Workspace<LiveDaemon> {
             daemon_error: None,
             event_rx: None,
             attached_generation: HashMap::new(),
+            host_recovered: HashSet::new(),
+            host_recovering: HashSet::new(),
             pending_spawns: HashSet::new(),
             status_message: None,
             exit_reason: None,
@@ -53,6 +55,7 @@ impl Workspace<LiveDaemon> {
             workspace_model: None,
             pending_placements: HashSet::new(),
             placed_panes: Vec::new(),
+            requested_focus: None,
             pending_control: None,
             next_control_seq: 0,
         }
