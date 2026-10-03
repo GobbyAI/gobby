@@ -1,11 +1,13 @@
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 import { ActivityPanel } from "../ActivityPanel";
 import {
   ACTIVITY_PANEL_DROPDOWN_TABS,
   ACTIVITY_PANEL_TABS,
+  type ActivityTab,
 } from "../ActivityPanelTabs";
 vi.mock("../../shared/ResizeHandle", () => ({
   ResizeHandle: ({
@@ -43,7 +45,17 @@ vi.mock("../PipelinesTab", () => ({
 }));
 
 vi.mock("../TasksTab", () => ({
-  TasksTab: () => <div>Tasks Tab</div>,
+  TasksTab: ({ focusTaskRef }: { focusTaskRef?: string | null }) => (
+    <div data-focus-task-ref={focusTaskRef ?? ""}>Tasks Tab</div>
+  ),
+}));
+
+vi.mock("../FeedbackTab", () => ({
+  FeedbackTab: ({ onOpenTask }: { onOpenTask: (taskRef: string) => void }) => (
+    <button type="button" onClick={() => onOpenTask("#23401")}>
+      Open filed task
+    </button>
+  ),
 }));
 
 vi.mock("../FilesTab", () => ({
@@ -391,6 +403,36 @@ describe("ActivityPanel", () => {
     );
 
     expect(screen.getByText("Changes Tab")).toBeInTheDocument();
+  });
+
+  it("opens a filed feedback task in the Tasks tab", async () => {
+    const user = userEvent.setup();
+    function Harness() {
+      const [tab, setTab] = useState<ActivityTab>("feedback");
+      return (
+        <ActivityPanel
+          mode={"split"}
+          onToggleChat={vi.fn()}
+          panelWidth={320}
+          onWidthChange={vi.fn()}
+          activeTab={tab}
+          onTabChange={setTab}
+          plans={new Map()}
+          activePlan={null}
+          onOpenPlan={vi.fn()}
+          onSetPlanVersion={vi.fn()}
+          isMobile={false}
+        />
+      );
+    }
+    render(<Harness />);
+
+    await user.click(screen.getByRole("button", { name: "Open filed task" }));
+
+    expect(screen.getByText("Tasks Tab")).toHaveAttribute(
+      "data-focus-task-ref",
+      "#23401",
+    );
   });
 
   it("renders MCP under the MCP tab", () => {

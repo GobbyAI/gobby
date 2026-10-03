@@ -1,5 +1,6 @@
 import {
   useState,
+  useCallback,
   useEffect,
   useRef,
   Suspense,
@@ -346,6 +347,10 @@ export function ActivityPanel({
   // tri-state owns chat/split/panel, mobile owns chat/panel as an overlay.
   const [viewportWidth, setViewportWidth] = useState(() => window.innerWidth);
   const [showMobileTabMenu, setShowMobileTabMenu] = useState(false);
+  // A task ref opened from another tab (Feedback's filed tasks) for the Tasks
+  // tab to select; cleared once the Tasks tab has resolved it.
+  const [focusTaskRef, setFocusTaskRef] = useState<string | null>(null);
+  const handleFocusTaskHandled = useCallback(() => setFocusTaskRef(null), []);
   // Expanded, the terminal takes the whole panel: the tab bar steps aside
   // and the terminal's own Collapse button brings it back.
   const [terminalExpanded, setTerminalExpanded] = useState(false);
@@ -418,6 +423,13 @@ export function ActivityPanel({
       setShowMobileTabMenu(false);
     });
   };
+  const handleOpenTask = (taskRef: string) => {
+    void dirtyGuardValue.guardedRun(() => {
+      setFocusTaskRef(taskRef);
+      onTabChange("tasks");
+      setShowMobileTabMenu(false);
+    });
+  };
 
   const tabContent = () => {
     switch (activeTab) {
@@ -457,7 +469,7 @@ export function ActivityPanel({
       case "cron":
         return <CronTab projectId={projectId} />;
       case "feedback":
-        return <FeedbackTab />;
+        return <FeedbackTab onOpenTask={handleOpenTask} />;
       case "traces":
         return <TracesTab projectId={projectId} />;
       case "mcp":
@@ -483,7 +495,14 @@ export function ActivityPanel({
       case "rules":
         return <RulesTab projectId={projectId} />;
       case "tasks":
-        return <TasksTab projectId={projectId} chatSessionId={chatSessionId} />;
+        return (
+          <TasksTab
+            projectId={projectId}
+            chatSessionId={chatSessionId}
+            focusTaskRef={focusTaskRef}
+            onFocusHandled={handleFocusTaskHandled}
+          />
+        );
       case "files":
         return <FilesTab projectId={projectId} onAddToChat={onAddFileToChat} />;
       case "plans":

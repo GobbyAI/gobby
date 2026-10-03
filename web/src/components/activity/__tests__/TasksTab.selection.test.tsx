@@ -8,6 +8,7 @@ import {
 import {
   installResizeObserverMock,
   setupDefaultFetchRoutes,
+  taskList,
 } from "./TasksTab.setup";
 
 vi.mock("../../../hooks/useWebSocketEvent", () => ({
@@ -70,4 +71,60 @@ it("keeps a row clicked before the first-row default selection is applied", asyn
     screen.getByText(title).closest('[role="treeitem"]');
   expect(row("Open task 2")).toHaveAttribute("aria-selected", "true");
   expect(row("Review approved task")).toHaveAttribute("aria-selected", "false");
+});
+
+it("selects the task a focus ref resolves to, then reports it handled", async () => {
+  // Routes match first-wins, so the ref route must precede the default detail route.
+  mockFetch.resetRoutes();
+  mockFetch.mockJsonResponse("/api/tasks/%23412", { task: taskList[3] });
+  setupDefaultFetchRoutes(mockFetch);
+  const onFocusHandled = vi.fn();
+
+  render(
+    <TasksTab
+      projectId="proj-1"
+      focusTaskRef="#412"
+      onFocusHandled={onFocusHandled}
+    />,
+  );
+
+  const row = (title: string) =>
+    screen.getByText(title).closest('[role="treeitem"]');
+  await vi.waitFor(() => {
+    expect(row("Open task 3")).toHaveAttribute("aria-selected", "true");
+  });
+  expect(row("Review approved task")).toHaveAttribute("aria-selected", "false");
+  expect(onFocusHandled).toHaveBeenCalledOnce();
+});
+
+it("asks for a retry when a focus ref fails to load", async () => {
+  mockFetch.resetRoutes();
+  mockFetch.mockErrorResponse("/api/tasks/%23412", 500);
+  setupDefaultFetchRoutes(mockFetch);
+
+  render(<TasksTab projectId="proj-1" focusTaskRef="#412" />);
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Couldn't load task #412. Try again.",
+  );
+});
+
+it("says so when a focus ref does not resolve", async () => {
+  mockFetch.resetRoutes();
+  mockFetch.mockErrorResponse("/api/tasks/%23999", 404);
+  setupDefaultFetchRoutes(mockFetch);
+  const onFocusHandled = vi.fn();
+
+  render(
+    <TasksTab
+      projectId="proj-1"
+      focusTaskRef="#999"
+      onFocusHandled={onFocusHandled}
+    />,
+  );
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Task #999 was not found.",
+  );
+  expect(onFocusHandled).toHaveBeenCalledOnce();
 });

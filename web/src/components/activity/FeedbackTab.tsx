@@ -29,7 +29,14 @@ function rowCount(count: number): string {
   return `${count} ${count === 1 ? "row" : "rows"}`;
 }
 
-export const FeedbackTab = memo(function FeedbackTab() {
+interface FeedbackTabProps {
+  /** Opens a filed task by ref (e.g. "#23401") in the Tasks tab. */
+  onOpenTask: (taskRef: string) => void;
+}
+
+export const FeedbackTab = memo(function FeedbackTab({
+  onOpenTask,
+}: FeedbackTabProps) {
   const { status, runs, isLoading, error } = useFeedbackReview();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [topHeight, setTopHeight] = useState(45);
@@ -106,7 +113,7 @@ export const FeedbackTab = memo(function FeedbackTab() {
             minHeight={15}
             maxHeight={80}
           />
-          <RunDetail run={selectedRun} />
+          <RunDetail run={selectedRun} onOpenTask={onOpenTask} />
         </>
       )}
     </div>
@@ -139,7 +146,13 @@ function StatusStrip({ status }: { status: FeedbackStatus }) {
   );
 }
 
-function RunDetail({ run }: { run: FeedbackRun }) {
+function RunDetail({
+  run,
+  onOpenTask,
+}: {
+  run: FeedbackRun;
+  onOpenTask: (taskRef: string) => void;
+}) {
   const { kind, label } = runStatus(run.status);
   const filed = run.actions?.filed ?? [];
   const deduplicated = run.actions?.deduplicated ?? 0;
@@ -168,19 +181,22 @@ function RunDetail({ run }: { run: FeedbackRun }) {
           ) : (
             <ul aria-label="Filed tasks" className="m-0 list-none p-0">
               {filed.map((task) => (
-                <li
-                  key={task.task_ref}
-                  className="flex min-w-0 items-baseline gap-2 py-0.5 text-xs"
-                >
-                  <span className="shrink-0 font-mono text-foreground select-all">
-                    {task.task_ref}
-                  </span>
-                  <span
-                    className="truncate text-muted-foreground"
-                    title={task.title}
+                <li key={task.task_ref} className="min-w-0">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    aria-label={`Open task ${task.task_ref}: ${task.title}`}
+                    className="w-full min-w-0 justify-start gap-2 px-1.5 text-left"
+                    onClick={() => onOpenTask(task.task_ref)}
                   >
-                    {task.title}
-                  </span>
+                    <span className="shrink-0 font-mono text-foreground">
+                      {task.task_ref}
+                    </span>
+                    <span className="truncate" title={task.title}>
+                      {task.title}
+                    </span>
+                  </Button>
                 </li>
               ))}
             </ul>

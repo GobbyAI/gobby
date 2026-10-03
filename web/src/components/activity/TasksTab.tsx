@@ -51,6 +51,9 @@ import { useTasksTabMenuActions } from "./useTasksTabMenuActions";
 interface TasksTabProps {
   projectId?: string | null;
   chatSessionId?: string | null;
+  /** Task ref or id to select once resolved; cleared via onFocusHandled. */
+  focusTaskRef?: string | null;
+  onFocusHandled?: () => void;
 }
 
 function isGobbyTaskDetailSnapshot(task: GobbyTask): task is GobbyTaskDetail {
@@ -74,6 +77,8 @@ function mergeTaskSnapshotIntoDetail(
 export const TasksTab = memo(function TasksTab({
   projectId,
   chatSessionId,
+  focusTaskRef,
+  onFocusHandled,
 }: TasksTabProps) {
   const { registry: stagesRegistry } = useStagesRegistry();
   const [tasks, setTasks] = useState<GobbyTask[]>([]);
@@ -356,6 +361,39 @@ export const TasksTab = memo(function TasksTab({
       });
     return () => controller.abort();
   }, [selectedTaskId]);
+
+  // Resolve a ref opened from another tab (e.g. "#23401") to its task id and
+  // select it; the detail route accepts refs as well as ids.
+  useEffect(() => {
+    if (!focusTaskRef) return;
+    const controller = new AbortController();
+    fetch(`${getBaseUrl()}/api/tasks/${encodeURIComponent(focusTaskRef)}`, {
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      })
+      .then((data) => {
+        const raw = extractTaskPayload(data);
+        if (raw?.id) {
+          setActionError(null);
+          setSelectedTaskId(raw.id);
+        } else {
+          setActionError(`Task ${focusTaskRef} was not found.`);
+        }
+      })
+      .catch((err) => {
+        if (err.name !== "AbortError") {
+          setActionError(`Couldn't load task ${focusTaskRef}. Try again.`);
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) onFocusHandled?.();
+      });
+    return () => controller.abort();
+  }, [focusTaskRef, onFocusHandled]);
 
   // Fetch dependencies + subtasks alongside the detail. Each call uses its own
   // controller so a stale response from a previous selection can't overwrite
