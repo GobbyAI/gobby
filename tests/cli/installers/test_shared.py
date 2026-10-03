@@ -12,6 +12,7 @@ Tests cover:
 import json
 import os
 from pathlib import Path
+from typing import IO, Any
 from unittest.mock import patch
 
 import pytest
@@ -833,7 +834,7 @@ class TestEdgeCases:
         original_open = open
         call_count = [0]
 
-        def mock_open_fn(path, mode="r", *args, **kwargs):
+        def mock_open_fn(path: Path, mode: str = "r", *args: Any, **kwargs: Any) -> IO[Any]:
             call_count[0] += 1
             # Fail on the write call (mode "w")
             if "w" in str(mode):

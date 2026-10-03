@@ -1051,16 +1051,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/installers/test_shared.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 835,
-      "message": "Function is missing a type annotation",
-      "occurrences": 2,
-      "path": "tests/cli/installers/test_shared.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/installers/test_tmux_config.py::::mypy:operator",
       "issue_code": "mypy:operator",
       "line": 161,

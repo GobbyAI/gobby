@@ -53,7 +53,7 @@ repos:
   # Moved from pre-commit to avoid auto-fix interference with concurrent agents
   # ==========================================================================
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.6
+    rev: v0.14.13
     hooks:
       # Linter - check only, no auto-fix (agents handle formatting)
       - id: ruff
