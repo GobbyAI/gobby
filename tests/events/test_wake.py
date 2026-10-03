@@ -1757,6 +1757,23 @@ class TestComposerGate:
         assert ledger.recorded == []
 
     @pytest.mark.asyncio
+    async def test_draft_deferral_never_logs_the_draft_text(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Operator drafts are user content and may hold secrets; log state and length only."""
+        draft = "export TOKEN=s3cret-value"
+        probe = AsyncMock(return_value=TerminalActivity(ComposerRead("draft", draft)))
+        dispatcher = self._dispatcher(probe, AsyncMock())
+
+        with caplog.at_level(logging.DEBUG, logger="gobby.events.wake"):
+            await dispatcher.dispatch_live_wake(WAKE_SESSION_ID)
+
+        logged = "\n".join(record.getMessage() for record in caplog.records)
+        assert f"{len(draft)} chars" in logged
+        assert "s3cret" not in logged
+        assert "TOKEN" not in logged
+
+    @pytest.mark.asyncio
     async def test_urgent_wake_defers_when_the_composer_holds_a_draft(self) -> None:
         from gobby.agents.idle_detector import ComposerRead
         from gobby.events.live_wake import TerminalActivity, composer_occupied_result

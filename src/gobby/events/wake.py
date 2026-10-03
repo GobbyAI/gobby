@@ -713,13 +713,11 @@ class WakeDispatcher:
         if state == "empty":
             return None, True
         if state == "draft":
-            excerpt = " ".join((activity.composer.line or "").split())
-            if len(excerpt) > 160:
-                excerpt = f"{excerpt[:157]}..."
+            # The draft is operator content and may hold secrets: log its length only.
             logger.warning(
-                "wake for session %s deferred: composer holds an operator draft: %s",
+                "wake for session %s deferred: composer holds an operator draft (%d chars)",
                 session_id,
-                excerpt,
+                len(activity.composer.line or ""),
             )
             return composer_occupied_result(session_id, method=method), False
         return composer_unconfirmed_result(session_id, method=method), False
