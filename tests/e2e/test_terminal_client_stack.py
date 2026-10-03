@@ -430,17 +430,34 @@ def _roster_entry(client: httpx.Client, session_id: str) -> dict[str, Any]:
     return {}
 
 
-def _respond(client: httpx.Client, entry: dict[str, Any]) -> None:
-    attention = entry.get("attention")
-    assert isinstance(attention, dict)
-    response = client.post(
-        f"/api/attention/{entry['entry_id']}/respond",
-        json={
-            "attention_id": attention["attention_id"],
-            "fingerprint": attention["fingerprint"],
-            "answer": {"option": 1},
-        },
+def _respond(client: httpx.Client, session_id: str) -> None:
+    # The stub repaints every 0.4s, so the pane can move past the fingerprint
+    # read from the roster before the answer lands. Respond refuses that with a
+    # 409 naming the moved identity; re-read the current episode and answer it.
+    def answered() -> httpx.Response | None:
+        entry = _roster_entry(client, session_id)
+        if not entry:
+            return None
+        attention = entry["attention"]
+        response = client.post(
+            f"/api/attention/{entry['entry_id']}/respond",
+            json={
+                "attention_id": attention["attention_id"],
+                "fingerprint": attention["fingerprint"],
+                "answer": {"option": 1},
+            },
+        )
+        if response.status_code == 409 and response.json()["detail"]["code"] in {
+            "prompt_changed",
+            "stale_episode",
+        }:
+            return None
+        return response
+
+    response = wait_for_condition(
+        answered, timeout=15.0, interval=0.5, description=f"answer for {session_id}"
     )
+    assert response is not None
     assert response.status_code == 200, response.text
 
 
@@ -619,13 +636,8 @@ async def test_terminal_client_stack_end_to_end(
             f"running={running.text[:1500]}; roster={roster.text[:2000]}"
         ) from exc
     assert _is_item_pair(attention)
-    native_entry, direct_entry = attention
-    _respond(client, native_entry)
-    # The first response can advance the other CLI's prompt. Read its current
-    # fingerprint immediately before answering the second entry.
-    current_direct_entry = _roster_entry(client, direct_session)
-    assert current_direct_entry, direct_entry
-    _respond(client, current_direct_entry)
+    _respond(client, native_session)
+    _respond(client, direct_session)
     await _assert_input_reaches(native_frames, "ANSWERED:", description="native attention answer")
     await _assert_input_reaches(direct_frames, "ANSWERED:", description="direct attention answer")
 
