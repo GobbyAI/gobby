@@ -1048,8 +1048,9 @@ def test_gclient_reaches_workspace(daemon_instance: DaemonInstance) -> None:
         _wait_for_host(http, daemon_instance)
     with _gclient(daemon_instance) as client:
         # The sidebar bands are Machines / Projects / Agents / Terminals
-        # (`SidebarSection::title`, crates/gclient/src/ui/hit.rs).
-        client.expect("Terminals")
+        # (`SidebarSection::title`, crates/gclient/src/ui/hit.rs); an empty
+        # Terminals band is hidden, so the startup sidebar shows Agents.
+        client.expect("Agents")
         # Startup opens no shell of its own, so the empty workspace says so
         # (crates/gclient/tests/client_loop.rs::
         # first_run_does_not_open_a_shell_or_auto_open_roster_terminals).
@@ -1097,7 +1098,7 @@ async def test_gclient_reorders_tabs_and_moves_a_running_pane(
         return latest
 
     with _gclient(daemon_instance) as client:
-        await asyncio.to_thread(client.expect, "Terminals")
+        await asyncio.to_thread(client.expect, "Agents")
         # Startup opens nothing, so place one running pane to reorder and
         # move; the two chords below then bring the tab count to three.
         placed_id = await _shell(daemon_instance)
