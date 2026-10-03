@@ -4969,15 +4969,15 @@ def test_chunked_derivation_matches_unchunked_derivation_in_order(
     assert resumed == _derive_transcript_evidence_sync(*args, snapshot)
 
 
-def test_payload_shell_does_not_grow_with_record_count() -> None:
-    # The shell is pickled before the first yield and unpickled after the last chunk,
-    # each in one uninterrupted step. A shell of fixed size keeps both steps bounded
+def test_payload_envelope_does_not_grow_with_record_count() -> None:
+    # The envelope is pickled before the first yield and unpickled after the last chunk,
+    # each in one uninterrupted step. An envelope of fixed size keeps both steps bounded
     # however many records a resumed snapshot or derived result carries.
-    def shell(records: int) -> bytes:
+    def envelope(records: int) -> bytes:
         runs = tuple(_session_run("session-1", f"cmd {i}", BASE_TIME, i) for i in range(records))
-        return encode((runs, list(runs))).shell
+        return encode((runs, list(runs))).envelope
 
-    assert len(shell(CHUNK_RECORDS)) == len(shell(8 * CHUNK_RECORDS))
+    assert len(envelope(CHUNK_RECORDS)) == len(envelope(8 * CHUNK_RECORDS))
 
 
 def _drop_last_chunk(payload: ChunkedPayload) -> ChunkedPayload:
