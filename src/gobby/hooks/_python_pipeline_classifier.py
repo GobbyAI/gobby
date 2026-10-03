@@ -9,6 +9,7 @@ unsupported dynamic execution.
 """
 
 import ast
+from collections import Counter
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -74,6 +75,8 @@ _PYTHON_PIPELINE_BLOCKED_NODES = (
 _PYTHON_REFLECTION_ESCAPE_NAMES = frozenset(
     {"__import__", "attrgetter", "compile", "delattr", "eval", "exec", "getattr", "setattr"}
 )
+# Namespace handles rebind names without a binding site the AST can count.
+_PYTHON_NAMESPACE_ESCAPE_NAMES = frozenset({"f_globals", "f_locals", "globals", "locals", "vars"})
 _PYTHON_METADATA_DUNDER_ATTRIBUTES = frozenset(
     {"__doc__", "__file__", "__module__", "__name__", "__version__"}
 )
@@ -111,6 +114,41 @@ _PYTHON_FILESYSTEM_MUTATION_METHODS = frozenset(
         "unlink",
         "write_bytes",
         "write_text",
+    }
+)
+
+# These properties contain detached strings/parts; other properties may retain a Path.
+_PYTHON_PATH_INSPECTION_ATTRIBUTES = frozenset(
+    {"anchor", "drive", "name", "parts", "root", "stem", "suffix", "suffixes"}
+)
+# Only direct calls qualify. A bound method itself exposes its receiver through __self__.
+# Other methods may return the receiver or retain it in a lazy result.
+_PYTHON_PATH_NONESCAPING_METHODS = _PYTHON_FILESYSTEM_MUTATION_METHODS | frozenset(
+    {
+        "as_posix",
+        "as_uri",
+        "exists",
+        "full_match",
+        "group",
+        "is_absolute",
+        "is_block_device",
+        "is_char_device",
+        "is_dir",
+        "is_fifo",
+        "is_file",
+        "is_mount",
+        "is_relative_to",
+        "is_reserved",
+        "is_socket",
+        "is_symlink",
+        "lstat",
+        "match",
+        "open",
+        "owner",
+        "read_bytes",
+        "read_text",
+        "samefile",
+        "stat",
     }
 )
 _PYTHON_PROCESS_CALLS = frozenset(
@@ -215,37 +253,50 @@ def _argument_names(arguments: ast.arguments) -> frozenset[str]:
     )
 
 
-def _rebound_names(tree: ast.AST) -> frozenset[str]:
-    """Every name the script binds other than through ``from ... import``."""
-    names: set[str] = set()
+def _binding_counts(tree: ast.AST) -> Counter[str]:
+    """Count every site where the script binds a name other than through imports."""
+    names: Counter[str] = Counter()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
-            names.add(node.id)
-        elif isinstance(node, ast.FunctionDef):
-            names.add(node.name)
+            names[node.id] += 1
+        elif isinstance(
+            node,
+            ast.FunctionDef
+            | ast.AsyncFunctionDef
+            | ast.ClassDef
+            | ast.TypeVar
+            | ast.ParamSpec
+            | ast.TypeVarTuple,
+        ):
+            names[node.name] += 1
         elif isinstance(node, ast.arg):
-            names.add(node.arg)
+            names[node.arg] += 1
         elif isinstance(node, ast.ExceptHandler) and node.name:
-            names.add(node.name)
+            names[node.name] += 1
         elif isinstance(node, ast.MatchAs | ast.MatchStar) and node.name:
-            names.add(node.name)
+            names[node.name] += 1
         elif isinstance(node, ast.MatchMapping) and node.rest:
-            names.add(node.rest)
-    return frozenset(names)
+            names[node.rest] += 1
+    return names
 
 
-def _imported_bindings(tree: ast.AST) -> Mapping[str, str]:
-    """Map a bound import name to its canonical module or member path."""
+def _imported_bindings(tree: ast.AST) -> Mapping[str, str] | None:
+    """Map stable import names to canonical paths, or refuse conflicting identities."""
     bindings: dict[str, str] = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
                 bound_name = alias.asname or alias.name.partition(".")[0]
+                if bindings.get(bound_name, alias.name) != alias.name:
+                    return None
                 bindings[bound_name] = alias.name
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 bound_name = alias.asname or alias.name
-                bindings[bound_name] = f"{node.module}.{alias.name}"
+                canonical_name = f"{node.module}.{alias.name}"
+                if bindings.get(bound_name, canonical_name) != canonical_name:
+                    return None
+                bindings[bound_name] = canonical_name
     return bindings
 
 
@@ -273,10 +324,27 @@ def _call_name(node: ast.Call, imported_bindings: Mapping[str, str]) -> str | No
 def _path_value_names(
     tree: ast.AST,
     imported_bindings: Mapping[str, str],
+    binding_counts: Counter[str],
 ) -> Mapping[str, str | None]:
-    """Map names bound to ``pathlib.Path(...)`` to their literal path, or None."""
+    """Map names bound to ``pathlib.Path(...)`` to their literal path, or None.
+
+    A name keeps its literal only when every binding of it is that same literal
+    assignment; any other binding (loop, ``with``, augmented, argument, unpacking,
+    definition) leaves its value unknown. A namespace handle such as ``globals()``
+    can rebind any name, so it leaves every value unknown. Object state writes,
+    private state access, or a Path value escaping its receiver position likewise
+    invalidate the literal proof: a stable binding need not hold a stable Path.
+    """
     names: dict[str, str | None] = {}
+    literal_sites: Counter[str] = Counter()
+    namespace_escape = False
     for node in ast.walk(tree):
+        if (
+            (isinstance(node, ast.Name) and node.id in _PYTHON_NAMESPACE_ESCAPE_NAMES)
+            or (isinstance(node, ast.Attribute) and node.attr in _PYTHON_NAMESPACE_ESCAPE_NAMES)
+            or (isinstance(node, ast.alias) and node.name in _PYTHON_NAMESPACE_ESCAPE_NAMES)
+        ):
+            namespace_escape = True
         target: ast.expr | None = None
         value: ast.expr | None = None
         if isinstance(node, ast.Assign) and len(node.targets) == 1:
@@ -292,6 +360,36 @@ def _path_value_names(
         ):
             literal = _literal_path_call(value)
             names[target.id] = literal if names.get(target.id, literal) == literal else None
+            literal_sites[target.id] += 1
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    state_escape = any(
+        (
+            isinstance(node, ast.Attribute)
+            and (not isinstance(node.ctx, ast.Load) or node.attr.startswith("_"))
+        )
+        or (isinstance(node, ast.Subscript) and not isinstance(node.ctx, ast.Load))
+        or (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Load)
+            and node.id in names
+            and not (
+                isinstance(parent := parents.get(node), ast.Attribute)
+                and parent.value is node
+                and (
+                    parent.attr in _PYTHON_PATH_INSPECTION_ATTRIBUTES
+                    or (
+                        parent.attr in _PYTHON_PATH_NONESCAPING_METHODS
+                        and isinstance(call := parents.get(parent), ast.Call)
+                        and call.func is parent
+                    )
+                )
+            )
+        )
+        for node in ast.walk(tree)
+    )
+    for name in names:
+        if namespace_escape or state_escape or literal_sites[name] != binding_counts[name]:
+            names[name] = None
     return names
 
 
@@ -653,6 +751,89 @@ def _literal_process_command(node: ast.Call) -> str | None:
     return None
 
 
+def _has_trusted_mutation_scope(
+    tree: ast.AST,
+    local_names: frozenset[str],
+    imported_bindings: Mapping[str, str],
+    path_value_names: Mapping[str, str | None],
+) -> bool:
+    """Withhold literal targets if any surrounding code can change trusted writers.
+
+    This is a source-wide proof, not an execution-order or alias analysis. Local
+    callables are opaque here even when the read-only pipeline admits their names.
+    """
+    trusted_modules = (
+        _PYTHON_PIPELINE_MODULES
+        | _PYTHON_PIPELINE_PURE_MODULES
+        | {"pathlib", "os", "shutil", "zipfile", "xml.etree.ElementTree"}
+    )
+    parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
+    for node in ast.walk(tree):
+        if isinstance(node, (*_PYTHON_PIPELINE_BLOCKED_NODES, ast.FunctionDef, ast.Lambda)):
+            return False
+        if isinstance(node, ast.Import):
+            if any(alias.name not in trusted_modules for alias in node.names):
+                return False
+        elif isinstance(node, ast.ImportFrom):
+            if node.level or node.module not in trusted_modules:
+                return False
+        elif isinstance(node, ast.Attribute):
+            parent = parents.get(node)
+            if isinstance(parent, ast.Call) and parent.func is node:
+                continue  # The call below checks its callee and the walk checks its arguments.
+            if node.attr in _PYTHON_PATH_INSPECTION_ATTRIBUTES and (
+                _literal_path(node.value, imported_bindings, path_value_names) is not None
+            ):
+                continue
+            if not _is_safe_python_pipeline_node(node, local_names, imported_bindings):
+                return False
+        elif isinstance(node, ast.Call):
+            if any(isinstance(argument, ast.Starred) for argument in node.args) or any(
+                keyword.arg is None for keyword in node.keywords
+            ):
+                return False
+            call_name = _call_name(node, imported_bindings) or ""
+            known_call = (
+                _mutation_call_targets(node, imported_bindings, path_value_names) is not None
+                or call_name == "pathlib.Path"
+                or call_name in _PYTHON_PIPELINE_BUILTINS | _PYTHON_PIPELINE_STREAM_CALLS
+                or call_name
+                in {"json.load", "json.loads", "json.dumps", "xml.etree.ElementTree.fromstring"}
+                or _is_pure_module_attribute(call_name)
+                or (call_name == "open" and _is_read_only_open_call(node))
+                or (call_name == "zipfile.ZipFile" and _is_read_only_zipfile_call(node))
+            )
+            if isinstance(node.func, ast.Attribute):
+                receiver = node.func.value
+                path_receiver = (
+                    _literal_path(receiver, imported_bindings, path_value_names) is not None
+                )
+                known_call |= (
+                    (path_receiver and node.func.attr in _PYTHON_PATH_NONESCAPING_METHODS)
+                    or (
+                        node.func.attr in _PYTHON_PIPELINE_METHODS
+                        and _is_safe_python_pipeline_node(receiver, local_names, imported_bindings)
+                    )
+                    or (
+                        node.func.attr in {"write", "writelines", "close"}
+                        and isinstance(receiver, ast.Call)
+                        and _call_name(receiver, imported_bindings) == "open"
+                    )
+                )
+            if not known_call or not _has_safe_python_pipeline_callbacks(
+                node, call_name, frozenset(), imported_bindings
+            ):
+                return False
+        elif isinstance(node, ast.With):
+            if any(not isinstance(item.context_expr, ast.Call) for item in node.items):
+                return False
+        elif isinstance(node, ast.AsyncFor) or (
+            isinstance(node, ast.comprehension) and node.is_async
+        ):
+            return False
+    return True
+
+
 def _proven_python_mutation(
     tree: ast.AST,
     rebound_names: frozenset[str],
@@ -720,6 +901,10 @@ def _proven_python_mutation(
             if not call_targets:
                 return _UNKNOWN_SCOPE_MUTATION
             targets.extend(target for target in call_targets if target not in targets)
+    if targets and not _has_trusted_mutation_scope(
+        tree, rebound_names | imported_bindings.keys(), imported_bindings, path_value_names
+    ):
+        return _UNKNOWN_SCOPE_MUTATION
     return _PythonMutationEvidence(tuple(targets)) if targets else None
 
 
@@ -731,9 +916,12 @@ def _classify_python_source_with_targets(
         tree = parse_agent_source(script)
     except SyntaxError:
         return _PythonExecutionClassification.INDETERMINATE, ()
-    rebound_names = _rebound_names(tree)
+    binding_counts = _binding_counts(tree)
+    rebound_names = frozenset(binding_counts)
     imported_bindings = _imported_bindings(tree)
-    path_value_names = _path_value_names(tree, imported_bindings)
+    if imported_bindings is None:
+        return _PythonExecutionClassification.MUTATION, ()
+    path_value_names = _path_value_names(tree, imported_bindings, binding_counts)
     mutation = _proven_python_mutation(
         tree,
         rebound_names,
