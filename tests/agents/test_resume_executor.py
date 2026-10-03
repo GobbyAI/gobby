@@ -25,6 +25,7 @@ from gobby.sessions.context_usage import (
     LOCAL_CONTEXT_ROUTE_VARIABLE,
 )
 from gobby.storage.agents import AgentRun
+from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 from tests.terminals.fakes import bind_spawn_runtime
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
@@ -191,13 +192,29 @@ async def test_codex_resume_delivers_prompt_via_composer_not_argv(
 
 
 @pytest.mark.asyncio
-async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
+async def test_resume_refuses_task_close_reviewer(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Its review stays bound to the original run, so a successor could never submit."""
+    prepare = _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(agent_name=TASK_CLOSE_REVIEWER_AGENT),
+        resume_metadata=_resume_metadata(),
+        runner=_runner(),
+        session_manager=MagicMock(),
+    )
+
+    assert result.success is False
+    assert result.error == "resume_task_close_reviewer_unsupported"
+    prepare.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_srt_codex_resume_keeps_tui_and_composer_prompt(
     monkeypatch: pytest.MonkeyPatch,
     mock_codex_prompt_delivery: MagicMock,
 ) -> None:
     runner = _runner()
-    finalize = AsyncMock()
-    _patch_common(monkeypatch, spawner=MagicMock(), finalize=finalize)
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
     prepare_sandbox = AsyncMock(
         return_value=SandboxLaunch(
             backend="srt",
@@ -212,14 +229,10 @@ async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
     monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
     metadata = _resume_metadata()
     metadata["sandbox_config"] = {"enabled": True, "backend": "srt"}
-    metadata["config_overrides"] = [
-        "features.plugins=false",
-        "features.remote_plugin=false",
-        'sandbox_mode="danger-full-access"',
-    ]
+    metadata["config_overrides"] = ["features.plugins=false", "features.remote_plugin=false"]
 
     result = await resume_executor.resume_agent_run(
-        _original_run(agent_name="task-close-reviewer"),
+        _original_run(),
         resume_metadata=metadata,
         runner=runner,
         session_manager=MagicMock(),
@@ -228,12 +241,12 @@ async def test_srt_codex_close_reviewer_resumes_headless_with_prompt(
     assert result.success is True
     command = runner._test_runtime.last_request.command
     provider_argv = command[command.index("--") + 1 :]
-    assert provider_argv[:2] == ["/opt/codex/versions/0.157.0", "exec"]
-    assert "--dangerously-bypass-approvals-and-sandbox" in provider_argv
-    assert provider_argv[-3:] == ["resume", "native-123", "Continue"]
+    assert provider_argv[:2] == ["/opt/codex/versions/0.157.0", "resume"]
+    assert "exec" not in provider_argv
+    assert "Continue" not in provider_argv
     assert "features.plugins=false" in provider_argv
     assert "features.remote_plugin=false" in provider_argv
-    mock_codex_prompt_delivery.assert_not_called()
+    mock_codex_prompt_delivery.assert_called_once()
     prepare_sandbox.assert_awaited_once()
 
 

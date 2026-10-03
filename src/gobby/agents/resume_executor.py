@@ -30,7 +30,6 @@ from gobby.agents.local_model import (
     ensure_local_model,
     refresh_local_model_context,
 )
-from gobby.agents.provider_capabilities import codex_launches_headless
 from gobby.agents.resume_executor_settlement import (
     _fire_resume_started,
     _park_unlaunched_successor,
@@ -127,6 +126,12 @@ async def resume_agent_run(
         daemon_config: Optional daemon config used for tmux spawn settings.
         agent_pane_reserver: Daemon pane reserver; a placed snapshot is refused without it.
     """
+    from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
+
+    if original_run.agent_name == TASK_CLOSE_REVIEWER_AGENT:
+        # Its close review stays bound to this run, so a successor could never
+        # submit a verdict; close-review reconciliation retries the review instead.
+        return ResumeAgentResult(False, error="resume_task_close_reviewer_unsupported")
     provider = _metadata_str(resume_metadata, "provider") or original_run.provider
     try:
         await asyncio.to_thread(revalidate_write_grant, resume_metadata)
@@ -405,18 +410,11 @@ async def resume_agent_run(
         config_overrides.extend(
             _codex_runtime_config_overrides(launch.provider_env.get("TMPDIR"), env)
         )
-    headless_reviewer = provider == "codex" and codex_launches_headless(
-        original_run.agent_name, sandbox_enforced=launch.enforced, sandbox_backend=launch.backend
-    )
     command, _cmd_env = build_cli_command(
         cli=provider,
         # Claude appends its prompt after MCP flags below. Codex TUI receives
-        # a post-launch composer paste; headless exec takes a positional prompt.
-        prompt=(
-            None
-            if provider == "claude" or (provider == "codex" and not headless_reviewer)
-            else prompt
-        ),
+        # a post-launch composer paste.
+        prompt=None if provider in {"claude", "codex"} else prompt,
         resume_session_id=native_session_id,
         auto_approve=bool(resume_metadata.get("auto_approve", True)),
         working_directory=cwd if provider in {"agy", "codex", "droid", "grok"} else None,
@@ -425,8 +423,6 @@ async def resume_agent_run(
         codex_oss_provider=codex_oss_provider,
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
         config_overrides=config_overrides,
-        mode="headless" if headless_reviewer else "agent",
-        external_sandbox_enforced=headless_reviewer,
     )
     launch_updates: dict[str, Any] = {}
     if provider == "claude":
@@ -494,7 +490,7 @@ async def resume_agent_run(
         child_session_id=spawn_context.session_id,
         agent_run_id=run_id,
         title=f"gobby-resume-{run_id}",
-        codex_prompt=prompt if provider == "codex" and not headless_reviewer else None,
+        codex_prompt=prompt if provider == "codex" else None,
     )
     spawn_request = SpawnRequest(
         prompt=prompt,
@@ -543,7 +539,7 @@ async def resume_agent_run(
         if manager is not None:
             terminal = await asyncio.to_thread(manager.get, terminal_result.terminal_id)
 
-    if provider == "codex" and not headless_reviewer and terminal is not None:
+    if provider == "codex" and terminal is not None:
         coordinator = getattr(runner, "write_coordinator", None)
         if coordinator is not None:
             schedule_codex_prompt_delivery(

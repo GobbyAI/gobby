@@ -479,7 +479,8 @@ async def _cleanup_missing_terminal_agent_run(
 
     A close-review caller or closed-task run is left running instead: a resume
     would start a session its review does not know about. Reporting it resolved
-    clears its fence so lifecycle reconciliation terminalizes it.
+    clears its fence so lifecycle reconciliation terminalizes it. A task-close
+    reviewer is parked without a resume for the same reason.
     """
     config = runner.config_runtime.capture().snapshot.active
     monitor = runner.agent_lifecycle_monitor
@@ -508,11 +509,16 @@ async def _cleanup_missing_terminal_agent_run(
                 return True
 
     from gobby.agents.resume_executor import resume_agent_run
+    from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
     transitioned = await monitor.terminalize_cancelled_run(
         run.id,
         terminal_reason="daemon_stop",
     )
+    if getattr(run, "agent_name", None) == TASK_CLOSE_REVIEWER_AGENT:
+        # Its review stays bound to this run; close-review reconciliation
+        # retries the parked reviewer, so a resumed successor is never started.
+        return bool(transitioned)
     parked = await _run_db(runner, runner.agent_runner.run_storage.get, run.id)
     if not transitioned or parked is None:
         return False
