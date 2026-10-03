@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from gobby.feedback.cron import FEEDBACK_REVIEW_CRON_JOB_NAME
+from gobby.sessions.handoff import FEEDBACK_DISPOSITIONS, FEEDBACK_FREQUENCIES, FEEDBACK_KINDS
+
 if TYPE_CHECKING:
     from gobby.feedback.service import FeedbackReviewService
     from gobby.servers.http import HTTPServer
@@ -22,7 +25,7 @@ class FeedbackReviewRequest(BaseModel):
 
 def create_feedback_router(server: HTTPServer) -> APIRouter:
     """Create session-feedback review routes."""
-    router = APIRouter(prefix="/feedback", tags=["feedback"])
+    router = APIRouter(prefix="/api/feedback", tags=["feedback"])
 
     def _service() -> FeedbackReviewService:
         service: FeedbackReviewService | None = getattr(
@@ -43,6 +46,70 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
             logger.exception("Feedback review run failed")
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         return {"success": True, **result}
+
+    @router.get("/entries")
+    async def feedback_entries(
+        limit: int = 50,
+        unreviewed: bool = False,
+        kind: str | None = None,
+        frequency: str | None = None,
+        disposition: str | None = None,
+    ) -> dict[str, Any]:
+        for name, value, allowed in (
+            ("kind", kind, FEEDBACK_KINDS),
+            ("frequency", frequency, FEEDBACK_FREQUENCIES),
+            ("disposition", disposition, FEEDBACK_DISPOSITIONS),
+        ):
+            if value is not None and value not in allowed:
+                raise HTTPException(
+                    status_code=422, detail=f"{name} must be one of {', '.join(allowed)}"
+                )
+        try:
+            entries = _service().store.list_feedback(
+                limit=limit,
+                unreviewed=unreviewed,
+                kind=kind,
+                frequency=frequency,
+                disposition=disposition,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"success": True, "entries": [asdict(entry) for entry in entries]}
+
+    @router.get("/runs")
+    async def feedback_runs(limit: int = 20) -> dict[str, Any]:
+        try:
+            runs = _service().store.list_runs(limit=limit)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"success": True, "runs": [asdict(run) for run in runs]}
+
+    @router.get("/status")
+    async def feedback_status() -> dict[str, Any]:
+        store = _service().store
+        latest = store.list_runs(limit=1)
+        cron_storage = getattr(server.services, "cron_storage", None)
+        job = (
+            cron_storage.get_job_by_name(FEEDBACK_REVIEW_CRON_JOB_NAME)
+            if cron_storage is not None
+            else None
+        )
+        return {
+            "success": True,
+            "backlog": store.backlog_count(),
+            "latest_run": asdict(latest[0]) if latest else None,
+            "schedule": (
+                {
+                    "enabled": job.enabled,
+                    "cron_expr": job.cron_expr,
+                    "timezone": job.timezone,
+                    "next_run_at": job.next_run_at,
+                    "last_status": job.last_status,
+                }
+                if job is not None
+                else None
+            ),
+        }
 
     @router.get("/review/latest")
     async def feedback_review_latest() -> dict[str, Any]:

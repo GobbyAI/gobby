@@ -192,6 +192,51 @@ def test_mark_reviewed_flips_only_unreviewed_rows_and_links_run(
     assert store.list_unreviewed(limit=10) == []
 
 
+def test_list_feedback_filters_newest_first_and_counts_backlog(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    store = FeedbackReviewStore(temp_db)
+    old = _insert_feedback(temp_db, session_id, created_at=_T0)
+    bug = _insert_feedback(temp_db, session_id, kind="bug", created_at=_T0 + timedelta(hours=1))
+    reviewed = _insert_feedback(
+        temp_db, session_id, created_at=_T0 + timedelta(hours=2), reviewed=True
+    )
+    temp_db.execute(
+        "UPDATE session_feedback SET frequency = 'always', disposition = 'fixed' WHERE id = %s",
+        (bug,),
+    )
+
+    recent = store.list_feedback(limit=10)
+    assert [row.id for row in recent] == [reviewed, bug, old]
+    assert [row.reviewed for row in recent] == [True, False, False]
+    assert [row.id for row in store.list_feedback(limit=10, unreviewed=True)] == [bug, old]
+    assert [row.id for row in store.list_feedback(limit=1)] == [reviewed]
+    assert [row.id for row in store.list_feedback(limit=10, kind="bug")] == [bug]
+    assert [row.id for row in store.list_feedback(limit=10, frequency="always")] == [bug]
+    assert [row.id for row in store.list_feedback(limit=10, disposition="fixed")] == [bug]
+    assert store.backlog_count() == 2
+
+
+def test_list_runs_returns_newest_first_without_observations(
+    temp_db: HubDatabase, session_id: str
+) -> None:
+    store = FeedbackReviewStore(temp_db)
+    _insert_feedback(temp_db, session_id)
+    batch = store.freeze_batch(5, dry_run=False)
+    assert batch is not None
+    older_id, _ = batch
+    store.finalize_run(older_id, status="completed", digest_md="# Older")
+    newer_id = store.create_run(dry_run=True, window_start=None, window_end=None, rows_considered=0)
+
+    runs = store.list_runs(limit=10)
+
+    assert [run.id for run in runs] == [newer_id, older_id]
+    assert runs[1].digest_md == "# Older"
+    assert runs[1].rows_considered == 1
+    assert all(run.observations == [] for run in runs)
+    assert [run.id for run in store.list_runs(limit=1)] == [newer_id]
+
+
 def test_latest_run_returns_newest(temp_db: HubDatabase) -> None:
     store = FeedbackReviewStore(temp_db)
     store.create_run(dry_run=False, window_start=None, window_end=None, rows_considered=0)
@@ -258,6 +303,7 @@ async def test_submit_large_markdown_review_through_api(
             {
                 "observation_ids": [observation_id],
                 "cited_paths": [],
+                "implementation_paths": [],
                 "theme": "Verified concern",
                 "classification": "defect",
                 "proposed_task": None,
@@ -275,7 +321,7 @@ async def test_submit_large_markdown_review_through_api(
             "summary_md": summary,
         },
     )
-    assert result["success"] is True
+    assert result["success"] is True, result.get("error")
     assert result["report_path"] == str(report)
     assert report.read_text().startswith(summary)
     assert report.read_text().count("<!-- gobby-feedback-outcomes -->") == 1

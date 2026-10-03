@@ -874,6 +874,9 @@ is no HTTP submission route for impersonating the assigned reviewer.
 | GET | `/api/feedback/review/{run_id}` | One durable run and digest |
 | GET | `/api/feedback/review/{run_id}/observations` | Frozen observations, with `offset=0`, `limit=50` defaults |
 | GET | `/api/feedback/review/{run_id}/results` | Accepted clusters and recorded action outcomes, with the same pagination |
+| GET | `/api/feedback/entries` | Newest submitted rows; `limit=50`, optional `unreviewed`, `kind`, `frequency`, `disposition` (unknown vocabulary returns 422) |
+| GET | `/api/feedback/runs` | Recent run summaries without observations, newest first; `limit=20` |
+| GET | `/api/feedback/status` | Unreviewed backlog, latest run summary, and the `gobby:feedback-review` cron schedule (null when unregistered) |
 
 Page limits are 1–100, offsets nonnegative; continue with `next_offset` until
 null. Missing run readers return 404; invalid/unknown paged reads return 400.
