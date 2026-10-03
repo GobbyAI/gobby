@@ -25,33 +25,44 @@ both before its model runs and when its close is evaluated. The reviewer's own
 process tree was cheap in pane arm A2 and in the natural spawned runs.
 
 1. **Spawn setup is the leading explanation for the extra host cost of a spawn
-   (candidate 2, ruled in as the largest measured per-spawn cost).**
-   Every sandboxed spawn runs `prepare_sandbox_run_paths`, which runs
+   (candidate 2: an observed expensive mechanism that pane seats do not run).**
+   Sandboxed spawns run `prepare_sandbox_run_paths`, which runs
    `_prewarm_pre_commit_store` and `_schedule_pre_commit_store_spare` (#21730).
-   - It consumes a pre-commit store spare and then APFS-clones a new one with
-     `cp -c -R` and `chmod -R`. The store is `~/.cache/pre-commit`: 393 MB in
-     17,245 files.
-   - `sandbox_reaper` later runs `rmtree` on the per-run root.
-   - One clone, chmod and remove measured 38.5 s wall and 7.0 s kernel CPU, and
-     added about 0.9 cores of system CPU while it ran. A pane seat does none of
-     this.
-   - `_preflight_srt` adds a p50 of 3.9 s per spawn, with p90 8.9 s.
+   - The prewarm is conditional. It returns early when the workspace has no
+     `.pre-commit-config.yaml` or the operator store `~/.cache/pre-commit` is
+     absent (`agents/sandbox_policy.py:757-761`). Otherwise it consumes a ready
+     spare. It clones synchronously only on a spare miss (763-765).
+   - The replenisher is coalesced. `_schedule_pre_commit_store_spare` returns
+     when a spare already exists or a replenisher thread is alive (717-718).
+     Otherwise it starts one background clone (`cp -c -R`, then a recursive
+     chmod). A spawn triggers at most one new clone; it is not guaranteed one.
+   - The store is 393 MB in 17,245 files. `sandbox_reaper` later runs `rmtree`
+     on the per-run root.
+   - One manual clone, chmod and remove (n=1) took 38.5 s wall and 7.0 s
+     kernel CPU. INFERRED association: host system CPU rose by about 0.9 cores
+     while it ran (n=7 `top` samples). That rise is a coincident system-wide
+     change, not a measured incremental per-spawn cost.
+   - `_preflight_srt` took a p50 of 3.9 s per spawn, with p90 8.9 s.
 2. **Close evaluation decodes transcript evidence on the daemon event loop.**
-   This is associated with the daemon health and hook stalls in the same minutes.
-   It explains only part of the 300 s close and preview timeouts (§2.8).
-   - `decode_cooperatively` yields once per 256-record chunk.
-   - On long transcripts the loop held the GIL in `_decode_steps` for up to
-     12.4 s of one minute.
-   - Hook adapter timeouts and health probes over 2 s fall in those minutes.
-3. **Daemon worker threads hold the GIL 36-76% of every minute.**
-   - The holders are the postgres pool's pure-Python paths, transcript
-     decode/persist, embeddings parsing, and the codex installer TOML load.
+   INFERRED association: daemon health and hook stalls fall in the same minutes.
+   The decode does not account for the whole 300 s of the close and preview
+   timeouts (§2.8).
+   - `decode_cooperatively` yields after each 256-record chunk
+     (`tasks/transcript_evidence_transfer.py:166-167`).
+   - On long transcripts, loop-thread GIL samples in `_decode_steps` added up to
+     as much as 12.4 s in one minute. That is total sampled occupancy across
+     many chunks, not one continuous stall.
+3. **In total, the daemon held the GIL for 36-76% of each sampled minute
+   (19:06-20:46).** The loop thread's share was 2-36%, and the off-loop share
+   was 29-72%.
+   - The off-loop holders are the postgres pool's pure-Python paths, transcript
+     decode and persist, embeddings parsing, and the codex installer TOML load.
    - The loop-only `/api/health` measured p50 0.41 s and max 4.7 s, and several
      seats hit 2 s timeouts.
-   - The leading explanation is that the loop thread waits for the GIL.
+   - INFERRED leading explanation: the loop thread waits for the GIL.
      Client-side slowness under host load is not excluded.
-   - This is ambient. A spawned reviewer adds to it through (2) and through
-     transcript ingestion.
+   - This is ambient. INFERRED: a spawned reviewer adds to it through (2) and
+     through transcript ingestion.
 
 The host baseline amplifies all three. RAM is full: 290 MB free, 22 GB in the
 compressor, about 400 MB/s of compressor churn, and the Docker VM at 30 GB resident.
@@ -84,14 +95,26 @@ posix_spawns, not CLI start-ups.
 | Arm | Window | Wall | Tree CPU | Pids | Disk written | Host during arm |
 |---|---|---|---|---|---|---|
 | Baseline | 18:57:30-19:01:30 | n/a | n/a | 1,489 new pids per 195 s, host-wide | n/a | all-process 5.65 cores, load1 mean 23.8 |
-| A2: codex pane, gpt-5.6-terra xhigh, same rendered prompt | 19:02:07-19:18:53 | 15 m 7 s to verdict | 52.6 s (0.05 cores) | 176 | 133.5 MB | load1 mean 33.3 |
+| A2: codex pane, gpt-5.6-terra xhigh, same rendered prompt | 19:02:07-19:18:53 | sampled window 16 m 46 s; Codex-reported launch to verdict 15 m 7 s | 52.6 s (0.05 cores) | 176 | 133.5 MB | load1 mean 33.3 |
 | A2 launch (first 60 s) | 19:02:07-19:03:07 | | 8.1 s | 13 | 63.3 MB | load1 mean 30.3 |
 | A2 run | 19:03:07-19:18:53 | | 44.4 s: gcode 25.3, codex 16.4 | 170 | 69.2 MB | load1 mean 33.3, max 47.3 |
 | A2 end (idle until quit) | 19:18:53-19:22:35 | | 0.1 s | 7 | 0.4 MB | load1 mean 27.6 |
-| Natural B: reviewer spawned by close, srt root 58439 | born 19:08:47 | | 16.5 s | 42 | INFERRED small | see §2.3 |
-| Natural B: srt root 65525 | born 19:10:48 | | 9.2 s | 12 | INFERRED small | see §2.3 |
+| Natural B: reviewer spawned by close, srt root 58439 | born 19:08:47 | UNKNOWN | 16.5 s | 42 | UNKNOWN | see §2.3 |
+| Natural B: srt root 65525 | born 19:10:48 | UNKNOWN | 9.2 s | 12 | UNKNOWN | see §2.3 |
 | A1: Claude pane | NOT RUN | | | | | load hold |
 | B: direct `spawn_agent`, key r-23353-armB-v1 | NOT RUN | | | | | load hold |
+
+A2 timing labels:
+- The sampled window, 19:02:07-19:18:53 (16 m 46 s), runs from the launch marker
+  to the completion detector's idle marker.
+- Codex reported "Worked for 15m 7s" from launch to verdict.
+- The rollout shows Codex running from 19:02:30 to the final verdict at 19:17:42.
+
+Per-phase metrics not captured:
+- Daemon GIL attributable to an arm or a phase: UNKNOWN. `py-spy` started at
+  19:06, after A2 launched, and it samples the daemon, not the arm.
+- Wall time and disk written for the natural B trees: UNKNOWN.
+- Per-phase load for natural B: UNKNOWN beyond the window figures in §2.3.
 
 A1 and B did not run. Josh's load rule held from 19:09 through the end of the
 capture window: 5-minute readings were 22.2-33.5, and none came in twice in a row
@@ -108,7 +131,7 @@ launched during it.
   running.
 - INFERRED: the natural spike cannot be pinned on the reviewer tree itself.
 
-### 2.4 Spawn setup (candidate 2): RULED IN
+### 2.4 Spawn setup (candidate 2): RULED IN as the leading explanation within the observed windows
 
 `daemon.log` "Spawn phase timings" for today's 42 codex spawns, in seconds:
 
@@ -131,20 +154,30 @@ One pre-commit store cycle, measured by hand at 20:28 with `/usr/bin/time`:
 | `chmod -R u+rwX` | 1.02 s | 0.22 s | |
 | `rm -rf` | 8.73 s | 1.67 s | |
 
-From `top` during the clone (n=7, indicative), compared with the minute before:
+From `top` during the clone, compared with the minute before (n=7, indicative;
+system-wide, not attributed to the clone):
 - running processes rose from 20.8 to 25.6;
 - stuck processes rose from 0.47 to 2.0;
 - system CPU rose from 23.7% to 28.5%, about 0.9 cores.
 
 INFERRED: APFS clone metadata work runs in kernel threads. The per-process
-sampler does not attribute it, which is why per-process CPU barely moves while
-load rises.
+sampler does not attribute it. That may be why per-process CPU barely moves
+while load rises.
 
 The exec trace shows the daemon's `/bin/cp` at 19:08:27 and its `chmod` at
 19:09:11. That straddles the 19:08:46 reviewer spawn and load1's step from 39 to
-43.
+43. This is an INFERRED association only: four closes and a cargo build ran in
+the same minutes (§2.3).
 
-### 2.5 SRT and violation-log writes (candidate 1): RULED OUT
+Mechanism bounds (`agents/sandbox_policy.py` on base 89d890c4ec):
+- `_prewarm_pre_commit_store` (755-770) does nothing when there is no config or
+  no store (757-761). It clones synchronously only on a spare miss (763-765).
+- `_schedule_pre_commit_store_spare` (709-730) returns when a spare exists or its
+  worker is alive (717-718).
+- UNKNOWN: how many of today's 42 spawns hit a spare, cloned synchronously, or
+  started a replenisher.
+
+### 2.5 SRT and violation-log writes (candidate 1): RULED OUT within the observed windows
 
 - The `log stream` violation watcher used about 1.7 CPU-s per minute.
 - logd used about 0.01 cores.
@@ -153,13 +186,13 @@ The exec trace shows the daemon's `/bin/cp` at 19:08:27 and its `chmod` at
 
 The SRT preflight (§2.4) belongs to spawn setup.
 
-### 2.6 Daemon-side run tracking (candidate 3): RULED OUT
+### 2.6 Daemon-side run tracking (candidate 3): RULED OUT within the observed windows
 
 - Daemon CPU was 0.36 cores in the spike window, against 0.33 at baseline.
 - Daemon children were `ps` at about 16 per minute and gcode/git.
 - No GIL top holder in any minute from 19:06 to 20:38 is run tracking.
 
-### 2.7 Validation reruns (candidate 4): RULED OUT for load
+### 2.7 Validation reruns (candidate 4): RULED OUT for load within the observed windows
 
 - No pytest, ruff or mypy process was born under the daemon in any window.
 - The close checklist's command parsing (`shell_lexing.parse_shell_command`,
@@ -173,7 +206,10 @@ The call path is `close_task`, then `_evaluate_close`, then
 `derive_close_transcript_evidence`, then either `derive_prelink_runs` or
 `derive_transcript_evidence`, then `decode_cooperatively`.
 
-| Minute | Loop decode samples | Seconds | Coincident |
+Seconds are summed sampled occupancy (samples / 20 Hz) across many cooperative
+chunks, not a single continuous stall.
+
+| Minute | Loop decode samples | Seconds | Coincident (INFERRED association) |
 |---|---|---|---|
 | 20:10:49 | 249 | 12.4 | gate 13 for #23227 (05d11691) completed at 20:12:11 |
 | 20:15:52 | 65 | 3.3 | |
@@ -191,18 +227,22 @@ The call path is `close_task`, then `_evaluate_close`, then
   then `daemon_git`. Another dump shows `close_checklist.evaluate_validation_commands`
   calling `realpath` per command run (`command_equivalence.runs_outside_root`).
 - UNKNOWN: a per-gate wall-time split. `mcp.log` logs only gate 13.
-- So the decode is the largest GIL burst, and it lands at the end, but it does not
-  explain the whole 300 s.
+- The decode is the largest sampled GIL burst, and it comes at the end. It does
+  not account for the whole 300 s.
 
 Short-transcript closes still fit. Gate 13 completed in 14-196 ms for other tasks
 throughout 19:54-20:35 (`mcp.log`), and those closes did not time out.
 UNKNOWN: their total wall time.
 
-### 2.9 Health starved of the GIL
+### 2.9 Health latency and GIL contention (INFERRED association)
 
 - `/api/health` (`servers/routes/admin/_health.py`) does no executor hop (#20839).
-- Per-minute GIL share, 19:30-20:38: 36-76% in total, but only 2-36% on the loop
-  thread.
+- Per-minute daemon GIL share, 19:06-20:46 (101 one-minute captures):
+  - total: 36-76%;
+  - loop thread: 2-36%;
+  - off-loop threads: 29-72%.
+- Examples: 20:10:49 was 68.8% total and 35.8% on the loop; 20:16:51 was 72.8%
+  total and 29.4% on the loop.
 - Top off-loop holders are `storage/hub/postgres_pool` (`transaction_context`,
   `assert_runtime_role`, `_normalize_value`, `fetchall`), `sessions/transcripts`
   decode and persist, `ai/embeddings._parse_embeddings_response` (up to 485
@@ -228,8 +268,8 @@ UNKNOWN: their total wall time.
 | # | Finding | Owning surface | Fix direction |
 |---|---|---|---|
 | 1 | Per-spawn pre-commit prewarm: clone, chmod and rm of 17k files | `agents/sandbox_policy.py` `prepare_sandbox_run_paths`, `_prewarm_pre_commit_store`, `_schedule_pre_commit_store_spare`, `_clone_pre_commit_store`; `agents/sandbox_reaper.py` (#21730) | Skip the prewarm for runs that never run pre-commit, such as read-only close reviewers. For committing runs, share one writable run cache across runs, or point pre-commit at the operator store, rather than a per-run clone plus spare. Recommended: the skip, which is the least mechanism and removes the whole cost from reviewers. |
-| 2 | Close evidence decode on the event loop | `tasks/transcript_evidence_transfer.decode_cooperatively`, called from `mcp_proxy/tools/tasks/_close_evaluation_support.derive_close_transcript_evidence` (made cooperative on the loop by #23256) | A thread executor alone only moves the decode into finding 3. Decode-once caching is recommended: persist decoded evidence keyed by transcript and offset, and decode only the new tail on each close or preview. A process pool and time-sliced yields cap stalls but still repeat the whole decode per call. |
-| 3 | Loop starved of the GIL by worker threads | the off-loop holders listed in §2.9 | Cut the pure-Python per-row work in `postgres_pool._normalize_value` and `assert_runtime_role` per transaction. Cache `codex._load_toml_config`. Move the transcript ingest decode and embeddings parsing to a process. Health is already loop-only. |
+| 2 | Close evidence decode on the event loop | `tasks/transcript_evidence_transfer.decode_cooperatively`, called from `mcp_proxy/tools/tasks/_close_evaluation_support.derive_close_transcript_evidence` (made cooperative on the loop by #23256) | A thread executor alone only moves the decode into finding 3. PROPOSED, pending source review: L2 gobby#14962 sent a read-only proposal through the PD. It reports that a watermark and durable snapshot cache already exist, and it proposes reusing them in a worker that returns only bounded evidence, rather than adding a new decoded-evidence cache. This note does not verify that proposal. |
+| 3 | Off-loop threads hold 29-72% of the GIL per minute (INFERRED cause of loop latency) | the off-loop holders listed in §2.9 | Cut the pure-Python per-row work in `postgres_pool._normalize_value` and `assert_runtime_role` per transaction. Cache `codex._load_toml_config`. Move the transcript ingest decode and embeddings parsing to a process. Health is already loop-only. |
 
 These are handed to the PD (gobby#14972) for Josh's routing during the close-queue
 freeze. No seat claims new tasks. #23353 changes no code.
@@ -243,7 +283,23 @@ freeze. No seat claims new tasks. #23353 changes no code.
   the running and stuck counts during the clone.
 - The kernel-thread CPU of APFS clones, beyond the system-wide `sy` rise.
 
-## 5. Re-measure plan
+## 5. Raw evidence and provenance
+
+The raw files are machine-local and were not committed. The scratchpad
+`/private/tmp/claude-501/-Users-josh-Projects-gobby/d44664dd-24f3-4689-adbd-5ba0f5ce1034/scratchpad/`
+is temporary. It holds:
+- data: `samples.jsonl` (the 1 s sampler), `iostat.log`, `top.log`,
+  `vmstat.log`, `health.log`, `dump1.txt` and `dumps2.txt` (`py-spy dump`), and
+  `clone-timing-2028.txt` (the verbatim `/usr/bin/time` output);
+- scripts: `analyze.py`, `window.py`, `gil.py`, `spawnphases.py`, `timeline.py`,
+  `births.py` and `diskw.py`;
+- the prompt and A2 markers: `prompt-ab.txt`, `A2.start`, `A2.idle` and `A2.end`.
+
+Josh's root capture is in `/tmp/gobby-23353/`: `exec.txt` (`fs_usage`) and
+`gil-HHMMSS.txt` (`py-spy --gil`, one file per minute). The logs are
+`~/.gobby/logs/daemon.log` ("Spawn phase timings") and `~/.gobby/logs/mcp.log`.
+
+## 6. Re-measure plan
 
 After fix 1 lands, run arm B (one direct `spawn_agent` of `task-close-reviewer`)
 and a pane arm under Josh's rule. Compare the spawn phase timings,
