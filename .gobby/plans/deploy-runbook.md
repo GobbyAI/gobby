@@ -16,10 +16,14 @@ is the runbook. This plan makes a runbook an ordinary pipeline tagged
 `pipeline` job. Each seat is one `mcp` step that calls `spawn_agent` with a
 placement, so every seat inherits the spawn guards, slot cap, lease, isolation
 and sandbox rules. The pipeline execution and its step rows are the deployment
-record, and each seat step's output carries its `run_id` and pane refs. A
-first guard step refuses when any requested seat is already held by a
-runbook-launched agent, and placement refuses a hand-launched pane with the
-same title. After a restart, a seat step that already launched adopts its original run.
+record, and each seat step's output carries its `run_id` and pane refs.
+Runbooks are fire and forget. A first guard step refuses only while the
+same runbook is still launching in the same project, workspace and machine.
+The same runbook may run on other machines, in other workspaces and for
+other projects at once, and any number of seats and pods may share one
+workspace. A seat is told apart by its `project#session_ref`; its pane
+title is a display label, and nothing refuses a title collision. After a restart, a seat step that already
+launched adopts its original run.
 
 This plan is the single active runbooks coverage owner under #22691. It owns
 its new deliverables (P5–P9) and holds typed deferrals (D2–D12) for the
@@ -54,32 +58,53 @@ removal needs no Targets.
    seat title and the workspace; the definition carries identity and
    instructions. No input or prompt names a `.gobby/roles` file. Interactive
    activation (#22903) is outside this plan and does not block it. Placement,
-   its `seat_live` refusal, the managed SRT requirement and cleanup are the
-   reused placed-launch leaves (D2–D12).
-5. **Seat identity is the placement seat key.** A seat is
-   `(workspace, canonical title)`, the key placed-launch decision 7 refuses
-   on. #23015 persists the validated placement, canonical title included,
-   into the run's resume metadata. 6.1 publishes that as a `seat` field in
-   `list_running_agents` and `list_agent_runs`. No new column, table or
-   session variable is added.
-6. **Admission is atomic per seat and per runbook; capacity is a snapshot.**
-   The seat level is placed launch's per-workspace reservation lock (1.1.6,
-   1.4.10). It serializes every entrypoint, because they all run in the one
-   daemon process. The runbook level is the guard step (6.2). It runs after
-   the execution row exists and refuses when any other execution of the same
-   pipeline in the project is `pending`, `running` or `waiting_approval`, so
-   at most one of two concurrent runs proceeds. Capacity is an early
-   fail-closed snapshot. `reserve_agent_slot` stays authoritative for each
-   seat, and an unrelated spawn can take a slot between seat steps. That
-   leaves a partial deployment, which the seat relaunch recovers (8.1.4).
-   Any failed, truncated or partial lookup refuses.
-7. **The guard checks seat definitions; placement covers hand-launched
-   panes.** Each catalogue entry names an `agent`. The guard refuses when a
-   requested seat's definition is missing or disabled in the installed
-   definition rows (AGENTS rule 8). It reads no `.gobby/roles` file and no
-   roster (Josh decision 4e977dc2). A hand-launched pane with the same seat
-   title has no agent run, and placement refuses it with `seat_live` (D2
-   1.1.3).
+   the managed SRT requirement and cleanup are the reused placed-launch
+   leaves (D2–D12); 6.2 removes placement's `seat_live` title refusal
+   (Decision 5).
+5. **Seat identity is the session ref; titles are display labels
+   (2026-10-03).** Josh's hard ruling: "stop. I don't give a fuck about seat
+   titles. you differentiate seats by project#session_ref: Pane_title and
+   stop blocking collisions. I can have multiple researchers and I may not
+   know how many I want at runtime. Same with developers. Same with lane
+   managers." A seat is its run's session, shown as
+   `project#session_ref: pane_title` (for example `gobby#15070: Plan
+   Writer`), and its runbook role comes from its definition and startup
+   prose. Nothing refuses two live seats with one title in one workspace,
+   and there is no instance input, numbering or naming scheme. This
+   supersedes placed-launch decision 7's title key: 6.2 removes placement's
+   `seat_live` refusal, which retires D2 1.1.3 and 1.1.6 and D12 3.1.2.
+   #23015 persists the validated placement into the run's resume metadata,
+   and 6.1 publishes it as a display `seat` field in `list_running_agents`
+   and `list_agent_runs`. No new column, table or session variable is
+   added.
+6. **Admission is atomic per seat; the runbook refuses only a concurrent
+   launch in the same place (2026-10-03).** Josh's #23329 rulings:
+   "runbooks are fire and forget ... we don't want the same two running at
+   the same time. what if I wanted a runbook that created a programming pod
+   consisting of a developer, reviewer, researcher, and manager? I might
+   need multiple pods running. slots? we're not enforcing slots as part of
+   runbooks." / "I might run the same runbook on multiple machines at the
+   same time." / "or the same runbook on the same machine for different
+   projects", and his pick "A: same place only". The seat level is placed
+   launch's per-workspace reservation lock (1.4.10). It serializes every
+   pane insert in a workspace, because every entrypoint runs in the one
+   daemon process, and it refuses no title. The runbook level is the guard step (6.2). It runs
+   after the execution row exists and refuses while another execution of
+   the same pipeline, in the same project, workspace and machine, is
+   `pending`, `running` or `waiting_approval`, so at most one of two
+   concurrent launches in one place proceeds. A finished launch blocks
+   nothing: a second pod in the same place starts once the first pod's
+   execution has ended, with the same titles (8.1). The guard does no
+   capacity check. Each seat's spawn still passes `reserve_agent_slot` like
+   any other spawn, and a seat refused there leaves a partial deployment,
+   which the seat relaunch recovers (8.1.4). Any failed, truncated or
+   partial lookup refuses.
+7. **The guard checks seat definitions only.** Each catalogue entry names
+   an `agent`. The guard refuses when a requested seat's definition is
+   missing or disabled in the installed definition rows (AGENTS rule 8). It
+   reads no `.gobby/roles` file and no roster (Josh decision 4e977dc2), no
+   agent runs and no slot count. A live seat with the same title, launched
+   by a runbook or by hand, refuses nothing (Decision 5).
 8. **Restart reconciles each seat step by its invocation id.** Runbooks set
    `resume_on_restart: true`. Recovery keeps completed step outputs and
    re-runs only unfinished steps. The executor gives every step a
@@ -237,7 +262,8 @@ removal needs no Targets.
   `_list_run_payload` into a new module before extending it.
   `_factory.py` and `pipeline_executor.py` gain only a call or a context
   key; reconciliation lives in a new module.
-- Every refusal names the held seat and its holder's run id.
+- Every refusal names its cause: the live sibling execution, the missing or
+  disabled definition.
 - 7.3 changes cron behavior for every pipeline job: a cron pipeline whose
   cron session cannot be created now fails instead of running under the
   system session.
@@ -378,8 +404,8 @@ Consumers unchanged:
 `kind: framing`
 
 **Goal:** a live seat is visible as a seat, and a runbook refuses before it
-launches anything when a seat is held, a seat's definition is missing, a
-sibling execution is live, or the cap cannot fit it.
+launches anything when a seat's definition is missing or the same runbook
+is still launching in the same place.
 
 ### 6.1 Seat field in run listings [category: code]
 `kind: deliverable`
@@ -419,10 +445,13 @@ it does not wait on #23015. D1 proves the field on real placed runs.
 `kind: deliverable`
 
 Targets:
-- `src/gobby/agents/runbook_seats.py`
-- `src/gobby/mcp_proxy/tools/runbook_seat_tools.py`
+- `src/gobby/agents/runbook_seats.py::*` — scope-reason: the guard module #23329 landed; its checks change throughout
+- `src/gobby/mcp_proxy/tools/runbook_seat_tools.py::*` — scope-reason: the tool wrapper reports the guard's narrowed result
 - `src/gobby/mcp_proxy/tools/agents_registry.py::*` — scope-reason: register the guard tool on gobby-agents
-- `tests/agents/test_runbook_seats.py`
+- `tests/agents/test_runbook_seats.py::*` — scope-reason: the guard tests are rewritten for the 6.2.1 and 6.2.3–6.2.6 changes
+- `src/gobby/terminals/workspace_agent_panes.py::*` — scope-reason: remove the `seat_live` title refusal from `_preflight` and `reserve` (Decision 5)
+- `tests/terminals/test_workspace_agent_panes.py::*` — scope-reason: replace the title-collision tests of D2 1.1.3 and 1.1.6 with 6.2.7
+- `tests/workflows/test_placed_pipeline_fixture.py::*` — scope-reason: D12 3.1.2's rerun now launches instead of refusing a live seat
 
 **Research context:** `gobby-agents:check_runbook_seats(workspace, requested,
 catalogue)` is read-only and is the runbook's first step. `requested` is the
@@ -433,56 +462,79 @@ checks only the requested seats. Called from a pipeline `mcp` step, its
 ambient session is the pipeline child. It finds its own execution id from
 the child's external id `pipeline-<execution id>`, and refuses when that
 session is not a pipeline child. `workspace` resolves through
-`WorkspaceManager.resolve_reference` (`storage/workspaces.py:353`). Each
-title is canonicalized with `truncate_title`, and two requested seats with
-the same `(workspace_id, title)` key refuse. The guard returns
-`success: True` with the checked seats and the free slot count only when
-every check below passes. Otherwise it returns `success: False` with an
-`error` naming each held seat and its holder, which fails the step
-(`execute_mcp_step`). Checks, in order:
+`WorkspaceManager.resolve_reference` (`storage/workspaces.py:353`), which
+resolves on this machine. Titles are display labels: the guard keys
+nothing on them, and two requested seats may share one. The guard returns `success: True` with
+the checked seats only when both checks below pass. Otherwise it returns
+`success: False` with an `error` naming the cause, which fails the step
+(`execute_mcp_step`). Josh's #23329 rulings (Decision 6) removed the
+live-seat check and the capacity check: the guard reads no agent runs and
+no slot count. Checks, in order:
 
-1. Sibling executions. Any other execution of the same pipeline name in the
-   project whose status is `pending`, `running` or `waiting_approval` refuses.
-   The caller's own row exists before step 1 runs, so two concurrent runs each
-   see the other and both refuse, or one refuses.
-2. Runbook-launched seats. Every run in the project whose status is in
-   `ACTIVE_AGENT_RUN_STATUSES` (`storage/agents/_constants.py:39`) is read
-   with no page cap. A run whose 6.1 `seat` equals a requested key refuses,
-   naming its `run_id`.
-3. Agent definitions. Each requested seat's `agent` must name an
+1. Same-place sibling executions. The key is (pipeline name, project,
+   workspace, machine). The guard lists the executions of the same pipeline
+   name in the project (`LocalPipelineExecutionManager` is project-scoped)
+   whose status is `pending`, `running` or `waiting_approval`, excluding its
+   own. A sibling's machine is the `machine_id` of its pipeline child
+   session, reached through the execution's `session_id`. A sibling on
+   another machine passes without further lookup. A sibling on this machine
+   has its `workspace` input (`inputs_json`) resolved through
+   `resolve_reference`, and refuses when that resolves to the caller's
+   workspace id. A sibling in another workspace passes. The caller's own row
+   exists before step 1 runs, so two concurrent launches in one place each
+   see the other and both refuse, or one refuses. An execution that has
+   ended blocks nothing, so a second pod in the same place starts once the
+   first pod's execution has ended.
+2. Agent definitions. Each requested seat's `agent` must name an
    installed, enabled agent definition, read from the installed definition
    rows (AGENTS rule 8: the DB is the source of truth). A missing or
    disabled definition refuses and names it.
-4. Capacity. When `max_active_agents_for_project` minus the active count is
-   below the number of seats requested, the guard refuses. This is an early
-   snapshot (Decision 6). Each seat's `reserve_agent_slot` stays
-   authoritative.
 
-A storage error, or a query that returns a truncated page, refuses with
-the cause. Seat-level atomicity stays with
-placement's `seat_live`. The guard is the visible first refusal and the
-runbook-level admission check.
+A storage error, a query that returns a full page, a live sibling with no
+child session yet, a sibling with no `workspace` input, and a sibling whose
+`workspace` input no longer resolves each refuse with the cause. The guard
+is the visible first refusal and the runbook-level admission check.
+
+Placement stops refusing title collisions (Decision 5). `_preflight` and
+`reserve` in `terminals/workspace_agent_panes.py` (`:206`, `:244`) drop the
+`seat_live` check and `_seat_held`. The in-flight bookkeeping that `reserve`
+keys by `(workspace_id, seat)` is keyed by pane id, and the per-workspace
+lock still serializes inserts (1.4.10). `seat_live` leaves the placement
+error codes. That supersedes D2 1.1.3 and 1.1.6 and D12 3.1.2, whose tests
+change with this leaf.
 
 **Acceptance:**
 
-- 6.2.1 - A seat held by a run in any active status (queued, pending or
-  running) refuses with that run id, and an ended run's seat passes. test:
-  `tests/agents/test_runbook_seats.py::test_live_run_seat_refuses`.
+- 6.2.1 - A requested seat whose title is held by a run in any active
+  status does not refuse at the guard, and the guard reads no agent run.
+  test:
+  `tests/agents/test_runbook_seats.py::test_live_run_seat_admits`.
 - 6.2.2 - A requested seat whose `agent` names no installed definition, or
   a disabled one, refuses naming the definition; an installed, enabled
   definition passes; and the guard reads no `.gobby/roles` file. test:
   `tests/agents/test_runbook_seats.py::test_seat_agent_definitions_resolved`.
-- 6.2.3 - Two executions of one runbook that both reach the guard both see a
-  live sibling, and at most one passes. test:
-  `tests/agents/test_runbook_seats.py::test_concurrent_executions_admit_at_most_one`.
-- 6.2.4 - A storage error, a truncated run query and a caller that is not a
-  pipeline child session each refuse. test:
+- 6.2.3 - A live execution of the same runbook in the same project,
+  workspace and machine refuses naming it, while one on another machine or
+  in another workspace passes, and an ended one passes. Two executions of
+  one runbook in one place that both reach the guard both see a live
+  sibling, and at most one passes. test:
+  `tests/agents/test_runbook_seats.py::test_runbook_refuses_only_a_launch_in_the_same_place`.
+  test: `tests/agents/test_runbook_seats.py::test_concurrent_executions_admit_at_most_one`.
+- 6.2.4 - A storage error, a truncated query, a caller that is not a
+  pipeline child session, a live sibling with no child session, and a
+  sibling with no resolvable `workspace` input each refuse. test:
   `tests/agents/test_runbook_seats.py::test_uncertain_lookup_fails_closed`.
-- 6.2.5 - Fewer free slots than requested seats refuses before any launch.
-  test: `tests/agents/test_runbook_seats.py::test_capacity_shortfall_refuses`.
-- 6.2.6 - An empty, duplicate, unknown or whitespace-padded seat name, and
-  two seats with one canonical key, each refuse before any seat lookup.
+- 6.2.5 - More requested seats than free agent slots does not refuse at the
+  guard; slots are not a runbook check. test:
+  `tests/agents/test_runbook_seats.py::test_slot_capacity_not_enforced`.
+- 6.2.6 - An empty, duplicate, unknown or whitespace-padded seat name each
+  refuse before any lookup, and two requested seats with one title pass.
   test: `tests/agents/test_runbook_seats.py::test_requested_seats_validated`.
+  test: `tests/agents/test_runbook_seats.py::test_seats_sharing_a_title_admit`.
+- 6.2.7 - Two placements with one title in one workspace both reserve and
+  bind distinct panes, a title held by a hand-launched pane refuses
+  nothing, and no placement error is `seat_live`. test:
+  `tests/terminals/test_workspace_agent_panes.py::test_duplicate_title_placements_both_succeed`.
 
 ## P7: Pipeline Resume And Seat Adoption
 `kind: framing`
@@ -588,7 +640,7 @@ is untouched. Authorization runs before any run lookup or adoption.
 placement preflight, isolation and launch:
 
 - No run with that id: the ordinary path runs, including placement
-  preflight and `seat_live`, and the new run is created with that id.
+  preflight, and the new run is created with that id.
 - A run with that id whose parent session is missing, lacks
   `source="pipeline"`, has another `project_id`, or has another external
   id than the caller: refuse `invocation_conflict`.
@@ -798,8 +850,9 @@ step's `invocation_id`, plus the seat's agent definition.
   `tests/workflows/test_runbook_pipeline.py::test_restart_reruns_on_same_child`.
 - 8.1.4 - A partial deploy keeps the launched seat's output. A fresh run
   with `seats: "adversary"` passes the guard and launches only the
-  adversary, and a run that asks for the writer while its run is active is
-  refused. The default `seats` places all three seats: the writer in a tab,
+  adversary. A later run that asks for the writer while the first writer
+  is still live, after the first execution has ended, launches a second
+  writer with the same title and is not refused. The default `seats` places all three seats: the writer in a tab,
   the adversary as a right split and the enhancer as a split below the
   writer. The pipelines run CLI given a `seats` input of `adversary` hands
   the executor that string unchanged. test:
@@ -841,9 +894,9 @@ The new skill reference `runbooks.md` carries the same operator steps in
 reference form, registered as a pipelines topic in `catalog.json` (beside
 `references/pipelines/recovery.md`, `:561`) and listed in the pipelines
 `overview.md` topic table. `recovery.md` gains one paragraph: a runbook that
-failed with `seat_launch_unsettled`, `invocation_conflict` or `seat_live` has
-a held or unsettled seat, which the operator finds by its `seat` field or
-run id before any relaunch.
+failed with `seat_launch_unsettled` or `invocation_conflict` has an
+unsettled seat, which the operator finds by its run id before any
+relaunch.
 
 **Acceptance:**
 
@@ -853,7 +906,7 @@ run id before any relaunch.
   `runs show --json` and `kill_agent` by recorded run id. file:
   `src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md`.
 - 9.1.3 - The recovery reference explains the post-restart
-  `seat_launch_unsettled`, `invocation_conflict` and `seat_live` failures.
+  `seat_launch_unsettled` and `invocation_conflict` failures.
   behavior: "seat_launch_unsettled" in
   `src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md`.
 - 9.1.4 - The runbooks reference is a registered pipelines topic that the
@@ -873,7 +926,7 @@ stand-in for each provider executable.
 
 | Item | Obligation | Artifact |
 | --- | --- | --- |
-| 8.1.7 | In the isolated real-SRT default `planning` runbook, all three seats use `plan-writer`, `plan-enhancer` and `plan-adversary` and match the layout derived from the accepted 8.1 runbook and its installed launch snapshot. `list_running_agents` exposes each seat, and a repeat request is refused by the guard naming all three original run ids with no launch side effects. | test: `tests/workflows/test_placed_runbook_live.py::test_live_three_seat_runbook` |
+| 8.1.7 | In the isolated real-SRT default `planning` runbook, all three seats use `plan-writer`, `plan-enhancer` and `plan-adversary` and match the layout derived from the accepted 8.1 runbook and its installed launch snapshot. `list_running_agents` exposes each seat. A repeat request while the first execution is still launching in the same workspace is refused by the guard naming that execution, with no launch side effects; a repeat after it has ended launches a second pod with the same titles. | test: `tests/workflows/test_placed_runbook_live.py::test_live_three_seat_runbook` |
 | 8.1.8 | `kill_agent` on all three run ids read from `runs show --json` ends the inert provider processes and frees all bound panes and reservations; a fresh three-seat launch can reuse the names. | test: `tests/workflows/test_placed_runbook_live.py::test_live_stop_by_run_ids` |
 | 8.1.9 | For the writer, enhancer and adversary, a consumed one-shot barrier matches only the selected step execution's `COMPLETED` write after its genuine spawn. SIGKILL to the isolated runner PID leaves the selected step `RUNNING` without output. Restarting the same daemon adopts the same fixture-owned host and the original run by invocation id, reuses the execution and child, preserves predecessor outputs and opens no second terminal for any held seat; ordinary reconciliation commits with no re-arming. Unchanged and renamed panes are both covered. | test: `tests/workflows/test_placed_runbook_live.py::test_live_crash_window_adopts_seat` |
 
@@ -891,8 +944,10 @@ deferral:
 ## D2 Agent pane reservation primitives
 `kind: deferred`
 
-Reused leaf #23009, placed-launch 1.1. It supplies the seat key, the
-atomic per-workspace reservation and release (Decisions 5 and 6).
+Reused leaf #23009, placed-launch 1.1. It supplies the atomic
+per-workspace reservation and release (Decision 6). Its title-keyed seat
+refusal is superseded (Decision 5): 6.2 removes `seat_live`, and 6.2.7
+replaces 1.1.3 and 1.1.6, whose tests change with #23329.
 
 Provenance: task #23009. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
 
@@ -1246,8 +1301,10 @@ deferral:
 ## D12 Two-seat placement acceptance fixture
 `kind: deferred`
 
-Reused leaf #23019, placed-launch 3.1. It proves placement-level refusal for
-a two-seat pipeline. Runbook-level refusal is this plan's 6.2.
+Reused leaf #23019, placed-launch 3.1. It proves placement for a two-seat
+pipeline. Runbook-level refusal is this plan's 6.2. 3.1.2's live-seat
+refusal is superseded (Decision 5): a rerun with a live seat launches, and
+its test changes with #23329.
 
 Provenance: task #23019. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
 
@@ -1352,6 +1409,26 @@ deferral:
 - 2026-10-02: M1 withdrawn (PD gobby#14972 GO, 16:22 CT); it predates the
   completion pass. The acting Adversary (gobby#14550) derives a fresh M1
   from the `d17801b` body (memory `f5577ae0`).
+- 2026-10-03: #23379 amendment from Josh's #23329 rulings, relayed by the
+  PD gobby#14972 and the Assistant gobby#15070, written by the Researcher
+  gobby#14550.
+  - Runbooks are fire and forget. The 6.2 guard keeps two checks: a
+    same-place sibling check keyed on (pipeline name, project, workspace,
+    machine), and the agent-definition check. It drops the live-run seat
+    check and the slot-capacity check.
+  - The 6.2.1, 6.2.3, 6.2.4 and 6.2.5 acceptance items now match L4b
+    gobby#15047's #23329 tests.
+  - Seat identity is `project#session_ref`, and titles are display labels
+    (Decision 5). Nothing refuses a title collision. 6.2 removes
+    placement's `seat_live` (new item 6.2.7), which supersedes D2 1.1.3
+    and 1.1.6 and D12 3.1.2.
+  - Dependent text is updated: the Overview, Decisions 4–7, the
+    Constraints, P6, 7.2, 8.1.4, 9.1 and D1 8.1.7.
+  - The three 6.2 Targets that #23329 landed as files now carry justified
+    `::*` scopes, which the validator requires once those files exist.
+- 2026-10-03: M1 withdrawn (LM gobby#14930 decision (a), same flow as
+  `6612cf3e13`); it predates the #23379 amendment. R6 gobby#14945 or MM
+  derives a fresh M1 after review.
 
 
 ## V2: Verification
@@ -1370,237 +1447,3 @@ under `-p` resolves to the main checkout's copy. After the PD-owned restart,
 `uv run gobby pipelines list --tag runbook` lists the bundled `planning`
 runbook.
 Do not run the full pytest suite.
-
-## M1 Task Manifest
-`kind: manifest`
-
-```yaml
-- title: Pipeline tags from YAML and a tag filter
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '5.1.1: A project pipeline YAML with `tags: [runbook]` imports
-    with `runbook` in the row''s tags, and a re-import with changed tags updates them.
-    test: `tests/workflows/test_imports.py::test_pipeline_yaml_tags_persist_on_import`.
-
-    5.1.2: A bundled pipeline YAML with tags syncs with `gobby` plus those tags. test:
-    `tests/workflows/test_workflows_sync.py::test_bundled_pipeline_tags_merge_with_gobby`.
-
-    5.1.3: `list_pipelines(tag="runbook")` returns only tagged pipelines in scope,
-    and a project YAML declaring `gobby` is rejected. test: `tests/mcp_proxy/tools/workflows/test_mcp_proxy_tools_workflows_pipelines.py::test_list_pipelines_filters_by_tag`.
-
-    5.1.4: `uv run gobby pipelines list --tag runbook` prints only tagged pipelines.
-    test: `tests/cli/test_cli_pipelines.py::test_list_filters_by_tag`.'
-  labels:
-  - covers:deploy-runbook:5.1:5.1.1
-  - covers:deploy-runbook:5.1:5.1.2
-  - covers:deploy-runbook:5.1:5.1.3
-  - covers:deploy-runbook:5.1:5.1.4
-  tdd: true
-  source_section: '5.1'
-  implementation_domain: backend
-- title: Seat field in run listings
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '6.1.1: A run whose resume metadata carries a placement lists
-    `seat: {workspace, title}` in `list_running_agents` and `list_agent_runs`, and
-    an unplaced run lists `seat: null`. test: `tests/mcp_proxy/tools/test_agents_run_payload.py::test_seat_from_placement_metadata`.
-
-    6.1.2: `agents_query_tools.py` ends the leaf under 1,000 lines and the existing
-    payload fields are unchanged. symbol: `src/gobby/mcp_proxy/tools/agents_run_payload.py::_list_run_payload`.
-    test: `tests/mcp_proxy/tools/test_agents_run_payload.py::test_payload_fields_unchanged`.'
-  labels:
-  - covers:deploy-runbook:6.1:6.1.1
-  - covers:deploy-runbook:6.1:6.1.2
-  tdd: true
-  source_section: '6.1'
-  implementation_domain: backend
-- title: Runbook seat guard tool
-  category: code
-  task_type: feature
-  depends_on:
-  - '6.1'
-  validation_criteria: '6.2.1: A seat held by a run in any active status (queued,
-    pending or running) refuses with that run id, and an ended run''s seat passes.
-    test: `tests/agents/test_runbook_seats.py::test_live_run_seat_refuses`.
-
-    6.2.2: A requested seat whose `agent` names no installed definition, or a disabled
-    one, refuses naming the definition; an installed, enabled definition passes; and
-    the guard reads no `.gobby/roles` file. test: `tests/agents/test_runbook_seats.py::test_seat_agent_definitions_resolved`.
-
-    6.2.3: Two executions of one runbook that both reach the guard both see a live
-    sibling, and at most one passes. test: `tests/agents/test_runbook_seats.py::test_concurrent_executions_admit_at_most_one`.
-
-    6.2.4: A storage error, a truncated run query and a caller that is not a pipeline
-    child session each refuse. test: `tests/agents/test_runbook_seats.py::test_uncertain_lookup_fails_closed`.
-
-    6.2.5: Fewer free slots than requested seats refuses before any launch. test:
-    `tests/agents/test_runbook_seats.py::test_capacity_shortfall_refuses`.
-
-    6.2.6: An empty, duplicate, unknown or whitespace-padded seat name, and two seats
-    with one canonical key, each refuse before any seat lookup. test: `tests/agents/test_runbook_seats.py::test_requested_seats_validated`.'
-  labels:
-  - covers:deploy-runbook:6.2:6.2.1
-  - covers:deploy-runbook:6.2:6.2.2
-  - covers:deploy-runbook:6.2:6.2.3
-  - covers:deploy-runbook:6.2:6.2.4
-  - covers:deploy-runbook:6.2:6.2.5
-  - covers:deploy-runbook:6.2:6.2.6
-  tdd: true
-  source_section: '6.2'
-  implementation_domain: backend
-- title: Pipeline resume runs the launch-time definition
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '7.1.1: A pipeline launched through `run_pipeline` stores its
-    definition snapshot, and a definition changed after launch leaves the resumed
-    step graph unchanged. test: `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_resume_uses_launch_snapshot`.
-
-    7.1.2: A missing or malformed snapshot fails the execution on startup recovery,
-    is refused by `resume_pipeline` with its steps unchanged, and runs no step. test:
-    `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_missing_snapshot_fails_closed`.
-
-    7.1.3: A pipeline launched through `run_pipeline` for a project pre-creates its
-    execution with that `project_id`, even when the execution manager is bound to
-    another project. test: `tests/mcp_proxy/tools/test_mcp_proxy_tools_pipeline_resume.py::test_precreate_records_caller_project`.'
-  labels:
-  - covers:deploy-runbook:7.1:7.1.1
-  - covers:deploy-runbook:7.1:7.1.2
-  - covers:deploy-runbook:7.1:7.1.3
-  tdd: true
-  source_section: '7.1'
-  implementation_domain: backend
-- title: Pipeline spawns reconcile by step invocation id
-  category: code
-  task_type: feature
-  depends_on:
-  - '7.1'
-  validation_criteria: '7.2.1: A step''s `invocation_id` is the same before and after
-    a restart, two steps of one execution get different ids, and a step whose id is
-    `invocation_id` does not override the reserved name. test: `tests/workflows/test_pipeline_invocation_id.py::test_invocation_id_is_stable_per_step`.
-
-    7.2.2: A placed spawn from a pipeline child whose `reserved_run_id` names a started
-    run returns that run with `adopted: true` and makes no placement, reserver or
-    launch call, whether the seat is still live or ended, moved or was renamed. test:
-    `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_started_run_is_adopted`.
-
-    7.2.3: Two steps that spawn the same seat in sequence create two runs, and neither
-    adopts the other. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_distinct_steps_do_not_share_runs`.
-
-    7.2.4: A run with the id that was prepared and never started, or failed before
-    start, refuses `seat_launch_unsettled` and launches nothing. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_unstarted_run_refuses`.
-
-    7.2.5: A non-pipeline caller that names a real pipeline child as `parent_session_id`
-    keeps the reviewer-internal refusal and reaches no lookup. A pipeline caller refuses
-    `invocation_unauthorized` when its declared parent is another session, its execution
-    is missing, not running or in another project, or the id is not one of its steps''
-    invocation ids. A run with the id under another execution or another project refuses
-    `invocation_conflict`. A replacement child with the same external id adopts. The
-    queued task-close reviewer spawn is unchanged. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_invocation_authority`.
-
-    7.2.6: An adopted reply''s `workspace`, `tab_ref` and `pane_ref` name the pane
-    bound to the run''s `terminal_id` in the fresh-placement format, and each is `null`
-    when no pane holds that terminal. test: `tests/mcp_proxy/tools/spawn_agent/test_seat_adoption.py::test_adopted_reply_names_bound_pane`.'
-  labels:
-  - covers:deploy-runbook:7.2:7.2.1
-  - covers:deploy-runbook:7.2:7.2.2
-  - covers:deploy-runbook:7.2:7.2.3
-  - covers:deploy-runbook:7.2:7.2.4
-  - covers:deploy-runbook:7.2:7.2.5
-  - covers:deploy-runbook:7.2:7.2.6
-  tdd: true
-  source_section: '7.2'
-  implementation_domain: backend
-- title: Cron pipeline launch requires a cron session
-  category: code
-  task_type: feature
-  depends_on: []
-  validation_criteria: '7.3.1: A cron `pipeline` job parents the pipeline child to
-    the cron session, and each spawn the pipeline makes carries that child as parent
-    and the job''s project. test: `tests/scheduler/test_cron_runbook_chain.py::test_cron_chain_identity`.
-
-    7.3.2: A failed cron session create, and a missing session manager, fail the cron
-    run with a typed error and create no execution. test: `tests/scheduler/test_cron_runbook_chain.py::test_cron_session_failure_refuses`.'
-  labels:
-  - covers:deploy-runbook:7.3:7.3.1
-  - covers:deploy-runbook:7.3:7.3.2
-  tdd: true
-  source_section: '7.3'
-  implementation_domain: backend
-- title: Bundled planning runbook
-  category: code
-  task_type: feature
-  depends_on:
-  - '5.1'
-  - '6.2'
-  - '7.1'
-  - '7.2'
-  validation_criteria: '8.1.1: Bundled sync installs the runbook with the `gobby`
-    and `runbook` tags, and it validates as a `PipelineDefinition`. Each seat step
-    spawns its agent definition (`plan-writer`, `plan-enhancer` or `plan-adversary`),
-    and no input or prompt names a role file. file: `src/gobby/install/shared/workflows/pipelines/planning.yaml`.
-    test: `tests/workflows/test_runbook_pipeline.py::test_runbook_syncs_bundled_and_tagged`.
-
-    8.1.2: MCP and HTTP launches parent every seat to the pipeline child session,
-    whose parent is the caller or the system session, and resolve the project. test:
-    `tests/workflows/test_runbook_pipeline.py::test_entrypoint_parent_chain`.
-
-    8.1.3: A restart between the writer''s spawn and its completed write re-runs the
-    writer step on the reused pipeline child, and the second spawn carries the same
-    parent and the same `reserved_run_id`. A restart after the writer completed keeps
-    its `run_id`, skips the guard and launches only the remaining requested seats.
-    test: `tests/workflows/test_runbook_pipeline.py::test_restart_reruns_on_same_child`.
-
-    8.1.4: A partial deploy keeps the launched seat''s output. A fresh run with `seats:
-    "adversary"` passes the guard and launches only the adversary, and a run that
-    asks for the writer while its run is active is refused. The default `seats` places
-    all three seats: the writer in a tab, the adversary as a right split and the enhancer
-    as a split below the writer. The pipelines run CLI given a `seats` input of `adversary`
-    hands the executor that string unchanged. test: `tests/workflows/test_runbook_pipeline.py::test_partial_deploy_relaunches_missing_seat`.
-    test: `tests/cli/test_cli_pipelines.py::test_run_passes_seats_input_as_string`.
-
-    8.1.5: `resume_pipeline` on a failed runbook execution refuses with the typed
-    error and changes no step or output, including after the current definition lost
-    its `runbook` tag, changed or was deleted. test: `tests/workflows/test_runbook_pipeline.py::test_failed_runbook_resume_refused`.
-
-    8.1.6: The pipelines runs show CLI with JSON output includes each seat step''s
-    `run_id` for a completed and for a failed runbook execution. test: `tests/cli/test_cli_pipelines.py::test_runs_show_includes_step_outputs`.'
-  labels:
-  - covers:deploy-runbook:8.1:8.1.1
-  - covers:deploy-runbook:8.1:8.1.2
-  - covers:deploy-runbook:8.1:8.1.3
-  - covers:deploy-runbook:8.1:8.1.4
-  - covers:deploy-runbook:8.1:8.1.5
-  - covers:deploy-runbook:8.1:8.1.6
-  tdd: true
-  source_section: '8.1'
-  implementation_domain: backend
-- title: Runbook guide and pipeline reference
-  category: docs
-  task_type: feature
-  depends_on:
-  - '7.3'
-  - '8.1'
-  validation_criteria: '9.1.1: The pipelines guide documents runbooks, their guard,
-    entrypoints, restart and stop. behavior: "## Runbooks" in `docs/guides/pipelines.md`.
-
-    9.1.2: The skill reference names `check_runbook_seats`, the `seats` input, `runs
-    show --json` and `kill_agent` by recorded run id. file: `src/gobby/install/shared/skills/gobby/references/pipelines/runbooks.md`.
-
-    9.1.3: The recovery reference explains the post-restart `seat_launch_unsettled`,
-    `invocation_conflict` and `seat_live` failures. behavior: "seat_launch_unsettled"
-    in `src/gobby/install/shared/skills/gobby/references/pipelines/recovery.md`.
-
-    9.1.4: The runbooks reference is a registered pipelines topic that the catalog
-    lists and `get_skill_file` loads. test: `tests/skills/test_reference_library.py::test_pipelines_runbooks_topic_is_registered`.'
-  labels:
-  - covers:deploy-runbook:9.1:9.1.1
-  - covers:deploy-runbook:9.1:9.1.2
-  - covers:deploy-runbook:9.1:9.1.3
-  - covers:deploy-runbook:9.1:9.1.4
-  tdd: false
-  source_section: '9.1'
-  assigned_agent: tech-writer
-```
