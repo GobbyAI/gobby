@@ -141,13 +141,24 @@ def _check(
 
 
 @pytest.mark.parametrize("status", ACTIVE_AGENT_RUN_STATUSES)
-def test_live_run_seat_admits(env: _Env, status: str) -> None:
+def test_live_run_seat_admits(env: _Env, monkeypatch: pytest.MonkeyPatch, status: str) -> None:
     caller = _pipeline_child(env)
     _run(env, status, title="Lead")
+    queries: list[str] = []
+    for name in ("execute", "fetchone", "fetchall"):
+        real = getattr(env.db, name)
+
+        def recording(sql: str, *args: Any, _real: Any = real, **kwargs: Any) -> Any:
+            queries.append(sql)
+            return _real(sql, *args, **kwargs)
+
+        monkeypatch.setattr(env.db, name, recording)
 
     seats = _check(env, caller)
 
     assert [seat.name for seat in seats] == ["lead", "dev"]
+    assert queries, "the guard read nothing through the hub"
+    assert [sql for sql in queries if "agent_runs" in sql] == []
 
 
 def test_seat_agent_definitions_resolved(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
