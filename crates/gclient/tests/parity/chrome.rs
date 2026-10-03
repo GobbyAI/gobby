@@ -1237,12 +1237,13 @@ switch_project = "ctrl+1..9"
                     // left these records-free panes unmarked (`gclient` alone,
                     // #23096), then section headings went bold with no fill
                     // or selector and a rule set `+` apart from the last tab
-                    // (#23120): 4.1.3
+                    // (#23120), then the Terminals address took subtext0
+                    // (#23280 Option B): 4.1.3
                     // requires a glyph change to fail here, so this digest
                     // moves only alongside a deliberate render change.
                     assert_eq!(
                         frame_digest(&terminal),
-                        "57be67f52df824ed897bd52d1b8325b684b5748d2f1a5c437bd96146fb4e965e",
+                        "5595bd0049cea7d7e3084692d22f90501533d49be383abe09766dcf7b1d595e8",
                         "the frame moved; read it against the boards before pinning:\n{}",
                         rect_rows(&terminal, frame).join("\n")
                     );

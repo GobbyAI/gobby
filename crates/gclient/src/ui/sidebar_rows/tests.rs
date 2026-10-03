@@ -3,6 +3,7 @@ use crate::app::Workspace;
 use crate::daemon::{Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow};
 use crate::theme::{Theme, ThemeKind};
 use crate::ui::sidebar::agent_rows;
+use ratatui::style::Color;
 use serde_json::json;
 
 fn scripted_workspace() -> Workspace {
