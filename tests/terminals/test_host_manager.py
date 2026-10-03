@@ -2210,3 +2210,45 @@ async def test_spawn_failure_retries_from_health_loop(
     assert host.host_pid == 4242
     assert host.last_error is None
     await host.stop()
+
+
+@pytest.mark.asyncio
+async def test_control_probe_reports_each_distinct_outage_after_recovery(
+    tmp_path: Path,
+    temp_db: HubDatabase,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.terminals.host_protocol import write_pidfile
+
+    epoch = str(uuid.uuid4())
+    clients = [FakeControlClient(host_epoch=epoch) for _ in range(3)]
+    remaining = iter(clients)
+    write_pidfile(tmp_path, clients[0].host_pid)
+    host = _host(tmp_path, TerminalManager(temp_db), clients[0])
+
+    async def connect() -> FakeControlClient:
+        return next(remaining)
+
+    def change_connection(tick: int) -> None:
+        if tick == 1:
+            clients[0].closed = True
+        elif tick == 3:
+            clients[1].closed = True
+
+    ticks = _Ticks(count=3, before_tick=change_connection)
+    host._connector = connect
+    host._sleep = ticks
+    with caplog.at_level(logging.WARNING, logger="gobby.terminals.host_manager"):
+        await host.start()
+        try:
+            await asyncio.wait_for(ticks.done.wait(), 5)
+            warnings = [
+                record
+                for record in caplog.records
+                if "gterm control probe failed; reconnecting live host" in record.message
+            ]
+            assert len(warnings) == 2
+            assert host._client is clients[2]
+            assert host.last_error is None
+        finally:
+            await host.stop()

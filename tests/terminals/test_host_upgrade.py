@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import uuid
 from collections.abc import Callable, Iterator
@@ -570,6 +571,45 @@ async def test_lost_ack_and_failed_reconnects_keep_rows(
     deaths.assert_not_awaited()
     assert _identity(terminals, rows) == before
     assert host.requests == [(str(exe), attempt_id)]
+    await rig.manager.stop()
+
+
+@pytest.mark.asyncio
+async def test_expired_window_recovery_clears_outage_error(
+    tmp_path: Path, temp_db: HubDatabase, caplog: pytest.LogCaptureFixture
+) -> None:
+    """#22914: settling an expired window recovers like a reconnect, so no stale error remains."""
+    exe = tmp_path / "bin" / "gterm"
+    installed = _install(exe, b"gterm 0.1.4")
+    host = _Host(binary_sha256="a" * 64)
+
+    def exec_before_reply(attempt_id: str) -> dict[str, Any]:
+        host.accept(attempt_id, installed)
+        host.exec_image()
+        raise HostConnectionLost("gterm control connection lost")
+
+    host.reply = exec_before_reply
+    rig = _rig(tmp_path, TerminalManager(temp_db), host, exe)
+    deaths = AsyncMock()
+
+    with patch.object(rig.manager, "handle_host_death", new=deaths):
+        await rig.manager.start()
+        attempt_id = host.requests[0][1]
+        await rig.ticks.run(2)
+        assert host.refused_connects == 2
+        assert rig.manager.last_error is not None
+
+        host.accepting = True
+        host.finish(attempt_id, "succeeded", installed, running=installed)
+        rig.clock.now += REQUEST_TIMEOUT_SECONDS + HOST_BUDGET_SECONDS + INTERVAL + 0.5
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="gobby.terminals.host_manager"):
+            await rig.ticks.run()
+        reconnects = [r for r in caplog.records if "reconnecting live host" in r.getMessage()]
+        assert reconnects == [], "the tick must settle the expired window, not reconnect"
+        assert rig.manager.upgrade.is_open is False
+        assert rig.manager.last_error is None
+    deaths.assert_not_awaited()
     await rig.manager.stop()
 
 
