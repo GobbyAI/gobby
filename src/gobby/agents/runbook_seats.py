@@ -1,21 +1,22 @@
 """Runbook seat guard: the read-only admission check a runbook runs before it launches seats.
 
-A seat is the ``(workspace_id, canonical title)`` key placement holds. The guard is the
-runbook's visible first refusal; seat-level atomicity stays with placement's ``seat_live``
-and each launch's ``reserve_agent_slot``.
+Runbooks are fire and forget: once the panes exist and the agents start, the pipeline
+completes. The guard refuses only an accidental double-fire, the same runbook still
+launching for the same project in the same workspace on the same machine. Seats are
+told apart by ``project#session_ref``, never by pane title, so seats may share a title;
+runbooks enforce no agent slots.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
-from gobby.storage.terminals import truncate_title
 from gobby.storage.workspaces import WorkspaceManager
 from gobby.workflows.pipeline_state import ExecutionStatus, PipelineExecution
 
@@ -28,11 +29,9 @@ LIVE_EXECUTION_STATUSES = (
 READ_BOUND = 1000
 """Rows accepted per status. Each read fetches one extra row, and only that row refuses as truncated."""
 
-_SeatKey = tuple[str, str]
-
 
 class RunbookSeatRefusal(Exception):
-    """The guard refuses the runbook; the message names each held seat and its holder."""
+    """The guard refuses the runbook; the message names the cause."""
 
 
 @dataclass(frozen=True)
@@ -46,19 +45,16 @@ class CatalogueSeat:
 class AdmittedSeats:
     workspace_id: str
     seats: tuple[CatalogueSeat, ...]
-    free_slots: int
 
 
 @dataclass(frozen=True)
 class RunbookSeatStores:
-    """The storage the guard reads; ``free_slots`` maps a project id to its free agent slots."""
+    """The storage the guard reads; ``executions`` builds a project's execution manager."""
 
     sessions: SessionManager
     executions: Callable[[str], LocalPipelineExecutionManager]
-    runs: LocalAgentRunManager
     definitions: AgentDefinitionManager
     workspaces: WorkspaceManager
-    free_slots: Callable[[str], int]
 
 
 def check_runbook_seats(
@@ -72,9 +68,10 @@ def check_runbook_seats(
     """Admit ``requested`` seats or raise ``RunbookSeatRefusal``.
 
     ``requested`` is the comma-separated seat names; each must be exactly a catalogue
-    name. Checks run in order: sibling executions of the caller's runbook, active runs
-    holding a requested seat, each seat's agent definition, then free agent slots. A
-    storage error or a truncated read refuses with its cause.
+    name. Checks run in order: a live execution of the caller's runbook in the same
+    workspace on the same machine, then each seat's agent definition. A storage error, a
+    truncated read, or a live sibling whose machine or workspace is unknown refuses with
+    its cause.
     """
     seats = _requested_seats(requested, catalogue)
     try:
@@ -107,11 +104,6 @@ def _requested_seats(
         if by_name[name] in seats:
             raise RunbookSeatRefusal(f"seat '{name}' is requested twice")
         seats.append(by_name[name])
-    titled: dict[str, CatalogueSeat] = {}
-    for seat in seats:
-        other = titled.setdefault(_canonical(seat.title), seat)
-        if other is not seat:
-            raise RunbookSeatRefusal(f"seats '{other.name}' and '{seat.name}' share one seat title")
     return tuple(seats)
 
 
@@ -124,10 +116,6 @@ def _catalogue_seat(entry: Mapping[str, Any]) -> CatalogueSeat:
         )
     name, title, agent = values
     return CatalogueSeat(name=name, title=title, agent=agent)
-
-
-def _canonical(title: str) -> str:
-    return truncate_title(title) or title
 
 
 def _admit(
@@ -153,15 +141,12 @@ def _admit(
     if execution is None:
         raise RunbookSeatRefusal(f"pipeline execution {execution_id} is not in this project")
     workspace_id = _workspace_id(stores.workspaces, workspace)
-    keys = {(workspace_id, _canonical(seat.title)): seat for seat in seats}
 
-    _refuse_live_siblings(executions, execution)
-    _refuse_held_seats(stores.runs, project_id, keys)
+    _refuse_live_siblings(
+        stores, executions, execution, machine_id=session.machine_id, workspace_id=workspace_id
+    )
     _refuse_unresolved_agents(stores.definitions, project_id, seats)
-    free_slots = stores.free_slots(project_id)
-    if free_slots < len(seats):
-        raise RunbookSeatRefusal(f"only {free_slots} free agent slot(s) for {len(seats)} seats")
-    return AdmittedSeats(workspace_id=workspace_id, seats=seats, free_slots=free_slots)
+    return AdmittedSeats(workspace_id=workspace_id, seats=seats)
 
 
 def _workspace_id(workspaces: WorkspaceManager, workspace: str) -> str:
@@ -177,42 +162,47 @@ def _refuse_truncated(rows: Sequence[object], what: str) -> None:
 
 
 def _refuse_live_siblings(
-    executions: LocalPipelineExecutionManager, execution: PipelineExecution
+    stores: RunbookSeatStores,
+    executions: LocalPipelineExecutionManager,
+    execution: PipelineExecution,
+    *,
+    machine_id: str,
+    workspace_id: str,
 ) -> None:
+    """Refuse when the caller's runbook is still launching in the same place.
+
+    ``executions`` is already scoped to the caller's project. A sibling elsewhere,
+    on another machine or in another workspace, never refuses.
+    """
     name = execution.pipeline_name
     siblings: list[str] = []
     for status in LIVE_EXECUTION_STATUSES:
         rows = executions.list_executions(status=status, pipeline_name=name, limit=READ_BOUND + 1)
         _refuse_truncated(rows, f"{status.value} '{name}' execution")
-        siblings.extend(row.id for row in rows if row.id != execution.id)
+        siblings.extend(
+            row.id
+            for row in rows
+            if row.id != execution.id
+            and _launches_here(stores, row, machine_id=machine_id, workspace_id=workspace_id)
+        )
     if siblings:
         raise RunbookSeatRefusal(f"another '{name}' execution is live: {', '.join(siblings)}")
 
 
-def _refuse_held_seats(
-    runs: LocalAgentRunManager, project_id: str, keys: Mapping[_SeatKey, CatalogueSeat]
-) -> None:
-    held: list[str] = []
-    for status in ACTIVE_AGENT_RUN_STATUSES:
-        rows = runs.list_by_status(status, limit=READ_BOUND + 1, project_id=project_id)
-        _refuse_truncated(rows, f"{status} agent run")
-        for run in rows:
-            key = _run_seat(run)
-            seat = keys.get(key) if key is not None else None
-            if seat is not None:
-                held.append(f"seat '{seat.name}' is held by {status} run {run.id}")
-    if held:
-        raise RunbookSeatRefusal("; ".join(held))
-
-
-def _run_seat(run: AgentRun) -> _SeatKey | None:
-    placement = (run.resume_metadata_json or {}).get("placement")
-    if not isinstance(placement, Mapping):
-        return None
-    workspace_id, title = placement.get("workspace_id"), placement.get("title")
-    if not (isinstance(workspace_id, str) and isinstance(title, str) and title):
-        return None
-    return workspace_id, _canonical(title)
+def _launches_here(
+    stores: RunbookSeatStores, sibling: PipelineExecution, *, machine_id: str, workspace_id: str
+) -> bool:
+    """Whether ``sibling`` launches on this machine in this workspace; unknown refuses."""
+    child = stores.sessions.get(sibling.session_id) if sibling.session_id else None
+    if child is None:
+        raise RunbookSeatRefusal(f"live execution {sibling.id} has no pipeline child session")
+    if child.machine_id != machine_id:
+        return False
+    inputs = json.loads(sibling.inputs_json or "{}")
+    workspace = inputs.get("workspace") if isinstance(inputs, dict) else None
+    if not isinstance(workspace, str) or not workspace:
+        raise RunbookSeatRefusal(f"live execution {sibling.id} has no workspace input")
+    return _workspace_id(stores.workspaces, workspace) == workspace_id
 
 
 def _refuse_unresolved_agents(

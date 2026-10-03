@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import builtins
+import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -27,7 +27,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.workspaces import WorkspaceManager
-from gobby.utils.project_context import reset_project_context, set_project_context
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.pipeline_state import ExecutionStatus
 from tests.agents.conftest import AGENT_TEST_MACHINE_ID
@@ -58,7 +57,7 @@ def _install_agent(db: HubDatabase, name: str, project_id: str, *, enabled: bool
 
 
 @pytest.fixture
-def env(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) -> _Env:
+def env(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _Env:
     project_id = str(sample_project["id"])
     workspace = WorkspaceManager(temp_db).create(AGENT_TEST_MACHINE_ID, "runbook")[0]
     parent = SessionManager(temp_db).register(
@@ -71,17 +70,27 @@ def env(temp_db: HubDatabase, sample_project: dict[str, Any], tmp_path: Path) ->
     _install_agent(temp_db, "dev-agent", project_id)
     return _Env(
         db=temp_db,
-        stores=runbook_seat_stores(temp_db, project_path=str(tmp_path)),
+        stores=runbook_seat_stores(temp_db),
         project_id=project_id,
         workspace_id=workspace.id,
         parent_session_id=parent.id,
     )
 
 
-def _pipeline_child(env: _Env, status: ExecutionStatus = ExecutionStatus.RUNNING) -> str:
-    """Start an execution of the runbook and return its pipeline child session id."""
+def _pipeline_child(
+    env: _Env,
+    status: ExecutionStatus = ExecutionStatus.RUNNING,
+    *,
+    workspace: str | None = None,
+    machine_id: str = AGENT_TEST_MACHINE_ID,
+) -> str:
+    """Start an execution of the runbook in ``workspace`` on ``machine_id``; return its child session."""
     executions = LocalPipelineExecutionManager(env.db, env.project_id)
-    execution = executions.create_execution(RUNBOOK, project_id=env.project_id)
+    execution = executions.create_execution(
+        RUNBOOK,
+        inputs_json=json.dumps({"workspace": workspace or env.workspace_id}),
+        project_id=env.project_id,
+    )
     child = SessionManager(env.db).register(
         external_id=f"pipeline-{execution.id}",
         machine_id=AGENT_TEST_MACHINE_ID,
@@ -89,6 +98,8 @@ def _pipeline_child(env: _Env, status: ExecutionStatus = ExecutionStatus.RUNNING
         project_id=env.project_id,
         parent_session_id=env.parent_session_id,
     )
+    if machine_id != AGENT_TEST_MACHINE_ID:
+        env.db.execute("UPDATE sessions SET machine_id = %s WHERE id = %s", (machine_id, child.id))
     executions.update_execution_session(execution.id, child.id)
     executions.update_execution_status(execution.id, status)
     return child.id
@@ -117,7 +128,7 @@ def _check(
     caller: str,
     requested: str = "lead,dev",
     catalogue: list[dict[str, Any]] = CATALOGUE,
-) -> tuple[tuple[CatalogueSeat, ...], int]:
+) -> tuple[CatalogueSeat, ...]:
     admitted = check_runbook_seats(
         env.stores,
         caller_session_id=caller,
@@ -125,19 +136,16 @@ def _check(
         requested=requested,
         catalogue=catalogue,
     )
-    return admitted.seats, admitted.free_slots
+    return admitted.seats
 
 
 @pytest.mark.parametrize("status", ACTIVE_AGENT_RUN_STATUSES)
-def test_live_run_seat_refuses(env: _Env, status: str) -> None:
+def test_live_run_seat_admits(env: _Env, status: str) -> None:
     caller = _pipeline_child(env)
-    holder = _run(env, status, title="Lead")
+    _run(env, status, title="Lead")
 
-    with pytest.raises(RunbookSeatRefusal, match=rf"seat 'lead'.*{holder.id}"):
-        _check(env, caller)
+    seats = _check(env, caller)
 
-    env.db.execute("UPDATE agent_runs SET status = 'completed' WHERE id = %s", (holder.id,))
-    seats, _ = _check(env, caller)
     assert [seat.name for seat in seats] == ["lead", "dev"]
 
 
@@ -159,10 +167,34 @@ def test_seat_agent_definitions_resolved(env: _Env, monkeypatch: pytest.MonkeyPa
         _check(env, caller, catalogue=missing)
     with pytest.raises(RunbookSeatRefusal, match=r"seat 'dev'.*'off-agent' is disabled"):
         _check(env, caller, catalogue=disabled)
-    seats, _ = _check(env, caller)
+    seats = _check(env, caller)
 
     assert [seat.agent for seat in seats] == ["lead-agent", "dev-agent"]
     assert [path for path in opened if ".gobby/roles" in path] == []
+
+
+@pytest.mark.parametrize(
+    ("place", "refused"),
+    [("same-place", True), ("other-machine", False), ("other-workspace", False)],
+)
+def test_runbook_refuses_only_a_launch_in_the_same_place(
+    env: _Env, place: str, refused: bool
+) -> None:
+    if place == "other-machine":
+        _pipeline_child(env, machine_id="21000000-0000-4000-8000-000000000002")
+    elif place == "other-workspace":
+        other = WorkspaceManager(env.db).create(AGENT_TEST_MACHINE_ID, "second-pod")[0]
+        _pipeline_child(env, workspace=other.id)
+    else:
+        _pipeline_child(env)
+    caller = _pipeline_child(env)
+
+    if refused:
+        with pytest.raises(RunbookSeatRefusal, match=f"another '{RUNBOOK}' execution is live"):
+            _check(env, caller)
+    else:
+        seats = _check(env, caller)
+        assert [seat.name for seat in seats] == ["lead", "dev"]
 
 
 def test_concurrent_executions_admit_at_most_one(env: _Env) -> None:
@@ -183,25 +215,49 @@ def test_concurrent_executions_admit_at_most_one(env: _Env) -> None:
 
 
 def _storage_error(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
-    def failing_list(*args: Any, **kwargs: Any) -> list[AgentRun]:
+    def failing_list(*args: Any, **kwargs: Any) -> list[object]:
         raise RuntimeError("hub connection lost")
 
-    monkeypatch.setattr(env.stores.runs, "list_by_status", failing_list)
+    monkeypatch.setattr(LocalPipelineExecutionManager, "list_executions", failing_list)
     return _pipeline_child(env)
 
 
 def _truncated_page(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
-    unplaced = _run(env, "completed")
+    caller = _pipeline_child(env)
+    real_list_executions = LocalPipelineExecutionManager.list_executions
 
-    def full_page(*args: Any, limit: int = 100, **kwargs: Any) -> list[AgentRun]:
-        return [unplaced] * limit
+    def full_page(
+        self: LocalPipelineExecutionManager, *, limit: int, **kwargs: Any
+    ) -> list[object]:
+        rows: list[object] = list(real_list_executions(self, limit=limit, **kwargs))
+        return (rows * limit)[:limit]
 
-    monkeypatch.setattr(env.stores.runs, "list_by_status", full_page)
-    return _pipeline_child(env)
+    monkeypatch.setattr(LocalPipelineExecutionManager, "list_executions", full_page)
+    return caller
 
 
 def _not_pipeline_child(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
     return env.parent_session_id
+
+
+def _sibling_without_session(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
+    executions = LocalPipelineExecutionManager(env.db, env.project_id)
+    sibling = executions.create_execution(
+        RUNBOOK,
+        inputs_json=json.dumps({"workspace": env.workspace_id}),
+        project_id=env.project_id,
+    )
+    executions.update_execution_status(sibling.id, ExecutionStatus.PENDING)
+    return _pipeline_child(env)
+
+
+def _sibling_without_workspace(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
+    sibling = _pipeline_child(env)
+    env.db.execute(
+        "UPDATE pipeline_executions SET inputs_json = %s WHERE session_id = %s",
+        (json.dumps({}), sibling),
+    )
+    return _pipeline_child(env)
 
 
 @pytest.mark.parametrize(
@@ -210,8 +266,16 @@ def _not_pipeline_child(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
         (_storage_error, "hub connection lost"),
         (_truncated_page, "truncated"),
         (_not_pipeline_child, "not a pipeline child session"),
+        (_sibling_without_session, "has no pipeline child session"),
+        (_sibling_without_workspace, "has no workspace input"),
     ],
-    ids=["storage-error", "truncated-page", "not-pipeline-child"],
+    ids=[
+        "storage-error",
+        "truncated-page",
+        "not-pipeline-child",
+        "sibling-without-session",
+        "sibling-without-workspace",
+    ],
 )
 def test_uncertain_lookup_fails_closed(
     env: _Env,
@@ -225,12 +289,10 @@ def test_uncertain_lookup_fails_closed(
         _check(env, caller)
 
 
-@pytest.mark.parametrize("read", ["executions", "runs"])
 def test_read_bound_refuses_only_past_a_full_page(
-    env: _Env, monkeypatch: pytest.MonkeyPatch, read: str
+    env: _Env, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     caller = _pipeline_child(env)
-    filler = _run(env, "completed")
     count = READ_BOUND
     real_list_executions = LocalPipelineExecutionManager.list_executions
 
@@ -240,15 +302,9 @@ def test_read_bound_refuses_only_past_a_full_page(
         rows: list[object] = list(real_list_executions(self, limit=limit, **kwargs))
         return (rows * count)[: min(limit, count)]
 
-    def repeated_runs(*args: Any, limit: int, **kwargs: Any) -> list[AgentRun]:
-        return [filler] * min(limit, count)
+    monkeypatch.setattr(LocalPipelineExecutionManager, "list_executions", repeated_executions)
 
-    if read == "executions":
-        monkeypatch.setattr(LocalPipelineExecutionManager, "list_executions", repeated_executions)
-    else:
-        monkeypatch.setattr(env.stores.runs, "list_by_status", repeated_runs)
-
-    seats, _ = _check(env, caller)
+    seats = _check(env, caller)
     assert [seat.name for seat in seats] == ["lead", "dev"]
 
     count = READ_BOUND + 1
@@ -256,86 +312,79 @@ def test_read_bound_refuses_only_past_a_full_page(
         _check(env, caller)
 
 
-def test_capacity_shortfall_refuses(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(runbook_seat_tools, "max_active_agents_for_project", lambda path: 2)
+def test_slot_capacity_not_enforced(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    # A zero agent cap must not refuse: runbooks do not enforce slots.
+    monkeypatch.setattr(
+        runbook_seat_tools, "max_active_agents_for_project", lambda path: 0, raising=False
+    )
     caller = _pipeline_child(env)
     _run(env, "running")
 
-    with pytest.raises(RunbookSeatRefusal, match=r"1 free agent slot.*2 seats"):
-        _check(env, caller)
-    seats, free_slots = _check(env, caller, requested="lead")
+    seats = _check(env, caller)
 
-    assert ([seat.name for seat in seats], free_slots) == (["lead"], 1)
+    assert [seat.name for seat in seats] == ["lead", "dev"]
 
 
-_LONG = "x" * 1024
+def test_seats_sharing_a_title_admit(env: _Env) -> None:
+    caller = _pipeline_child(env)
+    researchers = [
+        {"name": "researcher-1", "title": "Researcher", "agent": "lead-agent"},
+        {"name": "researcher-2", "title": "Researcher", "agent": "lead-agent"},
+    ]
+
+    seats = _check(env, caller, requested="researcher-1,researcher-2", catalogue=researchers)
+
+    assert [seat.name for seat in seats] == ["researcher-1", "researcher-2"]
 
 
 @pytest.mark.parametrize(
-    ("requested", "catalogue", "cause"),
+    ("requested", "cause"),
     [
-        ("", CATALOGUE, "no seats requested"),
-        ("lead,lead", CATALOGUE, "seat 'lead' is requested twice"),
-        ("lead,ghost", CATALOGUE, "seat 'ghost' is not in the catalogue"),
-        ("lead, dev", CATALOGUE, "seat ' dev' is padded with whitespace"),
-        (
-            "lead,dev",
-            [
-                {"name": "lead", "title": f"{_LONG}a", "agent": "lead-agent"},
-                {"name": "dev", "title": f"{_LONG}b", "agent": "dev-agent"},
-            ],
-            "seats 'lead' and 'dev' share one seat title",
-        ),
+        ("", "no seats requested"),
+        ("lead,lead", "seat 'lead' is requested twice"),
+        ("lead,ghost", "seat 'ghost' is not in the catalogue"),
+        ("lead, dev", "seat ' dev' is padded with whitespace"),
     ],
-    ids=["empty", "duplicate", "unknown", "whitespace-padded", "one-canonical-key"],
+    ids=["empty", "duplicate", "unknown", "whitespace-padded"],
 )
 def test_requested_seats_validated(
     env: _Env,
     monkeypatch: pytest.MonkeyPatch,
     requested: str,
-    catalogue: list[dict[str, Any]],
     cause: str,
 ) -> None:
     caller = _pipeline_child(env)
     lookups: list[object] = []
 
-    def recording_list(*args: Any, **kwargs: Any) -> list[AgentRun]:
+    def recording_list(*args: Any, **kwargs: Any) -> list[object]:
         lookups.append(kwargs)
         return []
 
-    monkeypatch.setattr(env.stores.runs, "list_by_status", recording_list)
+    monkeypatch.setattr(LocalPipelineExecutionManager, "list_executions", recording_list)
 
     with pytest.raises(RunbookSeatRefusal, match=cause):
-        _check(env, caller, requested=requested, catalogue=catalogue)
+        _check(env, caller, requested=requested)
     assert lookups == []
 
 
-def test_registered_tool_replies_in_mcp_step_shape(
-    env: _Env, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(runbook_seat_tools, "max_active_agents_for_project", lambda path: 5)
+def test_registered_tool_replies_in_mcp_step_shape(env: _Env) -> None:
     registry = create_agents_registry(
         MagicMock(), session_manager=SessionManager(env.db), db=env.db
     )
     caller = _pipeline_child(env)
-    project_token = set_project_context({"id": env.project_id, "project_path": str(tmp_path)})
-    try:
-        with session_context_for_test(caller):
-            admitted = registry.call_sync(
-                "check_runbook_seats",
-                {"workspace": env.workspace_id, "requested": "lead", "catalogue": CATALOGUE},
-            )
-            refused = registry.call_sync(
-                "check_runbook_seats",
-                {"workspace": env.workspace_id, "requested": "ghost", "catalogue": CATALOGUE},
-            )
-    finally:
-        reset_project_context(project_token)
+    with session_context_for_test(caller):
+        admitted = registry.call_sync(
+            "check_runbook_seats",
+            {"workspace": env.workspace_id, "requested": "lead", "catalogue": CATALOGUE},
+        )
+        refused = registry.call_sync(
+            "check_runbook_seats",
+            {"workspace": env.workspace_id, "requested": "ghost", "catalogue": CATALOGUE},
+        )
 
     assert admitted == {
         "success": True,
         "workspace_id": env.workspace_id,
         "seats": ({"name": "lead", "title": "Lead", "agent": "lead-agent"},),
-        "free_slots": 5,
     }
     assert refused == {"success": False, "error": "seat 'ghost' is not in the catalogue"}
