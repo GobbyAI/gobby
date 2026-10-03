@@ -724,7 +724,6 @@ const CONFIG_VALUES = {
     reasoning_watchdog_interrupt_enabled: true,
     reasoning_watchdog_settle_seconds: 2.5,
     init_timeout_seconds: 60,
-    registration_timeout_seconds: 30.0,
     auto_enter_approval_prompts: true,
     auto_enter_agent_terminals: false,
     auto_enter_agent_interval_seconds: 5,

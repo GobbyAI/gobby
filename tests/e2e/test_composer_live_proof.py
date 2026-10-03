@@ -127,7 +127,6 @@ async def composer_fixture(
                 "terminal_host.max_attachments_per_terminal": 4,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
-                "tmux.registration_timeout_seconds": 300.0,
                 "hook_extensions.websocket.enabled": True,
                 "hook_extensions.websocket.include_payload": True,
                 "hook_extensions.websocket.broadcast_events": [

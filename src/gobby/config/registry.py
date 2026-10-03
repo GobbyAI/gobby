@@ -581,7 +581,11 @@ def _flatten_mapping(value: Mapping[str, object], prefix: str = "") -> Iterator[
 
 BOOTSTRAP_RUNTIME_PATHS = frozenset(_flatten_mapping(BootstrapConfig().to_config_dict()))
 _REMOVED_RUNTIME_PATHS = frozenset({"hub_backend", "postgres_pool"})
-_REMOVED_STORED_KEYS = frozenset(f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS)
+# tmux.registration_timeout_seconds lost its reader when spawn stopped waiting for
+# registration (6c211201b8).
+_REMOVED_STORED_KEYS = frozenset(f"memory.{key}" for key in REMOVED_MEMORY_CONFIG_KEYS) | {
+    "tmux.registration_timeout_seconds"
+}
 _REMOVED_STORED_SECTIONS = ("memory_usefulness",)
 
 

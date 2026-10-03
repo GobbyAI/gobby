@@ -4631,17 +4631,6 @@
     },
     {
       "activation": "live",
-      "default": 30.0,
-      "description": "Seconds to wait after tmux live-pane verification for the spawned runtime to register its child session.",
-      "key": "tmux.registration_timeout_seconds",
-      "machineExport": false,
-      "namespace": "tmux",
-      "secrecy": "none",
-      "type": "number",
-      "visibility": "public"
-    },
-    {
-      "activation": "live",
       "default": "gobby",
       "description": "Prefix for auto-generated session names.",
       "key": "tmux.session_prefix",

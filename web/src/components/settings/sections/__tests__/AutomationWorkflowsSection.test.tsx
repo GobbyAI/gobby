@@ -121,7 +121,6 @@ function makeConfigValues(): Record<string, unknown> {
       reasoning_watchdog_interrupt_enabled: false,
       reasoning_watchdog_settle_seconds: 5,
       init_timeout_seconds: 30,
-      registration_timeout_seconds: 30,
       auto_enter_approval_prompts: true,
       auto_enter_agent_terminals: false,
       auto_enter_agent_interval_seconds: 10,

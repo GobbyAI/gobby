@@ -204,7 +204,7 @@ def e2e_pre_daemon_setup(
     mutations.patch_internal(
         expected_revision=mutations.repository.current_revision(),
         # A stub provider never registers a session; keep its seat held for the test.
-        patch=ConfigPatch(values={"tmux.registration_timeout_seconds": 300.0}),
+        patch=ConfigPatch(values={"tmux.init_timeout_seconds": 600}),
         source="two-seat-placement-fixture",
     )
     try:

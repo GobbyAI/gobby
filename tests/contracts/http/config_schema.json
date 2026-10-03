@@ -4538,16 +4538,6 @@
           "default": 0.2,
           "description": "Seconds to wait after Ctrl-C before sending the watchdog continuation prompt."
         },
-        "tmux.registration_timeout_seconds": {
-          "type": "number",
-          "namespace": "tmux",
-          "secrecy": "none",
-          "visibility": "public",
-          "activation": "live",
-          "machineExport": false,
-          "default": 30.0,
-          "description": "Seconds to wait after tmux live-pane verification for the spawned runtime to register its child session."
-        },
         "tmux.session_prefix": {
           "type": "string",
           "namespace": "tmux",
