@@ -42,6 +42,7 @@ DEVELOPER: dict[str, Any] = {"_agent_type": "developer"}
 ASSISTANT: dict[str, Any] = {"_agent_type": "default", "_persona_name": "assistant"}
 ARCHIVIST: dict[str, Any] = {"_agent_type": "archivist"}
 PLAN_WRITER: dict[str, Any] = {"_agent_type": "default", "_persona_name": "plan-writer"}
+PLAN_ENHANCER: dict[str, Any] = {"_agent_type": "plan-enhancer"}
 ORCHESTRATOR: dict[str, Any] = {"_agent_type": "default", "_persona_name": "orchestrator"}
 
 
@@ -123,10 +124,12 @@ async def test_seat_common_matches_spawned_and_skips_non_seats(engine: RuleEngin
     spawned = await _turn_context(engine, {"_agent_type": "developer"})
     orchestrator = await _turn_context(engine, {"_persona_name": "orchestrator"})
     plain = await _turn_context(engine, {})
+    enhancer = await _turn_context(engine, dict(PLAN_ENHANCER))
     off_catalogue = await _turn_context(engine, {"_persona_name": "design-lead"})
 
     assert GUIDANCE_HEADING in spawned
     assert GUIDANCE_HEADING in orchestrator
+    assert GUIDANCE_HEADING in enhancer
     assert GUIDANCE_HEADING not in plain
     assert GUIDANCE_HEADING not in off_catalogue
 
@@ -147,7 +150,7 @@ async def test_seat_common_rearms_after_compact(engine: RuleEngine) -> None:
 
 @pytest.mark.asyncio
 async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
-    for seat in (DEVELOPER, ASSISTANT):
+    for seat in (DEVELOPER, ASSISTANT, PLAN_ENHANCER):
         for tool in ("spawn_agent", "dispatch_batch"):
             blocked = await _decide(
                 engine, _proxy_call("gobby-agents", tool, {"agent": "developer"}), seat
@@ -161,7 +164,7 @@ async def test_seats_cannot_spawn(engine: RuleEngine) -> None:
         _shell("gobby agents spawn developer --task '#1'"),
         _shell("cd /tmp && uv run gobby pipelines run nightly"),
     ]
-    for seat in (DEVELOPER, ASSISTANT, PLAN_WRITER):
+    for seat in (DEVELOPER, ASSISTANT, PLAN_WRITER, PLAN_ENHANCER):
         for launch in launches:
             blocked = await _decide(engine, launch, seat)
             assert blocked.decision == "block", (seat, launch)

@@ -959,15 +959,23 @@ class TestSyncBundledAgents:
 
         assert result["success"] is True
         assert result["errors"] == []
+        retired_names = ("plan-enhancer-taskless", "plan-adversary-taskless")
         for name in old_names:
-            assert mgr.get_by_name(name) is None
             renamed = mgr.get_by_name(f"{name}-old")
             assert renamed is not None
             assert renamed.source == "installed"
             assert renamed.enabled is True
             assert _parse_body(renamed).name == f"{name}-old"
+        for name in retired_names:
+            assert mgr.get_by_name(name) is None
         enabled_names = {row.name for row in mgr.list_all() if row.enabled}
-        assert enabled_names.isdisjoint(old_names)
+        assert enabled_names.isdisjoint(retired_names)
+        # The plan-enhancer name now belongs to the bundled planning seat.
+        seat = mgr.get_by_name("plan-enhancer")
+        assert seat is not None
+        seat_prompts = _parse_body(seat).prompts
+        assert seat_prompts is not None
+        assert "You are the Plan Enhancer seat" in (seat_prompts.agent or "")
 
     @pytest.mark.unit
     def test_sync_orphan_cleanup_preserves_non_sync_managed_agents(

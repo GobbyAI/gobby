@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 AGENTS_DIR = REPO_ROOT / "src/gobby/install/shared/workflows/agents"
 REMOVED_RESEARCHER = "plan-review-researcher-taskless"
-ADVERSARIES = ("plan-adversary", "plan-adversary-taskless-old")
+ADVERSARIES = ("plan-adversary-old", "plan-adversary-taskless-old")
 PLAN_AGENTS = (*ADVERSARIES, "plan-enhancer-old", "plan-enhancer-taskless-old")
 LANES = (
     "requirements_traceability",
@@ -34,7 +34,7 @@ def _review(agent: dict[str, Any]) -> dict[str, Any]:
 
 def test_adversary_agents_pin_the_reviewer_model() -> None:
     """The agent definition owns the reviewer model, not the coordinator skill."""
-    tasked = _agent("plan-adversary")
+    tasked = _agent("plan-adversary-old")
     assert tasked["provider"] == "codex"
     assert tasked["model"] == "gpt-5.6-sol"
     taskless = _agent("plan-adversary-taskless-old")
