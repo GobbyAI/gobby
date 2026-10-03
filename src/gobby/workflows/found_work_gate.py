@@ -32,7 +32,12 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptValidationRun,
 )
 from gobby.workflows.found_work_dispositions import has_owner_filed_disposition
-from gobby.workflows.validation_cover import green_covers_failure, run_targets
+from gobby.workflows.validation_cover import (
+    green_covers_failure,
+    run_covers,
+    run_targets,
+    surviving_path_failure,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +247,11 @@ def unresolved_validation_failures(
     foreign_paths: AbstractSet[str] = frozenset(),
     project_path: str | None = None,
 ) -> tuple[TranscriptValidationRun, ...]:
-    """Return failures without a later, or another tree's, covering green run."""
+    """Return failures without a later, or another tree's, covering green run.
+
+    A pytest red that collected nothing because named paths are gone needs a
+    later green over only its surviving paths.
+    """
     ordered = sorted(runs, key=lambda run: run.order)
     unresolved: list[TranscriptValidationRun] = []
     for failed in ordered:
@@ -256,6 +265,9 @@ def unresolved_validation_failures(
         if any(green_covers_failure(green, failed, project_path) for green in greens):
             continue
         later_greens = [run for run in greens if run.order > failed.order]
+        surviving = surviving_path_failure(failed, project_path)
+        if surviving is not None and any(run_covers(run, surviving) for run in later_greens):
+            continue
         if owner_handoff and _verified_foreign_clearance(
             failed,
             later_greens,
