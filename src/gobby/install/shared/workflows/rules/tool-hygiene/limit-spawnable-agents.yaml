@@ -13,12 +13,14 @@ rules:
       and tool_input.get('tool_name') in ('spawn_agent', 'dispatch_batch')
       and not spawn_target_allowed(
         event.metadata.get('_platform_session_id'), tool_input.get('tool_name'),
-        tool_input.get('agent'))
+        tool_input.get('agent'), tool_input.get('suggestions'))
     effects:
       - type: block
         mcp_tools: ["gobby-agents:spawn_agent", "gobby-agents:dispatch_batch"]
         reason: >-
           A spawned agent spawns only what its definition's spawnable_agents
-          allows: ["*"] for any agent, the named agents, or none when empty. An
-          omitted agent means the tool's default. Send the work to your parent
-          with gobby-agents:send_message instead.
+          allows: ["*"] for any agent, the named agents, or none when empty.
+          Every agent the call can start must be allowed: an omitted agent
+          means the tool's default, each dispatch_batch suggestion's own agent
+          counts, and so does every agent in a target's fallback_agent chain.
+          Send the work to your parent with gobby-agents:send_message instead.

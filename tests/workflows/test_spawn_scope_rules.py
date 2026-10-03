@@ -45,11 +45,13 @@ def _only_limit_rule_enabled(db: HubDatabase) -> RuleDefinitionManager:
     return manager
 
 
-def _spawn_event(caller_id: str, tool_name: str, agent: str | None) -> HookEvent:
+def _spawn_event(
+    caller_id: str, tool_name: str, agent: str | None, suggestions: object = None
+) -> HookEvent:
     """The before_tool event the MCP proxy builds for one spawn dispatch."""
     arguments: dict[str, Any] = {"prompt": "work"}
     if tool_name == "dispatch_batch":
-        arguments = {"suggestions": [{"task_id": "#1"}]}
+        arguments = {"suggestions": [{"task_id": "#1"}] if suggestions is None else suggestions}
     if agent is not None:
         arguments["agent"] = agent
     data: dict[str, Any] = {
@@ -71,7 +73,9 @@ def _spawn_event(caller_id: str, tool_name: str, agent: str | None) -> HookEvent
     )
 
 
-def _define_agent(db: HubDatabase, name: str, spawnable: list[str] | None) -> None:
+def _define_agent(
+    db: HubDatabase, name: str, spawnable: list[str] | None, fallback: str | None = None
+) -> None:
     body: dict[str, Any] = {
         "name": name,
         "prompts": {"agent": "Work."},
@@ -79,6 +83,8 @@ def _define_agent(db: HubDatabase, name: str, spawnable: list[str] | None) -> No
     }
     if spawnable is not None:
         body["spawnable_agents"] = spawnable
+    if fallback is not None:
+        body["fallback_agent"] = fallback
     AgentDefinitionManager(db).create(name, body)
 
 
@@ -95,6 +101,12 @@ class TestLimitSpawnableAgents:
         _define_agent(temp_db, "spawn-scope-lister", ["spawn-scope-worker"])
         _define_agent(temp_db, "spawn-scope-listless", None)
         _define_agent(temp_db, "spawn-scope-anyone", ["*"])
+        _define_agent(temp_db, "spawn-scope-chained", None, fallback="spawn-scope-backup")
+        _define_agent(temp_db, "spawn-scope-backup", None)
+        _define_agent(temp_db, "spawn-scope-chain-lister", ["spawn-scope-chained"])
+        _define_agent(
+            temp_db, "spawn-scope-chain-both", ["spawn-scope-chained", "spawn-scope-backup"]
+        )
 
         def register(name: str, parent: Session | None = None) -> Session:
             return session_manager.register(
@@ -126,6 +138,8 @@ class TestLimitSpawnableAgents:
             "lister": spawned("spawn-scope-lister"),
             "listless": spawned("spawn-scope-listless"),
             "anyone": spawned("spawn-scope-anyone"),
+            "chain-lister": spawned("spawn-scope-chain-lister"),
+            "chain-both": spawned("spawn-scope-chain-both"),
         }
 
     def test_rule_syncs_enabled_blocking_both_spawn_tools(self, temp_db: HubDatabase) -> None:
@@ -179,6 +193,61 @@ class TestLimitSpawnableAgents:
             assert response.reason is not None
             assert LIMIT_SPAWNABLE_AGENTS in response.reason
             assert "spawnable_agents" in response.reason
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("caller", "tool_name", "agent", "suggestions", "expected_decision"),
+        [
+            # A suggestion's own agent overrides the top-level one.
+            ("lister", "dispatch_batch", "spawn-scope-worker", [{"agent": "default"}], "block"),
+            ("lister", "dispatch_batch", None, [{"agent": "spawn-scope-worker"}], "allow"),
+            ("lister", "dispatch_batch", "spawn-scope-worker", [{"agent": "  "}], "allow"),
+            (
+                "lister",
+                "dispatch_batch",
+                None,
+                [{"agent": "spawn-scope-worker"}, {"agent": "spawn-scope-other"}],
+                "block",
+            ),
+            ("lister", "dispatch_batch", "spawn-scope-worker", "#1", "block"),
+            ("lister", "dispatch_batch", "spawn-scope-worker", ["#1"], "block"),
+            # Every agent in a target's fallback_agent chain is a target too.
+            ("chain-lister", "spawn_agent", "spawn-scope-chained", None, "block"),
+            ("chain-both", "spawn_agent", "spawn-scope-chained", None, "allow"),
+            (
+                "chain-lister",
+                "dispatch_batch",
+                None,
+                [{"agent": "spawn-scope-chained"}],
+                "block",
+            ),
+            ("chain-both", "dispatch_batch", "spawn-scope-chained", [{}], "allow"),
+        ],
+    )
+    async def test_every_effective_spawn_target_must_be_listed(
+        self,
+        temp_db: HubDatabase,
+        session_manager: SessionManager,
+        callers: dict[str, Session],
+        caller: str,
+        tool_name: str,
+        agent: str | None,
+        suggestions: object,
+        expected_decision: str,
+    ) -> None:
+        _only_limit_rule_enabled(temp_db)
+        caller_id = callers[caller].id
+
+        response = await RuleEngine(temp_db, session_manager=session_manager).evaluate(
+            _spawn_event(caller_id, tool_name, agent, suggestions),
+            session_id=caller_id,
+            variables={},
+        )
+
+        assert response.decision == expected_decision
+        if expected_decision == "block":
+            assert response.reason is not None
+            assert LIMIT_SPAWNABLE_AGENTS in response.reason
 
     @pytest.mark.asyncio
     async def test_disabling_the_rule_lets_a_listless_agent_spawn(
