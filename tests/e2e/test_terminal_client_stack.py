@@ -137,6 +137,11 @@ def terminal_backend(request: pytest.FixtureRequest) -> str:
 
 
 @pytest.fixture
+def e2e_home_dir(e2e_srt_spawn_home: Path) -> Path:
+    return e2e_srt_spawn_home
+
+
+@pytest.fixture
 def e2e_pre_daemon_setup(
     postgres_db: Any,
     e2e_config: tuple[Path, int, int],

@@ -81,6 +81,11 @@ def composer_admission() -> Admission:
 
 
 @pytest.fixture
+def e2e_home_dir(e2e_srt_spawn_home: Path) -> Path:
+    return e2e_srt_spawn_home
+
+
+@pytest.fixture
 async def composer_fixture(
     composer_admission: Admission,
     e2e_project_dir: Path,

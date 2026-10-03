@@ -188,14 +188,16 @@ async def test_notice_refreshes_a_semantically_unchanged_native_frame(provider: 
     assert proof.evidence[0]["cursor"] == [7, 1]
 
 
-def test_setup_requires_the_isolated_project_and_its_private_home(tmp_path: Path) -> None:
+def test_setup_requires_the_isolated_project_and_e2e_home(tmp_path: Path) -> None:
     project = tmp_path / "proof"
     project.mkdir()
     marker = project / ".gobby" / "project.json"
     marker.parent.mkdir()
     marker.write_text(json.dumps({"id": "00000000-0000-0000-0000-000000000e2e"}))
-    home = project / ".gobby-home"
+    home = tmp_path / "home"
     home.mkdir(mode=0o700)
+    machine = home / "machine_id"
+    machine.write_text("21000000-0000-4000-8000-000000000002")
     verify_setup(home, project)
     marker.write_text(json.dumps({"id": "d45545c5-ded5-4335-b115-0245752edacf"}))
     with pytest.raises(ProofRefused, match="isolated"):
@@ -203,6 +205,9 @@ def test_setup_requires_the_isolated_project_and_its_private_home(tmp_path: Path
     marker.write_text(json.dumps({"id": "00000000-0000-0000-0000-000000000e2e"}))
     with pytest.raises(ProofRefused, match="home"):
         verify_setup(tmp_path, project)
+    machine.write_text("10000000-0000-4000-8000-000000000001")
+    with pytest.raises(ProofRefused, match="home"):
+        verify_setup(home, project)
 
 
 @pytest.mark.asyncio
