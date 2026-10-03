@@ -17,6 +17,12 @@ from pydantic import (
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.workflows.definitions import WorkflowStep
 
+SendMessageTarget = Literal["global", "project", "parent", "session", "agent", "build"]
+
+
+def _parent_only() -> list[SendMessageTarget]:
+    return ["parent"]
+
 
 class AgentSelector(BaseModel):
     """Selector for dynamically filtering rules, variables, and skills."""
@@ -138,6 +144,9 @@ class AgentDefinitionBody(BaseModel):
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
+    # send_message target modes a spawned agent of this type may use, enforced by
+    # the bundled rule scope-spawned-agent-send-message
+    send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")

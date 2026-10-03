@@ -88,6 +88,7 @@ def mock_agent_run() -> MagicMock:
         "created_at": "2024-01-01T09:59:00Z",
         "updated_at": "2024-01-01T10:01:00Z",
     }
+    run.to_list_dict.return_value = run.to_dict.return_value
     return run
 
 

@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.definitions.agents import AgentDefinitionManager
 from gobby.terminals.actor_scope import SESSION_ACTOR_PREFIX, ActorScopeError, resolve_actor_scope
+from gobby.workflows.agent_models import AgentDefinitionBody
 
 if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
@@ -46,6 +48,34 @@ def send_keys_target_in_scope(
     return scope.admits(project_id=target.project_id, session_id=target_id)
 
 
+def send_message_target_allowed(
+    session_manager: SessionManager | None, caller_ref: Any, agent_type: Any, target: Any
+) -> bool:
+    """Whether the caller's agent definition admits this send_message target mode.
+
+    A session that is not a spawned agent may use every mode. A spawned agent may
+    use only the modes in its definition's ``send_message_targets``; an omitted
+    target is ``parent``. An unknown caller or definition raises, and a raising
+    block condition fails closed.
+    """
+    if session_manager is None:
+        raise RuntimeError("send_message target modes need a session manager")
+    if not isinstance(caller_ref, str) or not caller_ref:
+        raise ValueError("send_message caller is unknown")
+    caller = session_manager.get(session_manager.resolve_session_reference(caller_ref))
+    if caller is None:
+        raise ValueError(f"send_message caller {caller_ref} is not registered")
+    if not caller.agent_run_id and caller.agent_depth == 0:
+        return True
+    if not isinstance(agent_type, str) or not agent_type:
+        raise ValueError(f"spawned session {caller.id} has no agent definition")
+    row = AgentDefinitionManager(session_manager.db).get_by_name(agent_type, caller.project_id)
+    if row is None:
+        raise ValueError(f"agent definition {agent_type} is not registered")
+    body = AgentDefinitionBody.model_validate({"name": row.name, **row.definition_json})
+    return (target or "parent") in body.send_message_targets
+
+
 def session_condition_helpers(
     session_manager: SessionManager | None,
 ) -> dict[str, Callable[..., Any]]:
@@ -53,5 +83,8 @@ def session_condition_helpers(
     return {
         "send_keys_target_in_scope": lambda caller_ref, target_ref: send_keys_target_in_scope(
             session_manager, caller_ref, target_ref
+        ),
+        "send_message_target_allowed": lambda caller_ref, agent_type, target: (
+            send_message_target_allowed(session_manager, caller_ref, agent_type, target)
         ),
     }

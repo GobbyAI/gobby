@@ -120,6 +120,7 @@ def _agent_definition_detail(row: AgentDefinitionRow) -> dict[str, Any]:
         ),
         "blocked_tools": body.blocked_tools,
         "blocked_mcp_tools": body.blocked_mcp_tools,
+        "send_message_targets": body.send_message_targets,
         "sources": body.sources,
         "tags": row.tags,
         "raw_mode": raw.get("mode"),

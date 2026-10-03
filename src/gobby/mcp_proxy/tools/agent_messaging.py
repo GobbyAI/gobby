@@ -91,24 +91,6 @@ def add_messaging_tools(
         """Resolve session reference to UUID."""
         return session_manager.resolve_session_reference(ref, get_context_project_id())
 
-    def _is_runbook_peer(seat: Any, target_ref: str | None) -> bool:
-        """A runbook seat may reach a sibling seat of its execution or the execution's launcher."""
-        execution = session_manager.get(seat.parent_session_id) if seat.parent_session_id else None
-        if (
-            execution is None
-            or execution.source != "pipeline"
-            or not execution.external_id.startswith("pipeline-")
-            or target_ref is None
-        ):
-            return False
-        try:
-            target = session_manager.get(_resolve(target_ref))
-        except ValueError:
-            return False
-        if target is None:
-            return False
-        return target.parent_session_id == execution.id or target.id == execution.parent_session_id
-
     from gobby.sessions.mailbox import MailboxService
 
     mailbox = MailboxService(
@@ -140,7 +122,9 @@ def add_messaging_tools(
             "when omitted. Spawned agents may omit target (defaults to parent). "
             "target='parent' reaches the session that spawned the sender, "
             "forbids target_id, and is available only to spawned agent sessions, which "
-            "may use only target='parent' and cannot override from_session. "
+            "cannot override from_session. The bundled rule scope-spawned-agent-send-message "
+            "limits a spawned agent to the target modes its agent definition lists in "
+            "send_message_targets (default: parent only). "
             "Message content never causes wake behavior. Omitting wake requests immediate "
             "processing for direct session, parent, or agent targets; global, project, and "
             "build fanout remains queued without live wakes. wake=true requests immediate "
@@ -257,8 +241,8 @@ def add_messaging_tools(
                     "error_code": "project_scope_required",
                 }
 
-            # Spawned agents report only to their parent, and only as themselves;
-            # runbook seats may also reach their execution's seats and launcher.
+            # Spawned agents send only as themselves. The bundled rule
+            # scope-spawned-agent-send-message limits which target modes they use.
             caller_id = (
                 _resolve(ctx_session_id)
                 if ctx_session_id and ctx_session_id != from_session
@@ -271,14 +255,6 @@ def add_messaging_tools(
                         "success": False,
                         "error": "Spawned agents can send messages only as their own session.",
                         "error_code": "send_message_sender_mismatch",
-                    }
-                if normalized_target != "parent" and not (
-                    normalized_target == "session" and _is_runbook_peer(caller, target_id)
-                ):
-                    return {
-                        "success": False,
-                        "error": "Spawned agents can message only their parent: use target='parent'.",
-                        "error_code": "send_message_parent_only",
                     }
 
             resolved_target_id = target_id
