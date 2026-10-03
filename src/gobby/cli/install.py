@@ -185,7 +185,7 @@ def _resolve_ide_settings_consent(*, no_interactive: bool) -> bool:
         f"Detected VS Code-family IDEs needing terminal integration: {', '.join(detected_ides)}"
     )
     return click.confirm(
-        "Configure detected VS Code-family IDE terminals to use tmux and Gobby session titles?",
+        "Configure detected VS Code-family IDE terminals to show Gobby session titles?",
         default=True,
     )
 

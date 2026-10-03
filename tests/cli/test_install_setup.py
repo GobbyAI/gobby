@@ -242,7 +242,7 @@ class TestRunDaemonSetup:
         mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ide.return_value = {
             "Code": {"added": True},
-            "Cursor": {"warning": "tmux executable was not found on PATH"},
+            "Cursor": {"already_configured": True},
             "Antigravity": {"error": "Failed to parse settings.json"},
         }
 
@@ -274,10 +274,8 @@ class TestRunDaemonSetup:
         assert mock_ide.call_args is not None
         mock_tmux.assert_called_once_with()
         output = capsys.readouterr().out
-        assert "Configured VS Code-family terminal integration: Code" in output
-        assert (
-            "Warning: Skipped Cursor terminal integration: tmux executable was not found on PATH"
-        ) in output
+        assert "Configured VS Code-family terminal integration: Code\n" in output
+        assert "Cursor" not in output
         assert (
             "Warning: Failed to configure Antigravity terminal integration: "
             "Failed to parse settings.json"
