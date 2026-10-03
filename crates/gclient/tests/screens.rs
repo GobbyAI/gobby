@@ -884,9 +884,9 @@ fn agent_rows_golden() {
         .lines()
         .find(|line| line.starts_with("11 :"))
         .expect("model slug style");
-    // The model sits in overlay1, a neutral tier below the title (#23120).
-    assert!(slug_style.contains("overlay1/panel_bg*5"));
-    assert!(!slug_style.contains("overlay1/panel_bg+d"));
+    // The model is secondary text in subtext0, never dimmed (#23280 Option B).
+    assert!(slug_style.contains("subtext0/panel_bg*5"), "{slug_style}");
+    assert!(!slug_style.contains("subtext0/panel_bg+d"), "{slug_style}");
 }
 
 #[test]

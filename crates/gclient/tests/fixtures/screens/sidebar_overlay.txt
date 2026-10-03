@@ -13,15 +13,15 @@
 05 | Projects                                                  ││                                                          │|
 05 : text/panel_bg*1 text/panel_bg+b*8 text/panel_bg*25 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 06 |▸⍾ alpha (main ↑2 ↓1)           ▸                          ││                                                          │|
-06 : accent/surface1*1 yellow/surface1*1 overlay0/surface1+d*1 text/surface1+b*5 subtext0/surface1*6 green/surface1*3 subtext0/surface1*4 text/surface1*11 accent/surface1*1 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+06 : accent/surface1*1 yellow/surface1*1 overlay0/surface1+d*1 accent/surface1+b*5 subtext0/surface1*2 identifier/surface1*4 green/surface1*3 subtext0/surface1*4 text/surface1*11 accent/surface1*1 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 07 |                                                           ││                                                          │|
 07 : text/panel_bg*34 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 08 | Agents                                                    ││                                                          │|
 08 : text/panel_bg*1 text/panel_bg+b*6 text/panel_bg*27 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 09 | ⍾ Unknown                                                 ││                                                          │|
-09 : text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*1 subtext0/panel_bg*7 text/panel_bg*24 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+09 : text/panel_bg*1 yellow/panel_bg*1 text/panel_bg*32 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 10 |   No assigned task                                        ││                                                          │|
-10 : text/panel_bg*3 overlay1/panel_bg*16 text/panel_bg*15 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+10 : text/panel_bg*3 subtext0/panel_bg*16 text/panel_bg*15 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 11 |                                                           ││                                                          │|
 11 : text/panel_bg*34 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 12 |                                                           ││                                                          │|
@@ -51,11 +51,11 @@
 24 | Terminals                                                 ││                                                          │|
 24 : text/panel_bg*1 text/panel_bg+b*9 text/panel_bg*24 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 25 | ○ term-beta              gclient                          ││                                                          │|
-25 : text/surface0*1 overlay0/surface0*1 overlay0/surface0+d*1 text/surface0+b*9 text/surface0*14 overlay0/surface0*7 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+25 : text/surface0*1 overlay0/surface0*1 overlay0/surface0+d*1 text/surface0+b*9 text/surface0*14 subtext0/surface0*7 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 26 |                                                           ││                                                          │|
 26 : text/surface0*33 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 27 | ○ term-gamma             gclient                          ││                                                          │|
-27 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 subtext0/panel_bg*10 text/panel_bg*13 overlay0/panel_bg*7 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
+27 : text/panel_bg*1 overlay0/panel_bg*1 overlay0/panel_bg+d*1 text/panel_bg*23 subtext0/panel_bg*7 text/panel_bg*1 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 28 |                                                           ││                                                          │|
 28 : text/panel_bg*34 text/panel_bg+d*24 text/panel_bg*1 yellow/panel_bg*1 accent/panel_bg*1 text/panel_bg*58 accent/panel_bg*1
 29 |                                                           ││                                                          │|
