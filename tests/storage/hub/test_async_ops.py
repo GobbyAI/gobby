@@ -6,6 +6,7 @@ import struct
 import threading
 import time
 from collections.abc import Awaitable, Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import psutil
@@ -13,6 +14,7 @@ import psycopg
 import pytest
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
+from psycopg.pq import TransactionStatus
 
 from gobby.storage.hub import async_ops
 from gobby.storage.hub.async_ops import (
@@ -70,6 +72,7 @@ class _FakeConnection:
     ) -> None:
         self.activity: list[str] = []
         self.pgconn = _FakePGConn(self.activity)
+        self.info = SimpleNamespace(transaction_status=TransactionStatus.INTRANS)
         self._block_first_set = block_first_set
         self._block_commit = block_commit
         self._fail_close = fail_close
@@ -491,6 +494,35 @@ async def test_foreign_row_lock_wait_terminates_within_deadline(
     finally:
         await holder.rollback()
         await holder.close()
+
+
+@pytest.mark.integration
+async def test_swallowed_statement_error_raises_instead_of_silent_rollback(
+    postgres_database_url: str,
+    async_ops_schema: str,
+) -> None:
+    """COMMIT of an aborted transaction silently rolls back (#23296)."""
+    conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
+    table = "bounded_async_swallowed_error"
+    async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as setup:
+        await setup.execute(f"DROP TABLE IF EXISTS {table}")
+        await setup.execute(f"CREATE TABLE {table} (id integer PRIMARY KEY)")
+
+    async def swallow_duplicate(conn: Any, _remaining: float) -> str:
+        await conn.execute(f"INSERT INTO {table} VALUES (1)")
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            await conn.execute(f"INSERT INTO {table} VALUES (1)")
+        return "reported success"
+
+    with pytest.raises(psycopg.errors.InFailedSqlTransaction):
+        await run_bounded_db(
+            swallow_duplicate,
+            conninfo=conninfo,
+            deadline_seconds=_DEADLINE_SECONDS,
+        )
+    async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as check:
+        cursor = await check.execute(f"SELECT count(*) FROM {table}")
+        assert await cursor.fetchone() == (0,)
 
 
 @pytest.mark.integration

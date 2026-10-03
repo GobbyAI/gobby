@@ -10,6 +10,7 @@ from typing import Any, Never
 
 import psycopg
 from psycopg import sql
+from psycopg.pq import TransactionStatus
 
 RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS = 1.0
 
@@ -94,6 +95,11 @@ async def _run_child[T](
 
         result = await work(connection, _require_remaining(work_cutoff))
         _require_remaining(work_cutoff)
+        # COMMIT of an aborted transaction silently rolls back (#23296).
+        if connection.info.transaction_status == TransactionStatus.INERROR:
+            raise psycopg.errors.InFailedSqlTransaction(
+                "transaction aborted by a swallowed statement error"
+            )
 
         state.commit_submitted = True
         await connection.commit()
