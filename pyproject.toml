@@ -49,6 +49,8 @@ dependencies = [
     "croniter>=6.0.0",
     "falkordb>=1.1.0",
     "jsonschema>=4.23.0",
+    # Parses provider XML receipts (Claude <task-notification>) without DTD or entity expansion.
+    "defusedxml>=0.7.1",
     "faster-whisper>=1.0.0",
     "qdrant-client==1.19.0",
     # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
