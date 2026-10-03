@@ -27,6 +27,7 @@ from tests.e2e.conftest import (
 
 daemon_instance = e2e_fixtures.daemon_instance
 e2e_config = e2e_fixtures.e2e_config
+e2e_home_dir = e2e_fixtures.e2e_home_dir
 e2e_project_dir = e2e_fixtures.e2e_project_dir
 mcp_client = e2e_fixtures.mcp_client
 
