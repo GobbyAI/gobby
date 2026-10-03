@@ -4,14 +4,15 @@
 //! join; the `Workspace` methods below own the cached inputs and the refetch
 //! bookkeeping around it.
 
+use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio::time::Instant;
 
-use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SidebarRows};
+use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SessionRow, SidebarRows};
 use crate::ui::chrome::RowState;
 
 use super::{short_terminal_id, Backend, Pane, Workspace};
@@ -365,7 +366,12 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 context_percent: entry.context_percent,
                 tokens_used: entry.tokens_used,
                 managed,
-                worktree_id: run.and_then(|(_, run)| run.worktree_id.clone()),
+                worktree_id: run
+                    .and_then(|(_, run)| run.worktree_id.clone())
+                    .or_else(|| {
+                        session
+                            .and_then(|(project, session)| bound_worktree(rows, project, session))
+                    }),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),
                 state: agent_state(entry, pane),
@@ -430,6 +436,42 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
     }
 }
 
+/// The worktree `session` works in, by the daemon's own rule
+/// (`_path_is_within`, source_control_worktrees.py): the deepest of its
+/// project's worktrees whose checkout holds its workspace path, compared by
+/// whole path components, unless the two are known to sit on different
+/// machines (#23280). Runs bind by their own `worktree_id` first.
+fn bound_worktree(rows: &SidebarRows, project_id: &str, session: &SessionRow) -> Option<String> {
+    let workspace = Path::new(session.workspace_path.as_deref()?);
+    rows.worktrees
+        .iter()
+        .filter(|worktree| worktree.project_id == project_id)
+        .filter(
+            |worktree| match (&worktree.machine_id, &session.machine_id) {
+                (Some(theirs), Some(ours)) => theirs == ours,
+                _ => true,
+            },
+        )
+        .filter(|worktree| {
+            !worktree.worktree_path.is_empty() && workspace.starts_with(&worktree.worktree_path)
+        })
+        .max_by_key(|worktree| Path::new(&worktree.worktree_path).components().count())
+        .map(|worktree| worktree.id.clone())
+}
+
+/// The bound agent a click on `worktree_id`'s state dot shows: the one
+/// whose state the dot draws, the first in roster order on a tie (#23280).
+pub fn worktree_focus_target<'a>(
+    model: &'a SidebarModel,
+    worktree_id: &str,
+) -> Option<&'a AgentEntry> {
+    model
+        .agents
+        .iter()
+        .filter(|agent| agent.worktree_id.as_deref() == Some(worktree_id))
+        .min_by_key(|agent| Reverse(urgency(rollup_class(agent.state))))
+}
+
 /// herdr `status_priority`: blocked over unseen over working over idle.
 pub fn urgency(state: RowState) -> u8 {
     match state {
@@ -459,12 +501,17 @@ pub fn state_class(state: RowState) -> RowState {
 pub fn rollup(states: impl IntoIterator<Item = RowState>) -> RowState {
     states
         .into_iter()
-        .map(|state| match state {
-            RowState::Paused => state,
-            other => state_class(other),
-        })
+        .map(rollup_class)
         .max_by_key(|state| urgency(*state))
         .unwrap_or(RowState::Idle)
+}
+
+/// The class `rollup` ranks a member by: held keeps its own state.
+fn rollup_class(state: RowState) -> RowState {
+    match state {
+        RowState::Paused => state,
+        other => state_class(other),
+    }
 }
 
 /// herdr's `AgentState` for one roster entry, given the pane that shows it.

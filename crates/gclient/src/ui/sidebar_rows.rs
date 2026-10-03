@@ -262,6 +262,18 @@ fn worktree_name_budget(row: &SidebarRow, width: u16) -> usize {
     usize::from(width).saturating_sub(5 + display_width(nest_prefix(row)))
 }
 
+/// A worktree row's lead after the marker: two cells so the branch sits
+/// under the card's name (marker, dot, space, name), then the nest prefix.
+fn worktree_prefix(row: &SidebarRow) -> String {
+    format!("  {}", nest_prefix(row))
+}
+
+/// The column of a worktree row's state dot, from the row's left edge: the
+/// one cell its click focuses the most urgent bound agent through (#23280).
+pub(crate) fn worktree_glyph_offset(row: &SidebarRow) -> u16 {
+    u16::try_from(1 + display_width(&worktree_prefix(row))).unwrap_or(u16::MAX)
+}
+
 /// The first rendered line of `row` at `width` columns. A project card is
 /// `{marker}{dot} {name} ({branch} ↑a ↓b)` with the group toggle at the
 /// right edge; a worktree row is `{marker}  ├─ {dot} {branch} · {task}`
@@ -335,9 +347,7 @@ pub(crate) fn row_line_with_scrolling<'a>(
             }
         }
         RowKind::Worktree => {
-            // Two cells after the marker so the branch sits under the card's
-            // name (marker, dot, space, name).
-            let prefix = format!("  {}", nest_prefix(row));
+            let prefix = worktree_prefix(row);
             let prefix_width = display_width(&prefix);
             spans.push(Span::styled(prefix, prefix_style));
             // No agent bound, no state: a blank keeps the branch aligned.

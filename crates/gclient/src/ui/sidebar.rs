@@ -14,14 +14,14 @@ pub mod projects;
 pub mod terminals;
 
 use crate::theme::Palette;
-use crate::ui::chrome::{Chrome, Mode, WorkspaceView};
+use crate::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
 use crate::ui::hit::SidebarSection;
 use crate::ui::scrollbar::{render_scrollbar, scrolled_recently, should_show_scrollbar};
 use crate::ui::settings::SidebarSide;
 use crate::ui::settings::TitleScrolling;
 use crate::ui::sidebar_rows::{
     project_rows, row_line_with_scrolling, row_second_line_with_travel, row_third_line, row_travel,
-    RowKind, SidebarRow,
+    worktree_glyph_offset, RowKind, SidebarRow,
 };
 use crate::ui::text::{display_width_u16, truncate_end};
 use gobby_terminal::layout::ScrollMetrics;
@@ -57,6 +57,8 @@ pub struct SidebarHits {
     pub projects: Vec<(String, Rect)>,
     /// Worktree rows, by worktree id.
     pub worktrees: Vec<(String, Rect)>,
+    /// The state dot of each worktree row with an agent bound, by worktree id.
+    pub worktree_glyphs: Vec<(String, Rect)>,
     /// The `▾`/`▸` cell of each card that has worktrees, by project id.
     pub group_toggles: Vec<(String, Rect)>,
     /// Session, agent run and bare terminal rows, by entry id (both lines).
@@ -323,7 +325,15 @@ pub(super) fn render_section_rows(
                         ));
                     }
                 }
-                RowKind::Worktree => hits.worktrees.push((row.id.clone(), rect)),
+                RowKind::Worktree => {
+                    hits.worktrees.push((row.id.clone(), rect));
+                    // An unbound worktree draws no dot, so it has no dot hit.
+                    let x = body.x.saturating_add(worktree_glyph_offset(row));
+                    if row.state != RowState::Unknown && x < body.right() {
+                        hits.worktree_glyphs
+                            .push((row.id.clone(), Rect::new(x, y, 1, 1)));
+                    }
+                }
                 RowKind::Agent | RowKind::Terminal => hits.agents.push((row.id.clone(), rect)),
                 RowKind::Machine => hits.machines.push((row.id.clone(), rect)),
                 RowKind::Group => {}

@@ -72,6 +72,7 @@ pub(super) fn wheel<W: WorkspaceView>(
         Hit::Machine(_)
         | Hit::Project(_)
         | Hit::Worktree(_)
+        | Hit::WorktreeGlyph(_)
         | Hit::GroupToggle(_)
         | Hit::Agent(_)
         | Hit::SidebarScrollbar { .. }
@@ -79,9 +80,10 @@ pub(super) fn wheel<W: WorkspaceView>(
         | Hit::SidebarDivider => {
             let section = match hit {
                 Hit::Machine(_) => SidebarSection::Machines,
-                Hit::Project(_) | Hit::Worktree(_) | Hit::GroupToggle(_) => {
-                    SidebarSection::Projects
-                }
+                Hit::Project(_)
+                | Hit::Worktree(_)
+                | Hit::WorktreeGlyph(_)
+                | Hit::GroupToggle(_) => SidebarSection::Projects,
                 Hit::Agent(id) if id.starts_with(TERMINAL_ROW) => SidebarSection::Terminals,
                 Hit::Agent(_) => SidebarSection::Agents,
                 Hit::SidebarScrollbar { section, .. } => section,

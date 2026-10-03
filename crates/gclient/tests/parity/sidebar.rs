@@ -22,7 +22,7 @@ use gobby_client::app::{
     MOUSE_SCROLL_LINES, PROJECT_DRAG_THRESHOLD,
 };
 use gobby_client::daemon::{
-    Attention, Checkout, ProjectRow, SidebarRows, SourceStatus, WorktreeRow,
+    Attention, Checkout, ProjectRow, SessionRow, SidebarRows, SourceStatus, WorktreeRow,
 };
 use gobby_client::key_input::KeyInput;
 use gobby_client::ui::chrome::{Chrome, Mode, RowState, WorkspaceView};
@@ -1607,7 +1607,15 @@ fn sidebar_drags_reorder_resize_and_scroll() {
 /// the focused project.
 fn project_workspace(count: usize) -> Workspace {
     let mut ws = sidebar_workspace(count);
-    ws.daemon_mut().set_sidebar_rows(SidebarRows {
+    ws.daemon_mut().set_sidebar_rows(project_sidebar_rows());
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install projects");
+    ws
+}
+
+/// `project_workspace`'s daemon rows.
+fn project_sidebar_rows() -> SidebarRows {
+    SidebarRows {
         projects: vec![
             scripted_project("proj-alpha", "alpha"),
             scripted_project("proj-beta", "beta"),
@@ -1634,10 +1642,7 @@ fn project_workspace(count: usize) -> Workspace {
             ..WorktreeRow::default()
         }],
         ..SidebarRows::default()
-    });
-    ws.select_project("proj-alpha");
-    ws.reconcile_subscribe_first().expect("install projects");
-    ws
+    }
 }
 
 /// A cell inside the row last drawn for `id` in `areas`.
@@ -1671,6 +1676,105 @@ fn project_board() -> (Workspace, Chrome, Rect) {
     );
     assert_eq!(drawn_ids(&chrome.view.worktree_hit_areas), ["wt-1"]);
     (ws, chrome, area)
+}
+
+/// `project_board` with two interactive sessions working in `wt-1`'s
+/// checkout: `sess-0` on `term-0` working, `sess-1` on `term-1` blocked.
+/// Neither is a spawned run, so only the workspace path binds them.
+fn bound_worktree_board() -> (Workspace, Chrome, Terminal<TestBackend>) {
+    let mut ws = sidebar_workspace(2);
+    let session = |id: &str, path: &str| SessionRow {
+        id: id.to_string(),
+        status: "active".to_string(),
+        workspace_path: Some(path.to_string()),
+        ..SessionRow::default()
+    };
+    let mut rows = project_sidebar_rows();
+    rows.sessions.insert(
+        "proj-alpha".to_string(),
+        vec![
+            session("sess-0", "/repos/alpha/.worktrees/feature"),
+            session("sess-1", "/repos/alpha/.worktrees/feature/crates"),
+        ],
+    );
+    ws.daemon_mut().set_sidebar_rows(rows);
+    ws.daemon_mut().set_roster(json!({
+        "epoch": "attention-1",
+        "seq": 1,
+        "entries": [
+            {
+                "entry_id": "session:sess-0",
+                "session_id": "sess-0",
+                "lifecycle_status": "running",
+                "terminal": {"terminal_id": "term-0", "backend": "native"},
+            },
+            {
+                "entry_id": "session:sess-1",
+                "session_id": "sess-1",
+                "terminal": {"terminal_id": "term-1", "backend": "native"},
+                "attention": {"attention_id": "att-1", "kind": "actionable"},
+            },
+        ],
+    }));
+    ws.select_project("proj-alpha");
+    ws.reconcile_subscribe_first().expect("install projects");
+    let mut chrome = chrome();
+    chrome.sidebar.all_projects = true;
+    chrome.sidebar.toggle_group("proj-alpha");
+    chrome.focus_project("proj-alpha");
+    chrome.open_tab(pane(&ws, 0), "0");
+    let term = draw_with_hits(&ws, &mut chrome, Rect::new(0, 0, 80, 40));
+    (ws, chrome, term)
+}
+
+/// #23280 item 5: the worktree indicator drew blank for sessions and had
+/// no hit of its own. A bound worktree draws its rolled-up dot, and that
+/// cell shows the most urgent bound agent; the rest of the row still opens
+/// the worktree, and a right click there still opens its menu.
+#[test]
+fn bound_worktree_glyph_draws_the_rollup_and_focuses_the_most_urgent_agent() {
+    let (ws, mut chrome, term) = bound_worktree_board();
+    let glyphs = chrome.view.worktree_glyph_hit_areas.clone();
+    assert_eq!(drawn_ids(&glyphs), ["wt-1"]);
+    let cell = glyphs[0].1;
+    assert_eq!((cell.width, cell.height), (1, 1), "the glyph is one cell");
+    assert_eq!(
+        term.backend().buffer()[(cell.x, cell.y)].symbol(),
+        dot(RowState::Attention),
+        "the blocked session sets the worktree's dot"
+    );
+
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, cell.x, cell.y),
+        MouseOutcome::FocusAgent("session:sess-1".to_string())
+    );
+    assert_eq!(chrome.gesture, None);
+    route(&ws, &mut chrome, LEFT_UP, cell.x, cell.y);
+
+    let (col, row) = row_cell(&chrome.view.worktree_hit_areas, "wt-1");
+    assert_ne!((col, row), (cell.x, cell.y));
+    assert_eq!(
+        route(&ws, &mut chrome, LEFT_DOWN, col, row),
+        MouseOutcome::OpenWorktree("wt-1".to_string())
+    );
+    route(&ws, &mut chrome, LEFT_UP, col, row);
+    assert_eq!(
+        route(
+            &ws,
+            &mut chrome,
+            MouseEventKind::Down(MouseButton::Right),
+            cell.x,
+            cell.y
+        ),
+        MouseOutcome::Handled,
+        "a right click on the glyph opens the worktree menu"
+    );
+}
+
+#[test]
+fn unbound_worktree_draws_no_glyph_and_no_glyph_hit() {
+    let (_, chrome, _) = project_board();
+    assert!(chrome.view.worktree_glyph_hit_areas.is_empty());
 }
 
 /// Plan 3.1.2: the project rows' pointer and navigate entry points, one
