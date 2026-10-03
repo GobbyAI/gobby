@@ -70,7 +70,13 @@ removal needs no Targets.
    `project#session_ref: pane_title` (for example `gobby#15070: Plan
    Writer`), and its runbook role comes from its definition and startup
    prose. Nothing refuses two live seats with one title in one workspace,
-   and there is no instance input, numbering or naming scheme. This
+   and there is no instance input, numbering or naming scheme. No role is a
+   singleton and no role has a count, the management roles included. Josh,
+   relayed by the PD on 2026-10-03, said: "those were just examples. I
+   might have multiple assistants running. I haven't decided yet. I need
+   the framework first, then we can improve it." The quotes come from the
+   Assistant gobby#15070 relay, message `2cce54dd`, and the PD relays
+   `ca620ceb` and `941ec370`. This
    supersedes placed-launch decision 7's title key: 6.2 removes placement's
    `seat_live` refusal, which retires D2 1.1.3 and 1.1.6 and D12 3.1.2.
    #23015 persists the validated placement into the run's resume metadata,
@@ -86,9 +92,10 @@ removal needs no Targets.
    runbooks." / "I might run the same runbook on multiple machines at the
    same time." / "or the same runbook on the same machine for different
    projects", and his pick "A: same place only". The seat level is placed
-   launch's per-workspace reservation lock (1.4.10). It serializes every
-   pane insert in a workspace, because every entrypoint runs in the one
-   daemon process, and it refuses no title. The runbook level is the guard step (6.2). It runs
+   launch's per-workspace reservation lock. It serializes every pane insert
+   in a workspace, because every entrypoint runs in the one daemon process,
+   and it refuses no title. Its proof is re-proved D5 1.4.10 and rewritten
+   D2 1.1.6 (6.2). The runbook level is the guard step (6.2). It runs
    after the execution row exists and refuses while another execution of
    the same pipeline, in the same project, workspace and machine, is
    `pending`, `running` or `waiting_approval`, so at most one of two
@@ -452,6 +459,8 @@ Targets:
 - `src/gobby/terminals/workspace_agent_panes.py::*` — scope-reason: remove the `seat_live` title refusal from `_preflight` and `reserve` (Decision 5)
 - `tests/terminals/test_workspace_agent_panes.py::*` — scope-reason: replace the title-collision tests of D2 1.1.3 and 1.1.6 with 6.2.7
 - `tests/workflows/test_placed_pipeline_fixture.py::*` — scope-reason: D12 3.1.2's rerun now launches instead of refusing a live seat
+- `tests/mcp_proxy/tools/spawn_agent/test_placement.py::*` — scope-reason: `_assert_seat_live` (`:448`) and the `seat_live` cases of D5 1.4.1, 1.4.5–1.4.7, 1.4.10, 1.4.13 and 1.4.14 change per the disposition below
+- `tests/agents/test_resume_placement.py::*` — scope-reason: the `seat_live` probes and case of D8 1.7.2, 1.7.3 and 1.7.6 change per the disposition below
 
 **Research context:** `gobby-agents:check_runbook_seats(workspace, requested,
 catalogue)` is read-only and is the runbook's first step. `requested` is the
@@ -500,8 +509,34 @@ Placement stops refusing title collisions (Decision 5). `_preflight` and
 `seat_live` check and `_seat_held`. The in-flight bookkeeping that `reserve`
 keys by `(workspace_id, seat)` is keyed by pane id, and the per-workspace
 lock still serializes inserts (1.4.10). `seat_live` leaves the placement
-error codes. That supersedes D2 1.1.3 and 1.1.6 and D12 3.1.2, whose tests
-change with this leaf.
+error codes. Every placed-launch item whose test asserts `seat_live`
+changes with this leaf:
+
+- Superseded: the behavior is gone, and the test is rewritten to assert
+  that same-title placements succeed. These are D2 1.1.3 and 1.1.6, and
+  D12 3.1.2.
+- Superseded in part: the item drops only its `seat_live` case, and the
+  rest stays proved unchanged.
+  - D5 1.4.1 drops the occupied-seat refusal (`test_placement.py:524`).
+  - D5 1.4.13 drops the held-seat rung of its precedence (`:1065`).
+  - D8 1.7.3 drops the `seat_live` case of its parametrized refusals
+    (`test_resume_placement.py:283`, `:319-323`).
+- Re-proved: the behavior stays. These tests used a `seat_live` refusal
+  only as a probe that a pane is still held, and they assert the held pane
+  directly instead (its row, its `terminal_id` and its in-flight mark). The
+  items are D2 1.1.11 (`test_workspace_agent_panes.py:660`, `:673`), D5
+  1.4.5, 1.4.6, 1.4.7 and 1.4.14 (`_assert_seat_live`,
+  `test_placement.py:448`), and D8 1.7.2 and 1.7.6
+  (`test_resume_placement.py:275`, `:488`).
+- Re-proved, D5 1.4.10: two concurrent placed spawns through one shared
+  reserver both succeed, with distinct pane and tab refs and two
+  `tab.created` broadcasts. Together with the rewritten 1.1.6, this is the
+  proof of the per-workspace lock (Decision 6).
+
+`test_seat_adoption.py::_seat_live` (`:208`) seats a live pane and asserts
+no error code, so it is unaffected. The implementer also corrects the
+module docstring at `agents/runbook_seats.py:4`, which still names
+`seat_live`.
 
 **Acceptance:**
 
@@ -946,8 +981,9 @@ deferral:
 
 Reused leaf #23009, placed-launch 1.1. It supplies the atomic
 per-workspace reservation and release (Decision 6). Its title-keyed seat
-refusal is superseded (Decision 5): 6.2 removes `seat_live`, and 6.2.7
-replaces 1.1.3 and 1.1.6, whose tests change with #23329.
+refusal is superseded (Decision 5): 6.2 removes `seat_live`. 1.1.3 and
+1.1.6 are superseded and 1.1.11 is re-proved, per the 6.2 disposition,
+and their tests change with #23329.
 
 Provenance: task #23009. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
 
@@ -1067,7 +1103,9 @@ deferral:
 
 Reused leaf #23012, placed-launch 1.4. It supplies the placed seat step, the
 reply the runbook records (Decision 11) and the parent-chain acceptance for
-system and cron callers (Decision 9).
+system and cron callers (Decision 9). With `seat_live` removed (Decision 5),
+1.4.1 and 1.4.13 lose their `seat_live` cases, and 1.4.5, 1.4.6, 1.4.7,
+1.4.10 and 1.4.14 are re-proved, per the 6.2 disposition.
 
 Provenance: task #23012. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
 
@@ -1185,8 +1223,10 @@ deferral:
 `kind: deferred`
 
 Reused leaf #23015, placed-launch 1.7, retained at the Adversary's request.
-It persists the placement in the resume snapshot that 6.1 reads as the seat
-identity (Decision 5).
+It persists the placement in the resume snapshot that 6.1 reads as the
+display `seat` field (Decision 5). With `seat_live` removed, 1.7.3 loses its
+`seat_live` case, and 1.7.2 and 1.7.6 are re-proved, per the 6.2
+disposition.
 
 Provenance: task #23015. The item text of record is `.gobby/plans/placed-agent-launch.md` at commit `3acd5c126c`, whose M1 was applied at `90831a98bf`. The historical `covers:placed-agent-launch:*` labels stay.
 
@@ -1426,6 +1466,12 @@ deferral:
     Constraints, P6, 7.2, 8.1.4, 9.1 and D1 8.1.7.
   - The three 6.2 Targets that #23329 landed as files now carry justified
     `::*` scopes, which the validator requires once those files exist.
+  - R6 gobby#14945's bounce of `0ee72e7895`: 6.2 adds Targets for
+    `test_placement.py` and `test_resume_placement.py`, plus a disposition
+    for every placed-launch item whose test asserts `seat_live` (D2, D5,
+    D8 and D12). The per-workspace lock is proved by re-proved 1.4.10 and
+    rewritten 1.1.6. Decision 5 cites its quote sources and records that
+    no role is a singleton (PD relay `941ec370`).
 - 2026-10-03: M1 withdrawn (LM gobby#14930 decision (a), same flow as
   `6612cf3e13`); it predates the #23379 amendment. R6 gobby#14945 or MM
   derives a fresh M1 after review.
