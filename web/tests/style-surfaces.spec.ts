@@ -1454,6 +1454,32 @@ function baseApi(
           },
         ],
       };
+    case "/api/feedback/status":
+      return {
+        backlog: 7,
+        schedule: {
+          enabled: true,
+          cron_expr: "0 3 * * *",
+          timezone: "UTC",
+          next_run_at: "2026-04-27T03:00:00Z",
+          last_status: "completed",
+        },
+      };
+    case "/api/feedback/runs":
+      return {
+        runs: [
+          {
+            id: "feedback-run-1",
+            status: "completed",
+            dry_run: false,
+            rows_considered: 4,
+            actions: { filed: [], deduplicated: 0 },
+            digest_md: "## Hook friction\n\nTwo sessions hit the same guard.",
+            error: null,
+            created_at: "2026-04-19T03:00:00Z",
+          },
+        ],
+      };
     case "/api/files/tree": {
       const treePath = url.searchParams.get("path") ?? "";
       if (treePath === "src") {
@@ -1704,6 +1730,7 @@ const TAB_CHECKPOINTS: Record<
   pipelines: (page) =>
     page.getByRole("button", { name: /nightly-verify/ }).first(),
   cron: (page) => page.getByRole("button", { name: "Select Nightly Digest" }),
+  feedback: (page) => page.getByTestId("feedback-run-row").first(),
 };
 
 function buildTabImplementations(): Record<string, Record<string, StateImpl>> {
