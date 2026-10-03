@@ -844,6 +844,38 @@ fn sessions_bind_to_the_worktree_holding_their_workspace() {
     );
 }
 
+/// #23280 item 5 review: registration stores the provider's cwd as given,
+/// and the daemon resolves paths before `_path_is_within`. `.` and `..`
+/// segments resolve the same way here, so `/w/1/../10` never binds `/w/1`.
+#[test]
+fn dot_segments_resolve_before_a_session_binds() {
+    let (rows, roster) = workspace_rows(
+        &[("wt-1", "/w/1", None), ("wt-10", "/w/10/./", None)],
+        &[
+            ("a", "/w/1/../10/src", LOCAL_MACHINE),
+            ("b", "/w/1/./crates", LOCAL_MACHINE),
+            ("c", "/w/1/..", LOCAL_MACHINE),
+        ],
+    );
+
+    let model = model(&rows, &roster, &[]);
+
+    let bound: Vec<(&str, Option<&str>)> = model
+        .agents
+        .iter()
+        .map(|agent| (agent.entry_id.as_str(), agent.worktree_id.as_deref()))
+        .collect();
+    assert_eq!(
+        bound,
+        [
+            ("session:a", Some("wt-10")),
+            ("session:b", Some("wt-1")),
+            ("session:c", None),
+        ],
+        "a `..` leaves the worktree it names, a `.` stays in it"
+    );
+}
+
 /// #23280 item 5: a click on the worktree glyph shows the agent whose state
 /// the glyph draws, the first in roster order on a tie. An unseen agent
 /// counts as idle in the rollup, so a working one outranks it.

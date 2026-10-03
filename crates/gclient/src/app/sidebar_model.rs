@@ -6,7 +6,7 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
@@ -439,10 +439,11 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
 /// The worktree `session` works in, by the daemon's own rule
 /// (`_path_is_within`, source_control_worktrees.py): the deepest of its
 /// project's worktrees whose checkout holds its workspace path, compared by
-/// whole path components, unless the two are known to sit on different
-/// machines (#23280). Runs bind by their own `worktree_id` first.
+/// whole path components after `.` and `..` resolve, unless the two are
+/// known to sit on different machines (#23280). Runs bind by their own
+/// `worktree_id` first.
 fn bound_worktree(rows: &SidebarRows, project_id: &str, session: &SessionRow) -> Option<String> {
-    let workspace = Path::new(session.workspace_path.as_deref()?);
+    let workspace = lexical(session.workspace_path.as_deref()?);
     rows.worktrees
         .iter()
         .filter(|worktree| worktree.project_id == project_id)
@@ -452,11 +453,28 @@ fn bound_worktree(rows: &SidebarRows, project_id: &str, session: &SessionRow) ->
                 _ => true,
             },
         )
-        .filter(|worktree| {
-            !worktree.worktree_path.is_empty() && workspace.starts_with(&worktree.worktree_path)
-        })
-        .max_by_key(|worktree| Path::new(&worktree.worktree_path).components().count())
-        .map(|worktree| worktree.id.clone())
+        .filter(|worktree| !worktree.worktree_path.is_empty())
+        .map(|worktree| (worktree, lexical(&worktree.worktree_path)))
+        .filter(|(_, checkout)| workspace.starts_with(checkout))
+        .max_by_key(|(_, checkout)| checkout.components().count())
+        .map(|(worktree, _)| worktree.id.clone())
+}
+
+/// `path` with its `.` and `..` segments resolved by name alone: the daemon
+/// resolves before comparing, and these paths may name another machine, so
+/// the local filesystem is never read.
+fn lexical(path: &str) -> PathBuf {
+    let mut resolved = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            other => resolved.push(other),
+        }
+    }
+    resolved
 }
 
 /// The bound agent a click on `worktree_id`'s state dot shows: the one
