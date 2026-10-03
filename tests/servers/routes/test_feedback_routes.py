@@ -186,6 +186,7 @@ def test_runs_list_recent_runs_newest_first() -> None:
 
     assert response.status_code == 200
     assert [run["id"] for run in response.json()["runs"]] == ["run-2", "run-1"]
+    assert all("observations" not in run for run in response.json()["runs"])
     service.store.list_runs.assert_called_once_with(limit=2)
 
 
@@ -212,6 +213,7 @@ def test_status_reports_backlog_latest_run_and_schedule() -> None:
 
     assert body["backlog"] == 7
     assert body["latest_run"]["id"] == "run-3"
+    assert "observations" not in body["latest_run"]
     assert body["schedule"] == {
         "enabled": True,
         "cron_expr": "0 3 * * *",

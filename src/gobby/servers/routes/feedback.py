@@ -14,6 +14,7 @@ from gobby.sessions.handoff import FEEDBACK_DISPOSITIONS, FEEDBACK_FREQUENCIES, 
 
 if TYPE_CHECKING:
     from gobby.feedback.service import FeedbackReviewService
+    from gobby.feedback.storage import FeedbackReviewRun
     from gobby.servers.http import HTTPServer
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,13 @@ logger = logging.getLogger(__name__)
 
 class FeedbackReviewRequest(BaseModel):
     dry_run: bool = False
+
+
+def _run_summary(run: FeedbackReviewRun) -> dict[str, Any]:
+    """Serialize a summary run; its observations were never read, so omit the key."""
+    summary = asdict(run)
+    del summary["observations"]
+    return summary
 
 
 def create_feedback_router(server: HTTPServer) -> APIRouter:
@@ -82,7 +90,7 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
             runs = _service().store.list_runs(limit=limit)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return {"success": True, "runs": [asdict(run) for run in runs]}
+        return {"success": True, "runs": [_run_summary(run) for run in runs]}
 
     @router.get("/status")
     async def feedback_status() -> dict[str, Any]:
@@ -97,7 +105,7 @@ def create_feedback_router(server: HTTPServer) -> APIRouter:
         return {
             "success": True,
             "backlog": store.backlog_count(),
-            "latest_run": asdict(latest[0]) if latest else None,
+            "latest_run": _run_summary(latest[0]) if latest else None,
             "schedule": (
                 {
                     "enabled": job.enabled,
