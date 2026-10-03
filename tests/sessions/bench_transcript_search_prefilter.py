@@ -130,8 +130,15 @@ def _load_prior_module(path: str) -> ModuleType:
 
 
 def _match_identities(results: list[dict[str, Any]]) -> list[str]:
-    """Canonical identity of each matched message: its full rendered dict, id included."""
-    return [json.dumps(match["message"], sort_keys=True) for match in results]
+    """Identity of each matched message: sha256 of its full rendered dict, id included.
+
+    Digests keep a 100k-match pagination small enough to hold and to pass between
+    prefilter shards.
+    """
+    return [
+        hashlib.sha256(json.dumps(match["message"], sort_keys=True).encode()).hexdigest()
+        for match in results
+    ]
 
 
 def _match_set_mismatches(reports: dict[str, dict[str, Any]]) -> list[str]:
@@ -160,7 +167,9 @@ def _summarize(calls: list[dict[str, Any]], found: list[str]) -> dict[str, Any]:
     }
 
 
-async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> dict[str, Any]:
+async def run_worker(
+    arm: str, fixture: str, groups: int, prior_module: str, shard: int = 0, shards: int = 1
+) -> dict[str, Any]:
     from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
     from gobby.mcp_proxy.tools.sessions._messages import SEARCH_GROUP_BUDGET
     from gobby.sessions import transcript_reader as readers
@@ -261,6 +270,7 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
     signatures = signer.snapshot(None, len(signer.widths))
     bitmap, widths = signatures.flatten()
     take()
+    report["shard"] = shard
     report["signing"] = {
         "groups_signed": len(widths),
         "admitted_width0": sum(1 for width in widths if width == 0),
@@ -270,18 +280,32 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
         "sign_pass_wall_s": sign_pass_s,
     }
 
+    # A shard measures calls with index % shards == shard. It replays every other call
+    # with the same render-and-match loop, minus the scan, to reach identical call
+    # boundaries, so shard counts sum to the unsharded counts.
     for name, template in QUERIES.items():
         query = template.format(last=groups // 2 - 1)
-        calls = []
-        found = []
+        shard_calls: list[dict[str, Any]] = []
         position = 0
+        index = 0
         candidates: list[int] = []
         scan_s = 0.0
-        while not calls or position < len(candidates):
+        replay_snapshot = None
+        while index == 0 or position < len(candidates):
+            measured = index % shards == shard
             started = time.perf_counter()
-            candidates = signatures.candidate_group_indices(query)
-            scan_s = scan_s or time.perf_counter() - started
-            snapshot = await reader._open_windowable(SESSION_ID)
+            if measured:
+                candidates = signatures.candidate_group_indices(query)
+                scan_s = scan_s or time.perf_counter() - started
+                snapshot = await reader._open_windowable(SESSION_ID)
+            else:
+                if index == 0:
+                    candidates = signatures.candidate_group_indices(query)
+                if replay_snapshot is None:
+                    replay_snapshot = await reader._open_windowable(SESSION_ID)
+                snapshot = replay_snapshot
+            if snapshot is None:
+                raise RuntimeError("fixture did not resolve to a windowable snapshot")
             budget = SEARCH_GROUP_BUDGET
             collected: list[dict[str, Any]] = []
             while position < len(candidates) and budget > 0 and len(collected) < LIMIT:
@@ -315,13 +339,51 @@ async def run_worker(arm: str, fixture: str, groups: int, prior_module: str) -> 
                         break
             elapsed = time.perf_counter() - started
             rendered_groups, resolved_count = take()
-            calls.append({"s": elapsed, "groups": rendered_groups, "resolutions": resolved_count})
-            found.extend(_match_identities(collected))
-        summary = _summarize(calls, found)
-        summary["candidates"] = len(candidates)
-        summary["candidate_scan_s"] = scan_s
-        report["queries"][name] = summary
+            if measured:
+                shard_calls.append(
+                    {
+                        "index": index,
+                        "s": elapsed,
+                        "groups": rendered_groups,
+                        "resolutions": resolved_count,
+                        "digests": _match_identities(collected),
+                    }
+                )
+            index += 1
+        report["queries"][name] = {
+            "calls": shard_calls,
+            "total_calls": index,
+            "candidates": len(candidates),
+            "candidate_scan_s": scan_s,
+        }
     return report
+
+
+def _merge_prefilter_shards(shard_reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Summarize prefilter shard reports as one arm; every call must appear exactly once."""
+    first = min(shard_reports, key=lambda report: report["shard"])
+    merged: dict[str, Any] = {
+        "arm": "prefilter",
+        "shards": len(shard_reports),
+        "timing": "contended, non-evidentiary" if len(shard_reports) > 1 else "uncontended",
+        "index_build_s": first["index_build_s"],
+        "signing": first["signing"],
+        "queries": {},
+    }
+    for name in QUERIES:
+        parts = [report["queries"][name] for report in shard_reports]
+        calls = sorted((call for part in parts for call in part["calls"]), key=lambda c: c["index"])
+        total_calls = {part["total_calls"] for part in parts}
+        if len(total_calls) != 1 or [call["index"] for call in calls] != list(
+            range(total_calls.pop())
+        ):
+            raise RuntimeError(f"prefilter shards disagree on the call sequence for {name}")
+        found = [digest for call in calls for digest in call["digests"]]
+        summary = _summarize(calls, found)
+        summary["candidates"] = first["queries"][name]["candidates"]
+        summary["candidate_scan_s"] = first["queries"][name]["candidate_scan_s"]
+        merged["queries"][name] = summary
+    return merged
 
 
 def main() -> int:
@@ -330,10 +392,23 @@ def main() -> int:
     parser.add_argument("--prior-module", required=True)
     parser.add_argument("--fixture")
     parser.add_argument("--worker", choices=["baseline", "prefilter"])
+    parser.add_argument(
+        "--shards",
+        type=int,
+        default=1,
+        help="prefilter worker processes; above 1, prefilter timings are contended",
+    )
+    parser.add_argument("--shard", type=int, default=0)
     args = parser.parse_args()
+    if args.shards < 1 or not 0 <= args.shard < args.shards:
+        parser.error("--shard must be in [0, --shards)")
 
     if args.worker:
-        report = asyncio.run(run_worker(args.worker, args.fixture, args.groups, args.prior_module))
+        report = asyncio.run(
+            run_worker(
+                args.worker, args.fixture, args.groups, args.prior_module, args.shard, args.shards
+            )
+        )
         print("RESULT " + json.dumps(report), flush=True)
         return 0
 
@@ -347,10 +422,9 @@ def _compare_arms(args: argparse.Namespace, root: Path) -> int:
     if not fixture.exists():
         build_fixture(fixture, args.groups)
     print(f"groups={args.groups} fixture={fixture} bytes={fixture.stat().st_size}", flush=True)
-    reports: dict[str, dict[str, Any]] = {}
-    for arm in ("baseline", "prefilter"):
-        env = dict(os.environ, GOBBY_HOME=str(root / f"home-{arm}"))
-        proc = subprocess.run(
+
+    def launch(arm: str, shard: int) -> subprocess.Popen[str]:
+        return subprocess.Popen(
             [
                 sys.executable,
                 __file__,
@@ -362,17 +436,38 @@ def _compare_arms(args: argparse.Namespace, root: Path) -> int:
                 str(args.groups),
                 "--prior-module",
                 str(Path(args.prior_module).resolve()),
+                "--shard",
+                str(shard),
+                "--shards",
+                str(args.shards),
             ],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            env=env,
+            env=dict(os.environ, GOBBY_HOME=str(root / f"home-{arm}-{shard}")),
         )
+
+    def collect(label: str, proc: subprocess.Popen[str]) -> dict[str, Any] | None:
+        stdout, stderr = proc.communicate()
         if proc.returncode != 0:
-            print(f"{arm} failed rc={proc.returncode}\n{proc.stderr[-4000:]}", flush=True)
-            return 1
-        line = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT ")][-1]
-        reports[arm] = json.loads(line[len("RESULT ") :])
-        print(json.dumps(reports[arm], indent=1), flush=True)
+            print(f"{label} failed rc={proc.returncode}\n{stderr[-4000:]}", flush=True)
+            return None
+        line = [ln for ln in stdout.splitlines() if ln.startswith("RESULT ")][-1]
+        report: dict[str, Any] = json.loads(line[len("RESULT ") :])
+        return report
+
+    # Baseline runs alone, so its timings stay uncontended; prefilter shards run together.
+    baseline = collect("baseline", launch("baseline", 0))
+    if baseline is None:
+        return 1
+    print(json.dumps(baseline, indent=1), flush=True)
+    procs = [launch("prefilter", shard) for shard in range(args.shards)]
+    shard_reports = [collect(f"prefilter shard {i}", proc) for i, proc in enumerate(procs)]
+    if any(report is None for report in shard_reports):
+        return 1
+    prefilter = _merge_prefilter_shards([report for report in shard_reports if report])
+    print(json.dumps(prefilter, indent=1), flush=True)
+    reports = {"baseline": baseline, "prefilter": prefilter}
     mismatches = _match_set_mismatches(reports)
     if mismatches:
         print(f"match sets differ for: {', '.join(mismatches)}", flush=True)
