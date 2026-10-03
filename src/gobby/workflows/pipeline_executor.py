@@ -696,7 +696,8 @@ class PipelineExecutor(
                             f"Step '{step.id}' failed with exit code {step_output['exit_code']}"
                         )
 
-                    if isinstance(step_output, dict) and "error" in step_output:
+                    # A null error is no error: spawn_agent's success reply carries one.
+                    if isinstance(step_output, dict) and step_output.get("error") is not None:
                         error_msg = str(step_output["error"])
                         context["steps"][step.id] = {"output": step_output}
                         await self._run_db(
