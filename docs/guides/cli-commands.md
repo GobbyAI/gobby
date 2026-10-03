@@ -1175,6 +1175,8 @@ tools; ordinary coding sessions capture observations with `gobby-sessions:feedba
 | `gobby feedback results RUN_ID --offset 0 --limit 50` | Read accepted findings and actual task outcomes |
 | `gobby feedback digest` | Read the latest review run and digest |
 | `gobby feedback digest --run-id RUN_ID` | Read one recorded run and digest |
+| `gobby feedback list [--unreviewed] [--kind K] [--frequency F] [--disposition D] [--limit 50] [--json]` | List submitted feedback rows, newest first |
+| `gobby feedback status [--json]` | Show the unreviewed backlog, latest run, and review schedule |
 
 Both paged readers accept limits 1–100 and nonnegative offsets; follow returned
 `next_offset` until null. The review command waits for the daemon operation; a

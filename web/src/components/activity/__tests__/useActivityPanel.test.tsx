@@ -408,6 +408,14 @@ describe("useActivityPanel — tab persistence", () => {
     expect(result.current.activeTab).toBe("mcp");
   });
 
+  it("keeps the Feedback tab as a persisted activity tab", () => {
+    localStorage.setItem(TAB_KEY, "feedback");
+
+    const { result } = renderHook(() => useActivityPanel(false));
+
+    expect(result.current.activeTab).toBe("feedback");
+  });
+
   it("persists the selected tab under the versioned storage key", () => {
     const { result } = renderHook(() => useActivityPanel(false));
 

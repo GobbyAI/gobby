@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from typing import Any, cast
+from urllib.parse import urlencode
 
 import click
 import httpx
 
 from gobby.cli.utils_config import get_daemon_client
+from gobby.sessions.handoff import FEEDBACK_DISPOSITIONS, FEEDBACK_FREQUENCIES, FEEDBACK_KINDS
 from gobby.utils.json_helpers import json_dumps
 
 # The review runs inline in the daemon: one distill call (900s deadline)
@@ -29,7 +31,9 @@ def feedback() -> None:
 def feedback_observations(ctx: click.Context, run_id: str, offset: int, limit: int) -> None:
     """Read one page of the frozen review batch."""
     data = _request(
-        ctx, f"/feedback/review/{run_id}/observations?offset={offset}&limit={limit}", method="GET"
+        ctx,
+        f"/api/feedback/review/{run_id}/observations?offset={offset}&limit={limit}",
+        method="GET",
     )
     click.echo(json_dumps(data, indent=2))
 
@@ -42,9 +46,79 @@ def feedback_observations(ctx: click.Context, run_id: str, offset: int, limit: i
 def feedback_results(ctx: click.Context, run_id: str, offset: int, limit: int) -> None:
     """Read accepted findings and their recorded task outcomes."""
     data = _request(
-        ctx, f"/feedback/review/{run_id}/results?offset={offset}&limit={limit}", method="GET"
+        ctx, f"/api/feedback/review/{run_id}/results?offset={offset}&limit={limit}", method="GET"
     )
     click.echo(json_dumps(data, indent=2))
+
+
+@feedback.command("list")
+@click.option("--limit", default=50, type=click.IntRange(1, 100))
+@click.option("--unreviewed", is_flag=True, help="Only rows no review run has consumed")
+@click.option("--kind", type=click.Choice(FEEDBACK_KINDS))
+@click.option("--frequency", type=click.Choice(FEEDBACK_FREQUENCIES))
+@click.option("--disposition", type=click.Choice(FEEDBACK_DISPOSITIONS))
+@click.option("--json", "as_json", is_flag=True, help="Print the raw daemon response")
+@click.pass_context
+def feedback_list(
+    ctx: click.Context,
+    limit: int,
+    unreviewed: bool,
+    kind: str | None,
+    frequency: str | None,
+    disposition: str | None,
+    as_json: bool,
+) -> None:
+    """List submitted feedback entries, newest first."""
+    params: dict[str, str | int] = {"limit": limit}
+    if unreviewed:
+        params["unreviewed"] = "true"
+    filters = {"kind": kind, "frequency": frequency, "disposition": disposition}
+    params.update({name: value for name, value in filters.items() if value is not None})
+    data = _request(ctx, f"/api/feedback/entries?{urlencode(params)}", method="GET")
+    if as_json:
+        click.echo(json_dumps(data, indent=2))
+        return
+    entries = data.get("entries") or []
+    if not entries:
+        click.echo("No feedback entries.")
+        return
+    for entry in entries:
+        state = "reviewed" if entry.get("reviewed") else "unreviewed"
+        evidence = (str(entry.get("evidence") or "").splitlines() or [""])[0][:80]
+        click.echo(
+            f"{entry.get('id')}  {entry.get('created_at')}  "
+            f"{entry.get('kind')}/{entry.get('frequency')}  "
+            f"{entry.get('disposition') or '-'}  {state}  {evidence}"
+        )
+
+
+@feedback.command("status")
+@click.option("--json", "as_json", is_flag=True, help="Print the raw daemon response")
+@click.pass_context
+def feedback_status(ctx: click.Context, as_json: bool) -> None:
+    """Show the unreviewed backlog, the latest review run and the review schedule."""
+    data = _request(ctx, "/api/feedback/status", method="GET")
+    if as_json:
+        click.echo(json_dumps(data, indent=2))
+        return
+    click.echo(f"Backlog: {data.get('backlog', 0)} unreviewed")
+    run = data.get("latest_run")
+    if isinstance(run, dict):
+        click.echo(
+            f"Latest run: {run.get('id')}  {run.get('status')}  "
+            f"rows={run.get('rows_considered')}  {run.get('created_at')}"
+        )
+    else:
+        click.echo("Latest run: none")
+    schedule = data.get("schedule")
+    if isinstance(schedule, dict):
+        enabled = "enabled" if schedule.get("enabled") else "disabled"
+        click.echo(
+            f"Schedule: {schedule.get('cron_expr')} ({schedule.get('timezone')})  {enabled}  "
+            f"next={schedule.get('next_run_at')}  last={schedule.get('last_status')}"
+        )
+    else:
+        click.echo("Schedule: not registered")
 
 
 @feedback.command("review")
@@ -58,7 +132,7 @@ def feedback_review(ctx: click.Context, dry_run: bool) -> None:
     """Run one feedback review pass in the daemon and print its digest."""
     data = _request(
         ctx,
-        "/feedback/review",
+        "/api/feedback/review",
         method="POST",
         json_data={"dry_run": dry_run},
         timeout=_REVIEW_TIMEOUT_SECONDS,
@@ -74,7 +148,7 @@ def feedback_review(ctx: click.Context, dry_run: bool) -> None:
     click.echo(f"Tasks filed: {data.get('tasks_filed', 0)}")
     click.echo(f"Deduplicated: {data.get('deduplicated', 0)}")
     if run_id:
-        run_data = _request(ctx, f"/feedback/review/{run_id}", method="GET")
+        run_data = _request(ctx, f"/api/feedback/review/{run_id}", method="GET")
         _print_digest(run_data.get("run"))
 
 
@@ -83,7 +157,7 @@ def feedback_review(ctx: click.Context, dry_run: bool) -> None:
 @click.pass_context
 def feedback_digest(ctx: click.Context, run_id: str | None) -> None:
     """Print the digest of the latest (or given) review run."""
-    endpoint = f"/feedback/review/{run_id}" if run_id else "/feedback/review/latest"
+    endpoint = f"/api/feedback/review/{run_id}" if run_id else "/api/feedback/review/latest"
     data = _request(ctx, endpoint, method="GET")
     run = data.get("run")
     if not isinstance(run, dict):
