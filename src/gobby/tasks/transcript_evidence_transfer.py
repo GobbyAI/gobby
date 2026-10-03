@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import io
-import pickle
+
+# Bandit B403/B301 are excluded on these two lines only, temporarily, until #23370 retires
+# this codec. Every chunk is bytes this daemon's own same-host transcript-evidence process
+# pool pickled (or encode() below); no other process, file, or network peer supplies them.
+import pickle  # nosec B403
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -118,7 +122,7 @@ def _decode_steps(payload: ChunkedPayload) -> Iterator[object]:
     sequences: dict[int, list[object]] = {}
     record_count = 0
     for chunk in payload.chunks:
-        decoded = pickle.loads(chunk)
+        decoded = pickle.loads(chunk)  # nosec B301 # same-host pool bytes, see the import
         if not (
             isinstance(decoded, tuple)
             and len(decoded) == 2
