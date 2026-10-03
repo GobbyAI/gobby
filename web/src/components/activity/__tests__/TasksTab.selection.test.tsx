@@ -97,6 +97,26 @@ it("selects the task a focus ref resolves to, then reports it handled", async ()
   expect(onFocusHandled).toHaveBeenCalledOnce();
 });
 
+it("keeps a focused task the default filters hide, showing its detail", async () => {
+  // Feedback runs are history: their filed tasks are routinely closed, and the
+  // default filters exclude closed rows.
+  const closedTask = taskList.find((task) => task.id === "task-closed");
+  mockFetch.resetRoutes();
+  mockFetch.mockJsonResponse("/api/tasks/%23499", { task: closedTask });
+  mockFetch.mockJsonResponse("/api/tasks/task-closed", { task: closedTask });
+  setupDefaultFetchRoutes(mockFetch);
+
+  render(<TasksTab projectId="proj-1" focusTaskRef="#499" />);
+
+  expect(await screen.findByDisplayValue("Closed task")).toBeInTheDocument();
+  // Let the list load and the reconcile effect run against the hidden row.
+  await act(async () => {});
+  expect(screen.getByDisplayValue("Closed task")).toBeInTheDocument();
+  expect(
+    screen.getByText("Review approved task").closest('[role="treeitem"]'),
+  ).toHaveAttribute("aria-selected", "false");
+});
+
 it("asks for a retry when a focus ref fails to load", async () => {
   mockFetch.resetRoutes();
   mockFetch.mockErrorResponse("/api/tasks/%23412", 500);

@@ -116,6 +116,9 @@ export const TasksTab = memo(function TasksTab({
   const abortRef = useRef<AbortController | null>(null);
   const debouncedRefetchRef = useRef<number | null>(null);
   const selectedTaskIdRef = useRef<string | null>(null);
+  // A task opened by focusTaskRef stays selected even when the filters hide
+  // its row (a filed task that has since closed), until the user picks another.
+  const focusedTaskIdRef = useRef<string | null>(null);
   // Abort any in-flight WebSocket-triggered detail fetch when a newer one
   // arrives or when the component unmounts.
   const detailFetchControllerRef = useRef<AbortController | null>(null);
@@ -378,6 +381,7 @@ export const TasksTab = memo(function TasksTab({
       .then((data) => {
         const raw = extractTaskPayload(data);
         if (raw?.id) {
+          focusedTaskIdRef.current = raw.id;
           setActionError(null);
           setSelectedTaskId(raw.id);
         } else {
@@ -554,6 +558,9 @@ export const TasksTab = memo(function TasksTab({
   // be overridden by the first-row default.
   useEffect(() => {
     setSelectedTaskId((current) => {
+      if (current !== null && current === focusedTaskIdRef.current) {
+        return current;
+      }
       if (visibleRows.length === 0) return null;
       if (current === null) return visibleRows[0].node.task.id;
       return visibleRows.some((row) => row.node.task.id === current)
@@ -659,6 +666,7 @@ export const TasksTab = memo(function TasksTab({
   }, []);
 
   const handleSelectTask = useCallback((taskId: string) => {
+    focusedTaskIdRef.current = null;
     setActionError(null);
     setSelectedTaskId(taskId);
   }, []);
