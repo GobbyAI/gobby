@@ -100,9 +100,9 @@ Outcomes:
     `title_source`, so a name a person sets after either goes live and
     before the cutover would be nulled. The four leaves land on 0.5.0
     together, right before that cutover, because any restart activates
-    whatever has landed. The old code stamps `manual` on every title write
-    up to the stop, and 458 runs before the new code starts, so no title
-    writer has a window. Rejected: stamping `manual` on each writer in 3.1
+    whatever has landed. The old code stamps `manual` on every person-set
+    title write up to the stop, and 458 runs before the new code starts, so
+    no title writer has a window. Rejected: stamping `manual` on each writer in 3.1
     and 3.2 and removing the stamps in 3.4, which is churn on seven write
     paths where one missed writer silently loses a name.
 
