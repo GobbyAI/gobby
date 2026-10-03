@@ -19,6 +19,7 @@ from gobby.tasks.acceptance_artifacts import (
 )
 from gobby.tasks.tdd_paths import is_implementation_edit_path
 from gobby.tasks.tdd_python_evidence import (
+    PythonBindingCache,
     _has_python_keyword_stub,
     _has_python_module_stub,
     _has_python_unchanged_api,
@@ -30,6 +31,7 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
 )
+from gobby.tasks.transcript_tool_arguments import PythonModuleCache
 
 _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
@@ -138,6 +140,9 @@ def evaluate_tdd_evidence(
         frozenset(implementation_paths) if task_category == "test" else frozenset()
     )
 
+    parse_cache: PythonModuleCache = {}
+    binding_cache: PythonBindingCache = {}
+    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] = {}
     findings: list[str] = []
     cycle: tuple[TranscriptValidationRun, TranscriptEdit] | None = None
     for test in tests:
@@ -181,7 +186,13 @@ def evaluate_tdd_evidence(
             production_edit_seen = True
             production_edit = production_edits[0]
             window_red, window_rejection = _find_red_run(
-                red_test, evidence, test_edit.order, production_edit
+                red_test,
+                evidence,
+                test_edit.order,
+                production_edit,
+                parse_cache=parse_cache,
+                binding_cache=binding_cache,
+                red_cache=red_cache,
             )
             red_rejection = window_rejection or red_rejection
             if window_red is None:
@@ -192,6 +203,9 @@ def evaluate_tdd_evidence(
                         production_edit.order,
                         later_production_edit,
                         require_not_implemented=not test.path.endswith(".rs"),
+                        parse_cache=parse_cache,
+                        binding_cache=binding_cache,
+                        red_cache=red_cache,
                     )
                     red_rejection = window_rejection or red_rejection
                     if window_red is not None:
@@ -267,6 +281,9 @@ def _find_red_run(
     first_non_test_edit: TranscriptEdit | None,
     *,
     require_not_implemented: bool = False,
+    parse_cache: PythonModuleCache | None = None,
+    binding_cache: PythonBindingCache | None = None,
+    red_cache: dict[tuple[str, str, str, int, bool], tuple[bool, str | None]] | None = None,
 ) -> tuple[TranscriptValidationRun | None, str | None]:
     rejection = None
     for run in sorted(evidence.validation_runs, key=lambda item: item.order):
@@ -281,39 +298,73 @@ def _find_red_run(
         core_command = run.core_command
         if core_command is None:
             continue
-        source_failure = _has_original_source_failure(test, evidence, run)
-        if not source_failure and not validation_run_names_test(core_command, run.output, test):
-            continue
-        matched, reason = _has_named_red_failure(core_command, run.output, test)
-        matched = matched or source_failure
+        key = (test.path, test.symbol, run.session_id, run.order, require_not_implemented)
+        cached = red_cache.get(key) if red_cache is not None else None
+        if cached is None:
+            cached = _red_run_proof(
+                test,
+                evidence,
+                run,
+                core_command,
+                require_not_implemented,
+                parse_cache,
+                binding_cache,
+            )
+            if red_cache is not None:
+                red_cache[key] = cached
+        matched, reason = cached
         if matched:
-            if _has_pytest_fail_placeholder(test, evidence, run):
-                reason = "test body is an unconditional pytest.fail placeholder"
-            elif not require_not_implemented or (
-                _has_python_keyword_stub(test, evidence, run)
-                or _has_python_module_stub(test, evidence, run)
-                or _has_python_unchanged_api(test, evidence, run)
-            ):
-                return run, None
-            else:
-                reason = (
-                    "post-production red has no attributable NotImplementedError or proven API stub"
-                )
+            return run, None
+        if reason is None:
+            continue
         rejection = f"run {run.command!r} rejected: {reason}"
     return None, rejection
 
 
+def _red_run_proof(
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    core_command: str,
+    require_not_implemented: bool,
+    parse_cache: PythonModuleCache | None,
+    binding_cache: PythonBindingCache | None,
+) -> tuple[bool, str | None]:
+    source_failure = _has_original_source_failure(test, evidence, run, parse_cache=parse_cache)
+    if not source_failure and not validation_run_names_test(core_command, run.output, test):
+        return False, None
+    matched, reason = _has_named_red_failure(core_command, run.output, test)
+    matched = matched or source_failure
+    if matched:
+        if _has_pytest_fail_placeholder(test, evidence, run, parse_cache):
+            reason = "test body is an unconditional pytest.fail placeholder"
+        elif not require_not_implemented or (
+            _has_python_keyword_stub(test, evidence, run, parse_cache)
+            or _has_python_module_stub(test, evidence, run, parse_cache)
+            or _has_python_unchanged_api(test, evidence, run, parse_cache, binding_cache)
+        ):
+            return True, None
+        else:
+            reason = (
+                "post-production red has no attributable NotImplementedError or proven API stub"
+            )
+    return False, reason
+
+
 def _has_pytest_fail_placeholder(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
     """Reject fail reached before control flow or a call into application code."""
-    node = _original_test_node(test, evidence, run)
+    node = _original_test_node(test, evidence, run, parse_cache)
     if node is None:
         return False
     # Builtins, stdlib and test-framework setup are not calls into code under test.
     setup_roots = {"pytest", "unittest", "builtins"}
     fail_calls = {"pytest.fail"}
-    module = _original_test_module(test, evidence, run)
+    module = _original_test_module(test, evidence, run, parse_cache)
     for item in [*(module.body if module is not None else ()), *node.body]:
         if isinstance(item, ast.Import):
             fail_calls.update(
@@ -439,9 +490,10 @@ def _has_original_source_failure(
     run: TranscriptValidationRun,
     *,
     require_not_implemented: bool = False,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
     """Bind a location-only failure to the test source that existed when RED started."""
-    node = _original_test_node(test, evidence, run)
+    node = _original_test_node(test, evidence, run, parse_cache)
     if node is None or not validation_run_covers_test(run.core_command, run.output, test):
         return False
     latest = max(

@@ -13,7 +13,14 @@ from gobby.tasks.transcript_evidence_models import (
     TranscriptEvidence,
     TranscriptValidationRun,
 )
-from gobby.tasks.transcript_tool_arguments import python_edit_tokens, python_noop_module
+from gobby.tasks.transcript_tool_arguments import (
+    PythonModuleCache,
+    parse_python_module,
+    python_edit_tokens,
+    python_noop_module,
+)
+
+PythonBindingCache = dict[ast.Module, dict[str, int]]
 
 
 def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
@@ -25,7 +32,10 @@ def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun)
 
 
 def _original_test_module(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> ast.Module | None:
     edits = [
         edit
@@ -41,9 +51,8 @@ def _original_test_module(
     source = latest.source_after or latest.source_fragment
     if source is None:
         return None
-    try:
-        node = ast.parse(textwrap.dedent(source))
-    except (SyntaxError, ValueError):
+    node = parse_python_module(textwrap.dedent(source), parse_cache)
+    if node is None:
         if latest.source_after is not None:
             return None
         # Appended tests may follow the tail of the preceding function in an
@@ -51,17 +60,17 @@ def _original_test_module(
         start = re.search(r"(?m)^(?:(?:async )?def |class |@)", source)
         if start is None:
             return None
-        try:
-            node = ast.parse(source[start.start() :])
-        except (SyntaxError, ValueError):
-            return None
+        node = parse_python_module(source[start.start() :], parse_cache)
     return node
 
 
 def _original_test_node(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    node: ast.AST | None = _original_test_module(test, evidence, run)
+    node: ast.AST | None = _original_test_module(test, evidence, run, parse_cache)
     for name in test.symbol.replace("::", ".").split("."):
         body = getattr(node, "body", ())
         matches = [child for child in body if getattr(child, "name", None) == name]
@@ -94,10 +103,13 @@ def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST,
 
 
 def _has_python_keyword_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
-    node = _original_test_node(test, evidence, run)
-    module = _original_test_module(test, evidence, run)
+    node = _original_test_node(test, evidence, run, parse_cache)
+    module = _original_test_module(test, evidence, run, parse_cache)
     if node is None or module is None:
         return False
     edits = sorted(
@@ -133,10 +145,13 @@ def _has_python_keyword_stub(
 
 
 def _has_python_module_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
 ) -> bool:
-    node = _original_test_node(test, evidence, run)
-    original_module = _original_test_module(test, evidence, run)
+    node = _original_test_node(test, evidence, run, parse_cache)
+    original_module = _original_test_module(test, evidence, run, parse_cache)
     if node is None or original_module is None:
         return False
     reachable = _reachable_python_nodes(original_module, node)
@@ -150,16 +165,44 @@ def _has_python_module_stub(
             and not edit.source_unchanged
         ):
             latest_by_path[edit.path] = edit
+    bridges: list[tuple[ast.Module, set[str]]] = []
+    for bridge in latest_by_path.values():
+        if bridge.source_after is None or not _source_confirmed_before(bridge, run):
+            continue
+        bridge_name = bridge.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
+        imported = {
+            alias.asname or alias.name: alias.name
+            for statement in original_module.body
+            if isinstance(statement, ast.ImportFrom) and statement.module == bridge_name
+            for alias in statement.names
+        }
+        invoked = {
+            imported[item.func.id]
+            for item in reachable
+            if isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Name)
+            and item.func.id in imported
+        }
+        if not invoked:
+            continue
+        bridge_module = parse_python_module(bridge.source_after, parse_cache)
+        if bridge_module is not None:
+            bridges.append((bridge_module, invoked))
     for edit in latest_by_path.values():
         stub_source = edit.source_after if edit.source_created else edit.python_added_source
         if stub_source is None or not _source_confirmed_before(edit, run):
             continue
-        classes = python_noop_module(stub_source, context_source=edit.source_after)
+        classes = python_noop_module(
+            stub_source, context_source=edit.source_after, parse_cache=parse_cache
+        )
         if classes is None:
+            continue
+        stub_module = parse_python_module(stub_source, parse_cache)
+        if stub_module is None:
             continue
         if edit.source_after is None and any(
             isinstance(statement, ast.ClassDef) and statement.bases
-            for statement in ast.parse(stub_source).body
+            for statement in stub_module.body
         ):
             # An inserted exception fragment alone cannot rule out existing uses.
             continue
@@ -193,29 +236,7 @@ def _has_python_module_stub(
             for item in reachable
         ):
             return True
-        for bridge in latest_by_path.values():
-            if bridge.source_after is None or not _source_confirmed_before(bridge, run):
-                continue
-            bridge_name = bridge.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
-            imported = {
-                alias.asname or alias.name: alias.name
-                for statement in original_module.body
-                if isinstance(statement, ast.ImportFrom) and statement.module == bridge_name
-                for alias in statement.names
-            }
-            invoked = {
-                imported[item.func.id]
-                for item in reachable
-                if isinstance(item, ast.Call)
-                and isinstance(item.func, ast.Name)
-                and item.func.id in imported
-            }
-            if not invoked:
-                continue
-            try:
-                bridge_module = ast.parse(bridge.source_after)
-            except (SyntaxError, ValueError):
-                continue
+        for bridge_module, invoked in bridges:
             bridge_aliases = {
                 alias.asname or alias.name
                 for statement in bridge_module.body
@@ -243,15 +264,19 @@ def _has_python_module_stub(
 
 
 def _has_python_unchanged_api(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
+    test: AcceptanceTest,
+    evidence: TranscriptEvidence,
+    run: TranscriptValidationRun,
+    parse_cache: PythonModuleCache | None = None,
+    binding_cache: PythonBindingCache | None = None,
 ) -> bool:
     """Prove the invoked module stayed identical from before test writing through RED.
 
     This credits a repeated write after a move already completed before the test.
     A changed body, binding or task-owned dependency invalidates the proof.
     """
-    module = _original_test_module(test, evidence, run)
-    node = _original_test_node(test, evidence, run)
+    module = _original_test_module(test, evidence, run, parse_cache)
+    node = _original_test_node(test, evidence, run, parse_cache)
     if module is None or node is None:
         return False
     edits = sorted(
@@ -296,7 +321,7 @@ def _has_python_unchanged_api(
     }
     for alias in called - shadowed:
         binding = aliases.get(alias)
-        if binding is None or _binding_count(module, alias) != 1:
+        if binding is None or _binding_count(module, alias, binding_cache) != 1:
             continue
         module_name, function_name = binding
         path = "src/" + module_name.replace(".", "/") + ".py"
@@ -321,9 +346,8 @@ def _has_python_unchanged_api(
             for edit in snapshots
         ):
             continue
-        try:
-            product = ast.parse(baseline.source_after)
-        except (SyntaxError, ValueError):
+        product = parse_python_module(baseline.source_after, parse_cache)
+        if product is None:
             continue
         functions = [
             item
@@ -333,7 +357,7 @@ def _has_python_unchanged_api(
         ]
         if len(functions) != 1:
             continue
-        if _binding_count(product, function_name) != 1:
+        if _binding_count(product, function_name, binding_cache) != 1:
             continue
         if any(isinstance(item, ast.ImportFrom) and item.level for item in product.body):
             continue
@@ -359,26 +383,30 @@ def _has_python_unchanged_api(
     return False
 
 
-def _binding_count(module: ast.Module, name: str) -> int:
+def _binding_count(module: ast.Module, name: str, cache: PythonBindingCache | None = None) -> int:
     """Reject ambiguous bindings conservatively, including nested rebinding."""
-    count = 0
+    if cache is not None and module in cache:
+        return cache[module].get(name, 0)
+    counts: dict[str, int] = {}
     for item in ast.walk(module):
-        if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store) and item.id == name:
-            count += 1
-        elif isinstance(item, ast.arg) and item.arg == name:
-            count += 1
+        bindings: tuple[str, ...] = ()
+        if isinstance(item, ast.Name) and isinstance(item.ctx, ast.Store):
+            bindings = (item.id,)
+        elif isinstance(item, ast.arg):
+            bindings = (item.arg,)
         elif isinstance(item, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            count += item.name == name
+            bindings = (item.name,)
         elif isinstance(item, ast.Import | ast.ImportFrom):
-            count += sum(
-                (
-                    alias.asname
-                    or (alias.name.split(".")[0] if isinstance(item, ast.Import) else alias.name)
-                )
-                == name
+            bindings = tuple(
+                alias.asname
+                or (alias.name.split(".")[0] if isinstance(item, ast.Import) else alias.name)
                 for alias in item.names
             )
-    return count
+        for binding in bindings:
+            counts[binding] = counts.get(binding, 0) + 1
+    if cache is not None:
+        cache[module] = counts
+    return counts.get(name, 0)
 
 
 def _module_dependency_matches(path: str, dependency: str) -> bool:

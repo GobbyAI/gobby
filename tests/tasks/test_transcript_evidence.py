@@ -202,6 +202,10 @@ def test_validation_output_keeps_unique_transport_result(normalized: str) -> Non
     assert truncated is False
 
 
+def _missing_transcript_worker_pid() -> int:
+    return os.getpid()
+
+
 def _raise_missing_transcript() -> None:
     raise TranscriptEvidenceUnavailable(
         "No transcript was found", source="codex", attempted_paths=("/missing/session.jsonl",)
@@ -214,7 +218,9 @@ def test_missing_transcript_exception_preserves_process_pool() -> None:
     except OSError as exc:
         pytest.skip(f"process pool unavailable: {exc}")
     with pool:
-        worker_pid = pool.submit(os.getpid).result(timeout=15)
+        # A module-local callable imports this test module and Gobby in the child.
+        # Allow cold spawn/import here; the exception and reuse checks stay bounded.
+        worker_pid = pool.submit(_missing_transcript_worker_pid).result(timeout=60)
         with pytest.raises(
             TranscriptEvidenceUnavailable, match="No transcript was found"
         ) as raised:
