@@ -1047,6 +1047,109 @@ async def test_python_stub_added_to_existing_module_credits_top_level_import_red
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["exception", "unchanged-move", "changed-move"])
+async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case: str) -> None:
+    test_path = "tests/test_provenance.py"
+    product_path = "src/gobby/feature.py"
+    records: list[dict[str, Any]] = []
+    if case == "exception":
+        body = (
+            "import pytest\nfrom gobby.feature import CronSessionError, launch\n\n"
+            "def test_original():\n    with pytest.raises(CronSessionError):\n        launch()\n"
+        )
+        anchor = "    self.output = output\n\n\n"
+        stub = 'class CronSessionError(RuntimeError):\n    """Missing cron session."""\n\n\n'
+        shape = {"old_string": anchor, "new_string": anchor + stub}
+        failure = "E   Failed: DID NOT RAISE <class 'gobby.feature.CronSessionError'>\n"
+        implementation = {"old_string": "return None", "new_string": "raise CronSessionError"}
+    else:
+        body = (
+            "from gobby.feature import payload\n\ndef test_original():\n"
+            "    assert payload({})['seat'] == 'lane-3'\n"
+        )
+        baseline = "def payload(run):\n    return {'id': run.get('id')}\n"
+        repeated = baseline if case == "unchanged-move" else baseline.replace("run.get('id')", "42")
+        records.extend(
+            _claude_edit_pair(
+                "Write", {"file_path": str(tmp_path / product_path), "content": baseline}, "move", 0
+            )
+        )
+        shape = {"content": repeated}
+        failure = "E   KeyError: 'seat'\n"
+        implementation = {
+            "old_string": repeated,
+            "new_string": "def payload(run):\n    return {'seat': 'lane-3'}\n",
+        }
+    records.extend(
+        _claude_edit_pair(
+            "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 2
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit" if case == "exception" else "Write",
+            {"file_path": str(tmp_path / product_path), **shape},
+            "shape",
+            4,
+        )
+    )
+    if case != "exception":
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / "src/gobby/query.py"),
+                    "old_string": "from collections.abc import Callable, Mapping\n",
+                    "new_string": "from collections.abc import Callable\n",
+                },
+                "cleanup",
+                6,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": f"____ test_original ____\n{test_path}:4: in test_original\n{failure}1 failed",
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit", {"file_path": str(tmp_path / product_path), **implementation}, "behavior", 10
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    records.sort(key=lambda record: record["timestamp"])
+    transcript = tmp_path / "provenance.jsonl"
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path, "src/gobby/query.py"},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is (case != "changed-move"), result
+
+
+@pytest.mark.asyncio
 async def test_claude_pairs_shell_results_and_tracks_task_edits(tmp_path: Path) -> None:
     transcript = tmp_path / "claude.jsonl"
     records = [

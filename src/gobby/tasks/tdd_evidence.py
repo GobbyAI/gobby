@@ -7,7 +7,6 @@ import builtins
 import re
 import shlex
 import sys
-import textwrap
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
@@ -18,13 +17,19 @@ from gobby.tasks.acceptance_artifacts import (
     validation_run_covers_test,
     validation_run_names_test,
 )
-from gobby.tasks.tdd_paths import is_implementation_edit_path, is_production_edit_path
+from gobby.tasks.tdd_paths import is_implementation_edit_path
+from gobby.tasks.tdd_python_evidence import (
+    _has_python_keyword_stub,
+    _has_python_module_stub,
+    _has_python_unchanged_api,
+    _original_test_module,
+    _original_test_node,
+)
 from gobby.tasks.transcript_evidence_models import (
     TranscriptEdit,
     TranscriptEvidence,
     TranscriptValidationRun,
 )
-from gobby.tasks.transcript_tool_arguments import python_noop_module
 
 _ASSERTION_DETAIL_RE = re.compile(
     r"AssertionError|assertion failed|\bassert\b|panicked at|Failed:\s+DID NOT RAISE",
@@ -287,6 +292,7 @@ def _find_red_run(
             elif not require_not_implemented or (
                 _has_python_keyword_stub(test, evidence, run)
                 or _has_python_module_stub(test, evidence, run)
+                or _has_python_unchanged_api(test, evidence, run)
             ):
                 return run, None
             else:
@@ -427,83 +433,6 @@ def _decorator_applications(decorators: list[ast.expr]) -> list[ast.Call]:
     return [ast.Call(func=decorator, args=[], keywords=[]) for decorator in reversed(decorators)]
 
 
-def _source_confirmed_before(edit: TranscriptEdit, run: TranscriptValidationRun) -> bool:
-    return (
-        edit.source_confirmed
-        and edit.source_confirmed_at is not None
-        and edit.source_confirmed_at < run.started_at
-    )
-
-
-def _original_test_module(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> ast.Module | None:
-    edits = [
-        edit
-        for edit in evidence.edits
-        if edit.session_id == run.session_id
-        and edit.path == test.path
-        and edit.timestamp < run.started_at
-        and edit.order < run.order
-    ]
-    latest = max(edits, key=lambda edit: edit.order, default=None)
-    if latest is None or not _source_confirmed_before(latest, run):
-        return None
-    source = latest.source_after or latest.source_fragment
-    if source is None:
-        return None
-    try:
-        node = ast.parse(textwrap.dedent(source))
-    except (SyntaxError, ValueError):
-        if latest.source_after is not None:
-            return None
-        # Appended tests may follow the tail of the preceding function in an
-        # Edit payload. Only complete module-level definitions carry body proof.
-        start = re.search(r"(?m)^(?:(?:async )?def |class |@)", source)
-        if start is None:
-            return None
-        try:
-            node = ast.parse(source[start.start() :])
-        except (SyntaxError, ValueError):
-            return None
-    return node
-
-
-def _original_test_node(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
-    node: ast.AST | None = _original_test_module(test, evidence, run)
-    for name in test.symbol.replace("::", ".").split("."):
-        body = getattr(node, "body", ())
-        matches = [child for child in body if getattr(child, "name", None) == name]
-        if len(matches) != 1:
-            return None
-        node = matches[0]
-    return node if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef) else None
-
-
-def _reachable_python_nodes(module: ast.Module, node: ast.AST) -> tuple[ast.AST, ...]:
-    """Follow only helpers and globals referenced by the original named test."""
-    bindings: dict[str, ast.AST] = {}
-    for statement in module.body:
-        if isinstance(statement, ast.FunctionDef | ast.AsyncFunctionDef):
-            bindings[statement.name] = statement
-        elif isinstance(statement, ast.Assign):
-            for target in statement.targets:
-                if isinstance(target, ast.Name):
-                    bindings[target.id] = statement.value
-    pending = [node]
-    visited: set[str] = set()
-    result: list[ast.AST] = []
-    while pending:
-        for item in ast.walk(pending.pop()):
-            result.append(item)
-            if isinstance(item, ast.Name) and item.id in bindings and item.id not in visited:
-                visited.add(item.id)
-                pending.append(bindings[item.id])
-    return tuple(result)
-
-
 def _has_original_source_failure(
     test: AcceptanceTest,
     evidence: TranscriptEvidence,
@@ -544,149 +473,6 @@ def _has_original_source_failure(
             and (not require_not_implemented or "NotImplementedError" in section)
         ):
             return True
-    return False
-
-
-def _has_python_keyword_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> bool:
-    node = _original_test_node(test, evidence, run)
-    module = _original_test_module(test, evidence, run)
-    if node is None or module is None:
-        return False
-    edits = sorted(
-        (
-            edit
-            for edit in evidence.edits
-            if edit.session_id == run.session_id
-            and edit.timestamp < run.started_at
-            and edit.order < run.order
-            and is_production_edit_path(edit.path)
-        ),
-        key=lambda edit: edit.order,
-    )
-    for edit in edits:
-        if not _source_confirmed_before(edit, run) or edit.python_stub is None:
-            continue
-        if any(
-            later.path == edit.path
-            and later.order > edit.order
-            and not later.source_unchanged
-            and (later.python_stub is None or not _source_confirmed_before(later, run))
-            for later in edits
-        ):
-            continue
-        name, keywords = edit.python_stub
-        for call in _reachable_python_nodes(module, node):
-            if not isinstance(call, ast.Call):
-                continue
-            called = getattr(call.func, "attr", None) or getattr(call.func, "id", None)
-            if called == name and any(keyword.arg in keywords for keyword in call.keywords):
-                return True
-    return False
-
-
-def _has_python_module_stub(
-    test: AcceptanceTest, evidence: TranscriptEvidence, run: TranscriptValidationRun
-) -> bool:
-    node = _original_test_node(test, evidence, run)
-    original_module = _original_test_module(test, evidence, run)
-    if node is None or original_module is None:
-        return False
-    reachable = _reachable_python_nodes(original_module, node)
-    latest_by_path: dict[str, TranscriptEdit] = {}
-    for edit in sorted(evidence.edits, key=lambda item: item.order):
-        if (
-            edit.session_id == run.session_id
-            and edit.timestamp < run.started_at
-            and edit.order < run.order
-            and is_production_edit_path(edit.path)
-            and not edit.source_unchanged
-        ):
-            latest_by_path[edit.path] = edit
-    for edit in latest_by_path.values():
-        stub_source = edit.source_after if edit.source_created else edit.python_added_source
-        if stub_source is None or not _source_confirmed_before(edit, run):
-            continue
-        classes = python_noop_module(stub_source)
-        if classes is None:
-            continue
-        module_name = edit.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
-        aliases = {
-            alias.asname or alias.name: classes[alias.name]
-            for statement in original_module.body
-            if isinstance(statement, ast.ImportFrom) and statement.module == module_name
-            for alias in statement.names
-            if alias.name in classes
-        }
-        if any(
-            isinstance(item, ast.Name) and item.id in aliases and aliases[item.id] is None
-            for item in reachable
-        ):
-            return True
-        constructed = {
-            call.func.id
-            for call in reachable
-            if isinstance(call, ast.Call)
-            and isinstance(call.func, ast.Name)
-            and call.func.id in aliases
-        }
-        members = set().union(*(aliases[name] or frozenset() for name in constructed))
-        if any(
-            isinstance(item, ast.Attribute)
-            and item.attr in members
-            or isinstance(item, ast.Call)
-            and isinstance(item.func, ast.Name)
-            and item.func.id in constructed
-            for item in reachable
-        ):
-            return True
-        for bridge in latest_by_path.values():
-            if bridge.source_after is None or not _source_confirmed_before(bridge, run):
-                continue
-            bridge_name = bridge.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
-            imported = {
-                alias.asname or alias.name: alias.name
-                for statement in original_module.body
-                if isinstance(statement, ast.ImportFrom) and statement.module == bridge_name
-                for alias in statement.names
-            }
-            invoked = {
-                imported[item.func.id]
-                for item in reachable
-                if isinstance(item, ast.Call)
-                and isinstance(item.func, ast.Name)
-                and item.func.id in imported
-            }
-            if not invoked:
-                continue
-            try:
-                bridge_module = ast.parse(bridge.source_after)
-            except (SyntaxError, ValueError):
-                continue
-            bridge_aliases = {
-                alias.asname or alias.name
-                for statement in bridge_module.body
-                if isinstance(statement, ast.ImportFrom) and statement.module == module_name
-                for alias in statement.names
-                if alias.name in classes
-            }
-            for declaration in bridge_module.body:
-                if not isinstance(declaration, ast.ClassDef) or declaration.name not in invoked:
-                    continue
-                constructors = [
-                    member
-                    for member in declaration.body
-                    if isinstance(member, ast.FunctionDef) and member.name == "__init__"
-                ]
-                if any(
-                    isinstance(item, ast.Call)
-                    and isinstance(item.func, ast.Name)
-                    and item.func.id in bridge_aliases
-                    for constructor in constructors
-                    for item in ast.walk(constructor)
-                ):
-                    return True
     return False
 
 
