@@ -28,6 +28,7 @@
 | code-reviewer.md | gobby#14945 |
 | code-reviewer.md | gobby#15009 |
 | code-reviewer.md | gobby#15010 |
+| code-reviewer.md | gobby#15242 |
 | researcher.md | gobby#14550 |
 | researcher.md | gobby#14640 |
 | archivist.md | gobby#14949 |
