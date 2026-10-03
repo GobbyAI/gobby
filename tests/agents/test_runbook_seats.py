@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
@@ -175,7 +176,12 @@ def test_seat_agent_definitions_resolved(env: _Env, monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.parametrize(
     ("place", "refused"),
-    [("same-place", True), ("other-machine", False), ("other-workspace", False)],
+    [
+        ("same-place", True),
+        ("other-machine", False),
+        ("other-workspace", False),
+        ("ended", False),
+    ],
 )
 def test_runbook_refuses_only_a_launch_in_the_same_place(
     env: _Env, place: str, refused: bool
@@ -185,6 +191,8 @@ def test_runbook_refuses_only_a_launch_in_the_same_place(
     elif place == "other-workspace":
         other = WorkspaceManager(env.db).create(AGENT_TEST_MACHINE_ID, "second-pod")[0]
         _pipeline_child(env, workspace=other.id)
+    elif place == "ended":
+        _pipeline_child(env, ExecutionStatus.COMPLETED)
     else:
         _pipeline_child(env)
     caller = _pipeline_child(env)
@@ -260,6 +268,11 @@ def _sibling_without_workspace(env: _Env, monkeypatch: pytest.MonkeyPatch) -> st
     return _pipeline_child(env)
 
 
+def _sibling_workspace_unresolved(env: _Env, monkeypatch: pytest.MonkeyPatch) -> str:
+    _pipeline_child(env, workspace=str(uuid.uuid4()))
+    return _pipeline_child(env)
+
+
 @pytest.mark.parametrize(
     ("arrange", "cause"),
     [
@@ -268,6 +281,7 @@ def _sibling_without_workspace(env: _Env, monkeypatch: pytest.MonkeyPatch) -> st
         (_not_pipeline_child, "not a pipeline child session"),
         (_sibling_without_session, "has no pipeline child session"),
         (_sibling_without_workspace, "has no workspace input"),
+        (_sibling_workspace_unresolved, "does not resolve"),
     ],
     ids=[
         "storage-error",
@@ -275,6 +289,7 @@ def _sibling_without_workspace(env: _Env, monkeypatch: pytest.MonkeyPatch) -> st
         "not-pipeline-child",
         "sibling-without-session",
         "sibling-without-workspace",
+        "sibling-workspace-unresolved",
     ],
 )
 def test_uncertain_lookup_fails_closed(

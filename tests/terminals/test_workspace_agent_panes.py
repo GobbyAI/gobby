@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any, NoReturn, get_args
 from unittest.mock import patch
 
 import pytest
@@ -385,9 +385,14 @@ async def test_duplicate_title_placements_both_succeed(harness: _Harness) -> Non
         assert len(set(pane_ids)) == 2
         assert set(pane_ids) <= _pane_ids(h, ws)
         assert sorted(_in_flight(h)) == sorted(pane_ids)
-        for pane in reserved:
-            await h.reserver.release(pane, terminal_id=None)
+        terminals = [_terminal(h) for _ in reserved]
+        for pane, terminal in zip(reserved, terminals, strict=True):
+            bound = await h.reserver.bind(pane, terminal.id)
+            assert (bound.id, bound.terminal_id) == (pane.pane_id, terminal.id)
+        for pane, terminal in zip(reserved, terminals, strict=True):
+            await h.reserver.release(pane, terminal_id=terminal.id)
         assert _in_flight(h) == []
+    assert "seat_live" not in get_args(agent_panes.AgentPlacementErrorCode)
 
 
 async def test_reserve_bind_emits_once(harness: _Harness) -> None:
