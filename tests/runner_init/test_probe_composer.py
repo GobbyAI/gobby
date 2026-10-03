@@ -102,8 +102,8 @@ async def test_registered_tmux_terminal_is_probed_through_its_runtime(
 ) -> None:
     """A managed tmux row gets the same real probe as a native one (#22915).
 
-    The wake gate withholds every probeable ``unknown`` read, so a registered
-    backend the probe skipped would never receive a live wake.
+    The wake gate withholds every ``unknown`` read, so a registered backend the
+    probe skipped would never receive a live wake.
     """
     terminal = make_memory_terminal(terminal_id="term-t", session_name="term-t", backend="tmux")
     runtime = FakeRuntime(backend="tmux", snapshot_text=pane)
@@ -113,13 +113,12 @@ async def test_registered_tmux_terminal_is_probed_through_its_runtime(
     read = await probe_terminal_activity(cast("GobbyRunner", runner), session, terminal)
 
     assert read.composer.state == state
-    assert read.composer_probeable is True
     assert runtime.snapshot_modes == ["ansi"]
 
 
 @pytest.mark.asyncio
 async def test_unregistered_backend_reads_unknown_and_stays_withheld() -> None:
-    """A row whose runtime is not registered fails closed as probeable unknown."""
+    """A row whose runtime is not registered fails closed as unknown."""
     terminal = make_memory_terminal(terminal_id="term-t", session_name="term-t", backend="tmux")
     native = FakeRuntime(backend="native", snapshot_text=_SUGGESTION_PANE)
     runner = _runner_for(native, terminal)
@@ -127,5 +126,5 @@ async def test_unregistered_backend_reads_unknown_and_stays_withheld() -> None:
 
     read = await probe_terminal_activity(cast("GobbyRunner", runner), session, terminal)
 
-    assert read == TerminalActivity(ComposerRead("unknown"), composer_probeable=True)
+    assert read == TerminalActivity(ComposerRead("unknown"))
     assert native.snapshot_modes == []

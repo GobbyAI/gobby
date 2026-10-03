@@ -363,7 +363,8 @@ class LocalWorktreeManager:
         project_id: str | None = None,
         status: str | tuple[str, ...] | None = None,
         agent_session_id: str | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
+        task_id: str | None = None,
     ) -> list[Worktree]:
         """
         List worktrees with optional filters.
@@ -372,7 +373,7 @@ class LocalWorktreeManager:
             project_id: Filter by project
             status: Filter by one status, or by any status in a tuple (applied before limit)
             agent_session_id: Filter by owning session
-            limit: Maximum number of results
+            limit: Maximum number of results, or None for every matching worktree
 
         Returns:
             List of Worktree instances
@@ -392,6 +393,9 @@ class LocalWorktreeManager:
         if agent_session_id:
             conditions.append("agent_session_id = %s")
             params.append(agent_session_id)
+        if task_id:
+            conditions.append("task_id = %s")
+            params.append(task_id)
         where_clause = " AND ".join(conditions)
         params.append(limit)
 

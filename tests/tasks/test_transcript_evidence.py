@@ -57,6 +57,78 @@ from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("receipt", ["valid", "missing", "wrong-job", "wrong-call", "assistant"])
+async def test_claude_background_validation_requires_matching_terminal_receipt(
+    tmp_path: Path, receipt: str
+) -> None:
+    transcript = tmp_path / "background.jsonl"
+    command = "uv run pytest tests/agents/test_plan_seat_definitions.py -q --tb=line"
+    output_path = "/private/tmp/claude-test/tasks/boyb2916b.output"
+    records = _claude_tool_pair(
+        command=command,
+        call_id="toolu-original",
+        start=BASE_TIME,
+        result=(
+            "Command did not complete within its 120s timeout and was moved to the "
+            f"background (ID: boyb2916b). Output is being written to: {output_path}. "
+            "You will be notified when it completes."
+        ),
+    )
+    failure = (
+        "E   AssertionError: plan-writer\n"
+        "tests/agents/test_plan_seat_definitions.py:57: AssertionError: plan-writer\n"
+        "FAILED tests/agents/test_plan_seat_definitions.py::test_seat_definitions_sync_and_validate\n"
+        "============================== 4 failed in 20.35s ==============================\n"
+    )
+    records += _claude_tool_pair(
+        command=f"tail -n 40 {output_path}",
+        call_id="read-output",
+        start=BASE_TIME + timedelta(seconds=2),
+        result=failure,
+    )
+    if receipt != "missing":
+        job_id = "unrelated" if receipt == "wrong-job" else "boyb2916b"
+        call_id = "unrelated" if receipt == "wrong-call" else "toolu-original"
+        role = "assistant" if receipt == "assistant" else "user"
+        records.append(
+            {
+                "type": role,
+                "timestamp": (BASE_TIME + timedelta(seconds=4)).isoformat(),
+                "message": {
+                    "role": role,
+                    "content": (
+                        f"<task-notification><task-id>{job_id}</task-id>"
+                        f"<tool-use-id>{call_id}</tool-use-id>"
+                        f"<output-file>{output_path}</output-file><status>failed</status>"
+                        f'<summary>Background command "{command}" failed with exit code 1</summary>'
+                        "</task-notification>"
+                    ),
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+    assert len(evidence.validation_runs) == 1
+    run = evidence.validation_runs[0]
+    assert run.command == command
+    assert run.started_at == BASE_TIME
+    if receipt == "valid":
+        assert (run.outcome, run.exit_code) == ("failure", 1)
+        assert run.completed_at == BASE_TIME + timedelta(seconds=4)
+        assert run.output == failure.strip()
+    else:
+        assert run.outcome == "unknown"
+        assert run.exit_code is None
+
+
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 
 
@@ -181,7 +253,8 @@ async def test_prewarmed_pool_runs_four_first_stops_concurrently(tmp_path: Path)
         assert len(set(pids)) == 4
         assert all(pid > 0 for pid in pids)
     finally:
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        # A drain that outlives its test can stop the tracker under later tests' pools.
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
 
 async def test_process_pool_oserror_falls_back_and_warns_once(
@@ -367,7 +440,7 @@ def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
 
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
         assert _resource_tracker_pid() is None
         assert transcript_evidence_pool._pool is None
@@ -934,6 +1007,236 @@ async def test_python_created_noop_module_red_requires_native_creation_and_origi
     )
     result = evaluate_tdd_evidence((test,), evidence)
     assert result.passed is expected, result
+
+
+@pytest.mark.parametrize(
+    ("case", "expected"),
+    [
+        ("added-ni", True),
+        ("added-noop-assertion", True),
+        ("added-real-body", False),
+        ("replaced-anchor", False),
+        ("behavior-before-red", False),
+        ("unrelated-import", False),
+    ],
+)
+async def test_python_stub_added_to_existing_module_credits_top_level_import_red(
+    tmp_path: Path, case: str, expected: bool
+) -> None:
+    test_path = "tests/test_feature.py"
+    product_path = "src/gobby/terminals/feature.py"
+    module = "other.module" if case == "unrelated-import" else "gobby.terminals.feature"
+    body = (
+        f"from {module} import feature_ready\n\ndef test_original():\n    assert feature_ready(3)\n"
+    )
+    stub_body = {
+        "added-noop-assertion": "    return False\n",
+        "added-real-body": "    return value > 2\n",
+    }.get(case, "    raise NotImplementedError\n")
+    anchor = "EXISTING = 1\n"
+    stub = f"\n\ndef feature_ready(value: int) -> bool:\n{stub_body}"
+    records = _claude_edit_pair(
+        "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 0
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": anchor,
+                "new_string": ("EXISTING = 2\n" if case == "replaced-anchor" else anchor) + stub,
+            },
+            "api-shape",
+            2,
+        )
+    )
+    if case == "behavior-before-red":
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "old_string": stub_body,
+                    "new_string": "    return value > 2\n",
+                },
+                "behavior-before-red",
+                4,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    failure = (
+        "E   assert False\n" if case == "added-noop-assertion" else "E   NotImplementedError\n"
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": (
+                    f"____ test_original ____\n{test_path}:4: in test_original\n{failure}1 failed"
+                ),
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit",
+            {
+                "file_path": str(tmp_path / product_path),
+                "old_string": stub_body,
+                "new_string": "    return value > 2\n",
+            },
+            "behavior",
+            10,
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    transcript = tmp_path / "added-stub-proof.jsonl"
+    records.sort(key=lambda record: record["timestamp"])
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is expected, result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "case", ["exception", "active-exception", "unchanged-move", "changed-move"]
+)
+async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case: str) -> None:
+    test_path = "tests/test_provenance.py"
+    product_path = "src/gobby/feature.py"
+    records: list[dict[str, Any]] = []
+    if case in {"exception", "active-exception"}:
+        body = (
+            "import pytest\nfrom gobby.feature import CronSessionError, launch\n\n"
+            "def test_original():\n    with pytest.raises(CronSessionError):\n        launch()\n"
+        )
+        anchor = "def launch():\n    return None\n"
+        stub = 'class CronSessionError(RuntimeError):\n    """Missing cron session."""\n\n\n'
+        shape = {"old_string": anchor, "new_string": anchor + stub}
+        failure = "E   Failed: DID NOT RAISE <class 'gobby.feature.CronSessionError'>\n"
+        implementation = {"old_string": "return None", "new_string": "raise CronSessionError"}
+        records.extend(
+            _claude_edit_pair(
+                "Write",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "content": anchor
+                    if case == "exception"
+                    else "def launch():\n    raise CronSessionError\n\n",
+                },
+                "existing-behavior",
+                0,
+            )
+        )
+        if case == "active-exception":
+            shape = {"old_string": "def launch():", "new_string": stub + "def launch():"}
+            implementation = {"old_string": "raise CronSessionError", "new_string": "return None"}
+    else:
+        body = (
+            "from gobby.feature import payload\n\ndef test_original():\n"
+            "    assert payload({})['seat'] == 'lane-3'\n"
+        )
+        baseline = "def payload(run):\n    return {'id': run.get('id')}\n"
+        repeated = baseline if case == "unchanged-move" else baseline.replace("run.get('id')", "42")
+        records.extend(
+            _claude_edit_pair(
+                "Write", {"file_path": str(tmp_path / product_path), "content": baseline}, "move", 0
+            )
+        )
+        shape = {"content": repeated}
+        failure = "E   KeyError: 'seat'\n"
+        implementation = {
+            "old_string": repeated,
+            "new_string": "def payload(run):\n    return {'seat': 'lane-3'}\n",
+        }
+    records.extend(
+        _claude_edit_pair(
+            "Write", {"file_path": str(tmp_path / test_path), "content": body}, "tests", 2
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit" if case in {"exception", "active-exception"} else "Write",
+            {"file_path": str(tmp_path / product_path), **shape},
+            "shape",
+            4,
+        )
+    )
+    if case not in {"exception", "active-exception"}:
+        records.extend(
+            _claude_edit_pair(
+                "Edit",
+                {
+                    "file_path": str(tmp_path / "src/gobby/query.py"),
+                    "old_string": "from collections.abc import Callable, Mapping\n",
+                    "new_string": "from collections.abc import Callable\n",
+                },
+                "cleanup",
+                6,
+            )
+        )
+    command = f"uv run pytest {test_path}::test_original -q"
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="red",
+            start=BASE_TIME + timedelta(seconds=8),
+            result={
+                "exit_code": 1,
+                "stdout": f"____ test_original ____\n{test_path}:4: in test_original\n{failure}1 failed",
+            },
+            is_error=True,
+        )
+    )
+    records.extend(
+        _claude_edit_pair(
+            "Edit", {"file_path": str(tmp_path / product_path), **implementation}, "behavior", 10
+        )
+    )
+    records.extend(
+        _claude_tool_pair(
+            command=command,
+            call_id="green",
+            start=BASE_TIME + timedelta(seconds=12),
+            result={"exit_code": 0, "stdout": "1 passed"},
+        )
+    )
+    records.sort(key=lambda record: record["timestamp"])
+    transcript = tmp_path / "provenance.jsonl"
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        {test_path, product_path, "src/gobby/query.py"},
+        str(tmp_path),
+    )
+    test = AcceptanceTest(
+        reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
+    )
+    result = evaluate_tdd_evidence((test,), evidence)
+    assert result.passed is (case not in {"changed-move", "active-exception"}), result
 
 
 @pytest.mark.asyncio
@@ -4756,15 +5059,15 @@ def test_chunked_derivation_matches_unchunked_derivation_in_order(
     assert resumed == _derive_transcript_evidence_sync(*args, snapshot)
 
 
-def test_payload_shell_does_not_grow_with_record_count() -> None:
-    # The shell is pickled before the first yield and unpickled after the last chunk,
-    # each in one uninterrupted step. A shell of fixed size keeps both steps bounded
+def test_payload_envelope_does_not_grow_with_record_count() -> None:
+    # The envelope is pickled before the first yield and unpickled after the last chunk,
+    # each in one uninterrupted step. An envelope of fixed size keeps both steps bounded
     # however many records a resumed snapshot or derived result carries.
-    def shell(records: int) -> bytes:
+    def envelope(records: int) -> bytes:
         runs = tuple(_session_run("session-1", f"cmd {i}", BASE_TIME, i) for i in range(records))
-        return encode((runs, list(runs))).shell
+        return encode((runs, list(runs))).envelope
 
-    assert len(shell(CHUNK_RECORDS)) == len(shell(8 * CHUNK_RECORDS))
+    assert len(envelope(CHUNK_RECORDS)) == len(envelope(8 * CHUNK_RECORDS))
 
 
 def _drop_last_chunk(payload: ChunkedPayload) -> ChunkedPayload:

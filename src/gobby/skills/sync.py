@@ -5,9 +5,9 @@ bundled install/shared/skills/ directory and syncs them to the database
 as installed rows, following the same pattern as sync_bundled_rules().
 
 Bundled skills are created with source='installed', enabled=True and
-identified by metadata containing a 'gobby' key. On subsequent syncs,
-gobby-tagged skills are overwritten from templates; user skills are
-never touched.
+identified by metadata containing a 'gobby' key or exact local bundle
+provenance. On subsequent syncs, owned skills are overwritten from
+templates; user skills are never touched.
 """
 
 from __future__ import annotations
@@ -67,20 +67,21 @@ def get_bundled_skills_path() -> Path:
 def _is_gobby_owned(skill: Skill) -> bool:
     """Check if a skill is owned by gobby (bundled).
 
-    Gobby-owned skills have a 'gobby' key in their metadata dict.
+    Installed global skills are owned by their marker or exact bundle path.
     """
     if skill.source != "installed" or skill.project_id is not None:
         return False
     if skill.metadata and "gobby" in skill.metadata:
         return True
-    # The original router shipped without the metadata marker. Its exact
-    # installed bundle provenance permits repairing that row on upgrade.
+    # Language and platform bundles intentionally omit metadata.gobby.
+    # Preserve their template metadata and require exact provenance each sync.
+    if Path(skill.name).name != skill.name or skill.name in {".", ".."}:
+        return False
     return bool(
-        skill.name == "gobby"
-        and skill.source_type == "filesystem"
+        skill.source_type in {"filesystem", "local"}
         and skill.source_path
         and Path(skill.source_path).resolve()
-        == (get_bundled_skills_path() / "gobby" / "SKILL.md").resolve()
+        == (get_bundled_skills_path() / skill.name / "SKILL.md").resolve()
     )
 
 
@@ -92,9 +93,9 @@ def _sync_single_skill(
     """Sync a single parsed skill to the database as an installed row.
 
     - Row doesn't exist → create with source='installed', enabled=True
-    - Gobby-tagged row exists → overwrite content from template (we own it)
-    - Non-gobby row with same name exists → skip (user's skill)
-    - Soft-deleted gobby row → restore and overwrite
+    - Owned installed row exists → overwrite content from template
+    - Unmanaged row with same name exists → skip (user's skill)
+    - Soft-deleted owned row → restore and overwrite
     """
     existing = storage.get_by_name(parsed.name, project_id=None, include_deleted=True)
 
@@ -204,8 +205,8 @@ def _handle_existing_gobby_skill(
 def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled skills from install/shared/skills/ to the database.
 
-    Creates/updates skills as source='installed', enabled=True with
-    gobby metadata. Gobby-owned skills (identified by metadata.gobby)
+    Creates/updates skills as source='installed' with template metadata.
+    Owned skills (identified by metadata.gobby or exact local bundle provenance)
     are overwritten on sync. User skills are never touched.
 
     Args:

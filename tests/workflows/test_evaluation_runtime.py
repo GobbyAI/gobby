@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import threading
 import time
 from collections.abc import Coroutine
@@ -13,7 +14,11 @@ import pytest
 
 from gobby.hooks.effect_deadline import BlockingEffectDeadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
-from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime, WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import (
+    ChildEvaluationCancelled,
+    WorkflowEvaluationRuntime,
+    WorkflowEvaluationTimeout,
+)
 from gobby.workflows.hooks import WorkflowHookHandler
 
 
@@ -182,3 +187,62 @@ def test_runtime_propagates_exceptions_and_rejects_work_after_shutdown() -> None
 
     with pytest.raises(RuntimeError, match="not running"):
         runtime.run(succeed())
+
+
+def test_run_reports_an_in_band_child_cancel_as_child_evaluation_cancelled() -> None:
+    """An in-band child cancel is not a cancel of the evaluation task (#22706).
+
+    A child awaited inside the evaluation can surface its own
+    ``asyncio.CancelledError``. Propagation through ``wait_for`` and
+    ``wrap_future`` does not identify who initiated the cancellation.
+    ``wait_for`` and ``run_coroutine_threadsafe`` propagate the child cancel
+    unchanged, so the adapter thread
+    would otherwise see an ordinary ``concurrent.futures.CancelledError`` and
+    misattribute it to a canceller of the evaluation. ``run()`` must report it
+    as ``ChildEvaluationCancelled`` because the evaluation task was never
+    cancelled.
+    """
+    runtime = WorkflowEvaluationRuntime(max_workers=1)
+
+    async def child_never_completes() -> None:
+        await asyncio.Event().wait()
+
+    async def cancelled_by_child() -> None:
+        child = asyncio.create_task(child_never_completes())
+        child.cancel()
+        await child
+        raise AssertionError("the child cancellation must propagate")
+
+    try:
+        with pytest.raises(ChildEvaluationCancelled):
+            runtime.run(cancelled_by_child(), timeout=5.0)
+    finally:
+        runtime.shutdown()
+
+
+def test_run_reraises_a_genuine_task_cancel_unchanged() -> None:
+    """A real cancellation of the evaluation task still reports CancelledError (#22706).
+
+    ``shutdown()`` cancels the pending evaluation task directly, which must not
+    be softened into ``ChildEvaluationCancelled``; that would hide a genuine
+    cancel and let ``evaluate`` retry an event that was actually cancelled.
+    """
+    runtime = WorkflowEvaluationRuntime(max_workers=1)
+    entered = threading.Event()
+
+    async def hold() -> None:
+        entered.set()
+        await asyncio.Event().wait()
+
+    def cancel_via_shutdown() -> None:
+        entered.wait(timeout=5.0)
+        runtime.shutdown()
+
+    canceller = threading.Thread(target=cancel_via_shutdown)
+    canceller.start()
+    try:
+        with pytest.raises(concurrent.futures.CancelledError):
+            runtime.run(hold(), timeout=30.0)
+    finally:
+        canceller.join(timeout=5.0)
+        runtime.shutdown()

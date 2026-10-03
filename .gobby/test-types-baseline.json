@@ -1051,16 +1051,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/cli/installers/test_shared.py::::mypy:no-untyped-def",
-      "issue_code": "mypy:no-untyped-def",
-      "line": 835,
-      "message": "Function is missing a type annotation",
-      "occurrences": 2,
-      "path": "tests/cli/installers/test_shared.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/cli/installers/test_tmux_config.py::::mypy:operator",
       "issue_code": "mypy:operator",
       "line": 161,
@@ -5747,26 +5737,6 @@
       "message": "Argument 2 to \"_mount_vite_dev_ui\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
       "occurrences": 2,
       "path": "tests/servers/test_app_factory_vite_proxy.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_attention_respond.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 97,
-      "message": "Argument 1 to \"create_attention_router\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 4,
-      "path": "tests/servers/test_attention_respond.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_attention_respond.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 459,
-      "message": "\"BaseRoute\" has no attribute \"path\"",
-      "occurrences": 1,
-      "path": "tests/servers/test_attention_respond.py",
       "severity": "high",
       "test_name": ""
     },

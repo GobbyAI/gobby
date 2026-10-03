@@ -62,7 +62,7 @@ def make_memory_terminal(
     return Terminal(
         id=tid,
         backend=backend,
-        ownership="gobby",
+        ownership="external" if backend == "tmux" else "gobby",
         state="live",
         machine_id=str(uuid4()),
         project_id=str(uuid4()),
@@ -801,7 +801,7 @@ def bind_spawn_runtime(request: object) -> tuple[MemoryTerminalStore, FakeRuntim
     spawn = cast(SpawnRequest, request)
 
     manager = MemoryTerminalStore()
-    runtime = FakeRuntime()
+    runtime = FakeRuntime(backend="native")
     registry = runtime_registry(runtime)
     spawn.terminal_manager = cast(TerminalManager, manager)
     spawn.terminal_runtime_registry = registry

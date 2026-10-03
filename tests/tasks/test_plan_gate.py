@@ -1,6 +1,6 @@
 """Tests for the spawn-time plan validation gate.
 
-Specifically: ``planner``, ``plan-adversary``, and ``plan-enhancer`` spawns
+Specifically: ``planner``, ``plan-adversary``, and ``plan-enhancer-old`` spawns
 refuse to start when the task's ``plan_file_path`` artifact fails the
 Plan-Coverage Contract validator. Other agents pass through, and the gate is a
 no-op when no plan artifact is recorded.
@@ -28,7 +28,7 @@ from gobby.tasks.expansion._plan_gate import (
 )
 from tests.agents.prepared_spawn import prepared_spawn
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 
 def _write_broken_plan(path: Path) -> Path:
@@ -143,7 +143,7 @@ class _FreshZeroSymbolIndex:
 
 
 def test_planning_agents_constant() -> None:
-    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary", "plan-enhancer"})
+    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary", "plan-enhancer-old"})
 
 
 def test_plan_enhancer_spawn_against_malformed_plan_returns_structured_failure(
@@ -153,7 +153,7 @@ def test_plan_enhancer_spawn_against_malformed_plan_returns_structured_failure(
     manager = _make_task_manager_with_artifact(str(plan))
 
     result = validate_plan_for_agent_spawn(
-        agent_name="plan-enhancer", task_id="t1", task_manager=manager
+        agent_name="plan-enhancer-old", task_id="t1", task_manager=manager
     )
 
     assert result is not None
@@ -189,7 +189,7 @@ def test_no_plan_artifact_passes_through() -> None:
     assert result is None
 
 
-@pytest.mark.parametrize("agent_name", ["planner", "plan-enhancer"])
+@pytest.mark.parametrize("agent_name", ["planner", "plan-enhancer-old"])
 def test_repair_agent_spawn_receives_missing_index_diagnostics(
     tmp_path: Path,
     agent_name: str,
@@ -397,7 +397,7 @@ async def test_spawn_agent_impl_dispatches_plan_gate_off_event_loop(
     monkeypatch.setattr(plan_gate_module, "validate_plan_for_agent_spawn", gate)
 
     result = await spawn_agent_impl(
-        terminal_backend="tmux",
+        terminal_backend="native",
         prompt="review plan",
         runner=MagicMock(),
         agent_lookup_name="planner",
@@ -435,8 +435,6 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
         status="running",
         terminal_type="process",
         terminal_id=None,
-        tmux_socket_name=None,
-        tmux_socket_path=None,
         pid=123,
         message="spawned",
     )
@@ -467,7 +465,7 @@ async def test_spawn_agent_impl_injects_symbol_repair_diagnostics(tmp_path: Path
         ) as execute,
     ):
         result = await spawn_agent_impl(
-            terminal_backend="tmux",
+            terminal_backend="native",
             prompt="Repair the plan",
             runner=runner,
             agent_lookup_name="planner",

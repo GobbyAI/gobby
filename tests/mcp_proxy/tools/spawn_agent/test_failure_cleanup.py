@@ -19,7 +19,7 @@ from gobby.agents import spawn_executor
 from gobby.agents.isolation import SpawnConfig, WorktreeIsolationHandler
 from gobby.mcp_proxy.tools.spawn_agent import _failure_cleanup
 from gobby.mcp_proxy.tools.spawn_agent._spawn_phase import SpawnPhase
-from gobby.storage.terminals import Terminal, TerminalManager
+from gobby.storage.terminals import Terminal, TerminalManager, native_locator_key
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.worktrees.git import WorktreeGitManager
 from tests.terminals.fakes import (
@@ -346,7 +346,7 @@ async def test_start_cas_win_returns_success_without_cleanup() -> None:
 
 @pytest.mark.asyncio
 async def test_lost_cas_with_running_run_treats_hook_win_as_success() -> None:
-    """H4: SessionStart hook won the start race — no cleanup, tmux survives."""
+    """H4: SessionStart hook won the start race — no cleanup, terminal survives."""
     runner = _runner(None, current_status="running")
 
     with patch.object(_failure_cleanup, "cleanup_failed_spawn", AsyncMock()) as cleanup:
@@ -546,7 +546,7 @@ async def test_health_fail_persists_full_redacted_pane_for_get_agent_capture() -
         resume_metadata_json=None,
     )
     storage = _HealthCaptureStorage(run)
-    terminal = SimpleNamespace(id="terminal-1", backend="tmux")
+    terminal = SimpleNamespace(id="terminal-1", backend="native")
     terminal_manager = MagicMock()
     terminal_manager.get.return_value = terminal
     runner = SimpleNamespace(
@@ -675,7 +675,7 @@ async def test_spawn_rollback_captures_before_terminating_runtime() -> None:
     events: list[str] = []
     terminal = SimpleNamespace(
         id="terminal-1",
-        backend="tmux",
+        backend="native",
         state="pending",
         spawn_key="gobby-rollback",
         **_ATTEMPT,
@@ -798,6 +798,8 @@ class _Isolation:
 class _StickyRuntime(FakeRuntime):
     """A runtime whose terminate returns while the session stays present."""
 
+    backend: Literal["tmux", "native"] = "native"
+
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del grace_seconds
         self.terminate_started.set()
@@ -816,8 +818,15 @@ class _UnprovableRuntime(FakeRuntime):
         raise RuntimeError(f"no recorded process to prove {_SECRET}")
 
 
-def _row(state: str, backend: Literal["tmux", "native"] = "tmux") -> Terminal:
-    row = make_memory_terminal(backend=backend)
+def _row(state: str) -> Terminal:
+    # A committed native terminal is addressed by its host terminal id on the
+    # host epoch that spawned it.
+    row = replace(
+        make_memory_terminal(backend="native"),
+        host_epoch="epoch",
+        locator={"host_terminal_id": "ht-1"},
+        locator_key=native_locator_key("epoch", "ht-1"),
+    )
     if state == "pending":
         return replace(row, state="pending", locator=None, locator_key=None)
     return replace(row, state=state)
@@ -861,7 +870,7 @@ async def _cleanup(
 
 
 async def test_failed_kill_orphans_and_keeps_isolation() -> None:
-    native_pending = _row("pending", backend="native")
+    native_pending = _row("pending")
     store = MemoryTerminalStore(native_pending)
     unprovable = _UnprovableRuntime()
     handler = _Isolation()
@@ -870,17 +879,17 @@ async def test_failed_kill_orphans_and_keeps_isolation() -> None:
     assert store.rows[native_pending.id].state == "pending"
     assert handler.removed == 0
 
-    tmux_pending = _row("pending")
-    store = MemoryTerminalStore(tmux_pending)
-    sticky = _StickyRuntime(live_keys={str(tmux_pending.spawn_key)})
-    await _cleanup(store, sticky, tmux_pending.id, handler)
-    assert sticky.killed == [tmux_pending.id]
-    assert store.rows[tmux_pending.id].state == "pending"
+    sticky_pending = _row("pending")
+    store = MemoryTerminalStore(sticky_pending)
+    sticky = _StickyRuntime(live_keys={str(sticky_pending.spawn_key)})
+    await _cleanup(store, sticky, sticky_pending.id, handler)
+    assert sticky.killed == [sticky_pending.id]
+    assert store.rows[sticky_pending.id].state == "pending"
     assert handler.removed == 0
 
     held = _row("pending")
     store = MemoryTerminalStore(held)
-    untouched = FakeRuntime()
+    untouched = FakeRuntime(backend="native")
     in_doubt_spawns.claim(held.id)
     try:
         await _cleanup(store, untouched, held.id, handler)
@@ -902,7 +911,7 @@ async def test_failed_kill_orphans_and_keeps_isolation() -> None:
     for state in ("pending", "live"):
         proven = _row(state)
         store = MemoryTerminalStore(proven)
-        await _cleanup(store, FakeRuntime(), proven.id, handler)
+        await _cleanup(store, FakeRuntime(backend="native"), proven.id, handler)
         assert store.rows[proven.id].state == "exited"
     assert handler.removed == 2
 
@@ -923,7 +932,9 @@ async def test_held_terminal_defers_rollback_and_isolation_to_owner(proven: bool
     terminalize = AsyncMock(return_value=True)
     in_doubt_spawns.claim(held.id)
     try:
-        await _cleanup(store, FakeRuntime(), held.id, handler, terminalize=terminalize)
+        await _cleanup(
+            store, FakeRuntime(backend="native"), held.id, handler, terminalize=terminalize
+        )
         # Run terminalization would exit the held row, so it waits for the owner.
         terminalize.assert_not_awaited()
         assert handler.removed == 0
@@ -964,7 +975,7 @@ async def _reap_with_concurrent_cleanup(
         await resume.wait()
         return absent
 
-    registry = runtime_registry(FakeRuntime())
+    registry = runtime_registry(FakeRuntime(backend="native"))
     manager = cast(TerminalManager, store)
     with (
         patch.object(spawn_executor, "_stale_pending_absent", first_absence),
@@ -978,7 +989,7 @@ async def _reap_with_concurrent_cleanup(
         # Cleanup lands while the reaper holds the id, so its steps wait on that claim.
         await _cleanup(
             store,
-            FakeRuntime(),
+            FakeRuntime(backend="native"),
             row.id,
             handler,
             terminalize=terminalize,
@@ -993,7 +1004,7 @@ async def _reap_with_concurrent_cleanup(
 async def test_unsettled_reap_keeps_deferred_cleanup_for_the_proven_reap(first_reap: str) -> None:
     row = _row("pending")
     store = MemoryTerminalStore(row)
-    registry = runtime_registry(FakeRuntime())
+    registry = runtime_registry(FakeRuntime(backend="native"))
     manager = cast(TerminalManager, store)
     handler = _Isolation()
     children = _ChildSessions()
@@ -1103,13 +1114,18 @@ async def test_sweep_reaches_suspended_cleanup_after_the_row_moves_on(moved_to: 
     elif moved_to == "exited":
         store.mark_exited(row.id)
     else:
-        store.rows[row.id] = replace(
-            row,
-            state="pending" if moved_to == "new_pending" else "live",
-            attempt_generation=row.attempt_generation + 1,
-        )
+        moved = replace(row, attempt_generation=row.attempt_generation + 1)
+        if moved_to == "new_live":
+            # A committed native attempt carries its host terminal locator.
+            moved = replace(
+                moved,
+                state="live",
+                locator={"host_terminal_id": "ht-2"},
+                locator_key=native_locator_key("epoch", "ht-2"),
+            )
+        store.rows[row.id] = moved
     moved_row = store.get(row.id)
-    registry = runtime_registry(FakeRuntime())
+    registry = runtime_registry(FakeRuntime(backend="native"))
     manager = cast(TerminalManager, store)
     probe = AsyncMock(return_value=False)
     with patch.object(spawn_executor, "_stale_pending_absent", probe):
@@ -1151,7 +1167,7 @@ async def test_held_terminal_defers_isolation_to_owner() -> None:
     try:
         await _cleanup(
             MemoryTerminalStore(reused),
-            FakeRuntime(),
+            FakeRuntime(backend="native"),
             reused.id,
             handler,
             cleanup_isolation=False,
@@ -1199,7 +1215,9 @@ async def test_held_terminal_defers_isolation_to_owner() -> None:
         in_doubt_spawns.claim(row.id)
         try:
             with patch.object(_failure_cleanup, "_forget_spawn_run", owner_settles):
-                await _cleanup(store, FakeRuntime(), row.id, handler, prior_attempt=prior)
+                await _cleanup(
+                    store, FakeRuntime(backend="native"), row.id, handler, prior_attempt=prior
+                )
         finally:
             in_doubt_spawns.release(row.id)
         assert handler.removed == int(removes), label

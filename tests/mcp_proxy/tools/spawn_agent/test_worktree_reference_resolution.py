@@ -31,7 +31,7 @@ from tests.fixtures.isolated_checkout import (
     install_isolated_checkout_project,
 )
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 _SEEDED_TEST_MACHINE_ID = "21000000-0000-4000-8000-000000000002"
 _FULL_ID = "0b0b0b0b-3333-4333-8333-333333333333"
@@ -179,7 +179,7 @@ class TestSpawnAgentResolvesWorktreeReferences:
                 {
                     "prompt": "Continue the assigned task",
                     "provider": "claude",
-                    "terminal_backend": "tmux",
+                    "terminal_backend": "native",
                     "parent_session_id": "parent-1",
                     "worktree_id": worktree_ref,
                 },
@@ -214,7 +214,7 @@ class TestSpawnAgentResolvesWorktreeReferences:
                 {
                     "prompt": "Continue the assigned task",
                     "provider": "claude",
-                    "terminal_backend": "tmux",
+                    "terminal_backend": "native",
                     "parent_session_id": "parent-1",
                     "worktree_id": worktree_ref,
                 },

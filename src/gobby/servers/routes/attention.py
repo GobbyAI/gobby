@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Literal, Self
@@ -18,9 +18,6 @@ from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.servers.routes.attention_roster import (
     _load_roster_entries,
     _model_display_names,
-)
-from gobby.servers.routes.attention_roster import (
-    _run_tmux_payload as _run_tmux_payload,
 )
 from gobby.storage.attention import AttentionState
 from gobby.storage.sessions import LIVE_SESSION_STATUS_ORDER
@@ -135,10 +132,9 @@ class AttentionMetadataRequest(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class AttentionPane:
-    """Resolved tmux target and its capture operation."""
+    """Resolved terminal row target and its capture operation."""
 
     target: str
-    tmux_cmd: Sequence[str]
     capture: Callable[[], Awaitable[str | None]]
 
 
@@ -387,11 +383,21 @@ def create_attention_router(
                     raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
                 observed_fingerprint = detector.pane_fingerprint(pane_output)
                 if observed_fingerprint != request.fingerprint:
+                    # The lifecycle scan refreshes the stored episode only every
+                    # check interval; move it to the pane now so the 409 names an
+                    # identity a retry can answer.
+                    await _retire_and_redetect(
+                        server,
+                        current=latest,
+                        pane=pane,
+                        detector=detector,
+                    )
+                    moved = await server.services.run_db(manager.get, entry_id)
                     raise HTTPException(
                         status_code=409,
                         detail={
                             "code": "prompt_changed",
-                            **_identity(latest),
+                            **_identity(moved or latest),
                         },
                     )
 
@@ -675,7 +681,6 @@ async def _resolve_attention_pane(
 
             return AttentionPane(
                 target=row.id,
-                tmux_cmd=(),
                 capture=capture_session_pane,
             )
 
@@ -697,6 +702,5 @@ async def _resolve_attention_pane(
 
     return AttentionPane(
         target=row.id,
-        tmux_cmd=(),
         capture=capture_run_pane,
     )

@@ -37,6 +37,8 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect as connect_websocket
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
+from gobby.agents.srt_runtime import SrtRuntimeError, verify_srt_installation
+from gobby.utils.dependency_requirements import SRT_RELEASE
 from gobby.utils.session_context import AGENT_RUN_ID_HEADER
 from tests.native_binary_selection import (
     NativeBinarySelectionError,
@@ -343,9 +345,11 @@ def _checkout_gdaemon_bin_dir(
     gterm dir would otherwise run that dir's gdaemon. The pinned identity stamp
     stays out: it describes the gdaemon this dir replaces.
 
-    Pinned binaries are hard links, never copies: gterm pins its own executable
-    and refuses to host when that executable is a symlink. The checkout gdaemon
-    stays a symlink so a rebuild that replaces its inode is still followed.
+    Pinned files are hard links, never symlinks: gterm pins its own executable
+    and refuses to host when that executable is a symlink. A sandbox that cannot
+    write the pinned dir refuses the link with EPERM, so those files are copied
+    into this temp dir; the installed set itself is never touched. The checkout
+    gdaemon stays a symlink so a rebuild that replaces its inode is still followed.
     """
     from gobby.utils.native_bin import IDENTITY_STAMP_NAME, native_bin_name
 
@@ -356,9 +360,13 @@ def _checkout_gdaemon_bin_dir(
             try:
                 os.link(entry.resolve(), composite / entry.name)
             except OSError as exc:
+                if exc.errno == errno.EPERM:
+                    # A sandbox without write access to the pinned dir refuses every link.
+                    shutil.copy2(entry, composite / entry.name)
+                    continue
                 if exc.errno != errno.EXDEV:
                     raise
-                # No symlink or copy fallback: either would break gterm or the installed set.
+                # No symlink fallback: a symlinked gterm refuses to host.
                 raise RuntimeError(
                     f"cannot hard-link {entry} into {composite}: {exc}. The pinned native "
                     "bin dir and the e2e home must share a filesystem."
@@ -460,6 +468,27 @@ def prepare_daemon_env(
     return env
 
 
+def link_operator_srt(home: Path) -> None:
+    """Link the operator's managed SRT into an isolated home, or skip.
+
+    Spawns fail closed without managed SRT. The isolated home borrows the
+    operator install through a symlink and never installs, downloads, or
+    writes under ~/.gobby; the install lock lands beside the link.
+    """
+    operator = Path.home() / ".gobby" / "tools" / "srt" / SRT_RELEASE.version
+    if not operator.is_dir():
+        pytest.skip(f"managed SRT {SRT_RELEASE.version} is not installed at {operator}")
+    link = home / "tools" / "srt" / SRT_RELEASE.version
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(operator, target_is_directory=True)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("GOBBY_HOME", str(home))
+        try:
+            verify_srt_installation()
+        except (OSError, SrtRuntimeError) as exc:
+            pytest.skip(f"managed SRT {SRT_RELEASE.version} failed verification: {exc}")
+
+
 def find_free_port(max_retries: int = 20) -> int:
     """Find an available port that won't collide with any running daemon.
 
@@ -506,37 +535,18 @@ def _postgres_url_for_schema(database_url: str, schema: str) -> str:
     return f"{database_url}{separator}options=-csearch_path%3D{schema}"
 
 
-def reserve_tmux_socket() -> Path:
-    """Reserve a short unique socket name under the permitted temp root."""
-    root = os.environ.get("CLAUDE_CODE_TMPDIR") or tempfile.gettempdir()
-    with tempfile.NamedTemporaryFile(prefix="t", dir=root) as reserved:
-        socket_path = Path(reserved.name).resolve()
-    if len(os.fsencode(socket_path)) >= 104:
-        pytest.fail(f"Permitted temp root is too long for AF_UNIX sockets: {root}")
-    return socket_path
-
-
 def _seed_e2e_runtime_state(
     postgres_db: Any,
     project_dir: Path,
     *,
     terminal_host_socket_dir: Path | None = None,
-) -> Path:
-    """Seed PostgreSQL-owned runtime config and the synthetic E2E project.
-
-    Returns the daemon's private tmux socket path. Without ``tmux.socket_path``
-    the daemon shares the user's ``tmux -L gobby`` server, and every agent it
-    spawns outlives the SIGKILL that tears the daemon down (#21175). The path
-    lives under the permitted temp root with a short unique name; the owner
-    kills the server and removes the socket with :func:`kill_tmux_server`.
-    """
+) -> None:
+    """Seed PostgreSQL-owned runtime config and the synthetic E2E project."""
     from gobby.storage.config_mutations import ConfigMutations, ConfigPatch
 
-    tmux_socket = reserve_tmux_socket()
     mutations = ConfigMutations(postgres_db)
     values: dict[str, object] = {
         "test_mode": True,
-        "tmux.socket_path": str(tmux_socket),
         "memory.dream.enabled": False,
         "gobby-tasks.expansion.enabled": False,
         "gobby-tasks.validation.enabled": False,
@@ -566,7 +576,7 @@ def _seed_e2e_runtime_state(
     from tests.fixtures.isolated_checkout import insert_isolated_machine, write_project_marker
 
     # validate_checkout_root proves the root by its marker, so a bare temp dir
-    # (the runtime-contract and tmux-isolation callers) needs one; the
+    # (the runtime-contract and single-daemon callers) needs one; the
     # e2e_project_dir fixture already wrote the same marker, and rewriting it
     # is a no-op there (#21671).
     if not (project_dir / ".gobby" / "project.json").exists():
@@ -580,15 +590,6 @@ def _seed_e2e_runtime_state(
         expected_marker_id=project_id,
     )
     LocalProjectCheckoutManager(postgres_db).register(machine_id, project_id, root)
-    return tmux_socket
-
-
-def kill_tmux_server(socket_path: Path) -> None:
-    """Stop the tmux server on ``socket_path`` (if any) and drop the socket file."""
-    subprocess.run(
-        ["tmux", "-S", str(socket_path), "kill-server"], capture_output=True, check=False
-    )
-    socket_path.unlink(missing_ok=True)
 
 
 def wait_for_port(port: int, timeout: float = 10.0) -> bool:
@@ -856,8 +857,35 @@ def e2e_project_dir() -> Generator[Path]:
 
 
 @pytest.fixture(scope="function")
+def e2e_home_dir(e2e_project_dir: Path) -> Path:
+    """Isolated daemon home, nested in the project by default.
+
+    A module that spawns agents under managed SRT overrides this with
+    ``e2e_srt_spawn_home``: a home inside the agent workspace is refused.
+    """
+    return e2e_project_dir / ".gobby-home"
+
+
+@pytest.fixture(scope="function")
+def e2e_srt_spawn_home() -> Generator[Path]:
+    """Private daemon home outside the agent workspace, for managed SRT spawns.
+
+    The sensitive-path contract (``assert_sensitive_path_contract``) refuses a
+    sandbox allow path containing ``GOBBY_HOME`` credentials such as
+    ``bootstrap.yaml`` or ``local_cli_token``. A spawn whose workspace is the
+    project directory must therefore run against a home outside that directory.
+    """
+    home = Path(tempfile.mkdtemp(prefix="gobby_e2e_home_")).resolve()
+    try:
+        yield home
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+@pytest.fixture(scope="function")
 def e2e_config(
     e2e_project_dir: Path,
+    e2e_home_dir: Path,
     postgres_database_url: str,
     postgres_schema: str,
     postgres_db: Any,
@@ -880,7 +908,7 @@ def e2e_config(
         ports.append(port)
     http_port, ws_port = ports
 
-    gobby_home = e2e_project_dir / ".gobby-home"
+    gobby_home = e2e_home_dir
     gobby_home.mkdir(parents=True, exist_ok=True)
 
     # Pin the daemon's machine identity to the synthetic id the e2e suite
@@ -900,7 +928,7 @@ def e2e_config(
     # Runtime configuration is PostgreSQL-owned. The legacy config.yaml below
     # remains input coverage for bootstrap-path resolution only.
     terminal_host_socket_dir = Path(tempfile.mkdtemp(prefix="gh-"))
-    tmux_socket = _seed_e2e_runtime_state(
+    _seed_e2e_runtime_state(
         postgres_db,
         e2e_project_dir,
         terminal_host_socket_dir=terminal_host_socket_dir,
@@ -968,7 +996,6 @@ front_door:
 
     yield config_path, http_port, ws_port
 
-    kill_tmux_server(tmux_socket)
     shutil.rmtree(terminal_host_socket_dir, ignore_errors=True)
 
 

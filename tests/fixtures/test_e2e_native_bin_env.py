@@ -66,6 +66,38 @@ def test_checkout_gdaemon_survives_pinned_gterm_dir(
     assert dict(os.environ) == environ_before
 
 
+def test_pinned_files_are_copied_where_links_are_refused(
+    checkout_gdaemon: Path,
+    installed_dir: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A sandbox that cannot write the pinned dir refuses every link, so its files are copied."""
+    runtime = installed_dir / ".ghook-runtime.json"
+    runtime.write_text('{"runtime": "installed"}')
+    runtime.chmod(0o644)
+    backup = _executable(installed_dir / ".gcode.bak-v435")
+
+    def sandboxed_link(src: Path, dst: Path) -> None:
+        raise PermissionError(errno.EPERM, os.strerror(errno.EPERM), str(src))
+
+    monkeypatch.setattr(os, "link", sandboxed_link)
+    home = tmp_path / "home"
+    home.mkdir()
+    base = {"GOBBY_TEST_GDAEMON": "checkout", NATIVE_BIN_DIR_ENV: str(installed_dir)}
+
+    bin_dir = Path(e2e_fixtures.prepare_daemon_env(base, home_dir=home)[NATIVE_BIN_DIR_ENV])
+
+    for pinned in (runtime, backup, installed_dir / GTERM):
+        copied = bin_dir / pinned.name
+        assert copied.read_bytes() == pinned.read_bytes()
+        assert not copied.is_symlink()
+        assert not os.path.samefile(copied, pinned)
+        assert copied.stat().st_mode == pinned.stat().st_mode
+    assert (bin_dir / GDAEMON).resolve() == checkout_gdaemon.resolve()
+    assert not (bin_dir / IDENTITY_STAMP_NAME).exists()
+
+
 def test_cross_filesystem_pin_fails_naming_the_cause(
     checkout_gdaemon: Path,
     installed_dir: Path,

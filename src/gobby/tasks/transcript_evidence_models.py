@@ -53,6 +53,9 @@ class TranscriptValidationRun:
     output_truncated: bool = False
     output_recovered_from: str | None = None
     output_recovered_at: datetime | None = None
+    provider_call_id: str | None = None
+    background_job_id: str | None = None
+    background_output_path: str | None = None
     #: Every validation segment of ``command`` in order, each with its own
     #: categories; ``categories`` above is their union. Empty only for runs
     #: built without classification.
@@ -85,6 +88,8 @@ class TranscriptEdit:
     source_created: bool = False
     source_fragment: str | None = None
     python_stub: tuple[str, tuple[str, ...]] | None = None
+    #: Inert declarations an Edit added around its verbatim-preserved anchor.
+    python_added_source: str | None = None
     source_unchanged: bool = False
 
 

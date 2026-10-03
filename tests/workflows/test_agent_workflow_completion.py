@@ -15,7 +15,7 @@ import yaml
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
-from gobby.agents.tmux import TmuxConfig
+from gobby.config.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager

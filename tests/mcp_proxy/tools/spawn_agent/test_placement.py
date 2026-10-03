@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import threading
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import MagicMock, patch
+from typing import Any, Literal, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -45,14 +46,16 @@ from gobby.terminals.host_client import HostCommandError
 from gobby.terminals.in_doubt import in_doubt_spawns
 from gobby.terminals.leases import TerminalLeaseRegistry
 from gobby.terminals.termination import kill_terminal
+from gobby.terminals.tmux_runtime import TmuxTerminalRuntime
 from gobby.terminals.workspace_agent_panes import AgentPaneReserver, AgentPlacementError
 from gobby.terminals.workspace_contract import WorkspaceEvent, WorkspaceOpError
 from gobby.terminals.workspace_ops import WorkspaceOps
 from gobby.terminals.write_coordinator import WriteCoordinator
+from gobby.utils import spawn as spawn_utils
 from tests.fixtures.postgres import TEST_MACHINE_ID_PREFIX, TEST_USER_ID
 from tests.terminals.fakes import FakeRuntime, runtime_registry
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("stub_srt_verifier")]
 
 LOCAL_MACHINE_ID = f"{TEST_MACHINE_ID_PREFIX}000000000001"
 SEAT = "developer-lane"
@@ -112,15 +115,14 @@ class _Isolation:
 class _UnkillableRuntime(FakeRuntime):
     """A runtime whose kill leaves the session running.
 
-    A tmux kill returns while the session stays present; the native host
-    raises ``kill_unproven``, since its kill returns only on a proven exit.
+    The native host raises ``kill_unproven``, since its kill returns only on a
+    proven exit.
     """
 
     async def terminate(self, terminal: Terminal, grace_seconds: float) -> None:
         del terminal, grace_seconds
         self.terminate_started.set()
-        if self.backend == "native":
-            raise HostCommandError("kill_unproven")
+        raise HostCommandError("kill_unproven")
 
 
 @dataclass
@@ -312,7 +314,6 @@ def _build(
         lambda *a, **k: None,
     )
     monkeypatch.setattr("gobby.runner_broadcasting.fire_agent_event", lambda *a, **k: None)
-    monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", lambda **k: None)
     return h
 
 
@@ -328,7 +329,7 @@ def placed(
         project=sample_project,
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        runtimes=(FakeRuntime(backend="tmux"), FakeRuntime(backend="native")),
+        runtimes=(FakeRuntime(backend="native"),),
     )
 
 
@@ -351,7 +352,7 @@ async def _spawn(h: _Harness, placement: dict[str, Any] | None, **overrides: Any
         "target_project_id": h.project_id,
         "session_manager": h.sessions,
         "db": h.db,
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
         "placement": placement,
         "agent_pane_reserver": h.reserver,
         "project_context_authoritative": True,
@@ -377,7 +378,7 @@ def _held_seat(h: _Harness, title: str = SEAT, state: str = "pending") -> Worksp
     )
     terminal_id = mint_terminal_id()
     h.terminals.create_pending(
-        terminal_id, h.project_id, "tmux", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
+        terminal_id, h.project_id, "native", "gobby", terminal_id, machine_id=LOCAL_MACHINE_ID
     )
     if state == "exited":
         h.terminals.fail_pending(terminal_id)
@@ -467,7 +468,7 @@ def _create_launch_terminal(h: _Harness, request: SpawnRequest) -> str:
     h.terminals.create_pending(
         terminal_id,
         request.project_id,
-        "tmux",
+        "native",
         "gobby",
         terminal_id,
         machine_id=LOCAL_MACHINE_ID,
@@ -535,7 +536,7 @@ async def test_refused_placement_has_no_side_effects(placed: _Harness) -> None:
 
 
 async def test_placed_launch_requires_managed_srt(
-    placed: _Harness, monkeypatch: pytest.MonkeyPatch
+    placed: _Harness, stub_srt_verifier: MagicMock
 ) -> None:
     h = placed
     panes, terminals = _panes(h), _terminal_states(h)
@@ -548,19 +549,18 @@ async def test_placed_launch_requires_managed_srt(
         assert result["placement_error"] == "sandbox_required"
         _assert_untouched(h, panes, terminals)
 
-    def missing_srt(**kwargs: Any) -> None:
-        raise SrtRuntimeError("managed SRT is not installed")
-
-    monkeypatch.setattr("gobby.agents.srt_runtime.verify_srt_installation", missing_srt)
+    # Configure the module's verifier stub; patching over it would outlive the stub's teardown.
+    stub_srt_verifier.side_effect = SrtRuntimeError("managed SRT is not installed")
     result = await _spawn(h, _tab(h))
     assert result["placement_error"] == "sandbox_required"
     _assert_untouched(h, panes, terminals)
 
-    # Leaf-local: an unplaced spawn with the same sandbox config still starts (1.8 extends it).
+    # An unplaced spawn with the same sandbox config is refused by the same gate (1.8).
     unplaced = await _spawn(h, None, daemon_config=disabled)
-    assert unplaced["success"] is True
-    assert unplaced["status"] == "starting"
-    await asyncio.gather(*impl._spawn_background_tasks.values())
+    assert unplaced["success"] is False
+    assert unplaced["error_code"] == "sandbox_required"
+    assert "placement_error" not in unplaced
+    _assert_untouched(h, panes, terminals)
 
 
 async def test_wrap_failure_refuses_and_releases_pane(placed: _Harness) -> None:
@@ -642,7 +642,7 @@ async def test_exceptions_and_cancellation_release_pane(placed: _Harness, exit_k
 
     h.executor = bind_busy if exit_kind == "busy" else bind_then_fail
     if exit_kind == "kill_fails":
-        h.kill_error = RuntimeError("tmux kill-session failed")
+        h.kill_error = RuntimeError("host kill failed")
     if exit_kind == "cleanup_fails":
         h.isolation.cleanup_error = RuntimeError("worktree removal failed")
 
@@ -903,8 +903,8 @@ async def test_concurrent_placed_spawns_share_one_reserver(
     ws_config = MagicMock(spec=WebSocketConfig)
     ws_config.host, ws_config.port = "localhost", 60888
     ws_config.ping_interval, ws_config.ping_timeout, ws_config.max_message_size = 30, 10, 1024
-    tmux = _ExecOrderedRuntime(backend="tmux", order=order)
-    registry = runtime_registry(tmux, FakeRuntime(backend="native"))
+    native = _ExecOrderedRuntime(backend="native", order=order)
+    registry = runtime_registry(native)
     server = WebSocketServer(ws_config, MagicMock(), MagicMock())
     server.session_manager = SessionManager(temp_db)
     server.configure_terminals(
@@ -921,7 +921,7 @@ async def test_concurrent_placed_spawns_share_one_reserver(
         project=sample_project,
         tmp_path=tmp_path,
         monkeypatch=monkeypatch,
-        runtimes=(tmux,),
+        runtimes=(native,),
         reserver=reserver,
     )
     h.runner.terminal_runtime_registry = registry
@@ -931,7 +931,7 @@ async def test_concurrent_placed_spawns_share_one_reserver(
         "provider": "claude",
         "isolation": "worktree",
         "parent_session_id": h.parent_id,
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
         "placement": _tab(h),
     }
 
@@ -1051,7 +1051,7 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
         "isolation": "worktree",
         "task_id": task.id,
         "parent_session_id": h.parent_id,
-        "terminal_backend": "tmux",
+        "terminal_backend": "native",
     }
 
     free_seat = await tool.call("spawn_agent", {**arguments, "placement": _tab(h)})
@@ -1072,7 +1072,6 @@ async def test_duplicate_placed_request_precedence(placed: _Harness) -> None:
     assert _panes(h) == {occupied.id: occupied.terminal_id}
 
 
-@pytest.mark.parametrize("backend", ["tmux", "native"])
 @pytest.mark.parametrize("proven", [True, False])
 @pytest.mark.parametrize("cancel_while_held", [False, True])
 async def test_placed_timeout_race_keeps_pane_until_owner_settles(
@@ -1080,13 +1079,12 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    backend: str,
     proven: bool,
     cancel_while_held: bool,
 ) -> None:
     hold = asyncio.Event()
     runtime_type = FakeRuntime if proven else _UnkillableRuntime
-    runtime = runtime_type(backend=cast(Any, backend), spawn_hold=hold)
+    runtime = runtime_type(backend="native", spawn_hold=hold)
     h = _build(
         db=temp_db,
         project=sample_project,
@@ -1095,7 +1093,7 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
         runtimes=(runtime,),
     )
 
-    result = await _spawn(h, _tab(h), timeout=0.05, terminal_backend=backend)
+    result = await _spawn(h, _tab(h), timeout=0.05)
 
     assert result["success"] is False
     [terminal_id] = _terminal_states(h)
@@ -1136,16 +1134,14 @@ async def test_placed_timeout_race_keeps_pane_until_owner_settles(
     assert _panes(h) == {pane_id: terminal_id}
 
 
-@pytest.mark.parametrize("backend", ["tmux", "native"])
 async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
-    backend: str,
 ) -> None:
     hold = asyncio.Event()
-    runtime = FakeRuntime(backend=cast(Any, backend), spawn_hold=hold)
+    runtime = FakeRuntime(backend="native", spawn_hold=hold)
     h = _build(
         db=temp_db,
         project=sample_project,
@@ -1154,7 +1150,7 @@ async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
         runtimes=(runtime,),
     )
 
-    result = await _spawn(h, None, timeout=0.05, terminal_backend=backend)
+    result = await _spawn(h, None, timeout=0.05)
     [launch] = [
         task
         for key, task in impl._spawn_background_tasks.items()
@@ -1181,7 +1177,93 @@ async def test_unplaced_timeout_rolls_back_at_once_without_a_claim(
 
     # The late cleanup kills what the prepare created.
     assert _terminal_states(h) == {terminal_id: "exited"}
-    if backend == "native":
-        assert runtime.killed_host_ids == ["ht-1"]
-    else:
-        assert runtime.live_keys == set()
+    assert runtime.killed_host_ids == ["ht-1"]
+
+
+@dataclass
+class _TmuxCommandRecorder:
+    """Records every tmux command line started through ``gobby.utils.spawn``."""
+
+    calls: list[tuple[str, ...]] = field(default_factory=list)
+
+    def refuse(self, argv: Sequence[str | os.PathLike[str]]) -> None:
+        command = tuple(os.fspath(part) for part in argv)
+        if command and Path(command[0]).name == "tmux":
+            self.calls.append(command)
+            raise FileNotFoundError(command[0])
+
+    def install(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        run, popen = spawn_utils.run, spawn_utils.popen
+        subprocess_exec = spawn_utils.create_subprocess_exec
+        session_exec = spawn_utils.create_session_exec
+
+        def guarded_run(argv: Sequence[str | os.PathLike[str]], **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return run(argv, **kwargs)
+
+        def guarded_popen(argv: Sequence[str | os.PathLike[str]], **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return popen(argv, **kwargs)
+
+        async def guarded_subprocess_exec(*argv: str | os.PathLike[str], **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return await subprocess_exec(*argv, **kwargs)
+
+        async def guarded_session_exec(*argv: str, **kwargs: Any) -> Any:
+            self.refuse(argv)
+            return await session_exec(*argv, **kwargs)
+
+        monkeypatch.setattr(spawn_utils, "run", guarded_run)
+        monkeypatch.setattr(spawn_utils, "popen", guarded_popen)
+        monkeypatch.setattr(spawn_utils, "create_subprocess_exec", guarded_subprocess_exec)
+        monkeypatch.setattr(spawn_utils, "create_session_exec", guarded_session_exec)
+
+
+@pytest.mark.parametrize("kind", ["unplaced", "tab", "split"])
+@pytest.mark.parametrize("terminal_backend", [None, "native"])
+async def test_public_spawn_creates_native_terminals_and_never_runs_tmux(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    terminal_backend: Literal["native"] | None,
+    kind: str,
+) -> None:
+    native = FakeRuntime(backend="native")
+    h = _build(
+        db=temp_db,
+        project=sample_project,
+        tmp_path=tmp_path,
+        monkeypatch=monkeypatch,
+        runtimes=(native,),
+    )
+    # The real tmux runtime is registered, so only resolution keeps a spawn off it.
+    h.registry.register(TmuxTerminalRuntime())
+    tmux = _TmuxCommandRecorder()
+    tmux.install(monkeypatch)
+    # Only the provider plan is faked; execute_spawn runs for real down to the runtime.
+    h.executor = spawn_executor.execute_spawn
+    monkeypatch.setattr(spawn_executor, "prepare_claude_spawn", AsyncMock(side_effect=_plan))
+    placement: dict[str, Any] | None = None
+    if kind == "tab":
+        placement = _tab(h)
+    elif kind == "split":
+        placement = _split(_held_seat(h, "beside", state="exited").id)
+
+    result = await _spawn(h, placement, terminal_backend=terminal_backend)
+    background = [
+        task
+        for key, task in impl._spawn_background_tasks.items()
+        if key.startswith(f"{result['run_id']}:")
+    ]
+    await asyncio.gather(*background)
+
+    assert result["success"] is True, result
+    [launch] = h.launches
+    assert launch.terminal_backend == "native"
+    assert native.create_calls == 1
+    assert native.last_request is not None
+    terminal = h.terminals.get(str(native.last_request.terminal_id))
+    assert terminal is not None
+    assert (terminal.backend, terminal.state) == ("native", "live")
+    assert tmux.calls == []

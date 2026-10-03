@@ -864,7 +864,11 @@ the restarted daemon adopts the surviving host. `gobby stop --terminals` and
 
 The client rides through the gap. When the daemon's connection drops:
 
-1. The pane contents stay visible but frozen while the daemon is unreachable.
+1. A direct native pane keeps receiving frames from its gterm host. If you
+   already hold its host input grant, you can keep typing while the daemon is
+   unreachable; host refusal still ends that authority. Taking control of an
+   ungranted pane waits for the daemon to return. Panes that use the daemon's
+   proxy keep their last visible frame frozen.
    A toast names the URL and cause (`Daemon unreachable at <url>: <error>`),
    while the status bar's left slot shows
    `× Daemon unreachable · retrying in <n> s` and counts down to the next attempt.

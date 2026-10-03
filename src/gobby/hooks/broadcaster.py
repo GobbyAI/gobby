@@ -21,6 +21,7 @@ from gobby.hooks.hook_types import (
     HookType,
 )
 from gobby.hooks.normalization import normalize_notification_input
+from gobby.hooks.tool_outcomes import hook_event_tool_outcome
 from gobby.sessions.reasoning_effort import observed_reasoning_effort
 
 logger = logging.getLogger(__name__)
@@ -117,8 +118,9 @@ class HookEventBroadcaster:
     @staticmethod
     def _resolve_hook_type(event: HookEvent) -> HookType | None:
         """Resolve the concrete hook type for a unified event."""
-        if event.event_type.value == "after_tool" and (
-            event.metadata.get("is_failure", False) or event.data.get("is_error", False)
+        if (
+            event.event_type.value == "after_tool"
+            and hook_event_tool_outcome(event.data, event.metadata).succeeded is False
         ):
             return HookType.POST_TOOL_USE_FAILURE
         return EVENT_TYPE_TO_HOOK_TYPE.get(event.event_type.value)

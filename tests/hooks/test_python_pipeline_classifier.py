@@ -469,6 +469,257 @@ def test_python_source_mutation_without_literal_scope_has_no_targets(script: str
     assert targets == ()
 
 
+@pytest.mark.parametrize(
+    "script",
+    [
+        pytest.param(
+            "p = Path('/tmp/safe')\nfor p in [Path('src/a.py')]:\n    p.write_text('x')",
+            id="for-target",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\n[p.write_text('x') for p in [Path('src/a.py')]]",
+            id="comprehension-target",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nwith nullcontext(Path('src/a.py')) as p:\n"
+            "    p.write_text('x')",
+            id="with-as-target",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\np /= '/repo/src/a.py'\np.write_text('x')",
+            id="augmented-assignment",
+        ),
+        pytest.param(
+            "def touch(p):\n    p.write_text('x')\np = Path('/tmp/safe')\ntouch(Path('src/a.py'))",
+            id="argument",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\np, other = Path('src/a.py'), 1\np.write_text('x')",
+            id="tuple-unpack",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nclass p:\n    write_text = Path('src/a.py').write_text\n"
+            "p.write_text('x')",
+            id="class-definition",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nasync def p():\n    pass\np.write_text('x')",
+            id="async-function-definition",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\ndef p():\n    pass\np.write_text('x')",
+            id="function-definition",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\ndef touch[p](q: p) -> None:\n    p.write_text('x')",
+            id="type-parameter",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\nglobals()['p'] = Path('src/a.py')\np.write_text('x')",
+            id="globals-subscript",
+        ),
+        pytest.param(
+            "p = Path('/tmp/safe')\ng = globals()\ng.update(p=Path('src/a.py'))\np.write_text('x')",
+            id="globals-alias-update",
+        ),
+        pytest.param(
+            "import sys\np = Path('/tmp/safe')\nsys._getframe(0).f_globals['p'] = Path('src/a.py')\n"
+            "p.write_text('x')",
+            id="frame-globals",
+        ),
+        pytest.param(
+            "from builtins import globals as g\np = Path('/tmp/safe')\n"
+            "g()['p'] = Path('src/a.py')\np.write_text('x')",
+            id="aliased-globals-import",
+        ),
+    ],
+)
+def test_path_name_rebound_by_another_binding_has_no_targets(script: str) -> None:
+    source = f"from contextlib import nullcontext\nfrom pathlib import Path\n{script}\n"
+
+    classification, targets = _classify_python_source_with_targets(source)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+def test_path_name_with_repeated_identical_literal_keeps_its_target() -> None:
+    source = "from pathlib import Path\np = Path('/tmp/a')\np = Path('/tmp/a')\np.write_text('x')\n"
+
+    assert _classify_python_source_with_targets(source) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/a",),
+    )
+
+
+def test_namespace_inspection_without_a_write_is_not_a_mutation() -> None:
+    classification, targets = _classify_python_source_with_targets("print(sorted(globals()))\n")
+
+    assert classification is not _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
+    ("first_import", "second_import", "constructor"),
+    [
+        ("from redirector import Path", "from pathlib import Path", "Path"),
+        ("from pathlib import Path", "from redirector import Path", "Path"),
+        ("from redirector import Path as P", "from pathlib import Path as P", "P"),
+        ("from pathlib import Path as P", "from redirector import Path as P", "P"),
+        ("import redirector as lib", "import pathlib as lib", "lib.Path"),
+        ("import pathlib as lib", "import redirector as lib", "lib.Path"),
+    ],
+)
+def test_conflicting_path_constructor_imports_have_unknown_write_scope(
+    first_import: str, second_import: str, constructor: str
+) -> None:
+    source = (
+        f"{first_import}\np = {constructor}('/tmp/safe.txt')\n{second_import}\np.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(source)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
+    ("import_statement", "constructor"),
+    [("from pathlib import Path", "Path"), ("import pathlib as lib", "lib.Path")],
+)
+def test_repeated_identical_constructor_import_keeps_literal_write_scope(
+    import_statement: str, constructor: str
+) -> None:
+    source = (
+        f"{import_statement}\np = {constructor}('/tmp/safe.txt')\n"
+        f"{import_statement}\np.write_text('x')\n"
+    )
+
+    assert _classify_python_source_with_targets(source) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/safe.txt",),
+    )
+
+
+@pytest.mark.parametrize(
+    "state_change",
+    [
+        "p._raw_paths = ['src/a.py']",
+        "q = p\nq._raw_paths = ['src/a.py']",
+        "p._raw_paths[0] = 'src/a.py'",
+        "parts = p._raw_paths\nparts.clear()\nparts.append('src/a.py')",
+        "q = p\nq._raw_paths.clear()\nq._raw_paths.append('src/a.py')",
+        "from redirector import redirect\nredirect(p)",
+    ],
+)
+def test_mutable_path_receiver_state_has_unknown_write_scope(state_change: str) -> None:
+    script = (
+        f"from pathlib import Path\np = Path('/tmp/safe.txt')\n{state_change}\np.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
+    "escape",
+    [
+        "redirect(p.write_text)",
+        "method = p.write_text\nredirect(method)",
+        "redirect(p.as_posix)",
+        "method = p.as_posix\nredirect(method)",
+        "redirect(p.absolute())",
+        "redirect(p.expanduser())",
+        "redirect(p.glob('*'))",
+    ],
+)
+def test_bound_path_receiver_escape_has_unknown_write_scope(escape: str) -> None:
+    script = (
+        "from pathlib import Path\n"
+        "from redirector import redirect\n"
+        "p = Path('/tmp/safe.txt')\n"
+        f"{escape}\n"
+        "p.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+@pytest.mark.parametrize(
+    "inspection",
+    [
+        "print(p.name, p.as_posix())",
+        "print(p.suffix, p.parts, p.is_absolute())",
+        "print(p.stat(), p.exists())",
+    ],
+)
+def test_public_path_inspection_preserves_literal_write_scope(inspection: str) -> None:
+    script = (
+        f"from pathlib import Path\np = Path('/tmp/safe.txt')\n{inspection}\np.write_text('x')\n"
+    )
+
+    classification, targets = _classify_python_source_with_targets(script)
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ("/tmp/safe.txt",)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "def redirect(value):\n    pass\np = Path('/tmp/safe.txt')\nredirect(Path)\np.write_text('x')",
+        "import pathlib\ndef redirect(value):\n    pass\np = Path('/tmp/safe.txt')\n"
+        "redirect(pathlib)\np.write_text('x')",
+        "def redirect(value):\n    pass\nconstructor = Path\np = Path('/tmp/safe.txt')\n"
+        "redirect(constructor)\np.write_text('x')",
+        "import pathlib\ndef redirect(value):\n    pass\nmodule = pathlib\n"
+        "p = Path('/tmp/safe.txt')\nredirect(module)\np.write_text('x')",
+        "def redirect():\n    pass\np = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
+        "p = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
+        "from redirector import redirect\np = Path('/tmp/safe.txt')\nredirect()\np.write_text('x')",
+        "p = Path('/tmp/safe.txt')\nimport redirector\np.write_text('x')",
+        "import redirector\np = Path('/tmp/safe.txt')\np.write_text('x')",
+        "def redirect():\n    pass\nredirect()\nPath('/tmp/safe.txt').write_text('x')",
+    ],
+    ids=[
+        "constructor-argument",
+        "module-argument",
+        "constructor-alias",
+        "module-alias",
+        "local-no-argument-call",
+        "opaque-no-argument-call",
+        "imported-no-argument-call",
+        "import-after-binding",
+        "import-before-binding",
+        "direct-constructor-receiver",
+    ],
+)
+def test_untrusted_execution_invalidates_literal_write_scope(script: str) -> None:
+    classification, targets = _classify_python_source_with_targets(
+        f"from pathlib import Path\n{script}\n"
+    )
+
+    assert classification is _PythonExecutionClassification.MUTATION
+    assert targets == ()
+
+
+def test_trusted_stdlib_execution_preserves_literal_write_scope() -> None:
+    script = (
+        "import json\nimport math\nfrom pathlib import Path\np = Path('/tmp/safe.txt')\n"
+        "print(json.dumps({'n': math.ceil(1.5)}), p.name, p.as_posix())\np.write_text('x')\n"
+    )
+
+    assert _classify_python_source_with_targets(script) == (
+        _PythonExecutionClassification.MUTATION,
+        ("/tmp/safe.txt",),
+    )
+
+
 def test_python_source_read_only_and_indeterminate_have_no_targets() -> None:
     assert _classify_python_source_with_targets("print(open('a.md').read())") == (
         _PythonExecutionClassification.READ_ONLY,

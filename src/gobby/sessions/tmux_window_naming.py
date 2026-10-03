@@ -10,7 +10,6 @@ from typing import Any
 from gobby.agents.tmux.session_manager import (
     TmuxProbeResult,
     TmuxReleaseOutcome,
-    TmuxSessionManager,
 )
 from gobby.hooks.background_tasks import create_background_task
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
@@ -87,22 +86,16 @@ def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title:
     return _synthesize_fallback_title(session)
 
 
-def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> TmuxSessionManager:
-    """Build a tmux manager for *session*'s recorded server context."""
-    agent_depth = getattr(session, "agent_depth", 0) or 0
-    default_socket_name = "gobby" if agent_depth > 0 else ""
-    return get_tmux_manager_for_context(terminal_context, default_socket_name=default_socket_name)
-
-
 async def probe_tmux_pane(session: Any) -> TmuxProbeResult | None:
     """Probe the tmux server and pane recorded for one persisted session."""
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:
         return None
     pane = tc.get("tmux_pane")
-    if not isinstance(pane, str) or not pane:
+    mgr = get_tmux_manager_for_context(tc)
+    if not isinstance(pane, str) or not pane or mgr is None:
         return None
-    return await _tmux_manager_for_session(session, tc).probe_target(pane)
+    return await mgr.probe_target(pane)
 
 
 async def _apply_window_rename(
@@ -118,13 +111,11 @@ async def _apply_window_rename(
     """
     resolved = _resolve_window_title(session, terminal_context, title)
     ref = getattr(session, "ref", "?")
-    socket = (
-        terminal_context.get("tmux_socket_path")
-        or terminal_context.get("tmux_socket_name")
-        or "default"
-    )
+    socket = terminal_context.get("tmux_socket_path")
+    mgr = get_tmux_manager_for_context(terminal_context)
+    if mgr is None:
+        return False
     try:
-        mgr = _tmux_manager_for_session(session, terminal_context)
         applied = bool(await mgr.rename_window(pane, resolved))
     except Exception as e:
         logger.warning(
@@ -308,7 +299,9 @@ async def release_window_name_if_unowned(session: Any) -> bool:
     if not isinstance(pane, str) or not pane:
         return False
 
-    mgr = _tmux_manager_for_session(session, tc)
+    mgr = get_tmux_manager_for_context(tc)
+    if mgr is None:
+        return False
     try:
         outcome = await mgr.release_window_title_ownership(pane)
         return outcome in {
@@ -356,7 +349,9 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     if not isinstance(pane, str) or not pane:
         return False
 
-    mgr = _tmux_manager_for_session(session, tc)
+    mgr = get_tmux_manager_for_context(tc)
+    if mgr is None:
+        return False
     try:
         auto_rename = await mgr.get_window_automatic_rename(pane)
     except Exception:

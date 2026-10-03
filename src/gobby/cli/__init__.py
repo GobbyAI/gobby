@@ -2,63 +2,113 @@
 Gobby CLI entry point.
 """
 
+import importlib
+from collections.abc import Iterator, MutableMapping
+
 import click
 
 from gobby.config.bootstrap import load_bootstrap
+from gobby.paths import get_gobby_home
 from gobby.utils.version import get_version
 
-from .agents import agents
-from .auth import auth
-from .build import build_command
-from .clones import clones
-from .communications import comms
-from .cron import cron
-from .cutover import cutover
-from .daemon import restart, status, stop
-from .daemon_health import health
-from .daemon_lease import lease
-from .daemon_start import start
-from .datastores import datastores as datastores_cli
-from .embeddings import embeddings
-from .extensions import hooks, webhooks
-from .feedback import feedback
-from .files import files
-from .hub_backup.cli import hub_backup
-from .hub_maintenance import hub_maintenance
-from .init import init
-from .install import install
-from .mcp import mcp_server
-from .mcp_proxy import mcp_proxy
-from .memory import memory
-from .merge import merge
-from .observations import observations
-from .pack import pack, unpack
-from .pipelines import pipelines
-from .plan import plan
-from .plans import plans
-from .postgres import postgres_cli
-from .profiles import profiles
-from .projects import projects
-from .qdrant import qdrant
-from .rules import rules
 from .runtime import CliRuntime
-from .schema import schema
-from .secrets import secrets
-from .service import service
-from .sessions import sessions
-from .skills import skills
-from .stages import stages
-from .sync import sync
-from .tasks import tasks
-from .test_quality import test_quality
-from .test_types import test_types
-from .tokens import tokens
-from .ui import ui
-from .uninstall import uninstall
-from .utils import get_gobby_home
-from .variables import variables
-from .workspaces import nodes, panes, workspaces
-from .worktrees import worktrees
+
+# Command name -> (module under gobby.cli, attribute). Each module is imported only
+# when its command runs or is listed, so `gobby mcp-server` (every agent's stdio
+# bridge) does not pay every command group's import cost before answering initialize.
+_COMMAND_SOURCES: dict[str, tuple[str, str]] = {
+    "start": ("daemon_start", "start"),
+    "stop": ("daemon", "stop"),
+    "restart": ("daemon", "restart"),
+    "status": ("daemon", "status"),
+    "health": ("daemon_health", "health"),
+    "lease": ("daemon_lease", "lease"),
+    "datastores": ("datastores", "datastores"),
+    "embeddings": ("embeddings", "embeddings"),
+    "mcp-server": ("mcp", "mcp_server"),
+    "init": ("init", "init"),
+    "install": ("install", "install"),
+    "uninstall": ("uninstall", "uninstall"),
+    "tasks": ("tasks", "tasks"),
+    "test-quality": ("test_quality", "test_quality"),
+    "test-types": ("test_types", "test_types"),
+    "tokens": ("tokens", "tokens"),
+    "memory": ("memory", "memory"),
+    "feedback": ("feedback", "feedback"),
+    "observations": ("observations", "observations"),
+    "sessions": ("sessions", "sessions"),
+    "skills": ("skills", "skills"),
+    "stages": ("stages", "stages"),
+    "agents": ("agents", "agents"),
+    "worktrees": ("worktrees", "worktrees"),
+    "workspaces": ("workspaces", "workspaces"),
+    "panes": ("workspaces", "panes"),
+    "nodes": ("workspaces", "nodes"),
+    "mcp-proxy": ("mcp_proxy", "mcp_proxy"),
+    "projects": ("projects", "projects"),
+    "profiles": ("profiles", "profiles"),
+    "rules": ("rules", "rules"),
+    "variables": ("variables", "variables"),
+    "merge": ("merge", "merge"),
+    "pipelines": ("pipelines", "pipelines"),
+    "clones": ("clones", "clones"),
+    "cron": ("cron", "cron"),
+    "cutover": ("cutover", "cutover"),
+    "hooks": ("extensions", "hooks"),
+    "webhooks": ("extensions", "webhooks"),
+    "ui": ("ui", "ui"),
+    "sync": ("sync", "sync"),
+    "auth": ("auth", "auth"),
+    "secrets": ("secrets", "secrets"),
+    "service": ("service", "service"),
+    "qdrant": ("qdrant", "qdrant"),
+    "postgres": ("postgres", "postgres_cli"),
+    "pack": ("pack", "pack"),
+    "unpack": ("pack", "unpack"),
+    "files": ("files", "files"),
+    "hub-backup": ("hub_backup.cli", "hub_backup"),
+    "hub-maintenance": ("hub_maintenance", "hub_maintenance"),
+    "comms": ("communications", "comms"),
+    "build": ("build", "build_command"),
+    "plan": ("plan", "plan"),
+    "plans": ("plans", "plans"),
+    "schema": ("schema", "schema"),
+}
+
+
+class _LazyCommands(MutableMapping[str, click.Command]):
+    """Click's command table, importing each command's module on first lookup."""
+
+    def __init__(self, sources: dict[str, tuple[str, str]]) -> None:
+        self._sources = dict(sources)
+        self._loaded: dict[str, click.Command] = {}
+
+    def __getitem__(self, name: str) -> click.Command:
+        if name not in self._loaded:
+            module_name, attribute = self._sources[name]
+            module = importlib.import_module(f"{__name__}.{module_name}")
+            self._loaded[name] = getattr(module, attribute)
+        return self._loaded[name]
+
+    def __setitem__(self, name: str, command: click.Command) -> None:
+        self._sources.pop(name, None)
+        self._loaded[name] = command
+
+    def __delitem__(self, name: str) -> None:
+        if name not in self:
+            raise KeyError(name)
+        self._sources.pop(name, None)
+        self._loaded.pop(name, None)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._sources or name in self._loaded
+
+    def __iter__(self) -> Iterator[str]:
+        yield from self._sources
+        yield from (name for name in self._loaded if name not in self._sources)
+
+    def __len__(self) -> int:
+        return len(self._sources.keys() | self._loaded.keys())
 
 
 def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) -> None:
@@ -68,7 +118,7 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
     ctx.exit()
 
 
-@click.group()
+@click.group(commands=_LazyCommands(_COMMAND_SOURCES))
 @click.option(
     "--config",
     type=click.Path(exists=True),
@@ -90,62 +140,3 @@ def cli(ctx: click.Context, config: str | None) -> None:
     runtime = CliRuntime(config_file=config)
     ctx.obj = runtime
     ctx.call_on_close(runtime.close)
-
-
-# Register commands
-cli.add_command(start)
-cli.add_command(stop)
-cli.add_command(restart)
-cli.add_command(status)
-cli.add_command(health)
-cli.add_command(lease)
-cli.add_command(datastores_cli)
-cli.add_command(embeddings)
-cli.add_command(mcp_server)
-cli.add_command(init)
-cli.add_command(install)
-cli.add_command(uninstall)
-cli.add_command(tasks)
-cli.add_command(test_quality)
-cli.add_command(test_types)
-cli.add_command(tokens)
-cli.add_command(memory)
-cli.add_command(feedback)
-cli.add_command(observations)
-cli.add_command(sessions)
-cli.add_command(skills)
-cli.add_command(stages)
-cli.add_command(agents)
-cli.add_command(worktrees)
-cli.add_command(workspaces)
-cli.add_command(panes)
-cli.add_command(nodes)
-cli.add_command(mcp_proxy)
-cli.add_command(projects)
-cli.add_command(profiles)
-cli.add_command(rules)
-cli.add_command(variables)
-cli.add_command(merge)
-cli.add_command(pipelines)
-cli.add_command(clones)
-cli.add_command(cron)
-cli.add_command(cutover)
-cli.add_command(hooks)
-cli.add_command(webhooks)
-cli.add_command(ui)
-cli.add_command(sync)
-cli.add_command(auth)
-cli.add_command(secrets)
-cli.add_command(service)
-cli.add_command(qdrant)
-cli.add_command(postgres_cli)
-cli.add_command(pack)
-cli.add_command(unpack)
-cli.add_command(files)
-cli.add_command(hub_backup)
-cli.add_command(hub_maintenance)
-cli.add_command(comms)
-cli.add_command(build_command)
-cli.add_command(plan)
-cli.add_command(plans)
-cli.add_command(schema)

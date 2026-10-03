@@ -137,3 +137,26 @@ rules:
           gobby-sessions:set_handoff. Only the prerequisites of that retry are
           open: the memory review and feedback a handoff gate can demand, the
           handoffs reference, schema discovery, and coordination messages.' }}
+
+  clear-handoff-gate-on-context-loss:
+    description: "Release the staged compact gate once the compaction boundary lands"
+    event: session_start
+    enabled: true
+    # The compact hydration boundary releases the gate the turn-start observer
+    # would otherwise clear, so a cancelled (or otherwise lost) BEFORE_AGENT
+    # evaluation cannot leave get_handoff blocked (#22706). A clear starts a
+    # successor row that holds no gate of its own, so only compact qualifies.
+    # Only the pending states are released: a delivery_failed gate keeps its
+    # retry and late-compact reconciliation signals.
+    priority: 9
+    when: >-
+      event.data.get('source') == 'compact'
+      and isinstance(variables.get('context_compact_handoff_result'), dict)
+      and (
+        variables.get('context_compact_handoff_result').get('delivery_pending') is True
+        or variables.get('context_compact_handoff_result').get('attempt_pending') is True
+      )
+    effects:
+      - type: set_variable
+        variable: context_compact_handoff_result
+        value: null

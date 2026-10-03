@@ -30,7 +30,6 @@ TERMINAL_TITLE_SETTING = "terminal.integrated.tabs.title"
 TERMINAL_TABS_HIDE_CONDITION_SETTING = "terminal.integrated.tabs.hideCondition"
 TERMINAL_TITLE_SEQUENCE = "${sequence}"
 TERMINAL_TABS_ALWAYS_VISIBLE = "never"
-TMUX_PROFILE_NAME = "tmux"
 
 
 def _get_ide_config_dir(ide_name: str) -> Path:
@@ -60,15 +59,6 @@ def _title_with_sequence(title: Any) -> str:
     return TERMINAL_TITLE_SEQUENCE
 
 
-def _terminal_platform_key() -> str | None:
-    """Return the VS Code terminal profile platform key for this host."""
-    if sys.platform == "darwin":
-        return "osx"
-    if sys.platform.startswith("linux"):
-        return "linux"
-    return None
-
-
 def _load_ide_settings(settings_path: Path) -> tuple[dict[str, Any] | None, str | None]:
     """Load an IDE settings object, returning a user-facing error on failure."""
     if not settings_path.exists():
@@ -86,34 +76,10 @@ def _load_ide_settings(settings_path: Path) -> tuple[dict[str, Any] | None, str 
 
 
 def _terminal_integration_updates(
-    ide_name: str,
-    existing_settings: dict[str, Any],
-    platform_key: str,
-    tmux_path: str | None,
+    ide_name: str, existing_settings: dict[str, Any]
 ) -> dict[str, Any]:
-    """Build the settings merge needed for full tmux terminal integration."""
-    profiles_setting = f"terminal.integrated.profiles.{platform_key}"
-    default_profile_setting = f"terminal.integrated.defaultProfile.{platform_key}"
-    existing_profiles = existing_settings.get(profiles_setting)
-    if existing_profiles is None:
-        profiles: dict[str, Any] = {}
-    elif isinstance(existing_profiles, dict):
-        profiles = existing_profiles
-    else:
-        raise ValueError(f"{profiles_setting} must be an object")
-
+    """Build the settings merge for Gobby session titles in IDE terminal tabs."""
     updates: dict[str, Any] = {}
-    if TMUX_PROFILE_NAME not in profiles:
-        if tmux_path is None:
-            raise ValueError("tmux executable was not found on PATH")
-        updates[profiles_setting] = {
-            **profiles,
-            TMUX_PROFILE_NAME: {"path": tmux_path, "args": ["new-session"]},
-        }
-
-    if existing_settings.get(default_profile_setting) != TMUX_PROFILE_NAME:
-        updates[default_profile_setting] = TMUX_PROFILE_NAME
-
     title = _title_with_sequence(existing_settings.get(TERMINAL_TITLE_SETTING))
     if existing_settings.get(TERMINAL_TITLE_SETTING) != title:
         updates[TERMINAL_TITLE_SETTING] = title
@@ -130,33 +96,25 @@ def find_vscode_family_ides_needing_terminal_integration(
     ide_names: tuple[str, ...] = VSCODE_FAMILY_IDE_NAMES,
 ) -> list[str]:
     """Return installed VS Code-family IDEs whose settings need integration."""
-    platform_key = _terminal_platform_key()
     needs_integration: list[str] = []
     for ide_name in ide_names:
         config_dir = _get_ide_config_dir(ide_name)
         if not config_dir.exists():
             continue
-        if platform_key is None:
-            needs_integration.append(ide_name)
-            continue
-
         settings, error = _load_ide_settings(config_dir / "User" / "settings.json")
         if error is not None or settings is None:
             needs_integration.append(ide_name)
-            continue
-        try:
-            if _terminal_integration_updates(ide_name, settings, platform_key, "tmux"):
-                needs_integration.append(ide_name)
-        except ValueError:
+        elif _terminal_integration_updates(ide_name, settings):
             needs_integration.append(ide_name)
     return needs_integration
 
 
 def configure_ide_terminal_integration(ide_name: str) -> dict[str, Any]:
-    """Configure full tmux terminal integration for a VS Code-family IDE.
+    """Configure Gobby session titles for a VS Code-family IDE's terminal tabs.
 
-    Preserves custom profiles, selects tmux as the default for new terminals,
-    and adds ``${sequence}`` title passthrough. Uses backup + atomic replace.
+    Adds ``${sequence}`` title passthrough and, for Antigravity, keeps the
+    terminal tabs visible. Terminal profiles are left alone. Uses backup +
+    atomic replace.
 
     Skips silently if the IDE is not installed (config dir doesn't exist).
 
@@ -175,7 +133,6 @@ def configure_ide_terminal_integration(ide_name: str) -> dict[str, Any]:
         "skipped": False,
         "backup_path": None,
         "error": None,
-        "warning": None,
     }
 
     config_dir = _get_ide_config_dir(ide_name)
@@ -187,41 +144,12 @@ def configure_ide_terminal_integration(ide_name: str) -> dict[str, Any]:
 
     settings_path = config_dir / "User" / "settings.json"
 
-    platform_key = _terminal_platform_key()
-    if platform_key is None:
-        result.update(
-            success=True,
-            skipped=True,
-            warning=f"unsupported platform {sys.platform!r}",
-        )
-        return result
-
     existing_settings, error = _load_ide_settings(settings_path)
     if error is not None or existing_settings is None:
         result["error"] = error
         return result
 
-    profiles_setting = f"terminal.integrated.profiles.{platform_key}"
-    existing_profiles = existing_settings.get(profiles_setting)
-    has_tmux_profile = (
-        isinstance(existing_profiles, dict) and TMUX_PROFILE_NAME in existing_profiles
-    )
-    tmux_path = None if has_tmux_profile else shutil.which("tmux")
-    if not has_tmux_profile and tmux_path is None:
-        result.update(
-            success=True,
-            skipped=True,
-            warning="tmux executable was not found on PATH",
-        )
-        return result
-
-    try:
-        updates = _terminal_integration_updates(
-            ide_name, existing_settings, platform_key, tmux_path
-        )
-    except ValueError as exc:
-        result["error"] = f"Failed to configure {settings_path}: {exc}"
-        return result
+    updates = _terminal_integration_updates(ide_name, existing_settings)
 
     if not updates:
         result["success"] = True
@@ -276,5 +204,5 @@ def configure_ide_terminal_integration(ide_name: str) -> dict[str, Any]:
 def configure_vscode_family_terminal_integration(
     ide_names: tuple[str, ...] = VSCODE_FAMILY_IDE_NAMES,
 ) -> dict[str, dict[str, Any]]:
-    """Configure full tmux integration for known VS Code-family IDEs."""
+    """Configure terminal tab titles for known VS Code-family IDEs."""
     return {ide_name: configure_ide_terminal_integration(ide_name) for ide_name in ide_names}

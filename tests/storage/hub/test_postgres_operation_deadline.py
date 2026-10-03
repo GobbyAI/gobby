@@ -31,6 +31,10 @@ def database() -> Iterator[PostgresHubDatabase]:
         pool_config=PostgresPoolConfig(min_size=1, max_size=1),
     )
     try:
+        # Open the pooled connection before any deadline starts, so the tight
+        # per-statement budgets below measure statements rather than connect cost.
+        with database.transaction() as txn:
+            txn.execute("SELECT 1")
         yield database
     finally:
         database.close()
@@ -152,6 +156,24 @@ def test_definite_commit_rejection_preserves_driver_error(database: PostgresHubD
             txn.execute("INSERT INTO definite_commit_rejection VALUES (1), (1)")
             txn.after_commit(lambda: callbacks.append("committed"))
     assert database.fetchone("SELECT count(*) AS count FROM definite_commit_rejection") == {
+        "count": 0
+    }
+    assert callbacks == []
+
+
+def test_swallowed_statement_error_raises_instead_of_silent_rollback(
+    database: PostgresHubDatabase,
+) -> None:
+    """PostgreSQL answers COMMIT of an aborted transaction with ROLLBACK (#23296)."""
+    database.execute("CREATE TEMP TABLE swallowed_statement_error (value INTEGER UNIQUE)")
+    callbacks: list[str] = []
+    with pytest.raises(psycopg.errors.InFailedSqlTransaction):
+        with database.transaction() as txn:
+            txn.execute("INSERT INTO swallowed_statement_error VALUES (1)")
+            txn.after_commit(lambda: callbacks.append("committed"))
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                txn.execute("INSERT INTO swallowed_statement_error VALUES (1)")
+    assert database.fetchone("SELECT count(*) AS count FROM swallowed_statement_error") == {
         "count": 0
     }
     assert callbacks == []

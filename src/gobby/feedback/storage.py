@@ -31,6 +31,14 @@ class FeedbackRow:
 
 
 @dataclass(frozen=True, slots=True)
+class FeedbackEntry(FeedbackRow):
+    """One session_feedback row with its review state, for listing surfaces."""
+
+    reviewed: bool
+    review_run_id: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class FeedbackReviewRun:
     """One feedback_review_runs row."""
 
@@ -53,10 +61,11 @@ _ROW_COLUMNS = (
     "id, session_id, source, kind, kind_other_label, evidence, impact, "
     "frequency, suggestion, disposition, created_at"
 )
-_RUN_COLUMNS = (
+_RUN_SUMMARY_COLUMNS = (
     "id, status, dry_run, window_start, window_end, rows_considered, "
-    "findings, actions, digest_md, error, created_at, completed_at, observations"
+    "findings, actions, digest_md, error, created_at, completed_at"
 )
+_RUN_COLUMNS = f"{_RUN_SUMMARY_COLUMNS}, observations"
 
 
 class FeedbackReviewStore:
@@ -98,6 +107,58 @@ class FeedbackReviewStore:
             (limit,),
         )
         return [FeedbackRow(**dict(row)) for row in rows]
+
+    def list_feedback(
+        self,
+        *,
+        limit: int,
+        unreviewed: bool = False,
+        kind: str | None = None,
+        frequency: str | None = None,
+        disposition: str | None = None,
+    ) -> list[FeedbackEntry]:
+        """Return the newest feedback rows matching every given filter."""
+        _validate_page(0, limit)
+        clauses = ["reviewed = FALSE"] if unreviewed else []
+        params: list[str] = []
+        for column, value in (
+            ("kind", kind),
+            ("frequency", frequency),
+            ("disposition", disposition),
+        ):
+            if value is not None:
+                clauses.append(f"{column} = %s")
+                params.append(value)
+        where = " AND ".join(clauses) or "TRUE"
+        rows = self.db.fetchall(
+            f"""
+            SELECT {_ROW_COLUMNS}, reviewed, review_run_id
+            FROM session_feedback
+            WHERE {where}
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+            """,
+            (*params, limit),
+        )
+        return [
+            FeedbackEntry(**{**dict(row), "review_run_id": _optional_str(row["review_run_id"])})
+            for row in rows
+        ]
+
+    def backlog_count(self) -> int:
+        """Return how many feedback rows still await review."""
+        row = self.db.fetchone("SELECT count(*) AS n FROM session_feedback WHERE reviewed = FALSE")
+        return int(row["n"]) if row else 0
+
+    def list_runs(self, *, limit: int) -> list[FeedbackReviewRun]:
+        """Return the newest review runs without their frozen observation snapshots."""
+        _validate_page(0, limit)
+        rows = self.db.fetchall(
+            f"SELECT {_RUN_SUMMARY_COLUMNS} FROM feedback_review_runs "
+            "ORDER BY created_at DESC, id DESC LIMIT %s",
+            (limit,),
+        )
+        return [_run_from_row(row) for row in rows]
 
     def create_run(
         self,
@@ -353,6 +414,10 @@ def _decode_json(value: Any) -> dict[str, Any] | None:
     if not isinstance(decoded, dict):
         raise TypeError(f"Expected a JSON object, got {type(decoded).__name__}")
     return decoded
+
+
+def _optional_str(value: Any) -> str | None:
+    return None if value is None else str(value)
 
 
 def _now() -> datetime:

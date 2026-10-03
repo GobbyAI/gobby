@@ -684,6 +684,58 @@ fn render_state_row_dirty_can_be_cleared_independently() {
 }
 
 #[test]
+fn scroll_region_changes_mark_first_row_or_full_dirty() {
+    let mut terminal = Terminal::new(8, 4, 100).unwrap();
+    let mut render_state = RenderState::new().unwrap();
+    terminal.write(b"row0\r\nrow1\r\nrow2\r\nrow3");
+    render_state.update(&terminal).unwrap();
+    let visible_rows = |terminal: &Terminal| {
+        let end = terminal.total_rows().unwrap();
+        terminal
+            .screen_text_rows_range(end.saturating_sub(4), end)
+            .unwrap()
+    };
+
+    for step in 0..3 {
+        let mut row_iterator = RowIterator::new().unwrap();
+        let mut rows = render_state
+            .populate_row_iterator(&mut row_iterator)
+            .unwrap();
+        while rows.next() {
+            rows.clear_dirty().unwrap();
+        }
+        render_state.set_dirty(Dirty::Clean).unwrap();
+
+        let before = visible_rows(&terminal);
+        terminal.write(format!("\x1b[1;4r\x1b[4;1H\nnew{step}").as_bytes());
+        let after = visible_rows(&terminal);
+        assert_ne!(before[0].cells[3].graphemes, after[0].cells[3].graphemes);
+
+        render_state.update(&terminal).unwrap();
+        match render_state.dirty().unwrap() {
+            Dirty::Full => {}
+            Dirty::Partial => {
+                let mut row_iterator = RowIterator::new().unwrap();
+                let mut rows = render_state
+                    .populate_row_iterator(&mut row_iterator)
+                    .unwrap();
+                let mut y = 0;
+                while rows.next() {
+                    if before[y].cells[3].graphemes != after[y].cells[3].graphemes {
+                        assert!(
+                            rows.dirty().unwrap(),
+                            "changed row {y} was not marked dirty"
+                        );
+                    }
+                    y += 1;
+                }
+            }
+            Dirty::Clean => panic!("scroll step {step} changed the first row but stayed clean"),
+        }
+    }
+}
+
+#[test]
 fn row_selection_returns_none_without_selection() {
     let terminal = Terminal::new(8, 3, 100).unwrap();
     let mut render_state = RenderState::new().unwrap();

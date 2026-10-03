@@ -51,7 +51,7 @@ rules:
     when: >
       event.data.get('canonical_tool_kind') == 'write'
       and event.data.get('canonical_file_paths')
-      and not event.data.get('is_error')
+      and not tool_call_failed()
     effects:
       - type: set_variable
         variable: turn_written_paths
@@ -157,4 +157,6 @@ rules:
       and navigation_requires_index(event.data, 'read', broad_only=True)
     effects:
       - type: block
-        reason: 'Use `gcode outline <file>`, then `gcode symbol-at <file>:<line>` for the symbol you need. Reads of 40 lines or fewer stay available. If a gcode call on that file fails, or a standalone `gcode outline <file>` finds no symbols, or a standalone `gcode symbol-at <file>:<line>` reports no containing symbol, retry this read; it stays allowed for the rest of the turn. A typed gcode outage error opens every read in the checkout for the turn.'
+        # gcode refuses another linked checkout's file unless --project names it (#22787).
+        # The sets follow "Use " so the raw template stays action-first (test_rewrite_rules).
+        reason: 'Use {% set hint = event.data.get(''canonical_gcode_project_hint'') %}{% set gcode = ''gcode --project '' ~ (hint | shlex_quote) if hint else ''gcode'' %}`{{ gcode }} outline <file>`, then `{{ gcode }} symbol-at <file>:<line>` for the symbol you need. Reads of 40 lines or fewer stay available. If a gcode call on that file fails, or a standalone `{{ gcode }} outline <file>` finds no symbols, or a standalone `{{ gcode }} symbol-at <file>:<line>` reports no containing symbol, retry this read; it stays allowed for the rest of the turn. A typed gcode outage error opens every read in the checkout for the turn.'

@@ -10,7 +10,7 @@ use tokio::net::{unix::OwnedReadHalf, UnixStream};
 use tokio::sync::{mpsc, oneshot, OwnedSemaphorePermit, Semaphore};
 use tokio::task::JoinSet;
 
-use super::backpressure::{enqueue_control, send_control};
+use super::backpressure::{enqueue_control, send_control, send_event, ControlOutbound};
 use super::events::EventReceiver;
 use super::ledger::{fingerprint_json, LedgerDecision, OperationLedger};
 use super::state::HostState;
@@ -102,7 +102,7 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
     let permits = Arc::new(Semaphore::new(MAX_INFLIGHT_PER_CONNECTION));
     let outbound_cap = state.config.control_queue_entries.max(1) as usize;
     let deadline = state.config.control_deadline();
-    let (outbound_tx, outbound_rx) = mpsc::channel::<Value>(outbound_cap);
+    let (outbound_tx, outbound_rx) = mpsc::channel::<ControlOutbound>(outbound_cap);
     let writer_task = tokio::spawn(async move {
         let reason = super::backpressure::write_outbound(writer, outbound_rx, deadline).await;
         if reason != super::backpressure::ControlClose::Disconnected {
@@ -333,9 +333,9 @@ pub async fn handle_connection(stream: UnixStream, state: Arc<HostState>) {
 /// the one message explaining why the events stopped. A peer that never drains
 /// is still bounded, because `write_outbound` closes it at `control_deadline`
 /// and dropping the receiver ends this loop.
-async fn recv_event(mut rx: EventReceiver, outbound: mpsc::Sender<Value>) {
+async fn recv_event(mut rx: EventReceiver, outbound: mpsc::Sender<ControlOutbound>) {
     while let Some(event) = rx.recv().await {
-        if send_control(&outbound, event).await.is_err() {
+        if send_event(&outbound, event).await.is_err() {
             break;
         }
     }

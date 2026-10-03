@@ -30,9 +30,6 @@ from gobby.agents.spawn import (
     PreparedSpawn,
     prepare_terminal_spawn,
 )
-from gobby.agents.spawners.base import SpawnResult
-from gobby.agents.tmux.spawner import TmuxSpawner
-from gobby.config.tmux import TmuxConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.session_models import Session
@@ -356,32 +353,6 @@ class TestPrepareTerminalSpawn:
             assert var in result.env_vars
 
 
-class TestTmuxSpawnerDetection:
-    """Tests for tmux spawner detection."""
-
-    def test_is_available(self) -> None:
-        """Test checking tmux availability."""
-        spawner = TmuxSpawner(config=TmuxConfig())
-        available = spawner.is_available()
-
-        # Should return a bool (may be False in CI without tmux)
-        assert isinstance(available, bool)
-
-    def test_spawn_when_unavailable(self) -> None:
-        """Test spawning when tmux is not available."""
-        spawner = TmuxSpawner(config=TmuxConfig())
-
-        with patch.object(spawner._session_manager, "is_available", return_value=False):
-            result = spawner.spawn(
-                command=["echo", "test"],
-                cwd="/tmp",
-                spawn_key="terminal-mode-unavailable",
-            )
-
-            assert result.success is False
-            assert result.error is not None
-
-
 class TestWorktreeIntegration:
     """Tests for terminal mode integration with worktrees."""
 
@@ -466,33 +437,3 @@ class TestPreparedSpawnDataclass:
         )
 
         assert spawn.workflow_name is None
-
-
-class TestSpawnResultDataclass:
-    """Tests for SpawnResult dataclass."""
-
-    def test_spawn_result_success(self) -> None:
-        """Test SpawnResult for successful spawn."""
-        result = SpawnResult(
-            success=True,
-            message="Spawned successfully",
-            pid=12345,
-            backend="tmux",
-        )
-
-        assert result.success is True
-        assert result.pid == 12345
-        assert result.backend == "tmux"
-        assert result.error is None
-
-    def test_spawn_result_failure(self) -> None:
-        """Test SpawnResult for failed spawn."""
-        result = SpawnResult(
-            success=False,
-            message="Failed to spawn",
-            error="Terminal not available",
-        )
-
-        assert result.success is False
-        assert result.pid is None
-        assert result.error == "Terminal not available"

@@ -17,7 +17,7 @@ import {
 /**
  * Automation & Workflows settings (audit IA section 8). Owns the task system,
  * expansion, and validation config (under the hyphenated `gobby-tasks` key),
- * the workflow engine, tmux agent spawning, cron scheduler, automation loop,
+ * the workflow engine, agent terminal monitoring, cron scheduler, automation loop,
  * and pipeline config groups — all draft-backed through the #17108 foundation.
  * Two surfaces are live rather than draft-backed: the rules-engine enforcement
  * toggle (`/api/rules`, threaded through context) and the variable-defaults
@@ -72,15 +72,7 @@ const WORKFLOW_PATHS = [
 ];
 
 const TMUX_PATHS = [
-  "tmux.enabled",
-  "tmux.command",
-  "tmux.socket_name",
-  "tmux.socket_path",
-  "tmux.config_file",
-  "tmux.session_prefix",
-  "tmux.history_limit",
   "tmux.attach_history_lines",
-  "tmux.wsl_distribution",
   "tmux.idle_check_enabled",
   "tmux.idle_timeout_seconds",
   "tmux.idle_reprompt_delay_seconds",
@@ -88,7 +80,6 @@ const TMUX_PATHS = [
   "tmux.reasoning_watchdog_interrupt_enabled",
   "tmux.reasoning_watchdog_settle_seconds",
   "tmux.init_timeout_seconds",
-  "tmux.registration_timeout_seconds",
   "tmux.auto_enter_approval_prompts",
   "tmux.auto_enter_agent_terminals",
   "tmux.auto_enter_agent_interval_seconds",
@@ -373,65 +364,13 @@ function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
       title="Tmux agents"
-      hint="How spawned agents run inside tmux sessions."
+      hint="Agent terminal monitoring, and attach history for hand-started panes."
     >
-      <SwitchConfigField
-        fields={fields}
-        path="tmux.enabled"
-        label="Enable tmux agents"
-        ariaLabel="Enable tmux agents"
-      />
-      <TextConfigField
-        fields={fields}
-        path="tmux.command"
-        label="tmux command"
-        ariaLabel="tmux command"
-        placeholder="tmux"
-      />
-      <TextConfigField
-        fields={fields}
-        path="tmux.socket_name"
-        label="Socket name"
-        ariaLabel="Socket name"
-      />
-      <TextConfigField
-        fields={fields}
-        path="tmux.socket_path"
-        label="Socket path"
-        ariaLabel="Socket path"
-        nullable
-      />
-      <TextConfigField
-        fields={fields}
-        path="tmux.config_file"
-        label="tmux config file"
-        ariaLabel="tmux config file"
-        nullable
-      />
-      <TextConfigField
-        fields={fields}
-        path="tmux.session_prefix"
-        label="Session prefix"
-        ariaLabel="Session prefix"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="tmux.history_limit"
-        label="Scrollback history limit"
-        ariaLabel="Scrollback history limit"
-      />
       <NumberConfigField
         fields={fields}
         path="tmux.attach_history_lines"
         label="Attach history lines (0 disables)"
         ariaLabel="Attach history lines (0 disables)"
-      />
-      <TextConfigField
-        fields={fields}
-        path="tmux.wsl_distribution"
-        label="WSL distribution"
-        ariaLabel="WSL distribution"
-        nullable
       />
       <SwitchConfigField
         fields={fields}
@@ -475,13 +414,6 @@ function TmuxGroup({ fields }: { fields: SettingsSectionFields }) {
         path="tmux.init_timeout_seconds"
         label="Init timeout (seconds)"
         ariaLabel="Init timeout (seconds)"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="tmux.registration_timeout_seconds"
-        label="Registration timeout (seconds)"
-        ariaLabel="Registration timeout (seconds)"
-        step={0.5}
       />
       <SwitchConfigField
         fields={fields}

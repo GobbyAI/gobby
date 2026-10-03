@@ -1,9 +1,8 @@
 """CLI session liveness monitor.
 
 Polls active sessions to detect when the owning terminal disappears.
-Legacy tmux targets are fenced because their liveness cannot be established
-through the native runtime. Parent PID checks cover sessions without that
-legacy target.
+A session in a tmux pane lives as long as its pane, or the window it was
+replaced in, on the recorded tmux server. Parent PID checks cover the rest.
 
 This is the fast-path counterpart to the 24-hour stale-session expiry in
 SessionLifecycleManager, reducing the detection window from hours to
@@ -21,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.tmux.session_manager import TmuxPaneInfo, TmuxSessionManager
 from gobby.sessions.tmux_context import get_tmux_window_id
 from gobby.storage.hook_receipts import retire_session_hook_effects
 from gobby.storage.hub.postgres_pool import is_pool_unavailable
@@ -61,8 +61,8 @@ class _TerminalLivenessRecord:
 class SessionLivenessMonitor:
     """Background task that detects dead CLI sessions via terminal liveness.
 
-    When the owning process for a session without a legacy tmux target exits
-    (e.g. user typed ``/exit``, process crashed, terminal closed), this monitor:
+    When the owning process for a session exits (e.g. user typed ``/exit``,
+    process crashed, terminal closed) or its tmux pane is gone, this monitor:
 
     1. Dispatches summary generation while the transcript file is still fresh.
     2. Marks the session as ``expired``.
@@ -98,7 +98,6 @@ class SessionLivenessMonitor:
         self._task: asyncio.Task[None] | None = None
         # session_id -> monotonic timestamp when we handled it
         self._recently_handled: dict[str, float] = {}
-        self._legacy_tmux_fenced_ids: set[str] = set()
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -161,26 +160,25 @@ class SessionLivenessMonitor:
         # 2. Query active sessions with terminal_context
         active_sessions = await asyncio.to_thread(self._get_active_terminal_sessions)
         if not active_sessions:
-            self._legacy_tmux_fenced_ids.clear()
             return
 
-        self._legacy_tmux_fenced_ids.intersection_update(
-            record.session_id for record in active_sessions
-        )
-
+        # One list-panes per tmux socket per sweep.
+        tmux_panes: dict[str, list[TmuxPaneInfo] | None] = {}
+        local_machine_id = get_machine_id()
         for record in active_sessions:
             if record.session_id in self._recently_handled:
+                continue
+            # Pids and tmux sockets are only meaningful on the machine that recorded them.
+            if (
+                local_machine_id is None
+                or record.machine_id != local_machine_id
+                or record.updated_at is None
+            ):
                 continue
 
             native_id = (record.terminal_context or {}).get("gobby_terminal_id")
             if record.status == "paused" and isinstance(native_id, str) and native_id:
-                local_machine_id = get_machine_id()
-                if (
-                    self.terminal_manager is None
-                    or local_machine_id is None
-                    or record.machine_id != local_machine_id
-                    or record.updated_at is None
-                ):
+                if self.terminal_manager is None:
                     continue
                 try:
                     live = await asyncio.to_thread(
@@ -202,13 +200,9 @@ class SessionLivenessMonitor:
 
             has_tmux_target = bool(record.tmux_pane or getattr(record, "tmux_window_id", None))
             if has_tmux_target:
-                if record.session_id not in self._legacy_tmux_fenced_ids:
-                    logger.warning(
-                        "Session %s has a legacy tmux target; liveness is fenced until "
-                        "an operator resolves its terminal ownership",
-                        record.session_id,
-                    )
-                    self._legacy_tmux_fenced_ids.add(record.session_id)
+                # Only a definite "gone" expires; an unanswered probe keeps the session.
+                if await self._tmux_target_live(record, tmux_panes) is False:
+                    await self._expire_record(record, local_machine_id, now)
                 continue
 
             inspection = await asyncio.to_thread(
@@ -225,16 +219,56 @@ class SessionLivenessMonitor:
                 record.parent_pid,
                 record.session_id,
             )
-            await self._expire_record(record, now)
+            await self._expire_record(record, local_machine_id, now)
+
+    @staticmethod
+    async def _tmux_target_live(
+        record: _TerminalLivenessRecord,
+        probes: dict[str, list[TmuxPaneInfo] | None],
+    ) -> bool | None:
+        """Whether the session's tmux pane, or its window, survives on its server.
+
+        ``None`` when the session recorded no socket or tmux did not answer.
+        """
+        context = record.terminal_context or {}
+        socket_path = context.get("tmux_socket_path")
+        if not isinstance(socket_path, str) or not socket_path:
+            return None
+        if socket_path not in probes:
+            try:
+                probes[socket_path] = await TmuxSessionManager(socket_path).list_panes()
+            except (TimeoutError, OSError):
+                probes[socket_path] = None
+        panes = probes[socket_path]
+        if panes is None:
+            return None
+        server_pid = context.get("tmux_server_pid")
+        server_start_time = context.get("tmux_server_start_time")
+        # A restarted server reuses pane ids, so a recorded generation must match.
+        check_server = isinstance(server_pid, int) and isinstance(server_start_time, int)
+        return any(
+            not pane.pane_dead
+            and (pane.pane_id == record.tmux_pane or pane.window_id == record.tmux_window_id)
+            and (
+                not check_server
+                or (pane.server_pid, pane.server_start_time) == (server_pid, server_start_time)
+            )
+            for pane in panes
+        )
 
     async def _expire_record(
         self,
         record: _TerminalLivenessRecord,
+        machine_id: str,
         now: float,
     ) -> bool:
         if getattr(record, "status", "active") not in TERMINAL_OWNER_STATUSES:
             return False
-        if not await self._expire_session(record.session_id):
+        if record.updated_at is None:
+            return False
+        if not await self._expire_session(
+            record.session_id, active_expiry=(machine_id, record.updated_at)
+        ):
             return False
         self._recently_handled[record.session_id] = now
         return True
@@ -345,14 +379,24 @@ class SessionLivenessMonitor:
         self,
         session_id: str,
         *,
+        active_expiry: tuple[str, datetime] | None = None,
         native_expiry: tuple[str, str, datetime] | None = None,
     ) -> bool:
-        """Conditionally expire a session, then dispatch cleanup work."""
+        """Conditionally expire a session, then dispatch cleanup work.
+
+        Exactly one of ``active_expiry`` (machine id, observed ``updated_at``) or
+        ``native_expiry`` names the snapshot the expiry is conditional on.
+        """
         try:
             if native_expiry is None:
+                if active_expiry is None:
+                    raise ValueError("expiry needs an observed snapshot")
+                machine_id, observed_updated_at = active_expiry
                 expired_session = await asyncio.to_thread(
                     self._session_manager.expire_if_active,
                     session_id,
+                    machine_id=machine_id,
+                    observed_updated_at=observed_updated_at,
                 )
             else:
                 terminal_id, machine_id, observed_updated_at = native_expiry

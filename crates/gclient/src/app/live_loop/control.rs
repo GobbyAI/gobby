@@ -10,7 +10,9 @@ use crate::frame_source::{FrameError, FrameSource};
 use crate::ui::status::Toast;
 use crate::ui::Chrome;
 
-use super::super::{ControlOutcome, ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE};
+use super::super::{
+    AttachState, ControlOutcome, ControlState, PaneId, Workspace, HOST_GRANT_UNAVAILABLE,
+};
 
 /// Status shown when a key lands in a pane whose lease another viewer took.
 pub const LEASE_LOST_INPUT: &str =
@@ -223,20 +225,36 @@ pub(super) async fn send_live_input(
     data: &[u8],
     paste: bool,
 ) -> Result<(), FrameError> {
-    if workspace.exit_reason().is_some() || !workspace.daemon_ready() {
+    if workspace.exit_reason().is_some() {
+        return Ok(());
+    }
+    // A restored host stream or an already-held direct grant can keep typing
+    // while the daemon is away. The host remains authoritative for refusal;
+    // an outage never acquires a grant for an observing or ungranted pane.
+    let pane = workspace.pane(pane_id);
+    if pane.direct_input()
+        && (workspace.host_recovered.contains(&pane_id)
+            || (!workspace.daemon_ready() && pane.writable()))
+    {
+        return send_live_write(workspace, pane_id, data, paste).await;
+    }
+    if !workspace.daemon_ready() {
         return Ok(());
     }
     if workspace.pane(pane_id).writable() {
         return send_live_write(workspace, pane_id, data, paste).await;
     }
-    if !workspace.pane(pane_id).is_live() {
+    let acquiring = workspace.awaiting_control(pane_id);
+    let pane = workspace.pane(pane_id);
+    if !pane.is_live()
+        && !(acquiring && matches!(pane.attach_state(), AttachState::Attaching { .. }))
+    {
         return Ok(());
     }
     // A lost lease and an unknown write outcome both wait on a person, so
     // typing into them says what is wrong instead of queueing. Once that
     // person has asked for control, the decision is made and the keys they
     // type next belong in the queue like any other (#22573).
-    let acquiring = workspace.awaiting_control(pane_id);
     let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
     let refusal = match pane.control {
         ControlState::LeaseLost if !acquiring => Some(LEASE_LOST_INPUT),
@@ -287,13 +305,18 @@ pub(super) async fn send_live_write(
 ) -> Result<(), FrameError> {
     let message = {
         let pane = workspace.panes.get_mut(&pane_id).expect("pane exists");
-        if !pane.writable() {
-            return Ok(());
-        }
         // A direct native pane types on its own frame socket: no write
         // sequence, no in-flight write, no daemon round trip per key (#22573).
-        if pane.direct_input() {
+        // A pane restored by a host-local reconnect keeps typing even after a
+        // later daemon outage cleared its lease: the carried grant lives at
+        // the host, which enforces it, and the daemon was never part of that
+        // reconnect (#23076).
+        let host_recovered = workspace.host_recovered.contains(&pane_id);
+        if pane.direct_input() && (host_recovered || pane.writable()) {
             return pane.send_host_input(data, paste);
+        }
+        if !pane.writable() {
+            return Ok(());
         }
         pane.client_write_seq += 1;
         pane.in_flight_write = Some(pane.client_write_seq);

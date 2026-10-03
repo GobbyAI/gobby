@@ -6,65 +6,74 @@ import inspect
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
-from uuid import uuid4
+from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.agents.spawn_executor import _promote_prepared
-from gobby.agents.spawn_executor_providers import ProviderSpawnPlan
-from gobby.agents.spawn_models import SpawnRequest
-from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManager
+from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.tmux.text_injection import (
     AttentionInjectionError,
     TmuxTargetUnavailableError,
+    TmuxTextInjectionError,
     TmuxTextInjectionTimeout,
 )
-from gobby.config.tmux import TmuxConfig
-from gobby.storage.terminals import AttachLocator, TerminalManager
+from gobby.storage.terminals import Terminal
 from gobby.terminals.host_protocol import frames_socket_path
 from gobby.terminals.runtime import (
     Delivered,
     IndeterminateWrite,
     SnapshotResult,
-    TerminalRuntime,
-    TerminalSpawnRequest,
+    TerminalWriteError,
 )
 from gobby.terminals.tmux_runtime import (
-    CommitSpawnRefusedError,
     InputPayloadTooLargeError,
     TmuxTerminalRuntime,
 )
-from gobby.terminals.web_spawn import spawn_web_terminal
-from tests.terminals.fakes import MemoryTerminalStore, make_memory_terminal
+from tests.terminals.fakes import make_memory_terminal
 
 pytestmark = pytest.mark.unit
 
 MAX_INPUT_PAYLOAD = 1024 * 1024
 
 
-class _StubSessions(TmuxSessionManager):
-    """Session manager whose tmux seams are plain attributes the tests replace."""
+_RECORDED_GENERATION = (1658, 1784592177)
+_RESTARTED_GENERATION = (1658, 1790000000)
 
-    _run: Any
-    is_available: Any
-    create_session: Any
+
+class _StubSessions(TmuxSessionManager):
+    """Session manager whose tmux seams are plain attributes the tests replace.
+
+    The generation probe answers with the fake row's recorded server; every
+    other tmux command goes to ``answer``.
+    """
+
+    answer: Any
     capture_pane: Any
     capture_full_pane: Any
     has_session: Any
 
+    async def _run(self, *args: str, timeout: float = 10.0) -> tuple[int, str, str]:
+        if "#{pid}" in args[-1]:
+            return 0, "{}\t{}\n".format(*_RECORDED_GENERATION), ""
+        result: tuple[int, str, str] = await self.answer(*args, timeout=timeout)
+        return result
+
 
 def _sessions() -> _StubSessions:
-    sessions = _StubSessions(TmuxConfig(history_limit=10000))
-    sessions.is_available = MagicMock(return_value=True)
+    sessions = _StubSessions("/tmp/gobby-test-tmux.sock")
+    sessions.answer = AsyncMock(return_value=(0, "", ""))
     return sessions
+
+
+def _runtime(sessions: TmuxSessionManager, **kwargs: Any) -> TmuxTerminalRuntime:
+    return TmuxTerminalRuntime(sessions_for_socket=lambda _socket: sessions, **kwargs)
 
 
 @pytest.mark.asyncio
 async def test_attach_locator_uses_live_host_identity(tmp_path: Path) -> None:
     host = SimpleNamespace(host_epoch="epoch-1", socket_dir=tmp_path)
-    runtime = TmuxTerminalRuntime(_sessions(), host_control=host)
+    runtime = _runtime(_sessions(), host_control=host)
     terminal = make_memory_terminal()
 
     first = await runtime.attach_locator(terminal)
@@ -81,145 +90,14 @@ async def test_attach_locator_uses_live_host_identity(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_spawn_geometry_matches_request_and_row() -> None:
-    sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
-    manager = MemoryTerminalStore()
-    created: list[tuple[int, int]] = []
-
-    async def run(*args: str, **_kwargs: object) -> tuple[int, str, str]:
-        if args[0] == "has-session":
-            return (1, "", "can't find session")
-        if args[0] == "new-session":
-            cols = int(args[args.index("-x") + 1])
-            rows = int(args[args.index("-y") + 1])
-            created.append((cols, rows))
-            return (0, "", "")
-        if args[-1] == "#{pane_pid}":
-            return (0, "42", "")
-        if args[-1] == "#{socket_path}|#{pid}|#{start_time}|#{pane_id}":
-            return (0, "/tmp/tmux.sock|1658|1784592177|%9", "")
-        if args[-1] == "#{pane_height} #{pane_width}":
-            cols, rows = created[-1]
-            return (0, f"{rows} {cols}", "")
-        raise AssertionError(args)
-
-    sessions._run = AsyncMock(side_effect=run)
-    project_id = str(uuid4())
-
-    requested = await spawn_web_terminal(
-        manager=cast(TerminalManager, manager),
-        runtime=runtime,
-        project_id=project_id,
-        session_id=None,
-        rows=24,
-        cols=80,
-        cwd=None,
-        command=["echo", "requested"],
-    )
-    assert requested.success is True
-    requested_row = manager.get(requested.terminal_id)
-    assert requested_row is not None
-    assert created[-1] == (80, 24)
-    assert (requested_row.cols, requested_row.rows) == created[-1]
-
-    agent_terminal_uuid = uuid4()
-    agent_terminal_id = str(agent_terminal_uuid)
-    agent_spawn_key = f"gobby-{uuid4().hex}"
-    attempt = manager.create_pending(
-        agent_terminal_id,
-        project_id,
-        "tmux",
-        "gobby",
-        agent_spawn_key,
-    )
-    prepared = await runtime.prepare_spawn(
-        TerminalSpawnRequest(
-            terminal_id=agent_terminal_uuid,
-            spawn_key=agent_spawn_key,
-            command=["echo", "agent"],
-        )
-    )
-    agent_result = await _promote_prepared(
-        cast(SpawnRequest, SimpleNamespace(run_manager=None)),
-        cast(
-            ProviderSpawnPlan,
-            SimpleNamespace(
-                agent_run_id=str(uuid4()),
-                child_session_id=str(uuid4()),
-                title=None,
-                auth_cli="codex",
-            ),
-        ),
-        manager=cast(TerminalManager, manager),
-        runtime=runtime,
-        backend="tmux",
-        terminal_id=agent_terminal_id,
-        spawn_key=agent_spawn_key,
-        prepared=prepared,
-        attempt_generation=attempt.attempt_generation,
-        attempt_started_at=attempt.attempt_started_at,
-    )
-    assert agent_result.success is True
-    agent_row = manager.get(agent_terminal_id)
-    assert agent_row is not None
-    assert created[-1] == (200, 50)
-    assert (agent_row.cols, agent_row.rows) == created[-1]
-
-
-@pytest.mark.asyncio
-async def test_prepare_commit_requires_caller_ack() -> None:
-    sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
-    created: list[str] = []
-
-    async def create_session(
-        name: str,
-        command: str | list[str] | None = None,
-        cwd: str | None = None,
-        env: dict[str, str] | None = None,
-        rows: int | None = 50,
-        cols: int | None = 200,
-    ) -> TmuxSessionInfo:
-        del command, cwd, env, rows, cols
-        created.append(name)
-        return TmuxSessionInfo(name=name, pane_pid=42, pane_id="%9")
-
-    sessions.create_session = create_session
-    sessions._run = AsyncMock(
-        side_effect=[
-            (0, "24 80", ""),
-            (0, "/tmp/tmux.sock|1658|1784592177|%9", ""),
-        ]
-    )
-    request = TerminalSpawnRequest(
-        terminal_id=uuid4(),
-        spawn_key="gobby-abc",
-        command=["echo", "hi"],
-        rows=24,
-        cols=80,
-    )
-    prepared = await runtime.prepare_spawn(request)
-    assert inspect.signature(runtime.prepare_spawn)
-    assert not hasattr(runtime, "spawn") or "spawn" not in TerminalRuntime.__dict__
-    with pytest.raises(CommitSpawnRefusedError):
-        await runtime.commit_spawn(prepared)
-    prepared.acknowledge_persist()
-    handle = await runtime.commit_spawn(prepared)
-    assert handle.terminal_id == request.terminal_id
-    assert isinstance(handle.locator, AttachLocator)
-    assert created == ["gobby-abc"]
-
-
-@pytest.mark.asyncio
 async def test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss() -> None:
     sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
+    runtime = _runtime(sessions)
     terminal = make_memory_terminal()
     wide = "盒🙂"
     sessions.capture_pane = AsyncMock(return_value=wide)
     sessions.capture_full_pane = AsyncMock(return_value=wide)
-    sessions._run = AsyncMock(return_value=(0, "12|10000", ""))
+    sessions.answer = AsyncMock(return_value=(0, "12|10000", ""))
 
     visible = await runtime.snapshot(terminal, lines=50)
     assert isinstance(visible, SnapshotResult)
@@ -229,7 +107,7 @@ async def test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss() -> N
     assert visible.total_bytes == len(wide.encode("utf-8"))
     assert visible.total_bytes != len(wide)
 
-    sessions._run = AsyncMock(return_value=(0, "10000|10000", ""))
+    sessions.answer = AsyncMock(return_value=(0, "10000|10000", ""))
     full = await runtime.snapshot_full(terminal)
     assert full.truncated is True
     assert full.dropped_bytes is None
@@ -242,9 +120,9 @@ async def test_snapshot_counters_are_utf8_bytes_with_unknown_history_loss() -> N
 @pytest.mark.asyncio
 async def test_snapshot_passes_the_requested_mode_to_capture() -> None:
     sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
+    runtime = _runtime(sessions)
     sessions.capture_pane = AsyncMock(return_value="\x1b[2mfaint\x1b[0m")
-    sessions._run = AsyncMock(return_value=(0, "12|10000", ""))
+    sessions.answer = AsyncMock(return_value=(0, "12|10000", ""))
 
     styled = await runtime.snapshot(make_memory_terminal(), lines=40, mode="ansi")
 
@@ -258,7 +136,7 @@ async def test_write_returns_indeterminate_when_effect_precedes_lost_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
+    runtime = _runtime(sessions)
     terminal = make_memory_terminal()
     landed: list[str] = []
 
@@ -321,12 +199,12 @@ async def test_write_paste_follows_live_bracketed_mode_and_size_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
+    runtime = _runtime(sessions)
     terminal = make_memory_terminal()
     sent: list[str] = []
 
     async def query(flag: str) -> None:
-        sessions._run = AsyncMock(return_value=(0, flag, ""))
+        sessions.answer = AsyncMock(return_value=(0, flag, ""))
 
     async def capture_paste(*args: object, **_kwargs: object) -> None:
         sent.append(str(args[1]))
@@ -351,7 +229,7 @@ async def test_write_paste_follows_live_bracketed_mode_and_size_cap(
 @pytest.mark.asyncio
 async def test_write_key_encodes_against_live_pane_flags() -> None:
     sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
+    runtime = _runtime(sessions)
     terminal = make_memory_terminal()
     hex_payloads: list[list[str]] = []
 
@@ -364,7 +242,7 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
             return (0, "", "")
         return (0, "", "")
 
-    sessions._run = AsyncMock(side_effect=run)
+    sessions.answer = AsyncMock(side_effect=run)
     await runtime.write_key(terminal, "up")
     assert any(part.lower() == "1b" or part == "1b" for cmd in hex_payloads for part in cmd)
     first = hex_payloads[-1]
@@ -380,7 +258,7 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
             return (0, "", "")
         return (0, "", "")
 
-    sessions._run = AsyncMock(side_effect=run_normal)
+    sessions.answer = AsyncMock(side_effect=run_normal)
     await runtime.write_key(terminal, "up")
     up_normal = hex_payloads[-1]
     assert "5b" in [part.lower() for part in up_normal]
@@ -399,7 +277,7 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
             return (0, "", "")
         return (0, "", "")
 
-    sessions._run = AsyncMock(side_effect=run_normal_keypad)
+    sessions.answer = AsyncMock(side_effect=run_normal_keypad)
     await runtime.write_key(terminal, "kpplus")
     assert hex_payloads[-1] != app_keypad
 
@@ -407,10 +285,10 @@ async def test_write_key_encodes_against_live_pane_flags() -> None:
 @pytest.mark.asyncio
 async def test_session_present_when_remain_on_exit_pane_is_dead() -> None:
     sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
+    runtime = _runtime(sessions)
     terminal = make_memory_terminal(session_name="gobby-orphan")
     sessions.has_session = AsyncMock(return_value=True)
-    sessions._run = AsyncMock(return_value=(0, "1", ""))
+    sessions.answer = AsyncMock(return_value=(0, "1", ""))
 
     assert await runtime.is_live(terminal) is False
     assert await runtime.session_present(terminal) is True
@@ -422,19 +300,248 @@ async def test_terminate_kills_on_the_terminals_own_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """External rows probe their own socket, so the kill must target it too."""
-    sessions = _sessions()
-    runtime = TmuxTerminalRuntime(sessions)
-    terminal = replace(make_memory_terminal(session_name="ext-demo"), ownership="external")
-    killed_sockets: list[str | None] = []
+    _ExternalTmux(monkeypatch)
+    runtime = TmuxTerminalRuntime()
+    terminal = make_memory_terminal(session_name="ext-demo")
+    killed_sockets: list[str] = []
 
     async def fake_kill(
         self: TmuxSessionManager, name: str, *, missing_ok: bool = False, timeout: float = 5.0
     ) -> bool:
-        killed_sockets.append(self.config.socket_path)
+        killed_sockets.append(self.base_args()[-1])
         return True
 
     monkeypatch.setattr(TmuxSessionManager, "kill_session", fake_kill)
     await runtime.terminate(terminal, grace_seconds=5.0)
     locator = terminal.locator or {}
     assert killed_sockets == [locator["socket_path"]]
-    assert killed_sockets != [sessions.config.socket_path]
+
+
+@pytest.mark.asyncio
+async def test_write_text_reports_partial_when_enter_fails_after_paste(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A landed paste followed by a failed Enter is a partial write, never a retry."""
+    runtime = _runtime(_sessions())
+    terminal = make_memory_terminal()
+
+    async def paste(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    async def failed_enter(*_args: object, **_kwargs: object) -> None:
+        raise TmuxTextInjectionError(
+            "enter withheld",
+            command=("tmux", "send-keys"),
+            stderr="injected",
+            returncode=1,
+        )
+
+    monkeypatch.setattr("gobby.terminals.tmux_runtime.paste_literal_text_to_tmux_target", paste)
+    monkeypatch.setattr("gobby.terminals.tmux_runtime.send_enter_key_to_tmux_target", failed_enter)
+    monkeypatch.setattr("gobby.terminals.tmux_runtime.asyncio.sleep", AsyncMock())
+    with pytest.raises(TerminalWriteError) as exc:
+        await runtime.write_text(terminal, "ECHO partial", submit=True)
+    assert exc.value.stage == "partial"
+
+
+class _ExternalTmux:
+    """Answers tmux on an external pane's socket and records every command sent.
+
+    Each generation query consumes the next queued ``(server_pid, start_time)``;
+    the last one keeps answering.
+    """
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch, *generations: tuple[int, int]) -> None:
+        self.commands: list[tuple[list[str], tuple[str, ...]]] = []
+        self._generations = list(generations or (_RECORDED_GENERATION,))
+
+        async def run(
+            manager: TmuxSessionManager, *args: str, timeout: float = 10.0
+        ) -> tuple[int, str, str]:
+            return self._answer(manager.base_args(), args)
+
+        monkeypatch.setattr(TmuxSessionManager, "_run", run)
+        monkeypatch.setattr(
+            "gobby.terminals.tmux_runtime.paste_literal_text_to_tmux_target", self._paste
+        )
+        monkeypatch.setattr(
+            "gobby.terminals.tmux_runtime.send_enter_key_to_tmux_target", self._enter
+        )
+        monkeypatch.setattr(
+            "gobby.terminals.tmux_runtime.send_named_key_to_tmux_target", self._named
+        )
+        monkeypatch.setattr("gobby.terminals.tmux_runtime.asyncio.sleep", AsyncMock())
+
+    def _generation(self) -> tuple[int, int]:
+        if len(self._generations) > 1:
+            return self._generations.pop(0)
+        return self._generations[0]
+
+    def _answer(self, tmux_cmd: list[str], args: tuple[str, ...]) -> tuple[int, str, str]:
+        self.commands.append((tmux_cmd, args))
+        if args[:1] != ("display-message",):
+            return 0, "", ""
+        answer = args[-1]
+        if "#{pid}" in answer:
+            pid, start = self._generation()
+            answer = answer.replace("#{pid}", str(pid)).replace("#{start_time}", str(start))
+        for flag in ("#{pane_dead}", "#{cursor_keys_flag}", "#{keypad_cursor_flag}"):
+            answer = answer.replace(flag, "0")
+        return 0, answer.replace("#{bracket_paste_flag}", "0") + "\n", ""
+
+    async def _paste(self, target: str, text: str, *, tmux_cmd: list[str]) -> None:
+        self.commands.append((list(tmux_cmd), ("paste", target, text)))
+
+    async def _enter(self, target: str, *, tmux_cmd: list[str]) -> None:
+        self.commands.append((list(tmux_cmd), ("enter", target)))
+
+    async def _named(self, target: str, key: str, *, tmux_cmd: list[str]) -> None:
+        self.commands.append((list(tmux_cmd), ("named", target, key)))
+
+    def byte_writes(self) -> list[tuple[str, ...]]:
+        return [
+            args
+            for _cmd, args in self.commands
+            if args[0] in {"paste", "enter", "named", "send-keys"}
+        ]
+
+
+def _external_terminal(**locator_overrides: object) -> Terminal:
+    terminal = make_memory_terminal(session_name="ext-demo")
+    locator = {**(terminal.locator or {}), **locator_overrides}
+    return replace(terminal, locator={k: v for k, v in locator.items() if v is not None})
+
+
+async def _write(runtime: TmuxTerminalRuntime, terminal: Terminal, op: str) -> object:
+    if op == "text":
+        return await runtime.write_text(terminal, "hello", submit=True)
+    if op == "key":
+        return await runtime.write_key(terminal, "enter")
+    if op == "arrow":
+        return await runtime.write_key(terminal, "up")
+    if op == "paste":
+        return await runtime.write_paste(terminal, "hello")
+    return await runtime.write_input(terminal, b"hello")
+
+
+_WRITE_OPS = ["text", "key", "arrow", "paste", "input"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", _WRITE_OPS)
+async def test_external_writes_address_the_panes_own_socket(
+    monkeypatch: pytest.MonkeyPatch, op: str
+) -> None:
+    """send_keys, wake and /compact all land here; none may reach the gobby server."""
+    tmux = _ExternalTmux(monkeypatch)
+    runtime = TmuxTerminalRuntime()
+    terminal = _external_terminal()
+
+    assert await _write(runtime, terminal, op) == Delivered()
+
+    assert tmux.byte_writes()
+    socket_path = (terminal.locator or {})["socket_path"]
+    for tmux_cmd, _args in tmux.commands:
+        assert "-L" not in tmux_cmd
+        assert tmux_cmd[tmux_cmd.index("-S") + 1] == socket_path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", _WRITE_OPS)
+@pytest.mark.parametrize(
+    "locator",
+    [
+        pytest.param({}, id="recycled-pane"),
+        pytest.param({"server_pid": None}, id="no-server-pid"),
+        pytest.param({"server_start_time": None}, id="no-start-time"),
+    ],
+)
+async def test_external_writes_refuse_a_pane_from_another_server_generation(
+    monkeypatch: pytest.MonkeyPatch, op: str, locator: dict[str, object]
+) -> None:
+    """A restarted server reuses %N; bytes meant for the old pane must not reach it."""
+    generation = _RESTARTED_GENERATION if not locator else _RECORDED_GENERATION
+    tmux = _ExternalTmux(monkeypatch, generation)
+    runtime = TmuxTerminalRuntime()
+
+    with pytest.raises(TerminalWriteError) as exc:
+        await _write(runtime, _external_terminal(**locator), op)
+
+    assert exc.value.stage == "none"
+    assert tmux.byte_writes() == []
+
+
+@pytest.mark.asyncio
+async def test_delayed_submit_is_withheld_when_the_server_restarts_mid_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmux = _ExternalTmux(monkeypatch, _RECORDED_GENERATION, _RESTARTED_GENERATION)
+    runtime = TmuxTerminalRuntime()
+
+    with pytest.raises(TerminalWriteError) as exc:
+        await runtime.write_text(_external_terminal(), "hello", submit=True)
+
+    assert exc.value.stage == "partial"
+    assert [args[0] for args in tmux.byte_writes()] == ["paste"]
+
+
+@pytest.mark.asyncio
+async def test_a_recycled_pane_is_not_live_and_is_never_killed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _ExternalTmux(monkeypatch, _RESTARTED_GENERATION)
+    kill = AsyncMock(return_value=True)
+    monkeypatch.setattr(TmuxSessionManager, "kill_session", kill)
+    runtime = TmuxTerminalRuntime()
+    terminal = _external_terminal()
+
+    assert await runtime.is_live(terminal) is False
+    await runtime.terminate(terminal, grace_seconds=5.0)
+    kill.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_recycled_pane_keeps_its_window_size(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A restarted server's %N is someone else's window; sizing must not touch it."""
+    tmux = _ExternalTmux(monkeypatch, _RESTARTED_GENERATION)
+    runtime = TmuxTerminalRuntime()
+    terminal = _external_terminal()
+
+    await runtime.resize(terminal, rows=40, cols=120)
+    await runtime.release_size(terminal)
+
+    assert [args for _cmd, args in tmux.commands if args[0] != "display-message"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_recycled_pane_is_never_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A restarted server's %N is someone else's pane; snapshots must not read it."""
+    tmux = _ExternalTmux(monkeypatch, _RESTARTED_GENERATION)
+    runtime = TmuxTerminalRuntime()
+    terminal = _external_terminal()
+
+    visible = await runtime.snapshot(terminal, lines=50)
+    full = await runtime.snapshot_full(terminal)
+
+    assert (visible.text, full.text) == ("", "")
+    assert [args[0] for _cmd, args in tmux.commands] == ["display-message", "display-message"]
+
+
+@pytest.mark.asyncio
+async def test_sizing_addresses_the_recorded_panes_own_socket(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tmux = _ExternalTmux(monkeypatch)
+    runtime = TmuxTerminalRuntime()
+    terminal = _external_terminal()
+
+    await runtime.resize(terminal, rows=40, cols=120)
+    await runtime.release_size(terminal)
+
+    socket_path = (terminal.locator or {})["socket_path"]
+    assert [args for _cmd, args in tmux.commands if args[0] != "display-message"] == [
+        ("set-option", "-w", "-t", "%1", "window-size", "manual"),
+        ("resize-window", "-t", "%1", "-x", "120", "-y", "40"),
+        ("set-option", "-wu", "-t", "%1", "window-size"),
+    ]
+    assert all(cmd[cmd.index("-S") + 1] == socket_path for cmd, _args in tmux.commands)

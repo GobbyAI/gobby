@@ -169,6 +169,7 @@ class TestSetVariableScoped:
             "open_tool_errors",
             "_last_blocked_tool",
             "edit_write_stop_blocks",
+            "_agent_type",
         ],
     )
     def test_set_variable_blocks_runtime_managed_variables(self, name: str) -> None:

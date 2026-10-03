@@ -6,7 +6,7 @@ GIL is held until the last record exists and the daemon event loop stalls for te
 of milliseconds, far longer when the host preempts the holder. This codec moves
 every record sequence out of band into small chunks. The loop encodes and decodes
 one chunk at a time and yields between chunks, so no single GIL hold outlasts one
-chunk. The shell left behind holds one reference per sequence, not per record, so
+chunk. The envelope left behind holds one reference per sequence, not per record, so
 pickling it before the first chunk and unpickling it after the last stay bounded
 at any transcript length (#23256). The only step that still scales with record
 count is the final copy of each decoded list into its tuple, a C copy that runs
@@ -18,7 +18,11 @@ from __future__ import annotations
 
 import asyncio
 import io
-import pickle
+
+# Bandit B403/B301 are excluded on these two lines only, temporarily, until #23370 retires
+# this codec. Every chunk is bytes this daemon's own same-host transcript-evidence process
+# pool pickled (or encode() below); no other process, file, or network peer supplies them.
+import pickle  # nosec B403
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
@@ -36,13 +40,13 @@ _RECORD_TYPES = (TranscriptValidationRun, TranscriptEdit)
 
 @dataclass(frozen=True)
 class ChunkedPayload:
-    """A pickled shell whose record sequences travel separately in ordered chunks.
+    """A pickled envelope whose record sequences travel separately in ordered chunks.
 
-    Each chunk pickles ``(sequence index, records)``; the shell refers to sequence
+    Each chunk pickles ``(sequence index, records)``; the envelope refers to sequence
     ``index`` by the persistent id ``(index, is_tuple)``.
     """
 
-    shell: bytes
+    envelope: bytes
     chunks: tuple[bytes, ...]
     record_count: int
 
@@ -95,8 +99,8 @@ class _SequenceUnpickler(pickle.Unpickler):
 
 def _encode_steps(value: object) -> Iterator[ChunkedPayload | None]:
     """Yield None after each chunk, then the finished payload."""
-    shell = io.BytesIO()
-    pickler = _SequencePickler(shell)
+    envelope = io.BytesIO()
+    pickler = _SequencePickler(envelope)
     pickler.dump(value)
     chunks: list[bytes] = []
     record_count = 0
@@ -108,7 +112,9 @@ def _encode_steps(value: object) -> Iterator[ChunkedPayload | None]:
             chunks.append(pickle.dumps((index, part), pickle.HIGHEST_PROTOCOL))
             record_count += len(part)
             yield None
-    yield ChunkedPayload(shell=shell.getvalue(), chunks=tuple(chunks), record_count=record_count)
+    yield ChunkedPayload(
+        envelope=envelope.getvalue(), chunks=tuple(chunks), record_count=record_count
+    )
 
 
 def _decode_steps(payload: ChunkedPayload) -> Iterator[object]:
@@ -116,7 +122,7 @@ def _decode_steps(payload: ChunkedPayload) -> Iterator[object]:
     sequences: dict[int, list[object]] = {}
     record_count = 0
     for chunk in payload.chunks:
-        decoded = pickle.loads(chunk)
+        decoded = pickle.loads(chunk)  # nosec B301 # same-host pool bytes, see the import
         if not (
             isinstance(decoded, tuple)
             and len(decoded) == 2
@@ -131,7 +137,7 @@ def _decode_steps(payload: ChunkedPayload) -> Iterator[object]:
         raise pickle.UnpicklingError(
             f"transcript record chunks hold {record_count} records, expected {payload.record_count}"
         )
-    yield _SequenceUnpickler(io.BytesIO(payload.shell), sequences).load()
+    yield _SequenceUnpickler(io.BytesIO(payload.envelope), sequences).load()
 
 
 def encode(value: object) -> ChunkedPayload:

@@ -18,6 +18,9 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from gobby.ai import embedding_cache
+from gobby.ai.embedding_cache import EmbeddingGenerationError as EmbeddingGenerationError
+
 if TYPE_CHECKING:
     from gobby.config.persistence import EmbeddingsConfig
 
@@ -29,10 +32,6 @@ _OPENAI_CLOUD_MODEL_DIMS: dict[str, int] = {
     "text-embedding-3-large": 3072,
     "text-embedding-ada-002": 1536,
 }
-
-
-class EmbeddingGenerationError(RuntimeError):
-    """Raised for expected provider-side embedding generation failures."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,73 +153,6 @@ _last_reload_attempt: float = 0.0
 _LOCAL_LM_STUDIO_RECOVERY_COOLDOWN = 60.0  # seconds
 _last_local_lm_studio_recovery_attempt: float = 0.0
 
-# ---------------------------------------------------------------------------
-# TTL cache for embedding results
-# ---------------------------------------------------------------------------
-_CACHE_TTL = 60.0  # seconds
-_CACHE_MAX_SIZE = 2048
-
-
-@dataclass(slots=True)
-class _CacheEntry:
-    embedding: list[float]
-    expires_at: float
-
-
-_cache: dict[str, _CacheEntry] = {}
-_inflight: dict[str, asyncio.Future[list[float]]] = {}
-# Initialize at module import: Python's import machinery is serialized, so two
-# concurrent _get_lock() callers cannot race to create distinct RLock objects.
-# The previous lazy-init pattern had exactly that race — two threads arriving
-# with _cache_lock=None would each call RLock() and one would overwrite the
-# other, leaving concurrent cache writers synchronized on different locks.
-_cache_lock: RLock = RLock()
-
-
-def _get_lock() -> RLock:
-    """Return the shared cache lock. Preserved as a function for call-site stability."""
-    return _cache_lock
-
-
-def _cache_key(text: str, model: str, api_base: str | None) -> str:
-    """Stable cache key from text content + model + endpoint."""
-    h = hashlib.sha256(text.encode()).hexdigest()[:16]
-    return f"{h}:{model}:{api_base or 'default'}"
-
-
-def _evict_expired() -> None:
-    """Remove expired entries. Called while holding the lock."""
-    now = time.monotonic()
-    expired = [k for k, v in _cache.items() if v.expires_at <= now]
-    for k in expired:
-        del _cache[k]
-
-
-def _enforce_max_size() -> None:
-    """Evict oldest entries if cache exceeds max size."""
-    if len(_cache) <= _CACHE_MAX_SIZE:
-        return
-    # Sort by expiry (oldest first) and remove excess
-    by_expiry = sorted(_cache.items(), key=lambda kv: kv[1].expires_at)
-    to_remove = len(_cache) - _CACHE_MAX_SIZE
-    for key, _ in by_expiry[:to_remove]:
-        del _cache[key]
-
-
-def _clear_embedding_cache() -> None:
-    """Clear the embedding cache. Useful for testing."""
-    with _get_lock():
-        _cache.clear()
-        for pending in _inflight.values():
-            if not pending.done():
-                pending.cancel()
-        _inflight.clear()
-
-
-def _consume_future_exception(future: asyncio.Future[list[float]]) -> None:
-    if not future.cancelled():
-        future.exception()
-
 
 def _needs_nomic_prefix(model: str) -> bool:
     """Check if a model requires nomic-style task prefixes."""
@@ -260,88 +192,24 @@ async def _generate_embeddings(
 
     prefixed_texts = [_apply_prefix(t, is_query, model, query_prefix) for t in texts]
 
-    lock = _get_lock()
-    loop = asyncio.get_running_loop()
+    async def fetch(missing_texts: list[str]) -> list[list[float]]:
+        return await _fetch_embeddings(
+            texts=missing_texts,
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            expected_dim=expected_dim,
+        )
 
-    with lock:
-        _evict_expired()
-        results: list[list[float] | None] = []
-        pending: list[tuple[int, str, asyncio.Future[list[float]]]] = []
-        new_miss_keys: list[str] = []
-        new_miss_texts: list[str] = []
-        new_miss_futures: list[asyncio.Future[list[float]]] = []
-
-        for i, text in enumerate(prefixed_texts):
-            key = _cache_key(text, model, api_base)
-            entry = _cache.get(key)
-            if (
-                entry is not None
-                and expected_dim is not None
-                and len(entry.embedding) != expected_dim
-            ):
-                del _cache[key]
-                entry = None
-            if entry is not None:
-                results.append(entry.embedding)
-            else:
-                future = _inflight.get(key)
-                if future is None:
-                    future = loop.create_future()
-                    _inflight[key] = future
-                    new_miss_keys.append(key)
-                    new_miss_texts.append(text)
-                    new_miss_futures.append(future)
-                results.append(None)
-                pending.append((i, key, future))
-
-    if new_miss_texts:
-        try:
-            fresh = await _fetch_embeddings(
-                texts=new_miss_texts,
-                model=model,
-                api_base=api_base,
-                api_key=api_key,
-                max_retries=max_retries,
-                base_delay=base_delay,
-                expected_dim=expected_dim,
-            )
-        except Exception as exc:
-            with lock:
-                for key, future in zip(new_miss_keys, new_miss_futures, strict=True):
-                    if _inflight.get(key) is future:
-                        del _inflight[key]
-                    if not future.done():
-                        future.set_exception(exc)
-                        future.add_done_callback(_consume_future_exception)
-            raise
-        with lock:
-            now = time.monotonic()
-            expires_at = now + _CACHE_TTL
-            for key, emb, future in zip(new_miss_keys, fresh, new_miss_futures, strict=True):
-                _cache[key] = _CacheEntry(embedding=emb, expires_at=expires_at)
-                if _inflight.get(key) is future:
-                    del _inflight[key]
-                if not future.done():
-                    future.set_result(emb)
-            _enforce_max_size()
-
-    for i, key, future in pending:
-        embedding = await future
-        if expected_dim is not None and len(embedding) != expected_dim:
-            with lock:
-                _cache.pop(key, None)
-            raise EmbeddingGenerationError(
-                f"Embedding dimension mismatch for model={model}: "
-                f"expected {expected_dim}, got {len(embedding)}"
-            )
-        results[i] = embedding
-
-    filled_results: list[list[float]] = []
-    for result in results:
-        if result is None:
-            raise EmbeddingGenerationError("Embedding cache fill left a missing result")
-        filled_results.append(result)
-    return filled_results
+    return await embedding_cache.generate_cached_embeddings(
+        prefixed_texts,
+        model=model,
+        api_base=api_base,
+        expected_dim=expected_dim,
+        fetch=fetch,
+    )
 
 
 async def _try_reload_model(model: str, api_base: str) -> bool:
@@ -793,17 +661,18 @@ class _ReachabilityEntry:
 
 
 _reachability_cache: dict[tuple[str, str | None], _ReachabilityEntry] = {}
+_reachability_lock = RLock()
 
 
 def _clear_reachability_cache() -> None:
     """Clear the reachability probe cache. Exposed for tests."""
-    with _get_lock():
+    with _reachability_lock:
         _reachability_cache.clear()
 
 
 def clear_cache() -> None:
     """Clear generated embedding and reachability caches."""
-    _clear_embedding_cache()
+    embedding_cache.clear_cache()
     _clear_reachability_cache()
 
 
@@ -869,7 +738,7 @@ async def _is_embedding_reachable(
 
     normalized_api_base = _normalize_api_base(api_base)
     cache_key = _reachability_cache_key(normalized_api_base, api_key)
-    lock = _get_lock()
+    lock = _reachability_lock
 
     now = time.monotonic()
     with lock:

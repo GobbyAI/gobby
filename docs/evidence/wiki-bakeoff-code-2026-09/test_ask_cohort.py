@@ -52,11 +52,11 @@ from ask_scoring_retrieval import (
     score_retrieval,
     scoring_contract,
 )
-
 from gobby.ask.artifacts import AskArtifactStore
 from gobby.ask.contracts import ProfileSnapshot
 from gobby.ask.publication import publish_answer
 from gobby.ask.validation import validate_claims, validate_review
+
 from gobby.workflows.agent_models import AgentDefinitionBody
 
 _SENSITIVE_HEADERS = (

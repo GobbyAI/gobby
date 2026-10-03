@@ -459,7 +459,7 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 | `--max-retries N` | Cap retries per build stage. |
 | `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
 | `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
-| `--plan-enhancement-rounds N` | Target constructive `plan-enhancer` rounds before the adversary gate (`0` disables; overrides the build profile default). |
+| `--plan-enhancement-rounds N` | Target constructive `plan-enhancer-old` rounds before the adversary gate (`0` disables; overrides the build profile default). |
 | `--dry-run` | Preview launch, `clean`, or `restart`; control previews may record history. |
 | `--delete-dirty-worktrees` | For `clean`, explicitly permit dirty descendant worktree deletion. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
@@ -492,7 +492,7 @@ the remaining planning review loop with the completed round count already
 applied. `drafted` starts from planning.
 
 `--plan-enhancement-rounds N` seeds the target number of constructive
-`plan-enhancer` rounds that run as a pre-adversary sub-loop inside the planning
+`plan-enhancer-old` rounds that run as a pre-adversary sub-loop inside the planning
 stage. Bundled profiles default to `0` (no enhancement); inspect the installed row
 before relying on that default. Pass `N > 0` to enable it when authorized. The explicit value wins over the build profile default, including an
 explicit `0`. Enhancement rounds are counted independently of the adversary
@@ -767,7 +767,7 @@ gobby agents cleanup [--timeout MINUTES] [--dry-run]
 
 `agents spawn` supports `--workflow`, `--task`, `--provider`, `--model`,
 `--reasoning-effort`, `--reasoning-required/--no-reasoning-required`,
-`--timeout`, `--terminal-backend tmux|native`, and `--json`.
+`--timeout`, `--terminal-backend native`, and `--json`.
 The CLI requires a parent session and does not expose all MCP isolation/grant
 fields. Cleanup mutates by default; use `--dry-run` to inspect stale candidates.
 CLI kill defaults differ from MCP: pass `--stop` to stop the workflow as well.
@@ -1175,6 +1175,8 @@ tools; ordinary coding sessions capture observations with `gobby-sessions:feedba
 | `gobby feedback results RUN_ID --offset 0 --limit 50` | Read accepted findings and actual task outcomes |
 | `gobby feedback digest` | Read the latest review run and digest |
 | `gobby feedback digest --run-id RUN_ID` | Read one recorded run and digest |
+| `gobby feedback list [--unreviewed] [--kind K] [--frequency F] [--disposition D] [--limit 50] [--json]` | List submitted feedback rows, newest first |
+| `gobby feedback status [--json]` | Show the unreviewed backlog, latest run, and review schedule |
 
 Both paged readers accept limits 1–100 and nonnegative offsets; follow returned
 `next_offset` until null. The review command waits for the daemon operation; a

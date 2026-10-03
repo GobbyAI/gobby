@@ -8,7 +8,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.servers.routes.configuration_context import require_config_snapshot
 from gobby.sessions.turn_lifecycle import TurnLifecycleState
 from gobby.storage.attention import (
     AttentionRosterRow,
@@ -54,7 +53,8 @@ def _load_roster_entries(
                 "model": run.model,
                 "model_display_name": display_names.get((run.provider, run.model)),
                 "terminal": _terminal_block(server, run.terminal),
-                "tmux": _run_tmux_payload(server, run),
+                # Agent runs are native-only; tmux blocks describe external panes.
+                "tmux": None,
                 "last_activity_at": _serialize_timestamp(run.updated_at),
                 **_metadata_payload(snapshot, entry_id),
             }
@@ -161,24 +161,6 @@ def _terminal_block(
         "backend": terminal.backend,
         "state": terminal.state,
         "attach": None if attach is None else asdict(attach),
-    }
-
-
-def _run_tmux_payload(
-    server: HTTPServer,
-    run: AttentionRosterRow,
-) -> dict[str, object] | None:
-    if run.terminal_id is None:
-        return None
-    terminal = getattr(run, "terminal", None)
-    session_name = None if terminal is None else terminal.session_name
-    tmux_config = require_config_snapshot(server).active.tmux
-    socket_path = getattr(tmux_config, "socket_path", None)
-    return {
-        "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
-        "session_name": session_name,
-        "pane_pid": run.pid,
-        "terminal_id": run.terminal_id,
     }
 
 

@@ -10,7 +10,7 @@ import contextvars
 import hashlib
 import logging
 import math
-import random
+import secrets
 import time
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 ACCESS_REFRESH_LEAD_SECONDS = 600.0
 KEEPALIVE_TICK_SECONDS = 60.0
 _MAX_BACKOFF_SECONDS = 900.0
+_JITTER = secrets.SystemRandom()
 _SHAPE_FIELDS = ("tokens", "client", "expires_at", "metadata", "resource", "issuer")
 _LOCK_HELD: contextvars.ContextVar[bool] = contextvars.ContextVar(
     "gobby_oauth_lock_held", default=False
@@ -103,7 +104,7 @@ def _retry_delay(attempt: int, retry_after: str | None, now: float) -> float:
     if honoured is not None:
         return honoured
     span = min(_MAX_BACKOFF_SECONDS, 5.0 * (2 ** (attempt - 1)))
-    return float(span) * float(random.uniform(0.5, 1.0))
+    return float(span) * _JITTER.uniform(0.5, 1.0)
 
 
 def _retry_after_seconds(retry_after: str | None, now: float) -> float | None:

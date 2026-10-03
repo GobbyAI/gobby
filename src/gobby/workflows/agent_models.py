@@ -17,6 +17,15 @@ from pydantic import (
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.workflows.definitions import WorkflowStep
 
+# The spawnable_agents value that lets a spawned agent spawn any agent.
+SPAWN_ANY_AGENT = "*"
+
+SendMessageTarget = Literal["global", "project", "parent", "session", "agent", "build"]
+
+
+def _parent_only() -> list[SendMessageTarget]:
+    return ["parent"]
+
 
 class AgentSelector(BaseModel):
     """Selector for dynamically filtering rules, variables, and skills."""
@@ -135,9 +144,16 @@ class AgentDefinitionBody(BaseModel):
     # Orchestration
     workflows: AgentWorkflows
     enabled: bool = True
+    # Agents a spawned run of this definition may spawn, enforced by the bundled
+    # limit-spawnable-agents rule: [SPAWN_ANY_AGENT] for any, named agents, or
+    # empty (the default) for none.
+    spawnable_agents: list[str] = Field(default_factory=list)
     # Agent-level tool restrictions (applied regardless of step workflow)
     blocked_tools: list[str] = Field(default_factory=list)
     blocked_mcp_tools: list[str] = Field(default_factory=list)
+    # send_message target modes a spawned agent of this type may use, enforced by
+    # the bundled rule scope-spawned-agent-send-message
+    send_message_targets: list[SendMessageTarget] = Field(default_factory=_parent_only)
     step_workflow: AgentStepWorkflowBody | None = None
 
     @model_validator(mode="before")
@@ -213,6 +229,20 @@ class AgentDefinitionBody(BaseModel):
                     normalized.append(item)
             return normalized
         raise ValueError("surfaces must be a string or list of strings")
+
+    @field_validator("spawnable_agents")
+    @classmethod
+    def _spawn_any_stands_alone(cls, value: list[str]) -> list[str]:
+        if SPAWN_ANY_AGENT in value and value != [SPAWN_ANY_AGENT]:
+            raise ValueError(
+                f"spawnable_agents is [{SPAWN_ANY_AGENT!r}] for any agent, "
+                "or a list of agent names, never both"
+            )
+        return value
+
+    def may_spawn(self, agent: str) -> bool:
+        """Whether a spawned run of this definition may spawn ``agent``."""
+        return self.spawnable_agents == [SPAWN_ANY_AGENT] or agent in self.spawnable_agents
 
     def supports_surface(self, surface: Literal["spawn", "persona"]) -> bool:
         """Return True when the definition explicitly supports the requested usage surface."""

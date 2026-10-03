@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 async def list_pipelines(
     loader: Any,
     project_id: str | None = None,
+    tag: str | None = None,
 ) -> dict[str, Any]:
     """
     List available pipeline definitions.
@@ -16,6 +17,7 @@ async def list_pipelines(
     Args:
         loader: PipelineLoader instance
         project_id: Optional project UUID for project-specific pipelines
+        tag: Optional tag to filter the resolved pipeline catalog
 
     Returns:
         Dict with list of pipeline info or error
@@ -28,6 +30,8 @@ async def list_pipelines(
 
         pipelines = []
         for workflow in discovered:
+            if tag is not None and tag not in workflow.definition.tags:
+                continue
             pipeline_info = {
                 "name": workflow.name,
                 "description": workflow.definition.description,

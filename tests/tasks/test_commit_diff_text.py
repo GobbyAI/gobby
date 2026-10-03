@@ -4,10 +4,17 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.tasks.commits import collect_commit_diff_text, collect_commit_rename_aliases_async
+from gobby.tasks.commits import (
+    collect_commit_diff_text,
+    collect_commit_diff_text_async,
+    collect_commit_rename_aliases_async,
+    collect_net_name_status_async,
+    resolve_task_tagged_commits_async,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -48,6 +55,51 @@ def repo(tmp_path: Path) -> Path:
 
 def test_empty_commit_set_has_no_patch() -> None:
     assert collect_commit_diff_text([], cwd=".") == ""
+
+
+@pytest.mark.parametrize("linked_first", [True, False])
+@pytest.mark.parametrize("linked_second", [True, False])
+@pytest.mark.asyncio
+async def test_sync_merge_ignores_unrelated_linked_history(
+    repo: Path, linked_first: bool, linked_second: bool
+) -> None:
+    initial = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "historical")
+    historical = _commit(repo, "historical.py", "HISTORICAL = True\n", "old task revision")
+    _git(repo, "checkout", "-q", "-b", "task", initial)
+    first = _commit(repo, "feature.py", "FEATURE = True\n", "[gobby-#42] task feature")
+    _git(repo, "checkout", "-q", "main")
+    second = _commit(repo, "incoming.py", "INCOMING = True\n", "target unrelated work")
+    _git(repo, "checkout", "-q", "task")
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", "[gobby-#42] sync target", "main")
+    sync = _git(repo, "rev-parse", "HEAD")
+    linked = [historical, sync]
+    if linked_first:
+        manager = MagicMock()
+        manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
+        with patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None):
+            rediscovered = await resolve_task_tagged_commits_async(
+                manager,
+                task_id="task-uuid",
+                since="2026-01-01T00:00:00Z",
+                cwd=repo,
+                project_name="gobby",
+            )
+        assert {_git(repo, "rev-parse", sha) for sha in rediscovered} == {first, sync}
+        manager.link_commit.assert_not_called()
+        linked = [historical, *rediscovered]
+    if linked_second:
+        linked.append(second)
+
+    diff = await collect_commit_diff_text_async(linked, cwd=repo)
+
+    assert "HISTORICAL = True" in diff
+    assert ("incoming.py" in diff) is (not linked_first or linked_second)
+    if linked_first:
+        assert "FEATURE = True" in diff
+    if linked_first and not linked_second:
+        paths = _paths(await collect_net_name_status_async(linked, cwd=repo))
+        assert set(paths) == {"historical.py", "feature.py"}
 
 
 @pytest.mark.asyncio
@@ -223,9 +275,17 @@ def test_clean_sync_merge_contributes_no_hunks(repo: Path) -> None:
     assert "+    return 2" in diff
 
 
-def test_conflict_sync_merge_contributes_only_its_resolution(repo: Path) -> None:
+@pytest.mark.parametrize("historical_link", [False, True])
+def test_conflict_sync_merge_contributes_only_its_resolution(
+    repo: Path, historical_link: bool
+) -> None:
     """A resolved sync merge contributes its remerge diff, not the incoming branch."""
     _commit(repo, "shared.py", "BASE = True\n", "base shared")
+    initial = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "old-task")
+    historical = _commit(repo, "historical.py", "HISTORICAL = True\n", "old task revision")
+    _git(repo, "checkout", "-q", "main")
+    assert _git(repo, "rev-parse", "HEAD") == initial
     _git(repo, "checkout", "-q", "-b", "side")
     _commit(repo, "shared.py", "SIDE = True\n", "side shared")
     _git(repo, "checkout", "-q", "main")
@@ -247,9 +307,120 @@ def test_conflict_sync_merge_contributes_only_its_resolution(repo: Path) -> None
     sync = _git(repo, "rev-parse", "HEAD")
     _commit(repo, "marker.py", "MARKER = True\n", "side follow")
 
-    diff = collect_commit_diff_text([sync, _git(repo, "rev-parse", "HEAD")], cwd=repo)
+    linked = [sync, _git(repo, "rev-parse", "HEAD")]
+    if historical_link:
+        linked.append(historical)
+    diff = collect_commit_diff_text(linked, cwd=repo)
 
     assert "unrelated.py" not in diff
     assert "remerge CONFLICT" in diff
     assert "+RESOLVED = True" in diff
     assert "MARKER = True" in diff
+
+
+def _merge(repo: Path, branch: str, message: str) -> str:
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", message, branch)
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def _branch_commit(repo: Path, branch: str, start: str, path: str, content: str) -> str:
+    _git(repo, "checkout", "-q", "-b", branch, start)
+    return _commit(repo, path, content, branch)
+
+
+def _paths(name_status: str | None) -> list[str]:
+    assert name_status is not None
+    fields = [field for field in name_status.split("\0") if field]
+    return fields[1::2]
+
+
+async def test_managed_integration_nets_only_its_linked_merges(repo: Path) -> None:
+    """#23302's shape: managed merges of a private branch and of an integration
+    branch holding an inner merge of two landed branches, with an unlinked foreign
+    commit on shared's first-parent chain between them (#23314)."""
+    private = _branch_commit(repo, "private", "main", "a.py", "A = 1\n")
+    _git(repo, "checkout", "-q", "main")
+    checkpoint_a = _merge(repo, "private", "managed checkpoint A")
+    foreign = _commit(repo, "foreign.py", "FOREIGN = True\n", "unlinked foreign commit")
+    landed_x = _branch_commit(repo, "x", foreign, "x.py", "X = 1\n")
+    landed_y = _branch_commit(repo, "y", foreign, "y.py", "Y = 1\n")
+    _git(repo, "checkout", "-q", "-b", "package", foreign)
+    inner_x = _merge(repo, "x", "inner merge x")
+    inner_y = _merge(repo, "y", "inner merge y")
+    _git(repo, "checkout", "-q", "main")
+    checkpoint_b = _merge(repo, "package", "managed checkpoint B")
+    linked = [private, checkpoint_a, landed_x, landed_y, inner_x, inner_y, checkpoint_b]
+
+    listing = await collect_net_name_status_async(linked, cwd=repo)
+    diff = await collect_commit_diff_text_async(linked, cwd=repo)
+
+    assert sorted(_paths(listing)) == ["a.py", "x.py", "y.py"]
+    assert "foreign.py" not in diff
+    for path in ("a.py", "x.py", "y.py"):
+        assert diff.count(f"diff --git a/{path} b/{path}") == 1
+
+
+async def test_linked_merge_and_its_second_parent_commits_apply_once(repo: Path) -> None:
+    """A merge's first-parent diff already carries its linked second-parent commits."""
+    first = _branch_commit(repo, "side", "main", "probe.py", "def probe():\n    return 1\n")
+    second = _commit(repo, "probe.py", "def probe():\n    return 2\n", "side second")
+    _git(repo, "checkout", "-q", "main")
+    landing = _merge(repo, "side", "land side")
+    follow = _commit(repo, "probe.py", "def probe():\n    return 3\n", "main follow")
+
+    listing = await collect_net_name_status_async([first, second, landing, follow], cwd=repo)
+    diff = await collect_commit_diff_text_async([first, second, landing, follow], cwd=repo)
+
+    assert _paths(listing) == ["probe.py"]
+    assert diff.count("diff --git a/probe.py b/probe.py") == 1
+    assert "+    return 3" in diff
+    assert "return 2" not in diff
+
+
+async def test_merge_that_needs_unlinked_first_parent_content_stays_unavailable(
+    repo: Path,
+) -> None:
+    """A merge whose diff builds on an unlinked commit cannot be netted from the base."""
+    started = _branch_commit(repo, "early", "main", "early.py", "EARLY = True\n")
+    _git(repo, "checkout", "-q", "main")
+    early = _merge(repo, "early", "land early")
+    foreign = _commit(repo, "probe.py", "def probe():\n    return 5\n", "unlinked foreign")
+    change = _branch_commit(repo, "late", foreign, "probe.py", "def probe():\n    return 6\n")
+    _git(repo, "checkout", "-q", "main")
+    late = _merge(repo, "late", "land late")
+
+    linked = [started, early, change, late]
+
+    assert await collect_net_name_status_async(linked, cwd=repo) is None
+
+
+async def test_conflicted_sync_inside_a_linked_merge_applies_once(repo: Path) -> None:
+    """A sync merge reached only through a linked merge's second parent arrives
+    with that merge's first-parent diff, so its resolution is not appended again."""
+    _commit(repo, "f.py", "BASE = True\n", "base f")
+    _branch_commit(repo, "q", "main", "f.py", "Q = True\n")
+    branch_work = _branch_commit(repo, "p", "main", "f.py", "P = True\n")
+    conflict = subprocess.run(
+        ["git", *_GIT_IDENTITY, "merge", "--no-ff", "--no-gpg-sign", "-m", "sync q", "q"],
+        cwd=repo,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert conflict.returncode != 0
+    (repo / "f.py").write_text("RESOLVED = True\n")
+    _git(repo, "add", "f.py")
+    _git(repo, "commit", "--no-gpg-sign", "-q", "-m", "sync q")
+    sync = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    landing = _merge(repo, "p", "land p")
+    follow = _commit(repo, "g.py", "G = True\n", "follow-up")
+    linked = [branch_work, sync, landing, follow]
+
+    listing = await collect_net_name_status_async(linked, cwd=repo)
+    diff = await collect_commit_diff_text_async(linked, cwd=repo)
+
+    assert _paths(listing) == ["f.py", "g.py"]
+    assert diff.count("diff --git a/f.py b/f.py") == 1
+    assert diff.count("+RESOLVED = True") == 1

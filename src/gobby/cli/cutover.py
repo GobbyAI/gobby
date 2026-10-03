@@ -71,7 +71,7 @@ def _run(
     timeout: int,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        result = subprocess.run(  # nosec B603 - fixed developer-tool arguments
+        result = subprocess.run(  # nosec B603 # fixed developer-tool arguments
             args,
             cwd=cwd,
             check=False,

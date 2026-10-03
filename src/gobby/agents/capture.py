@@ -1,4 +1,4 @@
-"""Serialized, durable capture-before-kill policy for managed tmux agents."""
+"""Serialized, durable capture-before-kill policy for managed agent terminals."""
 
 from __future__ import annotations
 
@@ -104,22 +104,6 @@ class CaptureStorage(Protocol):
         terminal_reason: AgentRunTerminalReason | None = None,
         result: str | None = None,
     ) -> AgentRun | None: ...
-
-
-class ManagedTmux(Protocol):
-    """Tmux operations used by managed async termination callers."""
-
-    async def has_session(self, name: str) -> bool: ...
-
-    async def capture_full_pane(self, session_name: str) -> str | None: ...
-
-    async def kill_session(
-        self,
-        name: str,
-        *,
-        missing_ok: bool = False,
-        timeout: float = 5.0,
-    ) -> bool: ...
 
 
 SyncTerminalCallback = Callable[[TerminalAction, str | None], AgentRun | None]
@@ -661,39 +645,5 @@ async def terminate_managed_runtime_async(
         session_alive=session_alive,
         capture=capture,
         kill=kill,
-        lock_timeout=lock_timeout,
-    )
-
-
-async def terminate_managed_tmux_async(
-    *,
-    storage: CaptureStorage,
-    run: AgentRun,
-    tmux: ManagedTmux,
-    action: TerminalAction,
-    reason: str | None = None,
-    result_prefix: str | None = None,
-    terminalize: AsyncTerminalCallback | None = None,
-    lock_timeout: float = _DEFAULT_LOCK_TIMEOUT_SECONDS,
-    terminal: Terminal | None = None,
-    runtime: TerminalRuntime | None = None,
-) -> CaptureTerminationResult:
-    """Compatibility wrapper; prefer terminate_managed_runtime_async."""
-    del tmux
-    if terminal is None or runtime is None:
-        return _failure(
-            TerminationErrorCode.KILL_FAILED,
-            "agent run has no terminal runtime",
-            run,
-        )
-    return await terminate_managed_runtime_async(
-        storage=storage,
-        run=run,
-        terminal=terminal,
-        runtime=runtime,
-        action=action,
-        reason=reason,
-        result_prefix=result_prefix,
-        terminalize=terminalize,
         lock_timeout=lock_timeout,
     )

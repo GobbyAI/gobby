@@ -23,6 +23,8 @@ PROJECT_VALIDATION_DETECTION_KEY = "validation_detection"
 _ENV_ASSIGNMENT_RE_PREFIX = "="
 _MAX_WRAPPER_NORMALIZATION_DEPTH = 8
 _EVIDENCE_ENV_ASSIGNMENT_PREFIX = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
+# env followed directly by an assignment; option forms such as `env -u` stay unstripped.
+_EVIDENCE_ENV_COMMAND_PREFIX = re.compile(r"(?:\S*/)?env\s+(?=[A-Za-z_][A-Za-z0-9_]*=)")
 _EVIDENCE_RTK_PREFIX = re.compile(r"^(uv\s+run\s+)?rtk\s+")
 # Every entry consumes the token after it, so an option missing here is read as
 # the command and the run goes uncredited. List both forms of a spelling pair;
@@ -507,6 +509,9 @@ def _unwrap_matched_rule(
         if wrapper.id == "nice":
             nice_command = _unwrap_nice_tokens(tokens)
             return ([nice_command], ()) if nice_command is not None else None
+        if wrapper.id == "env":
+            env_command = _unwrap_env_tokens(tokens)
+            return ([env_command], ()) if env_command is not None else None
         try:
             delimiter_index = tokens.index(wrapper.delimiter, consumed)
         except ValueError:
@@ -540,6 +545,23 @@ def _unwrap_nice_tokens(tokens: list[str]) -> list[str] | None:
     return tokens[cursor:]
 
 
+def _unwrap_env_tokens(tokens: list[str]) -> list[str] | None:
+    """Return the command env runs when env only sets variables, with or without --.
+
+    Options such as -i, -u, -C or -S change what the command sees, so they are refused.
+    """
+    if not tokens or not _matches_command_token(tokens[0], "env"):
+        return None
+    cursor = 1
+    while cursor < len(tokens) and _looks_like_env_assignment(tokens[cursor]):
+        cursor += 1
+    if cursor < len(tokens) and tokens[cursor] == "--":
+        cursor += 1
+    if cursor >= len(tokens) or tokens[cursor].startswith("-"):
+        return None
+    return tokens[cursor:]
+
+
 def normalize_validation_evidence_command(command: str) -> str:
     """Remove exit-preserving prefixes and use the category check's nice grammar."""
     cursor = _evidence_skip_whitespace(command, 0)
@@ -550,11 +572,26 @@ def normalize_validation_evidence_command(command: str) -> str:
         if next_cursor is None:
             break
         cursor = _evidence_skip_whitespace(command, next_cursor)
+    env_start = cursor
+    env_command = _EVIDENCE_ENV_COMMAND_PREFIX.match(command, cursor)
+    if env_command is not None:
+        cursor = env_command.end()
     while _EVIDENCE_ENV_ASSIGNMENT_PREFIX.match(command, cursor):
         word_end = _evidence_shell_word_end(command, cursor)
         if word_end is None or word_end >= len(command) or not command[word_end].isspace():
             break
         cursor = _evidence_skip_whitespace(command, word_end)
+    if env_command is not None and command.startswith("-", cursor):
+        delimiter_end = cursor + 2
+        if (
+            command.startswith("--", cursor)
+            and delimiter_end < len(command)
+            and command[delimiter_end].isspace()
+        ):
+            cursor = _evidence_skip_whitespace(command, delimiter_end)
+        else:
+            # An env option after the assignments: leave the whole form as written.
+            cursor = env_start
     core = _EVIDENCE_RTK_PREFIX.sub(r"\1", command[cursor:].strip(), count=1)
     parsed = parse_shell_command(core)
     if len(parsed.segments) == 1 and not parsed.operators:

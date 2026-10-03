@@ -7,6 +7,7 @@ have valid structure, and evaluate conditions properly.
 from __future__ import annotations
 
 import json
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -4635,6 +4636,36 @@ class TestCodeIndexNavigationRules:
         assert 'gcode grep -F "literal"' in (response.reason or "")
 
     @pytest.mark.asyncio
+    async def test_sibling_checkout_read_redirect_names_gcode_project(
+        self, db: HubDatabase, tmp_path: Path
+    ) -> None:
+        _sync_bundled(db)
+        # A space and an apostrophe in the root prove the rendered command quotes it.
+        primary, linked = self._linked_checkouts(tmp_path / "team's checkouts")
+        for checkout in (primary, linked):
+            (checkout / "src/long.py").write_text("value = 1\n" * 60, encoding="utf-8")
+        engine = RuleEngine(db)
+
+        async def reason(target: Path) -> str:
+            event = self._normalized_bash_event(
+                f"cat {shlex.quote(str(target))}", cwd=str(primary), project_path=str(primary)
+            )
+            response = await engine.evaluate(
+                event, session_id=SESSION_ID, variables=self._variables(loaded=True)
+            )
+            assert response.decision == "block"
+            return response.reason or ""
+
+        sibling = await reason(linked / "src/long.py")
+        own = await reason(primary / "src/long.py")
+
+        outline, symbol_at = sibling.split("`")[1:4:2]
+        assert shlex.split(outline) == ["gcode", "--project", str(linked), "outline", "<file>"]
+        assert shlex.split(symbol_at)[:3] == ["gcode", "--project", str(linked)]
+        assert "gcode outline <file>" in own
+        assert "--project" not in own
+
+    @pytest.mark.asyncio
     async def test_pathless_search_in_linked_worktree_defaults_scope_to_cwd(
         self, db: HubDatabase, tmp_path: Path
     ) -> None:
@@ -4906,6 +4937,29 @@ class TestCodeIndexNavigationRules:
 
             assert allowed.decision == "allow", command
             assert blocked.decision == "block", command
+
+    @pytest.mark.asyncio
+    async def test_provider_success_records_write_despite_stale_error_alias(
+        self, db: HubDatabase
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables(loaded=False)
+        write = self._event(
+            HookEventType.AFTER_TOOL,
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/app.py"},
+                "canonical_tool_kind": "write",
+                "canonical_file_paths": ["src/app.py"],
+                "is_error": True,
+            },
+        )
+        write.metadata["is_failure"] = False
+
+        await engine.evaluate(write, session_id=SESSION_ID, variables=variables)
+
+        assert variables["turn_written_paths"] == ["src/app.py"]
 
     @pytest.mark.asyncio
     async def test_gcode_fail_open_allows_fallback_search(self, db: HubDatabase) -> None:

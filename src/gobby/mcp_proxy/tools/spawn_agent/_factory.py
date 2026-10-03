@@ -23,6 +23,7 @@ from ._provider_resolution import (
     resolve_spawn_provider,
     spawning_session_provider,
 )
+from ._seat_adoption import pipeline_caller, pipeline_invocation_reply
 from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
@@ -359,7 +360,7 @@ def create_spawn_agent_registry(
         parent_session_id: str | None = None,
         project_path: str | None = None,
         notify_parent_on_completion: bool = True,
-        terminal_backend: Literal["tmux", "native"] | None = None,
+        terminal_backend: Literal["native"] | None = None,
         droid_mode: Literal["exec", "interactive"] = "exec",
         extra_write_paths: list[str] | None = None,
         write_paths_reason: str | None = None,
@@ -447,11 +448,31 @@ def create_spawn_agent_registry(
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
-        if reserved_run_id is not None:
+        from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
+
+        # Queued task-close reviewer runs keep their own validation below, even
+        # when a pipeline step is the ambient caller.
+        invoking_pipeline = (
+            await asyncio.to_thread(pipeline_caller, session_manager, caller_session_id)
+            if reserved_run_id is not None and agent != TASK_CLOSE_REVIEWER_AGENT
+            else None
+        )
+        if reserved_run_id is not None and invoking_pipeline is not None:
+            invocation_reply = await asyncio.to_thread(
+                pipeline_invocation_reply,
+                db,
+                session_manager,
+                invoking_pipeline,
+                parent_session_id=resolved_parent_session_id,
+                project_id=project_id,
+                reserved_run_id=reserved_run_id,
+            )
+            if invocation_reply is not None:
+                return invocation_reply
+        elif reserved_run_id is not None:
             from uuid import UUID
 
             from gobby.storage.agents import LocalAgentRunManager
-            from gobby.tasks.agentic_close_review import TASK_CLOSE_REVIEWER_AGENT
 
             if agent != TASK_CLOSE_REVIEWER_AGENT or task_id is not None or db is None:
                 return {"success": False, "error": "reserved_run_id is reviewer-internal"}

@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.proxy_relay import ProxyAttachment
 from gobby.servers.websocket.terminal_sizing import TerminalSizingMixin
 from gobby.servers.websocket.terminal_ws import TerminalWsMixin
@@ -55,11 +54,13 @@ async def test_external_tmux_row_resizes_and_releases(
     async def run_tmux(
         _manager: TmuxSessionManager, *args: str, **_kwargs: object
     ) -> tuple[int, str, str]:
+        if "#{pid}" in args[-1]:
+            return (0, "1658\t1784592177\n", "")
         commands.append(args)
         return (0, "", "")
 
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
-    runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
+    runtime = TmuxTerminalRuntime()
     server = _SizingServer(row, runtime)
     attachment = await server.lease_registry.attach("term-1", viewer="gclient")
 
@@ -94,11 +95,13 @@ async def test_proxy_socket_failure_applies_re_elected_size(
     async def run_tmux(
         _manager: TmuxSessionManager, *args: str, **_kwargs: object
     ) -> tuple[int, str, str]:
+        if "#{pid}" in args[-1]:
+            return (0, "1658\t1784592177\n", "")
         commands.append(args)
         return (0, "", "")
 
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
-    runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
+    runtime = TmuxTerminalRuntime()
     server = _SizingServer(row, runtime)
     web = await server.lease_registry.attach("term-1", viewer="web")
     gclient = await server.lease_registry.attach("term-1", viewer="gclient")
@@ -149,11 +152,13 @@ async def test_web_viewer_pins_tmux_window_only_while_holding_the_lease(
     async def run_tmux(
         _manager: TmuxSessionManager, *args: str, **_kwargs: object
     ) -> tuple[int, str, str]:
+        if "#{pid}" in args[-1]:
+            return (0, "1658\t1784592177\n", "")
         commands.append(args)
         return (0, "", "")
 
     monkeypatch.setattr(TmuxSessionManager, "_run", run_tmux)
-    runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
+    runtime = TmuxTerminalRuntime()
     server = _SizingServer(row, runtime)
     web = await server.lease_registry.attach("term-1", viewer="web", backend="tmux")
     websocket = object()

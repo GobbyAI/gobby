@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
-import subprocess  # nosec B404 - direct argv probes of a user-installed executable
+import subprocess  # nosec B404 # direct argv probes of a user-installed executable
 import sys
 import tomllib
 from collections.abc import Mapping, Sequence
@@ -113,7 +113,7 @@ def platform_paths(
 
 def _run_probe(argv: Sequence[str], *, timeout: float) -> tuple[int, bytes, bytes] | None:
     try:
-        completed = spawn.run(  # nosec B603 - executable is an explicit candidate path
+        completed = spawn.run(  # nosec B603 # executable is an explicit candidate path
             list(argv),
             capture_output=True,
             check=False,

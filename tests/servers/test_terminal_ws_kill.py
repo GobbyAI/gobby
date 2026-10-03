@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
 from gobby.servers.websocket.server import WebSocketServer
 from gobby.servers.websocket.terminal_ws_create import TerminalCreateMixin
 from gobby.storage.hub.protocol import HubDatabase
@@ -116,7 +115,7 @@ async def test_kill_refuses_live_external_tmux_row_without_probing_its_socket(
     async def fake_kill(
         self: TmuxSessionManager, name: str, *, missing_ok: bool = False, timeout: float = 5.0
     ) -> bool:
-        killed.append((self.config.socket_path, name))
+        killed.append((self.base_args()[-1], name))
         return True
 
     monkeypatch.setattr(TmuxSessionManager, "kill_session", fake_kill)
@@ -128,7 +127,7 @@ async def test_kill_refuses_live_external_tmux_row_without_probing_its_socket(
     config.max_message_size = 1024
     server = WebSocketServer(config, MagicMock(), AsyncMock(return_value="test-user"))
     server.terminal_manager = manager
-    runtime = TmuxTerminalRuntime(TmuxSessionManager(TmuxConfig(socket_name="gobby")))
+    runtime = TmuxTerminalRuntime()
     server.terminal_runtime_registry = MagicMock(resolve=lambda _backend: runtime)
     broadcast = AsyncMock()
     cast(Any, server).broadcast_tmux_session_event = broadcast

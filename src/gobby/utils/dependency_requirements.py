@@ -21,7 +21,6 @@ DependencyState = Literal["healthy", "missing", "outdated", "invalid", "timed_ou
 DependencyPayload = dict[str, str | None]
 
 PYTHON_MIN_VERSION = "3.13.0"
-TMUX_MIN_VERSION = "3.2"
 GIT_MIN_VERSION = "2.38.0"
 NODE_MIN_VERSION = "20.11.0"
 DOCKER_COMPOSE_MIN_VERSION = "2.7.0"
@@ -145,11 +144,6 @@ def unsupported_platform_error() -> str | None:
     )
 
 
-def requires_tmux() -> bool:
-    """Return whether the supported host uses tmux for terminal sessions."""
-    return os.name == "posix" and not is_native_windows()
-
-
 def parse_version_output(output: str) -> DetectedVersion | None:
     """Extract a comparable semantic version from common CLI version output."""
     match = _VERSION_PATTERN.search(output.strip())
@@ -249,14 +243,6 @@ def collect_dependency_report(
     install and start preflight pass none, so every contract is still decided.
     """
     probes: dict[str, Callable[[], DependencyStatus]] = {}
-    if requires_tmux():
-        probes["tmux"] = lambda: _command_status(
-            name="tmux",
-            executable="tmux",
-            arguments=("-V",),
-            minimum_version=TMUX_MIN_VERSION,
-            install_action="Install tmux 3.2 or newer and retry.",
-        )
     probes["git"] = lambda: _command_status(
         name="Git",
         executable="git",
@@ -297,9 +283,7 @@ def collect_dependency_report(
     }
     docker_running = running.collect()
     required = {
-        name: statuses[name]
-        for name in ("tmux", "git", "node", "srt", "impeccable")
-        if name in statuses
+        name: statuses[name] for name in ("git", "node", "srt", "impeccable") if name in statuses
     }
     compose = statuses["docker_compose"]
     if managed_services:

@@ -18,10 +18,12 @@ from gobby.config.terminals import TerminalConfig
 from gobby.config.tmux import ATTACH_HISTORY_LINES
 from gobby.storage.terminals import TerminalManager
 from gobby.terminals.host_client import (
+    HelloResult,
     HostClient,
     HostCommandError,
     HostManagerStopped,
     HostUnavailableError,
+    PingResult,
 )
 from gobby.terminals.host_control import HostControlError
 from gobby.terminals.host_event_reader import InputActivitySink, arm_events
@@ -40,6 +42,7 @@ from gobby.terminals.host_protocol import (
 from gobby.terminals.host_reap import reap_recorded_process
 from gobby.terminals.host_reconcile import ReconcileError, reconcile_host_inventory
 from gobby.terminals.host_upgrade import HostUpgradeCoordinator
+from gobby.terminals.input_grants import HandoffKey, expire_native_input_handoffs
 from gobby.utils.machine_id import require_machine_id
 from gobby.utils.native_bin import resolve_native_bin
 
@@ -104,6 +107,7 @@ class TerminalHostManager:
             health_interval=config.health_interval_seconds,
             monotonic=lambda: self._monotonic(),
         )
+        self._input_handoff_deadlines: dict[HandoffKey, float] = {}
         self.enabled = config.enabled
         self.running = False
         self.adopted = False
@@ -487,6 +491,12 @@ class TerminalHostManager:
         if manager is None or self.upgrade.is_open:
             return
         client = self._client
+        epoch = host_epoch if host_epoch is not None else (self.host_epoch or "")
+        machine_id = require_machine_id()
+        if client is not None and epoch:
+            await expire_native_input_handoffs(
+                manager, client, machine_id, epoch, self._input_handoff_deadlines, self._monotonic()
+            )
         rows: list[Any] = [] if host_rows is None else host_rows
         if host_rows is None and client is not None:
             try:
@@ -494,7 +504,6 @@ class TerminalHostManager:
             except Exception as exc:
                 self.last_error = str(exc)
                 return
-        epoch = host_epoch if host_epoch is not None else (self.host_epoch or "")
 
         async def kill(host_terminal_id: str) -> None:
             if client is None:
@@ -504,7 +513,7 @@ class TerminalHostManager:
         try:
             error = await reconcile_host_inventory(
                 terminal_manager=manager,
-                machine_id=require_machine_id(),
+                machine_id=machine_id,
                 host_epoch=epoch,
                 host_rows=rows,
                 spawn_in_doubt_seconds=self.terminal_config.spawn_in_doubt_seconds,
@@ -654,6 +663,10 @@ class TerminalHostManager:
         log_dir.mkdir(parents=True, exist_ok=True)
         log_path = log_dir / HOST_LOG_NAME
         env = os.environ.copy()
+        # Agents inherit the host env; a daemon started inside tmux must not
+        # hand them its own pane as their terminal context.
+        env.pop("TMUX", None)
+        env.pop("TMUX_PANE", None)
         env["GTERM_LOG_FILE"] = str(log_path)
         with log_path.open("a", encoding="utf-8") as log_file:
             return __import__("subprocess").Popen(  # nosec B603
@@ -856,6 +869,7 @@ class TerminalHostManager:
         self._health_task = loop.create_task(self._health_loop(), name="gterm-host-health")
 
     def _record_healthy_ping(self) -> None:
+        self.last_error = None
         now = self._monotonic()
         if self._healthy_since is None:
             self._healthy_since = now
@@ -864,10 +878,22 @@ class TerminalHostManager:
             self.backoff_seconds = 0.0
             self._restart_failures = 0
 
+    def _adopt_client(self, client: Any, hello: HelloResult, ping: PingResult) -> None:
+        """Make a freshly probed connection current; its hello and ping count as healthy."""
+        self._client = client
+        self.host_epoch = ping.host_epoch or hello.host_epoch
+        self.host_pid = ping.host_pid
+        self.capabilities = tuple(hello.capabilities)
+        self._record_healthy_ping()
+
     async def _health_loop(self) -> None:
         interval = self.config.health_interval_seconds
         while not self._stop_requested:
-            await self._sleep(interval)
+            delay = interval
+            if self._input_handoff_deadlines:
+                until_expiry = min(self._input_handoff_deadlines.values()) - self._monotonic()
+                delay = min(delay, max(1.0, until_expiry))
+            await self._sleep(delay)
             client = self._client
             if client is None:
                 if self.host_mismatch is not None:
@@ -885,8 +911,7 @@ class TerminalHostManager:
                         continue
                     return
                 await self._close_client(client)
-                self._client, hello, _ = fresh
-                self.capabilities = tuple(hello.capabilities)
+                self._adopt_client(*fresh)
                 continue
             try:
                 ping = await client.ping()
@@ -897,16 +922,14 @@ class TerminalHostManager:
                 self._record_healthy_ping()
             except Exception as exc:
                 self.last_error = str(exc)
+                self._healthy_since = None
                 pid = self.host_pid
                 if isinstance(pid, int) and pid > 0 and self._pid_identity(pid):
                     logger.warning("gterm control probe failed; reconnecting live host: %s", exc)
                     try:
                         await self._close_client(client)
                         replacement, hello, ping = await self._fresh_probe()
-                        self._client = replacement
-                        self.host_epoch = ping.host_epoch or hello.host_epoch
-                        self.host_pid = ping.host_pid
-                        self.capabilities = tuple(hello.capabilities)
+                        self._adopt_client(replacement, hello, ping)
                         await self.upgrade.observe(replacement, ping, self.capabilities)
                     except Exception as reconnect_exc:
                         self.last_error = str(reconnect_exc)

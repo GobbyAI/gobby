@@ -41,7 +41,7 @@ _DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "epic_qa", "pr", "merge"
 # Taskless plan review and enhancement coordinate the caller's current plan
 # workflow and have no build task isolation to inherit.
 _TASKLESS_MAIN_CONTEXT_AGENT_SLUGS = frozenset(
-    {"plan-adversary-taskless", "plan-enhancer-taskless"}
+    {"plan-adversary-taskless-old", "plan-enhancer-taskless-old"}
 )
 
 SpawnIsolation = Literal["none", "worktree", "clone"]

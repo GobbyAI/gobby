@@ -882,3 +882,68 @@ def test_yolo_fallback_then_reemit_recovers(tmp_path: Path) -> None:
     assert first_outcome == "fallback_force_approve"
     assert second_outcome == "fresh"
     parse_plan(plan, parse_mode="expansion")
+
+
+@pytest.mark.parametrize(
+    ("title", "targets", "artifact", "domain"),
+    [
+        (
+            "Session lists read display name",
+            ["web/src/components/SessionList.tsx", "web/src/hooks/**/*.ts"],
+            "web/src/components/SessionList.tsx",
+            "frontend",
+        ),
+        (
+            "Pane chrome shows the seat",
+            ["crates/gclient/src/pane_chrome/mod.rs"],
+            "crates/gclient/src/pane_chrome/mod.rs",
+            "frontend",
+        ),
+        (
+            "Client tab names follow the seat",
+            ["src/gobby/terminals/tabs.py"],
+            "src/gobby/terminals/tabs.py",
+            "backend",
+        ),
+        (
+            "Display name reaches the session list",
+            ["src/gobby/sessions/naming.py", "web/src/components/SessionList.tsx"],
+            "src/gobby/sessions/naming.py",
+            "fullstack",
+        ),
+        (
+            "Rename the seat label",
+            ["docs/guides/seats.md"],
+            "docs/guides/seats.md",
+            "backend",
+        ),
+        ("Rename the react label", [], "docs/guides/seats.md", "frontend"),
+        ("Rename the seat label", [], "docs/guides/seats.md", "backend"),
+    ],
+    ids=[
+        "web-only",
+        "gclient-only",
+        "gobby-only",
+        "web-and-gobby",
+        "unclassifiable-targets-default",
+        "no-targets-keyword",
+        "no-targets-default",
+    ],
+)
+def test_code_entry_domain_derives_from_targets(
+    tmp_path: Path, title: str, targets: list[str], artifact: str, domain: str
+) -> None:
+    target_block = "\n".join(["Targets:", *(f"- `{path}` — edited" for path in targets)])
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "> **Plan ID:** domain-plan\n\n"
+        "## P1 Phase\n`kind: framing`\n\n"
+        f"### 1.1 {title} [category: code]\n`kind: deliverable`\n\n"
+        f"{target_block if targets else 'No targets.'}\n\n"
+        f"**Acceptance:**\n- 1.1.1 — The label is shown. file: `{artifact}`\n",
+        encoding="utf-8",
+    )
+
+    entries = derive_manifest_entries(parse_plan(plan, parse_mode="draft"), {})
+
+    assert [entry["implementation_domain"] for entry in entries] == [domain]

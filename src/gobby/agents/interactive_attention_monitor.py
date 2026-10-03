@@ -199,7 +199,7 @@ class InteractiveAttentionMonitor:
                     native_unavailable = True
                     _host_outage_log(
                         logger,
-                        logging.INFO,
+                        logging.DEBUG,
                         "InteractiveAttentionMonitor: native host unavailable; retrying next pass",
                     )
                     continue

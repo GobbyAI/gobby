@@ -83,41 +83,7 @@ def init(
     _maybe_install_git_hooks_for_init(Path(result.project_path).resolve())
 
     if not result.already_existed:
-        # Check tmux availability
         import shutil
-
-        from gobby.agents.tmux.wsl_compat import needs_wsl
-
-        if needs_wsl():
-            if not shutil.which("wsl"):
-                click.echo(
-                    "  Warning: WSL not found. Install: wsl --install, then: sudo apt install tmux"
-                )
-            else:
-                # WSL available — check if tmux is installed inside it
-                try:
-                    tmux_check = subprocess.run(
-                        ["wsl", "which", "tmux"],
-                        capture_output=True,
-                        timeout=5,
-                    )
-                    if tmux_check.returncode != 0:
-                        click.echo(
-                            "  Warning: tmux not found inside WSL. "
-                            "Install: wsl -e sudo apt install tmux"
-                        )
-                except (subprocess.TimeoutExpired, OSError):
-                    pass  # WSL may be slow to start; don't block init
-        elif not shutil.which("tmux"):
-            import platform as _platform
-
-            if _platform.system() == "Darwin":
-                click.echo("  Warning: tmux not found. Install: brew install tmux")
-            else:
-                click.echo(
-                    "  Warning: tmux not found. Install: sudo apt install tmux "
-                    "(or sudo dnf install tmux)"
-                )
 
         # Check clawhub CLI (skill hub search)
         if not shutil.which("clawhub"):

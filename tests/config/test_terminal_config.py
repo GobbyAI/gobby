@@ -32,11 +32,13 @@ def test_shared_terminal_config_precedes_host_config() -> None:
     assert type(daemon.terminals) is TerminalConfig
     assert type(daemon.tmux) is TmuxConfig
 
-    overridden = DaemonConfig.model_validate(
-        {"terminals": {"default_backend": "tmux", "spawn_in_doubt_seconds": 90.0}}
-    )
-    assert overridden.terminals.default_backend == "tmux"
+    overridden = DaemonConfig.model_validate({"terminals": {"spawn_in_doubt_seconds": 90.0}})
+    assert overridden.terminals.default_backend == "native"
     assert overridden.terminals.spawn_in_doubt_seconds == 90.0
+
+    # tmux is a spawn-less adapter for external panes; it cannot be the spawn default.
+    with pytest.raises(ValidationError):
+        DaemonConfig.model_validate({"terminals": {"default_backend": "tmux"}})
 
     with pytest.raises(ValidationError):
         DaemonConfig.model_validate({"terminals": {"default_backend": "ssh"}})

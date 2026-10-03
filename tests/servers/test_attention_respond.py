@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.app_context import ServiceContainer
@@ -80,7 +82,7 @@ def _client(
         return function(*args, **kwargs)
 
     async def resolve_pane(_state: AttentionState) -> AttentionPane:
-        return AttentionPane(target="%42", tmux_cmd=("tmux",), capture=capture)
+        return AttentionPane(target="%42", capture=capture)
 
     server = SimpleNamespace(
         services=SimpleNamespace(
@@ -94,7 +96,7 @@ def _client(
     app = FastAPI()
     app.include_router(
         create_attention_router(
-            server,
+            cast(HTTPServer, server),
             pane_resolver=resolve_pane,
             injector=injector,
         )
@@ -150,10 +152,11 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
         assert changed.json()["detail"]["code"] == "prompt_changed"
         assert injected == []
 
-        pane_output = APPROVAL_PROMPT
+        moved = manager.get(state.entry_id)
+        assert moved is not None
         accepted = client.post(
             f"/api/attention/{state.entry_id}/respond",
-            json=_request(state, {"option": 1}),
+            json=_request(moved, {"option": 1}),
         )
         assert accepted.status_code == 200
         assert accepted.json() == {"status": "accepted", "entry_id": state.entry_id}
@@ -168,6 +171,7 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
         assert retired.status_code == 409
         assert retired.json()["detail"]["code"] == "stale_episode"
 
+        pane_output = APPROVAL_PROMPT
         recurring = _open_prompt(manager)
         assert recurring.attention_id != state.attention_id
         text_response = client.post(
@@ -182,6 +186,61 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
             json=_request(recurring, {"text": "yes", "key": "enter"}),
         )
         assert invalid_variants.status_code == 422
+
+
+def test_prompt_changed_moves_the_episode_to_the_current_pane(temp_db: HubDatabase) -> None:
+    # The stored fingerprint is refreshed only by the lifecycle scan (30s), so
+    # a 409 that names the stale identity makes every retry fail until then.
+    manager = _manager(temp_db)
+    state = _open_prompt(manager)
+    pane_output = APPROVAL_PROMPT.replace("Allow", "Always allow")
+    injected: list[AttentionAnswer] = []
+
+    async def capture() -> str:
+        return pane_output
+
+    async def inject(_pane: AttentionPane, answer: AttentionAnswer) -> None:
+        injected.append(answer)
+
+    with _client(manager, capture=capture, injector=inject) as client:
+        changed = client.post(
+            f"/api/attention/{state.entry_id}/respond",
+            json=_request(state, {"option": 1}),
+        )
+        assert changed.status_code == 409
+        detail = changed.json()["detail"]
+        current = manager.get(state.entry_id)
+        assert current is not None
+        assert current.state == "blocked"
+        assert current.fingerprint == PromptDetector(DETECTION_REGISTRY, "claude").pane_fingerprint(
+            pane_output
+        )
+        assert current.attention_id != state.attention_id
+        assert detail == {
+            "code": "prompt_changed",
+            "attention_id": current.attention_id,
+            "fingerprint": current.fingerprint,
+        }
+        assert injected == []
+
+        retried = client.post(
+            f"/api/attention/{state.entry_id}/respond",
+            json=_request(current, {"option": 1}),
+        )
+        assert retried.status_code == 200
+        assert injected[-1].option == 1
+
+        reopened = _open_prompt(manager)
+        pane_output = "Done.\n"
+        gone = client.post(
+            f"/api/attention/{reopened.entry_id}/respond",
+            json=_request(reopened, {"option": 1}),
+        )
+        assert gone.status_code == 409
+        assert gone.json()["detail"]["code"] == "prompt_changed"
+        retired = manager.get(reopened.entry_id)
+        assert retired is not None
+        assert retired.state is None
 
 
 def test_respond_routes_through_coordinator_with_cas(
@@ -298,7 +357,7 @@ def test_partial_injection_and_stall_paths(temp_db: HubDatabase) -> None:
         payload=detector.prompt_payload("provider still unavailable", kind="stall").to_payload(),
     ).current
     assert stalled is not None
-    failure_stage: str | None = None
+    failure_stage: Literal["none", "partial"] | None = None
     injection_calls = 0
 
     async def capture() -> str:
@@ -452,11 +511,11 @@ def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> Non
         session_manager=None,
         task_manager=MagicMock(),
         attention_manager=_manager(temp_db),
-        detection_registry=DETECTION_REGISTRY,
+        detection_registry=cast(DetectionManifestRegistry, DETECTION_REGISTRY),
     )
     server = HTTPServer(services=services, test_mode=True, bootstrap_config=BootstrapConfig())
 
-    paths = {route.path for route in server.app.routes}
+    paths = {route.path for route in server.app.routes if isinstance(route, APIRoute)}
 
     assert "/api/attention/{entry_id}/respond" in paths
 
@@ -498,7 +557,7 @@ def test_attention_router_composes_session_pane_dependencies(
         )
     )
     app = FastAPI()
-    app.include_router(create_attention_router(server, injector=inject))
+    app.include_router(create_attention_router(cast(HTTPServer, server), injector=inject))
 
     with TestClient(app) as client:
         response = client.post(
@@ -508,83 +567,3 @@ def test_attention_router_composes_session_pane_dependencies(
 
     assert response.status_code == 200
     assert injected[-1].option == 1
-
-
-@pytest.mark.parametrize(
-    ("answer", "expected_payload", "expected_key"),
-    [
-        (AttentionAnswer(option=2), "2", "Enter"),
-        (AttentionAnswer(text="line one\nline two"), "line one\nline two", "Enter"),
-        (AttentionAnswer(key="enter"), None, "Enter"),
-        (AttentionAnswer(key="escape"), None, "Escape"),
-        (AttentionAnswer(key="tab"), None, "Tab"),
-        (AttentionAnswer(key="up"), None, "Up"),
-        (AttentionAnswer(key="down"), None, "Down"),
-    ],
-)
-@pytest.mark.asyncio
-async def test_attention_injection_sequences(
-    answer: AttentionAnswer,
-    expected_payload: str | None,
-    expected_key: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.agents.tmux import text_injection
-
-    commands: list[tuple[str, ...]] = []
-
-    async def record(command: Any, *, timeout: float) -> None:
-        del timeout
-        commands.append(tuple(command))
-
-    monkeypatch.setattr(text_injection, "_run_tmux_command", record)
-
-    await text_injection.inject_attention_answer_to_tmux_target(
-        "%42",
-        option=answer.option,
-        text=answer.text,
-        key=answer.key,
-        enter_delay_seconds=0,
-    )
-
-    send_keys = [command for command in commands if "send-keys" in command]
-    assert send_keys[-1][-1] == expected_key
-    if expected_payload is None:
-        assert len(commands) == 1
-    else:
-        set_buffer = next(command for command in commands if "set-buffer" in command)
-        assert set_buffer[-1] == expected_payload
-        assert send_keys == [("tmux", "send-keys", "-t", "%42", "Enter")]
-
-
-@pytest.mark.parametrize(
-    ("fail_on_command", "expected_stage"),
-    [(1, "none"), (2, "none"), (4, "partial")],
-)
-@pytest.mark.asyncio
-async def test_attention_injection_failure_stage_tracks_delivered_bytes(
-    fail_on_command: int,
-    expected_stage: str,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.agents.tmux import text_injection
-
-    command_count = 0
-
-    async def fail_at_selected_command(command: Any, *, timeout: float) -> None:
-        nonlocal command_count
-        del command, timeout
-        command_count += 1
-        if command_count == fail_on_command:
-            raise RuntimeError("tmux failed")
-
-    monkeypatch.setattr(text_injection, "_run_tmux_command", fail_at_selected_command)
-
-    with pytest.raises(AttentionInjectionError) as error:
-        await text_injection.inject_attention_answer_to_tmux_target(
-            "%42",
-            option=1,
-            enter_delay_seconds=0,
-        )
-
-    assert error.value.stage == expected_stage

@@ -16,11 +16,9 @@ from uuid import NAMESPACE_URL, uuid5
 import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.tmux import configure_tmux
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import resolve_stage_manifest_specs
 from gobby.config.app import DaemonConfig
-from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.agents import LocalAgentRunManager
@@ -64,12 +62,6 @@ def _local_machine_identity() -> Iterator[None]:
     # import style flows through the cache.
     with patch("gobby.utils.machine_id._cached_machine_id", LOCAL_MACHINE_ID):
         yield
-
-
-@pytest.fixture(autouse=True)
-def _configure_tmux() -> None:
-    # Per test: the root conftest resets the tmux globals around every test.
-    configure_tmux(TmuxConfig())
 
 
 class _MiniPipeline:

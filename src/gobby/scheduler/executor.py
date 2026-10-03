@@ -38,6 +38,10 @@ class CronShellError(RuntimeError):
         self.output = output
 
 
+class CronSessionError(RuntimeError):
+    """A cron pipeline launch could not obtain its cron session."""
+
+
 @dataclass(frozen=True)
 class ActionOutcome:
     """Normalized cron action result."""
@@ -462,7 +466,13 @@ class CronExecutor:
             )
 
         sm = pipeline_executor.session_manager
-        session_id = await self._create_cron_session(job, run, sm, pipeline_name) if sm else None
+        if sm is None:
+            raise CronSessionError(
+                f"pipeline '{pipeline_name}' has no session manager for its cron session"
+            )
+        session_id = await self._create_cron_session(job, run, sm, pipeline_name)
+        if session_id is None:
+            raise CronSessionError(f"pipeline '{pipeline_name}' could not create its cron session")
 
         # Set project context so MCP tools can resolve task refs like #9916
         # Must include project_path — spawn_agent_impl requires it.

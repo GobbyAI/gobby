@@ -219,7 +219,7 @@ def test_review_learning_is_hidden_from_skill_discovery() -> None:
 def test_plan_skill_documents_parallel_review_contract() -> None:
     body = _skill_body(PLAN_REVIEW_SKILL) + _skill_body(PLAN_SKILL)
     for phrase in (
-        "plan-adversary-taskless",
+        "plan-adversary-taskless-old",
         "prepare_plan_review_round",
         "bind_evidence_run",
         "coverage_attestation",
@@ -369,7 +369,7 @@ def test_interactive_approval_sequence(
     plan_contract = _skill_body(PLAN_SKILL)
     draft_contract = _skill_body(PLAN_DRAFT_SKILL)
     adversary_contract = _skill_body(PLAN_REVIEW_SKILL)
-    taskless_agent = (WORKFLOWS / "plan-adversary-taskless.yaml").read_text(encoding="utf-8")
+    taskless_agent = (WORKFLOWS / "plan-adversary-taskless-old.yaml").read_text(encoding="utf-8")
     protocol = plan_contract.split("## Reviewed approval", 1)[1].split("## Approval without", 1)[0]
     normalized_protocol = " ".join(protocol.split())
 

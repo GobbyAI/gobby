@@ -6,7 +6,8 @@ rules:
     event: after_tool
     enabled: true
     priority: 50
-    when: "event.metadata.get('is_failure', False) or event.data.get('is_error', False)"
+    # The canonical outcome: a provider hook's success outranks a stale is_error alias.
+    when: "tool_call_failed()"
     effects:
       - type: set_variable
         variable: tool_block_pending

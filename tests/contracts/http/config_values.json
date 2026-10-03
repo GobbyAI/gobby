@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "config_values",
   "family": "config",
+  "backend": "up",
   "credential": "operator",
   "request": {
     "method": "GET",
@@ -869,10 +870,6 @@
           "auto_enter_agent_interval_seconds": 30,
           "auto_enter_agent_terminals": true,
           "auto_enter_approval_prompts": true,
-          "command": "tmux",
-          "config_file": null,
-          "enabled": true,
-          "history_limit": 10000,
           "idle_check_enabled": true,
           "idle_reprompt_delay_seconds": 300,
           "idle_timeout_seconds": 60,
@@ -884,13 +881,8 @@
           "memory_watchdog_grace_seconds": 120.0,
           "reasoning_watchdog_interrupt_enabled": true,
           "reasoning_watchdog_settle_seconds": 0.2,
-          "registration_timeout_seconds": 30.0,
-          "session_prefix": "gobby",
-          "socket_name": "gobby",
-          "socket_path": "@mask@",
           "system_memory_critical_available_percent": 4.0,
-          "system_memory_warn_available_percent": 8.0,
-          "wsl_distribution": null
+          "system_memory_warn_available_percent": 8.0
         },
         "tool_approval": {
           "default_policy": "auto",
@@ -1939,10 +1931,6 @@
           "auto_enter_agent_interval_seconds": 30,
           "auto_enter_agent_terminals": true,
           "auto_enter_approval_prompts": true,
-          "command": "tmux",
-          "config_file": null,
-          "enabled": true,
-          "history_limit": 10000,
           "idle_check_enabled": true,
           "idle_reprompt_delay_seconds": 300,
           "idle_timeout_seconds": 60,
@@ -1954,13 +1942,8 @@
           "memory_watchdog_grace_seconds": 120.0,
           "reasoning_watchdog_interrupt_enabled": true,
           "reasoning_watchdog_settle_seconds": 0.2,
-          "registration_timeout_seconds": 30.0,
-          "session_prefix": "gobby",
-          "socket_name": "gobby",
-          "socket_path": "@mask@",
           "system_memory_critical_available_percent": 4.0,
-          "system_memory_warn_available_percent": 8.0,
-          "wsl_distribution": null
+          "system_memory_warn_available_percent": 8.0
         },
         "tool_approval": {
           "default_policy": "auto",
@@ -2181,8 +2164,6 @@
   },
   "mask": [
     "/response/body/desired/terminal_host/socket_dir",
-    "/response/body/desired/tmux/socket_path",
-    "/response/body/active/terminal_host/socket_dir",
-    "/response/body/active/tmux/socket_path"
+    "/response/body/active/terminal_host/socket_dir"
   ]
 }

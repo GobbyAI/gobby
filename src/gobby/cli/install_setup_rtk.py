@@ -10,7 +10,7 @@ import platform
 import re
 import shlex
 import shutil
-import subprocess  # nosec B404 - direct argv package-manager invocation
+import subprocess  # nosec B404 # direct argv package-manager invocation
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -169,7 +169,7 @@ def _download_fallback(*, home: Path | None = None) -> RtkProbe:
 
 def _brew_probe(brew: str) -> RtkProbe | None:
     try:
-        prefix = subprocess.run(  # nosec B603 - direct Homebrew argv
+        prefix = subprocess.run(  # nosec B603 # direct Homebrew argv
             [brew, "--prefix", "rtk"],
             capture_output=True,
             check=False,
@@ -201,7 +201,7 @@ def ensure_rtk(
     brew = shutil.which("brew", path=values.get("PATH", ""))
     if brew:
         try:
-            installed = subprocess.run(  # nosec B603 - direct Homebrew argv
+            installed = subprocess.run(  # nosec B603 # direct Homebrew argv
                 [brew, "install", "rtk"],
                 capture_output=True,
                 check=False,

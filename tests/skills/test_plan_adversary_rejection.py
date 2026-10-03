@@ -14,7 +14,7 @@ pytestmark = pytest.mark.unit
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 PLAN_REVIEW = PROJECT_ROOT / "src/gobby/install/shared/skills/gobby/references/plan/review.md"
-ADVERSARY = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/plan-adversary.yaml"
+ADVERSARY = PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/plan-adversary-old.yaml"
 
 MALFORMED_CASES = [
     (

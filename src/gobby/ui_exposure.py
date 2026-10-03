@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess  # nosec B404 - fixed tailscale CLI commands
+import subprocess  # nosec B404 # fixed tailscale CLI commands
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -283,7 +283,7 @@ def _run_json(arguments: list[str]) -> dict[str, object]:
     if executable is None:
         raise UiExposeError("tailscale executable was not found")
     try:
-        result = subprocess.run(  # nosec B603 - executable resolved from PATH, fixed arguments
+        result = subprocess.run(  # nosec B603 # executable resolved from PATH, fixed arguments
             [executable, *arguments],
             capture_output=True,
             text=True,
@@ -313,7 +313,7 @@ def _run_mutation(arguments: list[str]) -> None:
     if executable is None:
         raise UiExposeError("tailscale executable was not found")
     try:
-        result = subprocess.run(  # nosec B603 - executable resolved from PATH, fixed arguments
+        result = subprocess.run(  # nosec B603 # executable resolved from PATH, fixed arguments
             [executable, *arguments],
             capture_output=True,
             text=True,

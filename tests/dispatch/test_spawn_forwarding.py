@@ -97,7 +97,7 @@ async def test_terminal_backend_reaches_the_effect(
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
         captured.update(kwargs)
-        backend = str(kwargs.get("terminal_backend") or "tmux")
+        backend = str(kwargs.get("terminal_backend") or "native")
         manager = TerminalManager(temp_db)
         terminal_id = str(uuid4())
         manager.create_pending(
@@ -163,10 +163,10 @@ async def test_terminal_backend_reaches_the_effect(
         prompt=enhancement.prompt,
         initial_variables=enhancement.initial_variables,
         additional_skills=enhancement.additional_skills,
-        terminal_backend="tmux",
+        terminal_backend="native",
     )
     await spawn_agent(enhanced, db=temp_db, services=services)
-    assert captured["terminal_backend"] == "tmux"
+    assert captured["terminal_backend"] == "native"
 
     scheduled_captured: dict[str, object] = {}
 
@@ -217,5 +217,4 @@ async def test_terminal_backend_reaches_the_effect(
     ):
         outcome = await executor._execute_agent_spawn(job, run)
     assert outcome.status == "dispatched"
-    assert scheduled_captured["terminal_backend"] in {"tmux", "native"}
-    assert scheduled_captured["terminal_backend"] is not None
+    assert scheduled_captured["terminal_backend"] == "native"

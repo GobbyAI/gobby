@@ -289,28 +289,29 @@ def test_managed_services_require_compose(monkeypatch: pytest.MonkeyPatch) -> No
     )
 
     assert report.runtime == {"python": healthy}
-    assert report.required["git"] == healthy
-    assert report.required["node"] == healthy
-    assert report.required["docker_compose"] == healthy
-    assert report.required["impeccable"] == healthy
+    assert report.required == {
+        "git": healthy,
+        "node": healthy,
+        "impeccable": healthy,
+        "docker_compose": healthy,
+    }
     assert compose_minimums == ["2.7.0"]
     assert report.optional == {"tailscale": healthy}
     assert report.services["docker_running"] is True
 
 
 @pytest.mark.parametrize(
-    ("os_name", "platform_name", "error_fragment", "requires_tmux"),
+    ("os_name", "platform_name", "error_fragment"),
     [
-        ("nt", "Windows", "WSL 2", False),
-        ("posix", "Linux", None, True),
+        ("nt", "Windows", "WSL 2"),
+        ("posix", "Linux", None),
     ],
 )
-def test_platform_support_and_tmux_requirement(
+def test_platform_support(
     monkeypatch: pytest.MonkeyPatch,
     os_name: str,
     platform_name: str,
     error_fragment: str | None,
-    requires_tmux: bool,
 ) -> None:
     monkeypatch.setattr("gobby.utils.dependency_requirements.os.name", os_name)
     monkeypatch.setattr(
@@ -322,7 +323,6 @@ def test_platform_support_and_tmux_requirement(
         assert error is None
     else:
         assert error_fragment in (error or "")
-    assert requirements.requires_tmux() is requires_tmux
 
 
 def test_report_marks_probes_past_the_deadline_timed_out_without_waiting(
