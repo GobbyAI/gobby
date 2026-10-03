@@ -150,10 +150,11 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
         assert changed.json()["detail"]["code"] == "prompt_changed"
         assert injected == []
 
-        pane_output = APPROVAL_PROMPT
+        moved = manager.get(state.entry_id)
+        assert moved is not None
         accepted = client.post(
             f"/api/attention/{state.entry_id}/respond",
-            json=_request(state, {"option": 1}),
+            json=_request(moved, {"option": 1}),
         )
         assert accepted.status_code == 200
         assert accepted.json() == {"status": "accepted", "entry_id": state.entry_id}
@@ -168,6 +169,7 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
         assert retired.status_code == 409
         assert retired.json()["detail"]["code"] == "stale_episode"
 
+        pane_output = APPROVAL_PROMPT
         recurring = _open_prompt(manager)
         assert recurring.attention_id != state.attention_id
         text_response = client.post(
@@ -182,6 +184,61 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
             json=_request(recurring, {"text": "yes", "key": "enter"}),
         )
         assert invalid_variants.status_code == 422
+
+
+def test_prompt_changed_moves_the_episode_to_the_current_pane(temp_db: HubDatabase) -> None:
+    # The stored fingerprint is refreshed only by the lifecycle scan (30s), so
+    # a 409 that names the stale identity makes every retry fail until then.
+    manager = _manager(temp_db)
+    state = _open_prompt(manager)
+    pane_output = APPROVAL_PROMPT.replace("Allow", "Always allow")
+    injected: list[AttentionAnswer] = []
+
+    async def capture() -> str:
+        return pane_output
+
+    async def inject(_pane: AttentionPane, answer: AttentionAnswer) -> None:
+        injected.append(answer)
+
+    with _client(manager, capture=capture, injector=inject) as client:
+        changed = client.post(
+            f"/api/attention/{state.entry_id}/respond",
+            json=_request(state, {"option": 1}),
+        )
+        assert changed.status_code == 409
+        detail = changed.json()["detail"]
+        current = manager.get(state.entry_id)
+        assert current is not None
+        assert current.state == "blocked"
+        assert current.fingerprint == PromptDetector(DETECTION_REGISTRY, "claude").pane_fingerprint(
+            pane_output
+        )
+        assert current.attention_id != state.attention_id
+        assert detail == {
+            "code": "prompt_changed",
+            "attention_id": current.attention_id,
+            "fingerprint": current.fingerprint,
+        }
+        assert injected == []
+
+        retried = client.post(
+            f"/api/attention/{state.entry_id}/respond",
+            json=_request(current, {"option": 1}),
+        )
+        assert retried.status_code == 200
+        assert injected[-1].option == 1
+
+        reopened = _open_prompt(manager)
+        pane_output = "Done.\n"
+        gone = client.post(
+            f"/api/attention/{reopened.entry_id}/respond",
+            json=_request(reopened, {"option": 1}),
+        )
+        assert gone.status_code == 409
+        assert gone.json()["detail"]["code"] == "prompt_changed"
+        retired = manager.get(reopened.entry_id)
+        assert retired is not None
+        assert retired.state is None
 
 
 def test_respond_routes_through_coordinator_with_cas(

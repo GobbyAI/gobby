@@ -383,11 +383,21 @@ def create_attention_router(
                     raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
                 observed_fingerprint = detector.pane_fingerprint(pane_output)
                 if observed_fingerprint != request.fingerprint:
+                    # The lifecycle scan refreshes the stored episode only every
+                    # check interval; move it to the pane now so the 409 names an
+                    # identity a retry can answer.
+                    await _retire_and_redetect(
+                        server,
+                        current=latest,
+                        pane=pane,
+                        detector=detector,
+                    )
+                    moved = await server.services.run_db(manager.get, entry_id)
                     raise HTTPException(
                         status_code=409,
                         detail={
                             "code": "prompt_changed",
-                            **_identity(latest),
+                            **_identity(moved or latest),
                         },
                     )
 
