@@ -41,6 +41,7 @@ from tests.e2e.composer_proof_races import ComposerRaces
 from tests.e2e.composer_proof_trace import ProofTrace
 from tests.e2e.conftest import (
     DaemonInstance,
+    link_operator_srt,
     prepare_daemon_env,
     terminate_process_tree,
     wait_for_daemon_health,
@@ -101,6 +102,7 @@ async def composer_fixture(
     nested = home / ".gobby"
     nested.mkdir(mode=0o700, exist_ok=True)
     (nested / "bin").symlink_to(native_bin, target_is_directory=True)
+    link_operator_srt(home)
     # Short private socket root accommodates macOS AF_UNIX limits.
     root = Path(tempfile.mkdtemp(prefix="p22915-", dir="/tmp"))
     host = root / "host"
@@ -118,7 +120,6 @@ async def composer_fixture(
                 "terminal_host.socket_dir": str(host),
                 "terminal_host.max_attachments_total": 8,
                 "terminal_host.max_attachments_per_terminal": 4,
-                "agent_sandbox.enabled": False,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
                 "tmux.registration_timeout_seconds": 300.0,

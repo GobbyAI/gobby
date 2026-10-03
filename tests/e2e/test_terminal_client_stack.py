@@ -43,6 +43,7 @@ from tests.e2e.conftest import (
     CLIEventSimulator,
     DaemonInstance,
     daemon_token,
+    link_operator_srt,
 )
 from tests.e2e.gclient_driver import GclientDriver, Screen, in_prefix_mode
 from tests.e2e.test_external_terminal_attach import (
@@ -156,6 +157,7 @@ def e2e_pre_daemon_setup(
         token_path = directory / "local_cli_token"
         token_path.write_text(token)
         token_path.chmod(0o600)
+    link_operator_srt(daemon_home)
     claude = stub_dir / "claude"
     claude.write_text(_STUB)
     claude.chmod(0o755)
@@ -173,7 +175,6 @@ def e2e_pre_daemon_setup(
                 "terminal_host.socket_dir": str(socket_dir),
                 "terminal_host.max_attachments_total": 64,
                 "terminal_host.max_attachments_per_terminal": 8,
-                "agent_sandbox.enabled": False,
                 "tmux.auto_enter_approval_prompts": False,
                 "tmux.auto_enter_agent_terminals": False,
                 "tmux.registration_timeout_seconds": 300.0,
