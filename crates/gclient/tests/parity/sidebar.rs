@@ -1680,22 +1680,20 @@ fn project_board() -> (Workspace, Chrome, Rect) {
 
 /// `project_board` with two interactive sessions working in `wt-1`'s
 /// checkout: `sess-0` on `term-0` working, `sess-1` on `term-1` blocked.
-/// Neither is a spawned run, so only the workspace path binds them.
+/// Neither is a spawned run, so only the `worktree_id` their daemon resolved
+/// binds them.
 fn bound_worktree_board() -> (Workspace, Chrome, Terminal<TestBackend>) {
     let mut ws = sidebar_workspace(2);
-    let session = |id: &str, path: &str| SessionRow {
+    let session = |id: &str| SessionRow {
         id: id.to_string(),
         status: "active".to_string(),
-        workspace_path: Some(path.to_string()),
+        worktree_id: Some("wt-1".to_string()),
         ..SessionRow::default()
     };
     let mut rows = project_sidebar_rows();
     rows.sessions.insert(
         "proj-alpha".to_string(),
-        vec![
-            session("sess-0", "/repos/alpha/.worktrees/feature"),
-            session("sess-1", "/repos/alpha/.worktrees/feature/crates"),
-        ],
+        vec![session("sess-0"), session("sess-1")],
     );
     ws.daemon_mut().set_sidebar_rows(rows);
     ws.daemon_mut().set_roster(json!({

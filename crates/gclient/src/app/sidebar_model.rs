@@ -6,13 +6,13 @@
 
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::Value;
 use tokio::time::Instant;
 
-use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SessionRow, SidebarRows};
+use crate::daemon::{Attention, Daemon, ProjectRow, RosterEntry, SidebarRows};
 use crate::ui::chrome::RowState;
 
 use super::{short_terminal_id, Backend, Pane, Workspace};
@@ -368,10 +368,7 @@ fn build_agents(inputs: &SidebarInputs) -> Vec<AgentEntry> {
                 managed,
                 worktree_id: run
                     .and_then(|(_, run)| run.worktree_id.clone())
-                    .or_else(|| {
-                        session
-                            .and_then(|(project, session)| bound_worktree(rows, project, session))
-                    }),
+                    .or_else(|| session.and_then(|(_, session)| session.worktree_id.clone())),
                 lifecycle_status: entry.lifecycle_status.clone(),
                 terminal_state: terminal.state.clone(),
                 state: agent_state(entry, pane),
@@ -434,47 +431,6 @@ fn project_entry(row: &ProjectRow, inputs: &SidebarInputs, agents: &[AgentEntry]
         worktrees,
         state: rollup(own.iter().map(|agent| agent.state)),
     }
-}
-
-/// The worktree `session` works in, by the daemon's own rule
-/// (`_path_is_within`, source_control_worktrees.py): the deepest of its
-/// project's worktrees whose checkout holds its workspace path, compared by
-/// whole path components after `.` and `..` resolve, unless the two are
-/// known to sit on different machines (#23280). Runs bind by their own
-/// `worktree_id` first.
-fn bound_worktree(rows: &SidebarRows, project_id: &str, session: &SessionRow) -> Option<String> {
-    let workspace = lexical(session.workspace_path.as_deref()?);
-    rows.worktrees
-        .iter()
-        .filter(|worktree| worktree.project_id == project_id)
-        .filter(
-            |worktree| match (&worktree.machine_id, &session.machine_id) {
-                (Some(theirs), Some(ours)) => theirs == ours,
-                _ => true,
-            },
-        )
-        .filter(|worktree| !worktree.worktree_path.is_empty())
-        .map(|worktree| (worktree, lexical(&worktree.worktree_path)))
-        .filter(|(_, checkout)| workspace.starts_with(checkout))
-        .max_by_key(|(_, checkout)| checkout.components().count())
-        .map(|(worktree, _)| worktree.id.clone())
-}
-
-/// `path` with its `.` and `..` segments resolved by name alone: the daemon
-/// resolves before comparing, and these paths may name another machine, so
-/// the local filesystem is never read.
-fn lexical(path: &str) -> PathBuf {
-    let mut resolved = PathBuf::new();
-    for component in Path::new(path).components() {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                resolved.pop();
-            }
-            other => resolved.push(other),
-        }
-    }
-    resolved
 }
 
 /// The bound agent a click on `worktree_id`'s state dot shows: the one

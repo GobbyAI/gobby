@@ -733,12 +733,12 @@ fn agy_sessions_are_labelled_antigravity() {
     assert_eq!(provider_label("codex"), "Codex");
 }
 
-/// Rows for one project whose sessions sit at `sessions`' workspace paths,
-/// each on its own roster entry `session:<id>` and terminal `term-<id>`,
-/// beside the given worktrees.
+/// Rows for one project with the given worktrees (path `/w/<id>`) and
+/// sessions, each session carrying the `worktree_id` its daemon resolved and
+/// sitting on its own roster entry `session:<id>` and terminal `term-<id>`.
 fn workspace_rows(
-    worktrees: &[(&str, &str, Option<&str>)],
-    sessions: &[(&str, &str, &str)],
+    worktrees: &[&str],
+    sessions: &[(&str, Option<&str>)],
 ) -> (SidebarRows, Vec<RosterEntry>) {
     let rows = SidebarRows {
         projects: vec![ProjectRow {
@@ -748,11 +748,10 @@ fn workspace_rows(
         }],
         worktrees: worktrees
             .iter()
-            .map(|(id, path, machine)| WorktreeRow {
+            .map(|id| WorktreeRow {
                 id: id.to_string(),
                 project_id: PROJECT.to_string(),
-                machine_id: machine.map(str::to_owned),
-                worktree_path: path.to_string(),
+                worktree_path: format!("/w/{id}"),
                 status: "active".to_string(),
                 workspace_role: "task".to_string(),
                 ..Default::default()
@@ -762,11 +761,11 @@ fn workspace_rows(
             PROJECT.to_string(),
             sessions
                 .iter()
-                .map(|(id, path, machine)| SessionRow {
+                .map(|(id, worktree)| SessionRow {
                     id: id.to_string(),
                     status: "active".to_string(),
-                    machine_id: Some(machine.to_string()),
-                    workspace_path: Some(path.to_string()),
+                    machine_id: Some(LOCAL_MACHINE.to_string()),
+                    worktree_id: worktree.map(str::to_owned),
                     ..Default::default()
                 })
                 .collect(),
@@ -775,7 +774,7 @@ fn workspace_rows(
     };
     let roster = sessions
         .iter()
-        .map(|(id, _, _)| {
+        .map(|(id, _)| {
             let mut agent = entry(&format!("session:{id}"), Some(&format!("term-{id}")));
             agent.session_id = Some(id.to_string());
             agent
@@ -786,26 +785,14 @@ fn workspace_rows(
 
 /// #23280 item 5: the worktree indicator only knew spawned runs
 /// (`run.worktree_id`), so an interactive or root session working in a
-/// worktree never lit it. A session now binds to the worktree its workspace
-/// sits in, the daemon's own rule (`_path_is_within` in
-/// source_control_worktrees.py): the deepest worktree holding the path, by
-/// whole path components, on the session's machine.
+/// worktree never lit it. A session now binds through the `worktree_id` its
+/// own machine's daemon resolves (symlinks and `..` included, never by the
+/// client comparing paths), and the worktree rolls up its bound sessions.
 #[test]
-fn sessions_bind_to_the_worktree_holding_their_workspace() {
+fn sessions_bind_through_the_daemon_resolved_worktree_id() {
     let (rows, roster) = workspace_rows(
-        &[
-            ("wt-1", "/w/1", Some(LOCAL_MACHINE)),
-            ("wt-10", "/w/10", None),
-            ("wt-inner", "/w/1/inner", None),
-            ("wt-idle", "/w/idle", None),
-        ],
-        &[
-            ("a", "/w/1/crates", LOCAL_MACHINE),
-            ("b", "/w/10", LOCAL_MACHINE),
-            ("c", "/w/1/inner/src", LOCAL_MACHINE),
-            ("d", "/elsewhere", LOCAL_MACHINE),
-            ("e", "/w/1", REMOTE_MACHINE),
-        ],
+        &["wt-1", "wt-10", "wt-idle"],
+        &[("a", Some("wt-1")), ("b", Some("wt-10")), ("c", None)],
     );
 
     let model = model(&rows, &roster, &[]);
@@ -820,12 +807,8 @@ fn sessions_bind_to_the_worktree_holding_their_workspace() {
         [
             ("session:a", Some("wt-1")),
             ("session:b", Some("wt-10")),
-            ("session:c", Some("wt-inner")),
-            ("session:d", None),
-            ("session:e", None),
-        ],
-        "a descendant binds, /w/10 is not under /w/1, the deeper worktree wins, \
-         and another machine's path is not this worktree"
+            ("session:c", None),
+        ]
     );
     let states: Vec<(&str, Option<RowState>)> = model.projects[0]
         .worktrees
@@ -837,43 +820,37 @@ fn sessions_bind_to_the_worktree_holding_their_workspace() {
         [
             ("wt-1", Some(RowState::Working)),
             ("wt-10", Some(RowState::Working)),
-            ("wt-inner", Some(RowState::Working)),
             ("wt-idle", None),
         ],
         "a bound worktree rolls up its sessions; an unbound one has no state"
     );
 }
 
-/// #23280 item 5 review: registration stores the provider's cwd as given,
-/// and the daemon resolves paths before `_path_is_within`. `.` and `..`
-/// segments resolve the same way here, so `/w/1/../10` never binds `/w/1`.
+/// #23280 item 5 review: lexical containment bound `/w/wt-1/link/src` to
+/// `wt-1` even when `link` points outside it. The client no longer compares
+/// paths at all: a session row whose daemon resolved no worktree binds
+/// nothing, whatever its workspace path says.
 #[test]
-fn dot_segments_resolve_before_a_session_binds() {
-    let (rows, roster) = workspace_rows(
-        &[("wt-1", "/w/1", None), ("wt-10", "/w/10/./", None)],
-        &[
-            ("a", "/w/1/../10/src", LOCAL_MACHINE),
-            ("b", "/w/1/./crates", LOCAL_MACHINE),
-            ("c", "/w/1/..", LOCAL_MACHINE),
-        ],
-    );
+fn a_workspace_path_without_a_resolved_worktree_binds_nothing() {
+    let (mut rows, roster) = workspace_rows(&["wt-1"], &[]);
+    let session: SessionRow = serde_json::from_value(serde_json::json!({
+        "id": "a",
+        "status": "active",
+        "machine_id": LOCAL_MACHINE,
+        "workspace_path": "/w/wt-1/link/src",
+        "worktree_id": null,
+    }))
+    .expect("session row");
+    rows.sessions.insert(PROJECT.to_string(), vec![session]);
+    let mut roster = roster;
+    let mut agent = entry("session:a", Some("term-a"));
+    agent.session_id = Some("a".to_string());
+    roster.push(agent);
 
     let model = model(&rows, &roster, &[]);
 
-    let bound: Vec<(&str, Option<&str>)> = model
-        .agents
-        .iter()
-        .map(|agent| (agent.entry_id.as_str(), agent.worktree_id.as_deref()))
-        .collect();
-    assert_eq!(
-        bound,
-        [
-            ("session:a", Some("wt-10")),
-            ("session:b", Some("wt-1")),
-            ("session:c", None),
-        ],
-        "a `..` leaves the worktree it names, a `.` stays in it"
-    );
+    assert_eq!(model.agents[0].worktree_id, None);
+    assert_eq!(model.projects[0].worktrees[0].state, None);
 }
 
 /// #23280 item 5: a click on the worktree glyph shows the agent whose state
@@ -882,12 +859,12 @@ fn dot_segments_resolve_before_a_session_binds() {
 #[test]
 fn worktree_focus_target_is_the_agent_behind_the_rolled_up_glyph() {
     let (rows, mut roster) = workspace_rows(
-        &[("wt-1", "/w/1", None), ("wt-idle", "/w/idle", None)],
+        &["wt-1", "wt-idle"],
         &[
-            ("unseen", "/w/1", LOCAL_MACHINE),
-            ("first", "/w/1", LOCAL_MACHINE),
-            ("second", "/w/1/src", LOCAL_MACHINE),
-            ("blocked", "/w/1", LOCAL_MACHINE),
+            ("unseen", Some("wt-1")),
+            ("first", Some("wt-1")),
+            ("second", Some("wt-1")),
+            ("blocked", Some("wt-1")),
         ],
     );
     roster[0].lifecycle_status = None;

@@ -26,6 +26,7 @@ from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore
 from gobby.telemetry.instruments import inc_counter
 from gobby.utils.daemon_git import GitOk, daemon_git
+from gobby.worktrees.containment import WorktreeRoots, containing_worktree_id, worktree_roots
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -34,6 +35,40 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+
+def _bind_worktrees(server: "HTTPServer", session_list: list[dict[str, Any]]) -> None:
+    """Set each row's `worktree_id`: the local worktree holding its workspace.
+
+    Only this machine's sessions resolve, against this machine's worktrees and
+    filesystem; another machine's rows, and every row when this machine's id
+    is unreadable, get None (#23280).
+    """
+    from gobby.utils.machine_id import get_machine_id
+
+    worktree_storage = server.services.worktree_storage
+    try:
+        local_machine = get_machine_id()
+    except OSError:
+        local_machine = None
+    roots_by_project: dict[str, WorktreeRoots] = {}
+    for data in session_list:
+        workspace = data.get("workspace_path")
+        worktree_id = None
+        if (
+            worktree_storage
+            and local_machine
+            and data.get("machine_id") == local_machine
+            and isinstance(workspace, str)
+            and workspace
+        ):
+            project_id = data["project_id"]
+            if project_id not in roots_by_project:
+                roots_by_project[project_id] = worktree_roots(
+                    worktree_storage.list_worktrees(project_id=project_id)
+                )
+            worktree_id = containing_worktree_id(workspace, roots_by_project[project_id])
+        data["worktree_id"] = worktree_id
 
 
 async def _get_commit_count(db: "HubDatabase", session: Any) -> int:
@@ -557,6 +592,7 @@ def register_core_routes(
                 session_list.append(session_data)
                 if include_resumability and len(session_list) >= limit:
                     break
+            await server.run_db(_bind_worktrees, server, session_list)
 
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
