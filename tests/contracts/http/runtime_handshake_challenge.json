@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "runtime_handshake_challenge",
   "family": "runtime_handshake",
+  "backend": "up",
   "credential": "none",
   "request": {
     "method": "POST",

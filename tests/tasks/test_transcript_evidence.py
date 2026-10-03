@@ -181,7 +181,8 @@ async def test_prewarmed_pool_runs_four_first_stops_concurrently(tmp_path: Path)
         assert len(set(pids)) == 4
         assert all(pid > 0 for pid in pids)
     finally:
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        # A drain that outlives its test can stop the tracker under later tests' pools.
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
 
 async def test_process_pool_oserror_falls_back_and_warns_once(
@@ -367,7 +368,7 @@ def test_shutdown_stops_resource_tracker_for_real_pool() -> None:
         assert pool.submit(pow, 2, 5).result(timeout=60) == 32
         assert _resource_tracker_pid() is not None
 
-        transcript_evidence_pool.shutdown_transcript_evidence_pool()
+        transcript_evidence_pool.shutdown_transcript_evidence_pool(timeout=60.0)
 
         assert _resource_tracker_pid() is None
         assert transcript_evidence_pool._pool is None

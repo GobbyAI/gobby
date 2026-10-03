@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "config_values",
   "family": "config",
+  "backend": "up",
   "credential": "operator",
   "request": {
     "method": "GET",
