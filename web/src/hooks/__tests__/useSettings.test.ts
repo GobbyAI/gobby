@@ -1,6 +1,9 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { configurationClient } from "../../api/config";
+import {
+  configurationClient,
+  type ConfigValuesSnapshot,
+} from "../../api/config";
 import {
   releaseTickerOverflow,
   reportTickerOverflow,
@@ -549,6 +552,48 @@ describe("useSettings", () => {
         expected_revision: 1,
         values: { ui_settings: { theme: "dark", fontSize: 18 } },
       });
+    });
+  });
+
+  it("persists a change batched into the same render as the remote merge", async () => {
+    let resolveRemote!: (snapshot: ConfigValuesSnapshot) => void;
+    const remote = new Promise<ConfigValuesSnapshot>((resolve) => {
+      resolveRemote = resolve;
+    });
+    vi.spyOn(configurationClient, "fetchValues").mockReturnValue(remote);
+    const patchSpy = vi
+      .spyOn(configurationClient, "patchLastWriteWins")
+      .mockResolvedValue({
+        kind: "success",
+        committed: true,
+        revision: 2,
+        changedKeys: ["ui_settings.theme"],
+        applyStatus: "applied",
+        pendingRestartKeys: [],
+        failedLiveKeys: {},
+      });
+
+    const { result } = renderHook(() => useSettings());
+
+    await act(async () => {
+      resolveRemote({
+        revision: 1,
+        desired: { ui_settings: { theme: "dark", fontSize: 18 } },
+        active: { ui_settings: { theme: "dark", fontSize: 18 } },
+        secret_set: {},
+        pending_restart_keys: [],
+        failed_live_keys: {},
+      });
+      await remote;
+      await Promise.resolve();
+      // The remote merge is queued but not yet rendered; this change joins
+      // the same render.
+      result.current.updateTheme("light");
+    });
+
+    expect(result.current.settings.theme).toBe("light");
+    expect(patchSpy).toHaveBeenCalledWith({
+      ui_settings: expect.objectContaining({ theme: "light", fontSize: 18 }),
     });
   });
 
