@@ -11,7 +11,10 @@ import pytest
 
 from gobby.agents import resume_executor
 from gobby.agents.sandbox import SandboxConfig
+from gobby.agents.sandbox_network import definition_sandbox_config
 from gobby.agents.srt_runtime import SrtRuntimeError
+from gobby.config.app import DaemonConfig
+from gobby.workflows.agent_models import AgentDefinitionBody
 from tests.agents.test_resume_executor import (
     _SUCCESSOR_ID,
     _original_run,
@@ -138,3 +141,41 @@ async def test_cancel_during_refusal_parking_still_parks_once(
     finalize.assert_awaited_once()
     storage.cancel.assert_called_once_with(str(_SUCCESSOR_ID), terminal_reason="daemon_stop")
     assert runner._test_runtime.create_calls == 0
+
+
+async def test_resume_replays_trusted_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
+    trusted = definition_sandbox_config(
+        DaemonConfig(),
+        AgentDefinitionBody.model_validate(
+            {
+                "name": "net-agent",
+                "provider": "claude",
+                "prompts": {"agent": "Run the assigned task."},
+                "workflows": {"rule_selectors": {"include": []}},
+                "network": "trusted",
+            }
+        ),
+    )
+    _patch_common(monkeypatch, spawner=MagicMock(), finalize=AsyncMock())
+    prepare_sandbox = AsyncMock(side_effect=OSError("stop after the replayed config"))
+    monkeypatch.setattr(resume_executor, "prepare_sandbox_launch", prepare_sandbox)
+    metadata = _resume_metadata()
+    metadata["sandbox_config"] = trusted.model_dump(mode="json")
+
+    # The seed is unreadable now: the resume must replay its snapshot, never re-resolve.
+    with (
+        patch("gobby.agents.sandbox_gate.verify_srt_installation"),
+        patch("gobby.agents.sandbox_network.trusted_domains", side_effect=OSError("gone")),
+    ):
+        await resume_executor.resume_agent_run(
+            _original_run(),
+            resume_metadata=metadata,
+            runner=_runner(storage=MagicMock()),
+            session_manager=MagicMock(),
+        )
+
+    assert prepare_sandbox.await_args is not None
+    replayed = prepare_sandbox.await_args.kwargs["config"]
+    assert replayed.allowed_domains == trusted.allowed_domains
+    assert (replayed.allow_git_network, replayed.allow_package_registries) == (True, True)
+    assert replayed.allow_network is False

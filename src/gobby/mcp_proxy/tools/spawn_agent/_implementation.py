@@ -367,7 +367,7 @@ async def spawn_agent_impl(
             effective_base_branch = None
     effective_base_branch = effective_base_branch or "main"
     # Daemon-owned agent sandboxes inherit from config-store defaults only.
-    gated = await resolve_spawn_sandbox(daemon_config, write_grant)
+    gated = await resolve_spawn_sandbox(daemon_config, write_grant, agent_body)
     if isinstance(gated, dict):
         # Placed refusals carry ``placement_error`` (the spawn_agent reply contract).
         return gated if placement is None else {**gated, "placement_error": "sandbox_required"}
