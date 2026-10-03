@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from collections.abc import Awaitable, Callable
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
@@ -58,6 +59,11 @@ __all__ = [
     "execute_mcp_step",
     "execute_prompt_step",
 ]
+
+
+def step_invocation_id(execution_id: str, step_id: str) -> str:
+    """A step's ``invocation_id``: stable across restarts, distinct per step."""
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"gobby-pipeline:{execution_id}:{step_id}"))
 
 
 def _best_effort_child_session_setup(action: Callable[[], Any], warning: str) -> None:
@@ -563,6 +569,7 @@ class PipelineExecutor(
 
                 # 4. Iterate through steps in order
                 for step in pipeline.steps:
+                    context["invocation_id"] = step_invocation_id(execution.id, step.id)
                     cancelled = await self._run_db(self._get_cancelled_execution, execution.id)
                     if cancelled:
                         self._close_pipeline_session(pipeline_session_id, caller_session_id)
