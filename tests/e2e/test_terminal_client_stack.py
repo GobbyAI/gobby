@@ -900,6 +900,8 @@ async def test_terminal_client_stack_end_to_end(
     inflight_row = next(row for row in listed if row.terminal_id == inflight_id)
     assert inflight_row.commit_state == "committed"
     assert inflight_row.host_terminal_id == inflight_host
+    # Its short-lived child would otherwise free an entitlement mid-fill below.
+    await control.kill(inflight_host, grace_ms=50)
 
     write_seq = control.next_seq
     payload = encode_control_line(
@@ -926,25 +928,21 @@ async def test_terminal_client_stack_end_to_end(
     # Native capacity is enforced at reserve time against the configured
     # attachment ceiling less the four reserved lifecycle slots
     # (gterminal host/native_ops.rs::reserve_observer ->
-    # native_entitlement_ceiling() = max_attachments_total - 4), so drive the
-    # host to that ceiling and prove the next create is refused. The live
-    # native seats already count toward the entitlement.
+    # native_entitlement_ceiling() = max_attachments_total - 4), so fill the
+    # host until a create is refused and prove the refusal is that gate. Every
+    # child outlives the fill: an exit frees its entitlement, so the host's own
+    # bound rows, not the daemon listing, prove the ceiling.
     entitlement_ceiling = 60  # terminal_host.max_attachments_total 64 - 4 reserved
-    live_native = [
-        item
-        for item in _list_items(client)
-        if item.get("backend") == "native" and item.get("state") == "live"
-    ]
     extras: list[str] = []
-    while len(live_native) + len(extras) < entitlement_ceiling:
-        created = await _ws_create(daemon_instance, ["/bin/sleep", "30"])
-        if created.get("success") is True:
-            extras.append(str(created["terminal_id"]))
-        else:
+    overflow: dict[str, Any] = {}
+    for _ in range(entitlement_ceiling + 1):
+        overflow = await _ws_create(daemon_instance, ["/bin/sleep", "300"])
+        if overflow.get("success") is not True:
             break
-    overflow = await _ws_create(daemon_instance, ["/bin/sleep", "5"])
-    assert overflow.get("success") is False
+        extras.append(str(overflow["terminal_id"]))
+    assert overflow.get("code") == "host_refused:capacity", overflow
     listed = await control.list_terminals()
+    assert sum(row.observer_bind != "none" for row in listed) == entitlement_ceiling
     overflow_id = overflow.get("terminal_id")
     assert overflow_id not in {row.terminal_id for row in listed}
     for extra_id in extras:
