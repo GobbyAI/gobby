@@ -57,6 +57,78 @@ from gobby.tasks.transcript_outcomes import EvidenceOutcome
 from gobby.tasks.transcript_outcomes import extract_output as _extract_output
 
 BASE_TIME = datetime(2026, 7, 27, 12, 0, tzinfo=UTC)
+
+
+@pytest.mark.parametrize("receipt", ["valid", "missing", "wrong-job", "wrong-call", "assistant"])
+async def test_claude_background_validation_requires_matching_terminal_receipt(
+    tmp_path: Path, receipt: str
+) -> None:
+    transcript = tmp_path / "background.jsonl"
+    command = "uv run pytest tests/agents/test_plan_seat_definitions.py -q --tb=line"
+    output_path = "/private/tmp/claude-test/tasks/boyb2916b.output"
+    records = _claude_tool_pair(
+        command=command,
+        call_id="toolu-original",
+        start=BASE_TIME,
+        result=(
+            "Command did not complete within its 120s timeout and was moved to the "
+            f"background (ID: boyb2916b). Output is being written to: {output_path}. "
+            "You will be notified when it completes."
+        ),
+    )
+    failure = (
+        "E   AssertionError: plan-writer\n"
+        "tests/agents/test_plan_seat_definitions.py:57: AssertionError: plan-writer\n"
+        "FAILED tests/agents/test_plan_seat_definitions.py::test_seat_definitions_sync_and_validate\n"
+        "============================== 4 failed in 20.35s ==============================\n"
+    )
+    records += _claude_tool_pair(
+        command=f"tail -n 40 {output_path}",
+        call_id="read-output",
+        start=BASE_TIME + timedelta(seconds=2),
+        result=failure,
+    )
+    if receipt != "missing":
+        job_id = "unrelated" if receipt == "wrong-job" else "boyb2916b"
+        call_id = "unrelated" if receipt == "wrong-call" else "toolu-original"
+        role = "assistant" if receipt == "assistant" else "user"
+        records.append(
+            {
+                "type": role,
+                "timestamp": (BASE_TIME + timedelta(seconds=4)).isoformat(),
+                "message": {
+                    "role": role,
+                    "content": (
+                        f"<task-notification><task-id>{job_id}</task-id>"
+                        f"<tool-use-id>{call_id}</tool-use-id>"
+                        f"<output-file>{output_path}</output-file><status>failed</status>"
+                        f'<summary>Background command "{command}" failed with exit code 1</summary>'
+                        "</task-notification>"
+                    ),
+                },
+            }
+        )
+    _write_jsonl(transcript, records)
+    evidence = await derive_transcript_evidence(
+        _session("claude", transcript),
+        BASE_TIME,
+        default_validation_detection_config(),
+        set(),
+        str(tmp_path),
+    )
+    assert len(evidence.validation_runs) == 1
+    run = evidence.validation_runs[0]
+    assert run.command == command
+    assert run.started_at == BASE_TIME
+    if receipt == "valid":
+        assert (run.outcome, run.exit_code) == ("failure", 1)
+        assert run.completed_at == BASE_TIME + timedelta(seconds=4)
+        assert run.output == failure.strip()
+    else:
+        assert run.outcome == "unknown"
+        assert run.exit_code is None
+
+
 LOCAL_MACHINE_ID = "21000000-0000-4000-8000-000000000003"
 
 
