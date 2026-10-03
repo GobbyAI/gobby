@@ -423,6 +423,59 @@ fn project_dialog_buttons_answer_a_click() {
     assert!(chrome.dialog.is_none(), "the dialog closes on cancel");
 }
 
+/// Draw the open dialog and return the screen plus each button's text.
+fn drawn_dialog_text(ws: &Workspace, chrome: &mut Chrome) -> (String, Vec<String>) {
+    let area = Rect::new(0, 0, 120, 40);
+    chrome.compute_view(ws, area);
+    let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("test terminal");
+    let mut hits = None;
+    terminal
+        .draw(|frame| hits = Some(render_workspace(frame, ws, chrome)))
+        .expect("draw the dialog");
+    chrome.view.apply_hits(hits.expect("dialog drawn"));
+    let buffer = terminal.backend().buffer();
+    let labels = chrome
+        .view
+        .dialog_button_hit_areas
+        .iter()
+        .map(|rect| {
+            (rect.x..rect.right())
+                .map(|x| buffer[(x, rect.y)].symbol())
+                .collect::<String>()
+                .trim()
+                .to_string()
+        })
+        .collect();
+    (screen_text(&terminal), labels)
+}
+
+/// Dialog action buttons and headers are sentence case (#23280).
+#[test]
+fn project_and_orphan_dialogs_draw_sentence_case_actions() {
+    let ws = Workspace::scripted();
+    let mut chrome = Chrome::dark();
+
+    open_new_project_dialog(&mut chrome);
+    let (_, labels) = drawn_dialog_text(&ws, &mut chrome);
+    assert_eq!(labels, ["↵ Open", "tab Complete", "esc Cancel"]);
+
+    open_project_dialog(&mut chrome, new_worktree_dialog());
+    let (_, labels) = drawn_dialog_text(&ws, &mut chrome);
+    assert_eq!(labels, ["↵ Create", "esc Cancel"]);
+
+    open_project_dialog(&mut chrome, open_worktree_dialog());
+    let (_, labels) = drawn_dialog_text(&ws, &mut chrome);
+    assert_eq!(labels, ["↵ Open", "esc Cancel"]);
+
+    open_project_dialog(&mut chrome, remove_worktree_dialog());
+    let (screen, _) = drawn_dialog_text(&ws, &mut chrome);
+    assert!(screen.contains(" Delete worktree checkout?"), "{screen}");
+
+    open_orphans_dialog(&mut chrome, vec![orphan("term-a"), orphan("term-b")]);
+    let (_, labels) = drawn_dialog_text(&ws, &mut chrome);
+    assert_eq!(labels, ["↵ Destroy 2", "esc Cancel"]);
+}
+
 fn open_rename_dialog(chrome: &mut Chrome) {
     chrome.dialog = Some(Dialog::Rename {
         kind: RenameKind::Tab,

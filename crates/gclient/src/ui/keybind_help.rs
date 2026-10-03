@@ -315,11 +315,11 @@ pub fn render_keybind_help(frame: &mut Frame, area: Rect, chrome: &Chrome) -> (V
     let [title_row, search_row] =
         Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas::<2>(stack.header);
 
-    render_modal_header(frame, title_row, "keybinds", p);
+    render_modal_header(frame, title_row, "Keybinds", p);
     let close_label = if chrome.keybind_help.search_focused {
-        "back"
+        "Back"
     } else {
-        "close"
+        "Close"
     };
     let button_w = action_button_width(Some("esc"), close_label).min(title_row.width);
     let button = Rect::new(
