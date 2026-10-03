@@ -25,26 +25,34 @@ A braille line has `cols` glyphs in U+2800–U+28FF; U+2800 is transparent.
 | `i` | Outline and lenses | `ink` |
 | `g` | Glint | `glint` |
 | `d` | Wordmark drop shadow | `dim` |
+| `n` | Halo network node | `blue` (info); `dim` in monochrome |
+| `e` | Halo network edge | `overlay0`; `surface1` in monochrome |
 | `.` | Transparent | No paint |
 
 The light theme's `ink` is the `line` token, the near-black of the menu
 bar's underline.
 
 The Empty tab uses the same goblin grid with a dim palette that keeps every
-role distinct, glints included, so both eyes survive. In dark mode `a` maps
-to `overlay0`, `o` to `dim`, `i` to the panel colour and `g` to `subtext0`.
-In light mode `a` maps to `surface1`, `o` to `overlay0`, `i` to `subtext0`
-and `g` to the panel colour. No separate dimmed grid is stored. The shadow grid places its `d` role one
-cell to the right and half a cell below the letters.
+role distinct, glints included, so both eyes survive. In dark mode `a` and
+`n` map to `overlay0`, `o` and `e` to `dim`, `i` to the panel colour and `g`
+to `subtext0`. In light mode `a` and `n` map to `surface1`, `o` and `e` to
+`overlay0`, `i` to `subtext0` and `g` to the panel colour. No separate
+dimmed grid is stored. The shadow grid places its `d` role one cell to the
+right and half a cell below the letters.
+
+## The goblin grid
+
+`goblin-41x18.grid` is hand-authored and is never regenerated (#23280). It
+is Josh's 33×16 goblin, corrected so both eyes draw the same cells, at cell
+column 4, row 2 inside its node halo. Splash and the Empty tab draw it. The
+generator's 33×16 output survives only as the `goblin-33x16-*.ans` previews,
+which show neither the eye correction nor the halo.
 
 ## Regenerate
 
 Run from the repository root. The 56×16 and 48×14 boxes preserve the source
 image aspect; the generator crops them to 33×16 and 29×14 drawn marks.
-`goblin-33x16.grid` is hand-corrected after generation so both eyes draw the
-same cells (#23280); never regenerate it, and edit it by hand. Its `.ans`
-previews show the generator's output. The other eleven commands rewrite the
-committed files byte-identically.
+All eleven commands rewrite the committed files byte-identically.
 
 ```sh
 uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 48 14 grid > crates/gclient/assets/marks/goblin-29x14.grid
@@ -60,5 +68,5 @@ uv run python crates/gclient/assets/marks/wordmark.py shadow ansi-dark lower > c
 uv run python crates/gclient/assets/marks/wordmark.py shadow ansi-light lower > crates/gclient/assets/marks/renders/wordmark-shadow-light.ans
 ```
 
-The `.ans` files render the same four marks with 24-bit SGR colours for
+The `.ans` files render the generated marks with 24-bit SGR colours for
 terminal inspection. They are visual previews and are not read by gclient.

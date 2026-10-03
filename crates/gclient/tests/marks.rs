@@ -18,7 +18,7 @@ fn halfblock_grid_parses_to_its_declared_size() {
     assert_eq!((mark.cols, mark.rows), (2, 1));
 
     for (mark, kind, size) in [
-        (goblin_large(), MarkKind::Halfblock, (33, 16)),
+        (goblin_large(), MarkKind::Halfblock, (41, 18)),
         (goblin_small(), MarkKind::Halfblock, (29, 14)),
         (wordmark(), MarkKind::Braille, (54, 8)),
         (wordmark_shadow(), MarkKind::Halfblock, (49, 9)),
@@ -51,7 +51,7 @@ fn malformed_marks_report_the_line_and_reason() {
 fn halfblock_cells_paint_upper_and_lower_halves_by_the_stated_rule() {
     let mark = parse("# halfblock 4x1\n..a..oai\n").unwrap();
     let colors = palette(ThemeKind::Dark);
-    let ink = MarkPalette::normal(&colors);
+    let ink = MarkPalette::normal(&colors, false);
     let mut terminal = Terminal::new(TestBackend::new(4, 1)).unwrap();
     terminal
         .draw(|frame| {
@@ -87,8 +87,8 @@ fn halfblock_cells_paint_upper_and_lower_halves_by_the_stated_rule() {
 fn braille_glyphs_paint_in_the_given_role_and_blank_cells_stay_transparent() {
     let mark = parse("# braille 2x1\n⠀⠁\n").unwrap();
     let colors = palette(ThemeKind::Light);
-    let normal = MarkPalette::normal(&colors);
-    let shadow = MarkPalette::shadow(&colors);
+    let normal = MarkPalette::normal(&colors, false);
+    let shadow = MarkPalette::shadow(&colors, false);
     let mut terminal = Terminal::new(TestBackend::new(2, 2)).unwrap();
     terminal
         .draw(|frame| {
@@ -150,13 +150,13 @@ fn goblin_variants() -> Vec<(String, MarkPalette)> {
     let mut variants = Vec::new();
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let theme = Theme::new(kind);
-        for (shade, colors) in [
-            ("colour", theme.palette()),
-            ("mono", Palette::monochrome(&theme)),
+        for (shade, colors, monochrome) in [
+            ("colour", theme.palette(), false),
+            ("mono", Palette::monochrome(&theme), true),
         ] {
             variants.push((
                 format!("{kind:?} {shade} normal"),
-                MarkPalette::normal(&colors),
+                MarkPalette::normal(&colors, monochrome),
             ));
             variants.push((
                 format!("{kind:?} {shade} dimmed"),
@@ -222,6 +222,55 @@ fn every_goblin_variant_draws_the_same_cells() {
 }
 
 #[test]
+fn the_goblin_wears_its_node_halo_in_every_variant() {
+    // Josh's halo option A (#23280): network nodes and edges ring the head,
+    // nodes info blue and edges overlay0, or dim and surface1 in mono.
+    let halo_only = |node, edge| MarkPalette {
+        accent: None,
+        overlay1: None,
+        ink: None,
+        glint: None,
+        dim: None,
+        node,
+        edge,
+        braille: Color::White,
+    };
+    let painted = |palette: &MarkPalette| {
+        cell_mask(&draw_goblin(palette))
+            .iter()
+            .flatten()
+            .filter(|&&(upper, lower)| upper || lower)
+            .count()
+    };
+    assert!(
+        painted(&halo_only(Some(Color::White), None)) > 0,
+        "no nodes"
+    );
+    assert!(
+        painted(&halo_only(None, Some(Color::White))) > 0,
+        "no edges"
+    );
+
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let theme = Theme::new(kind);
+        let colour = theme.palette();
+        let normal = MarkPalette::normal(&colour, false);
+        assert_eq!(normal.node, Some(colour.blue), "{kind:?} node");
+        assert_eq!(normal.edge, Some(colour.overlay0), "{kind:?} edge");
+        let grays = Palette::monochrome(&theme);
+        let mono = MarkPalette::normal(&grays, true);
+        assert_eq!(mono.node, Some(grays.dim), "{kind:?} mono node");
+        assert_eq!(mono.edge, Some(grays.surface1), "{kind:?} mono edge");
+    }
+    for (name, palette) in goblin_variants() {
+        assert!(
+            palette.node.is_some() && palette.edge.is_some(),
+            "{name} drops the halo"
+        );
+    }
+}
+
+#[test]
 fn both_goblin_eyes_render_identically_in_every_variant() {
     // The glint marks each eye; a glint-only palette finds them.
     let only_glint = MarkPalette {
@@ -230,6 +279,8 @@ fn both_goblin_eyes_render_identically_in_every_variant() {
         ink: None,
         glint: Some(Color::White),
         dim: None,
+        node: None,
+        edge: None,
         braille: Color::White,
     };
     let glints: Vec<(usize, usize)> = draw_goblin(&only_glint)
