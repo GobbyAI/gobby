@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -12,6 +13,7 @@ from gobby.tasks.commits import (
     collect_commit_diff_text_async,
     collect_commit_rename_aliases_async,
     collect_net_name_status_async,
+    resolve_task_tagged_commits_async,
 )
 
 pytestmark = pytest.mark.unit
@@ -53,6 +55,51 @@ def repo(tmp_path: Path) -> Path:
 
 def test_empty_commit_set_has_no_patch() -> None:
     assert collect_commit_diff_text([], cwd=".") == ""
+
+
+@pytest.mark.parametrize("linked_first", [True, False])
+@pytest.mark.parametrize("linked_second", [True, False])
+@pytest.mark.asyncio
+async def test_sync_merge_ignores_unrelated_linked_history(
+    repo: Path, linked_first: bool, linked_second: bool
+) -> None:
+    initial = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "historical")
+    historical = _commit(repo, "historical.py", "HISTORICAL = True\n", "old task revision")
+    _git(repo, "checkout", "-q", "-b", "task", initial)
+    first = _commit(repo, "feature.py", "FEATURE = True\n", "[gobby-#42] task feature")
+    _git(repo, "checkout", "-q", "main")
+    second = _commit(repo, "incoming.py", "INCOMING = True\n", "target unrelated work")
+    _git(repo, "checkout", "-q", "task")
+    _git(repo, "merge", "--no-ff", "--no-gpg-sign", "-q", "-m", "[gobby-#42] sync target", "main")
+    sync = _git(repo, "rev-parse", "HEAD")
+    linked = [historical, sync]
+    if linked_first:
+        manager = MagicMock()
+        manager.get_task.return_value = MagicMock(id="task-uuid", seq_num=42)
+        with patch("gobby.tasks.commits._resolve_branch_for_task", return_value=None):
+            rediscovered = await resolve_task_tagged_commits_async(
+                manager,
+                task_id="task-uuid",
+                since="2026-01-01T00:00:00Z",
+                cwd=repo,
+                project_name="gobby",
+            )
+        assert {_git(repo, "rev-parse", sha) for sha in rediscovered} == {first, sync}
+        manager.link_commit.assert_not_called()
+        linked = [historical, *rediscovered]
+    if linked_second:
+        linked.append(second)
+
+    diff = await collect_commit_diff_text_async(linked, cwd=repo)
+
+    assert "HISTORICAL = True" in diff
+    assert ("incoming.py" in diff) is (not linked_first or linked_second)
+    if linked_first:
+        assert "FEATURE = True" in diff
+    if linked_first and not linked_second:
+        paths = _paths(await collect_net_name_status_async(linked, cwd=repo))
+        assert set(paths) == {"historical.py", "feature.py"}
 
 
 @pytest.mark.asyncio
@@ -228,9 +275,17 @@ def test_clean_sync_merge_contributes_no_hunks(repo: Path) -> None:
     assert "+    return 2" in diff
 
 
-def test_conflict_sync_merge_contributes_only_its_resolution(repo: Path) -> None:
+@pytest.mark.parametrize("historical_link", [False, True])
+def test_conflict_sync_merge_contributes_only_its_resolution(
+    repo: Path, historical_link: bool
+) -> None:
     """A resolved sync merge contributes its remerge diff, not the incoming branch."""
     _commit(repo, "shared.py", "BASE = True\n", "base shared")
+    initial = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", "old-task")
+    historical = _commit(repo, "historical.py", "HISTORICAL = True\n", "old task revision")
+    _git(repo, "checkout", "-q", "main")
+    assert _git(repo, "rev-parse", "HEAD") == initial
     _git(repo, "checkout", "-q", "-b", "side")
     _commit(repo, "shared.py", "SIDE = True\n", "side shared")
     _git(repo, "checkout", "-q", "main")
@@ -252,7 +307,10 @@ def test_conflict_sync_merge_contributes_only_its_resolution(repo: Path) -> None
     sync = _git(repo, "rev-parse", "HEAD")
     _commit(repo, "marker.py", "MARKER = True\n", "side follow")
 
-    diff = collect_commit_diff_text([sync, _git(repo, "rev-parse", "HEAD")], cwd=repo)
+    linked = [sync, _git(repo, "rev-parse", "HEAD")]
+    if historical_link:
+        linked.append(historical)
+    diff = collect_commit_diff_text(linked, cwd=repo)
 
     assert "unrelated.py" not in diff
     assert "remerge CONFLICT" in diff
