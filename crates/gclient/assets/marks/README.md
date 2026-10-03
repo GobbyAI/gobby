@@ -27,20 +27,26 @@ A braille line has `cols` glyphs in U+2800–U+28FF; U+2800 is transparent.
 | `d` | Wordmark drop shadow | `dim` |
 | `.` | Transparent | No paint |
 
-The Empty tab uses the same goblin grid with a dim palette: `a` maps to
-`overlay0` and `o`/`i` to the panel colour in dark mode; `a` maps to
-`surface1` and `o`/`i` to `overlay0` in light mode. It omits `g` glints.
-No separate dimmed grid is stored. The shadow grid places its `d` role one
+The light theme's `ink` is the `line` token, the near-black of the menu
+bar's underline.
+
+The Empty tab uses the same goblin grid with a dim palette that keeps every
+role distinct, glints included, so both eyes survive. In dark mode `a` maps
+to `overlay0`, `o` to `dim`, `i` to the panel colour and `g` to `subtext0`.
+In light mode `a` maps to `surface1`, `o` to `overlay0`, `i` to `subtext0`
+and `g` to the panel colour. No separate dimmed grid is stored. The shadow grid places its `d` role one
 cell to the right and half a cell below the letters.
 
 ## Regenerate
 
 Run from the repository root. The 56×16 and 48×14 boxes preserve the source
 image aspect; the generator crops them to 33×16 and 29×14 drawn marks.
-All twelve commands rewrite the committed files byte-identically.
+`goblin-33x16.grid` is hand-corrected after generation so both eyes draw the
+same cells (#23280); never regenerate it, and edit it by hand. Its `.ans`
+previews show the generator's output. The other eleven commands rewrite the
+committed files byte-identically.
 
 ```sh
-uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 56 16 grid > crates/gclient/assets/marks/goblin-33x16.grid
 uv run python crates/gclient/assets/marks/mask2.py web/public/logo.png 48 14 grid > crates/gclient/assets/marks/goblin-29x14.grid
 uv run python crates/gclient/assets/marks/wordmark.py braille grid lower > crates/gclient/assets/marks/wordmark-braille-54x8.txt
 uv run python crates/gclient/assets/marks/wordmark.py shadow grid lower > crates/gclient/assets/marks/wordmark-shadow-49x9.grid

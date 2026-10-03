@@ -389,8 +389,7 @@ parity_tests! {
 
             let agent_x = find_symbol_x(&terminal, body.y + 1, body.width, "N");
             let agent_style = style_at(&terminal, agent_x, body.y + 1);
-            // On the active fill the quiet line steps up to subtext0, since
-            // overlay1 on surface0 falls under AA.
+            // Secondary text is subtext0 on every ground (#23280 Option B).
             assert_eq!(agent_style.fg, Some(p.subtext0));
             assert!(!agent_style.add_modifier.contains(Modifier::DIM));
             assert!(!agent_style.add_modifier.contains(Modifier::BOLD));
@@ -412,9 +411,12 @@ parity_tests! {
             let project = style_at(&terminal, find_symbol_x(&terminal, project_body.y, project_body.width, "o"), project_body.y);
             let agent = style_at(&terminal, find_symbol_x(&terminal, body.y, body.width, "p"), body.y);
 
-            assert_eq!(project.fg, Some(p.subtext0));
-            assert_eq!(agent.fg, project.fg);
-            assert!(!project.add_modifier.intersects(Modifier::BOLD | Modifier::DIM));
+            // #23280 Option B: a project name is bold accent whatever its
+            // state, and an unfocused agent's definition is plain text.
+            assert_eq!(project.fg, Some(p.accent));
+            assert!(project.add_modifier.contains(Modifier::BOLD));
+            assert!(!project.add_modifier.contains(Modifier::DIM));
+            assert_eq!(agent.fg, Some(p.text));
             assert!(!agent.add_modifier.intersects(Modifier::BOLD | Modifier::DIM));
         }
 
@@ -432,17 +434,18 @@ parity_tests! {
             assert_eq!(second_row, first_row + 1);
             let p = palette();
 
+            // #23280 Option B: project names are bold accent in every state,
+            // so the active card is told apart by its surface0 fill.
             let active = style_at(&terminal, find_symbol_x(&terminal, first_row, 25, "o"), first_row);
-            assert_eq!(active.fg, Some(p.text));
+            assert_eq!(active.fg, Some(p.accent));
             assert!(active.add_modifier.contains(Modifier::BOLD));
             assert!(!active.add_modifier.contains(Modifier::DIM));
             assert_eq!(active.bg, Some(p.surface0));
 
             let inactive = style_at(&terminal, find_symbol_x(&terminal, second_row, 25, "t"), second_row);
-            assert_eq!(inactive.fg, Some(p.subtext0));
-            assert!(!inactive
-                .add_modifier
-                .intersects(Modifier::BOLD | Modifier::DIM));
+            assert_eq!(inactive.fg, Some(p.accent));
+            assert!(inactive.add_modifier.contains(Modifier::BOLD));
+            assert!(!inactive.add_modifier.contains(Modifier::DIM));
             // herdr: `Color::Reset`; the sidebar sits on the terminal's ground.
             assert_eq!(inactive.bg, Some(Color::Reset));
         }

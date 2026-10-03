@@ -231,17 +231,31 @@ impl MarkPalette {
         }
     }
 
+    /// Every role keeps its own colour, the eye glint included, so the
+    /// dimmed goblin still has both eyes.
     pub fn dimmed(palette: &Palette, kind: ThemeKind) -> Self {
-        let (fill, lines) = match kind {
-            ThemeKind::Dark => (palette.overlay0, palette.panel_bg),
-            ThemeKind::Light => (palette.surface1, palette.overlay0),
+        let (accent, overlay1, ink, glint, dim) = match kind {
+            ThemeKind::Dark => (
+                palette.overlay0,
+                palette.dim,
+                palette.panel_bg,
+                palette.subtext0,
+                palette.panel_bg,
+            ),
+            ThemeKind::Light => (
+                palette.surface1,
+                palette.overlay0,
+                palette.subtext0,
+                palette.panel_bg,
+                palette.overlay0,
+            ),
         };
         Self {
-            accent: Some(fill),
-            overlay1: Some(lines),
-            ink: Some(lines),
-            glint: None,
-            dim: Some(lines),
+            accent: Some(accent),
+            overlay1: Some(overlay1),
+            ink: Some(ink),
+            glint: Some(glint),
+            dim: Some(dim),
             braille: palette.wordmark,
         }
     }

@@ -117,18 +117,142 @@ fn braille_glyphs_paint_in_the_given_role_and_blank_cells_stay_transparent() {
 }
 
 #[test]
-fn dimmed_palette_drops_glints_and_uses_theme_fill_and_lines() {
+fn dimmed_palette_keeps_every_role_distinct_with_the_glint() {
+    // Josh's 16:54 empty-tab palette (#23280): every grid role keeps its own
+    // token, and the glint stays so the eyes stay white.
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let colors = palette(kind);
         let dimmed = MarkPalette::dimmed(&colors, kind);
-        let (fill, lines) = match kind {
-            ThemeKind::Dark => (colors.overlay0, colors.panel_bg),
-            ThemeKind::Light => (colors.surface1, colors.overlay0),
+        let (accent, overlay1, ink, glint) = match kind {
+            ThemeKind::Dark => (
+                colors.overlay0,
+                colors.dim,
+                colors.panel_bg,
+                colors.subtext0,
+            ),
+            ThemeKind::Light => (
+                colors.surface1,
+                colors.overlay0,
+                colors.subtext0,
+                colors.panel_bg,
+            ),
         };
-        assert_eq!(dimmed.accent, Some(fill));
-        assert_eq!(dimmed.overlay1, Some(lines));
-        assert_eq!(dimmed.ink, Some(lines));
-        assert_eq!(dimmed.dim, Some(lines));
-        assert_eq!(dimmed.glint, None);
+        assert_eq!(dimmed.accent, Some(accent), "{kind:?} accent");
+        assert_eq!(dimmed.overlay1, Some(overlay1), "{kind:?} overlay1");
+        assert_eq!(dimmed.ink, Some(ink), "{kind:?} ink");
+        assert_eq!(dimmed.glint, Some(glint), "{kind:?} glint");
+    }
+}
+
+/// Every palette a goblin surface paints `goblin_large` with: the splash in
+/// each theme and in monochrome, and the empty tab's dimmed mark in each.
+fn goblin_variants() -> Vec<(String, MarkPalette)> {
+    let mut variants = Vec::new();
+    for kind in [ThemeKind::Dark, ThemeKind::Light] {
+        let theme = Theme::new(kind);
+        for (shade, colors) in [
+            ("colour", theme.palette()),
+            ("mono", Palette::monochrome(&theme)),
+        ] {
+            variants.push((
+                format!("{kind:?} {shade} normal"),
+                MarkPalette::normal(&colors),
+            ));
+            variants.push((
+                format!("{kind:?} {shade} dimmed"),
+                MarkPalette::dimmed(&colors, kind),
+            ));
+        }
+    }
+    variants
+}
+
+/// `goblin_large` drawn with `palette` on a blank ground: per cell its
+/// symbol, foreground and background.
+fn draw_goblin(palette: &MarkPalette) -> Vec<Vec<(String, Color, Color)>> {
+    let mark = goblin_large();
+    let mut terminal = Terminal::new(TestBackend::new(mark.cols, mark.rows)).unwrap();
+    terminal
+        .draw(|frame| render_mark(frame, (0, 0), mark, palette))
+        .unwrap();
+    let buffer = terminal.backend().buffer();
+    (0..mark.rows)
+        .map(|y| {
+            (0..mark.cols)
+                .map(|x| {
+                    let cell = &buffer[(x, y)];
+                    (cell.symbol().to_string(), cell.fg, cell.bg)
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// Which halves of each cell carry ink: the shape a variant draws, with
+/// its colours dropped.
+fn cell_mask(cells: &[Vec<(String, Color, Color)>]) -> Vec<Vec<(bool, bool)>> {
+    cells
+        .iter()
+        .map(|row| {
+            row.iter()
+                .map(|(symbol, _, bg)| match symbol.as_str() {
+                    "▀" => (true, *bg != Color::Reset),
+                    "▄" => (false, true),
+                    _ => (false, false),
+                })
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn every_goblin_variant_draws_the_same_cells() {
+    // Josh via the Assistant, PD ruling 15:44 (#23280 criterion 2): one
+    // grid feeds every variant, and only the colours differ.
+    let variants = goblin_variants();
+    let reference = cell_mask(&draw_goblin(&variants[0].1));
+    for (name, palette) in &variants[1..] {
+        assert_eq!(
+            cell_mask(&draw_goblin(palette)),
+            reference,
+            "{name} draws different cells from {}",
+            variants[0].0
+        );
+    }
+}
+
+#[test]
+fn both_goblin_eyes_render_identically_in_every_variant() {
+    // The glint marks each eye; a glint-only palette finds them.
+    let only_glint = MarkPalette {
+        accent: None,
+        overlay1: None,
+        ink: None,
+        glint: Some(Color::White),
+        dim: None,
+        braille: Color::White,
+    };
+    let glints: Vec<(usize, usize)> = draw_goblin(&only_glint)
+        .iter()
+        .enumerate()
+        .flat_map(|(y, row)| {
+            row.iter()
+                .enumerate()
+                .filter(|(_, (symbol, _, _))| symbol.trim() != "")
+                .map(move |(x, _)| (x, y))
+        })
+        .collect();
+    assert_eq!(glints.len(), 2, "one glint cell per eye: {glints:?}");
+    for (name, palette) in goblin_variants() {
+        let cells = draw_goblin(&palette);
+        // Each eye's lens: the glint cell, two cells either side, and the
+        // rows above and below.
+        let lens = |(x, y): (usize, usize)| -> Vec<(String, Color, Color)> {
+            (y - 1..=y + 1)
+                .flat_map(|row| (x - 2..=x + 2).map(move |col| (row, col)))
+                .map(|(row, col)| cells[row][col].clone())
+                .collect()
+        };
+        assert_eq!(lens(glints[0]), lens(glints[1]), "{name} eyes differ");
     }
 }

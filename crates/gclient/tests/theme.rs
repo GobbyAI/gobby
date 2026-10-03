@@ -4,7 +4,7 @@
 use gobby_client::app::ControlState;
 use gobby_client::theme::{
     contrast_ratio, relative_luminance, Palette, Theme, ThemeKind, BRAND_HUE, DESTRUCTIVE_HUE,
-    INFO_HUE, WARNING_HUE,
+    IDENTIFIER_HUE, INFO_HUE, WARNING_HUE,
 };
 use gobby_client::ui::chrome::RowState;
 use gobby_client::ui::status::{
@@ -86,10 +86,17 @@ fn tokens_match_design_contract_and_survive_monochrome() {
 
         // Every herdr palette name resolves to a contract token.
         let entries = Palette::entries(theme);
-        assert_eq!(entries.len(), 19);
+        assert_eq!(entries.len(), 20);
         for (name, token) in entries {
             assert!(
-                [BRAND_HUE, INFO_HUE, WARNING_HUE, DESTRUCTIVE_HUE].contains(&token.hue),
+                [
+                    BRAND_HUE,
+                    INFO_HUE,
+                    WARNING_HUE,
+                    DESTRUCTIVE_HUE,
+                    IDENTIFIER_HUE
+                ]
+                .contains(&token.hue),
                 "{kind:?} {name} hue {}",
                 token.hue
             );
@@ -279,7 +286,7 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
     for kind in [ThemeKind::Dark, ThemeKind::Light] {
         let theme = Theme::new(kind);
         let palette = theme.palette();
-        assert_eq!(Palette::entries(&theme).len(), 19);
+        assert_eq!(Palette::entries(&theme).len(), 20);
         for (name, token) in Palette::entries(&theme) {
             let painted = match name {
                 "accent" => palette.accent,
@@ -301,6 +308,7 @@ fn palette_entries_bind_the_same_tokens_the_render_paints_with() {
                 "ink" => palette.ink,
                 "glint" => palette.glint,
                 "dim" => palette.dim,
+                "identifier" => palette.identifier,
                 // Every new role has to be bound here, or a capture
                 // would silently fall back to naming it by raw colour value.
                 other => panic!("{kind:?} palette role {other} has no field in this map"),
@@ -333,10 +341,45 @@ fn dim_sits_between_surface1_and_overlay0_and_ink_glint_swap_by_kind() {
                 assert_eq!(palette.glint, palette.text);
             }
             ThemeKind::Light => {
-                assert_eq!(palette.ink, palette.text);
+                // Josh's 16:54 goblin (#23280): the light mark's ink is the
+                // tinted near-black `line`, never pure black.
+                assert_eq!(palette.ink, palette.line);
                 assert_eq!(palette.glint, palette.panel_bg);
             }
         }
         assert_eq!(palette.dim, n.dim.color());
+    }
+}
+
+/// Josh's Option B board (#23280): refs and branches take one non-state
+/// hue, 315, at oklch(85% 0.10) dark and oklch(50% 0.12) light. It reads as
+/// AA text on every surface and stays at least 35 degrees from every state
+/// hue, so it never borrows a state's meaning.
+#[test]
+fn identifier_is_the_board_violet_and_reads_as_aa_text_on_every_surface() {
+    let expected = [
+        (ThemeKind::Dark, (0xe7, 0xba, 0xfb)),
+        (ThemeKind::Light, (0x7d, 0x4b, 0x92)),
+    ];
+    for (kind, rgb) in expected {
+        let theme = Theme::new(kind);
+        assert_eq!(theme.identifier.hue, IDENTIFIER_HUE);
+        assert_eq!(theme.identifier.rgb(), rgb, "{kind:?} identifier");
+        assert_eq!(theme.palette().identifier, theme.identifier.color());
+        for state in [BRAND_HUE, INFO_HUE, WARNING_HUE, DESTRUCTIVE_HUE] {
+            let gap = (i32::from(IDENTIFIER_HUE) - i32::from(state)).rem_euclid(360);
+            assert!(
+                gap.min(360 - gap) >= 35,
+                "{kind:?} identifier {gap} from {state}"
+            );
+        }
+        for surface in theme.neutrals.surfaces() {
+            let ratio = contrast_ratio(theme.identifier.rgb(), surface.rgb());
+            assert!(
+                ratio >= 4.5,
+                "{kind:?} identifier on {}: {ratio:.2}",
+                surface.name
+            );
+        }
     }
 }
