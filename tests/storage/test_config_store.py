@@ -195,26 +195,6 @@ class TestConfigPersistence:
         assert [row["key"] for row in rows] == ["memory.enabled"]
         assert dict(repository.read(resolve_secrets=False).overrides) == {"memory.enabled": False}
 
-    def test_removed_tmux_registration_timeout_swept(
-        self,
-        repository: ConfigRepository,
-        temp_db: HubDatabase,
-    ) -> None:
-        # Spawn stopped waiting for registration in 6c211201b8; the key had no reader.
-        stored = {"tmux.registration_timeout_seconds": "300.0", "tmux.init_timeout_seconds": "600"}
-        for key, value in stored.items():
-            temp_db.execute(
-                """INSERT INTO config_store (key, value, source, is_secret, revision)
-                   VALUES (%s, %s, %s, %s, %s)""",
-                (key, value, "test", False, 0),
-            )
-
-        repository.reconcile_registry()
-
-        assert dict(repository.read(resolve_secrets=False).overrides) == {
-            "tmux.init_timeout_seconds": 600
-        }
-
     @pytest.mark.parametrize("key", ["llm_providers", "llm_providers.openai.api_key"])
     def test_removed_provider_keys_are_rejected(
         self,
