@@ -28,6 +28,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.sessions import SessionManager, system_session_id
+from gobby.utils.machine_id import require_machine_id
 from gobby.utils.session_context import (
     reset_session_context,
     session_context_for_test,
@@ -1354,44 +1355,29 @@ class TestSendMessage:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("target", "target_id"),
-        [
-            ("session", "s-other"),
-            ("agent", "run-other"),
-            ("build", "build-other"),
-            ("project", None),
-            ("global", None),
-        ],
-    )
-    async def test_spawned_agent_send_message_limited_to_parent(
+    async def test_spawned_agent_recipient_scope_is_left_to_rules(
         self,
         messaging_registry: InternalToolRegistry,
         mock_session_manager: MagicMock,
         mock_message_manager: MagicMock,
-        target: str,
-        target_id: str | None,
     ) -> None:
-        """A spawned agent is refused every non-parent target but reaches its parent."""
+        """The tool delivers a spawned agent's non-parent send; recipient scope is a rule."""
         mock_session_manager.get.side_effect = _spawned_child_session_lookup
-        blocked_arguments: dict[str, Any] = {"target": target, "content": "status"}
-        if target_id is not None:
-            blocked_arguments["target_id"] = target_id
 
         with session_context_for_test("s-child"):
-            blocked = await messaging_registry.call("send_message", blocked_arguments)
-            mock_message_manager.create_message.assert_not_called()
+            sent = await messaging_registry.call(
+                "send_message",
+                {"target": "session", "target_id": "s-other", "content": "status"},
+            )
             delivered = await messaging_registry.call(
                 "send_message", {"target": "parent", "content": "status"}
             )
 
-        assert blocked["success"] is False
-        assert blocked["error_code"] == "send_message_parent_only"
-        assert delivered["success"] is True
+        assert (sent["success"], delivered["success"]) == (True, True)
         recipients = [
             call.kwargs["to_session"] for call in mock_message_manager.create_message.call_args_list
         ]
-        assert recipients == ["s-parent"]
+        assert recipients == ["s-other", "s-parent"]
 
     @pytest.mark.asyncio
     async def test_spawned_agent_omitted_target_defaults_to_parent(
@@ -1425,25 +1411,6 @@ class TestSendMessage:
 
         assert result["success"] is False
         assert result["error_code"] == "target_required"
-        mock_message_manager.create_message.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_spawned_agent_session_target_still_parent_only(
-        self,
-        messaging_registry: InternalToolRegistry,
-        mock_session_manager: MagicMock,
-        mock_message_manager: MagicMock,
-    ) -> None:
-        mock_session_manager.get.side_effect = _spawned_child_session_lookup
-
-        with session_context_for_test("s-child"):
-            blocked = await messaging_registry.call(
-                "send_message",
-                {"target": "session", "target_id": "s-other", "content": "status"},
-            )
-
-        assert blocked["success"] is False
-        assert blocked["error_code"] == "send_message_parent_only"
         mock_message_manager.create_message.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1796,3 +1763,90 @@ class TestGetInterSessionMessages:
         assert kwargs["message_type"] == "command_result"
         assert kwargs["limit"] == 10
         assert kwargs["offset"] == 5
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Spawned-agent target modes are a rule, not tool code (#23350)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class _SpawnedSessions:
+    registry: InternalToolRegistry
+    messages: InterSessionMessageManager
+    ids: dict[str, str]
+
+
+@pytest.fixture
+def spawned_sessions(temp_db: HubDatabase, sample_project: dict[str, Any]) -> _SpawnedSessions:
+    """A root session, its spawned child, and an unrelated peer in the same project."""
+    from gobby.mcp_proxy.tools.agent_messaging import add_messaging_tools
+
+    sessions = SessionManager(temp_db)
+    ids: dict[str, str] = {}
+    for name, parent, depth in (("root", None, 0), ("child", "root", 1), ("peer", None, 0)):
+        ids[name] = sessions.register(
+            external_id=name,
+            machine_id=require_machine_id(),
+            source="claude",
+            project_id=sample_project["id"],
+            parent_session_id=None if parent is None else ids[parent],
+            agent_depth=depth,
+        ).id
+
+    messages = InterSessionMessageManager(temp_db)
+    registry = InternalToolRegistry(name="gobby-agents", description="Agent messaging v2")
+    add_messaging_tools(
+        registry=registry,
+        message_manager=messages,
+        session_manager=sessions,
+        db=temp_db,
+        wake_dispatcher=FakeWakeDispatcher(),
+    )
+    return _SpawnedSessions(registry=registry, messages=messages, ids=ids)
+
+
+async def _send_as(env: _SpawnedSessions, caller: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    with session_context_for_test(env.ids[caller]):
+        result: dict[str, Any] = await env.registry.call(
+            "send_message", {"content": "status", "wake": False, **arguments}
+        )
+    return result
+
+
+@pytest.mark.parametrize("target", ["session", "project", "global"])
+async def test_tool_leaves_spawned_agent_target_modes_to_the_rule(
+    spawned_sessions: _SpawnedSessions, target: str
+) -> None:
+    arguments: dict[str, Any] = {"target": target}
+    if target == "session":
+        arguments["target_id"] = spawned_sessions.ids["peer"]
+
+    result = await _send_as(spawned_sessions, "child", arguments)
+
+    assert result["success"] is True, result
+    sent = spawned_sessions.messages.list_messages(
+        session_id=spawned_sessions.ids["child"], direction="sent"
+    )
+    assert spawned_sessions.ids["peer"] in {message.to_session for message in sent}
+
+
+async def test_spawned_agent_still_cannot_send_as_another_session(
+    spawned_sessions: _SpawnedSessions,
+) -> None:
+    ids = spawned_sessions.ids
+
+    result = await _send_as(
+        spawned_sessions,
+        "child",
+        {"target": "session", "target_id": ids["root"], "from_session": ids["peer"]},
+    )
+
+    assert (result["success"], result.get("error_code")) == (
+        False,
+        "send_message_sender_mismatch",
+    )
+    for sender in ("child", "peer"):
+        assert (
+            spawned_sessions.messages.list_messages(session_id=ids[sender], direction="sent") == []
+        )

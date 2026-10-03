@@ -95,6 +95,7 @@ The current `AgentDefinitionBody` schema accepts these primary fields:
 | `workflows` | Rule, skill, variable, and pipeline selectors |
 | `skills` | Metadata for baseline and allow-listed skill families |
 | `blocked_tools` / `blocked_mcp_tools` | Definition-level restrictions |
+| `send_message_targets` | `send_message` target modes a spawned agent may use (default `["parent"]`), enforced by the `scope-spawned-agent-send-message` rule |
 | `step_workflow` | Optional nested object with `steps`, `variables`, and `exit_condition` |
 | `enabled` | Whether the definition is active |
 
@@ -371,8 +372,11 @@ send_message(
 
 A `task_blocker` message must identify the assigned task in `metadata.task_id`
 and use `target="parent"` (or omit `target`, which defaults to `parent` for
-spawned agents). Spawned agents may send only to this target and
-cannot override `from_session`. In configured worker step workflows, successful
+spawned agents). Spawned agents cannot override `from_session`, and the bundled
+rule `scope-spawned-agent-send-message` limits each one to the target modes its
+agent definition lists in `send_message_targets`. The default is `["parent"]`,
+so this target is the only one an undeclared agent can use. Disabling the rule
+lifts the limit. In configured worker step workflows, successful
 delivery sets `blocker_handed_off` and advances to the termination step. The worker
 still calls `end_agent_run` with a structured blocker handoff; sending a message
 alone is not a universal process-exit operation. Inspect the installed definition

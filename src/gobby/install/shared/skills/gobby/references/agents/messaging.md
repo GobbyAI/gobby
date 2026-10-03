@@ -6,8 +6,10 @@ Discover the intended session/run/build identity before selecting the target.
 
 Target `parent` resolves the session that spawned the sender, forbids `target_id`,
 and is available only to spawned agents. Spawned agents may omit `target`
-(it defaults to `parent`); they may use only `target="parent"` and cannot
-override `from_session`.
+(it defaults to `parent`) and cannot override `from_session`. The bundled rule
+`scope-spawned-agent-send-message` limits a spawned agent to the target modes its
+agent definition lists in `send_message_targets`; the default is `["parent"]`.
+Root sessions may use every mode.
 Targets `session`, `agent`, and `build` require `target_id`. A targetless `project`
 send coordinates the current repository; targetless `global` reaches other live
 non-system sessions on the sender's machine across projects. Ordinary project
