@@ -5751,26 +5751,6 @@
       "test_name": ""
     },
     {
-      "fingerprint": "tests/servers/test_attention_respond.py::::mypy:arg-type",
-      "issue_code": "mypy:arg-type",
-      "line": 97,
-      "message": "Argument 1 to \"create_attention_router\" has incompatible type \"SimpleNamespace\"; expected \"HTTPServer\"",
-      "occurrences": 4,
-      "path": "tests/servers/test_attention_respond.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
-      "fingerprint": "tests/servers/test_attention_respond.py::::mypy:attr-defined",
-      "issue_code": "mypy:attr-defined",
-      "line": 459,
-      "message": "\"BaseRoute\" has no attribute \"path\"",
-      "occurrences": 1,
-      "path": "tests/servers/test_attention_respond.py",
-      "severity": "high",
-      "test_name": ""
-    },
-    {
       "fingerprint": "tests/servers/test_attention_routes_wiring.py::::mypy:attr-defined",
       "issue_code": "mypy:attr-defined",
       "line": 28,

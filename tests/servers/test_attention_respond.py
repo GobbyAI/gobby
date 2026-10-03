@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import AttentionInjectionError
 from gobby.app_context import ServiceContainer
@@ -94,7 +96,7 @@ def _client(
     app = FastAPI()
     app.include_router(
         create_attention_router(
-            server,
+            cast(HTTPServer, server),
             pane_resolver=resolve_pane,
             injector=injector,
         )
@@ -355,7 +357,7 @@ def test_partial_injection_and_stall_paths(temp_db: HubDatabase) -> None:
         payload=detector.prompt_payload("provider still unavailable", kind="stall").to_payload(),
     ).current
     assert stalled is not None
-    failure_stage: str | None = None
+    failure_stage: Literal["none", "partial"] | None = None
     injection_calls = 0
 
     async def capture() -> str:
@@ -509,11 +511,11 @@ def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> Non
         session_manager=None,
         task_manager=MagicMock(),
         attention_manager=_manager(temp_db),
-        detection_registry=DETECTION_REGISTRY,
+        detection_registry=cast(DetectionManifestRegistry, DETECTION_REGISTRY),
     )
     server = HTTPServer(services=services, test_mode=True, bootstrap_config=BootstrapConfig())
 
-    paths = {route.path for route in server.app.routes}
+    paths = {route.path for route in server.app.routes if isinstance(route, APIRoute)}
 
     assert "/api/attention/{entry_id}/respond" in paths
 
@@ -555,7 +557,7 @@ def test_attention_router_composes_session_pane_dependencies(
         )
     )
     app = FastAPI()
-    app.include_router(create_attention_router(server, injector=inject))
+    app.include_router(create_attention_router(cast(HTTPServer, server), injector=inject))
 
     with TestClient(app) as client:
         response = client.post(
