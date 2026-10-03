@@ -539,7 +539,7 @@ The PD disposed each finding on 2026-10-01:
       - Costs canonical request signing plus a replay/nonce window in Python, Rust (gcore, ghook, gclient) and the relay. It also conflicts with P4's hub-certificate pin, unless the pin is dropped for proxied hubs.
     - Pick K2 only if nodes must reach the hub through a TLS-terminating proxy.
 
-PD review of this revision is required before the Assistant presents the choices.
+**PD review (2026-10-02, PD ruling 23:09 CDT):** the PD reviewed and authored the final R0-R7 option set at 20:26:46 CDT (option A accepts every recommended R0-R7 default of revision 3). The Assistant presented button 23128-A after that, at 20:27:12 CDT. The PD waived the full-document review of revision 3 (`75ef620`) on 2026-10-01 at 16:00 CDT.
 
 ### Josh's decisions
 
