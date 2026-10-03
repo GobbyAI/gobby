@@ -1119,21 +1119,39 @@ async def test_python_stub_added_to_existing_module_credits_top_level_import_red
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case", ["exception", "unchanged-move", "changed-move"])
+@pytest.mark.parametrize(
+    "case", ["exception", "active-exception", "unchanged-move", "changed-move"]
+)
 async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case: str) -> None:
     test_path = "tests/test_provenance.py"
     product_path = "src/gobby/feature.py"
     records: list[dict[str, Any]] = []
-    if case == "exception":
+    if case in {"exception", "active-exception"}:
         body = (
             "import pytest\nfrom gobby.feature import CronSessionError, launch\n\n"
             "def test_original():\n    with pytest.raises(CronSessionError):\n        launch()\n"
         )
-        anchor = "    self.output = output\n\n\n"
+        anchor = "def launch():\n    return None\n"
         stub = 'class CronSessionError(RuntimeError):\n    """Missing cron session."""\n\n\n'
         shape = {"old_string": anchor, "new_string": anchor + stub}
         failure = "E   Failed: DID NOT RAISE <class 'gobby.feature.CronSessionError'>\n"
         implementation = {"old_string": "return None", "new_string": "raise CronSessionError"}
+        records.extend(
+            _claude_edit_pair(
+                "Write",
+                {
+                    "file_path": str(tmp_path / product_path),
+                    "content": anchor
+                    if case == "exception"
+                    else "def launch():\n    raise CronSessionError\n\n",
+                },
+                "existing-behavior",
+                0,
+            )
+        )
+        if case == "active-exception":
+            shape = {"old_string": "def launch():", "new_string": stub + "def launch():"}
+            implementation = {"old_string": "raise CronSessionError", "new_string": "return None"}
     else:
         body = (
             "from gobby.feature import payload\n\ndef test_original():\n"
@@ -1159,13 +1177,13 @@ async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case
     )
     records.extend(
         _claude_edit_pair(
-            "Edit" if case == "exception" else "Write",
+            "Edit" if case in {"exception", "active-exception"} else "Write",
             {"file_path": str(tmp_path / product_path), **shape},
             "shape",
             4,
         )
     )
-    if case != "exception":
+    if case not in {"exception", "active-exception"}:
         records.extend(
             _claude_edit_pair(
                 "Edit",
@@ -1218,7 +1236,7 @@ async def test_python_api_provenance_from_provider_receipts(tmp_path: Path, case
         reference=f"{test_path}::test_original", path=test_path, symbol="test_original", body=body
     )
     result = evaluate_tdd_evidence((test,), evidence)
-    assert result.passed is (case != "changed-move"), result
+    assert result.passed is (case not in {"changed-move", "active-exception"}), result
 
 
 @pytest.mark.asyncio

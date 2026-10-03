@@ -157,6 +157,12 @@ def _has_python_module_stub(
         classes = python_noop_module(stub_source, context_source=edit.source_after)
         if classes is None:
             continue
+        if edit.source_after is None and any(
+            isinstance(statement, ast.ClassDef) and statement.bases
+            for statement in ast.parse(stub_source).body
+        ):
+            # An inserted exception fragment alone cannot rule out existing uses.
+            continue
         module_name = edit.path.removeprefix("src/").removesuffix(".py").replace("/", ".")
         aliases = {
             alias.asname or alias.name: classes[alias.name]
